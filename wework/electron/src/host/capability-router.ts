@@ -72,6 +72,7 @@ export const HOST_CAPABILITIES = [
   'e2e.focusWindow',
   'e2e.pressKey',
   'e2e.getProcessSnapshot',
+  'e2e.getRendererHeapUsage',
   'e2e.getRuntimeDiagnostics',
   'e2e.getClipboardText',
   'e2e.getStartupSplashSnapshot',

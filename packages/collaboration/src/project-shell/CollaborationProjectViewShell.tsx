@@ -15,6 +15,7 @@ import { ProjectShell, type ProjectShellProps } from "./ProjectShell";
 
 export const collaborationProjectViewIds = [
   "board",
+  "table",
   "files",
   "automation",
   "manage",
@@ -25,6 +26,7 @@ export type StandardCollaborationProjectView =
 
 export interface CollaborationProjectViewLabels {
   board: string;
+  table: string;
   files: string;
   automation: string;
   manage: string;
@@ -32,6 +34,7 @@ export interface CollaborationProjectViewLabels {
 
 export interface CollaborationProjectViewTestIds {
   board: string;
+  table: string;
   files: string;
   automation: string;
   manage: string;
@@ -47,6 +50,7 @@ export interface CollaborationProjectViewExtension {
 
 export interface CollaborationProjectViewSlots {
   board: ReactNode;
+  table: ReactNode;
   files: ReactNode;
   automation: ReactNode;
   manage: ReactNode;
@@ -119,8 +123,12 @@ export function buildCollaborationProjectViewOptions({
       label: labels[view],
       testId: testIds[view],
     }));
+  const standardIds = new Set(standardOptions.map((option) => option.id));
   const extensionOptions = extensions
-    .filter((extension) => extension.available !== false)
+    .filter(
+      (extension) =>
+        extension.available !== false && !standardIds.has(extension.id),
+    )
     .map(({ id, label, testId }) => ({ id, label, testId }));
 
   return [

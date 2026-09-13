@@ -367,6 +367,7 @@ impl RuntimeWorkRpcHandler {
             mut thread,
             before_cursor: page_before_cursor,
             after_cursor: page_after_cursor,
+            prepend_item_turn_ids,
         } = load_codex_transcript(
             &self.codex_app_server,
             CodexTranscriptRequest {
@@ -489,7 +490,7 @@ impl RuntimeWorkRpcHandler {
             running,
         });
 
-        Ok(transcript_response(TranscriptResponseInput {
+        let mut response = transcript_response(TranscriptResponseInput {
             local_task_id,
             workspace_path,
             runtime: "codex".to_owned(),
@@ -510,6 +511,27 @@ impl RuntimeWorkRpcHandler {
             },
             full_content: include_full_content,
             turn_item_source: TranscriptTurnItemSource::CodexItems,
-        }))
+        });
+        mark_prepend_item_turns(&mut response, &prepend_item_turn_ids);
+        Ok(response)
+    }
+}
+
+fn mark_prepend_item_turns(response: &mut Value, turn_ids: &HashSet<String>) {
+    if turn_ids.is_empty() {
+        return;
+    }
+    for turn in response
+        .get_mut("turns")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        let Some(turn_id) = string_field(turn, "id") else {
+            continue;
+        };
+        if turn_ids.contains(&turn_id) {
+            turn["itemMerge"] = Value::String("prepend".to_owned());
+        }
     }
 }

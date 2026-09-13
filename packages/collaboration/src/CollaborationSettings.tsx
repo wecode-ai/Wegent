@@ -9,6 +9,7 @@ import {
   ProjectManageView,
   type ProjectManageHost,
 } from "./project-manage";
+import { ProjectAgentConfiguration } from "./project-agent-config";
 import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
 import type { CollaborationProject } from "./types";
 import type { CollaborationTranslate } from "./i18n";
@@ -120,6 +121,14 @@ export function CollaborationSettings({
       host={host}
       project={project}
       onProjectUpdated={onChange}
+      renderProviderSettings={() => (
+        <ProjectAgentConfiguration
+          api={api}
+          project={project}
+          onError={onError}
+          translate={translate}
+        />
+      )}
     />
   );
 }

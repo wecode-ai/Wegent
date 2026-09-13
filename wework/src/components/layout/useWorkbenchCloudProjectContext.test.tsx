@@ -716,6 +716,78 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(enrichedFollowup.origin).toBeUndefined()
   })
 
+  test('refreshes task context before send while the rendered binding is still loading', async () => {
+    const defaultBoard = {
+      ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
+      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+      name: '我的任务',
+    }
+    const enrichedItem = {
+      ...loopItem(defaultBoard.id),
+      title: 'Updated acceptance criteria',
+      has_additional_context: true,
+    }
+    const runtimeTask = {
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+    }
+    let resolveInitialLookup:
+      | ((value: { project: CloudProject; loop_item: CloudLoopItem | null }) => void)
+      | undefined
+    const findCloudContextForTask = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ project: CloudProject; loop_item: CloudLoopItem | null }>(resolve => {
+            resolveInitialLookup = resolve
+          })
+      )
+      .mockResolvedValue({
+        project: defaultBoard,
+        loop_item: enrichedItem,
+      })
+    const localApi = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [defaultBoard] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      findCloudContextForTask,
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        defaultLocation: 'local',
+      },
+    } as unknown as WorkbenchServices
+    const { result } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: runtimeTask,
+        currentProjectId: 42,
+        defaultProjectSpace: null,
+        paneKey: 'project:42',
+        runtimeTaskTitle: 'Runtime task',
+        services,
+        userId: 1,
+      })
+    )
+
+    await waitFor(() => expect(findCloudContextForTask).toHaveBeenCalledOnce())
+    expect(result.current.boundCloudProject).toBeNull()
+
+    let submission: Awaited<ReturnType<typeof result.current.prepareSubmission>> | undefined
+    await act(async () => {
+      submission = await result.current.prepareSubmission('Apply the updated criteria')
+    })
+
+    expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
+    expect(submission?.additionalContext?.cloudCollaboration.value).toContain(enrichedItem.title)
+    resolveInitialLookup?.({
+      project: defaultBoard,
+      loop_item: enrichedItem,
+    })
+  })
+
   test('does not apply a late default Issue refresh after switching tasks', async () => {
     const defaultBoard = {
       ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
@@ -1328,7 +1400,7 @@ describe('useWorkbenchCloudProjectContext', () => {
       },
       fixed: true,
     },
-  ])('reuses the $description when opening a bound work item', async setup => {
+  ])('opens or reuses the $description when opening a bound work item', async setup => {
     const { boardRoute, boardTabId, cloudProject, fixed } = setup
     const item = loopItem(cloudProject.id)
     const currentRuntimeTask = {
@@ -1400,12 +1472,18 @@ describe('useWorkbenchCloudProjectContext', () => {
     await waitFor(() => expect(result.current.boundCloudItem).toEqual(item))
     act(() => result.current.openBoundProjectSpaceTask())
 
-    expect(openTab).not.toHaveBeenCalled()
-    expect(workspaceTabs.selectTab).toHaveBeenCalledOnce()
-    expect(workspaceTabs.selectTab).toHaveBeenCalledWith(boardTab.id, {
+    const expectedTab = {
       title: '我的任务',
       contentRoute: `/todo?projectStore=${cloudProject.project_store}&projectId=${cloudProject.id}`,
-    })
+    }
+    if (fixed) {
+      expect(workspaceTabs.selectTab).not.toHaveBeenCalled()
+      expect(openTab).toHaveBeenCalledWith('board', expectedTab)
+    } else {
+      expect(openTab).not.toHaveBeenCalled()
+      expect(workspaceTabs.selectTab).toHaveBeenCalledOnce()
+      expect(workspaceTabs.selectTab).toHaveBeenCalledWith(boardTab.id, expectedTab)
+    }
     expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
   })
 

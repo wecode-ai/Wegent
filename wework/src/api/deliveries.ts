@@ -907,11 +907,12 @@ export function createDeliveryApi(client: HttpClient) {
     },
     listLoopItemExecutions(
       projectId: CloudProjectIdInput,
-      options: { agent_id?: string; status?: string } = {}
+      options: { agent_id?: string; status?: string; include_terminal?: boolean } = {}
     ): Promise<{ items: CloudLoopItemExecution[] }> {
       const query = new URLSearchParams()
       if (options.agent_id) query.set('agent_id', options.agent_id)
       if (options.status) query.set('status', options.status)
+      if (options.include_terminal) query.set('include_terminal', 'true')
       const suffix = query.toString() ? `?${query.toString()}` : ''
       return client
         .get<{

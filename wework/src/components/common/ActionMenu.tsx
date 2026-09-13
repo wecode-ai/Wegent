@@ -52,6 +52,7 @@ export interface ActionMenuItem {
 interface ActionMenuProps {
   ariaLabel: string
   testId: string
+  menuTestId?: string
   items: ActionMenuItem[]
   icon?: ComponentType<{ className?: string }>
   triggerLabel?: ReactNode
@@ -74,6 +75,7 @@ export interface MenuPosition {
 export function ActionMenu({
   ariaLabel,
   testId,
+  menuTestId,
   items,
   icon: Icon = MoreHorizontal,
   triggerLabel,
@@ -429,7 +431,7 @@ export function ActionMenu({
           <div
             ref={menuRef}
             role="menu"
-            data-testid={`${testId}-menu`}
+            data-testid={menuTestId ?? `${testId}-menu`}
             data-embedded-browser-occlusion
             aria-label={ariaLabel}
             style={{

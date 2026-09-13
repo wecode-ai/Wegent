@@ -157,12 +157,14 @@ export interface RuntimeConversationTurn {
   id: string | null
   clientUserMessageId?: string
   runtimeMessageIndex?: number
+  itemMerge?: 'prepend'
   items: RuntimeConversationItem[]
   status: RuntimeWorkbenchMessageStatus
   completedAt?: string | number | null
   error?: string
   errorType?: string
   stoppedNotice?: boolean | null
+  contentTruncated?: boolean
   streamingThinkingContent?: string
   fileChanges?: TurnFileChangesSummary
   references?: CodexReference[]

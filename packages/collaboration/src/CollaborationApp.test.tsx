@@ -18,8 +18,11 @@ vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return {
     ...actual,
+    useCallback: <T extends (...args: never[]) => unknown>(callback: T) =>
+      callback,
     useEffect: vi.fn(),
     useMemo: <T,>(factory: () => T) => factory(),
+    useRef: <T,>(initialValue: T) => ({ current: initialValue }),
     useState: <T,>(initialValue: T | (() => T)) => [
       typeof initialValue === "function"
         ? (initialValue as () => T)()
@@ -219,9 +222,10 @@ describe("CollaborationApp API boundary", () => {
     expect(location.rootView).toBe("my-work");
   });
 
-  it("uses the original Wework project view set without Web-only pages", () => {
+  it("keeps the shared project view set free of host-only pages", () => {
     expect(collaborationProjectViewIds).toEqual([
       "board",
+      "table",
       "files",
       "automation",
       "manage",

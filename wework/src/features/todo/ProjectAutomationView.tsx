@@ -3,7 +3,6 @@ import '@xyflow/react/dist/style.css'
 import { useCallback, useMemo } from 'react'
 import type { CloudLoopItem, CloudProject, CloudProjectMember } from '@/api/deliveries'
 import type { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
-import type { ExecutionListApi } from '@/features/todo/ProjectQueueView'
 import { modelSelectionIdentityOptions } from '@/features/workbench/runtimeModelSelection'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type {
@@ -36,7 +35,6 @@ interface ProjectAutomationViewProps {
   projectAutomationApi?: WorkbenchServices['projectAutomationApi']
   projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
   runtimeProfileApi?: WorkbenchServices['runtimeProfileApi']
-  executionApi?: ExecutionListApi
   deviceApi?: WorkbenchServices['deviceApi']
   modelApi?: WorkbenchServices['modelApi']
   teamApi?: WorkbenchServices['teamApi']

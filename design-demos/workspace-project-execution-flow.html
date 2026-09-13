@@ -1,0 +1,2787 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wework Workspace 智能研发协作 Demo</title>
+<style>
+  :root {
+    --bg: #f4f4f5;
+    --sidebar: #ededf0;
+    --surface: #fff;
+    --soft: #f7f7f8;
+    --hover: #f0f1f3;
+    --line: rgba(20,24,32,.09);
+    --line-strong: rgba(20,24,32,.16);
+    --text: #191b20;
+    --text-2: #62666f;
+    --text-3: #969aa3;
+    --blue: #2878f0;
+    --blue-soft: #eaf2ff;
+    --green: #0b9968;
+    --green-soft: #e7f7f0;
+    --amber: #d88718;
+    --amber-soft: #fff3de;
+    --purple: #7154d7;
+    --purple-soft: #f0ecff;
+    --red: #d84b44;
+    --radius: 10px;
+    --radius-lg: 15px;
+    --shadow: 0 20px 70px rgba(15,18,25,.18);
+    --shadow-soft: 0 5px 18px rgba(15,18,25,.08);
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    min-width: 1120px;
+    overflow: hidden;
+    color: var(--text);
+    background: #d9dbe0;
+    font: 13px/1.5 var(--font);
+  }
+  button, input, textarea, select { color: inherit; font: inherit; }
+  button { cursor: pointer; }
+  [hidden] { display: none !important; }
+
+  .demo {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .demo-bar {
+    height: 44px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 18px;
+    color: #f1f1f3;
+    background: #202126;
+  }
+  .demo-title { font-weight: 700; }
+  .demo-hint { color: #9fa3ab; font-size: 11px; }
+  .demo-modes {
+    display: flex;
+    gap: 2px;
+    margin-left: 8px;
+    padding: 3px;
+    border-radius: 8px;
+    background: rgba(255,255,255,.08);
+  }
+  .demo-modes button {
+    height: 25px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 6px;
+    color: #aeb2ba;
+    background: transparent;
+    font-size: 10px;
+  }
+  .demo-modes button.active { color: #202126; background: #fff; font-weight: 700; }
+  .demo-path {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #bbbfc7;
+    font-size: 11px;
+  }
+  .demo-path span.active { color: #fff; font-weight: 650; }
+
+  .window {
+    flex: 1;
+    min-height: 0;
+    margin: 13px;
+    display: flex;
+    overflow: hidden;
+    border: 1px solid rgba(0,0,0,.08);
+    border-radius: 15px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+
+  .sidebar {
+    position: relative;
+    width: 214px;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    padding: 13px 10px 11px;
+    background: var(--sidebar);
+  }
+  .brand {
+    height: 34px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 9px;
+    font-size: 15px;
+    font-weight: 750;
+  }
+  .brand-mark {
+    width: 25px;
+    height: 25px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    color: #fff;
+    background: #202126;
+    font-size: 11px;
+  }
+  .workspace-switch {
+    width: calc(100% - 8px);
+    margin: 9px 4px 12px;
+    padding: 10px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    border: 0;
+    border-radius: 10px;
+    background: rgba(255,255,255,.72);
+    text-align: left;
+  }
+  .workspace-switch > span:nth-child(2) { min-width: 0; flex: 1; }
+  .workspace-icon {
+    width: 30px;
+    height: 30px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+    color: #245bb9;
+    background: #dce9ff;
+    font-weight: 750;
+  }
+  .workspace-name { display: block; overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-meta { display: block; margin-top: 2px; color: var(--text-3); font-size: 10px; }
+  .chev { margin-left: auto; color: var(--text-3); }
+  .workspace-menu {
+    position: absolute;
+    z-index: 20;
+    top: 100%;
+    left: 4px;
+    width: calc(100% - 8px);
+    padding: 7px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: var(--shadow-soft);
+  }
+  .workspace-menu-label { padding: 5px 8px; color: var(--text-3); font-size: 9px; }
+  .workspace-option {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    text-align: left;
+  }
+  .workspace-option:hover { background: var(--hover); }
+  .workspace-option.active { background: var(--blue-soft); }
+  .workspace-option .workspace-icon { width: 26px; height: 26px; border-radius: 7px; font-size: 10px; }
+  .workspace-option-main { min-width: 0; flex: 1; }
+  .workspace-option-name { display: block; font-weight: 650; }
+  .workspace-option-meta { display: block; margin-top: 1px; color: var(--text-3); font-size: 9px; }
+  .workspace-check { color: var(--blue); font-weight: 700; }
+  .workspace-menu-actions {
+    margin-top: 5px;
+    padding-top: 5px;
+    border-top: 1px solid var(--line);
+  }
+  .workspace-context {
+    margin: 8px 4px 4px;
+    padding: 0 6px;
+    color: var(--text-3);
+    font-size: 9px;
+  }
+  .workspace-picker { position: relative; }
+  .workspace-back {
+    width: calc(100% - 8px);
+    height: 34px;
+    margin: 7px 4px 2px;
+    padding: 0 9px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    border-radius: 8px;
+    color: var(--text-2);
+    background: transparent;
+    text-align: left;
+  }
+  .workspace-back:hover { color: var(--text); background: rgba(255,255,255,.58); }
+  .workspace-navigation {
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .side-label {
+    padding: 13px 10px 5px;
+    color: var(--text-3);
+    font-size: 10px;
+  }
+  .side-item {
+    width: 100%;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 8px;
+    color: var(--text-2);
+    background: transparent;
+    text-align: left;
+  }
+  .side-item:hover { color: var(--text); background: rgba(255,255,255,.58); }
+  .side-item.active { color: var(--text); background: #fff; font-weight: 650; }
+  .side-icon { width: 17px; text-align: center; color: var(--text-3); }
+  .side-count {
+    margin-left: auto;
+    padding: 1px 6px;
+    border-radius: 99px;
+    color: var(--text-3);
+    background: rgba(0,0,0,.045);
+    font-size: 9px;
+  }
+  .side-count.guide { color: #225fb9; background: var(--blue-soft); font-weight: 700; }
+  .me {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px;
+  }
+  .avatar {
+    width: 28px;
+    height: 28px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: #fff;
+    background: #586270;
+    font-size: 10px;
+    font-weight: 750;
+  }
+  .avatar.blue { background: #347ce8; }
+  .avatar.green { background: #25936f; }
+  .avatar.amber { background: #c37a19; }
+  .avatar.purple { background: var(--purple); }
+  .avatar.robot { border-radius: 8px; background: #202126; }
+
+  .main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: #fafafb;
+  }
+  .topbar {
+    height: 52px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(255,255,255,.9);
+  }
+  .breadcrumb { color: var(--text-3); }
+  .breadcrumb strong { color: var(--text); font-weight: 650; }
+  .spacer { flex: 1; }
+  .search {
+    width: 260px;
+    height: 31px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 10px;
+    border-radius: 8px;
+    color: var(--text-3);
+    background: var(--soft);
+  }
+  .icon-btn {
+    width: 31px;
+    height: 31px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+  }
+  .icon-btn:hover { background: var(--hover); }
+  .page {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+  .page-pad { padding: 24px; }
+
+  .btn {
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    font-weight: 600;
+  }
+  .btn:hover { background: var(--hover); }
+  .btn.primary { color: #fff; border-color: #202126; background: #202126; }
+  .btn.blue { color: #fff; border-color: var(--blue); background: var(--blue); }
+  .btn.ghost { border-color: transparent; background: transparent; color: var(--text-2); }
+  .btn.danger { color: var(--red); }
+
+  .page-hero {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 21px;
+  }
+  .hero-icon {
+    width: 52px;
+    height: 52px;
+    display: grid;
+    place-items: center;
+    border-radius: 15px;
+    color: #245bb9;
+    background: #dce9ff;
+    font-size: 18px;
+    font-weight: 750;
+  }
+  .page-title { font-size: 22px; font-weight: 750; }
+  .page-subtitle { margin-top: 4px; color: var(--text-2); }
+  .page-actions { margin-left: auto; display: flex; gap: 8px; }
+
+  .tabs {
+    display: flex;
+    gap: 3px;
+    margin-bottom: 16px;
+    padding-bottom: 11px;
+    border-bottom: 1px solid var(--line);
+  }
+  .tabs button {
+    height: 31px;
+    padding: 0 13px;
+    border: 0;
+    border-radius: 8px;
+    color: var(--text-2);
+    background: transparent;
+  }
+  .tabs button:hover { background: var(--hover); }
+  .tabs button.active { color: var(--text); background: #fff; font-weight: 650; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
+
+  .overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1.65fr) minmax(330px, 1fr);
+    gap: 14px;
+  }
+  .column-stack { display: flex; flex-direction: column; gap: 14px; }
+  .panel {
+    padding: 17px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #fff;
+  }
+  .panel-head {
+    display: flex;
+    align-items: center;
+    margin-bottom: 13px;
+  }
+  .panel-title { font-size: 15px; font-weight: 700; }
+  .panel-note { margin-left: 8px; color: var(--text-3); font-size: 10px; }
+  .link-btn { margin-left: auto; border: 0; color: var(--blue); background: none; font-size: 11px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
+  .stat { padding: 13px; border-radius: 11px; background: var(--soft); }
+  .stat-value { font-size: 22px; font-weight: 750; }
+  .stat-label { margin-top: 4px; color: var(--text-3); font-size: 10px; }
+
+  .project-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+  .space-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; }
+  .space-card {
+    min-height: 164px;
+    padding: 17px;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #fff;
+    text-align: left;
+  }
+  .space-card:hover { border-color: rgba(40,120,240,.38); box-shadow: var(--shadow-soft); }
+  .space-card-head { display: flex; align-items: center; gap: 11px; }
+  .space-card .workspace-icon { width: 40px; height: 40px; font-size: 13px; }
+  .space-card-name { display: block; font-size: 15px; font-weight: 700; }
+  .space-card-kind { display: block; margin-top: 2px; color: var(--text-3); font-size: 10px; }
+  .space-card-desc { margin-top: 15px; color: var(--text-2); line-height: 1.65; }
+  .space-card-foot { margin-top: auto; padding-top: 14px; display: flex; align-items: center; color: var(--text-3); font-size: 10px; }
+  .space-card-foot span:last-child { margin-left: auto; color: var(--blue); }
+  .platform-resource-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+  .platform-resource-card {
+    padding: 17px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #fff;
+  }
+  .platform-resource-card .row:last-child { padding-bottom: 0; }
+  .empty-state {
+    min-height: 430px;
+    display: grid;
+    place-items: center;
+    padding: 36px;
+    border: 1px dashed var(--line-strong);
+    border-radius: 16px;
+    background: #fff;
+    text-align: center;
+  }
+  .empty-content { max-width: 590px; }
+  .empty-icon {
+    width: 58px;
+    height: 58px;
+    margin: 0 auto 15px;
+    display: grid;
+    place-items: center;
+    border-radius: 17px;
+    color: #245bb9;
+    background: var(--blue-soft);
+    font-size: 22px;
+    font-weight: 750;
+  }
+  .empty-title { font-size: 21px; font-weight: 750; }
+  .empty-desc { margin: 7px auto 0; color: var(--text-2); line-height: 1.7; }
+  .empty-actions { margin-top: 20px; display: flex; justify-content: center; gap: 8px; }
+  .onboarding-flow {
+    margin-top: 26px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 9px;
+    text-align: left;
+  }
+  .onboarding-step {
+    padding: 12px;
+    border-radius: 11px;
+    color: var(--text-2);
+    background: var(--soft);
+    font-size: 10px;
+  }
+  .onboarding-step strong { display: block; margin-bottom: 3px; color: var(--text); font-size: 11px; }
+  .onboarding-number {
+    width: 20px;
+    height: 20px;
+    margin-bottom: 8px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: #fff;
+    background: var(--blue);
+    font-size: 9px;
+  }
+  .starter-panel {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 22px;
+    border: 1px solid var(--line);
+    border-radius: 15px;
+    background: #fff;
+  }
+  .starter-progress { color: var(--blue); font-size: 10px; font-weight: 700; }
+  .starter-title { margin-top: 7px; font-size: 20px; font-weight: 750; }
+  .starter-desc { margin-top: 5px; color: var(--text-2); }
+  .execution-guide {
+    margin: 0 0 14px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border: 1px solid #b9cff7;
+    border-radius: 12px;
+    background: var(--blue-soft);
+  }
+  .execution-guide-main { flex: 1; min-width: 0; }
+  .execution-guide-title { display: block; margin-top: 3px; font-weight: 750; }
+  .execution-guide-desc { display: block; margin-top: 3px; color: var(--text-2); font-size: 11px; }
+  .starter-list { margin-top: 20px; }
+  .starter-optional-label {
+    margin-top: 20px;
+    padding-top: 17px;
+    border-top: 1px solid var(--line);
+    color: var(--text-3);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .next-step-badge {
+    flex: none;
+    padding: 5px 8px;
+    border-radius: 7px;
+    color: #225fb9;
+    background: var(--blue-soft);
+    font-size: 9px;
+    font-weight: 700;
+  }
+  .starter-row {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 13px 0;
+    border-top: 1px solid var(--line);
+  }
+  .starter-list > .starter-row:first-child { border-top: 0; }
+  .starter-row-main { flex: 1; }
+  .starter-row-title { font-weight: 700; }
+  .starter-row-desc { margin-top: 2px; color: var(--text-3); font-size: 10px; }
+  .onboarding-nav {
+    margin: 6px 10px 12px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: #fff;
+  }
+  .onboarding-nav-title {
+    margin: 0 4px 7px;
+    color: var(--text-3);
+    font-size: 9px;
+    font-weight: 750;
+  }
+  .onboarding-nav-step {
+    width: 100%;
+    padding: 7px 5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    border-radius: 7px;
+    color: var(--text-2);
+    background: transparent;
+    text-align: left;
+    font-size: 10px;
+  }
+  .onboarding-nav-step:hover:not(:disabled) { background: var(--soft); }
+  .onboarding-nav-step:disabled { color: var(--text-3); cursor: default; }
+  .onboarding-nav-step.current { color: #225fb9; background: var(--blue-soft); font-weight: 700; }
+  .onboarding-nav-step.done { color: var(--text); }
+  .onboarding-nav-mark {
+    width: 18px;
+    height: 18px;
+    display: grid;
+    flex: none;
+    place-items: center;
+    border: 1px solid var(--line-strong);
+    border-radius: 50%;
+    font-size: 8px;
+    font-weight: 750;
+  }
+  .onboarding-nav-step.current .onboarding-nav-mark { color: #fff; border-color: var(--blue); background: var(--blue); }
+  .onboarding-nav-step.done .onboarding-nav-mark { color: #087a54; border-color: #9dd7c2; background: #e2f7ee; }
+  .setup-choice-grid {
+    margin-top: 8px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 9px;
+  }
+  .setup-choice {
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    color: var(--text-2);
+    background: #fff;
+    text-align: left;
+  }
+  .setup-choice:hover { border-color: #9bbcf4; }
+  .setup-choice.active { color: #225fb9; border-color: #79a8f2; background: var(--blue-soft); }
+  .setup-choice strong { display: block; color: var(--text); font-size: 11px; }
+  .setup-choice span { display: block; margin-top: 4px; font-size: 9px; line-height: 1.5; }
+  .setup-choice.active strong { color: #225fb9; }
+  .resource-config-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(240px, .8fr);
+    gap: 18px;
+    align-items: start;
+  }
+  .config-summary {
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: var(--soft);
+  }
+  .config-summary-title { font-weight: 750; }
+  .config-summary-meta { margin-top: 4px; color: var(--text-3); font-size: 10px; line-height: 1.6; }
+  .selection-list { margin-top: 8px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .selection-option {
+    width: 100%;
+    padding: 11px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    background: #fff;
+    text-align: left;
+  }
+  .selection-option:last-child { border-bottom: 0; }
+  .selection-option:hover { background: var(--soft); }
+  .selection-option.active { background: var(--blue-soft); }
+  .selection-check { margin-left: auto; color: var(--blue); font-weight: 750; }
+  .code-command {
+    margin-top: 8px;
+    padding: 11px 12px;
+    overflow: auto;
+    border-radius: 9px;
+    color: #dce8ff;
+    background: #20242b;
+    font: 10px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: nowrap;
+  }
+  .setup-status {
+    min-height: 220px;
+    display: grid;
+    place-items: center;
+    text-align: center;
+  }
+  .status-spinner {
+    width: 34px;
+    height: 34px;
+    margin: 0 auto 12px;
+    border: 3px solid #dbe7fa;
+    border-top-color: var(--blue);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .setup-flow {
+    margin: 10px 0 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .setup-flow-step {
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-3);
+    background: var(--soft);
+    font-size: 10px;
+  }
+  .setup-flow-step + .setup-flow-step { border-left: 1px solid var(--line); }
+  .setup-flow-step.active { color: #225fb9; background: var(--blue-soft); font-weight: 700; }
+  .setup-flow-step.done { color: #087a54; background: #eef9f4; }
+  .setup-flow-number {
+    width: 19px;
+    height: 19px;
+    display: grid;
+    flex: none;
+    place-items: center;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    font-size: 8px;
+    font-weight: 750;
+  }
+  .settings-card.guided-setup {
+    padding: 18px;
+    border-color: #d9dee8;
+    background: #f5f7fa;
+  }
+  .setup-flow-header {
+    margin: -18px -18px 18px;
+    padding: 16px 18px;
+    border-bottom: 1px solid #d9dee8;
+    border-radius: 14px 14px 0 0;
+    background: #fff;
+  }
+  .setup-flow-context { color: var(--text-3); font-size: 9px; font-weight: 700; }
+  .setup-flow-name { margin-top: 3px; font-size: 15px; font-weight: 750; }
+  .setup-stage-body {
+    padding: 18px;
+    border: 1px solid #d9dee8;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(18, 27, 44, .03);
+  }
+  .setup-stage-kicker {
+    margin-bottom: 5px;
+    color: var(--blue);
+    font-size: 9px;
+    font-weight: 750;
+  }
+  .project-card {
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: #fff;
+    text-align: left;
+  }
+  .project-card:hover { border-color: rgba(40,120,240,.38); box-shadow: var(--shadow-soft); }
+  .project-card-head { display: flex; align-items: center; gap: 9px; }
+  .project-symbol {
+    width: 33px;
+    height: 33px;
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+    color: #fff;
+    background: var(--blue);
+    font-size: 10px;
+    font-weight: 750;
+  }
+  .project-name { font-weight: 700; }
+  .project-manager { margin-top: 2px; color: var(--text-3); font-size: 10px; }
+  .progress { height: 5px; margin-top: 13px; overflow: hidden; border-radius: 99px; background: #ebedf0; }
+  .progress span { display: block; height: 100%; border-radius: inherit; background: var(--blue); }
+  .project-foot { margin-top: 7px; display: flex; color: var(--text-3); font-size: 10px; }
+  .project-foot span:last-child { margin-left: auto; }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 0;
+  }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row-main { min-width: 0; flex: 1; }
+  .row-title { font-weight: 650; }
+  .row-meta { margin-top: 2px; color: var(--text-3); font-size: 10px; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 7px;
+    border-radius: 99px;
+    color: var(--text-2);
+    background: #eceef1;
+    font-size: 9px;
+  }
+  .badge.blue { color: #225fb9; background: var(--blue-soft); }
+  .badge.green { color: #087a54; background: var(--green-soft); }
+  .badge.amber { color: #97610d; background: var(--amber-soft); }
+  .badge.purple { color: #5d468f; background: var(--purple-soft); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); }
+  .dot.online { background: var(--green); }
+
+  .unit {
+    padding: 12px;
+    border: 1px solid #a9d8c4;
+    border-radius: 11px;
+    background: var(--green-soft);
+  }
+  .unit + .unit { margin-top: 8px; }
+  .unit-head { display: flex; align-items: center; gap: 8px; }
+  .unit-title { font-weight: 700; color: #087a54; }
+  .unit-bind { margin-top: 7px; color: #527b69; font-size: 10px; line-height: 1.6; }
+
+  .settings-layout { display: grid; grid-template-columns: 190px minmax(0,700px); gap: 22px; }
+  .settings-nav { display: flex; flex-direction: column; gap: 3px; }
+  .settings-nav button {
+    height: 34px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 8px;
+    color: var(--text-2);
+    background: transparent;
+    text-align: left;
+  }
+  .settings-nav button.active { color: var(--text); background: #fff; font-weight: 650; }
+  .settings-card {
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #fff;
+  }
+  .settings-card + .settings-card { margin-top: 13px; }
+  .settings-title { font-size: 15px; font-weight: 700; }
+  .settings-desc { margin-top: 4px; color: var(--text-3); font-size: 11px; }
+  .field { margin-top: 16px; }
+  .field-label { margin-bottom: 6px; font-weight: 600; }
+  .field-help { margin-top: 5px; color: var(--text-3); font-size: 10px; }
+  .input, .textarea, .select {
+    width: 100%;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    outline: none;
+    background: #fff;
+  }
+  .input, .select { height: 36px; padding: 0 10px; }
+  .textarea { min-height: 78px; padding: 9px 10px; resize: vertical; }
+  .input:focus, .textarea:focus, .select:focus { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(40,120,240,.1); }
+  .inline-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .project-shell { height: 100%; display: flex; flex-direction: column; }
+  .project-head {
+    height: 67px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 19px;
+    border-bottom: 1px solid var(--line);
+    background: #fff;
+  }
+  .project-head-title { font-size: 17px; font-weight: 750; }
+  .project-head-meta { margin-top: 2px; color: var(--text-3); font-size: 10px; }
+  .project-tabs {
+    margin-left: 17px;
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 9px;
+    background: var(--soft);
+  }
+  .project-tabs button {
+    height: 28px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 7px;
+    color: var(--text-2);
+    background: transparent;
+  }
+  .project-tabs button.active { color: var(--text); background: #fff; font-weight: 650; box-shadow: 0 1px 3px rgba(0,0,0,.07); }
+  .manager-chip {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 9px 5px 6px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+  }
+  .manager-chip .avatar { width: 22px; height: 22px; font-size: 8px; }
+  .manager-chip small { display: block; color: var(--text-3); font-size: 9px; }
+  .manager-chip strong { font-size: 11px; }
+  .project-body { flex: 1; min-height: 0; display: flex; }
+  .project-content { flex: 1; min-width: 0; overflow: auto; padding: 12px; background: #f7f7f8; }
+  .board-toolbar {
+    height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: -12px -12px 12px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--line);
+    background: #fff;
+  }
+  .filter {
+    height: 27px;
+    padding: 0 9px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: #fff;
+    color: var(--text-2);
+  }
+  .board { display: grid; grid-template-columns: repeat(4,minmax(205px,1fr)); gap: 10px; min-width: 850px; }
+  .kanban-column { min-width: 0; }
+  .column-head { height: 33px; display: flex; align-items: center; padding: 0 4px; color: var(--text-2); font-weight: 650; }
+  .column-head .count { margin-left: auto; color: var(--text-3); font-size: 10px; }
+  .issue-card {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+    text-align: left;
+  }
+  .issue-card + .issue-card { margin-top: 8px; }
+  .issue-card:hover { transform: translateY(-1px); border-color: rgba(40,120,240,.36); box-shadow: var(--shadow-soft); }
+  .issue-card.selected { border-color: rgba(40,120,240,.55); box-shadow: 0 0 0 2px rgba(40,120,240,.08); }
+  .issue-id { color: var(--text-3); font-size: 9px; }
+  .issue-title { margin-top: 6px; font-weight: 650; line-height: 1.45; }
+  .issue-tags { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 5px; }
+  .issue-foot { margin-top: 10px; display: flex; align-items: center; color: var(--text-3); font-size: 9px; }
+  .issue-foot span:last-child { margin-left: auto; }
+
+  .issue-table {
+    width: 100%;
+    border-spacing: 0;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .issue-table th, .issue-table td { height: 43px; padding: 0 12px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  .issue-table th { color: var(--text-3); background: var(--soft); font-size: 10px; font-weight: 600; }
+  .issue-table tr:last-child td { border-bottom: 0; }
+  .issue-table tbody tr { cursor: pointer; }
+  .issue-table tbody tr:hover { background: #fafcff; }
+  .table-title { font-weight: 650; }
+
+  .issue-drawer {
+    width: 430px;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--line);
+    background: #fff;
+  }
+  .drawer-head {
+    height: 44px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--line);
+    color: var(--text-3);
+    font-size: 10px;
+  }
+  .drawer-head strong { margin-left: 6px; color: var(--text-2); }
+  .drawer-close { margin-left: auto; }
+  .drawer-title-wrap { padding: 16px 17px 0; }
+  .drawer-title { font-size: 19px; font-weight: 750; line-height: 1.4; }
+  .drawer-meta { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .status-select {
+    height: 27px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 99px;
+    color: #225fb9;
+    background: var(--blue-soft);
+    font-size: 10px;
+  }
+  .drawer-tabs { margin: 15px 17px 0; }
+  .drawer-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 17px 17px; }
+  .section { margin-top: 18px; }
+  .section-head { display: flex; align-items: center; margin-bottom: 9px; font-weight: 700; }
+  .section-head span { margin-left: auto; color: var(--text-3); font-size: 9px; font-weight: 400; }
+  .section-head .section-count { margin-left: 6px; margin-right: auto; }
+  .section-action {
+    padding: 0;
+    border: 0;
+    color: var(--blue);
+    background: transparent;
+    font-size: 10px;
+    font-weight: 650;
+  }
+  .section-action:hover { text-decoration: underline; }
+  .task-empty {
+    padding: 9px 0;
+    color: var(--text-3);
+    font-size: 10px;
+  }
+  .description { color: var(--text-2); line-height: 1.7; }
+  .assignment {
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--soft);
+  }
+  .assignment-head { display: flex; align-items: center; gap: 8px; }
+  .assignment-title { font-weight: 650; }
+  .assignment-meta { margin-top: 6px; color: var(--text-3); font-size: 10px; line-height: 1.55; }
+  .task-card {
+    padding: 12px;
+    border: 1px solid #a9d8c4;
+    border-radius: 10px;
+    background: var(--green-soft);
+  }
+  .task-head { display: flex; align-items: flex-start; gap: 8px; }
+  .task-title { color: #087a54; font-weight: 700; }
+  .task-meta { margin-top: 3px; color: #527b69; font-size: 10px; line-height: 1.55; }
+  .timeline { display: flex; flex-direction: column; }
+  .event { display: flex; gap: 9px; padding: 10px 0; }
+  .event + .event { border-top: 1px solid var(--line); }
+  .event-body { flex: 1; }
+  .event-title { font-weight: 650; }
+  .event-text { margin-top: 3px; color: var(--text-2); line-height: 1.55; }
+  .event-time { color: var(--text-3); font-size: 9px; }
+  .source-mark {
+    display: inline-flex;
+    margin-top: 6px;
+    padding: 3px 7px;
+    border-radius: 99px;
+    color: #5d468f;
+    background: var(--purple-soft);
+    font-size: 9px;
+  }
+  .composer {
+    position: relative;
+    flex: none;
+    margin: 0 13px 13px;
+    padding: 9px;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    background: #fff;
+  }
+  .composer textarea { width: 100%; min-height: 54px; border: 0; outline: 0; resize: none; }
+  .composer-tools { display: flex; align-items: center; gap: 5px; }
+  .tool {
+    height: 28px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 7px;
+    color: var(--text-2);
+    background: transparent;
+  }
+  .tool:hover { background: var(--hover); }
+  .flow-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 7px;
+    border-radius: 7px;
+    color: #5d468f;
+    background: var(--purple-soft);
+    font-size: 9px;
+  }
+  .send { margin-left: auto; }
+  .mention-menu {
+    position: absolute;
+    z-index: 8;
+    left: 8px;
+    bottom: 47px;
+    width: 310px;
+    padding: 7px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: #fff;
+    box-shadow: var(--shadow-soft);
+  }
+  .mention-label { padding: 5px 7px; color: var(--text-3); font-size: 9px; }
+  .mention {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    text-align: left;
+  }
+  .mention:hover { background: var(--hover); }
+  .mention .avatar { width: 24px; height: 24px; font-size: 8px; }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 44px 0 0;
+    z-index: 30;
+    display: grid;
+    place-items: center;
+    background: rgba(22,24,30,.28);
+    backdrop-filter: blur(1px);
+  }
+  .modal {
+    width: 550px;
+    border-radius: 15px;
+    overflow: hidden;
+    background: #fff;
+    box-shadow: var(--shadow);
+  }
+  .modal-head { display: flex; align-items: flex-start; padding: 18px 19px 13px; }
+  .modal-title { font-size: 17px; font-weight: 750; }
+  .modal-desc { margin-top: 4px; color: var(--text-3); font-size: 10px; }
+  .modal-body { padding: 0 19px 18px; }
+  .modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 19px; border-top: 1px solid var(--line); }
+  .toast {
+    position: fixed;
+    z-index: 50;
+    left: 50%;
+    bottom: 29px;
+    transform: translateX(-50%);
+    padding: 10px 14px;
+    border-radius: 9px;
+    color: #fff;
+    background: #202126;
+    box-shadow: var(--shadow-soft);
+    pointer-events: none;
+  }
+  .notification {
+    position: fixed;
+    z-index: 45;
+    top: 65px;
+    right: 28px;
+    width: 340px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: var(--shadow);
+  }
+  .notification-title { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+  .notification-text { margin-top: 8px; color: var(--text-2); }
+
+  @media (max-width: 1280px) {
+    .sidebar { width: 194px; }
+    .issue-drawer { width: 390px; }
+    .search { width: 190px; }
+  }
+</style>
+</head>
+<body>
+<div class="demo">
+  <div class="demo-bar">
+    <div class="demo-title">Wework 智能研发协作 Demo</div>
+    <div class="demo-hint">从 Workspace 管资源，进入 Project 管工作，在 Issue 动态中 @成员或 Agent 分配</div>
+    <div class="demo-modes"><button class="active" data-demo-mode="first-use">首次使用</button><button data-demo-mode="sample">已有数据</button></div>
+    <div class="demo-path"><span id="pathPlatform" class="active">Platform</span>›<span id="pathWorkspace">Workspace</span>›<span id="pathProject">Project</span>›<span id="pathIssue">Issue</span></div>
+  </div>
+
+  <div class="window">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">W</span>Wegent</div>
+
+      <div id="platformNavigation">
+        <div class="side-label">平台</div>
+        <button class="side-item active" data-view="platform-spaces"><span class="side-icon">▦</span>所有空间<span class="side-count" id="workspaceCountNav">0</span></button>
+        <button class="side-item" data-view="platform-work"><span class="side-icon">◎</span>我的工作<span class="side-count" id="workCountNav">0</span></button>
+        <button class="side-item" id="notificationNav"><span class="side-icon">◉</span>通知<span class="side-count" id="notificationCount">0</span></button>
+        <button class="side-item" data-view="platform-resources"><span class="side-icon">◇</span>资源</button>
+      </div>
+
+      <button class="workspace-back" id="workspaceBack" hidden><span class="side-icon">←</span>返回所有空间</button>
+
+      <div class="workspace-picker" id="workspacePicker" hidden>
+        <div class="workspace-context">当前空间</div>
+        <button class="workspace-switch" id="workspaceSwitch" aria-haspopup="menu" aria-expanded="false">
+        <span class="workspace-icon">研</span>
+        <span><span class="workspace-name" id="currentWorkspaceName">研发协作空间</span><span class="workspace-meta" id="currentWorkspaceMeta">12 人 · 6 Agent · 4 执行环境</span></span>
+        <span class="chev">⌄</span>
+        </button>
+        <div class="workspace-menu" id="workspaceMenu" role="menu" hidden>
+        <div class="workspace-menu-label">我的空间</div>
+        <button class="workspace-option active sample-workspace-option" data-workspace-name="研发协作空间" data-workspace-meta="12 人 · 6 Agent · 4 执行环境">
+          <span class="workspace-icon">研</span><span class="workspace-option-main"><span class="workspace-option-name">研发协作空间</span><span class="workspace-option-meta">团队空间 · 当前</span></span><span class="workspace-check">✓</span>
+        </button>
+        <button class="workspace-option sample-workspace-option" data-workspace-name="我的空间" data-workspace-meta="1 人 · 2 Agent · 2 执行环境">
+          <span class="workspace-icon" style="color:#6b4bc4;background:#eee9ff">李</span><span class="workspace-option-main"><span class="workspace-option-name">我的空间</span><span class="workspace-option-meta">个人空间</span></span><span class="workspace-check"></span>
+        </button>
+        <button class="workspace-option sample-workspace-option" data-workspace-name="Wegent 产品组" data-workspace-meta="28 人 · 11 Agent · 7 执行环境">
+          <span class="workspace-icon" style="color:#087a54;background:#e2f7ee">W</span><span class="workspace-option-main"><span class="workspace-option-name">Wegent 产品组</span><span class="workspace-option-meta">团队空间</span></span><span class="workspace-check"></span>
+        </button>
+        <button class="workspace-option" id="onboardingWorkspaceOption" hidden>
+          <span class="workspace-icon">新</span><span class="workspace-option-main"><span class="workspace-option-name">我的研发空间</span><span class="workspace-option-meta">团队空间 · 当前</span></span><span class="workspace-check">✓</span>
+        </button>
+        <div class="workspace-menu-actions">
+          <button class="workspace-option" id="viewAllWorkspaces"><span class="side-icon">▦</span><span class="workspace-option-name">查看所有空间</span></button>
+          <button class="workspace-option" id="createWorkspace"><span class="side-icon">＋</span><span class="workspace-option-name">创建空间</span></button>
+          <button class="workspace-option" id="joinWorkspace"><span class="side-icon">↗</span><span class="workspace-option-name">加入空间</span></button>
+        </div>
+        </div>
+      </div>
+
+      <div class="workspace-navigation" id="workspaceNavigation" hidden>
+        <button class="side-item" data-view="workspace-home"><span class="side-icon">⌂</span>空间首页</button>
+        <div class="onboarding-nav" id="onboardingStepsNav" hidden>
+          <div class="onboarding-nav-title">完成第一次 AI 协作</div>
+          <button class="onboarding-nav-step" id="guideProjectStep"><span class="onboarding-nav-mark">1</span><span>创建项目</span></button>
+          <button class="onboarding-nav-step" id="guideAgentStep"><span class="onboarding-nav-mark">2</span><span>配置 AI</span></button>
+          <button class="onboarding-nav-step" id="guideIssueStep"><span class="onboarding-nav-mark">3</span><span>创建 Issue</span></button>
+          <button class="onboarding-nav-step" id="guideExecutionStep"><span class="onboarding-nav-mark">4</span><span>分配并执行</span></button>
+        </div>
+        <button class="side-item" data-view="workspace-projects"><span class="side-icon">◆</span>全部项目<span class="side-count" id="projectCountNav">0</span></button>
+
+        <div class="side-label">空间资源</div>
+        <button class="side-item" data-view="workspace-members"><span class="side-icon">♙</span>成员<span class="side-count" id="memberCountNav">1</span></button>
+        <button class="side-item" data-view="workspace-agents"><span class="side-icon">✦</span>智能体<span class="side-count" id="agentCountNav">0</span></button>
+        <button class="side-item" data-view="workspace-devices"><span class="side-icon">▣</span>执行环境<span class="side-count" id="environmentCountNav">0</span></button>
+        <button class="side-item" data-view="workspace-settings"><span class="side-icon">⚙</span>空间设置</button>
+
+        <div id="workspaceProjectLinks" hidden>
+          <div class="side-label">协作项目</div>
+          <button class="side-item" data-project="wework"><span class="side-icon">◆</span><span id="firstProjectNavName">Wework 2.0</span></button>
+          <button class="side-item sample-project-link" data-project="platform"><span class="side-icon">◇</span>智能研发平台</button>
+          <button class="side-item sample-project-link" data-project="plugins"><span class="side-icon">◇</span>插件生态</button>
+        </div>
+      </div>
+
+      <div class="me"><span class="avatar blue">李</span><span><strong>李明</strong><span class="workspace-meta" style="display:block">Wegent 账号</span></span></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="breadcrumb" id="breadcrumb"><strong>所有空间</strong></div>
+        <div class="spacer"></div>
+        <div class="search">⌕ 搜索项目、Issue、成员、智能体</div>
+        <button class="icon-btn" id="notificationBell">♢</button>
+        <span class="avatar blue">李</span>
+      </header>
+
+      <section class="page page-pad" id="platformSpaces">
+        <div class="page-hero">
+          <div><div class="page-title">所有空间</div><div class="page-subtitle">空间是成员、项目、Agent 和执行环境的协作边界。</div></div>
+          <div class="page-actions" id="platformSpaceActions" hidden><button class="btn" id="joinWorkspacePage">加入空间</button><button class="btn primary" id="createWorkspacePage">创建空间</button></div>
+        </div>
+        <div class="empty-state" id="emptySpaces">
+          <div class="empty-content">
+            <div class="empty-icon">W</div>
+            <div class="empty-title">创建第一个协作空间</div>
+            <div class="empty-desc">空间用来组织成员、项目和可共享的 AI 资源。先创建空间，其他配置可以稍后完成。</div>
+            <div class="empty-actions"><button class="btn" id="joinFirstWorkspace">加入已有空间</button><button class="btn primary" id="createFirstWorkspace">创建空间</button></div>
+            <div class="onboarding-flow">
+              <div class="onboarding-step"><span class="onboarding-number">1</span><strong>创建空间</strong>确定协作边界</div>
+              <div class="onboarding-step"><span class="onboarding-number">2</span><strong>创建项目</strong>组织 Issue 和工作</div>
+              <div class="onboarding-step"><span class="onboarding-number">3</span><strong>开始分配</strong>交给成员或 Agent</div>
+            </div>
+          </div>
+        </div>
+        <div class="space-grid" id="populatedSpaces" hidden>
+          <button class="space-card sample-space-card" data-enter-workspace="研发协作空间">
+            <div class="space-card-head"><span class="workspace-icon">研</span><span><span class="space-card-name">研发协作空间</span><span class="space-card-kind">团队空间 · 我是管理员</span></span></div>
+            <div class="space-card-desc">Wework、Wegent 与智能研发流程的产品设计和研发协作。</div>
+            <div class="space-card-foot"><span>12 成员 · 6 Agent · 4 执行环境 · 3 项目</span><span>进入空间 →</span></div>
+          </button>
+          <button class="space-card sample-space-card" data-enter-workspace="我的空间">
+            <div class="space-card-head"><span class="workspace-icon" style="color:#6b4bc4;background:#eee9ff">李</span><span><span class="space-card-name">我的空间</span><span class="space-card-kind">个人空间</span></span></div>
+            <div class="space-card-desc">管理个人项目，以及仅自己可用的 Agent 和执行环境。</div>
+            <div class="space-card-foot"><span>1 成员 · 2 Agent · 2 执行环境 · 2 项目</span><span>进入空间 →</span></div>
+          </button>
+          <button class="space-card sample-space-card" data-enter-workspace="Wegent 产品组">
+            <div class="space-card-head"><span class="workspace-icon" style="color:#087a54;background:#e2f7ee">W</span><span><span class="space-card-name">Wegent 产品组</span><span class="space-card-kind">团队空间 · 我是成员</span></span></div>
+            <div class="space-card-desc">Wegent 产品规划、研发交付和 Agent 能力建设。</div>
+            <div class="space-card-foot"><span>28 成员 · 11 Agent · 7 执行环境 · 8 项目</span><span>进入空间 →</span></div>
+          </button>
+          <button class="space-card" id="onboardingSpaceCard" hidden>
+            <div class="space-card-head"><span class="workspace-icon">新</span><span><span class="space-card-name">我的研发空间</span><span class="space-card-kind">团队空间 · 我是管理员</span></span></div>
+            <div class="space-card-desc" id="onboardingSpaceDescription">用于组织产品研发、Issue 分配和交付。</div>
+            <div class="space-card-foot"><span id="onboardingSpaceMeta">1 成员 · 0 Agent · 0 执行环境 · 0 项目</span><span>进入空间 →</span></div>
+          </button>
+        </div>
+      </section>
+
+      <section class="page page-pad" id="platformResources" hidden>
+        <div class="page-hero">
+          <div><div class="page-title">资源</div><div class="page-subtitle">管理我拥有的 Agent 和执行环境，并授权给 Workspace 使用。</div></div>
+        </div>
+        <div class="empty-state" id="emptyPersonalResources">
+          <div class="empty-content">
+            <div class="empty-icon">◇</div>
+            <div class="empty-title">还没有个人资源</div>
+            <div class="empty-desc">Agent 和执行环境可以先创建在个人账号下，再授权给一个或多个协作空间使用。</div>
+            <div class="empty-actions"><button class="btn">添加执行环境</button><button class="btn primary">创建 Agent</button></div>
+          </div>
+        </div>
+        <div class="platform-resource-grid" id="populatedPersonalResources" hidden>
+          <div class="platform-resource-card">
+            <div class="panel-head"><div class="panel-title">我的 Agent</div><button class="link-btn">管理</button></div>
+            <div class="row"><span class="avatar robot">C</span><span class="row-main"><span class="row-title">Codex 产品工程师</span><span class="row-meta">已授权给 2 个空间</span></span><span class="badge green">可用</span></div>
+            <div class="row"><span class="avatar robot">R</span><span class="row-main"><span class="row-title">调研 Agent</span><span class="row-meta">仅我的空间</span></span><span class="badge">私有</span></div>
+          </div>
+          <div class="platform-resource-card">
+            <div class="panel-head"><div class="panel-title">我的执行环境</div><button class="link-btn">管理</button></div>
+            <div class="row"><span class="avatar blue">M</span><span class="row-main"><span class="row-title">李明的 MacBook Pro</span><span class="row-meta">本地设备 · 已授权给研发协作空间</span></span><span class="badge green">在线</span></div>
+            <div class="row"><span class="avatar purple">☁</span><span class="row-main"><span class="row-title">个人云主机</span><span class="row-meta">云主机 · 仅我的空间</span></span><span class="badge green">在线</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page page-pad" id="platformWork" hidden>
+        <div class="page-hero"><div><div class="page-title">我的工作</div><div class="page-subtitle">跨空间查看分配给我的工作和我主动参与的任务。</div></div></div>
+        <div class="empty-state" id="emptyWork">
+          <div class="empty-content"><div class="empty-icon">◎</div><div class="empty-title">还没有工作</div><div class="empty-desc">当项目中的 Issue 分配给你，或者你主动创建 Task 后，会显示在这里。</div><div class="empty-actions"><button class="btn primary" data-view="platform-spaces">创建或进入空间</button></div></div>
+        </div>
+        <div class="panel" id="populatedWork" hidden>
+          <div class="row"><span class="avatar blue">研</span><span class="row-main"><span class="row-title">设计 Workspace 智能研发协作模型</span><span class="row-meta">研发协作空间 / Wework 2.0 · 等待开始</span></span><span class="badge amber">被分配</span><button class="btn" data-project="wework">打开</button></div>
+          <div class="row"><span class="avatar green">W</span><span class="row-main"><span class="row-title">统一插件安装模型</span><span class="row-meta">Wegent 产品组 / 插件生态 · 执行中</span></span><span class="badge green">我参与</span><button class="btn">打开</button></div>
+        </div>
+      </section>
+
+      <section class="page page-pad" id="workspaceOnboarding" hidden>
+        <div class="page-hero">
+          <div class="hero-icon" id="onboardingWorkspaceIcon">新</div>
+          <div><div class="page-title" id="onboardingWorkspaceTitle">新协作空间</div><div class="page-subtitle">空间已创建。先创建项目，成员和 AI 资源都可以稍后补充。</div></div>
+          <div class="page-actions"><button class="btn ghost" id="skipOnboarding">跳过引导</button><button class="btn" data-view="workspace-settings">空间设置</button></div>
+        </div>
+        <div class="starter-panel">
+          <div class="starter-progress" id="workspaceStarterProgress">上手进度 · 1 / 4</div>
+          <div class="starter-title" id="workspaceStarterTitle">创建第一个项目</div>
+          <div class="starter-desc" id="workspaceStarterDesc">项目负责组织 Issue、项目成员和分配方式。创建项目不要求预先配置 Agent。</div>
+          <div class="starter-list">
+            <div class="starter-row">
+              <span class="next-step-badge" id="workspacePrimaryStepNumber">下一步</span>
+              <span class="starter-row-main"><span class="starter-row-title" id="workspaceProjectStepTitle">创建项目</span><span class="starter-row-desc" id="workspaceProjectStepDesc">填写项目名称，并选择由自己或 AI 担任项目管理者。</span></span>
+              <button class="btn primary" id="onboardingCreateProject">创建项目</button>
+            </div>
+            <div class="starter-optional-label">AI 与成员</div>
+            <div class="starter-row">
+              <span class="avatar robot">✦</span>
+              <span class="starter-row-main"><span class="starter-row-title">配置 AI 执行能力</span><span class="starter-row-desc" id="onboardingConfigureAIDesc">创建 Agent，并先选择托管执行或添加执行环境。</span></span>
+              <button class="btn" id="onboardingConfigureAI">配置 Agent</button>
+            </div>
+            <div class="starter-row">
+              <span class="avatar">♙</span>
+              <span class="starter-row-main"><span class="starter-row-title">邀请成员</span><span class="starter-row-desc" id="onboardingInviteDesc">可选。成员加入后可以接收分配通知，也可以主动参与 Issue。</span></span>
+              <button class="btn" id="onboardingInvite">邀请成员</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page page-pad" id="workspaceFreshHome" hidden>
+        <div class="page-hero">
+          <div class="hero-icon" id="freshWorkspaceIcon">新</div>
+          <div><div class="page-title" id="freshWorkspaceTitle">新协作空间</div><div class="page-subtitle">管理当前空间中的项目、成员、Agent 和执行环境。</div></div>
+          <div class="page-actions"><button class="btn" data-view="workspace-settings">空间设置</button><button class="btn primary" id="freshCreateProject">创建项目</button></div>
+        </div>
+        <div class="tabs"><button class="active">概览</button><button data-view="workspace-projects">项目</button><button data-view="workspace-members">成员</button><button data-view="workspace-agents">智能体</button><button data-view="workspace-devices">执行环境</button></div>
+        <div class="panel">
+          <div class="stats">
+            <div class="stat"><div class="stat-value" id="freshProjectCount">0</div><div class="stat-label">协作项目</div></div>
+            <div class="stat"><div class="stat-value" id="freshMemberCount">1</div><div class="stat-label">成员</div></div>
+            <div class="stat"><div class="stat-value" id="freshAgentCount">0</div><div class="stat-label">Agent</div></div>
+            <div class="stat"><div class="stat-value" id="freshEnvironmentCount">0</div><div class="stat-label">在线执行环境</div></div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:14px">
+          <div class="panel-head"><div class="panel-title">项目</div><div class="panel-note">项目负责组织 Issue、分配和交付</div></div>
+          <div class="empty-state" id="freshEmptyProjects" style="min-height:260px">
+            <div class="empty-content"><div class="empty-icon">◆</div><div class="empty-title">还没有项目</div><div class="empty-desc">创建项目后，就可以开始记录 Issue 和组织协作。</div><div class="empty-actions"><button class="btn primary" id="freshCreateProjectEmpty">创建项目</button></div></div>
+          </div>
+          <div class="project-grid" id="freshProjectGrid" hidden>
+            <button class="project-card" data-project="wework"><div class="project-card-head"><span class="project-symbol" id="freshProjectSymbol">新</span><span><span class="project-name" id="freshProjectName">新产品研发</span><span class="project-manager" id="freshProjectManager">管理者：李明 · 人</span></span></div><div class="progress"><span id="freshProjectProgress" style="width:0"></span></div><div class="project-foot"><span id="freshProjectIssues">0 个 Issue</span><span>进入项目 →</span></div></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="page page-pad" id="workspaceHome" hidden>
+        <div class="page-hero">
+          <div class="hero-icon">研</div>
+          <div><div class="page-title" id="workspaceHomeTitle">研发协作空间</div><div class="page-subtitle">人和 AI 共享项目、智能体和执行环境的协作边界。</div></div>
+          <div class="page-actions"><button class="btn" data-view="workspace-settings">空间设置</button><button class="btn primary" id="createProject">创建项目</button></div>
+        </div>
+        <div class="tabs"><button class="active">概览</button><button data-view="workspace-projects">项目</button><button data-view="workspace-members">成员</button><button data-view="workspace-agents">智能体</button><button data-view="workspace-devices">执行环境</button></div>
+
+        <div class="overview">
+          <div class="column-stack">
+            <div class="panel">
+              <div class="stats">
+                <div class="stat"><div class="stat-value" id="projectCount">3</div><div class="stat-label">协作项目</div></div>
+                <div class="stat"><div class="stat-value">12</div><div class="stat-label">成员</div></div>
+                <div class="stat"><div class="stat-value">6</div><div class="stat-label">Agent</div></div>
+                <div class="stat"><div class="stat-value">4</div><div class="stat-label">在线执行环境</div></div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><div class="panel-title">项目</div><div class="panel-note">每个项目有自己的管理者、Issue 和设置</div><button class="link-btn" data-view="workspace-projects">浏览全部</button></div>
+              <div class="project-grid" id="homeProjectGrid">
+                <button class="project-card" data-project="wework">
+                  <div class="project-card-head"><span class="project-symbol">W2</span><span><span class="project-name">Wework 2.0</span><span class="project-manager">管理者：Mika PMO · AI</span></span></div>
+                  <div class="progress"><span style="width:58%"></span></div><div class="project-foot"><span>12 个 Issue · 3 个执行中</span><span>58%</span></div>
+                </button>
+                <button class="project-card" data-project="platform">
+                  <div class="project-card-head"><span class="project-symbol" style="background:var(--purple)">研</span><span><span class="project-name">智能研发平台</span><span class="project-manager">管理者：王芳 · 人</span></span></div>
+                  <div class="progress"><span style="width:34%;background:var(--purple)"></span></div><div class="project-foot"><span>8 个 Issue · 1 个执行中</span><span>34%</span></div>
+                </button>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><div class="panel-title">Agent</div><div class="panel-note">Agent 独立于成员管理，执行时使用一个执行环境</div><button class="link-btn" data-view="workspace-agents">管理 Agent</button></div>
+              <div class="unit"><div class="unit-head"><span class="avatar robot">C</span><span class="unit-title">Codex 产品工程师</span><span class="badge" style="margin-left:auto">可用</span></div><div class="unit-bind">Agent：产品设计与前端实现<br>执行环境：李明的 MacBook Pro · 本地设备</div></div>
+              <div class="unit"><div class="unit-head"><span class="avatar robot">A</span><span class="unit-title">架构师 Agent</span><span class="badge" style="margin-left:auto">可用</span></div><div class="unit-bind">Agent：系统架构与方案评审<br>执行环境：Wegent 云主机 01 · 云主机</div></div>
+            </div>
+          </div>
+          <div class="column-stack">
+            <div class="panel">
+              <div class="panel-head"><div class="panel-title">成员</div><button class="link-btn" data-view="workspace-members">管理成员</button></div>
+              <div class="row"><span class="avatar blue">李</span><span class="row-main"><span class="row-title">李明</span><span class="row-meta">产品设计 · 3 个进行中任务</span></span><span class="badge">成员</span></div>
+              <div class="row"><span class="avatar amber">王</span><span class="row-main"><span class="row-title">王芳</span><span class="row-meta">产品负责人 · 空间管理员</span></span><span class="badge">管理员</span></div>
+              <div class="row"><span class="avatar green">陈</span><span class="row-main"><span class="row-title">陈晨</span><span class="row-meta">研发工程师 · 1 个进行中任务</span></span><span class="badge">成员</span></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><div class="panel-title">执行环境</div><button class="link-btn" data-view="workspace-devices">管理执行环境</button></div>
+              <div class="row"><span class="avatar robot">☁</span><span class="row-main"><span class="row-title">Wegent 云主机 01</span><span class="row-meta">空间所有 · 2 个 Agent 使用</span></span><span class="badge green"><span class="dot online"></span>在线</span></div>
+              <div class="row"><span class="avatar blue">M</span><span class="row-main"><span class="row-title">李明的 MacBook Pro</span><span class="row-meta">个人所有 · 已授权给空间</span></span><span class="badge green"><span class="dot online"></span>在线</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page page-pad" id="workspaceProjects" hidden>
+        <div class="page-hero"><div><div class="page-title">全部项目</div><div class="page-subtitle">浏览并进入 Workspace 下的协作项目。</div></div><div class="page-actions"><button class="btn primary" id="createProject2">创建项目</button></div></div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">3 个项目</div><div class="spacer"></div><div class="search" style="width:220px">⌕ 搜索项目</div></div>
+          <div class="project-grid" id="allProjectGrid">
+            <button class="project-card" data-project="wework"><div class="project-card-head"><span class="project-symbol">W2</span><span><span class="project-name">Wework 2.0</span><span class="project-manager">Mika PMO · AI</span></span></div><div class="progress"><span style="width:58%"></span></div><div class="project-foot"><span>12 个 Issue</span><span>58%</span></div></button>
+            <button class="project-card" data-project="platform"><div class="project-card-head"><span class="project-symbol" style="background:var(--purple)">研</span><span><span class="project-name">智能研发平台</span><span class="project-manager">王芳 · 人</span></span></div><div class="progress"><span style="width:34%;background:var(--purple)"></span></div><div class="project-foot"><span>8 个 Issue</span><span>34%</span></div></button>
+            <button class="project-card" data-project="plugins"><div class="project-card-head"><span class="project-symbol" style="background:var(--green)">P</span><span><span class="project-name">插件生态</span><span class="project-manager">陈晨 · 人</span></span></div><div class="progress"><span style="width:76%;background:var(--green)"></span></div><div class="project-foot"><span>15 个 Issue</span><span>76%</span></div></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="page page-pad" id="workspaceSettings" hidden>
+        <div class="page-hero"><div><div class="page-title">空间设置</div><div class="page-subtitle">管理 Workspace 的基本信息、成员权限和共享资源。</div></div></div>
+        <div class="settings-layout">
+          <div class="settings-nav"><button class="active">基本信息</button><button>成员与权限</button><button>Agent</button><button>执行环境</button><button>集成</button></div>
+          <div>
+            <div class="settings-card">
+              <div class="settings-title">基本信息</div><div class="settings-desc">这些信息对空间内所有成员可见。</div>
+              <div class="field"><div class="field-label">空间名称</div><input class="input" value="研发协作空间"></div>
+              <div class="field"><div class="field-label">空间说明</div><textarea class="textarea">用于 Wework、Wegent 与智能研发流程的产品设计和研发协作。</textarea></div>
+              <div class="field"><button class="btn primary" data-save>保存修改</button></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page page-pad" id="workspaceResource" hidden>
+        <div class="page-hero"><div><div class="page-title" id="resourceTitle">成员</div><div class="page-subtitle" id="resourceSubtitle"></div></div><div class="page-actions"><button class="btn primary" id="resourceCreate">添加</button></div></div>
+        <div class="panel" id="resourceRows"></div>
+        <div class="settings-card" id="resourceEditor" hidden></div>
+      </section>
+
+      <section class="page" id="projectPage" hidden>
+        <div class="project-shell">
+          <div class="project-head">
+            <span class="project-symbol" id="projectHeadSymbol">W2</span>
+            <span><span class="project-head-title" id="projectHeadTitle">Wework 2.0</span><span class="project-head-meta" id="projectHeadMeta">协作项目 · 8 位成员（5 人、3 Agent）</span></span>
+            <div class="project-tabs"><button class="active" data-project-view="board">看板</button><button data-project-view="table">Issue 表格</button><button data-project-view="settings">项目设置</button></div>
+            <div class="manager-chip"><span class="avatar purple" id="projectManagerAvatar">PM</span><span><small>项目管理者</small><strong id="projectManagerName">Mika PMO · AI</strong></span></div>
+          </div>
+          <div class="project-body">
+            <div class="project-content" id="projectContent">
+              <div id="emptyProjectView" hidden>
+                <div class="board-toolbar"><span style="font-weight:650">项目看板</span><div class="spacer"></div><button class="btn primary" id="createFirstIssueTop">创建 Issue</button></div>
+                <div class="empty-state">
+                  <div class="empty-content">
+                    <div class="empty-icon" id="emptyProjectIcon">AI</div>
+                    <div class="starter-progress" id="emptyProjectProgress">上手步骤 · 2 / 4</div>
+                    <div class="empty-title" id="emptyProjectTitle">先配置 AI 执行能力</div>
+                    <div class="empty-desc" id="emptyProjectDesc">选择已有 Wegent Team 或自定义 Agent，并添加一个执行环境。准备完成后再创建 Issue。</div>
+                    <div class="empty-actions"><button class="btn primary" id="createFirstIssue">配置 AI</button></div>
+                    <div class="onboarding-flow">
+                      <div class="onboarding-step"><span class="onboarding-number">1</span><strong>配置 AI</strong>Agent + 执行环境</div>
+                      <div class="onboarding-step"><span class="onboarding-number">2</span><strong>创建 Issue</strong>描述要完成的目标</div>
+                      <div class="onboarding-step"><span class="onboarding-number">3</span><strong>分配并执行</strong>结果自动回到 Issue</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div id="firstIssueBoardView" hidden>
+                <div class="execution-guide" id="aiExecutionGuide">
+                  <span class="avatar robot">AI</span>
+                  <span class="execution-guide-main">
+                    <span class="starter-progress">上手进度 · 3 / 4</span>
+                    <span class="execution-guide-title">把这个 Issue 分配给 AI</span>
+                    <span class="execution-guide-desc">打开 Issue 的“动态与分配”，@ 已配置好的 Agent，系统会按 Team 的运行方式开始工作。</span>
+                  </span>
+                  <button class="btn primary" id="startAIAssignment">去分配</button>
+                </div>
+                <div class="board-toolbar"><button class="filter">全部 Issue⌄</button><button class="filter">执行者⌄</button><div class="spacer"></div><button class="btn primary" id="createAnotherIssue" style="height:28px">创建 Issue</button></div>
+                <div class="board">
+                  <div class="kanban-column">
+                    <div class="column-head"><span class="dot"></span>&nbsp;待处理<span class="count">1</span></div>
+                    <button class="issue-card selected" id="firstIssueCard" data-issue="first">
+                      <div class="issue-id">ISSUE-1</div>
+                      <div class="issue-title" id="firstIssueCardTitle">完成第一个协作任务</div>
+                      <div class="issue-tags"><span class="badge" id="firstIssueAssignment">待分配</span></div>
+                      <div class="issue-foot"><span id="firstIssueExecutor">点击打开并开始分配</span><span>刚刚</span></div>
+                    </button>
+                  </div>
+                  <div class="kanban-column"><div class="column-head"><span class="dot" style="background:var(--blue)"></span>&nbsp;进行中<span class="count">0</span></div></div>
+                  <div class="kanban-column"><div class="column-head"><span class="dot" style="background:var(--green)"></span>&nbsp;验收<span class="count">0</span></div></div>
+                  <div class="kanban-column"><div class="column-head"><span class="dot" style="background:var(--text-3)"></span>&nbsp;已完成<span class="count">0</span></div></div>
+                </div>
+              </div>
+
+              <div id="onboardingTableView" hidden>
+                <div class="board-toolbar"><span style="font-weight:650">Issue 表格</span><div class="spacer"></div><button class="btn primary onboarding-create-issue" style="height:28px">创建 Issue</button></div>
+                <div class="empty-state" id="emptyIssueTable">
+                  <div class="empty-content"><div class="empty-icon">◇</div><div class="empty-title">还没有 Issue</div><div class="empty-desc">创建第一个 Issue 后，会同时出现在表格和看板中。</div><div class="empty-actions"><button class="btn primary onboarding-create-issue">创建 Issue</button></div></div>
+                </div>
+                <table class="issue-table" id="firstIssueTable" hidden>
+                  <thead><tr><th>Issue</th><th>状态</th><th>执行者</th><th>更新时间</th></tr></thead>
+                  <tbody><tr id="firstIssueTableRow"><td><span class="issue-id">ISSUE-1</span>　<span class="table-title" id="firstIssueTableTitle">完成第一个协作任务</span></td><td><span class="badge">待处理</span></td><td id="firstIssueTableExecutor">未分配</td><td>刚刚</td></tr></tbody>
+                </table>
+              </div>
+
+              <div id="onboardingProjectSettingsView" hidden>
+                <div class="settings-layout" style="grid-template-columns:170px minmax(0,700px)">
+                  <div class="settings-nav"><button class="active">基本信息</button><button>成员</button><button>可用 Agent</button><button>可用执行环境</button></div>
+                  <div>
+                    <div class="settings-card">
+                      <div class="settings-title">项目基本信息</div><div class="settings-desc">项目已具备创建 Issue 的条件，其他资源可以按需添加。</div>
+                      <div class="field"><div class="field-label">项目名称</div><input class="input" id="onboardingProjectNameInput" value="新产品研发"></div>
+                      <div class="field"><div class="field-label">项目管理者</div><input class="input" id="onboardingProjectManagerInput" value="李明 · 人" readonly></div>
+                    </div>
+                    <div class="settings-card">
+                      <div class="settings-title">当前资源</div>
+                      <div class="row"><span class="avatar blue">李</span><span class="row-main"><span class="row-title" id="onboardingMemberSummary">1 位成员</span><span class="row-meta">空间创建者已加入项目</span></span><button class="btn" id="projectInviteMember">邀请成员</button></div>
+                      <div class="row"><span class="avatar robot">AI</span><span class="row-main"><span class="row-title" id="onboardingAgentSummary">尚未配置 Agent</span><span class="row-meta">第一次分配给 AI 时也可以创建</span></span><button class="btn">配置</button></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div id="boardView">
+                <div class="board-toolbar"><button class="filter">全部 Issue⌄</button><button class="filter">成员⌄</button><button class="filter">执行状态⌄</button><div class="spacer"></div><span style="color:var(--text-3);font-size:10px">12 个 Issue · 3 个执行中</span></div>
+                <div class="board">
+                  <div class="kanban-column"><div class="column-head"><span class="dot"></span>&nbsp;需求池<span class="count">2</span></div><button class="issue-card" data-issue="551"><div class="issue-id">WEWORK-551</div><div class="issue-title">支持跨项目交付物检索</div><div class="issue-tags"><span class="badge">待澄清</span></div><div class="issue-foot"><span>无分配</span><span>今天</span></div></button></div>
+                  <div class="kanban-column"><div class="column-head"><span class="dot" style="background:var(--blue)"></span>&nbsp;设计中<span class="count">2</span></div><button class="issue-card selected" data-issue="549"><div class="issue-id">WEWORK-549</div><div class="issue-title">设计 Workspace 智能研发协作模型</div><div class="issue-tags"><span class="badge blue">设计中</span><span class="badge" id="cardAssignment">待分配</span></div><div class="issue-foot"><span id="cardExecutor">尚未分配执行者</span><span>刚刚</span></div></button><button class="issue-card" data-issue="545"><div class="issue-id">WEWORK-545</div><div class="issue-title">统一 Wegent 与 Wework Agent 定义</div><div class="issue-tags"><span class="badge green">AI 执行中</span></div><div class="issue-foot"><span>架构师 Agent</span><span>12 分钟</span></div></button></div>
+                  <div class="kanban-column"><div class="column-head"><span class="dot" style="background:var(--blue)"></span>&nbsp;开发中<span class="count">3</span></div><button class="issue-card" data-issue="538"><div class="issue-id">WEWORK-538</div><div class="issue-title">本地任务与云端 Issue 关联</div><div class="issue-tags"><span class="badge green">执行中</span></div><div class="issue-foot"><span>Codex 工程师</span><span>28 分钟</span></div></button></div>
+                  <div class="kanban-column"><div class="column-head"><span class="dot" style="background:var(--green)"></span>&nbsp;验收<span class="count">1</span></div><button class="issue-card" data-issue="531"><div class="issue-id">WEWORK-531</div><div class="issue-title">Wework 插件统一安装模型</div><div class="issue-tags"><span class="badge blue">待验收</span></div><div class="issue-foot"><span>王芳</span><span>昨天</span></div></button></div>
+                </div>
+              </div>
+
+              <div id="tableView" hidden>
+                <div class="board-toolbar"><button class="filter">状态⌄</button><button class="filter">执行者⌄</button><button class="filter">标签⌄</button><div class="spacer"></div><button class="btn primary" style="height:28px">创建 Issue</button></div>
+                <table class="issue-table">
+                  <thead><tr><th>Issue</th><th>状态</th><th>分配/执行者</th><th>分配来源</th><th>更新时间</th></tr></thead>
+                  <tbody>
+                    <tr data-issue="549"><td><span class="issue-id">WEWORK-549</span>　<span class="table-title">设计 Workspace 智能研发协作模型</span></td><td><span class="badge blue">设计中</span></td><td id="tableExecutor">未分配</td><td id="tableSource">—</td><td>刚刚</td></tr>
+                    <tr data-issue="545"><td><span class="issue-id">WEWORK-545</span>　<span class="table-title">统一 Wegent 与 Wework Agent 定义</span></td><td><span class="badge green">开发中</span></td><td>架构师 Agent</td><td>产品研发 · 架构设计</td><td>12 分钟前</td></tr>
+                    <tr data-issue="538"><td><span class="issue-id">WEWORK-538</span>　<span class="table-title">本地任务与云端 Issue 关联</span></td><td><span class="badge green">开发中</span></td><td>Codex 工程师</td><td>项目调度原则</td><td>28 分钟前</td></tr>
+                    <tr data-issue="531"><td><span class="issue-id">WEWORK-531</span>　<span class="table-title">Wework 插件统一安装模型</span></td><td><span class="badge blue">验收</span></td><td>王芳</td><td>产品研发 · 产品验收</td><td>昨天</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div id="projectSettingsView" hidden>
+                <div class="settings-layout" style="grid-template-columns:170px minmax(0,700px)">
+                  <div class="settings-nav"><button class="active">基本信息</button><button>成员</button><button>可用 Agent</button><button>可用执行环境</button><button>流程标识</button></div>
+                  <div>
+                    <div class="settings-card">
+                      <div class="settings-title">项目管理</div><div class="settings-desc">项目管理者可以是人或 AI，负责根据调度原则分配工作。</div>
+                      <div class="field"><div class="field-label">项目管理者</div><select class="select"><option>Mika PMO · AI</option><option>王芳 · 人</option></select></div>
+                      <div class="field"><div class="field-label">调度原则</div><textarea class="textarea" id="dispatchPolicy">设计类工作优先分给产品设计成员；需要直接产出代码或交互原型时，优先分给 Codex 产品工程师。</textarea><div class="field-help">这是一句提供给调度模型的自然语言说明，不是规则引擎。</div></div>
+                      <div class="field"><button class="btn primary" data-save>保存设置</button></div>
+                    </div>
+                    <div class="settings-card">
+                      <div class="settings-title">项目成员</div><div class="settings-desc">成员是参与项目的人，可以接收通知并在 Wework 中创建任务。</div>
+                      <div class="row"><span class="avatar amber">王</span><span class="row-main"><span class="row-title">王芳</span><span class="row-meta">产品负责人</span></span><span class="badge">项目成员</span></div>
+                      <div class="row"><span class="avatar blue">李</span><span class="row-main"><span class="row-title">李明</span><span class="row-meta">产品设计</span></span><span class="badge">项目成员</span></div>
+                      <div class="field"><button class="btn">添加成员</button></div>
+                    </div>
+                    <div class="settings-card">
+                      <div class="settings-title">可用 Agent</div><div class="settings-desc">Agent 是项目可调度的 AI；执行任务时使用其绑定的执行环境。</div>
+                      <div class="row"><span class="avatar robot">C</span><span class="row-main"><span class="row-title">Codex 产品工程师</span><span class="row-meta">产品设计与前端实现 · 执行环境：李明的 MacBook Pro</span></span><span class="badge green">可调度</span></div>
+                      <div class="row"><span class="avatar robot">A</span><span class="row-main"><span class="row-title">架构师 Agent</span><span class="row-meta">系统架构与方案评审 · 执行环境：Wegent 云主机 01</span></span><span class="badge green">可调度</span></div>
+                      <div class="field"><button class="btn">添加 Agent</button></div>
+                    </div>
+                    <div class="settings-card">
+                      <div class="settings-title">流程步骤标识</div><div class="settings-desc">流程只为 Assignment 增加来源标识，不改变 Task 的执行方式。</div>
+                      <div class="row"><span class="badge purple">产品研发</span><span class="row-main"><span class="row-title">需求梳理 → 交互设计 → 开发 → 产品验收</span></span><button class="btn">编辑</button></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <aside class="issue-drawer" id="issueDrawer" hidden>
+              <div class="drawer-head">Issue <strong id="issueDrawerId">WEWORK-549</strong><button class="icon-btn drawer-close" id="closeIssue">×</button></div>
+              <div class="drawer-title-wrap">
+                <div class="drawer-title" id="issueDrawerTitle">设计 Workspace 智能研发协作模型</div>
+                <div class="drawer-meta"><select class="status-select" id="issueStatus"><option>待处理</option><option>设计中</option><option>需求池</option><option>开发中</option><option>验收</option><option>已完成</option></select><span class="badge">高优先级</span><span class="badge" id="issueManagerBadge">Mika PMO</span></div>
+              </div>
+              <div class="drawer-scroll" id="issueDetail">
+                <div class="section"><div class="section-head">描述</div><div class="description" id="issueDrawerDescription">设计 Workspace、Project、成员、Agent 和执行环境的产品关系，让人和 AI 都能围绕同一个 Issue 工作。</div></div>
+                <div class="section"><div class="section-head">当前分配<span id="assignmentState">尚未分配</span></div><div class="assignment" id="assignmentCard"><div class="assignment-title">没有指定执行者</div><div class="assignment-meta">在下方评论框 @成员或 Agent 完成分配。分配不是权限，其他项目成员仍可直接参与。</div></div></div>
+                <div class="section"><div class="section-head">执行任务<span class="section-count" id="taskCount">0</span><button class="section-action" id="directJoin">＋ 开始处理</button></div><div id="taskArea"><div class="task-empty">暂无执行任务</div></div></div>
+                <div class="section"><div class="section-head">产物<span>0</span></div><div class="description" id="deliveryArea">执行结束后，产物会回到这个 Issue。</div></div>
+                <div class="section"><div class="section-head">动态与评论</div><div class="timeline" id="activityTimeline">
+                  <div class="event"><span class="avatar purple">PM</span><div class="event-body"><div class="event-title">Mika 创建了 Issue</div><div class="event-text">需要明确 Workspace 与 Project 的协作关系，并给出可执行的产品交互。</div><div class="event-time">今天 10:12</div></div></div>
+                  <div class="event"><span class="avatar amber">王</span><div class="event-body"><div class="event-title">王芳</div><div class="event-text">规则就是给调度模型的一句话。流程分配只需要额外记录流程步骤。</div><div class="event-time">今天 11:06</div></div></div>
+                </div></div>
+              </div>
+
+              <div class="composer" id="composer">
+                <textarea id="commentInput" placeholder="发表评论；输入 @ 分配给成员或 Agent…"></textarea>
+                <div class="composer-tools">
+                  <button class="tool" id="mentionButton">@ 分配</button>
+                  <button class="tool" id="flowButton">＋ 流程步骤</button>
+                  <span class="flow-chip" id="flowChip" hidden>产品研发 · 交互设计　×</span>
+                  <button class="btn primary send" id="sendComment">发送</button>
+                </div>
+                <div class="mention-menu" id="mentionMenu" hidden>
+                  <div class="mention-label">人</div>
+                  <button class="mention" data-mention-type="human" data-name="李明"><span class="avatar blue">李</span><span><strong>李明</strong><span class="row-meta" style="display:block">Wework 在线 · 通知后由本人开始</span></span></button>
+                  <button class="mention sample-mention" data-mention-type="human" data-name="王芳"><span class="avatar amber">王</span><span><strong>王芳</strong><span class="row-meta" style="display:block">Wework 在线 · 通知后由本人开始</span></span></button>
+                  <div class="mention-label">Agent</div>
+                  <button class="mention sample-mention" data-mention-type="ai" data-name="Codex 产品工程师" data-device="李明的 MacBook Pro"><span class="avatar robot">C</span><span><strong>Codex 产品工程师</strong><span class="row-meta" style="display:block">李明的 MacBook Pro · 在线</span></span></button>
+                  <button class="mention sample-mention" data-mention-type="ai" data-name="架构师 Agent" data-device="Wegent 云主机 01"><span class="avatar robot">A</span><span><strong>架构师 Agent</strong><span class="row-meta" style="display:block">Wegent 云主机 01 · 在线</span></span></button>
+                  <button class="mention" id="starterAgentMention" data-mention-type="ai" data-name="默认执行 Agent" data-device="" data-runtime-type="environment" hidden><span class="avatar robot">AI</span><span><strong id="starterAgentMentionName">默认执行 Agent</strong><span class="row-meta" id="starterAgentMentionMeta" style="display:block">尚未配置</span></span></button>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="createWorkspaceModal" hidden>
+  <div class="modal">
+    <div class="modal-head"><div><div class="modal-title">创建协作空间</div><div class="modal-desc">先建立协作边界，项目、成员和 AI 资源可以稍后添加。</div></div><button class="icon-btn" id="closeWorkspaceCreate" style="margin-left:auto">×</button></div>
+    <div class="modal-body">
+      <div class="field"><div class="field-label">空间名称</div><input class="input" id="newWorkspaceName" value="我的研发空间"></div>
+      <div class="field"><div class="field-label">空间用途</div><textarea class="textarea" id="newWorkspaceDescription">用于组织产品研发、Issue 分配和交付。</textarea></div>
+      <div class="field-help">创建后只有你一名成员，不要求立即配置 Agent 或执行环境。</div>
+    </div>
+    <div class="modal-foot"><button class="btn" id="cancelWorkspaceCreate">取消</button><button class="btn primary" id="confirmWorkspaceCreate">创建并继续</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="createProjectModal" hidden>
+  <div class="modal">
+    <div class="modal-head"><div><div class="modal-title">创建协作项目</div><div class="modal-desc" id="createProjectModalDesc">项目创建后，从 Workspace 选择成员、Agent 和执行环境。</div></div><button class="icon-btn" id="closeCreate" style="margin-left:auto">×</button></div>
+    <div class="modal-body">
+      <div class="field"><div class="field-label">项目名称</div><input class="input" id="newProjectName" value="新产品研发"></div>
+      <div class="field"><div class="field-label">项目说明</div><textarea class="textarea" id="newProjectDescription">围绕新产品目标组织 Issue、分配与交付。</textarea></div>
+      <div class="inline-fields">
+        <div class="field"><div class="field-label">项目管理者</div><select class="select" id="projectManagerType"><option value="human">我自己</option><option value="ai">AI 项目管家</option></select></div>
+        <div class="field"><div class="field-label">具体管理者</div><select class="select" id="projectManagerSelect"><option>李明</option></select></div>
+      </div>
+      <div class="assignment" id="aiManagerHint" hidden><div class="assignment-title">还没有可用的 Agent</div><div class="assignment-meta">先由你担任项目管理者；配置 Agent 后，可以在项目设置中改为 AI 项目管家。</div></div>
+    </div>
+    <div class="modal-foot"><button class="btn" id="cancelCreate">取消</button><button class="btn primary" id="confirmCreate">创建项目</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="createIssueModal" hidden>
+  <div class="modal">
+    <div class="modal-head"><div><div class="modal-title">创建第一个 Issue</div><div class="modal-desc">先描述目标，创建后再决定由成员还是 Agent 执行。</div></div><button class="icon-btn" id="closeIssueCreate" style="margin-left:auto">×</button></div>
+    <div class="modal-body">
+      <div class="field"><div class="field-label">Issue 标题</div><input class="input" id="newIssueTitle" value="完成第一个协作任务"></div>
+      <div class="field"><div class="field-label">要完成什么</div><textarea class="textarea" id="newIssueDescription">明确目标、完成执行，并把产物同步回 Issue。</textarea></div>
+      <div class="field-help">无需现在选择执行者。创建后可在“动态与分配”中通过 @ 完成分配。</div>
+    </div>
+    <div class="modal-foot"><button class="btn" id="cancelIssueCreate">取消</button><button class="btn primary" id="confirmIssueCreate">创建 Issue</button></div>
+  </div>
+</div>
+
+<div class="notification" id="humanNotification" hidden>
+  <div class="notification-title"><span class="avatar purple">PM</span><span id="notificationActor">Mika 在 Issue 中 @了你</span></div>
+  <div class="notification-text" id="notificationText">请处理「设计 Workspace 智能研发协作模型」。</div>
+  <div style="display:flex;justify-content:flex-end;gap:7px;margin-top:12px"><button class="btn" id="notificationLater">稍后</button><button class="btn blue" id="notificationStart">开始处理</button></div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+  const $ = (selector) => document.querySelector(selector)
+  const $$ = (selector) => [...document.querySelectorAll(selector)]
+  const state = {
+    demoMode: 'first-use',
+    onboardingStage: 'no-space',
+    onboardingSkipped: false,
+    workspaceName: '研发协作空间',
+    projectName: 'Wework 2.0',
+    projectManager: 'Mika PMO · AI',
+    invitedMember: false,
+    starterAgentCreated: false,
+    starterEnvironmentCreated: false,
+    starterAgentName: '默认执行 Agent',
+    starterEnvironment: '',
+    agentSetupMode: 'existing',
+    pendingAgentName: 'Codex 产品研发团队',
+    agentOwner: 'workspace',
+    customRuntimeMode: 'environment',
+    starterRuntimeType: 'environment',
+    environmentSetupMode: 'local',
+    environmentOwner: 'workspace',
+    pendingEnvironmentName: '李明的当前设备',
+    environmentSetupPhase: 'configure',
+    customBots: ['产品经理 Bot', 'Codex 工程师 Bot'],
+    issueTitle: '设计 Workspace 智能研发协作模型',
+    issueDescription: '设计 Workspace、Project、成员、Agent 和执行环境的产品关系，让人和 AI 都能围绕同一个 Issue 工作。',
+    view: 'platform-spaces',
+    projectView: 'board',
+    issueOpen: false,
+    issueTab: 'detail',
+    mention: null,
+    flowStep: false,
+    assignment: null,
+    task: null
+  }
+
+  const resources = {
+    members: {
+      title: '成员',
+      subtitle: '人通过成员关系加入 Workspace，并参与一个或多个 Project。',
+      rows: [
+        ['李', '李明', '产品设计 · 3 个项目', '成员', 'blue'],
+        ['王', '王芳', '产品负责人 · 空间管理员', '管理员', 'amber'],
+        ['陈', '陈晨', '研发工程师 · 2 个项目', '成员', 'green']
+      ]
+    },
+    agents: {
+      title: '智能体',
+      subtitle: 'Agent 独立于成员管理，可以加入项目；执行任务时使用其绑定的执行环境。',
+      rows: [
+        ['C', 'Codex 产品工程师', '产品设计与前端实现 · 已绑定 1 个执行环境', '空间共享', 'robot'],
+        ['A', '架构师 Agent', '架构设计与方案评审 · 已绑定 1 个执行环境', '空间共享', 'robot'],
+        ['R', '调研 Agent', '竞品与资料调研 · 未绑定在线执行环境', '不可调度', 'robot']
+      ]
+    },
+    devices: {
+      title: '执行环境',
+      subtitle: '执行环境的所有者可以是个人或 Workspace；个人执行环境授权后可被项目使用。',
+      rows: [
+        ['☁', 'Wegent 云主机 01', 'Workspace 所有 · 2 个 Agent 使用', '在线', 'robot'],
+        ['M', '李明的 MacBook Pro', '李明所有 · 已授权给 Workspace', '在线', 'blue'],
+      ]
+    }
+  }
+
+  function toast(message) {
+    const el = $('#toast')
+    el.textContent = message
+    el.hidden = false
+    clearTimeout(toast.timer)
+    toast.timer = setTimeout(() => { el.hidden = true }, 2200)
+  }
+
+  function isFirstUse() {
+    return state.demoMode === 'first-use'
+  }
+
+  function hasWorkspace() {
+    return !isFirstUse() || state.onboardingStage !== 'no-space'
+  }
+
+  function hasProject() {
+    return !isFirstUse() || ['project-created', 'empty-project', 'first-issue', 'ai-running'].includes(state.onboardingStage)
+  }
+
+  function renderDemoState() {
+    const firstUse = isFirstUse()
+    const workspaceExists = hasWorkspace()
+    const projectExists = hasProject()
+
+    $$('[data-demo-mode]').forEach((button) => button.classList.toggle('active', button.dataset.demoMode === state.demoMode))
+    $('#emptySpaces').hidden = !firstUse || workspaceExists
+    $('#populatedSpaces').hidden = firstUse && !workspaceExists
+    $('#platformSpaceActions').hidden = firstUse && !workspaceExists
+    $$('.sample-space-card').forEach((card) => { card.hidden = firstUse })
+    $('#onboardingSpaceCard').hidden = !firstUse || !workspaceExists
+    $('#emptyPersonalResources').hidden = !firstUse
+    $('#populatedPersonalResources').hidden = firstUse
+    $('#emptyWork').hidden = !firstUse
+    $('#populatedWork').hidden = firstUse
+
+    $('#workspaceCountNav').textContent = firstUse ? (workspaceExists ? '1' : '0') : '3'
+    $('#workCountNav').textContent = firstUse ? '0' : '3'
+    $('#projectCountNav').textContent = firstUse ? (projectExists ? '1' : '0') : '3'
+    const memberCount = state.invitedMember ? 2 : 1
+    $('#memberCountNav').textContent = firstUse ? String(memberCount) : '12'
+    $('#agentCountNav').textContent = firstUse ? (state.starterAgentCreated ? '1' : '0') : '6'
+    $('#environmentCountNav').textContent = firstUse ? (state.starterEnvironmentCreated ? '1' : '0') : '4'
+    $('#workspaceProjectLinks').hidden = !projectExists
+    $$('.sample-project-link').forEach((link) => { link.hidden = firstUse })
+    $$('.sample-workspace-option').forEach((option) => { option.hidden = firstUse })
+    $$('.sample-mention').forEach((mention) => { mention.hidden = firstUse })
+    $('#starterAgentMention').hidden = !firstUse || !state.starterAgentCreated
+    $('#onboardingWorkspaceOption').hidden = !firstUse || !workspaceExists
+    $('#firstProjectNavName').textContent = state.projectName
+    const onboardingIncomplete = firstUse && workspaceExists && !state.onboardingSkipped && state.onboardingStage !== 'ai-running'
+    $('#onboardingStepsNav').hidden = !onboardingIncomplete
+
+    if (onboardingIncomplete) {
+      const issueExists = ['first-issue', 'ai-running'].includes(state.onboardingStage)
+      const stepState = (element, done, current, enabled = true) => {
+        element.classList.toggle('done', done)
+        element.classList.toggle('current', current)
+        element.disabled = !enabled
+        element.querySelector('.onboarding-nav-mark').textContent = done ? '✓' : element.id === 'guideProjectStep' ? '1' : element.id === 'guideAgentStep' ? '2' : element.id === 'guideIssueStep' ? '3' : '4'
+      }
+      stepState($('#guideProjectStep'), projectExists, !projectExists)
+      stepState($('#guideAgentStep'), state.starterAgentCreated, projectExists && !state.starterAgentCreated, projectExists)
+      stepState($('#guideIssueStep'), issueExists, projectExists && state.starterAgentCreated && !issueExists, projectExists && state.starterAgentCreated)
+      stepState($('#guideExecutionStep'), false, issueExists && state.starterAgentCreated, issueExists && state.starterAgentCreated)
+    }
+
+    if (firstUse && workspaceExists) {
+      $('#currentWorkspaceName').textContent = state.workspaceName
+      $('#currentWorkspaceMeta').textContent = `${memberCount} 人 · ${state.starterAgentCreated ? '1' : '0'} Agent · ${state.starterEnvironmentCreated ? '1' : '0'} 执行环境`
+      $('#onboardingWorkspaceTitle').textContent = state.workspaceName
+      $('#onboardingWorkspaceIcon').textContent = state.workspaceName.slice(0, 1)
+      $('#onboardingWorkspaceOption .workspace-option-name').textContent = state.workspaceName
+      $('#onboardingWorkspaceOption .workspace-icon').textContent = state.workspaceName.slice(0, 1)
+      $('#onboardingSpaceCard .space-card-name').textContent = state.workspaceName
+      $('#onboardingSpaceCard .workspace-icon').textContent = state.workspaceName.slice(0, 1)
+      $('#onboardingSpaceMeta').textContent = `${memberCount} 成员 · ${state.starterAgentCreated ? '1' : '0'} Agent · ${state.starterEnvironmentCreated ? '1' : '0'} 执行环境 · ${projectExists ? '1' : '0'} 项目`
+      $('#freshWorkspaceTitle').textContent = state.workspaceName
+      $('#freshWorkspaceIcon').textContent = state.workspaceName.slice(0, 1)
+      $('#freshProjectCount').textContent = projectExists ? '1' : '0'
+      $('#freshMemberCount').textContent = String(memberCount)
+      $('#freshAgentCount').textContent = state.starterAgentCreated ? '1' : '0'
+      $('#freshEnvironmentCount').textContent = state.starterEnvironmentCreated ? '1' : '0'
+      $('#freshEmptyProjects').hidden = projectExists
+      $('#freshProjectGrid').hidden = !projectExists
+      $('#freshProjectName').textContent = state.projectName
+      $('#freshProjectSymbol').textContent = state.projectName.slice(0, 1)
+      $('#freshProjectManager').textContent = `管理者：${state.projectManager}`
+      const issueExists = ['first-issue', 'ai-running'].includes(state.onboardingStage)
+      $('#freshProjectIssues').textContent = issueExists ? '1 个 Issue' : '0 个 Issue'
+      $('#freshProjectProgress').style.width = state.onboardingStage === 'ai-running' ? '50%' : issueExists ? '20%' : '0'
+      $('#onboardingMemberSummary').textContent = `${memberCount} 位成员`
+      $('#onboardingAgentSummary').textContent = state.starterAgentCreated ? `${state.starterAgentName} · ${state.starterRuntimeType === 'chat' ? 'Wegent Chat' : state.starterEnvironment}` : '尚未配置 Agent'
+      $('#starterAgentMention').dataset.name = state.starterAgentName
+      $('#starterAgentMention').dataset.device = state.starterEnvironment
+      $('#starterAgentMention').dataset.runtimeType = state.starterRuntimeType
+      $('#starterAgentMentionName').textContent = state.starterAgentCreated ? state.starterAgentName : '创建默认执行 Agent'
+      $('#starterAgentMentionMeta').textContent = state.starterAgentCreated ? `${state.starterRuntimeType === 'chat' ? 'Wegent Chat' : state.starterEnvironment} · 在线` : '尚未配置'
+      $('#onboardingInvite').textContent = state.invitedMember ? '已邀请' : '邀请成员'
+      $('#onboardingInviteDesc').textContent = state.invitedMember ? '王芳已加入当前空间，可以接收分配通知。' : '可选。成员加入后可以接收分配通知，也可以主动参与 Issue。'
+      $('#onboardingConfigureAI').textContent = state.starterAgentCreated ? '已配置' : '配置 Agent'
+      $('#onboardingConfigureAIDesc').textContent = state.starterAgentCreated ? `${state.starterAgentName} 将在「${state.starterEnvironment}」中执行任务。` : '创建 Agent，并先选择托管执行或添加执行环境。'
+      if (projectExists) {
+        $('#workspaceStarterProgress').textContent = state.onboardingStage === 'ai-running' ? '上手引导已完成' : issueExists ? '上手步骤 · 4 / 4' : state.starterAgentCreated ? '上手步骤 · 3 / 4' : '上手步骤 · 2 / 4'
+        $('#workspaceStarterTitle').textContent = state.onboardingStage === 'ai-running' ? '第一次 AI 执行已启动' : issueExists ? '把 Issue 分配给 AI' : state.starterAgentCreated ? '创建第一个 Issue' : '配置 AI 执行能力'
+        $('#workspaceStarterDesc').textContent = state.onboardingStage === 'ai-running' ? 'Agent 已领取任务并在执行环境中开始工作，完整协作链路已经跑通。' : issueExists ? '进入 Issue，在“动态与分配”中 @ Agent，看到执行任务被自动创建。' : state.starterAgentCreated ? `Agent 与执行环境已经就绪。下一步进入项目创建 Issue。` : '先选择已有 Wegent Team 或自定义 Agent，再添加一个执行环境。'
+        $('#workspacePrimaryStepNumber').textContent = '下一步'
+        $('#workspaceProjectStepTitle').textContent = state.onboardingStage === 'ai-running' ? '查看 AI 执行进展' : issueExists ? `分配「${state.issueTitle}」` : state.starterAgentCreated ? `在「${state.projectName}」中创建 Issue` : '准备 Agent 与执行环境'
+        $('#workspaceProjectStepDesc').textContent = state.onboardingStage === 'ai-running' ? `${state.starterAgentName} · ${state.starterRuntimeType === 'chat' ? 'Wegent Chat' : state.starterEnvironment}` : issueExists ? '通过评论 @ Agent 完成分配' : state.starterAgentCreated ? `项目管理者：${state.projectManager}` : '完成后，Agent 才能领取 Issue 产生的任务'
+        $('#onboardingCreateProject').textContent = state.onboardingStage === 'ai-running' ? '查看执行' : issueExists ? '进入 Issue' : state.starterAgentCreated ? '进入项目' : '配置 AI'
+      } else {
+        $('#workspaceStarterProgress').textContent = '上手进度 · 1 / 4'
+        $('#workspaceStarterTitle').textContent = '创建第一个项目'
+        $('#workspaceStarterDesc').textContent = '项目负责组织 Issue、项目成员和分配方式。创建项目不要求预先配置 Agent。'
+        $('#workspacePrimaryStepNumber').textContent = '下一步'
+        $('#workspaceProjectStepTitle').textContent = '创建项目'
+        $('#workspaceProjectStepDesc').textContent = '填写项目名称，并选择由自己或 AI 担任项目管理者。'
+        $('#onboardingCreateProject').textContent = '创建项目'
+      }
+      $('#aiExecutionGuide').hidden = state.onboardingStage !== 'first-issue'
+      if (projectExists && !issueExists) {
+        $('#createFirstIssueTop').hidden = !state.starterAgentCreated
+        $('#emptyProjectIcon').textContent = state.starterAgentCreated ? '◆' : 'AI'
+        $('#emptyProjectProgress').textContent = state.starterAgentCreated ? '上手步骤 · 3 / 4' : '上手步骤 · 2 / 4'
+        $('#emptyProjectTitle').textContent = state.starterAgentCreated ? '创建第一个 Issue' : '先配置 AI 执行能力'
+        $('#emptyProjectDesc').textContent = state.starterAgentCreated ? 'Issue 描述要完成的事情。创建后，在动态中通过 @ 把工作分给 Agent。' : '选择已有 Wegent Team 或自定义 Agent，并添加一个执行环境。准备完成后再创建 Issue。'
+        $('#createFirstIssue').textContent = state.starterAgentCreated ? '创建 Issue' : '配置 AI'
+      }
+    }
+  }
+
+  function resetInteractionState() {
+    state.issueOpen = false
+    state.mention = null
+    state.flowStep = false
+    state.assignment = null
+    state.task = null
+    $('#issueDrawer').hidden = true
+    $('#humanNotification').hidden = true
+    $('#notificationCount').textContent = '0'
+    renderAssignment()
+    renderTask()
+    $('#deliveryArea').textContent = '执行结束后，产物会回到这个 Issue。'
+    if (!isFirstUse()) {
+      $('#activityTimeline').innerHTML = '<div class="event"><span class="avatar purple">PM</span><div class="event-body"><div class="event-title">Mika 创建了 Issue</div><div class="event-text">需要明确 Workspace 与 Project 的协作关系，并给出可执行的产品交互。</div><div class="event-time">今天 10:12</div></div></div><div class="event"><span class="avatar amber">王</span><div class="event-body"><div class="event-title">王芳</div><div class="event-text">规则就是给调度模型的一句话。流程分配只需要额外记录流程步骤。</div><div class="event-time">今天 11:06</div></div></div>'
+    }
+  }
+
+  function setDemoMode(mode) {
+    state.demoMode = mode
+    if (mode === 'first-use') {
+      state.onboardingStage = 'no-space'
+      state.onboardingSkipped = false
+      state.workspaceName = ''
+      state.projectName = ''
+      state.projectManager = '李明 · 人'
+      state.invitedMember = false
+      state.starterAgentCreated = false
+      state.starterEnvironmentCreated = false
+      state.starterAgentName = '默认执行 Agent'
+      state.starterEnvironment = ''
+      state.agentSetupMode = 'existing'
+      state.pendingAgentName = 'Codex 产品研发团队'
+      state.agentOwner = 'workspace'
+      state.customRuntimeMode = 'environment'
+      state.starterRuntimeType = 'environment'
+      state.environmentSetupMode = 'local'
+      state.environmentOwner = 'workspace'
+      state.pendingEnvironmentName = '李明的当前设备'
+      state.environmentSetupPhase = 'configure'
+      state.customBots = ['产品经理 Bot', 'Codex 工程师 Bot']
+      state.issueTitle = ''
+      state.issueDescription = ''
+    } else {
+      state.onboardingStage = 'sample'
+      state.onboardingSkipped = true
+      state.workspaceName = '研发协作空间'
+      state.projectName = 'Wework 2.0'
+      state.projectManager = 'Mika PMO · AI'
+      state.invitedMember = true
+      state.starterAgentCreated = true
+      state.starterEnvironmentCreated = true
+      state.starterAgentName = 'Codex 产品工程师'
+      state.starterEnvironment = '李明的 MacBook Pro'
+      state.agentSetupMode = 'existing'
+      state.pendingAgentName = 'Codex 产品研发团队'
+      state.agentOwner = 'workspace'
+      state.customRuntimeMode = 'environment'
+      state.starterRuntimeType = 'environment'
+      state.environmentSetupMode = 'local'
+      state.environmentOwner = 'personal'
+      state.pendingEnvironmentName = '李明的 MacBook Pro'
+      state.environmentSetupPhase = 'configure'
+      state.customBots = ['产品经理 Bot', 'Codex 工程师 Bot']
+      state.issueTitle = '设计 Workspace 智能研发协作模型'
+      state.issueDescription = '设计 Workspace、Project、成员、Agent 和执行环境的产品关系，让人和 AI 都能围绕同一个 Issue 工作。'
+      $('#currentWorkspaceName').textContent = state.workspaceName
+      $('#currentWorkspaceMeta').textContent = '12 人 · 6 Agent · 4 执行环境'
+      $('#workspaceHomeTitle').textContent = state.workspaceName
+    }
+    resetInteractionState()
+    renderDemoState()
+    showPage('platform-spaces')
+  }
+
+  function updatePath(level) {
+    $('#pathPlatform').classList.toggle('active', level === 'platform')
+    $('#pathWorkspace').classList.toggle('active', level === 'workspace')
+    $('#pathProject').classList.toggle('active', level === 'project')
+    $('#pathIssue').classList.toggle('active', level === 'issue')
+  }
+
+  function showPage(view) {
+    state.view = view
+    const isPlatform = view.startsWith('platform-')
+    $('#platformSpaces').hidden = view !== 'platform-spaces'
+    $('#platformResources').hidden = view !== 'platform-resources'
+    $('#platformWork').hidden = view !== 'platform-work'
+    const showWorkspaceOnboarding = view === 'workspace-home' && isFirstUse() && hasWorkspace() && !state.onboardingSkipped
+    const showFreshWorkspaceHome = view === 'workspace-home' && isFirstUse() && hasWorkspace() && state.onboardingSkipped
+    $('#workspaceOnboarding').hidden = !showWorkspaceOnboarding
+    $('#workspaceFreshHome').hidden = !showFreshWorkspaceHome
+    $('#workspaceHome').hidden = view !== 'workspace-home' || showWorkspaceOnboarding || showFreshWorkspaceHome
+    $('#workspaceProjects').hidden = view !== 'workspace-projects'
+    $('#workspaceSettings').hidden = view !== 'workspace-settings'
+    $('#workspaceResource').hidden = !view.startsWith('workspace-') || !['workspace-members','workspace-agents','workspace-devices'].includes(view)
+    $('#projectPage').hidden = view !== 'project'
+    $('#platformNavigation').hidden = !isPlatform
+    $('#workspaceBack').hidden = isPlatform
+    $('#workspacePicker').hidden = isPlatform
+    $('#workspaceNavigation').hidden = isPlatform
+    $$('.side-item[data-view]').forEach((item) => item.classList.toggle('active', item.dataset.view === view))
+    $$('.side-item[data-project]').forEach((item) => item.classList.toggle('active', view === 'project' && item.dataset.project === 'wework'))
+
+    if (view === 'platform-spaces') {
+      $('#breadcrumb').innerHTML = '<strong>所有空间</strong>'
+      updatePath('platform')
+    } else if (view === 'platform-resources') {
+      $('#breadcrumb').innerHTML = '平台&nbsp; / &nbsp;<strong>资源</strong>'
+      updatePath('platform')
+    } else if (view === 'platform-work') {
+      $('#breadcrumb').innerHTML = '平台&nbsp; / &nbsp;<strong>我的工作</strong>'
+      updatePath('platform')
+    } else if (view === 'workspace-home') {
+      $('#breadcrumb').textContent = state.workspaceName
+      updatePath('workspace')
+    } else if (view === 'workspace-projects') {
+      $('#breadcrumb').innerHTML = `${state.workspaceName}&nbsp; / &nbsp;<strong>全部项目</strong>`
+      updatePath('workspace')
+    } else if (view === 'workspace-settings') {
+      $('#breadcrumb').innerHTML = `${state.workspaceName}&nbsp; / &nbsp;<strong>空间设置</strong>`
+      updatePath('workspace')
+    } else if (view.startsWith('workspace-')) {
+      const type = view.replace('workspace-', '')
+      renderResource(type)
+      $('#breadcrumb').innerHTML = `${state.workspaceName}&nbsp; / &nbsp;<strong>${resources[type].title}</strong>`
+      updatePath('workspace')
+    } else {
+      $('#breadcrumb').innerHTML = `${state.workspaceName}&nbsp; / &nbsp;<strong>${state.projectName}</strong>`
+      updatePath(state.issueOpen ? 'issue' : 'project')
+    }
+  }
+
+  function renderResource(type) {
+    const resource = resources[type]
+    $('#resourceEditor').hidden = true
+    $('#resourceEditor').classList.remove('guided-setup')
+    $('#resourceRows').hidden = false
+    $('#resourceCreate').hidden = false
+    $('#resourceTitle').textContent = resource.title
+    $('#resourceSubtitle').textContent = resource.subtitle
+    $('#resourceCreate').textContent = type === 'members' ? '邀请成员' : type === 'agents' ? '配置 Agent' : '添加执行环境'
+    if (isFirstUse()) {
+      if (type === 'members') {
+        $('#resourceRows').innerHTML = `<div class="row"><span class="avatar blue">李</span><span class="row-main"><span class="row-title">李明</span><span class="row-meta">空间创建者 · 管理员</span></span><span class="badge">管理员</span></div>${state.invitedMember ? '<div class="row"><span class="avatar amber">王</span><span class="row-main"><span class="row-title">王芳</span><span class="row-meta">产品负责人 · 已加入空间</span></span><span class="badge">成员</span></div>' : ''}`
+      } else if (state.starterAgentCreated && type === 'agents') {
+        const owner = state.agentOwner === 'workspace' ? state.workspaceName : '李明'
+        const runtime = state.starterRuntimeType === 'chat' ? '运行方式：Wegent Chat' : `执行环境：${state.starterEnvironment}`
+        $('#resourceRows').innerHTML = `<div class="row"><span class="avatar robot">AI</span><span class="row-main"><span class="row-title">${state.starterAgentName}</span><span class="row-meta">归属：${owner} · ${runtime}</span></span><span class="badge green">可用</span></div>`
+      } else if (state.starterEnvironmentCreated && type === 'devices') {
+        const owner = state.environmentOwner === 'workspace' ? state.workspaceName : '李明'
+        $('#resourceRows').innerHTML = `<div class="row"><span class="avatar purple">☁</span><span class="row-main"><span class="row-title">${state.starterEnvironment}</span><span class="row-meta">归属：${owner} · ${state.starterAgentName} 使用</span></span><span class="badge green">在线</span></div>`
+      } else {
+        const label = type === 'agents' ? 'Agent' : '执行环境'
+        $('#resourceRows').innerHTML = `<div class="empty-state" style="min-height:310px;border:0"><div class="empty-content"><div class="empty-icon">${type === 'agents' ? 'AI' : '▣'}</div><div class="empty-title">还没有${label}</div><div class="empty-desc">${type === 'agents' ? '选择已有 Wegent Team，或在当前空间自定义一个 Agent。' : '选择任务运行的位置，连接成功后即可供 Agent 使用。'}</div><div class="empty-actions"><button class="btn primary" id="emptyResourceCreate">${type === 'agents' ? '配置 Agent' : '添加执行环境'}</button></div></div></div>`
+      }
+      const emptyCreate = $('#emptyResourceCreate')
+      if (emptyCreate) emptyCreate.addEventListener('click', () => showResourceSetup(type))
+      return
+    }
+    $('#resourceRows').innerHTML = resource.rows.map(([avatar, name, meta, badge, color]) => `
+      <div class="row">
+        <span class="avatar ${color}">${avatar}</span>
+        <span class="row-main"><span class="row-title">${name}</span><span class="row-meta">${meta}</span></span>
+        <span class="badge">${badge}</span><button class="btn">查看</button>
+      </div>`).join('')
+  }
+
+  function agentSetupFlow(activeStep) {
+    return `
+      <div class="setup-flow">
+        <div class="setup-flow-step ${activeStep > 1 ? 'done' : 'active'}"><span class="setup-flow-number">${activeStep > 1 ? '✓' : '1'}</span><span>配置智能体</span></div>
+        <div class="setup-flow-step ${activeStep > 2 ? 'done' : activeStep === 2 ? 'active' : ''}"><span class="setup-flow-number">${activeStep > 2 ? '✓' : '2'}</span><span>准备运行条件</span></div>
+        <div class="setup-flow-step ${activeStep === 3 ? 'active' : ''}"><span class="setup-flow-number">3</span><span>确认保存</span></div>
+      </div>`
+  }
+
+  function showResourceSetup(type, returnToAgentSetup = false, lockToWorkspace = false) {
+    if (lockToWorkspace && type === 'agents') state.agentOwner = 'workspace'
+    if (lockToWorkspace && type === 'devices') state.environmentOwner = 'workspace'
+    const nestedEnvironmentSetup = type === 'devices' && returnToAgentSetup
+    showPage(`workspace-${nestedEnvironmentSetup ? 'agents' : type}`)
+    const editor = $('#resourceEditor')
+    editor.hidden = false
+    editor.classList.toggle('guided-setup', type === 'agents' || nestedEnvironmentSetup)
+    $('#resourceRows').hidden = true
+    $('#resourceCreate').hidden = true
+    if (nestedEnvironmentSetup) {
+      $('#resourceTitle').textContent = '配置智能体'
+      $('#resourceSubtitle').textContent = `${state.pendingAgentName} · 补齐运行条件后返回确认`
+    }
+    if (type === 'members') {
+      editor.innerHTML = `
+        <div class="settings-title">邀请成员</div>
+        <div class="settings-desc">成员接受邀请后，可以加入项目、接收分配通知或主动参与 Issue。</div>
+        <div class="field"><div class="field-label">邮箱或用户名</div><input class="input" id="inlineMemberAccount" value="wangfang@example.com"></div>
+        <div class="field"><div class="field-label">空间角色</div><select class="select"><option>成员</option><option>管理员</option></select></div>
+        <div class="field" style="display:flex;justify-content:flex-end;gap:8px"><button class="btn" id="cancelResourceSetup">取消</button><button class="btn primary" id="saveMemberSetup">发送邀请</button></div>`
+      $('#saveMemberSetup').addEventListener('click', () => {
+        state.invitedMember = true
+        renderDemoState()
+        renderResource('members')
+        toast('邀请已发送，王芳已加入演示空间')
+      })
+    } else if (type === 'agents') {
+      const existingMode = state.agentSetupMode === 'existing'
+      const selectedTeam = state.pendingAgentName === '通用研发团队'
+        ? {
+            name: '通用研发团队',
+            description: '适合需求分析、编码、测试等通用研发任务',
+            bots: ['任务规划 Bot', '研发执行 Bot', '质量检查 Bot'],
+            mode: '主从协作',
+            runtime: 'chat'
+          }
+        : {
+            name: 'Codex 产品研发团队',
+            description: '面向产品设计、前端实现和交互原型交付',
+            bots: ['产品经理 Bot', 'Codex 工程师 Bot'],
+            mode: '主从协作',
+            runtime: 'environment'
+          }
+      const botRows = (existingMode ? selectedTeam.bots : state.customBots).map((bot, index) => `
+        <div class="row"><span class="avatar robot">${index + 1}</span><span class="row-main"><span class="row-title">${bot}</span><span class="row-meta">${index === 0 ? '负责理解目标与拆解工作' : '负责执行并同步结果'}</span></span>${existingMode ? '' : `<button class="btn" data-remove-custom-bot="${index}">移除</button>`}</div>
+      `).join('')
+      const agentDefinition = `
+        <div class="resource-config-layout">
+          <div>
+            <div class="field">
+              <div class="field-label">Agent 来源</div>
+              <div class="setup-choice-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+                <button class="setup-choice ${existingMode ? 'active' : ''}" id="selectExistingTeam"><strong>选择已有 Wegent Team</strong><span>复用已经配置好的 Bots、Ghost 和协作模式</span></button>
+                <button class="setup-choice ${existingMode ? '' : 'active'}" id="selectCustomTeam"><strong>在空间内自定义</strong><span>为当前 Workspace 新建一套 Agent Team 配置</span></button>
+              </div>
+            </div>
+            ${existingMode ? `
+              <div class="field"><div class="field-label">选择 Team</div><input class="input" id="teamSearch" placeholder="搜索我的 Wegent Team"></div>
+              <div class="selection-list" id="teamSelectionList">
+                <button class="selection-option ${selectedTeam.name === 'Codex 产品研发团队' ? 'active' : ''}" data-team-option="Codex 产品研发团队"><span class="avatar robot">C</span><span class="row-main"><span class="row-title">Codex 产品研发团队</span><span class="row-meta">2 Bots · 产品研发与交互实现</span></span><span class="selection-check">${selectedTeam.name === 'Codex 产品研发团队' ? '✓' : ''}</span></button>
+                <button class="selection-option ${selectedTeam.name === '通用研发团队' ? 'active' : ''}" data-team-option="通用研发团队"><span class="avatar purple">研</span><span class="row-main"><span class="row-title">通用研发团队</span><span class="row-meta">3 Bots · 规划、研发、质量检查</span></span><span class="selection-check">${selectedTeam.name === '通用研发团队' ? '✓' : ''}</span></button>
+              </div>
+            ` : `
+              <div class="field"><div class="field-label">Agent 名称</div><input class="input" id="customAgentName" value="${state.pendingAgentName === 'Codex 产品研发团队' ? '产品研发 Agent' : state.pendingAgentName}"></div>
+              <div class="field"><div class="field-label">用途说明</div><textarea class="textarea">负责理解产品目标、实现交互 Demo，并将产物同步回 Issue。</textarea></div>
+              <div class="field"><div class="field-label">协作模式</div><select class="select" id="customCollaborationMode"><option>主从协作</option><option>自由协作</option></select></div>
+              <div class="field"><div class="field-label">运行方式</div><div class="setup-choice-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+                <button class="setup-choice ${state.customRuntimeMode === 'chat' ? 'active' : ''}" data-custom-runtime="chat"><strong>Wegent Chat</strong><span>Bot 使用 Chat Shell，直接在 Wegent 运行</span></button>
+                <button class="setup-choice ${state.customRuntimeMode === 'environment' ? 'active' : ''}" data-custom-runtime="environment"><strong>开发执行</strong><span>Bot 使用 Codex 等 Shell，需要执行环境</span></button>
+              </div></div>
+            `}
+            ${lockToWorkspace ? `
+              <div class="field"><div class="field-label">Agent 归属</div><div class="assignment"><div class="assignment-title">${state.workspaceName}</div><div class="assignment-meta">从项目配置的 Agent 自动归属当前 Workspace。</div></div></div>
+            ` : `
+              <div class="field"><div class="field-label">Agent 归属</div><div class="setup-choice-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+                <button class="setup-choice ${state.agentOwner === 'workspace' ? 'active' : ''}" data-agent-owner="workspace"><strong>当前 Workspace</strong><span>空间共同拥有，管理员可以配置和授权</span></button>
+                <button class="setup-choice ${state.agentOwner === 'personal' ? 'active' : ''}" data-agent-owner="personal"><strong>我的资源</strong><span>归属个人，并授权给当前 Workspace 使用</span></button>
+              </div></div>
+            `}
+          </div>
+          <div class="config-summary">
+            <div class="config-summary-title">${existingMode ? selectedTeam.name : '自定义 Team 配置'}</div>
+            <div class="config-summary-meta">${existingMode ? selectedTeam.description : '直接在当前页面维护参与协作的 Bots。'}</div>
+            <div style="margin-top:10px">${botRows}</div>
+            ${existingMode ? `<div class="field-help">协作模式：${selectedTeam.mode}<br>运行方式：${selectedTeam.runtime === 'chat' ? 'Wegent Chat（Chat Shell）' : '开发执行（需要执行环境）'}<br>Team 配置来自 Wegent，保存 Agent 时不会复制或修改原 Team。</div>` : '<button class="btn" id="addCustomBot" style="margin-top:10px">＋ 添加 Bot</button>'}
+          </div>
+        </div>
+      `
+      const runtimeType = existingMode ? selectedTeam.runtime : state.customRuntimeMode
+      const requiresEnvironment = runtimeType === 'environment'
+      const captureAgentDefinition = () => {
+        if (!existingMode) state.pendingAgentName = $('#customAgentName').value.trim() || '自定义 Agent'
+      }
+      const runtimeSection = !requiresEnvironment
+        ? '<div class="field"><div class="field-label">运行方式</div><div class="assignment"><div class="assignment-title">Wegent Chat</div><div class="assignment-meta">该 Team 的 Bot 已配置 Chat Shell，将直接在 Wegent 中运行，不需要选择执行环境。</div></div></div>'
+        : state.starterEnvironmentCreated
+          ? `<div class="field"><div class="field-label">执行环境</div><div class="assignment"><div class="assignment-title">${state.starterEnvironment}</div><div class="assignment-meta">在线 · 可用于开发执行</div></div></div>`
+          : '<div class="field"><div class="field-label">执行环境</div><div class="assignment"><div class="assignment-title">还没有可用的执行环境</div><div class="assignment-meta">这个 Team 使用 Codex 等开发 Shell，需要在当前设备或云主机中运行。</div><div class="empty-actions" style="justify-content:flex-start;margin-top:12px"><button class="btn primary" id="goAddEnvironment">添加执行环境</button></div></div></div>'
+      editor.innerHTML = `
+        <div class="setup-flow-header">
+          <div class="setup-flow-context">创建智能体</div>
+          <div class="setup-flow-name">${state.pendingAgentName}</div>
+          ${agentSetupFlow(!requiresEnvironment || state.starterEnvironmentCreated ? 3 : 1)}
+        </div>
+        <div class="setup-stage-body">
+          <div class="setup-stage-kicker">${!requiresEnvironment || state.starterEnvironmentCreated ? '步骤 3 · 确认保存' : '步骤 1 · 配置智能体'}</div>
+          <div class="settings-title">${!requiresEnvironment || state.starterEnvironmentCreated ? '确认智能体配置' : '选择或定义 Wegent Team'}</div>
+          <div class="settings-desc">Agent 对应一套 Wegent Team。是否需要执行环境，由 Team 中 Bot 的 Shell 决定。</div>
+          ${agentDefinition}
+          ${runtimeSection}
+          <div class="field" style="display:flex;justify-content:flex-end;gap:8px"><button class="btn" id="cancelResourceSetup">取消</button>${!requiresEnvironment || state.starterEnvironmentCreated ? '<button class="btn primary" id="saveAgentSetup">保存 Agent</button>' : ''}</div>
+        </div>`
+      const addEnvironment = $('#goAddEnvironment')
+      if (addEnvironment) addEnvironment.addEventListener('click', () => {
+        captureAgentDefinition()
+        showResourceSetup('devices', true, lockToWorkspace)
+      })
+      const saveAgent = $('#saveAgentSetup')
+      if (saveAgent) saveAgent.addEventListener('click', () => {
+        captureAgentDefinition()
+        state.starterAgentCreated = true
+        state.starterAgentName = state.pendingAgentName
+        state.starterRuntimeType = runtimeType
+        if (!requiresEnvironment) state.starterEnvironment = 'Wegent Chat'
+        renderDemoState()
+        renderResource('agents')
+        toast('Agent 已配置，可以创建 Issue')
+      })
+      $('#selectExistingTeam').addEventListener('click', () => {
+        captureAgentDefinition()
+        state.agentSetupMode = 'existing'
+        state.pendingAgentName = 'Codex 产品研发团队'
+        showResourceSetup('agents', false, lockToWorkspace)
+      })
+      $('#selectCustomTeam').addEventListener('click', () => {
+        captureAgentDefinition()
+        state.agentSetupMode = 'custom'
+        if (state.pendingAgentName === 'Codex 产品研发团队' || state.pendingAgentName === '通用研发团队') state.pendingAgentName = '产品研发 Agent'
+        showResourceSetup('agents', false, lockToWorkspace)
+      })
+      $$('[data-team-option]').forEach((button) => button.addEventListener('click', () => {
+        state.pendingAgentName = button.dataset.teamOption
+        showResourceSetup('agents', false, lockToWorkspace)
+      }))
+      const teamSearch = $('#teamSearch')
+      if (teamSearch) teamSearch.addEventListener('input', (event) => {
+        const keyword = event.target.value.trim().toLowerCase()
+        $$('[data-team-option]').forEach((button) => {
+          button.hidden = !button.textContent.toLowerCase().includes(keyword)
+        })
+      })
+      $$('[data-custom-runtime]').forEach((button) => button.addEventListener('click', () => {
+        captureAgentDefinition()
+        state.customRuntimeMode = button.dataset.customRuntime
+        showResourceSetup('agents', false, lockToWorkspace)
+      }))
+      const addCustomBot = $('#addCustomBot')
+      if (addCustomBot) addCustomBot.addEventListener('click', () => {
+        captureAgentDefinition()
+        state.customBots.push(`新增 Bot ${state.customBots.length + 1}`)
+        showResourceSetup('agents', false, lockToWorkspace)
+      })
+      $$('[data-remove-custom-bot]').forEach((button) => button.addEventListener('click', () => {
+        captureAgentDefinition()
+        state.customBots.splice(Number(button.dataset.removeCustomBot), 1)
+        showResourceSetup('agents', false, lockToWorkspace)
+      }))
+      $$('[data-agent-owner]').forEach((button) => button.addEventListener('click', () => {
+        captureAgentDefinition()
+        state.agentOwner = button.dataset.agentOwner
+        showResourceSetup('agents', false, lockToWorkspace)
+      }))
+    } else {
+      const mode = state.environmentSetupMode
+      if (state.environmentSetupPhase === 'connecting') {
+        editor.innerHTML = `
+          ${nestedEnvironmentSetup ? `<div class="setup-flow-header"><div class="setup-flow-context">创建智能体</div><div class="setup-flow-name">${state.pendingAgentName}</div>${agentSetupFlow(2)}</div>` : ''}
+          <div class="${nestedEnvironmentSetup ? 'setup-stage-body' : ''}">
+            ${nestedEnvironmentSetup ? '<div class="setup-stage-kicker">步骤 2 · 准备运行条件</div>' : ''}
+            <div class="setup-status">
+              <div><div class="status-spinner"></div><div class="settings-title">${mode === 'local' ? '正在连接当前设备' : '正在创建云主机'}</div><div class="settings-desc">${mode === 'local' ? '正在检查 Wework 本地运行能力并连接到当前空间…' : '正在创建主机、安装运行服务并连接到当前空间…'}</div></div>
+            </div>
+          </div>`
+        editor.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        setTimeout(() => {
+          state.starterEnvironmentCreated = true
+          state.starterEnvironment = state.pendingEnvironmentName
+          state.environmentSetupPhase = 'configure'
+          renderDemoState()
+          if (returnToAgentSetup) {
+            showResourceSetup('agents', false, lockToWorkspace)
+            toast('执行环境已连接，请继续保存 Agent')
+          } else {
+            renderResource('devices')
+            toast('执行环境已在线')
+          }
+        }, 700)
+        return
+      }
+      const modeForm = mode === 'local'
+        ? `
+          <div class="field"><div class="field-label">环境名称</div><input class="input" id="environmentName" value="${state.pendingEnvironmentName === '新建云主机' ? '李明的当前设备' : state.pendingEnvironmentName}"></div>
+          <div class="assignment"><div class="assignment-head"><span class="avatar blue">M</span><span><div class="assignment-title">当前设备已检测</div><div class="assignment-meta">macOS · Apple Silicon · Wework 在线</div></span><span class="badge green" style="margin-left:auto">可连接</span></div></div>
+          <div class="field"><div class="field-label">运行目录</div><input class="input" value="~/.wework/workspace"></div>
+          <div class="field-help">连接后，Agent 可以在当前设备创建任务、访问授权的项目目录并同步产物。</div>
+        `
+        : `
+          <div class="field"><div class="field-label">环境名称</div><input class="input" id="environmentName" value="${state.pendingEnvironmentName === '李明的当前设备' ? '新建云主机' : state.pendingEnvironmentName}"></div>
+          <div class="inline-fields">
+            <div class="field"><div class="field-label">地域</div><select class="select"><option>华北 · 北京</option><option>华东 · 上海</option></select></div>
+            <div class="field"><div class="field-label">规格</div><select class="select"><option>4 核 8 GB</option><option>8 核 16 GB</option></select></div>
+          </div>
+          <div class="inline-fields">
+            <div class="field"><div class="field-label">系统镜像</div><select class="select"><option>Ubuntu 24.04 + 开发工具</option><option>Ubuntu 22.04</option></select></div>
+            <div class="field"><div class="field-label">磁盘</div><select class="select"><option>100 GB</option><option>200 GB</option></select></div>
+          </div>
+          <div class="field-help">创建后会自动安装运行服务并连接到当前空间，无需复制命令。</div>
+        `
+      const environmentForm = `
+        <div class="field"><div class="field-label">在哪里运行</div><div class="setup-choice-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+          <button class="setup-choice ${mode === 'local' ? 'active' : ''}" data-environment-mode="local"><strong>当前设备</strong><span>使用当前 Wework 所在设备</span></button>
+          <button class="setup-choice ${mode === 'cloud' ? 'active' : ''}" data-environment-mode="cloud"><strong>云主机</strong><span>创建或选择云主机后启动</span></button>
+        </div></div>
+        ${lockToWorkspace ? `
+          <div class="field"><div class="field-label">执行环境归属</div><div class="assignment"><div class="assignment-title">${state.workspaceName}</div><div class="assignment-meta">从项目配置的执行环境自动归属当前 Workspace。</div></div></div>
+        ` : `
+          <div class="field"><div class="field-label">执行环境归属</div><div class="setup-choice-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+            <button class="setup-choice ${state.environmentOwner === 'workspace' ? 'active' : ''}" data-environment-owner="workspace"><strong>当前 Workspace</strong><span>空间共同拥有，可供空间 Agent 使用</span></button>
+            <button class="setup-choice ${state.environmentOwner === 'personal' ? 'active' : ''}" data-environment-owner="personal"><strong>我的资源</strong><span>归属个人，并授权给当前 Workspace 使用</span></button>
+          </div></div>
+        `}
+        ${modeForm}
+        <div class="field" style="display:flex;justify-content:flex-end;gap:8px"><button class="btn" id="cancelResourceSetup">${nestedEnvironmentSetup ? '← 返回智能体配置' : '取消'}</button><button class="btn primary" id="saveEnvironmentSetup">${mode === 'local' ? '连接当前设备' : '创建并连接'}</button></div>`
+      editor.innerHTML = nestedEnvironmentSetup
+        ? `
+          <div class="setup-flow-header">
+            <div class="setup-flow-context">创建智能体</div>
+            <div class="setup-flow-name">${state.pendingAgentName}</div>
+            ${agentSetupFlow(2)}
+          </div>
+          <div class="setup-stage-body">
+            <div class="setup-stage-kicker">步骤 2 · 准备运行条件</div>
+            <div class="settings-title">选择任务运行的位置</div>
+            <div class="settings-desc">「${state.pendingAgentName}」使用开发执行。连接成功后会自动返回智能体确认页。</div>
+            ${environmentForm}
+          </div>`
+        : `
+          <div class="settings-title">添加执行环境</div>
+          <div class="settings-desc">选择 AI 任务在哪里运行。连接成功后，该位置会成为当前空间可用的执行环境。</div>
+          ${environmentForm}`
+      const captureEnvironment = () => {
+        state.pendingEnvironmentName = $('#environmentName').value.trim() || (mode === 'local' ? '我的当前设备' : '云端执行环境')
+      }
+      $$('[data-environment-mode]').forEach((button) => button.addEventListener('click', () => {
+        captureEnvironment()
+        state.environmentSetupMode = button.dataset.environmentMode
+        state.pendingEnvironmentName = button.dataset.environmentMode === 'local' ? '李明的当前设备' : '新建云主机'
+        showResourceSetup('devices', returnToAgentSetup, lockToWorkspace)
+      }))
+      $$('[data-environment-owner]').forEach((button) => button.addEventListener('click', () => {
+        captureEnvironment()
+        state.environmentOwner = button.dataset.environmentOwner
+        showResourceSetup('devices', returnToAgentSetup, lockToWorkspace)
+      }))
+      $('#saveEnvironmentSetup').addEventListener('click', () => {
+        captureEnvironment()
+        state.environmentSetupPhase = 'connecting'
+        showResourceSetup('devices', returnToAgentSetup, lockToWorkspace)
+      })
+    }
+    $('#cancelResourceSetup').addEventListener('click', () => {
+      if (nestedEnvironmentSetup) {
+        state.environmentSetupPhase = 'configure'
+        showResourceSetup('agents', false, lockToWorkspace)
+        return
+      }
+      renderResource(type)
+    })
+    editor.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  function openProject() {
+    if (isFirstUse() && !hasProject()) {
+      openCreateModal()
+      return
+    }
+    if (isFirstUse() && state.onboardingStage === 'project-created') state.onboardingStage = 'empty-project'
+    state.issueOpen = false
+    $('#issueDrawer').hidden = true
+    $('#projectHeadTitle').textContent = state.projectName
+    $('#projectHeadMeta').textContent = isFirstUse() ? `协作项目 · ${state.invitedMember ? '2' : '1'} 位成员` : '协作项目 · 8 位成员（5 人、3 Agent）'
+    $('#projectHeadSymbol').textContent = isFirstUse() ? state.projectName.slice(0, 1) : 'W2'
+    $('#projectManagerName').textContent = state.projectManager
+    $('#projectManagerAvatar').textContent = state.projectManager.includes('AI') ? 'AI' : '李'
+    showPage('project')
+    switchProjectView('board')
+  }
+
+  function switchProjectView(view) {
+    state.projectView = view
+    const onboardingProject = isFirstUse() && hasProject()
+    $('#emptyProjectView').hidden = !onboardingProject || state.onboardingStage !== 'empty-project' || view !== 'board'
+    const issueExists = ['first-issue', 'ai-running'].includes(state.onboardingStage)
+    $('#firstIssueBoardView').hidden = !onboardingProject || !issueExists || view !== 'board'
+    $('#onboardingTableView').hidden = !onboardingProject || view !== 'table'
+    $('#onboardingProjectSettingsView').hidden = !onboardingProject || view !== 'settings'
+    $('#emptyIssueTable').hidden = issueExists
+    $('#firstIssueTable').hidden = !issueExists
+    $('#boardView').hidden = view !== 'board' || onboardingProject
+    $('#tableView').hidden = view !== 'table' || onboardingProject
+    $('#projectSettingsView').hidden = view !== 'settings' || onboardingProject
+    $$('.project-tabs button').forEach((button) => button.classList.toggle('active', button.dataset.projectView === view))
+    if (view === 'settings') {
+      state.issueOpen = false
+      $('#issueDrawer').hidden = true
+    }
+  }
+
+  function openIssue() {
+    if (isFirstUse()) {
+      $('#issueDrawerId').textContent = 'ISSUE-1'
+      $('#issueDrawerTitle').textContent = state.issueTitle
+      $('#issueDrawerDescription').textContent = state.issueDescription
+      $('#issueManagerBadge').textContent = state.projectManager.replace(' · 人', '').replace(' · AI', '')
+      $('#issueStatus').value = '待处理'
+    } else {
+      $('#issueDrawerId').textContent = 'WEWORK-549'
+      $('#issueDrawerTitle').textContent = state.issueTitle
+      $('#issueDrawerDescription').textContent = state.issueDescription
+      $('#issueManagerBadge').textContent = 'Mika PMO'
+      $('#issueStatus').value = '设计中'
+    }
+    state.issueOpen = true
+    $('#issueDrawer').hidden = false
+    switchIssueTab('detail')
+    updatePath('issue')
+  }
+
+  function closeIssue() {
+    state.issueOpen = false
+    $('#issueDrawer').hidden = true
+    updatePath('project')
+  }
+
+  function switchIssueTab(tab) {
+    state.issueTab = 'detail'
+    $('#issueDetail').hidden = false
+    $('#composer').hidden = false
+    if (tab === 'activity') $('#commentInput').focus()
+  }
+
+  function assignmentSource() {
+    if (!state.assignment) return ''
+    return state.assignment.flowStep ? '产品研发 · 交互设计' : '项目调度原则'
+  }
+
+  function renderAssignment() {
+    const assignment = state.assignment
+    if (!assignment) {
+      $('#assignmentState').textContent = '尚未分配'
+      $('#assignmentCard').innerHTML = '<div class="assignment-title">没有指定执行者</div><div class="assignment-meta">在下方评论框 @成员或 Agent 完成分配。分配不是权限，其他项目成员仍可直接参与。</div>'
+      $('#cardAssignment').textContent = '待分配'
+      $('#cardAssignment').className = 'badge'
+      $('#cardExecutor').textContent = '尚未分配执行者'
+      $('#tableExecutor').textContent = '未分配'
+      $('#tableSource').textContent = '—'
+      $('#firstIssueAssignment').textContent = '待分配'
+      $('#firstIssueAssignment').className = 'badge'
+      $('#firstIssueExecutor').textContent = '点击打开并开始分配'
+      $('#firstIssueTableExecutor').textContent = '未分配'
+      return
+    }
+    const human = assignment.type === 'human'
+    $('#assignmentState').textContent = human ? '已通知，等待开始' : 'AI 已自动开始'
+    const runtimeLabel = assignment.runtimeType === 'chat' ? '运行方式：Wegent Chat' : `执行环境：${assignment.device}`
+    $('#assignmentCard').innerHTML = `
+      <div class="assignment-head"><span class="avatar ${human ? 'blue' : 'robot'}">${assignment.name[0]}</span><span><div class="assignment-title">${assignment.name}</div><div class="assignment-meta">${human ? '成员 · Wework 通知' : `Agent · ${runtimeLabel}`}</div></span><span class="badge ${human ? 'amber' : 'green'}" style="margin-left:auto">${human ? '等待开始' : '执行中'}</span></div>
+      <span class="source-mark">${assignment.flowStep ? '流程分配' : '按调度原则分配'} · ${assignmentSource()}</span>`
+    $('#cardAssignment').textContent = human ? `已分给 ${assignment.name}` : 'AI 执行中'
+    $('#cardAssignment').className = `badge ${human ? 'amber' : 'green'}`
+    $('#cardExecutor').textContent = human ? `${assignment.name} · 等待开始` : `${assignment.name} · ${assignment.device}`
+    $('#tableExecutor').textContent = assignment.name
+    $('#tableSource').textContent = assignmentSource()
+    $('#firstIssueAssignment').textContent = human ? `已分给 ${assignment.name}` : 'AI 执行中'
+    $('#firstIssueAssignment').className = `badge ${human ? 'amber' : 'green'}`
+    $('#firstIssueExecutor').textContent = human ? `${assignment.name} · 等待开始` : `${assignment.name} · ${assignment.device}`
+    $('#firstIssueTableExecutor').textContent = assignment.name
+    renderTask()
+  }
+
+  function renderTask() {
+    if (!state.task) {
+      $('#taskCount').textContent = '0'
+      $('#directJoin').hidden = false
+      $('#taskArea').innerHTML = '<div class="task-empty">暂无执行任务</div>'
+      bindDirectJoin()
+      return
+    }
+    $('#taskCount').textContent = '1'
+    $('#directJoin').hidden = true
+    $('#taskArea').innerHTML = `
+      <div class="task-card"><div class="task-head"><span class="avatar ${state.task.type === 'ai' ? 'robot' : 'blue'}">${state.task.name[0]}</span><span><div class="task-title">TASK-1024 · ${state.task.name}</div><div class="task-meta">${state.task.type === 'ai' ? state.task.runtimeType === 'chat' ? '已通过 Wegent Chat 开始运行' : `已在「${state.task.device}」开始运行` : '已从 Wework 创建本地执行任务'}<br>来源：${state.task.source}</div></span><span class="badge green" style="margin-left:auto">执行中</span></div><div style="margin-top:10px"><button class="btn primary" id="completeTask">模拟完成</button></div></div>`
+    $('#completeTask').addEventListener('click', completeTask)
+  }
+
+  function bindDirectJoin() {
+    const button = $('#directJoin')
+    if (!button) return
+    button.onclick = () => {
+      state.task = { type: 'human', name: '李明', source: '成员主动参与' }
+      renderTask()
+      appendEvent('李明开始处理', '李明主动开始处理这个 Issue，系统已创建关联任务。', '成员主动参与', 'human')
+      toast('已开始处理')
+    }
+  }
+
+  function appendEvent(title, text, source, type) {
+    const event = document.createElement('div')
+    event.className = 'event'
+    event.innerHTML = `<span class="avatar ${type === 'ai' ? 'robot' : 'blue'}">${type === 'ai' ? 'AI' : title[0]}</span><div class="event-body"><div class="event-title">${title}</div><div class="event-text">${text}</div>${source ? `<span class="source-mark">${source}</span>` : ''}<div class="event-time">刚刚</div></div>`
+    $('#activityTimeline').appendChild(event)
+  }
+
+  function sendComment() {
+    const text = $('#commentInput').value.trim()
+    if (!text && !state.mention) return toast('先写评论或选择一个分配对象')
+    const mentionText = state.mention ? `@${state.mention.name} ` : ''
+    appendEvent('李明', `${mentionText}${text || '请处理这个 Issue。'}`, state.flowStep ? '流程：产品研发 · 交互设计' : '', 'human')
+
+    if (state.mention) {
+      state.assignment = { ...state.mention, flowStep: state.flowStep }
+      if (state.mention.type === 'ai') {
+        state.task = { type: 'ai', name: state.mention.name, device: state.mention.device, runtimeType: state.mention.runtimeType, source: assignmentSource() }
+        const runtimeText = state.mention.runtimeType === 'chat' ? '通过 Wegent Chat 开始运行' : `已在 ${state.mention.device} 开始执行`
+        appendEvent('系统创建执行任务', `${state.mention.name} ${runtimeText}。`, assignmentSource(), 'ai')
+        if (isFirstUse() && state.onboardingStage === 'first-issue') {
+          state.onboardingStage = 'ai-running'
+          renderDemoState()
+        }
+        toast('AI 已领取任务，上手引导完成')
+      } else {
+        state.task = null
+        $('#notificationActor').textContent = `${state.projectManager.replace(' · 人', '').replace(' · AI', '')} 在 Issue 中 @了你`
+        $('#notificationText').textContent = `请处理「${state.issueTitle}」。`
+        $('#humanNotification').hidden = false
+        $('#notificationCount').textContent = '1'
+        toast('已通过评论分配，并发送 Wework 通知')
+      }
+      renderAssignment()
+    } else {
+      toast('评论已发送')
+    }
+    $('#commentInput').value = ''
+    state.mention = null
+    state.flowStep = false
+    $('#flowChip').hidden = true
+  }
+
+  function startHumanTask() {
+    $('#humanNotification').hidden = true
+    $('#notificationCount').textContent = '0'
+    state.task = { type: 'human', name: state.assignment?.name || '李明', source: assignmentSource() || '评论分配' }
+    renderTask()
+    appendEvent(`${state.task.name} 开始处理`, '从 Wework 通知进入 Issue，并创建了执行 Task。', state.task.source, 'human')
+    toast('已创建人的 Wework Task')
+  }
+
+  function completeTask() {
+    $('#taskArea').innerHTML = '<div class="task-card" style="border-color:#9cb8ed;background:var(--blue-soft)"><div class="task-title" style="color:#225fb9">TASK-1024 · 已完成</div><div class="task-meta" style="color:#5879a8">执行记录和产物已同步到 Issue。</div></div>'
+    $('#deliveryArea').innerHTML = '<div class="assignment"><div class="assignment-title">workspace-project-execution-flow.html</div><div class="assignment-meta">交互 Demo · 来自 TASK-1024 · 刚刚</div></div>'
+    appendEvent('任务执行完成', '产物已同步到当前 Issue，等待项目管理者检查。', '执行结果', 'ai')
+    toast('执行完成，产物已回到 Issue')
+  }
+
+  function openCreateModal() {
+    if (isFirstUse()) {
+      $('#newProjectName').value = '新产品研发'
+      $('#projectManagerType').innerHTML = state.starterAgentCreated ? '<option value="human">我自己</option><option value="ai">AI 项目管家</option>' : '<option value="human">我自己</option>'
+      $('#projectManagerType').value = 'human'
+      $('#createProjectModalDesc').textContent = '创建项目后，下一步创建第一个 Issue。成员和 AI 资源可以稍后补充。'
+      updateProjectManagerOptions()
+    } else {
+      $('#projectManagerType').innerHTML = '<option value="human">我自己</option><option value="ai">AI 项目管家</option>'
+      $('#createProjectModalDesc').textContent = '项目创建后，从 Workspace 选择成员、Agent 和执行环境。'
+    }
+    $('#createProjectModal').hidden = false
+    $('#newProjectName').focus()
+  }
+
+  function openWorkspaceCreateModal() {
+    $('#createWorkspaceModal').hidden = false
+    $('#newWorkspaceName').focus()
+  }
+
+  function closeWorkspaceCreateModal() {
+    $('#createWorkspaceModal').hidden = true
+  }
+
+  function createOnboardingWorkspace() {
+    const name = $('#newWorkspaceName').value.trim() || '我的研发空间'
+    state.workspaceName = name
+    state.onboardingStage = 'empty-workspace'
+    state.onboardingSkipped = false
+    $('#onboardingSpaceDescription').textContent = $('#newWorkspaceDescription').value.trim() || '用于组织项目和智能协作。'
+    closeWorkspaceCreateModal()
+    renderDemoState()
+    showPage('workspace-home')
+    toast(`空间「${name}」已创建`)
+  }
+
+  function updateProjectManagerOptions() {
+    const ai = $('#projectManagerType').value === 'ai'
+    $('#projectManagerSelect').innerHTML = ai ? `<option>${state.starterAgentName}</option>` : '<option>李明</option>'
+    $('#aiManagerHint').hidden = !ai || !isFirstUse()
+  }
+
+  function createOnboardingProject() {
+    const name = $('#newProjectName').value.trim() || '新协作项目'
+    const aiManager = $('#projectManagerType').value === 'ai'
+    state.projectName = name
+    state.projectManager = aiManager ? `${state.starterAgentName} · AI` : '李明 · 人'
+    state.onboardingStage = 'project-created'
+    $('#projectHeadTitle').textContent = name
+    $('#projectHeadSymbol').textContent = name.slice(0, 1)
+    $('#projectHeadMeta').textContent = `协作项目 · ${state.invitedMember ? '2' : '1'} 位成员`
+    $('#projectManagerName').textContent = state.projectManager
+    $('#projectManagerAvatar').textContent = aiManager ? 'AI' : '李'
+    $('#onboardingProjectNameInput').value = name
+    $('#onboardingProjectManagerInput').value = state.projectManager
+    $('#createProjectModal').hidden = true
+    renderDemoState()
+    showPage('workspace-home')
+    toast(`项目「${name}」已创建，可从空间首页进入`)
+  }
+
+  function openIssueCreateModal() {
+    $('#createIssueModal').hidden = false
+    $('#newIssueTitle').focus()
+  }
+
+  function closeIssueCreateModal() {
+    $('#createIssueModal').hidden = true
+  }
+
+  function createOnboardingIssue() {
+    resetInteractionState()
+    state.issueTitle = $('#newIssueTitle').value.trim() || '完成第一个协作任务'
+    state.issueDescription = $('#newIssueDescription').value.trim() || '完成任务并同步产物。'
+    state.onboardingStage = 'first-issue'
+    state.onboardingSkipped = false
+    $('#firstIssueCardTitle').textContent = state.issueTitle
+    $('#firstIssueTableTitle').textContent = state.issueTitle
+    $('#activityTimeline').innerHTML = `<div class="event"><span class="avatar blue">李</span><div class="event-body"><div class="event-title">李明创建了 Issue</div><div class="event-text">${state.issueDescription}</div><div class="event-time">刚刚</div></div></div>`
+    closeIssueCreateModal()
+    renderDemoState()
+    showPage('project')
+    switchProjectView('board')
+    openIssue()
+    toast('Issue 已创建，下一步把它分配给 AI')
+  }
+
+  function setWorkspaceMenu(open) {
+    $('#workspaceMenu').hidden = !open
+    $('#workspaceSwitch').setAttribute('aria-expanded', String(open))
+  }
+
+  function switchWorkspace(button) {
+    state.workspaceName = button.dataset.workspaceName
+    $('#currentWorkspaceName').textContent = state.workspaceName
+    $('#currentWorkspaceMeta').textContent = button.dataset.workspaceMeta
+    $('#workspaceHomeTitle').textContent = state.workspaceName
+    $$('.workspace-option[data-workspace-name]').forEach((option) => {
+      const active = option === button
+      option.classList.toggle('active', active)
+      option.querySelector('.workspace-check').textContent = active ? '✓' : ''
+    })
+    setWorkspaceMenu(false)
+    showPage('workspace-home')
+    toast(`已切换到「${state.workspaceName}」`)
+  }
+
+  function enterWorkspace(name) {
+    const option = $(`.workspace-option[data-workspace-name="${name}"]`)
+    if (option) switchWorkspace(option)
+  }
+
+  $('#workspaceSwitch').addEventListener('click', (event) => {
+    event.stopPropagation()
+    setWorkspaceMenu($('#workspaceMenu').hidden)
+  })
+  $$('.workspace-option[data-workspace-name]').forEach((button) => {
+    button.addEventListener('click', () => switchWorkspace(button))
+  })
+  $$('[data-enter-workspace]').forEach((button) => {
+    button.addEventListener('click', () => enterWorkspace(button.dataset.enterWorkspace))
+  })
+  $('#onboardingSpaceCard').addEventListener('click', () => showPage('workspace-home'))
+  $('#onboardingWorkspaceOption').addEventListener('click', () => {
+    setWorkspaceMenu(false)
+    showPage('workspace-home')
+  })
+  $('#viewAllWorkspaces').addEventListener('click', () => {
+    setWorkspaceMenu(false)
+    showPage('platform-spaces')
+  })
+  $('#workspaceBack').addEventListener('click', () => showPage('platform-spaces'))
+  $('#createWorkspace').addEventListener('click', () => {
+    setWorkspaceMenu(false)
+    openWorkspaceCreateModal()
+  })
+  $('#joinWorkspace').addEventListener('click', () => {
+    setWorkspaceMenu(false)
+    toast('已打开加入空间入口')
+  })
+  $('#createWorkspacePage').addEventListener('click', openWorkspaceCreateModal)
+  $('#joinWorkspacePage').addEventListener('click', () => toast('已打开加入空间入口'))
+  $('#createFirstWorkspace').addEventListener('click', openWorkspaceCreateModal)
+  $('#joinFirstWorkspace').addEventListener('click', () => toast('已打开加入空间入口'))
+  $$('[data-demo-mode]').forEach((button) => button.addEventListener('click', () => setDemoMode(button.dataset.demoMode)))
+  $$('[data-view]').forEach((button) => button.addEventListener('click', () => showPage(button.dataset.view)))
+  $$('[data-project]').forEach((button) => button.addEventListener('click', openProject))
+  $$('.project-tabs button').forEach((button) => button.addEventListener('click', () => switchProjectView(button.dataset.projectView)))
+  $$('[data-issue]').forEach((node) => node.addEventListener('click', openIssue))
+  $$('.drawer-tabs button').forEach((button) => button.addEventListener('click', () => switchIssueTab(button.dataset.issueTab)))
+  $('#closeIssue').addEventListener('click', closeIssue)
+  $('#issueStatus').addEventListener('change', (event) => {
+    appendEvent('李明更新了状态', `Issue 状态变为「${event.target.value}」。`, '', 'human')
+    toast(`状态已更新为「${event.target.value}」`)
+  })
+  $('#mentionButton').addEventListener('click', (event) => {
+    event.stopPropagation()
+    $('#mentionMenu').hidden = !$('#mentionMenu').hidden
+  })
+  $$('.mention').forEach((button) => button.addEventListener('click', () => {
+    state.mention = { type: button.dataset.mentionType, name: button.dataset.name, device: button.dataset.device || null, runtimeType: button.dataset.runtimeType || 'environment' }
+    $('#mentionMenu').hidden = true
+    $('#commentInput').value = `请 ${button.dataset.name} 处理这个 Issue，并持续同步进展。`
+    toast(`已选择 @${button.dataset.name}`)
+  }))
+  $('#flowButton').addEventListener('click', () => {
+    state.flowStep = !state.flowStep
+    $('#flowChip').hidden = !state.flowStep
+  })
+  $('#flowChip').addEventListener('click', () => { state.flowStep = false; $('#flowChip').hidden = true })
+  $('#sendComment').addEventListener('click', sendComment)
+  $('#commentInput').addEventListener('input', (event) => {
+    if (event.target.value.endsWith('@')) $('#mentionMenu').hidden = false
+  })
+  $('#notificationStart').addEventListener('click', startHumanTask)
+  $('#notificationLater').addEventListener('click', () => { $('#humanNotification').hidden = true })
+  $('#notificationBell').addEventListener('click', () => {
+    if (state.assignment?.type === 'human' && !state.task) $('#humanNotification').hidden = false
+    else toast('当前没有新的通知')
+  })
+  $('#notificationNav').addEventListener('click', () => {
+    if (state.assignment?.type === 'human' && !state.task) $('#humanNotification').hidden = false
+    else toast('当前没有新的通知')
+  })
+  $('#onboardingCreateProject').addEventListener('click', () => {
+    if (!hasProject()) {
+      openCreateModal()
+      return
+    }
+    if (!state.starterAgentCreated) {
+      showResourceSetup('agents', false, true)
+      return
+    }
+    openProject()
+    if (['first-issue', 'ai-running'].includes(state.onboardingStage)) {
+      openIssue()
+      if (state.onboardingStage === 'first-issue') switchIssueTab('activity')
+    }
+  })
+  $('#guideProjectStep').addEventListener('click', () => {
+    if (hasProject()) openProject()
+    else openCreateModal()
+  })
+  $('#guideIssueStep').addEventListener('click', () => {
+    if (!hasProject()) return
+    openProject()
+    if (['first-issue', 'ai-running'].includes(state.onboardingStage)) openIssue()
+    else openIssueCreateModal()
+  })
+  $('#guideAgentStep').addEventListener('click', () => showResourceSetup('agents', false, true))
+  $('#guideExecutionStep').addEventListener('click', (event) => {
+    event.stopPropagation()
+    if (!['first-issue', 'ai-running'].includes(state.onboardingStage)) return
+    openProject()
+    openIssue()
+    switchIssueTab('activity')
+    if (state.onboardingStage === 'first-issue') $('#mentionMenu').hidden = false
+  })
+  $('#startAIAssignment').addEventListener('click', (event) => {
+    event.stopPropagation()
+    openIssue()
+    switchIssueTab('activity')
+    $('#mentionMenu').hidden = false
+  })
+  $('#skipOnboarding').addEventListener('click', () => {
+    state.onboardingSkipped = true
+    renderDemoState()
+    showPage('workspace-home')
+    toast('已跳过上手引导')
+  })
+  $('#onboardingInvite').addEventListener('click', () => showResourceSetup('members'))
+  $('#onboardingConfigureAI').addEventListener('click', () => showResourceSetup('agents', false, hasProject()))
+  $('#projectInviteMember').addEventListener('click', () => showResourceSetup('members'))
+  $('#freshCreateProject').addEventListener('click', openCreateModal)
+  $('#freshCreateProjectEmpty').addEventListener('click', openCreateModal)
+  $('#createProject').addEventListener('click', openCreateModal)
+  $('#createProject2').addEventListener('click', openCreateModal)
+  $('#projectManagerType').addEventListener('change', updateProjectManagerOptions)
+  $('#closeCreate').addEventListener('click', () => { $('#createProjectModal').hidden = true })
+  $('#cancelCreate').addEventListener('click', () => { $('#createProjectModal').hidden = true })
+  $('#confirmCreate').addEventListener('click', () => {
+    if (isFirstUse()) {
+      createOnboardingProject()
+      return
+    }
+    const name = $('#newProjectName').value.trim() || '新协作项目'
+    $('#createProjectModal').hidden = true
+    toast(`已创建「${name}」，进入项目`)
+    openProject()
+  })
+  $('#closeWorkspaceCreate').addEventListener('click', closeWorkspaceCreateModal)
+  $('#cancelWorkspaceCreate').addEventListener('click', closeWorkspaceCreateModal)
+  $('#confirmWorkspaceCreate').addEventListener('click', createOnboardingWorkspace)
+  $('#createFirstIssue').addEventListener('click', () => {
+    if (isFirstUse() && !state.starterAgentCreated) showResourceSetup('agents', false, true)
+    else openIssueCreateModal()
+  })
+  $('#createFirstIssueTop').addEventListener('click', () => {
+    if (isFirstUse() && !state.starterAgentCreated) showResourceSetup('agents', false, true)
+    else openIssueCreateModal()
+  })
+  $$('.onboarding-create-issue').forEach((button) => button.addEventListener('click', openIssueCreateModal))
+  $('#createAnotherIssue').addEventListener('click', openIssueCreateModal)
+  $('#closeIssueCreate').addEventListener('click', closeIssueCreateModal)
+  $('#cancelIssueCreate').addEventListener('click', closeIssueCreateModal)
+  $('#confirmIssueCreate').addEventListener('click', createOnboardingIssue)
+  $('#firstIssueTableRow').addEventListener('click', openIssue)
+  $$('[data-save]').forEach((button) => button.addEventListener('click', () => toast('设置已保存')))
+  $('#resourceCreate').addEventListener('click', () => {
+    const type = state.view.replace('workspace-', '')
+    showResourceSetup(type)
+  })
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('#mentionMenu') && !event.target.closest('#mentionButton')) $('#mentionMenu').hidden = true
+    if (!event.target.closest('#workspaceMenu') && !event.target.closest('#workspaceSwitch')) setWorkspaceMenu(false)
+  })
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return
+    $('#createWorkspaceModal').hidden = true
+    $('#createProjectModal').hidden = true
+    $('#createIssueModal').hidden = true
+    $('#mentionMenu').hidden = true
+    setWorkspaceMenu(false)
+    $('#humanNotification').hidden = true
+  })
+
+  renderAssignment()
+  setDemoMode('first-use')
+</script>
+</body>
+</html>

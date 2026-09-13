@@ -2,6 +2,7 @@ export const DESKTOP_CHECKPOINTS = [
   'remote-device-onboarding',
   'workspace-tabs',
   'cloud-project-creation',
+  'cloud-device-lifecycle',
   'cloud-space-mention',
   'collaboration-shared-core',
   'priority-filter',
