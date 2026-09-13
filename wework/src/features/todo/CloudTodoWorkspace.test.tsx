@@ -676,11 +676,12 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
     setProjectDefault: vi.fn(async () => null),
     selectExecution: vi.fn(),
   }
-  const projectChatAgentApi = {
+  const projectChatAgentApi = workbenchServices.projectChatAgentApi ?? {
     list: vi.fn(async () => []),
     create: vi.fn(),
     update: vi.fn(),
   }
+  workbenchServices.projectChatAgentApi = projectChatAgentApi
   workbenchServices.sharedWorkspaceApi = createWeworkSharedWorkspaceApi({
     client: {
       get: vi.fn(async (url: string) => {
@@ -1010,8 +1011,15 @@ describe('CloudTodoWorkspace', () => {
 
     act(() => {
       publishProjectSpaceTaskBindingChanged({
-        deviceId: 'local-device',
-        taskId: 'runtime-moved-to-board',
+        task: {
+          deviceId: 'local-device',
+          taskId: 'runtime-moved-to-board',
+        },
+        project: {
+          projectStore: 'backend',
+          projectId: String(project.id),
+        },
+        type: 'bound',
       })
     })
 
@@ -2067,6 +2075,24 @@ describe('CloudTodoWorkspace', () => {
     }
     const localItem = { ...item, id: 'LOCAL-1', cloud_project_id: 22 }
     const localServices = services()
+    const createLocalAgent = vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({
+      id: 'offline-local-codex',
+      projectId: String(localProject.id),
+      name: String(input.name),
+      runtime: 'codex' as const,
+      model: null,
+      systemPrompt: String(input.systemPrompt ?? ''),
+      status: 'active' as const,
+      version: 1,
+      createdAt: '2026-09-13T00:00:00Z',
+      updatedAt: '2026-09-13T00:00:00Z',
+      ...input,
+    }))
+    localServices.localProjectChatAgentApi = {
+      list: vi.fn(async () => []),
+      create: createLocalAgent,
+      update: vi.fn(),
+    } as never
     const localApi = localServices.deliveryApi!
     localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
     localApi.listLoopItems = vi.fn(async () => ({ items: [localItem] }))
@@ -2085,6 +2111,7 @@ describe('CloudTodoWorkspace', () => {
       projectSpaceDetailServices: {
         local: {
           deliveryApi: localApi,
+          projectChatAgentApi: localServices.localProjectChatAgentApi,
           deviceApi: localServices.deviceApi,
           modelApi: localServices.modelApi,
           teamApi: localServices.teamApi,
@@ -2107,7 +2134,33 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('cloud-project-settings-files'))
     expect(await screen.findByTestId('cloud-files-upload')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-settings-dispatch'))
-    expect(await screen.findByTestId('project-automation-policy')).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('collaboration-project-dispatch-unavailable')
+    ).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('collaboration-dispatch-configure-agents'))
+    expect(screen.getByTestId('cloud-project-settings-agents')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(await screen.findByTestId('project-agent-config')).toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('project-agent-add'))
+    expect(screen.getByTestId('project-agent-dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-agent-mode-codex'))
+    await userEvent.type(screen.getByTestId('project-agent-codex-name'), 'Offline Codex')
+    await userEvent.selectOptions(
+      screen.getByTestId('project-agent-codex-environment'),
+      'device:local-device'
+    )
+    await userEvent.click(screen.getByTestId('project-agent-codex-create'))
+    expect(createLocalAgent).toHaveBeenCalledWith(
+      localProject.id,
+      expect.objectContaining({
+        name: 'Offline Codex',
+        runtime: 'codex',
+        executionDeviceId: 'local-device',
+      })
+    )
+    expect(await screen.findByTestId('project-agent-row-offline-local-codex')).toBeInTheDocument()
 
     expect(cloudApi.listLoopItems).not.toHaveBeenCalled()
     expect(cloudApi.listCloudProjectMembers).not.toHaveBeenCalled()
@@ -2180,7 +2233,9 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
     await userEvent.click(screen.getByTestId('cloud-project-settings-dispatch'))
-    expect(await screen.findByTestId('project-automation-policy')).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('collaboration-project-dispatch-unavailable')
+    ).toBeInTheDocument()
 
     view.rerender(
       <CloudTodoWorkspace
@@ -2189,7 +2244,7 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
-    expect(screen.getByTestId('project-automation-policy')).toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-project-dispatch-unavailable')).toBeInTheDocument()
   })
 
   it('renames and archives a project from the sidebar menu', async () => {
@@ -3768,7 +3823,26 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('shows assignment and dispatch inside settings for local project spaces', async () => {
-    const workbenchServices = services()
+    const workbenchServices = services({
+      projectChatAgentApi: {
+        list: vi.fn(async () => [
+          {
+            id: 'local-agent',
+            projectId: String(project.id),
+            name: 'Local agent',
+            runtime: 'codex',
+            model: null,
+            systemPrompt: '',
+            status: 'active',
+            version: 1,
+            createdAt: '',
+            updatedAt: '',
+          },
+        ]),
+        create: vi.fn(),
+        update: vi.fn(),
+      } as never,
+    })
     const listCloudProjects = workbenchServices.deliveryApi!.listCloudProjects as ReturnType<
       typeof vi.fn
     >

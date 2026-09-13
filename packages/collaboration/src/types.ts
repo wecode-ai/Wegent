@@ -161,6 +161,13 @@ export interface CollaborationWorkspace {
   updated_at: string;
 }
 
+export interface CollaborationWorkspaceNavigationContext {
+  id: string;
+  public_id: string;
+  location: "cloud";
+  name: string;
+}
+
 export interface CollaborationExecutionEnvironment {
   id: string;
   device_id?: number;

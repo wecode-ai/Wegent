@@ -20,6 +20,7 @@ import type {
   CollaborationRole,
   CollaborationUser,
   CollaborationWorkspace,
+  CollaborationWorkspaceNavigationContext,
 } from "../types";
 
 export interface WorkspacePage<T> {
@@ -420,6 +421,9 @@ export interface SharedWorkspaceAssignmentsApi {
 export interface SharedCollaborationWorkspacesApi {
   list(): Promise<CollaborationWorkspace[]>;
   get(workspaceId: string): Promise<CollaborationWorkspace>;
+  getNavigationContext?(
+    workspaceId: string,
+  ): Promise<CollaborationWorkspaceNavigationContext>;
   create(input: WorkspaceCreateInput): Promise<CollaborationWorkspace>;
   update(
     workspaceId: string,

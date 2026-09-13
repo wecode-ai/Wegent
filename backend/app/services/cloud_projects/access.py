@@ -14,6 +14,7 @@ from app.models.cloud_project import CloudProject
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole, has_permission
+from app.services.cloud_project_visibility import accessible_cloud_projects
 
 
 @dataclass(frozen=True)
@@ -93,11 +94,8 @@ def require_cloud_project_role(
     required_role: BaseRole = BaseRole.Reporter,
 ) -> CloudProjectAccess:
     project = (
-        db.query(CloudProject)
-        .filter(
-            CloudProject.id == cloud_project_id,
-            CloudProject.status == "active",
-        )
+        accessible_cloud_projects(db, user_id)
+        .filter(CloudProject.id == cloud_project_id)
         .first()
     )
     if project is None:

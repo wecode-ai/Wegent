@@ -45,6 +45,11 @@ describe("createSharedWorkspaceHttpApi", () => {
         ],
       })
       .mockResolvedValueOnce({
+        id: "workspace-1",
+        publicId: "workspace-public",
+        name: "研发空间",
+      })
+      .mockResolvedValueOnce({
         items: [
           {
             id: "team-kind-12",
@@ -79,6 +84,14 @@ describe("createSharedWorkspaceHttpApi", () => {
       { id: "workspace-1", access_role: "Owner", member_count: 2 },
     ]);
     await expect(
+      api.workspaces.getNavigationContext?.("workspace/1"),
+    ).resolves.toEqual({
+      id: "workspace-1",
+      public_id: "workspace-public",
+      location: "cloud",
+      name: "研发空间",
+    });
+    await expect(
       api.workspaces.listAgents("workspace/1"),
     ).resolves.toMatchObject([{ id: "12", team_id: 12 }]);
     await expect(api.resources.list()).resolves.toMatchObject({
@@ -91,6 +104,10 @@ describe("createSharedWorkspaceHttpApi", () => {
 
     expect(get).toHaveBeenNthCalledWith(
       2,
+      "/v1/workspaces/workspace%2F1/navigation-context",
+    );
+    expect(get).toHaveBeenNthCalledWith(
+      3,
       "/v1/workspaces/workspace%2F1/agents",
     );
     expect(post).toHaveBeenCalledWith("/v1/workspaces/workspace%2F1/members", {

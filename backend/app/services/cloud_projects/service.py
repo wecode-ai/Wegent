@@ -9,7 +9,6 @@ import re
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,6 +28,7 @@ from app.schemas.cloud_project import (
     CloudProjectUpdate,
     normalize_provider_config,
 )
+from app.services.cloud_project_visibility import accessible_cloud_projects
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_item_status_history import write_status_change
 from app.services.workspaces import workspace_service
@@ -186,31 +186,12 @@ class CloudProjectService:
     ) -> list[CloudProject]:
         if workspace_id is not None:
             require_workspace_role(db, workspace_id, user_id)
-        member_project_ids = select(ResourceMember.resource_id).where(
-            ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED.value,
-        )
-        query = db.query(CloudProject).filter(
-            CloudProject.status == "active",
-            or_(
-                CloudProject.created_by_user_id == user_id,
-                CloudProject.id.in_(member_project_ids),
-                CloudProject.metadata_json["visibility"].as_string() == "public",
-            ),
-        )
+        query = accessible_cloud_projects(db, user_id)
         if workspace_id is not None:
             query = query.filter(
                 CloudProject.id.in_(project_ids_for_workspace(db, workspace_id))
             )
-        return (
-            query.filter(
-                CloudProject.status == "active",
-            )
-            .order_by(CloudProject.updated_at.desc())
-            .all()
-        )
+        return query.order_by(CloudProject.updated_at.desc()).all()
 
     def get(self, db: Session, project_id: int, user_id: int) -> CloudProject:
         return require_cloud_project_role(

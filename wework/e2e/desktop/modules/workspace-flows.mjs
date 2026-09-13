@@ -589,22 +589,46 @@ async function verifyWorkspaceIssueCreation(control) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command(
-    'waitFor',
-    `${boardContentSelector} [data-testid="collaboration-issue-detail"]`,
-    {
-      text: 'WEWORK_DESKTOP_E2E_ISSUE_TITLE',
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+  const issueCardSelector = [
+    `${boardContentSelector} button[data-testid^="cloud-todo-card-"]`,
+    ':not([data-testid^="cloud-todo-card-task-"])',
+    ':not([data-testid^="cloud-todo-card-more-"])',
+    ':not([data-testid^="cloud-todo-card-archive-"])',
+    ':not([data-testid^="cloud-todo-card-add-child-"])',
+  ].join('')
+  await control.command('markElementWithText', issueCardSelector, {
+    text: issueTitle,
+    value: 'workspace-created-issue',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const createdIssueCardSelector = `${boardContentSelector} [data-e2e-anchor-id="workspace-created-issue"]`
+  const createdIssueTestId = await control.command('getAttribute', createdIssueCardSelector, {
+    value: 'data-testid',
+  })
+  assert.match(
+    createdIssueTestId ?? '',
+    /^cloud-todo-card-.+$/,
+    'The newly created Issue did not expose a stable board identity'
+  )
+  const createdIssueId = createdIssueTestId.slice('cloud-todo-card-'.length)
+  const issueDetailSelector = `${boardContentSelector} [data-testid="collaboration-issue-detail"]`
+  await control.command('waitFor', issueDetailSelector, {
+    text: 'WEWORK_DESKTOP_E2E_ISSUE_TITLE',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const openedIssueDetailText = await control.command('getText', issueDetailSelector)
+  assert.ok(
+    openedIssueDetailText.includes(`${projectName} / ${createdIssueId}`),
+    'The opened Issue detail was not bound to the newly created board card'
   )
   const [issueTitleMetrics] = JSON.parse(
     await control.command(
       'getElementMetrics',
-      `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`
+      `${issueDetailSelector} [data-testid="cloud-todo-detail-title"]`
     )
   )
-  const issueDetailDescription = `${boardContentSelector} [data-testid="cloud-todo-detail-description"]`
+  const issueDetailDescription = `${issueDetailSelector} [data-testid="cloud-todo-detail-description"]`
   await waitForControlValueIncludes(
     control,
     issueDetailDescription,
@@ -614,7 +638,7 @@ async function verifyWorkspaceIssueCreation(control) {
   const issueTitleLineHeight = Number.parseFloat(
     await control.command(
       'getComputedStyleValue',
-      `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
+      `${issueDetailSelector} [data-testid="cloud-todo-detail-title"]`,
       { value: 'line-height' }
     )
   )
@@ -633,6 +657,15 @@ async function verifyWorkspaceIssueCreation(control) {
     control,
     'workspace-issue-02-created.png',
     boardContentSelector
+  )
+  const editIssueContentSelector = `${issueDetailSelector} [data-testid="cloud-todo-edit-content"]`
+  await control.command('click', editIssueContentSelector)
+  await waitForAttribute(
+    control,
+    issueDetailDescription,
+    'contenteditable',
+    'true',
+    'The newly created Issue did not enter editable content mode'
   )
   await control.command('fill', issueDetailDescription, {
     value: twoLineIssueDescription,
@@ -1049,7 +1082,11 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const activeTaskConversationSelector = '[data-testid^="cloud-todo-open-task-conversation-"]'
+  const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid^="cloud-todo-open-task-conversation-"]`
+  await control.command(
+    'click',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-toggle-tasks"]`
+  )
   await control.command('waitFor', activeTaskConversationSelector, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1441,8 +1478,8 @@ async function verifyWorkspaceTabIsolation(control) {
   await waitForAttribute(
     control,
     firstWorkspaceAgents,
-    'class',
-    'active',
+    'aria-current',
+    'page',
     'The first project-space tab did not retain its Agents section'
   )
 
@@ -1467,9 +1504,9 @@ async function verifyWorkspaceTabIsolation(control) {
   )
   assert.equal(
     await control.command('getAttribute', firstWorkspaceAgents, {
-      value: 'class',
+      value: 'aria-current',
     }),
-    'active',
+    'page',
     'Opening a second project-space tab reset the first tab workspace section'
   )
   await enterLocalCollaborationWorkspace(control, secondBoardContent)

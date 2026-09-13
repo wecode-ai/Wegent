@@ -15,6 +15,7 @@ import {
   type CollaborationHostAdapter,
   type CollaborationIssue,
   type CollaborationPlatformLocation,
+  type CollaborationProjectRendererWorkspaceContext,
   type CollaborationProject,
   type CollaborationWorkspace,
   type SharedWorkspaceApi,
@@ -54,7 +55,14 @@ import { AiChatModal } from './AiChatModal'
 import { CloudTodoBoardCard, type CloudTodoBoardTaskBinding } from './CloudTodoBoardCard'
 import { projectBoundRuntimeTaskStatuses } from './runtimeMyWork'
 import { TodoEditor } from './TodoEditor'
-import type { LocatedProjectSpace } from './projectSpaceSelection'
+import {
+  projectSpaceForRuntimeTask,
+  publishProjectSpaceTaskBindingChanged,
+  reconcileProjectSpaceTaskBindings,
+  sameProjectSpace,
+  subscribeProjectSpaceTaskBindingChanged,
+  type LocatedProjectSpace,
+} from './projectSpaceSelection'
 import { weworkAutomationUiHost } from './weworkAutomationUiHost'
 
 const initialLocation: CollaborationPlatformLocation = {
@@ -66,14 +74,16 @@ const initialLocation: CollaborationPlatformLocation = {
   issueId: null,
 }
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
-const LOCAL_PROJECT_STATUS_REFRESH_DELAYS_MS = [0, 500, 1_500] as const
+const PROJECT_STATUS_REFRESH_DELAYS_MS = [0, 500, 1_500] as const
 
 // eslint-disable-next-line react-refresh/only-export-components
-export function localProjectRuntimeStatusSignature(
-  runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
+export function projectRuntimeStatusSignature(
+  runtimeTaskLifecycle: RuntimeTaskLifecycleStoreSnapshot | undefined,
+  project: RuntimeProjectSpaceRef
 ): string {
   return [...(runtimeTaskLifecycle?.tasks.entries() ?? [])]
     .flatMap(([key, lifecycle]) => {
+      if (!sameProjectSpace(projectSpaceForRuntimeTask(lifecycle.address), project)) return []
       const status = runtimeTaskTrackingExecutionStatus(lifecycle)
       return status ? [`${key}:${status}`] : []
     })
@@ -571,7 +581,7 @@ export function createWeworkPlatformApi(
   }
 }
 
-function WeworkSharedProject({
+export function WeworkSharedProject({
   api,
   detailServices,
   focusedItemId,
@@ -604,7 +614,7 @@ function WeworkSharedProject({
   services: WorkbenchServices
   setLocation: Dispatch<SetStateAction<CollaborationPlatformLocation>>
   userId: string | number
-  workspace: CollaborationWorkspace
+  workspace: CollaborationProjectRendererWorkspaceContext
 }) {
   const [taskComposer, setTaskComposer] = useState<{
     address?: RuntimeTaskAddress
@@ -613,16 +623,22 @@ function WeworkSharedProject({
   } | null>(null)
   const [pinnedProgressIssueId, setPinnedProgressIssueId] = useState<string | null>(null)
   const [refreshProjectRequestKey, setRefreshProjectRequestKey] = useState(0)
+  const [, setTaskBindingRevision] = useState(0)
   const runtimeTaskLifecycleRef = useRef(runtimeTaskLifecycle)
   useEffect(() => {
     runtimeTaskLifecycleRef.current = runtimeTaskLifecycle
   }, [runtimeTaskLifecycle])
+  const hasFullWorkspaceAccess = 'access_role' in workspace
   const scopedApi = useMemo<SharedWorkspaceApi>(
     () => ({
       ...api,
       projects: {
         ...api.projects,
-        list: () => api.projects.list(workspace.id),
+        list: async () => {
+          if (hasFullWorkspaceAccess) return api.projects.list(workspace.id)
+          const accessibleProjects = await api.projects.list()
+          return accessibleProjects.filter(candidate => String(candidate.id) === String(project.id))
+        },
         create: input =>
           api.projects.create({
             ...input,
@@ -633,6 +649,18 @@ function WeworkSharedProject({
         ...api.issues,
         async getBoardSnapshot(projectId) {
           const snapshot = await api.issues.getBoardSnapshot(projectId)
+          const currentProject = {
+            projectStore: project.project_store,
+            projectId: String(project.id),
+          }
+          const bindingsChanged = reconcileProjectSpaceTaskBindings(
+            currentProject,
+            snapshot.taskBindings.map(binding => ({
+              deviceId: binding.deviceId,
+              taskId: binding.taskId,
+            }))
+          )
+          if (bindingsChanged) setTaskBindingRevision(value => value + 1)
           if (project.project_store !== 'local') return snapshot
           return {
             ...snapshot,
@@ -649,7 +677,7 @@ function WeworkSharedProject({
         },
       },
     }),
-    [api, project.project_store, workspace.id]
+    [api, hasFullWorkspaceAccess, project.id, project.project_store, workspace.id]
   )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
@@ -718,14 +746,14 @@ function WeworkSharedProject({
     }
     return running
   }, [runtimeTaskLifecycle, runtimeWork])
-  const runtimeTaskStatusSignature = useMemo(
-    () => localProjectRuntimeStatusSignature(runtimeTaskLifecycle),
-    [runtimeTaskLifecycle]
-  )
+  const runtimeTaskStatusSignature = projectRuntimeStatusSignature(runtimeTaskLifecycle, {
+    projectStore: project.project_store,
+    projectId: String(project.id),
+  })
 
   useEffect(() => {
-    if (project.project_store !== 'local' || !runtimeTaskStatusSignature) return
-    const timeouts = LOCAL_PROJECT_STATUS_REFRESH_DELAYS_MS.map(delay =>
+    if (!runtimeTaskStatusSignature) return
+    const timeouts = PROJECT_STATUS_REFRESH_DELAYS_MS.map(delay =>
       window.setTimeout(() => {
         setRefreshProjectRequestKey(value => value + 1)
       }, delay)
@@ -733,7 +761,24 @@ function WeworkSharedProject({
     return () => {
       for (const timeout of timeouts) window.clearTimeout(timeout)
     }
-  }, [project.project_store, runtimeTaskStatusSignature])
+  }, [runtimeTaskStatusSignature])
+
+  useEffect(
+    () =>
+      subscribeProjectSpaceTaskBindingChanged(change => {
+        if (
+          !sameProjectSpace(change.project, {
+            projectStore: project.project_store,
+            projectId: String(project.id),
+          })
+        ) {
+          return
+        }
+        setTaskBindingRevision(value => value + 1)
+        setRefreshProjectRequestKey(value => value + 1)
+      }),
+    [project.id, project.project_store]
+  )
 
   return (
     <div className="flex h-full min-h-0 min-w-0">
@@ -911,7 +956,23 @@ function WeworkSharedProject({
               taskComposer.issue.title,
               taskComposer.workflowStep
             )
-            return () => runtimePort.unbindTask(taskComposer.issue.id, address)
+            const projectRef = {
+              projectStore: project.project_store,
+              projectId: String(project.id),
+            }
+            publishProjectSpaceTaskBindingChanged({
+              task: address,
+              project: projectRef,
+              type: 'bound',
+            })
+            return async () => {
+              await runtimePort.unbindTask(taskComposer.issue.id, address)
+              publishProjectSpaceTaskBindingChanged({
+                task: address,
+                project: projectRef,
+                type: 'unbound',
+              })
+            }
           }}
           onTaskCreated={async address => {
             setTaskComposer(current => (current ? { ...current, address } : current))

@@ -16,6 +16,7 @@ import type {
   CollaborationOwnedAgent,
   CollaborationPlatformResources,
   CollaborationWorkspace,
+  CollaborationWorkspaceNavigationContext,
 } from "../types";
 
 type WorkspaceDto = object | Record<string, unknown>;
@@ -272,6 +273,18 @@ export function mapCollaborationWorkspaceDto(
     version: Number(row.version ?? 0),
     created_at: String(row.created_at ?? row.createdAt ?? ""),
     updated_at: String(row.updated_at ?? row.updatedAt ?? ""),
+  };
+}
+
+export function mapCollaborationWorkspaceNavigationContextDto(
+  input: WorkspaceDto,
+): CollaborationWorkspaceNavigationContext {
+  const row = asRecord(input);
+  return {
+    id: String(row.id),
+    public_id: String(row.public_id ?? row.publicId ?? ""),
+    location: "cloud",
+    name: String(row.name ?? ""),
   };
 }
 

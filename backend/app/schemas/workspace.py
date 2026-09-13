@@ -57,6 +57,14 @@ class WorkspaceListResponse(BaseModel):
     items: list[WorkspaceResponse]
 
 
+class WorkspaceNavigationContextResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: SnowflakeId
+    public_id: str
+    name: str
+
+
 class WorkspaceMemberCreate(BaseModel):
     user_id: int = Field(ge=1)
     role: BaseRole = BaseRole.Developer

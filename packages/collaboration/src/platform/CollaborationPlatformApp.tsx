@@ -27,6 +27,7 @@ import type {
   CollaborationOwnedAgent,
   CollaborationProject,
   CollaborationWorkspace,
+  CollaborationWorkspaceNavigationContext,
 } from "../types";
 import {
   filterCollaborationWorkspaces,
@@ -165,6 +166,15 @@ const platformMessages = {
 
 type PlatformMessages = (typeof platformMessages)[CollaborationLocale];
 
+export type CollaborationProjectRendererWorkspaceContext =
+  | CollaborationWorkspace
+  | CollaborationWorkspaceNavigationContext;
+
+export interface CollaborationProjectRendererContext {
+  project: CollaborationProject;
+  workspace: CollaborationProjectRendererWorkspaceContext;
+}
+
 function navigateWithin(
   host: CollaborationPlatformHostAdapter,
   patch: Partial<CollaborationPlatformLocation>,
@@ -176,6 +186,7 @@ function CollaborationPlatformNavigation({
   host,
   messages,
   workspaces,
+  workspaceNavigationContext,
   projects,
   onCreateWorkspace,
   footer,
@@ -183,16 +194,33 @@ function CollaborationPlatformNavigation({
   host: CollaborationPlatformHostAdapter;
   messages: PlatformMessages;
   workspaces: CollaborationWorkspace[];
+  workspaceNavigationContext: CollaborationWorkspaceNavigationContext | null;
   projects: CollaborationProject[];
   onCreateWorkspace(): void;
   footer?: React.ReactNode;
 }) {
+  const navigationWorkspaces = useMemo(
+    () =>
+      workspaceNavigationContext
+        ? [
+            ...workspaces.map((workspace) => ({ workspace, canOpen: true })),
+            ...(workspaces.some(
+              (workspace) => workspace.id === workspaceNavigationContext.id,
+            )
+              ? []
+              : [{ workspace: workspaceNavigationContext, canOpen: false }]),
+          ]
+        : workspaces.map((workspace) => ({ workspace, canOpen: true })),
+    [workspaceNavigationContext, workspaces],
+  );
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
     () =>
       new Set(
         host.location.workspaceId
           ? [host.location.workspaceId]
-          : workspaces.slice(0, 1).map((workspace) => workspace.id),
+          : navigationWorkspaces
+              .slice(0, 1)
+              .map(({ workspace }) => workspace.id),
       ),
   );
   const [workspacesExpanded, setWorkspacesExpanded] = useState(true);
@@ -201,13 +229,14 @@ function CollaborationPlatformNavigation({
   const collaborationMenuRef = useRef<HTMLDivElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const workspaceId = host.location.workspaceId ?? workspaces[0]?.id;
+    const workspaceId =
+      host.location.workspaceId ?? navigationWorkspaces[0]?.workspace.id;
     if (!workspaceId) return;
     setExpandedWorkspaceIds((current) => {
       if (current.has(workspaceId)) return current;
       return new Set([...current, workspaceId]);
     });
-  }, [host.location.workspaceId, workspaces]);
+  }, [host.location.workspaceId, navigationWorkspaces]);
   useEffect(() => {
     if (!collaborationMenuOpen) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
@@ -336,7 +365,7 @@ function CollaborationPlatformNavigation({
       </div>
       {workspacesExpanded ? (
         <div className="collaboration-workspace-tree">
-          {workspaces.map((candidate) => {
+          {navigationWorkspaces.map(({ workspace: candidate, canOpen }) => {
             const expanded = expandedWorkspaceIds.has(candidate.id);
             const candidateProjects = projects.filter(
               (project) => project.workspace_id === candidate.id,
@@ -345,8 +374,10 @@ function CollaborationPlatformNavigation({
               host.location.workspaceId === candidate.id &&
               !host.location.projectId;
             const canManageWorkspace =
-              candidate.access_role === "Owner" ||
-              candidate.access_role === "Maintainer";
+              canOpen &&
+              "access_role" in candidate &&
+              (candidate.access_role === "Owner" ||
+                candidate.access_role === "Maintainer");
             const menuOpen = workspaceMenuId === candidate.id;
             return (
               <section
@@ -359,27 +390,44 @@ function CollaborationPlatformNavigation({
                     workspaceActive ? " active" : ""
                   }${canManageWorkspace ? " has-actions" : ""}`}
                 >
-                  <button
-                    type="button"
-                    className="collaboration-workspace-identity"
-                    data-testid={
-                      host.location.workspaceId === candidate.id
-                        ? "collaboration-workspace-nav-projects"
-                        : `collaboration-workspace-home-${candidate.id}`
-                    }
-                    aria-current={workspaceActive ? "page" : undefined}
-                    onClick={() => openWorkspaceHome(candidate.id)}
-                  >
-                    <span
-                      className="collaboration-workspace-folder"
-                      aria-hidden="true"
+                  {canOpen ? (
+                    <button
+                      type="button"
+                      className="collaboration-workspace-identity"
+                      data-testid={
+                        host.location.workspaceId === candidate.id
+                          ? "collaboration-workspace-nav-projects"
+                          : `collaboration-workspace-home-${candidate.id}`
+                      }
+                      aria-current={workspaceActive ? "page" : undefined}
+                      onClick={() => openWorkspaceHome(candidate.id)}
                     >
-                      <FolderOpen />
-                    </span>
-                    <span className="collaboration-workspace-title">
-                      {candidate.name}
-                    </span>
-                  </button>
+                      <span
+                        className="collaboration-workspace-folder"
+                        aria-hidden="true"
+                      >
+                        <FolderOpen />
+                      </span>
+                      <span className="collaboration-workspace-title">
+                        {candidate.name}
+                      </span>
+                    </button>
+                  ) : (
+                    <div
+                      className="collaboration-workspace-identity"
+                      data-testid="collaboration-project-parent-workspace-context"
+                    >
+                      <span
+                        className="collaboration-workspace-folder"
+                        aria-hidden="true"
+                      >
+                        <FolderOpen />
+                      </span>
+                      <span className="collaboration-workspace-title">
+                        {candidate.name}
+                      </span>
+                    </div>
+                  )}
                   <button
                     type="button"
                     className="collaboration-workspace-toggle"
@@ -769,10 +817,7 @@ export function CollaborationPlatformApp({
     workflowStep?: string,
   ): void;
   onReady?(): void;
-  renderProject?(context: {
-    project: CollaborationProject;
-    workspace: CollaborationWorkspace;
-  }): React.ReactNode;
+  renderProject?(context: CollaborationProjectRendererContext): React.ReactNode;
   renderShell?(shell: {
     main: React.ReactNode;
     sidebar: React.ReactNode;
@@ -800,15 +845,28 @@ export function CollaborationPlatformApp({
   const scopedApi = useMemo<SharedWorkspaceApi>(() => {
     if (!host.location.workspaceId) return api;
     const workspaceId = host.location.workspaceId;
+    const projectId = host.location.projectId;
+    const hasFullWorkspaceAccess = state.workspace?.id === workspaceId;
     return {
       ...api,
       projects: {
         ...api.projects,
-        list: () => api.projects.list(workspaceId),
+        list: async () => {
+          const projects = await (hasFullWorkspaceAccess
+            ? api.projects.list(workspaceId)
+            : api.projects.list());
+          if (hasFullWorkspaceAccess || !projectId) return projects;
+          return projects.filter((project) => project.id === projectId);
+        },
         create: (input) => api.projects.create({ ...input, workspaceId }),
       },
     };
-  }, [api, host.location.workspaceId]);
+  }, [
+    api,
+    host.location.projectId,
+    host.location.workspaceId,
+    state.workspace,
+  ]);
   const projectResourceAgents = useMemo(() => {
     const agents = new Map<number, CollaborationOwnedAgent>();
     for (const agent of [...state.resources.agents, ...state.agents]) {
@@ -849,14 +907,19 @@ export function CollaborationPlatformApp({
         {state.error}
       </div>
     );
-  } else if (host.location.projectId && state.workspace) {
+  } else if (
+    host.location.projectId &&
+    (state.workspace || state.workspaceNavigationContext)
+  ) {
+    const workspaceContext =
+      state.workspace ?? state.workspaceNavigationContext;
     const selectedProject =
       state.projects.find(
         (project) => String(project.id) === host.location.projectId,
       ) ?? null;
     content =
-      selectedProject && renderProject ? (
-        renderProject({ project: selectedProject, workspace: state.workspace })
+      selectedProject && renderProject && workspaceContext ? (
+        renderProject({ project: selectedProject, workspace: workspaceContext })
       ) : (
         <CollaborationApp
           api={scopedApi}
@@ -1278,6 +1341,7 @@ export function CollaborationPlatformApp({
       host={host}
       messages={messages}
       workspaces={state.workspaces}
+      workspaceNavigationContext={state.workspaceNavigationContext}
       projects={state.navigationProjects}
       onCreateWorkspace={() => setWorkspaceDialogOpen(true)}
       footer={sidebarFooter}

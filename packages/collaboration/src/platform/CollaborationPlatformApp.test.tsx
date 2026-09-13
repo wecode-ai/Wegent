@@ -21,7 +21,10 @@ import type {
   CollaborationProject,
   CollaborationWorkspace,
 } from "../types";
-import { CollaborationPlatformApp } from "./CollaborationPlatformApp";
+import {
+  CollaborationPlatformApp,
+  type CollaborationProjectRendererContext,
+} from "./CollaborationPlatformApp";
 import type {
   CollaborationPlatformHostAdapter,
   CollaborationPlatformLocation,
@@ -567,6 +570,7 @@ function PlatformHarness({
   onReady,
   notify,
   manageResource,
+  renderProject,
   capabilities = { automation: false, dingtalkAitable: false },
 }: {
   api: SharedWorkspaceApi;
@@ -574,6 +578,7 @@ function PlatformHarness({
   onReady?(): void;
   notify?: CollaborationPlatformHostAdapter["notify"];
   manageResource?: CollaborationPlatformHostAdapter["manageResource"];
+  renderProject?(context: CollaborationProjectRendererContext): ReactNode;
   capabilities?: CollaborationPlatformHostAdapter["capabilities"];
 }) {
   const [location, setLocation] = useState(start);
@@ -587,7 +592,12 @@ function PlatformHarness({
   return (
     <>
       <output data-testid="test-location">{JSON.stringify(location)}</output>
-      <CollaborationPlatformApp api={api} host={host} onReady={onReady} />
+      <CollaborationPlatformApp
+        api={api}
+        host={host}
+        onReady={onReady}
+        renderProject={renderProject}
+      />
     </>
   );
 }
@@ -867,6 +877,152 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect(api.workspaces?.update).not.toHaveBeenCalled();
     },
   );
+
+  it("passes the minimal parent context to a custom restricted project renderer", async () => {
+    const restrictedProject = {
+      ...project,
+      access_role: "RestrictedAnalyst" as const,
+    };
+    const { api } = createApi({
+      initialWorkspaces: [],
+      initialProjects: [restrictedProject],
+    });
+    api.workspaces!.getNavigationContext = vi.fn(async () => ({
+      id: workspace.id,
+      public_id: "workspace-public",
+      location: "cloud",
+      name: workspace.name,
+    }));
+    api.workspaces!.listMembers = vi.fn(async () => {
+      throw new Error("Workspace not found");
+    });
+    api.workspaces!.listAgents = vi.fn(async () => {
+      throw new Error("Workspace not found");
+    });
+    api.workspaces!.listExecutionEnvironments = vi.fn(async () => {
+      throw new Error("Workspace not found");
+    });
+    const renderProject = vi.fn(
+      ({ project: renderedProject, workspace: workspaceContext }) => (
+        <div data-testid="restricted-custom-project">
+          {renderedProject.name}:{workspaceContext.name}
+        </div>
+      ),
+    );
+
+    await render(
+      <PlatformHarness
+        api={api}
+        renderProject={renderProject}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          workspaceView: "projects",
+          projectId: restrictedProject.id,
+          projectView: "board",
+        }}
+      />,
+    );
+
+    expect(byTestId("restricted-custom-project").textContent).toBe(
+      `${restrictedProject.name}:${workspace.name}`,
+    );
+    expect(renderProject).toHaveBeenCalledOnce();
+    expect(renderProject).toHaveBeenCalledWith({
+      project: restrictedProject,
+      workspace: {
+        id: workspace.id,
+        public_id: "workspace-public",
+        location: "cloud",
+        name: workspace.name,
+      },
+    });
+    expect(
+      container.querySelector('[data-testid="collaboration-board"]'),
+    ).toBeNull();
+    expect(
+      byTestId(`collaboration-workspace-project-${project.id}`),
+    ).toBeTruthy();
+    expect(api.workspaces!.get).not.toHaveBeenCalled();
+    expect(api.workspaces!.getNavigationContext).toHaveBeenCalledWith(
+      workspace.id,
+    );
+    expect(api.workspaces!.listMembers).not.toHaveBeenCalled();
+    expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
+    expect(api.workspaces!.listExecutionEnvironments).not.toHaveBeenCalled();
+    expect(api.resources!.list).not.toHaveBeenCalled();
+
+    const parentContext = byTestId(
+      "collaboration-project-parent-workspace-context",
+    );
+    expect(parentContext.tagName).toBe("DIV");
+    const locationBeforeClick = byTestId("test-location").textContent;
+    await click(parentContext);
+    expect(byTestId("test-location").textContent).toBe(locationBeforeClick);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(api.workspaces!.listMembers).not.toHaveBeenCalled();
+  });
+
+  it("keeps the default restricted project renderer and management tabs hidden", async () => {
+    const restrictedProject = {
+      ...project,
+      access_role: "RestrictedAnalyst" as const,
+    };
+    const otherProject = {
+      ...project,
+      id: "project-2",
+      public_id: "project-public-2",
+      project_key: "OTHER",
+      name: "其他已授权项目",
+    };
+    const { api } = createApi({
+      initialWorkspaces: [],
+      initialProjects: [restrictedProject, otherProject],
+    });
+    api.workspaces!.getNavigationContext = vi.fn(async () => ({
+      id: workspace.id,
+      public_id: "workspace-public",
+      location: "cloud",
+      name: workspace.name,
+    }));
+    api.projects.list = vi.fn(async (workspaceId?: string) => {
+      if (workspaceId) throw new Error("Workspace not found");
+      return [restrictedProject, otherProject];
+    });
+
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          workspaceView: "projects",
+          projectId: restrictedProject.id,
+          projectView: "board",
+        }}
+      />,
+    );
+
+    expect(byTestId("collaboration-board")).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="collaboration-tab-files"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="collaboration-tab-automation"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="collaboration-tab-manage"]'),
+    ).toBeNull();
+    expect(
+      byTestId("collaboration-project-parent-workspace-context").tagName,
+    ).toBe("DIV");
+    expect(api.projects.list).not.toHaveBeenCalledWith(workspace.id);
+    expect(api.projects.list).toHaveBeenCalledTimes(2);
+    expect(api.projects.list).toHaveBeenNthCalledWith(1);
+    expect(api.projects.list).toHaveBeenNthCalledWith(2);
+    expect(api.projects.get).not.toHaveBeenCalledWith(otherProject.id);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
 
   it("does not let an older location request overwrite a newer workspace", async () => {
     const oldWorkspace = { ...workspace, id: "workspace-old", name: "旧空间" };
