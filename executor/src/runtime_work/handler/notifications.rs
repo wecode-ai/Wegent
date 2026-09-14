@@ -357,12 +357,33 @@ impl RuntimeWorkRpcHandler {
             self.promote_pending_thread_event_route(&thread_id);
         }
 
-        let mut routes = self
-            .thread_event_routes
+        let child_thread_ids = codex_spawned_child_thread_ids(&message);
+        let mut routing = self
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned");
-        let Some(route) = routes.get(&thread_id) else {
-            debug_unrouted_codex_notification(&message, "missing_route");
+            .expect("thread event routing lock should not be poisoned");
+        let Some(route) = routing.routes.get(&thread_id) else {
+            debug_unrouted_codex_notification(&message, "route_pending");
+            let dropped = if routing.pending_notifications.len() >= MAX_PENDING_CODEX_NOTIFICATIONS
+            {
+                routing.pending_notifications.pop_front()
+            } else {
+                None
+            };
+            routing
+                .pending_notifications
+                .push_back(PendingCodexNotification { thread_id, message });
+            drop(routing);
+            if let Some(dropped) = dropped {
+                let notification = codex_notification(&dropped.message);
+                log_executor_event(
+                    "runtime work pending codex notification dropped",
+                    &[
+                        ("thread_id", dropped.thread_id),
+                        ("method", notification.method),
+                    ],
+                );
+            }
             return;
         };
         let local_task_id = route.local_task_id.clone();
@@ -392,9 +413,10 @@ impl RuntimeWorkRpcHandler {
                 ],
             );
         }
-        for child_thread_id in codex_spawned_child_thread_ids(&message) {
-            routes
-                .entry(child_thread_id)
+        for child_thread_id in &child_thread_ids {
+            routing
+                .routes
+                .entry(child_thread_id.clone())
                 .or_insert_with(|| RuntimeThreadEventRoute {
                     local_task_id: local_task_id.clone(),
                     request: route_request.clone(),
@@ -403,50 +425,63 @@ impl RuntimeWorkRpcHandler {
                     nested: true,
                 });
         }
-        if self.is_active_local_task(&local_task_id) {
+        let pending_notifications =
+            take_pending_codex_notifications(&mut routing, &child_thread_ids);
+        let skip_active_notification = if self.is_active_local_task(&local_task_id) {
             let Some(active_turn) = self.active_codex_turn(&local_task_id) else {
+                drop(routing);
+                self.replay_codex_notifications(pending_notifications);
                 return;
             };
             let Some(notification_turn_id) = notification_turn_id.as_deref() else {
+                drop(routing);
+                self.replay_codex_notifications(pending_notifications);
                 return;
             };
             if notification_turn_id == active_turn.turn_id {
-                return;
+                true
+            } else {
+                log_executor_event(
+                    "runtime work routes non-active turn notification",
+                    &[
+                        ("thread_id", thread_id.clone()),
+                        ("active_turn_id", active_turn.turn_id),
+                        ("notification_turn_id", notification_turn_id.to_owned()),
+                    ],
+                );
+                false
             }
-            log_executor_event(
-                "runtime work routes non-active turn notification",
-                &[
-                    ("thread_id", thread_id.clone()),
-                    ("active_turn_id", active_turn.turn_id),
-                    ("notification_turn_id", notification_turn_id.to_owned()),
-                ],
-            );
-        }
+        } else {
+            false
+        };
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
             self.register_codex_thread_workspace_root(&started_thread_id, &route_request);
         }
-        drop(routes);
+        drop(routing);
 
-        let mut event_request = route_request;
-        if !route_nested && !is_context_compaction_request(&event_request) {
-            if let Some(turn_id) = notification_turn_id {
-                if event_request.subtask_id != turn_id {
-                    event_request.subtask_id = turn_id;
-                    event_request.extra.remove("client_user_message_id");
-                    event_request.extra.remove("clientUserMessageId");
+        if !skip_active_notification {
+            let mut event_request = route_request;
+            if !route_nested && !is_context_compaction_request(&event_request) {
+                if let Some(turn_id) = notification_turn_id {
+                    if event_request.subtask_id != turn_id {
+                        event_request.subtask_id = turn_id;
+                        event_request.extra.remove("client_user_message_id");
+                        event_request.extra.remove("clientUserMessageId");
+                    }
                 }
             }
+            event_mapper
+                .lock()
+                .expect("thread event mapper lock should not be poisoned")
+                .map(
+                    &self.event_tx,
+                    &self.device_id,
+                    &local_task_id,
+                    &event_request,
+                    message,
+                );
         }
-        event_mapper
-            .lock()
-            .expect("thread event mapper lock should not be poisoned")
-            .map(
-                &self.event_tx,
-                &self.device_id,
-                &local_task_id,
-                &event_request,
-                message,
-            );
+        self.replay_codex_notifications(pending_notifications);
     }
 
     pub(super) fn register_thread_event_route(
@@ -466,13 +501,14 @@ impl RuntimeWorkRpcHandler {
             clear_runtime_handle_messages(&mut link.runtime_handle);
         });
         let pending_id = pending_thread_event_route_id(&local_task_id);
-        let mut routes = self
-            .thread_event_routes
+        let mut routing = self
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned");
-        let existing = routes
+            .expect("thread event routing lock should not be poisoned");
+        let existing = routing
+            .routes
             .remove(thread_id)
-            .or_else(|| routes.remove(&pending_id));
+            .or_else(|| routing.routes.remove(&pending_id));
         let mut route = existing.unwrap_or_else(|| {
             RuntimeThreadEventRoute::new(local_task_id.clone(), request.clone(), active)
         });
@@ -494,7 +530,11 @@ impl RuntimeWorkRpcHandler {
         }
         route.active = route.active || active;
         route.nested = false;
-        routes.insert(thread_id.to_owned(), route);
+        routing.routes.insert(thread_id.to_owned(), route);
+        let pending_notifications =
+            take_pending_codex_notifications(&mut routing, &[thread_id.to_owned()]);
+        drop(routing);
+        self.replay_codex_notifications(pending_notifications);
     }
 
     pub(super) fn repair_legacy_task_activity_time(&self, local_task_id: &str, thread: &Value) {
@@ -519,16 +559,16 @@ impl RuntimeWorkRpcHandler {
         request: ExecutionRequest,
     ) {
         let pending_id = pending_thread_event_route_id(&local_task_id);
-        let mut routes = self
-            .thread_event_routes
+        let mut routing = self
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned");
-        if let Some(route) = routes.get_mut(&pending_id) {
+            .expect("thread event routing lock should not be poisoned");
+        if let Some(route) = routing.routes.get_mut(&pending_id) {
             route.request = request;
             route.active = true;
             return;
         }
-        routes.insert(
+        routing.routes.insert(
             pending_id,
             RuntimeThreadEventRoute::new(local_task_id, request, true),
         );
@@ -572,9 +612,10 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn thread_event_route_exists(&self, thread_id: &str) -> bool {
-        self.thread_event_routes
+        self.thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned")
+            .expect("thread event routing lock should not be poisoned")
+            .routes
             .contains_key(thread_id)
     }
 
@@ -583,14 +624,15 @@ impl RuntimeWorkRpcHandler {
             return false;
         }
 
-        let mut routes = self
-            .thread_event_routes
+        let mut routing = self
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned");
-        if routes.contains_key(thread_id) {
+            .expect("thread event routing lock should not be poisoned");
+        if routing.routes.contains_key(thread_id) {
             return true;
         }
-        let mut pending_route_ids = routes
+        let mut pending_route_ids = routing
+            .routes
             .iter()
             .filter(|(route_id, route)| is_pending_thread_event_route_id(route_id) && route.active)
             .map(|(route_id, _)| route_id.clone());
@@ -600,7 +642,7 @@ impl RuntimeWorkRpcHandler {
         if pending_route_ids.next().is_some() {
             return false;
         }
-        let Some(mut route) = routes.remove(&pending_route_id) else {
+        let Some(mut route) = routing.routes.remove(&pending_route_id) else {
             return false;
         };
         route
@@ -610,23 +652,27 @@ impl RuntimeWorkRpcHandler {
             .observe_root_thread_id(thread_id);
         route.nested = false;
         let local_task_id = route.local_task_id.clone();
-        routes.insert(thread_id.to_owned(), route);
-        drop(routes);
+        routing.routes.insert(thread_id.to_owned(), route);
+        let pending_notifications =
+            take_pending_codex_notifications(&mut routing, &[thread_id.to_owned()]);
+        drop(routing);
 
         self.store.update_task(&local_task_id, |link| {
             link.thread_id = Some(thread_id.to_owned());
             clear_runtime_handle_messages(&mut link.runtime_handle);
             link.updated_at = now_ms();
         });
+        self.replay_codex_notifications(pending_notifications);
         true
     }
 
     pub(super) fn unscoped_route_thread_id(&self) -> Option<String> {
-        let routes = self
-            .thread_event_routes
+        let routing = self
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned");
-        let mut active_routes = routes
+            .expect("thread event routing lock should not be poisoned");
+        let mut active_routes = routing
+            .routes
             .iter()
             .filter(|(_, route)| route.active)
             .map(|(thread_id, _)| thread_id.clone());
@@ -637,7 +683,7 @@ impl RuntimeWorkRpcHandler {
             return Some(thread_id);
         }
 
-        let mut route_ids = routes.keys().cloned();
+        let mut route_ids = routing.routes.keys().cloned();
         let thread_id = route_ids.next()?;
         if route_ids.next().is_some() {
             None
@@ -648,9 +694,10 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn mark_thread_event_route_idle(&self, thread_id: &str) {
         if let Some(route) = self
-            .thread_event_routes
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned")
+            .expect("thread event routing lock should not be poisoned")
+            .routes
             .get_mut(thread_id)
         {
             route.active = false;
@@ -658,17 +705,22 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn remove_thread_event_route(&self, thread_id: &str) {
-        self.thread_event_routes
+        let mut routing = self
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned")
-            .remove(thread_id);
+            .expect("thread event routing lock should not be poisoned");
+        routing.routes.remove(thread_id);
+        routing
+            .pending_notifications
+            .retain(|notification| notification.thread_id != thread_id);
     }
 
     pub(super) fn mark_thread_event_routes_idle_for_local_task(&self, local_task_id: &str) {
         for route in self
-            .thread_event_routes
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned")
+            .expect("thread event routing lock should not be poisoned")
+            .routes
             .values_mut()
         {
             if route.local_task_id == local_task_id {
@@ -676,6 +728,35 @@ impl RuntimeWorkRpcHandler {
             }
         }
     }
+
+    fn replay_codex_notifications(&self, notifications: Vec<Value>) {
+        for notification in notifications {
+            self.route_codex_notification(notification);
+        }
+    }
+}
+
+fn take_pending_codex_notifications(
+    routing: &mut RuntimeThreadEventRouting,
+    thread_ids: &[String],
+) -> Vec<Value> {
+    if thread_ids.is_empty() || routing.pending_notifications.is_empty() {
+        return Vec::new();
+    }
+    let thread_ids = thread_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let mut pending = Vec::new();
+    routing.pending_notifications.retain(|notification| {
+        if thread_ids.contains(notification.thread_id.as_str()) {
+            pending.push(notification.message.clone());
+            false
+        } else {
+            true
+        }
+    });
+    pending
 }
 
 fn codex_spawned_child_thread_ids(message: &Value) -> Vec<String> {

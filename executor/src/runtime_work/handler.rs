@@ -214,6 +214,7 @@ const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
 const MIN_MAX_CONCURRENT_TASKS: usize = 1;
 const MAX_MAX_CONCURRENT_TASKS: usize = 20;
+const MAX_PENDING_CODEX_NOTIFICATIONS: usize = 256;
 
 fn restore_startup_concurrency(max_concurrent_tasks: usize) -> usize {
     let configured = env::var(RESTORE_STARTUP_CONCURRENCY_ENV)
@@ -570,7 +571,7 @@ pub struct RuntimeWorkRpcHandler {
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
-    thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
+    thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     automation_store: AutomationStore,
@@ -656,6 +657,17 @@ struct RuntimeThreadEventRoute {
     event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,
     active: bool,
     nested: bool,
+}
+
+#[derive(Default)]
+struct RuntimeThreadEventRouting {
+    routes: HashMap<String, RuntimeThreadEventRoute>,
+    pending_notifications: VecDeque<PendingCodexNotification>,
+}
+
+struct PendingCodexNotification {
+    thread_id: String,
+    message: Value,
 }
 
 struct ScheduledTurnGuard {
@@ -812,7 +824,7 @@ impl RuntimeWorkRpcHandler {
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
-            thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
+            thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
             automation_store: AutomationStore::from_env(),
