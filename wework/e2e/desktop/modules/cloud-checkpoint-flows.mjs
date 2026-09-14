@@ -52,6 +52,7 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
+  REMOTE_DOCKER_DEVICE_ID,
   SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -683,6 +684,12 @@ async function verifyCloudCheckpoint({
       setPhase('cloud-automation-lifecycle')
       await ensureExperimentalFeaturesEnabled(control)
       await verifyCloudAutomationLifecycle(control, CLOUD_DEVICE_ID)
+      setPhase('remote-docker-automation-lifecycle')
+      await verifyCloudAutomationLifecycle(control, REMOTE_DOCKER_DEVICE_ID, {
+        automationSuffix: 'Remote Docker',
+        deviceName: 'Wework E2E Remote Docker Device',
+        expectedCompletionIndex: 2,
+      })
       return
     case 'model-routing':
       setPhase('cloud-model-routing')
