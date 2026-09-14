@@ -212,8 +212,8 @@ function getSystemQuickLaunchFunctionId(selection: QuickPresetSelection): string
 interface ChatAreaProps {
   teams: Team[]
   isTeamsLoading: boolean
-  /** True when loading the team list failed, so the UI can offer a retry. */
-  isTeamsError?: boolean
+  /** Error from the latest failed team list load, so the UI can offer a retry. */
+  loadError?: Error | null
   selectedTeamForNewTask?: Team | null
   showRepositorySelector?: boolean
   taskType?: TaskType
@@ -264,7 +264,7 @@ interface ChatAreaProps {
 function ChatAreaContent({
   teams,
   isTeamsLoading,
-  isTeamsError = false,
+  loadError = null,
   selectedTeamForNewTask,
   showRepositorySelector = true,
   taskType = 'chat',
@@ -2625,7 +2625,7 @@ function ChatAreaContent({
                   currentMode={teamModeFilter}
                   isLoading={isTeamsLoading}
                   isTeamsLoading={isTeamsLoading}
-                  isTeamsError={isTeamsError}
+                  loadError={loadError}
                   hideSelected={true}
                   onRefreshTeams={onRefreshTeams}
                   showWizardButton={effectiveTaskType === 'chat'}

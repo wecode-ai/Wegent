@@ -25,8 +25,8 @@ interface TeamContextType {
   teams: Team[]
   /** Whether teams are currently loading */
   isTeamsLoading: boolean
-  /** True when the latest load failed and no cached team list is available */
-  isTeamsError: boolean
+  /** Error from the latest failed load, cleared on success */
+  loadError: Error | null
   /** Refresh teams from API */
   refreshTeams: () => Promise<Team[]>
   /** Add a new team to the list (optimistic update) */
@@ -36,14 +36,14 @@ interface TeamContextType {
 const TeamContext = createContext<TeamContextType | undefined>(undefined)
 
 export function TeamProvider({ children }: { children: ReactNode }) {
-  const { teams, isTeamsLoading, isTeamsError, refreshTeams, addTeam } = teamService.useTeams()
+  const { teams, isTeamsLoading, loadError, refreshTeams, addTeam } = teamService.useTeams()
 
   return (
     <TeamContext.Provider
       value={{
         teams,
         isTeamsLoading,
-        isTeamsError,
+        loadError,
         refreshTeams,
         addTeam,
       }}

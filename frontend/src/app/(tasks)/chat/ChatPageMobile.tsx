@@ -63,7 +63,7 @@ export function ChatPageMobile() {
   const { t } = useTranslation()
 
   // Team state from context (centralized to avoid duplicate API calls)
-  const { teams, isTeamsLoading, isTeamsError, refreshTeams } = useTeamContext()
+  const { teams, isTeamsLoading, loadError, refreshTeams } = useTeamContext()
 
   // Task context for refreshing task list
   const { refreshTasks, selectedTask, selectedTaskDetail, selectTask, refreshSelectedTaskDetail } =
@@ -339,7 +339,7 @@ export function ChatPageMobile() {
         <ChatArea
           teams={visibleTeams}
           isTeamsLoading={isTeamsLoading}
-          isTeamsError={isTeamsError}
+          loadError={loadError}
           selectedTeamForNewTask={_selectedTeamForNewTask}
           showRepositorySelector={showRepositorySelector}
           taskType={taskType}

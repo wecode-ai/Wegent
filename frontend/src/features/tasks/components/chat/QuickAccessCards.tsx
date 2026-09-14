@@ -40,7 +40,7 @@ interface QuickAccessCardsProps {
   currentMode: TeamModeFilter
   isLoading?: boolean
   isTeamsLoading?: boolean
-  isTeamsError?: boolean
+  loadError?: Error | null
   hideSelected?: boolean
   onRefreshTeams?: () => Promise<Team[]>
   showWizardButton?: boolean
@@ -58,7 +58,7 @@ export function QuickAccessCards({
   currentMode,
   isLoading,
   isTeamsLoading = false,
-  isTeamsError = false,
+  loadError = null,
   hideSelected: _hideSelected = false,
   onRefreshTeams,
   showWizardButton: _showWizardButton = false,
@@ -76,6 +76,8 @@ export function QuickAccessCards({
   const [dragOverTeamId, setDragOverTeamId] = useState<number | null>(null)
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
   const [isRetryingTeams, setIsRetryingTeams] = useState(false)
+  // Consecutive manual retry failures; used to surface the "refresh page" fallback.
+  const [retryFailureCount, setRetryFailureCount] = useState(0)
   const [dialogTeams, setDialogTeams] = useState<Team[]>(teams)
   const [dialogBots, setDialogBots] = useState<Bot[]>([])
   const [morePopoverOpen, setMorePopoverOpen] = useState(false)
@@ -379,8 +381,11 @@ export function QuickAccessCards({
     setIsRetryingTeams(true)
     try {
       await onRefreshTeams()
+      setRetryFailureCount(0)
     } catch {
-      // Failure keeps the retry card visible.
+      // Failure keeps the retry card visible; track it to surface a
+      // "refresh page" fallback after repeated manual retries.
+      setRetryFailureCount(count => count + 1)
     } finally {
       setIsRetryingTeams(false)
     }
@@ -412,7 +417,7 @@ export function QuickAccessCards({
     )
   }
 
-  if (isTeamsError && teams.length === 0) {
+  if (loadError && teams.length === 0) {
     return (
       <div
         className="flex flex-col items-center justify-center mt-8 mb-4"
@@ -427,20 +432,35 @@ export function QuickAccessCards({
           <h3 className="text-lg font-semibold text-text-primary mb-2">
             {t('teams.load_failed_title')}
           </h3>
-          <p className="text-sm text-text-muted">{t('teams.load_failed_description')}</p>
-          {onRefreshTeams && (
-            <Button
-              type="button"
-              variant="primary"
-              size="sm"
-              className="mt-4"
-              data-testid="quick-access-teams-retry"
-              disabled={isRetryingTeams}
-              onClick={handleRetryTeams}
-            >
-              {t('teams.retry')}
-            </Button>
-          )}
+          <p className="text-sm text-text-muted">
+            {t('teams.load_failed_description')}
+            {loadError.message ? ` (${loadError.message})` : ''}
+          </p>
+          <div className="mt-4 flex items-center justify-center gap-2">
+            {onRefreshTeams && (
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                data-testid="quick-access-teams-retry"
+                disabled={isRetryingTeams}
+                onClick={handleRetryTeams}
+              >
+                {t('teams.retry')}
+              </Button>
+            )}
+            {retryFailureCount > 0 && (
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                data-testid="quick-access-teams-reload"
+                onClick={() => window.location.reload()}
+              >
+                {t('teams.refresh_page')}
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     )

@@ -22,8 +22,8 @@ const fetchTeams = async (): Promise<Team[]> => {
 export interface UseTeamsResult {
   teams: Team[]
   isTeamsLoading: boolean
-  /** True when the latest load failed and no cached team list is available. */
-  isTeamsError: boolean
+  /** Error from the latest failed load, cleared on success. */
+  loadError: Error | null
   refreshTeams: () => Promise<Team[]>
   addTeam: (team: Team) => void
 }
@@ -68,20 +68,20 @@ export const teamService = {
   useTeams(): UseTeamsResult {
     const [teams, setTeams] = useState<Team[]>([])
     const [isTeamsLoading, setIsTeamsLoading] = useState(true)
-    const [isTeamsError, setIsTeamsError] = useState(false)
+    const [loadError, setLoadError] = useState<Error | null>(null)
 
     const refreshTeams = useCallback(async (): Promise<Team[]> => {
       setIsTeamsLoading(true)
       try {
         const sortedTeams = await teamService.fetchTeamsWithRetry()
         setTeams(sortedTeams)
-        setIsTeamsError(false)
+        setLoadError(null)
         return sortedTeams
       } catch (error) {
         console.error('[teamService] Failed to fetch teams:', error)
         // Keep the previously loaded teams so a transient failure does not
         // replace a usable list with the "no agents" empty state.
-        setIsTeamsError(true)
+        setLoadError(error instanceof Error ? error : new Error(String(error)))
         throw error
       } finally {
         setIsTeamsLoading(false)
@@ -103,14 +103,14 @@ export const teamService = {
 
     useEffect(() => {
       void refreshTeams().catch(() => {
-        // Failure is surfaced through isTeamsError.
+        // Failure is surfaced through loadError.
       })
     }, [refreshTeams])
 
     return {
       teams,
       isTeamsLoading,
-      isTeamsError,
+      loadError,
       refreshTeams,
       addTeam,
     }

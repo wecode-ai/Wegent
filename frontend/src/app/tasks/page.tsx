@@ -30,7 +30,7 @@ const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea
 
 function TasksPageContent() {
   // Team state from service
-  const { teams, isTeamsLoading, isTeamsError, refreshTeams } = teamService.useTeams()
+  const { teams, isTeamsLoading, loadError, refreshTeams } = teamService.useTeams()
 
   // Mobile detection
   const isMobile = useIsMobile()
@@ -73,7 +73,7 @@ function TasksPageContent() {
           <ChatArea
             teams={teams}
             isTeamsLoading={isTeamsLoading}
-            isTeamsError={isTeamsError}
+            loadError={loadError}
             selectedTeamForNewTask={null}
             taskType="code"
           />

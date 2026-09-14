@@ -45,6 +45,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'teams.load_failed_title': 'Failed to load agents',
         'teams.load_failed_description': 'Something went wrong. Please try again.',
         'teams.retry': 'Retry',
+        'teams.refresh_page': 'Refresh page',
       }
 
       return translations[key] || key
@@ -716,15 +717,41 @@ describe('QuickAccessCards', () => {
         show_system_recommended: false,
         teams: [],
       },
-      { isTeamsError: true, onRefreshTeams }
+      { loadError: new Error('network error'), onRefreshTeams }
     )
 
     expect(await screen.findByTestId('quick-access-teams-error')).toBeInTheDocument()
     expect(screen.queryByText('No teams')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('quick-access-teams-reload')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('quick-access-teams-retry'))
 
     await waitFor(() => expect(onRefreshTeams).toHaveBeenCalledTimes(1))
+  })
+
+  test('shows the refresh page fallback after a manual retry fails', async () => {
+    const onRefreshTeams = jest.fn().mockRejectedValue(new Error('network error'))
+    renderQuickAccessCards(
+      [],
+      {
+        system_version: 1,
+        system_team_ids: [],
+        user_version: 1,
+        show_system_recommended: false,
+        teams: [],
+      },
+      { loadError: new Error('network error'), onRefreshTeams }
+    )
+
+    expect(await screen.findByTestId('quick-access-teams-error')).toBeInTheDocument()
+    expect(screen.queryByTestId('quick-access-teams-reload')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('quick-access-teams-retry'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('quick-access-teams-reload')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('quick-access-teams-reload')).toHaveTextContent('Refresh page')
   })
 
   test('shows the empty state only when teams loaded and none exist', async () => {

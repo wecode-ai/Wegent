@@ -51,7 +51,7 @@ export default function DeviceChatPage() {
   const isMobile = useIsMobile()
 
   // Team state from context (centralized to avoid duplicate API calls)
-  const { teams, isTeamsLoading, isTeamsError, refreshTeams } = useTeamContext()
+  const { teams, isTeamsLoading, loadError, refreshTeams } = useTeamContext()
 
   // Device state
   const { devices, selectedDeviceId, setSelectedDeviceId } = useDevices()
@@ -268,7 +268,7 @@ export default function DeviceChatPage() {
           <ChatArea
             teams={teams}
             isTeamsLoading={isTeamsLoading}
-            isTeamsError={isTeamsError}
+            loadError={loadError}
             showRepositorySelector={false}
             taskType="task"
             onRefreshTeams={handleRefreshTeams}
