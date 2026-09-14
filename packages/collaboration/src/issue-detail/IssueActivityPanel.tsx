@@ -219,11 +219,22 @@ export function IssueActivityPanel({
   );
   const pendingAssignment = useMemo(() => {
     if (!canAssign || !selectedAssignment) return null;
+    if (
+      assignments.some(
+        (assignment) =>
+          assignment.status === "active" &&
+          assignment.target_type === selectedAssignment.type &&
+          assignment.target_id === selectedAssignment.targetId &&
+          !assignment.workflow_step,
+      )
+    ) {
+      return null;
+    }
     return body.slice(selectedAssignment.start, selectedAssignment.end) ===
       `@${selectedAssignment.name}`
       ? selectedAssignment
       : null;
-  }, [body, canAssign, selectedAssignment]);
+  }, [assignments, body, canAssign, selectedAssignment]);
   const submit = async () => {
     const submissionId = ++submissionIdRef.current;
     const submittedIssueId = issue.id;

@@ -747,9 +747,18 @@ export function WeworkSharedProject({
     }
     return running
   }, [runtimeTaskLifecycle, runtimeWork])
-  const runtimeTaskStatusSignature = projectRuntimeStatusSignature(runtimeTaskLifecycle, {
-    projectStore: project.project_store,
-    projectId: String(project.id),
+  const runtimeTaskStatusSignature =
+    project.project_store === 'local'
+      ? ''
+      : projectRuntimeStatusSignature(runtimeTaskLifecycle, {
+          projectStore: project.project_store,
+          projectId: String(project.id),
+        })
+  const localRuntimeLifecycleVersion =
+    project.project_store === 'local' ? runtimeTaskLifecycle?.version : undefined
+  const previousLocalRuntimeRef = useRef({
+    projectId: project.project_store === 'local' ? String(project.id) : null,
+    version: localRuntimeLifecycleVersion,
   })
 
   useEffect(() => {
@@ -763,6 +772,31 @@ export function WeworkSharedProject({
       for (const timeout of timeouts) window.clearTimeout(timeout)
     }
   }, [runtimeTaskStatusSignature])
+
+  useEffect(() => {
+    const projectId = project.project_store === 'local' ? String(project.id) : null
+    const previous = previousLocalRuntimeRef.current
+    previousLocalRuntimeRef.current = {
+      projectId,
+      version: localRuntimeLifecycleVersion,
+    }
+    if (
+      projectId === null ||
+      localRuntimeLifecycleVersion === undefined ||
+      previous.projectId !== projectId ||
+      previous.version === localRuntimeLifecycleVersion
+    ) {
+      return
+    }
+    const timeouts = PROJECT_STATUS_REFRESH_DELAYS_MS.map(delay =>
+      window.setTimeout(() => {
+        setRefreshProjectRequestKey(value => value + 1)
+      }, delay)
+    )
+    return () => {
+      for (const timeout of timeouts) window.clearTimeout(timeout)
+    }
+  }, [localRuntimeLifecycleVersion, project.id, project.project_store])
 
   useEffect(
     () =>

@@ -34,11 +34,15 @@ vi.mock('@wegent/collaboration', async importOriginal => {
     }) => {
       const renderCount = useRef(0)
       const [projectIds, setProjectIds] = useState('')
+      const [snapshotStatuses, setSnapshotStatuses] = useState('')
       renderCount.current += 1
       const loadSnapshot = useCallback(() => {
         const projectId = host.location.projectId
         if (!projectId || !api.issues.getBoardSnapshot) return
-        void api.issues.getBoardSnapshot(projectId).catch(() => undefined)
+        void api.issues
+          .getBoardSnapshot(projectId)
+          .then(snapshot => setSnapshotStatuses(snapshot.items.map(item => item.status).join(',')))
+          .catch(() => undefined)
       }, [api.issues, host.location.projectId])
       useEffect(() => {
         loadSnapshot()
@@ -57,6 +61,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
           'data-refresh-key': refreshProjectRequestKey,
           'data-render-count': renderCount.current,
           'data-project-ids': projectIds,
+          'data-snapshot-statuses': snapshotStatuses,
         },
         createElement(
           'button',
@@ -650,6 +655,165 @@ describe('Wework collaboration workspace API', () => {
       '3'
     )
     expect(screen.getByTestId('collaboration-app-refresh-probe-local-project-b')).toHaveAttribute(
+      'data-refresh-key',
+      '0'
+    )
+  })
+
+  it('refreshes an open local project for background Runtime lifecycle changes', async () => {
+    vi.useFakeTimers()
+    const lifecycleStore = new RuntimeTaskLifecycleStore('wework-local-background-refresh')
+    const getBoardSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce({
+        items: [{ id: 'issue-1', status: 'in_progress' }],
+        taskBindings: [],
+      })
+      .mockResolvedValue({
+        items: [{ id: 'issue-1', status: 'completed' }],
+        taskBindings: [],
+      })
+    const projectProps = {
+      api: {
+        projects: {},
+        issues: { getBoardSnapshot },
+      } as unknown as SharedWorkspaceApi,
+      localProjects: [],
+      locale: 'zh-CN' as const,
+      location: {
+        platformView: 'project' as const,
+        workspaceId: 'local-workspace',
+        workspaceView: 'projects' as const,
+        projectId: 'local-project',
+        projectView: 'board' as const,
+        issueId: null,
+      },
+      project: {
+        id: 'local-project',
+        name: 'Local project',
+        project_store: 'local',
+      } as never,
+      services: {} as never,
+      setLocation: vi.fn(),
+      userId: 1,
+      workspace: {
+        id: 'local-workspace',
+        name: 'Local workspace',
+      } as never,
+    }
+    const { rerender } = render(
+      createElement(WeworkSharedProject, {
+        ...projectProps,
+        runtimeTaskLifecycle: lifecycleStore.getSnapshot(),
+      })
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(getBoardSnapshot).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('collaboration-app-refresh-probe-local-project')).toHaveAttribute(
+      'data-refresh-key',
+      '0'
+    )
+    expect(screen.getByTestId('collaboration-app-refresh-probe-local-project')).toHaveAttribute(
+      'data-snapshot-statuses',
+      'in_progress'
+    )
+
+    act(() => {
+      lifecycleStore.syncRuntimeWork(
+        runtimeWork([
+          runtimeTask({
+            taskId: 'background-automation-task',
+            running: false,
+            status: 'done',
+            completedAt: 1_700_000_000,
+          }),
+        ])
+      )
+      rerender(
+        createElement(WeworkSharedProject, {
+          ...projectProps,
+          runtimeTaskLifecycle: lifecycleStore.getSnapshot(),
+        })
+      )
+    })
+    await act(async () => {
+      vi.runAllTimers()
+      await Promise.resolve()
+    })
+
+    expect(getBoardSnapshot).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('collaboration-app-refresh-probe-local-project')).toHaveAttribute(
+      'data-refresh-key',
+      '3'
+    )
+    expect(screen.getByTestId('collaboration-app-refresh-probe-local-project')).toHaveAttribute(
+      'data-snapshot-statuses',
+      'completed'
+    )
+  })
+
+  it('does not refresh a cloud project for unrelated local Runtime lifecycle changes', () => {
+    vi.useFakeTimers()
+    const lifecycleStore = new RuntimeTaskLifecycleStore('wework-cloud-background-isolation')
+    const projectProps = {
+      api: {
+        projects: {},
+        issues: {},
+      } as unknown as SharedWorkspaceApi,
+      localProjects: [],
+      locale: 'zh-CN' as const,
+      location: {
+        platformView: 'project' as const,
+        workspaceId: 'cloud-workspace',
+        workspaceView: 'projects' as const,
+        projectId: 'cloud-project',
+        projectView: 'board' as const,
+        issueId: null,
+      },
+      project: {
+        id: 'cloud-project',
+        name: 'Cloud project',
+        project_store: 'backend',
+      } as never,
+      services: {} as never,
+      setLocation: vi.fn(),
+      userId: 1,
+      workspace: {
+        id: 'cloud-workspace',
+        name: 'Cloud workspace',
+      } as never,
+    }
+    const { rerender } = render(
+      createElement(WeworkSharedProject, {
+        ...projectProps,
+        runtimeTaskLifecycle: lifecycleStore.getSnapshot(),
+      })
+    )
+
+    lifecycleStore.syncRuntimeWork(
+      runtimeWork([
+        runtimeTask({
+          taskId: 'unrelated-local-runtime-task',
+          running: false,
+          status: 'done',
+          completedAt: 1_700_000_000,
+        }),
+      ])
+    )
+    rerender(
+      createElement(WeworkSharedProject, {
+        ...projectProps,
+        runtimeTaskLifecycle: lifecycleStore.getSnapshot(),
+      })
+    )
+    act(() => {
+      vi.runAllTimers()
+    })
+
+    expect(screen.getByTestId('collaboration-app-refresh-probe-cloud-project')).toHaveAttribute(
       'data-refresh-key',
       '0'
     )

@@ -564,6 +564,61 @@ describe("IssueActivityPanel", () => {
     ).toBe("发送");
   });
 
+  it("submits a mention of an active assignee as a normal comment", async () => {
+    const activeAssignment = {
+      id: "assignment-1",
+      issue_id: issue.id,
+      target_type: "human",
+      target_id: "7",
+      target_name: "李明",
+      workflow_step: null,
+      body: "",
+      comment_id: "assignment-1",
+      created_by_user_id: 1,
+      created_by_user_name: "项目经理",
+      status: "active",
+      created_at: "2026-09-12T00:00:00Z",
+      updated_at: "2026-09-12T00:00:00Z",
+    } satisfies CollaborationAssignment;
+    const body = "@李明 请继续补充验证结果";
+    const comment = {
+      id: "comment-2",
+      issue_id: issue.id,
+      author: "项目经理",
+      body,
+      created_at: "2026-09-12T00:01:00Z",
+    } satisfies CollaborationComment;
+    const api = {
+      assignments: { create: vi.fn() },
+      comments: { create: vi.fn().mockResolvedValue(comment) },
+    } as unknown as Pick<SharedWorkspaceApi, "assignments" | "comments">;
+    const { onCommentsChange } = render(issue, {
+      api,
+      assignments: [activeAssignment],
+    });
+
+    await click("collaboration-issue-mention-trigger");
+    await click("collaboration-issue-mention-member-7");
+    change("collaboration-issue-comment", body);
+
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-assignment-preview"]',
+      ),
+    ).toBeNull();
+    expect(
+      container
+        .querySelector('[data-testid="collaboration-issue-comment-submit"]')
+        ?.getAttribute("aria-label"),
+    ).toBe("发送");
+
+    await click("collaboration-issue-comment-submit");
+
+    expect(api.assignments?.create).not.toHaveBeenCalled();
+    expect(api.comments.create).toHaveBeenCalledWith(issue.id, body);
+    expect(onCommentsChange).toHaveBeenCalledWith([comment]);
+  });
+
   it("renders an assignment comment event only once", () => {
     const assignment = {
       id: "comment-1",
