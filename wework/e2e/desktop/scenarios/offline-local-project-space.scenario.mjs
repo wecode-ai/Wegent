@@ -152,6 +152,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'page',
         'The offline flow did not enter the device-owned local workspace'
       )
+      cloudProjectDetailRequests.length = 0
 
       await control.command(
         'click',
