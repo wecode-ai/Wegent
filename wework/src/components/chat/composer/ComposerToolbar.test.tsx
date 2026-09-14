@@ -161,4 +161,33 @@ describe('ComposerToolbar', () => {
     expect(permission).toHaveTextContent('')
     expect(permission.compareDocumentPosition(contextUsage)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
+
+  it('wraps whole toolbar groups and lets the active mode pill shrink in narrow composers', () => {
+    render(
+      <ComposerToolbar
+        canSend={false}
+        models={[]}
+        selectedModel={null}
+        selectedModelOptions={{}}
+        isModelSelectionReady
+        goalDraftActive
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+        onFileSelect={vi.fn()}
+        onQuickPhraseSelect={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    const toolbar = screen.getByTestId('composer-toolbar')
+    const features = toolbar.querySelector('[data-composer-toolbar-group="features"]')
+    const actions = toolbar.querySelector('[data-composer-toolbar-group="actions"]')
+    const goalPill = screen.getByTestId('goal-draft-pill')
+
+    expect(toolbar).toHaveClass('flex-wrap', 'gap-x-2', 'gap-y-1')
+    expect(features).toHaveClass('flex-auto', 'min-w-0', 'flex-wrap', 'gap-x-2', 'gap-y-1')
+    expect(actions).toHaveClass('ml-auto', 'shrink-0')
+    expect(goalPill).toHaveClass('min-w-8', 'max-w-full', 'shrink', 'overflow-hidden')
+    expect(goalPill.querySelector('span')).toHaveClass('min-w-0', 'truncate')
+  })
 })
