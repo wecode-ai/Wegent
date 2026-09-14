@@ -108,6 +108,7 @@ class PreparedExternalSyncBatch:
 
     payload: Any = field(repr=False)
     immediate_states: dict[int, RemoteDocumentState] = field(default_factory=dict)
+    skipped_document_ids: frozenset[int] = field(default_factory=frozenset)
     connection_names: dict[tuple[int, str], str] = field(default_factory=dict)
 
 
@@ -237,6 +238,7 @@ class WikiExternalSyncProvider(ExternalSyncProvider, ExternalDocumentProvider):
         self, db: Session, candidates: Sequence[SyncCandidate]
     ) -> PreparedExternalSyncBatch:
         immediate: dict[int, RemoteDocumentState] = {}
+        skipped_document_ids: set[int] = set()
         connection_names: dict[tuple[int, str], str] = {}
         groups: dict[tuple[int, str], list[SyncCandidate]] = {}
         for candidate in candidates:
@@ -272,10 +274,19 @@ class WikiExternalSyncProvider(ExternalSyncProvider, ExternalDocumentProvider):
                         ),
                     )
                 continue
+            if (
+                getattr(connection.connector, "supports_scheduled_sync", False)
+                is not True
+            ):
+                skipped_document_ids.update(
+                    candidate.document_id for candidate in group
+                )
+                continue
             prepared_groups.append((connection, tuple(group)))
         return PreparedExternalSyncBatch(
             payload=tuple(prepared_groups),
             immediate_states=immediate,
+            skipped_document_ids=frozenset(skipped_document_ids),
             connection_names=connection_names,
         )
 

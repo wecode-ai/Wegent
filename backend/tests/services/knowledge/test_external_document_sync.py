@@ -393,6 +393,74 @@ async def test_daily_sync_records_transient_source_error_without_breaking_index(
 
 
 @pytest.mark.asyncio
+async def test_daily_sync_skips_connector_without_scheduled_sync_support(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _create_synced_document(test_db, test_user, remote_version="v1")
+
+    def prepare(_db, candidates):
+        candidate = candidates[0]
+        return PreparedExternalSyncBatch(
+            payload=(),
+            skipped_document_ids=frozenset({candidate.document_id}),
+            connection_names={
+                (
+                    candidate.owner_user_id,
+                    candidate.locator.connection_id,
+                ): "Manual Wiki"
+            },
+        )
+
+    provider = SimpleNamespace(
+        prepare_remote_inspection=prepare,
+        inspect_remote_states=AsyncMock(return_value={}),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.get_external_sync_provider",
+        lambda provider_id: provider if provider_id == "wiki" else None,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.get",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.set", AsyncMock()
+    )
+    queue_refresh = MagicMock()
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync."
+        "external_document_import_service.queue_source_refresh",
+        queue_refresh,
+    )
+
+    report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
+
+    current = test_db.get(KnowledgeDocument, document.id)
+    assert current is not None
+    assert report.scanned == 1
+    assert report.eligible == 1
+    assert report.skipped == 1
+    assert report.failed == 0
+    assert report.unchanged == 0
+    summary = next(iter(report.connection_summaries.values()))
+    assert summary.connection_name == "Manual Wiki"
+    assert summary.skipped == 1
+    assert summary.failed == 0
+    assert current.index_status == DocumentIndexStatus.SUCCESS
+    assert current.external_source_config["sync"] == {
+        "enabled": True,
+        "connection_id": "conn-primary",
+        "resource_id": "42",
+        "observed_version": "v1",
+        "content_version": "v1",
+        "indexed_version": "v1",
+    }
+    queue_refresh.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_schedule_failure_does_not_rollback_prior_batch_metadata(
     test_db: Session,
     test_user: User,

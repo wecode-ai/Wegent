@@ -41,7 +41,7 @@ def test_logs_global_and_per_connection_sync_summaries(caplog) -> None:
     )
 
     with caplog.at_level(logging.INFO):
-        _log_sync_report(report)
+        _log_sync_report(report, elapsed_seconds=1.2345)
 
     assert "connection_name='Primary Wiki'" in caplog.text
     assert "scanned=12" in caplog.text
@@ -51,3 +51,4 @@ def test_logs_global_and_per_connection_sync_summaries(caplog) -> None:
     assert "source_missing=1" in caplog.text
     assert "failed=0" in caplog.text
     assert "[External Sync] total" in caplog.text
+    assert "elapsed_seconds=1.234" in caplog.text

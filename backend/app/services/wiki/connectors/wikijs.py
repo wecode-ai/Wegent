@@ -190,6 +190,7 @@ def _is_forbidden_message(message: str) -> bool:
 class WikijsConnector(WikiConnector):
     """Wiki.js 2.x adapter over the GraphQL endpoint."""
 
+    supports_scheduled_sync = True
     connector_type = "wikijs"
     display_name = "Wiki.js"
 

@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import time
 from dataclasses import asdict
 
 from app.core.celery_app import celery_app
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 _LOCK_NAME = "external-document-sync:daily"
 
 
-def _log_sync_report(report: SyncReport) -> None:
+def _log_sync_report(report: SyncReport, elapsed_seconds: float) -> None:
     summaries = sorted(
         report.connection_summaries.values(),
         key=lambda item: (
@@ -56,7 +57,8 @@ def _log_sync_report(report: SyncReport) -> None:
     logger.info(
         "[External Sync] total scanned=%s eligible=%s updates_detected=%s "
         "update_tasks_queued=%s refresh_queued=%s reindex_queued=%s "
-        "unchanged=%s source_missing=%s skipped=%s failed=%s next_cursors=%s",
+        "unchanged=%s source_missing=%s skipped=%s failed=%s next_cursors=%s "
+        "elapsed_seconds=%.3f",
         report.scanned,
         report.eligible,
         report.updates_detected,
@@ -68,6 +70,7 @@ def _log_sync_report(report: SyncReport) -> None:
         report.skipped,
         report.failed,
         report.next_cursors,
+        elapsed_seconds,
     )
 
 
@@ -79,6 +82,7 @@ def _log_sync_report(report: SyncReport) -> None:
 def sync_external_documents_task() -> dict[str, object]:
     if not settings.EXTERNAL_DOC_SYNC_ENABLED:
         return {"status": "disabled"}
+    started_at = time.perf_counter()
     with distributed_lock.acquire_watchdog_context(
         _LOCK_NAME,
         expire_seconds=settings.EXTERNAL_DOC_SYNC_LOCK_TTL_SECONDS,
@@ -97,5 +101,5 @@ def sync_external_documents_task() -> dict[str, object]:
                     time_budget_seconds=settings.EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS,
                 )
             )
-    _log_sync_report(report)
+    _log_sync_report(report, time.perf_counter() - started_at)
     return {"status": "completed", **asdict(report)}

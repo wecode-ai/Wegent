@@ -9,7 +9,12 @@ from unittest.mock import patch
 import pytest
 
 from app.core.config import settings as app_settings
-from app.services.wiki.connector import WikiApiError, WikiPageMeta, WikiSiteConfig
+from app.services.wiki.connector import (
+    WikiApiError,
+    WikiConnector,
+    WikiPageMeta,
+    WikiSiteConfig,
+)
 from app.services.wiki.connectors.wikijs import (
     WikijsConnector,
     validate_wiki_site_url,
@@ -25,6 +30,11 @@ def _async_returning(value):
         return value
 
     return _return
+
+
+def test_scheduled_sync_capability_is_opt_in() -> None:
+    assert WikiConnector.supports_scheduled_sync is False
+    assert WikijsConnector.supports_scheduled_sync is True
 
 
 class TestValidateWikiSiteUrl:

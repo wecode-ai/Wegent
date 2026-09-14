@@ -85,6 +85,7 @@ async def test_wiki_remote_inspection_batches_by_connection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     connector = SimpleNamespace(
+        supports_scheduled_sync=True,
         inspect_page_metadata_by_ids=AsyncMock(
             return_value={
                 "42": WikiPageProbe(
@@ -99,7 +100,7 @@ async def test_wiki_remote_inspection_batches_by_connection(
                 "missing": WikiPageProbe(confirmed_missing=True),
                 "forbidden": WikiPageProbe(error_code="wiki_page_forbidden"),
             }
-        )
+        ),
     )
     connection = SimpleNamespace(
         display_name="Primary Wiki",
@@ -144,6 +145,7 @@ async def test_wiki_remote_inspection_queries_bound_id_without_listing_site(
         updated_at="2026-09-08T02:00:00Z",
     )
     connector = SimpleNamespace(
+        supports_scheduled_sync=True,
         inspect_page_metadata_by_ids=AsyncMock(
             return_value={"5001": WikiPageProbe(page=outside_window)}
         ),
@@ -178,6 +180,7 @@ async def test_wiki_remote_inspection_does_not_treat_lookup_error_as_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     connector = SimpleNamespace(
+        supports_scheduled_sync=True,
         inspect_page_metadata_by_ids=AsyncMock(
             side_effect=WikiApiError("wiki_auth_failed", "bad key")
         ),
@@ -220,6 +223,38 @@ def test_wiki_remote_inspection_skips_inactive_owner() -> None:
         "external_connection_unavailable"
     )
     assert prepared.immediate_states[14].error_message == "Wiki 连接不可用"
+
+
+@pytest.mark.asyncio
+async def test_wiki_remote_inspection_skips_unsupported_connector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inspect_pages = AsyncMock()
+    connection = SimpleNamespace(
+        display_name="Manual Wiki",
+        config=WikiSiteConfig(site_url="https://wiki.example.com", api_key="secret"),
+        connector=SimpleNamespace(
+            supports_scheduled_sync=False,
+            inspect_page_metadata_by_ids=inspect_pages,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_sync_providers."
+        "WikiConnectionService.get_user_wiki_connection",
+        lambda *args, **kwargs: connection,
+    )
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(id=7)
+    candidate = SyncCandidate(15, 7, ExternalSyncLocator("wiki", "conn-manual", "5004"))
+
+    prepared = wiki_external_sync_provider.prepare_remote_inspection(db, [candidate])
+    states = await wiki_external_sync_provider.inspect_remote_states(prepared)
+
+    assert prepared.payload == ()
+    assert prepared.immediate_states == {}
+    assert prepared.skipped_document_ids == frozenset({15})
+    assert states == {}
+    inspect_pages.assert_not_awaited()
 
 
 @pytest.mark.asyncio

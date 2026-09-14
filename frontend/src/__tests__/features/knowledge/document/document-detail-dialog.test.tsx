@@ -39,7 +39,10 @@ jest.mock('next/dynamic', () => () => {
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, options?: { name?: string }) =>
+      key === 'document.document.externalSource.wikiConnectionName'
+        ? `${key}:${options?.name || ''}`
+        : key,
     getCurrentLanguage: () => 'en',
   }),
 }))
@@ -51,6 +54,7 @@ jest.mock('@/features/theme/ThemeProvider', () => ({
 }))
 
 const mockListKnowledgeBases = jest.fn()
+const mockListWikiConnections = jest.fn()
 
 jest.mock('@/apis/knowledge', () => ({
   getKnowledgeConfig: jest.fn().mockResolvedValue({
@@ -62,6 +66,12 @@ jest.mock('@/apis/knowledge', () => ({
 jest.mock('@/apis/knowledge-base', () => ({
   knowledgeBaseApi: {
     updateDocumentContent: jest.fn(),
+  },
+}))
+
+jest.mock('@/apis/wiki', () => ({
+  wikiApis: {
+    listConnections: (...args: unknown[]) => mockListWikiConnections(...args),
   },
 }))
 
@@ -146,6 +156,11 @@ beforeEach(() => {
   mockDownloadAttachment.mockReset()
   mockDocumentSummary = null
   mockListKnowledgeBases.mockResolvedValue({ items: [] })
+  mockListWikiConnections.mockReset()
+  mockListWikiConnections.mockResolvedValue({
+    connections: [],
+    available_connectors: [],
+  })
 })
 
 const baseDocument: KnowledgeDocument = {
@@ -304,7 +319,22 @@ describe('DocumentDetailDialog external source info', () => {
     expect(screen.queryByTestId('external-source-info')).not.toBeInTheDocument()
   })
 
-  it('shows the original source link for a synchronized wiki document', () => {
+  it('shows the source link and current connection name for a synchronized wiki document', async () => {
+    mockListWikiConnections.mockResolvedValue({
+      connections: [
+        {
+          id: 'conn-primary',
+          display_name: 'Operations Wiki',
+          enabled: true,
+          connector_type: 'wikijs',
+          site_url: 'https://wiki.example.com',
+          default_locale: null,
+          api_key_masked: '****',
+          available_connectors: [],
+        },
+      ],
+      available_connectors: [],
+    })
     render(
       <DocumentDetailDialog
         open={true}
@@ -317,7 +347,7 @@ describe('DocumentDetailDialog external source info', () => {
               provider: 'wiki',
               title: 'Operations handbook',
               url: 'https://wiki.example.com/operations/handbook',
-              sync: { enabled: true },
+              sync: { enabled: true, connection_id: 'conn-primary' },
             },
           },
         }}
@@ -331,6 +361,10 @@ describe('DocumentDetailDialog external source info', () => {
       'href',
       'https://wiki.example.com/operations/handbook'
     )
+    expect(await screen.findByTestId('external-wiki-connection-name')).toHaveTextContent(
+      'document.document.externalSource.wikiConnectionName:Operations Wiki'
+    )
+    expect(mockListWikiConnections).toHaveBeenCalledTimes(1)
   })
 
   it.each([

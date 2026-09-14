@@ -374,7 +374,8 @@
       "wikiSourceMissingHint": "Wiki 页面已被删除，知识库继续使用最近一次成功同步的索引内容",
       "externalSource": {
         "lastImportedAt": "最近导入 {{time}}",
-        "accessible": "来源正常"
+        "accessible": "来源正常",
+        "wikiConnectionName": "Wiki 连接：{{name}}"
       },
       "search": "搜索文档",
       "searchInFolder": "在 {{folder}} 中搜索文档",

@@ -374,7 +374,8 @@
       "wikiSourceMissingHint": "The Wiki page was deleted; the knowledge base continues using the last successfully synchronized index",
       "externalSource": {
         "lastImportedAt": "Last imported {{time}}",
-        "accessible": "Source available"
+        "accessible": "Source available",
+        "wikiConnectionName": "Wiki connection: {{name}}"
       },
       "search": "Search documents",
       "searchInFolder": "Search documents in {{folder}}",

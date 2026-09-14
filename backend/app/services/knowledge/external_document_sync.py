@@ -187,11 +187,19 @@ class ExternalDocumentSyncModule:
             candidates = self._build_candidates(provider_id, documents, report)
             db.commit()
             if provider is not None and candidates:
-                states, connection_names = await self._inspect_candidates(
-                    db, provider_id, provider, candidates
+                states, connection_names, skipped_document_ids = (
+                    await self._inspect_candidates(
+                        db, provider_id, provider, candidates
+                    )
                 )
                 self._apply_connection_names(report, provider_id, connection_names)
-                await self._apply_inspection_results(db, candidates, states, report)
+                await self._apply_inspection_results(
+                    db,
+                    candidates,
+                    states,
+                    skipped_document_ids,
+                    report,
+                )
                 db.commit()
             await self._store_cursor(cursor_key, provider_id, cursor, report)
             if len(documents) < batch_size:
@@ -256,7 +264,11 @@ class ExternalDocumentSyncModule:
         provider_id: str,
         provider: ExternalSyncProvider,
         candidates: list[SyncCandidate],
-    ) -> tuple[dict[int, RemoteDocumentState | None], dict[tuple[int, str], str]]:
+    ) -> tuple[
+        dict[int, RemoteDocumentState | None],
+        dict[tuple[int, str], str],
+        frozenset[int],
+    ]:
         prepared = provider.prepare_remote_inspection(db, candidates)
         db.commit()
         try:
@@ -266,7 +278,7 @@ class ExternalDocumentSyncModule:
                 "[External Sync] Provider inspection failed provider=%s", provider_id
             )
             states = {candidate.document_id: None for candidate in candidates}
-        return states, prepared.connection_names
+        return states, prepared.connection_names, prepared.skipped_document_ids
 
     @staticmethod
     def _apply_connection_names(
@@ -344,6 +356,7 @@ class ExternalDocumentSyncModule:
         db: Session,
         candidates: list[SyncCandidate],
         states: dict[int, RemoteDocumentState | None],
+        skipped_document_ids: frozenset[int],
         report: SyncReport,
     ) -> None:
         candidate_by_id = {candidate.document_id: candidate for candidate in candidates}
@@ -364,6 +377,10 @@ class ExternalDocumentSyncModule:
             )
             document = documents_by_id.get(document_id)
             if document is None or not self._still_matches(document, candidate):
+                report.skipped += 1
+                connection_report.skipped += 1
+                continue
+            if document_id in skipped_document_ids:
                 report.skipped += 1
                 connection_report.skipped += 1
                 continue

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,7 @@ class WikiApiError(Exception):
 class WikiConnector(ABC):
     """Protocol every wiki system connector implements."""
 
+    supports_scheduled_sync: ClassVar[bool] = False
     connector_type: str
     display_name: str
     # Credential keys this connector reads from the encrypted service store.

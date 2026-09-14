@@ -52,6 +52,7 @@ import { getProcessingErrorMessage } from '../utils/processing-error'
 import { downloadAttachment, formatFileSize } from '@/apis/attachments'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeConfig } from '@/apis/knowledge'
+import { wikiApis } from '@/apis/wiki'
 import { buildKbUrl } from '@/utils/knowledgeUrl'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -133,6 +134,10 @@ export function DocumentDetailDialog({
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Chunk storage configuration - controls whether chunks section is visible
   const [chunkStorageEnabled, setChunkStorageEnabled] = useState(false)
+  const [resolvedWikiConnection, setResolvedWikiConnection] = useState<{
+    id: string
+    name: string | null
+  } | null>(null)
 
   // Fetch knowledge config on mount to check if chunk storage is enabled
   useEffect(() => {
@@ -177,12 +182,43 @@ export function DocumentDetailDialog({
     [document]
   )
   const sourceInfo = externalSourceInfo
+  const wikiConnectionId =
+    sourceInfo?.provider === 'wiki' && sourceInfo.sync?.enabled
+      ? sourceInfo.sync.connection_id
+      : undefined
+  const wikiConnectionName =
+    resolvedWikiConnection && resolvedWikiConnection.id === wikiConnectionId
+      ? resolvedWikiConnection.name
+      : null
   const externalLastImportedAt = useMemo(() => {
     if (!externalSourceInfo?.last_success_at) return null
     const date = parseUTCDate(externalSourceInfo.last_success_at)
     return date && !Number.isNaN(date.getTime()) ? formatDateTime(date.getTime()) : null
   }, [externalSourceInfo])
   const isSourceView = contentSourceMode === 'source' && canPreviewSource
+
+  useEffect(() => {
+    if (!open || !wikiConnectionId) return
+
+    let cancelled = false
+    void wikiApis
+      .listConnections()
+      .then(response => {
+        if (cancelled) return
+        const connection = response.connections.find(item => item.id === wikiConnectionId)
+        setResolvedWikiConnection({
+          id: wikiConnectionId,
+          name: connection?.display_name || null,
+        })
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedWikiConnection({ id: wikiConnectionId, name: null })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, wikiConnectionId])
 
   // Track if content has changed (compare against content at edit start)
   const hasChanges = editedContent !== (editStartContentRef.current || fullContent || '')
@@ -407,6 +443,16 @@ export function DocumentDetailDialog({
                         data-testid="external-source-info"
                       >
                         <span className="capitalize">{sourceInfo.provider}</span>
+                        {wikiConnectionName && (
+                          <>
+                            <span>•</span>
+                            <span data-testid="external-wiki-connection-name">
+                              {t('document.document.externalSource.wikiConnectionName', {
+                                name: wikiConnectionName,
+                              })}
+                            </span>
+                          </>
+                        )}
                         <span>•</span>
                         {sourceInfo.url && (
                           <a
