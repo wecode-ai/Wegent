@@ -456,7 +456,7 @@ export class RuntimeTaskLifecycleStore {
         task: previousTask ?? emptyRuntimeTaskSummary(nextAddress),
       })
     }
-    if (previousState.goalStatus !== null) {
+    if (previousState.hasAuthoritativeGoalStatus) {
       nextMachine.dispatch({
         type: 'goal_status_received',
         goalStatus: previousState.goalStatus,

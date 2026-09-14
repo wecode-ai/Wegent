@@ -1447,6 +1447,16 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.derived.shouldShowUnread).toBe(true)
   })
 
+  test('does not let a stale active executor snapshot restore an authoritative Goal clear', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+
+    store.goalStatusReceived(address, null)
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+
+    expect(store.getTask(address)?.goalStatus).toBeNull()
+  })
+
   test.each(['paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const)(
     'settles execution when the Goal reports %s',
     goalStatus => {

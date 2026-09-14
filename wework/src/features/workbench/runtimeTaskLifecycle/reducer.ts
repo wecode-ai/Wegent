@@ -59,10 +59,7 @@ export function reduceRuntimeTaskLifecycle(
         turnPhase,
         activeTurnId,
         goalStatus:
-          event.task.goalStatus === undefined ||
-          (event.task.goalStatus === 'active' &&
-            state.goalStatus !== null &&
-            state.goalStatus !== 'active')
+          event.task.goalStatus === undefined || state.hasAuthoritativeGoalStatus
             ? state.goalStatus
             : event.task.goalStatus,
         continuable: event.task.continuable !== false,
@@ -226,11 +223,13 @@ export function reduceRuntimeTaskLifecycle(
             turnPhase: 'idle',
             activeTurnId: null,
             goalStatus: event.goalStatus,
+            hasAuthoritativeGoalStatus: true,
             expectedExecutorRunning: false,
           }
         : {
             ...state,
             goalStatus: event.goalStatus,
+            hasAuthoritativeGoalStatus: true,
           }
     }
 

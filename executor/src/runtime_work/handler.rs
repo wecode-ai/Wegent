@@ -663,6 +663,7 @@ struct RuntimeThreadEventRoute {
 struct RuntimeThreadEventRouting {
     routes: HashMap<String, RuntimeThreadEventRoute>,
     pending_notifications: VecDeque<PendingCodexNotification>,
+    replaying_thread_ids: HashSet<String>,
 }
 
 struct PendingCodexNotification {

@@ -4622,6 +4622,98 @@ fn spawned_child_notifications_wait_for_parent_route_registration() {
 }
 
 #[test]
+fn child_notifications_remain_ordered_while_pending_notifications_replay() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("replaying-spawned-child-thread-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "turn-root".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-root".to_owned());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route("thread-root", local_task_id.to_owned(), request, false);
+    handler.route_codex_notification(json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-root",
+            "turnId": "turn-root",
+            "item": {
+                "id": "spawn-call",
+                "type": "collabAgentToolCall",
+                "tool": "spawnAgent",
+                "receiverThreadIds": ["thread-child"],
+                "status": "completed"
+            }
+        }
+    }));
+    while event_rx.try_recv().is_ok() {}
+
+    let child_started = json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "item": {
+                "id": "child-message",
+                "type": "agentMessage",
+                "phase": "final_answer",
+                "text": ""
+            }
+        }
+    });
+    let pending_replay = {
+        let mut routing = handler
+            .thread_event_routing
+            .lock()
+            .expect("thread event routing lock should not be poisoned");
+        assert!(routing
+            .replaying_thread_ids
+            .insert("thread-child".to_owned()));
+        Some((
+            vec!["thread-child".to_owned()],
+            vec![PendingCodexNotification {
+                thread_id: "thread-child".to_owned(),
+                message: child_started,
+            }],
+        ))
+    };
+
+    handler.route_codex_notification(json!({
+        "method": "item/agentMessage/delta",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "itemId": "child-message",
+            "delta": "ordered child output"
+        }
+    }));
+    assert!(event_rx.try_recv().is_err());
+
+    handler.replay_codex_notifications(pending_replay);
+
+    let child_event = event_rx
+        .try_recv()
+        .expect("child delta should follow its pending start notification");
+    assert_eq!(child_event["event"], "response.block.created");
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["content"],
+        "ordered child output"
+    );
+    assert!(event_rx.try_recv().is_err());
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn active_parent_registers_child_route_before_skipping_its_own_notification() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("active-spawned-child-thread-route");
