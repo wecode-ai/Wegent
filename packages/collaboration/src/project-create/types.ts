@@ -5,7 +5,12 @@
 import type { ReactNode } from "react";
 
 import type { WorkspaceProjectCreateInput } from "../ports/SharedWorkspaceApi";
-import type { CollaborationProject } from "../types";
+import type {
+  CollaborationExecutionEnvironment,
+  CollaborationMember,
+  CollaborationOwnedAgent,
+  CollaborationProject,
+} from "../types";
 
 export type ProjectCreateLocation = "local" | "cloud";
 export type ProjectCreateProvider = NonNullable<
@@ -15,6 +20,23 @@ export type ProjectCreateProvider = NonNullable<
 export interface ProjectCreateTarget {
   location: ProjectCreateLocation;
   create(input: WorkspaceProjectCreateInput): Promise<CollaborationProject>;
+}
+
+export interface ProjectCreateResourceSelection {
+  memberUserIds: number[];
+  agentTeamIds: number[];
+  executionEnvironmentDeviceIds: number[];
+}
+
+export interface ProjectCreateResourceSetup {
+  workspaceName: string;
+  members: CollaborationMember[];
+  agents: CollaborationOwnedAgent[];
+  executionEnvironments: CollaborationExecutionEnvironment[];
+  configure(
+    project: CollaborationProject,
+    selection: ProjectCreateResourceSelection,
+  ): Promise<void>;
 }
 
 export interface DingTalkAITableLink {
@@ -75,6 +97,13 @@ export interface ProjectCreateLabels {
   aitableRuntimeHint: string;
   description: string;
   descriptionPlaceholder: string;
+  projectResources: string;
+  projectResourcesDescription: string;
+  members: string;
+  agents: string;
+  executionEnvironments: string;
+  creatorIncluded: string;
+  noSpaceResources: string;
   cancel: string;
   create: string;
   creating: string;
@@ -91,6 +120,7 @@ export interface ProjectCreateDialogProps {
   defaultLocation: ProjectCreateLocation;
   allowDingTalkAITable: boolean;
   labels: ProjectCreateLabels;
+  resourceSetup?: ProjectCreateResourceSetup;
   testIds?: {
     name?: string;
     description?: string;

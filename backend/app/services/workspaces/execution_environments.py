@@ -13,7 +13,10 @@ from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceExecutionEnvironmentCreate
 from app.services.workspaces.access import require_workspace_role
 from app.services.workspaces.resource_mapping import execution_environment_values
-from app.services.workspaces.storage import ensure_resource_grant, resource_grant
+from app.services.workspaces.storage import (
+    ensure_resource_grant,
+    resource_grant,
+)
 
 
 class WorkspaceExecutionEnvironmentService:

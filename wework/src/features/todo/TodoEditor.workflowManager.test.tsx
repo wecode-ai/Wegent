@@ -104,6 +104,7 @@ describe('TodoEditor workflow manager execution', () => {
       />
     )
 
+    await user.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     const managerCard = await screen.findByTestId('cloud-todo-workflow-manager-run')
     expect(managerCard).toBeEnabled()
     expect(screen.getByTestId('cloud-todo-workflow-manager-open-execution')).toBeInTheDocument()

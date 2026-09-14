@@ -242,7 +242,7 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-chat-section-new-chat-button')).toBeInTheDocument()
   })
 
-  test('renders My Tasks as the selected default work-items board view', async () => {
+  test('renders Board as the selected default work-items view', async () => {
     const onOpenMyWork = vi.fn()
 
     renderSidebar({
@@ -251,7 +251,7 @@ describe('DesktopSidebar', () => {
     })
 
     const myWorkButton = screen.getByTestId('task-my-work-button')
-    expect(myWorkButton).toHaveTextContent('我的任务')
+    expect(myWorkButton).toHaveTextContent('看板')
     expect(myWorkButton).toHaveAttribute('aria-current', 'page')
 
     await userEvent.click(myWorkButton)

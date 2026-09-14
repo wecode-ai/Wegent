@@ -8,6 +8,7 @@ import {
   mapCollaborationOwnedAgentDto,
   mapCollaborationPlatformResourcesDto,
   mapCollaborationWorkspaceDto,
+  mapCollaborationWorkspaceNavigationContextDto,
 } from "../dto-mappers";
 import type {
   SharedCollaborationResourcesApi,
@@ -131,6 +132,13 @@ export function createSharedWorkspaceHttpApi(
       async get(workspaceId) {
         return mapCollaborationWorkspaceDto(
           await transport.get(`/v1/workspaces/${encoded(workspaceId)}`),
+        );
+      },
+      async getNavigationContext(workspaceId) {
+        return mapCollaborationWorkspaceNavigationContextDto(
+          await transport.get(
+            `/v1/workspaces/${encoded(workspaceId)}/navigation-context`,
+          ),
         );
       },
       async create(input) {

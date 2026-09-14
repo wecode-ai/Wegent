@@ -1,7 +1,10 @@
-import type { ComponentType } from "react";
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import type {
-  AutomationEventSourceCatalogItem,
   AutomationEventCollectionMode,
+  AutomationEventSourceCatalogItem,
   AutomationEventSourceType,
   AutomationProject,
   AutomationUiRule,
@@ -72,6 +75,11 @@ export interface AutomationUiProject extends AutomationProject {
   } | null;
 }
 
+export interface AutomationProjectAgentOption {
+  id: string;
+  name: string;
+}
+
 export interface AutomationRulesViewProps {
   rules: AutomationUiRule[];
   runs: AutomationUiRun[];
@@ -83,6 +91,7 @@ export interface AutomationRulesViewProps {
   projectIncomingHookApi?: AutomationIncomingHookUiApi;
   projectId?: string;
   project?: AutomationUiProject;
+  projectAgents?: AutomationProjectAgentOption[];
   executionCatalog?: WorkspaceAutomationExecutionCatalog;
   onReload?: () => Promise<void>;
   onLoadExecutionCatalog?: () => Promise<WorkspaceAutomationExecutionCatalog>;
@@ -90,14 +99,12 @@ export interface AutomationRulesViewProps {
     deviceIds: string[],
   ) => Promise<WorkspaceAutomationExecutionCatalog["plugins"]>;
   onLoadRuns?: () => Promise<AutomationUiRun[]>;
+  onOpenIssue?: (issueId: string) => void;
   onRunRule?: (rule: AutomationUiRule) => Promise<void>;
-  onSaveRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule>;
+  onSaveRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule | null>;
   onToggleRule?: (
     rule: AutomationUiRule,
     enabled: boolean,
-  ) => Promise<AutomationUiRule>;
-  onDuplicateRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule>;
+  ) => Promise<AutomationUiRule | null>;
   onDeleteRule?: (rule: AutomationUiRule) => Promise<void>;
 }
-
-export const AutomationRulesView: ComponentType<AutomationRulesViewProps>;

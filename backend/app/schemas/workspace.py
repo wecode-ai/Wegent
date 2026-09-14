@@ -57,6 +57,14 @@ class WorkspaceListResponse(BaseModel):
     items: list[WorkspaceResponse]
 
 
+class WorkspaceNavigationContextResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: SnowflakeId
+    public_id: str
+    name: str
+
+
 class WorkspaceMemberCreate(BaseModel):
     user_id: int = Field(ge=1)
     role: BaseRole = BaseRole.Developer
@@ -129,6 +137,7 @@ class WorkspaceExecutionEnvironmentResponse(BaseModel):
     device_type: str
     runtime_instance_id: str | None
     capabilities: list[str]
+    coding_tools: list[str] = Field(default_factory=list)
     owner_type: ResourceOwnerType
     owner_id: SnowflakeId
     owner_name: str
@@ -158,8 +167,10 @@ class PersonalAgentResource(BaseModel):
 class PersonalExecutionEnvironmentResource(BaseModel):
     id: SnowflakeId
     device_id: int
+    device_key: str
     name: str
     kind: Literal["local_device", "cloud_host"]
+    coding_tools: list[str] = Field(default_factory=list)
     owner_type: Literal["user"] = "user"
     owner_id: str
     owner_name: str

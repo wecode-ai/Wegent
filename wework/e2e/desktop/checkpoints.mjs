@@ -11,6 +11,7 @@ export const DESKTOP_CHECKPOINTS = [
   'workbench-mode',
   'automation-lifecycle',
   'project-automation',
+  'local-project-automation-chain',
   'project-event-sources',
   'project-assignment-notification',
   'offline-local-project-space',

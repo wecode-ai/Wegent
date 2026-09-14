@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Square,
 } from 'lucide-react'
+import { activityDisplayBody } from '@wegent/collaboration'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
@@ -1761,7 +1762,7 @@ function ChatMessage({
   stopping?: boolean
 }) {
   const { t } = useTranslation('common')
-  const text = message.content
+  const text = activityDisplayBody(message.content, '')
   const isAgent = message.sender.type === 'agent'
   const isSubagent = message.metadata.kind === 'task_ai_subagent'
   const runId = typeof message.metadata.run_id === 'string' ? message.metadata.run_id : null

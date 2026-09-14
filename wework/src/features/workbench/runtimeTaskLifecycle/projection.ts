@@ -12,6 +12,7 @@ export function projectRuntimePaneTranscript(
   transcript: RuntimeTranscriptResponse
 ): RuntimePaneTranscript {
   return {
+    runtime: transcript.runtime,
     running: transcript.running,
     messages: runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
     turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),

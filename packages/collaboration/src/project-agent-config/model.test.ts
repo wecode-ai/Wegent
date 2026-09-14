@@ -37,6 +37,7 @@ const environment: CollaborationExecutionEnvironment = {
   device_key: "device-macbook",
   name: "MacBook Pro",
   kind: "local_device",
+  coding_tools: ["claude_code", "codex"],
   owner_type: "user",
   owner_id: "7",
   owner_name: "李明",

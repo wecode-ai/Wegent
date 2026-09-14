@@ -5,6 +5,7 @@
 import {
   buildInstalledPluginProjectCatalog,
   createSharedWorkspaceHttpApi,
+  mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
   mapWorkspaceDeliveryAssetDto,
   mapWorkspaceDeliveryDto,
@@ -483,7 +484,8 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
   {
     capability: 'automationExecutionCatalog.load',
     status: 'supported',
-    endpoint: 'GET /devices + GET /models/unified + GET /v1/runtime-profiles',
+    endpoint:
+      'GET /v1/cloud-projects/{id}/execution-environments + GET /models/unified + GET /v1/runtime-profiles',
   },
   {
     capability: 'automationExecutionCatalog.loadPlugins',
@@ -567,10 +569,14 @@ function mapAutomationExecutionCatalog(
     environments: devices
       .filter(device => device.status !== 'offline')
       .map(device => ({
-        deviceId: String(device.device_id ?? ''),
-        label: String(device.name ?? device.device_id ?? ''),
+        deviceId: String(device.device_key ?? device.deviceKey ?? device.device_id ?? ''),
+        label: String(
+          device.name ?? device.device_key ?? device.deviceKey ?? device.device_id ?? ''
+        ),
         executionEnvironment:
-          device.device_type === 'local' ? ('local' as const) : ('cloud' as const),
+          device.device_type === 'local' || device.kind === 'local_device'
+            ? ('local' as const)
+            : ('cloud' as const),
       }))
       .filter(environment => environment.deviceId),
     models: models
@@ -677,6 +683,25 @@ export function createWebSharedWorkspaceApi(
       },
       archive(projectId, version) {
         return client.delete(`/v1/cloud-projects/${encoded(projectId)}?version=${version}`)
+      },
+      async listExecutionEnvironments(projectId) {
+        const response = await client.get<{ items: Array<Record<string, unknown>> }>(
+          `/v1/cloud-projects/${encoded(projectId)}/execution-environments`
+        )
+        return response.items.map(mapCollaborationExecutionEnvironmentDto)
+      },
+      async addExecutionEnvironment(projectId, deviceId) {
+        return mapCollaborationExecutionEnvironmentDto(
+          await client.post<Record<string, unknown>>(
+            `/v1/cloud-projects/${encoded(projectId)}/execution-environments`,
+            { device_id: deviceId }
+          )
+        )
+      },
+      removeExecutionEnvironment(projectId, deviceId) {
+        return client.delete(
+          `/v1/cloud-projects/${encoded(projectId)}/execution-environments/${encoded(deviceId)}`
+        )
       },
       importMessages(projectId, input) {
         return client.post(
@@ -1139,9 +1164,9 @@ export function createWebSharedWorkspaceApi(
       },
     },
     automationExecutionCatalog: {
-      async load() {
+      async load(projectId) {
         const [devices, models, runtimeProfiles] = await Promise.all([
-          client.get('/devices'),
+          client.get(`/v1/cloud-projects/${encoded(projectId)}/execution-environments`),
           client.get('/models/unified?include_config=true&model_category_type=llm'),
           client.get('/v1/runtime-profiles'),
         ])

@@ -13,6 +13,7 @@ export interface ProjectSpaceSidebarNavItem {
 }
 
 export interface ProjectSpaceSidebarProject {
+  actionsAvailable?: boolean;
   canManage: boolean;
   count?: number;
   icon: ReactNode;
@@ -240,7 +241,9 @@ export function ProjectSpaceSidebar({
                 {project.count}
               </span>
             ) : null}
-            {renderProjectMoreButton(project)}
+            {project.actionsAvailable !== false
+              ? renderProjectMoreButton(project)
+              : null}
             {openProjectId === project.id ? (
               <div
                 data-testid={`cloud-sidebar-project-menu-${project.id}`}

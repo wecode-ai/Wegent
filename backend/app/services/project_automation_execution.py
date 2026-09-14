@@ -258,6 +258,19 @@ class ProjectAutomationExecution:
             if adopt_existing_workflow
             else instantiate_workflow(definition)
         )
+        if workflow.advancement_policy == "ai" and (
+            workflow.execution_config is None
+            or not workflow.execution_config.is_complete()
+        ):
+            from app.services.issue_execution_configuration import (
+                project_automation_execution_config,
+            )
+
+            workflow.execution_config = project_automation_execution_config(
+                db,
+                rule,
+                issue_creator_user_id=int(item.created_by_user_id or owner.id),
+            )
         workflow_snapshot = workflow.model_dump(mode="json")
         item_metadata["workflow"] = workflow_snapshot
         item_metadata["workflow_automation"] = {

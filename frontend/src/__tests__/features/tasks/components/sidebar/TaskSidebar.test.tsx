@@ -262,6 +262,23 @@ describe('TaskSidebar scroll structure', () => {
     window.history.pushState({}, '', '/chat')
   })
 
+  it('replaces conversation history with collaboration context below system navigation', () => {
+    render(
+      <TaskSidebar
+        isMobileSidebarOpen={false}
+        setIsMobileSidebarOpen={jest.fn()}
+        pageType="collaboration"
+        contextSection={<div data-testid="collaboration-context-navigation">spaces</div>}
+      />
+    )
+
+    expect(screen.getAllByTestId('collaboration-context-navigation')).toHaveLength(2)
+    expect(screen.queryByText('project-section')).not.toBeInTheDocument()
+    expect(screen.queryByText('common:tasks.history_title')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('task-sidebar-nav-flow-button')).toHaveLength(2)
+    expect(screen.getAllByTestId('task-sidebar-more-button')).toHaveLength(2)
+  })
+
   afterEach(() => {
     SIDEBAR_NAV_CONFIG.keepSecondaryNavFixed = true
   })

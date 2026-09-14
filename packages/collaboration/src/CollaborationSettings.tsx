@@ -19,7 +19,9 @@ interface CollaborationSettingsProps {
   project: CollaborationProject;
   onChange(project: CollaborationProject): void;
   onError(): void;
+  onAgentsChange?(): void;
   translate: CollaborationTranslate;
+  section?: "overview" | "members" | "agents" | "board";
 }
 
 function createManageIcon(
@@ -65,7 +67,9 @@ export function CollaborationSettings({
   project,
   onChange,
   onError,
+  onAgentsChange,
   translate,
+  section = "overview",
 }: CollaborationSettingsProps) {
   const manageApi = useMemo(
     () => createSharedWorkspaceProjectManageApi(api),
@@ -120,12 +124,14 @@ export function CollaborationSettings({
       api={manageApi}
       host={host}
       project={project}
+      section={section}
       onProjectUpdated={onChange}
       renderProviderSettings={() => (
         <ProjectAgentConfiguration
           api={api}
           project={project}
           onError={onError}
+          onAgentsChange={onAgentsChange}
           translate={translate}
         />
       )}

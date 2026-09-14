@@ -2,10 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test, type Page, type TestInfo } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
+
+const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 
 interface VersionedResource {
   version: number
+}
+
+interface WorkspaceMemberList {
+  items: Array<{ user_id: number; user_name: string }>
 }
 
 function escaped(value: string): string {
@@ -21,33 +27,41 @@ async function capture(page: Page, testInfo: TestInfo, name: string): Promise<vo
 
 async function archiveResource(
   page: Page,
+  request: APIRequestContext,
   resourcePath: string
 ): Promise<{ ok: boolean; stage: 'get' | 'delete'; status: number }> {
-  return page.evaluate(async path => {
-    const resourceResponse = await fetch(path)
-    if (!resourceResponse.ok) {
-      return { ok: false, status: resourceResponse.status, stage: 'get' as const }
-    }
-    const resource = (await resourceResponse.json()) as VersionedResource
-    const archiveResponse = await fetch(`${path}?version=${resource.version}`, {
-      method: 'DELETE',
-    })
-    return {
-      ok: archiveResponse.ok,
-      status: archiveResponse.status,
-      stage: 'delete' as const,
-    }
-  }, resourcePath)
+  const authToken = (await page.context().cookies()).find(
+    cookie => cookie.name === 'auth_token'
+  )?.value
+  if (!authToken) {
+    throw new Error('Authenticated browser context is missing auth_token')
+  }
+  const headers = { Authorization: `Bearer ${authToken}` }
+  const resourceResponse = await request.get(`${API_BASE_URL}${resourcePath}`, { headers })
+  if (!resourceResponse.ok()) {
+    return { ok: false, status: resourceResponse.status(), stage: 'get' }
+  }
+  const resource = (await resourceResponse.json()) as VersionedResource
+  const archiveResponse = await request.delete(
+    `${API_BASE_URL}${resourcePath}?version=${resource.version}`,
+    { headers }
+  )
+  return {
+    ok: archiveResponse.ok(),
+    status: archiveResponse.status(),
+    stage: 'delete',
+  }
 }
 
 test.describe('Collaboration module', () => {
   let projectId = ''
   let workspaceId = ''
 
-  test.afterEach(async ({ page }) => {
+  test.afterEach(async ({ page, request }) => {
     if (projectId) {
       const cleanup = await archiveResource(
         page,
+        request,
         `/api/v1/cloud-projects/${encodeURIComponent(projectId)}`
       )
       expect(cleanup, `Failed to archive E2E project during ${cleanup.stage}`).toEqual({
@@ -61,6 +75,7 @@ test.describe('Collaboration module', () => {
     if (workspaceId) {
       const cleanup = await archiveResource(
         page,
+        request,
         `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`
       )
       expect(cleanup, `Failed to archive E2E workspace during ${cleanup.stage}`).toEqual({
@@ -74,6 +89,7 @@ test.describe('Collaboration module', () => {
 
   test('persists the Workspace → Project → Issue collaboration flow', async ({
     page,
+    request,
   }, testInfo) => {
     const suffix = `${Date.now()}`
     const workspaceName = `Workspace E2E ${suffix}`
@@ -82,20 +98,12 @@ test.describe('Collaboration module', () => {
     const updatedIssueTitle = `${issueTitle} updated`
     const comment = `Persistent E2E comment ${suffix}`
     const assignmentComment = `Assignment E2E comment ${suffix}`
-    const workflowStep = '交互设计'
 
     await page.goto('/collaboration')
     await expect(page).toHaveURL(/\/collaboration$/)
     await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
-    await expect(page.getByTestId('collaboration-nav-all-spaces')).toBeVisible()
-
-    await page.getByTestId('collaboration-nav-resources').click()
-    await expect(page).toHaveURL(/\/collaboration\/resources$/)
-    await expect(page.getByTestId('collaboration-nav-resources')).toHaveClass(/active/)
-    await capture(page, testInfo, '01-resources')
-
-    await page.getByTestId('collaboration-nav-all-spaces').click()
-    await expect(page).toHaveURL(/\/collaboration$/)
+    await expect(page.getByTestId('collaboration-workspaces-section-toggle')).toBeVisible()
+    await expect(page.getByTestId('collaboration-workspace-sidebar-create')).toBeVisible()
 
     await page.getByTestId('collaboration-workspace-create').click()
     await page.getByTestId('collaboration-workspace-name-input').fill(workspaceName)
@@ -107,15 +115,29 @@ test.describe('Collaboration module', () => {
     await expect(page).toHaveURL(/\/collaboration\/workspaces\/[^/?]+$/)
     workspaceId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
     expect(workspaceId).not.toBe('')
-    await expect(page.getByTestId('collaboration-workspace-back')).toBeVisible()
-    await expect(page.getByText(workspaceName, { exact: true }).first()).toBeVisible()
-
-    await page.getByTestId('collaboration-workspace-back').click()
-    await expect(page).toHaveURL(/\/collaboration$/)
-    await expect(page.getByTestId(`collaboration-workspace-${workspaceId}`)).toContainText(
+    await expect(page.getByTestId('collaboration-workspace-nav-projects')).toContainText(
       workspaceName
     )
-    await page.getByTestId(`collaboration-workspace-${workspaceId}`).click()
+    await expect(page.getByTestId(`collaboration-workspace-tree-${workspaceId}`)).toBeVisible()
+
+    await page
+      .getByTestId(`collaboration-workspace-tree-${workspaceId}`)
+      .locator('.collaboration-workspace-row')
+      .hover()
+    await page.getByTestId('collaboration-workspace-actions').click()
+    await page.getByTestId('collaboration-workspace-nav-settings').click()
+    await expect(page).toHaveURL(
+      new RegExp(`/collaboration/workspaces/${escaped(encodeURIComponent(workspaceId))}/settings$`)
+    )
+    await expect(page.getByTestId('workspace-settings-shell')).toBeVisible()
+    await expect(page.getByTestId('collaboration-workspace-settings-save')).toBeVisible()
+    await page.getByTestId('collaboration-workspace-nav-members').click()
+    await expect(page).toHaveURL(
+      new RegExp(`/collaboration/workspaces/${escaped(encodeURIComponent(workspaceId))}/members$`)
+    )
+    await capture(page, testInfo, '01-workspace-resources')
+
+    await page.getByTestId('collaboration-workspace-nav-projects').click()
     await expect(page).toHaveURL(
       new RegExp(`/collaboration/workspaces/${escaped(encodeURIComponent(workspaceId))}$`)
     )
@@ -134,7 +156,7 @@ test.describe('Collaboration module', () => {
     )
     projectId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
     expect(projectId).not.toBe('')
-    await expect(page.getByTestId('collaboration-board')).toBeVisible()
+    await expect(page.getByTestId('collaboration-empty-project')).toBeVisible()
 
     await page.getByTestId('collaboration-issue-create').click()
     await page.getByTestId('cloud-todo-title').fill(issueTitle)
@@ -154,6 +176,7 @@ test.describe('Collaboration module', () => {
     const issueId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
     expect(issueId).not.toBe('')
 
+    await page.getByTestId('cloud-todo-edit-content').click()
     await page.getByTestId('cloud-todo-detail-title').fill(updatedIssueTitle)
     await page.getByTestId('cloud-todo-detail-status').selectOption('pending')
     await page.getByTestId('cloud-todo-save').click()
@@ -163,23 +186,26 @@ test.describe('Collaboration module', () => {
     await page.getByTestId('collaboration-issue-comment-submit').click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(comment)
 
-    const assignmentTarget = page.getByTestId('collaboration-assignment-target')
-    const assignedMemberName = await assignmentTarget
-      .locator('optgroup')
-      .first()
-      .locator('option')
-      .first()
-      .textContent()
-    expect(assignedMemberName?.trim()).not.toBe('')
-    await assignmentTarget.selectOption({ index: 1 })
-    await page.getByTestId('collaboration-assignment-workflow-step').fill(workflowStep)
-    await page.getByTestId('collaboration-issue-comment').fill(assignmentComment)
+    const authToken = (await page.context().cookies()).find(
+      cookie => cookie.name === 'auth_token'
+    )?.value
+    expect(authToken).toBeTruthy()
+    const memberResponse = await request.get(
+      `${API_BASE_URL}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/members`,
+      { headers: { Authorization: `Bearer ${authToken}` } }
+    )
+    expect(memberResponse.ok()).toBe(true)
+    const memberList = (await memberResponse.json()) as WorkspaceMemberList
+    const assignedMember = memberList.items[0]
+    const assignedMemberName = assignedMember?.user_name
+    if (!assignedMember || !assignedMemberName) throw new Error('Workspace owner member is missing')
+    await page.getByTestId('collaboration-issue-comment').click()
+    await page.getByTestId('collaboration-issue-mention-trigger').click()
+    await page.getByTestId(`collaboration-issue-mention-member-${assignedMember.user_id}`).click()
+    await page.getByTestId('collaboration-issue-comment').pressSequentially(assignmentComment)
     await page.getByTestId('collaboration-issue-comment-submit').click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignmentComment)
-    await expect(page.getByTestId('collaboration-comments')).toContainText(workflowStep)
-    await expect(page.getByTestId('collaboration-comments')).toContainText(
-      assignedMemberName?.trim() ?? ''
-    )
+    await expect(page.getByTestId('collaboration-comments')).toContainText(assignedMemberName)
     await capture(page, testInfo, '02-issue-activity')
 
     await page.getByTestId('cloud-todo-detail-close').click()
@@ -192,8 +218,8 @@ test.describe('Collaboration module', () => {
     await expect(page).toHaveURL(new RegExp(`${escaped(projectPath)}\\?view=table$`))
     const tableRow = page.getByTestId(`collaboration-issue-table-row-${issueId}`)
     await expect(tableRow).toContainText(updatedIssueTitle)
-    await expect(tableRow).toContainText('pending')
-    await expect(tableRow).toContainText(assignedMemberName?.trim() ?? '')
+    await expect(tableRow).toContainText(/待处理|To do/)
+    await expect(tableRow).toContainText(assignedMemberName)
 
     await page.reload()
     await expect(page).toHaveURL(new RegExp(`${escaped(projectPath)}\\?view=table$`))
@@ -210,7 +236,6 @@ test.describe('Collaboration module', () => {
     await page.getByTestId(`collaboration-issue-${issueId}`).getByRole('button').first().click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(comment)
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignmentComment)
-    await expect(page.getByTestId('collaboration-comments')).toContainText(workflowStep)
     await capture(page, testInfo, '03-persisted-issue')
   })
 })

@@ -3,24 +3,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import type {
-  CollaborationHostAdapter,
   CollaborationPlatformHostAdapter,
   CollaborationPlatformLocation,
 } from '@wegent/collaboration'
 
-import {
-  CollaborationPage,
-  collaborationLocationPath,
-} from '@/features/collaboration/CollaborationPage'
+import { CollaborationPage } from '@/features/collaboration/CollaborationPage'
+import { collaborationLocationPath } from '@/features/collaboration/routes'
 
 const mockPush = jest.fn()
 const mockReplace = jest.fn()
 let mockPathname = '/collaboration'
 let mockSearchParams = new URLSearchParams()
 let capturedHost: CollaborationPlatformHostAdapter | null = null
-let capturedProjectHost: CollaborationHostAdapter | null = null
+const mockGetProject = jest.fn()
 
 jest.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
@@ -29,64 +26,60 @@ jest.mock('next/navigation', () => ({
 }))
 
 jest.mock('@wegent/collaboration', () => ({
-  CollaborationApp: ({ host }: { host: CollaborationHostAdapter }) => {
-    capturedProjectHost = host
-    return (
-      <button
-        type="button"
-        data-testid="project-back"
-        onClick={() =>
-          host.navigate({
-            projectId: null,
-            issueId: null,
-            view: 'board',
-            rootView: 'home',
-          })
-        }
-      />
-    )
-  },
-  CollaborationPlatformApp: ({ host }: { host: CollaborationPlatformHostAdapter }) => {
+  CollaborationPlatformApp: ({
+    host,
+    renderShell,
+  }: {
+    host: CollaborationPlatformHostAdapter
+    renderShell?: (shell: { main: React.ReactNode; sidebar: React.ReactNode }) => React.ReactNode
+  }) => {
     capturedHost = host
-    return (
-      <button
-        type="button"
-        data-testid="open-resources"
-        onClick={() =>
-          host.navigate({
-            platformView: 'resources',
-            workspaceId: null,
-            workspaceView: 'home',
-            projectId: null,
-            projectView: 'board',
-            issueId: null,
-          })
-        }
-      />
-    )
+    return renderShell?.({
+      main: <div data-testid="shared-collaboration-main" />,
+      sidebar: <div data-testid="shared-collaboration-sidebar">spaces</div>,
+    })
   },
 }))
 
-jest.mock('@/features/collaboration/CollaborationProjectSection', () => ({
-  CollaborationProjectSection: () => null,
+jest.mock('@/features/tasks/components/sidebar', () => ({
+  CollapsedSidebarButtons: () => <div data-testid="collapsed-sidebar-buttons" />,
+  ResizableSidebar: ({ children }: { children: React.ReactNode }) => (
+    <aside data-testid="resizable-sidebar">{children}</aside>
+  ),
+  TaskSidebar: ({ contextSection }: { contextSection?: React.ReactNode }) => (
+    <div data-testid="task-sidebar">
+      <div data-testid="task-sidebar-system-navigation">system navigation</div>
+      <div data-testid="task-sidebar-collaboration-context">{contextSection}</div>
+    </div>
+  ),
 }))
 
-jest.mock('@/features/collaboration/shared-api', () => ({
-  createWebSharedWorkspaceApi: () => ({}),
-}))
-
-jest.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({ getCurrentLanguage: () => 'zh-CN' }),
-}))
+jest.mock(
+  '@/features/layout/TopNavigation',
+  () =>
+    function MockTopNavigation() {
+      return <div data-testid="top-navigation" />
+    }
+)
 
 jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
   useIsMobile: () => false,
 }))
 
-jest.mock('@/features/tasks/components/sidebar', () => ({
-  CollapsedSidebarButtons: () => null,
-  ResizableSidebar: ({ children }: { children: React.ReactNode }) => <aside>{children}</aside>,
-  TaskSidebar: () => null,
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({ selectTask: jest.fn() }),
+}))
+
+jest.mock('@/features/collaboration/shared-api', () => ({
+  createWebSharedWorkspaceApi: () => ({
+    projects: {
+      get: mockGetProject,
+    },
+  }),
+}))
+
+jest.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({ getCurrentLanguage: () => 'zh-CN' }),
 }))
 
 jest.mock('sonner', () => ({
@@ -100,11 +93,15 @@ describe('CollaborationPage platform routing', () => {
     mockPathname = '/collaboration'
     mockSearchParams = new URLSearchParams()
     capturedHost = null
-    capturedProjectHost = null
+    mockGetProject.mockReset()
+    mockGetProject.mockResolvedValue({
+      id: 'project 1',
+      workspace_id: 'workspace 1',
+    })
     localStorage.clear()
   })
 
-  it('renders the platform spaces root and navigates resources through the thin host shell', () => {
+  it('renders the platform spaces root through the thin host shell', () => {
     render(<CollaborationPage />)
 
     expect(capturedHost?.location).toEqual({
@@ -118,10 +115,23 @@ describe('CollaborationPage platform routing', () => {
     expect(capturedHost?.capabilities).toEqual({
       automation: true,
       dingtalkAitable: false,
+      projectLocation: 'cloud',
+      workspaceLocations: ['cloud'],
+      sidebarPresentation: 'context',
     })
+    expect(screen.getByTestId('collaboration-page-main')).toHaveClass('flex-1', 'overflow-hidden')
+    expect(screen.getByTestId('task-sidebar-system-navigation')).toBeInTheDocument()
+    expect(screen.getByTestId('task-sidebar-collaboration-context')).toContainElement(
+      screen.getByTestId('shared-collaboration-sidebar')
+    )
+  })
 
-    fireEvent.click(screen.getByTestId('open-resources'))
-    expect(mockPush).toHaveBeenCalledWith('/collaboration/resources')
+  it('opens the selected execution environment in device management', () => {
+    render(<CollaborationPage />)
+
+    capturedHost?.manageResource?.('environments', 'device/21')
+
+    expect(mockPush).toHaveBeenCalledWith('/devices?deviceId=device%2F21')
   })
 
   it('maps a nested Workspace, Project and Issue URL into the shared location', () => {
@@ -138,56 +148,79 @@ describe('CollaborationPage platform routing', () => {
       projectView: 'table',
       issueId: 'issue%3',
     })
-    expect(capturedProjectHost).toBeNull()
+  })
+
+  it('opens an Issue drawer with native shallow history inside the current Project', () => {
+    mockPathname = '/collaboration/workspaces/workspace%201/projects/project%201'
+    const pushState = jest.spyOn(window.history, 'pushState').mockImplementation(() => undefined)
+
+    render(<CollaborationPage />)
+
+    capturedHost?.navigate({
+      ...capturedHost.location,
+      issueId: 'issue 1',
+    })
+
+    expect(pushState).toHaveBeenCalledWith(
+      null,
+      '',
+      '/collaboration/workspaces/workspace%201/projects/project%201/issues/issue%201'
+    )
+    expect(mockPush).not.toHaveBeenCalled()
+    pushState.mockRestore()
   })
 
   it.each(['automation', 'manage', 'files'] as const)(
-    'routes a legacy Project %s URL to the mature project application',
-    view => {
+    'redirects a legacy Project %s URL into the canonical shared Workspace route',
+    async view => {
       mockPathname = '/collaboration/project%201'
       mockSearchParams = new URLSearchParams(`view=${view}`)
 
       render(<CollaborationPage />)
 
       expect(capturedHost).toBeNull()
-      expect(capturedProjectHost?.location).toEqual({
-        projectId: 'project 1',
-        issueId: null,
-        view,
-        rootView: 'home',
-      })
+      expect(screen.getByText('正在进入协作空间…')).toBeInTheDocument()
+      await waitFor(() =>
+        expect(mockReplace).toHaveBeenCalledWith(
+          `/collaboration/workspaces/workspace%201/projects/project%201?view=${view}`
+        )
+      )
     }
   )
 
-  it('falls back unknown legacy Project views to the mature board', () => {
+  it('falls back unknown legacy Project views to the canonical board', async () => {
     mockPathname = '/collaboration/project%201'
     mockSearchParams = new URLSearchParams('view=unknown')
 
     render(<CollaborationPage />)
 
     expect(capturedHost).toBeNull()
-    expect(capturedProjectHost?.location).toEqual({
-      projectId: 'project 1',
-      issueId: null,
-      view: 'board',
-      rootView: 'home',
-    })
+    await waitFor(() =>
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/collaboration/workspaces/workspace%201/projects/project%201'
+      )
+    )
   })
 
-  it('routes a legacy Issue URL to the mature Issue detail and returns to spaces', () => {
+  it('redirects a legacy Issue URL into the canonical shared Issue detail', async () => {
     mockPathname = '/collaboration/project%201/issues/issue%202'
 
     render(<CollaborationPage />)
 
-    expect(capturedProjectHost?.location).toEqual({
-      projectId: 'project 1',
-      issueId: 'issue 2',
-      view: 'board',
-      rootView: 'home',
-    })
+    await waitFor(() =>
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/collaboration/workspaces/workspace%201/projects/project%201/issues/issue%202'
+      )
+    )
+  })
 
-    fireEvent.click(screen.getByTestId('project-back'))
-    expect(mockPush).toHaveBeenCalledWith('/collaboration')
+  it('returns to the spaces root when a legacy Project has no Workspace', async () => {
+    mockPathname = '/collaboration/project%201'
+    mockGetProject.mockResolvedValue({ id: 'project 1', workspace_id: null })
+
+    render(<CollaborationPage />)
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/collaboration'))
   })
 
   it('keeps path construction centralized for every shared hierarchy level', () => {
@@ -212,5 +245,25 @@ describe('CollaborationPage platform routing', () => {
     ).toBe(
       '/collaboration/workspaces/workspace%201/projects/project%2F1/issues/issue%201?view=table'
     )
+  })
+
+  it('redirects the removed My Work route to the collaboration home', async () => {
+    mockPathname = '/collaboration/my-work'
+
+    render(<CollaborationPage />)
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/collaboration'))
+    expect(mockGetProject).not.toHaveBeenCalled()
+    expect(capturedHost?.location.platformView).toBe('spaces')
+  })
+
+  it('redirects the removed global collaboration resources route to the collaboration home', async () => {
+    mockPathname = '/collaboration/resources'
+
+    render(<CollaborationPage />)
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/collaboration'))
+    expect(mockGetProject).not.toHaveBeenCalled()
+    expect(capturedHost?.location.platformView).toBe('spaces')
   })
 })

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'vitest'
+import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import {
   composerSkillFilePath,
   createComposerMentionElement,
@@ -89,6 +90,29 @@ describe('cloud references', () => {
     expect(
       findComposerMentionDeletionRange(reference, reference.length, reference.length, 'Backspace')
     ).toEqual({ start: 0, end: reference.length, cursor: 0 })
+  })
+})
+
+describe('conversation references', () => {
+  test('keeps encoded runtime metadata inside one atomic composer mention', () => {
+    const reference = createConversationMentionReference('Source chat', {
+      deviceId: 'local-device',
+      taskId: 'source-task',
+      runtimeHandle: {
+        modelSelection: {
+          modelName: 'Kimi K3 (OpenAI)',
+        },
+      },
+    })
+
+    expect(parseComposerMentions(reference)).toEqual([
+      expect.objectContaining({
+        name: 'Source chat',
+        reference,
+        start: 0,
+        end: reference.length,
+      }),
+    ])
   })
 })
 

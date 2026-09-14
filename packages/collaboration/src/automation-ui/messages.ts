@@ -8,6 +8,129 @@ export type AutomationMessageValues = Record<
 type AutomationMessages = Record<string, string>;
 
 const zhCN: AutomationMessages = {
+  "automation.policy.title": "项目调度",
+  "automation.policy.description":
+    "定义 Issue 如何进入项目，以及由谁协调执行。",
+  "automation.policy.create": "新建调度策略",
+  "automation.policy.emptyTitle": "还没有调度策略",
+  "automation.policy.emptyDescription":
+    "创建一条策略，让项目经理智能体开始协调 Issue。",
+  "automation.policy.createAction": "创建策略",
+  "automation.policy.welcomeTitle": "让项目按同一套原则持续运转",
+  "automation.policy.welcomeDescription":
+    "调度策略负责决定 Issue 何时进入执行、项目经理智能体如何拆解和分配任务。具体执行仍然发生在 Issue 内，不需要绘制流程图。",
+  "automation.policy.createFirst": "创建第一条策略",
+  "automation.policy.select": "选择调度策略",
+  "automation.policy.discardChangesConfirm":
+    "当前策略有未保存的更改。放弃更改并继续吗？",
+  "automation.policy.loading": "正在读取项目调度策略…",
+  "automation.policy.defaultName": "Issue 智能调度",
+  "automation.policy.defaultManager": "项目经理智能体",
+  "automation.policy.defaultPrompt":
+    "理解 Issue 的目标、上下文和验收要求，拆分成可独立验证的任务，并分配给最合适的成员或智能体。",
+  "automation.policy.unsaved": "尚未保存",
+  "automation.policy.save": "保存",
+  "automation.policy.saveChanges": "保存更改",
+  "automation.policy.saving": "保存中",
+  "automation.policy.saved": "已保存",
+  "automation.policy.retrySave": "重试保存",
+  "automation.policy.nameRequired": "请填写策略名称",
+  "automation.policy.promptRequired": "请填写调度原则",
+  "automation.policy.saveFailed": "保存失败，请重试",
+  "automation.policy.updateFailed": "更新失败",
+  "automation.policy.runFailed": "运行失败，请重试",
+  "automation.policy.deleteConfirm": "删除“{{name}}”？此操作无法撤销。",
+  "automation.policy.deleteFailed": "删除失败，请重试",
+  "automation.policy.reload": "重新加载",
+  "automation.policy.ruleDescription":
+    "每次触发时，系统都会在对应 Issue 中留下分配与执行记录。",
+  "automation.policy.testRun": "测试运行",
+  "automation.policy.runNow": "立即执行",
+  "automation.policy.runConfirm":
+    "这会对真实 Issue 执行分配并可能发送通知或启动智能体。确定继续吗？",
+  "automation.policy.openIssue": "打开 Issue",
+  "automation.policy.disable": "停用",
+  "automation.policy.enable": "启用",
+  "automation.policy.delete": "删除这条策略",
+  "automation.policy.triggerTitle": "什么时候开始调度？",
+  "automation.policy.triggerDescription": "选择 Issue 进入这套调度策略的时机。",
+  "automation.policy.triggerCreated": "Issue 创建后",
+  "automation.policy.triggerCreatedDescription":
+    "创建后立即交给项目经理智能体判断和分配",
+  "automation.policy.triggerStarted": "开始处理时",
+  "automation.policy.triggerStartedDescription":
+    "成员将 Issue 推进到处理中后再开始调度",
+  "automation.policy.triggerSchedule": "定时巡检",
+  "automation.policy.triggerScheduleDescription":
+    "按固定时间检查项目中的待处理事项",
+  "automation.policy.tags": "只处理带有以下标签的 Issue（可选）",
+  "automation.policy.tagsPlaceholder": "例如：自动开发、紧急",
+  "automation.policy.frequency": "频率",
+  "automation.policy.time": "时间",
+  "automation.policy.hourly": "每小时",
+  "automation.policy.daily": "每天",
+  "automation.policy.weekdays": "工作日",
+  "automation.policy.weekly": "每周",
+  "automation.policy.weekday": "星期",
+  "automation.policy.timezone": "时区",
+  "automation.policy.monday": "周一",
+  "automation.policy.tuesday": "周二",
+  "automation.policy.wednesday": "周三",
+  "automation.policy.thursday": "周四",
+  "automation.policy.friday": "周五",
+  "automation.policy.saturday": "周六",
+  "automation.policy.sunday": "周日",
+  "automation.policy.coordinatorTitle": "项目经理智能体如何协调？",
+  "automation.policy.coordinatorDescription":
+    "这是一段给调度模型的自然语言说明，不是需要连线的规则引擎。",
+  "automation.policy.principle": "调度原则",
+  "automation.policy.principlePlaceholder":
+    "例如：先确认需求和验收标准，再拆成可独立验证的任务；优先分配给具备对应技能且当前负载较低的执行者。",
+  "automation.policy.approvalQuestion": "分配后是否需要人工确认？",
+  "automation.policy.approvalRequired": "人工确认",
+  "automation.policy.approvalAutomatic": "自动执行",
+  "automation.policy.fixedTitle": "这是一条固定执行流程",
+  "automation.policy.fixedDescription":
+    "已有执行步骤会继续按原配置运行。现在改为清晰的阶段列表展示，不再用画布位置和连线表达顺序。",
+  "automation.policy.stepsTitle": "流程步骤",
+  "automation.policy.stepsDescription":
+    "为每个阶段指定必须跟进的项目智能体，项目经理将按顺序分配并传递结果与交付物。",
+  "automation.policy.stepFallback": "步骤 {{index}}",
+  "automation.policy.stepNoDescription": "未填写步骤说明",
+  "automation.policy.addStep": "添加步骤",
+  "automation.policy.addFirstStep": "添加第一个步骤",
+  "automation.policy.editStep": "编辑步骤",
+  "automation.policy.deleteStep": "删除步骤",
+  "automation.policy.stepName": "步骤名称",
+  "automation.policy.stepNamePlaceholder": "例如：交互设计",
+  "automation.policy.stepDescription": "期望结果",
+  "automation.policy.stepDescriptionPlaceholder":
+    "说明完成这个步骤时应产出什么结果",
+  "automation.policy.stepAgent": "指定智能体",
+  "automation.policy.stepAgentPlaceholder": "选择项目智能体",
+  "automation.policy.stepAgentRequired": "请选择步骤 {{index}} 的执行智能体",
+  "automation.policy.stepAgentUnavailable": "原智能体已不可用（{{id}}）",
+  "automation.policy.removeStep": "删除“{{name}}”",
+  "automation.policy.dynamicTitle": "无需预设步骤",
+  "automation.policy.dynamicDescription":
+    "项目经理智能体会根据每个 Issue 的实际情况动态拆解和分配任务。",
+  "automation.policy.historyBack": "返回策略",
+  "automation.policy.historyDescription":
+    "“{{name}}”产生的 Issue 执行记录，可回到对应 Issue 查看分配、执行和交付结果。",
+  "automation.policy.historyAll": "项目运行记录",
+  "automation.policy.historyEmpty": "暂无运行记录",
+  "automation.policy.historyEmptyDescription":
+    "策略触发后，可回到对应 Issue 查看分配、执行和交付结果。",
+  "automation.policy.unnamedIssue": "未命名 Issue",
+  "automation.policy.run.pending": "等待中",
+  "automation.policy.run.queued": "排队中",
+  "automation.policy.run.waiting_runtime": "等待运行环境",
+  "automation.policy.run.waiting_device": "等待设备",
+  "automation.policy.run.running": "执行中",
+  "automation.policy.run.succeeded": "已完成",
+  "automation.policy.run.failed": "失败",
+  "automation.policy.run.skipped": "已跳过",
+  "automation.policy.run.cancelled": "已取消",
   "automation.title": "自动化",
   "automation.runs.title": "运行记录",
   "automation.home.description":
@@ -489,6 +612,136 @@ const zhCN: AutomationMessages = {
 };
 
 const en: AutomationMessages = {
+  "automation.policy.title": "Project dispatch",
+  "automation.policy.description":
+    "Define how Issues enter the project and who coordinates execution.",
+  "automation.policy.create": "New dispatch policy",
+  "automation.policy.emptyTitle": "No dispatch policies yet",
+  "automation.policy.emptyDescription":
+    "Create a policy so the project manager agent can start coordinating Issues.",
+  "automation.policy.createAction": "Create policy",
+  "automation.policy.welcomeTitle":
+    "Keep the project running by shared principles",
+  "automation.policy.welcomeDescription":
+    "Dispatch policies decide when an Issue enters execution and how the project manager agent breaks down and assigns work. Execution still happens inside the Issue, without drawing a flowchart.",
+  "automation.policy.createFirst": "Create the first policy",
+  "automation.policy.select": "Select dispatch policy",
+  "automation.policy.discardChangesConfirm":
+    "This policy has unsaved changes. Discard them and continue?",
+  "automation.policy.loading": "Loading project dispatch policies…",
+  "automation.policy.defaultName": "Smart Issue dispatch",
+  "automation.policy.defaultManager": "Project manager agent",
+  "automation.policy.defaultPrompt":
+    "Understand the Issue goal, context, and acceptance criteria; split it into independently verifiable tasks and assign each to the best member or agent.",
+  "automation.policy.unsaved": "Not saved",
+  "automation.policy.save": "Save",
+  "automation.policy.saveChanges": "Save changes",
+  "automation.policy.saving": "Saving",
+  "automation.policy.saved": "Saved",
+  "automation.policy.retrySave": "Retry save",
+  "automation.policy.nameRequired": "Enter a policy name",
+  "automation.policy.promptRequired": "Enter dispatch principles",
+  "automation.policy.saveFailed": "Save failed. Try again.",
+  "automation.policy.updateFailed": "Update failed",
+  "automation.policy.runFailed": "Run failed. Try again.",
+  "automation.policy.deleteConfirm":
+    "Delete “{{name}}”? This action cannot be undone.",
+  "automation.policy.deleteFailed": "Delete failed. Try again.",
+  "automation.policy.reload": "Reload",
+  "automation.policy.ruleDescription":
+    "Each trigger leaves assignment and execution records in the corresponding Issue.",
+  "automation.policy.testRun": "Test run",
+  "automation.policy.runNow": "Run now",
+  "automation.policy.runConfirm":
+    "This will dispatch real issues and may notify members or start agents. Continue?",
+  "automation.policy.openIssue": "Open issue",
+  "automation.policy.disable": "Disable",
+  "automation.policy.enable": "Enable",
+  "automation.policy.delete": "Delete this policy",
+  "automation.policy.triggerTitle": "When should dispatch begin?",
+  "automation.policy.triggerDescription":
+    "Choose when an Issue enters this dispatch policy.",
+  "automation.policy.triggerCreated": "After Issue creation",
+  "automation.policy.triggerCreatedDescription":
+    "Let the project manager agent evaluate and assign it immediately",
+  "automation.policy.triggerStarted": "When work starts",
+  "automation.policy.triggerStartedDescription":
+    "Start dispatch after a member moves the Issue into progress",
+  "automation.policy.triggerSchedule": "Scheduled review",
+  "automation.policy.triggerScheduleDescription":
+    "Review pending project work at a fixed time",
+  "automation.policy.tags": "Only process Issues with these tags (optional)",
+  "automation.policy.tagsPlaceholder": "For example: auto development, urgent",
+  "automation.policy.frequency": "Frequency",
+  "automation.policy.time": "Time",
+  "automation.policy.hourly": "Hourly",
+  "automation.policy.daily": "Daily",
+  "automation.policy.weekdays": "Weekdays",
+  "automation.policy.weekly": "Weekly",
+  "automation.policy.weekday": "Day of week",
+  "automation.policy.timezone": "Timezone",
+  "automation.policy.monday": "Monday",
+  "automation.policy.tuesday": "Tuesday",
+  "automation.policy.wednesday": "Wednesday",
+  "automation.policy.thursday": "Thursday",
+  "automation.policy.friday": "Friday",
+  "automation.policy.saturday": "Saturday",
+  "automation.policy.sunday": "Sunday",
+  "automation.policy.coordinatorTitle":
+    "How should the project manager agent coordinate?",
+  "automation.policy.coordinatorDescription":
+    "This is natural-language guidance for the dispatch model, not a rule engine that needs connectors.",
+  "automation.policy.principle": "Dispatch principles",
+  "automation.policy.principlePlaceholder":
+    "For example: confirm requirements and acceptance criteria first, then create independently verifiable tasks and prefer qualified executors with available capacity.",
+  "automation.policy.approvalQuestion":
+    "Should assignments require manual confirmation?",
+  "automation.policy.approvalRequired": "Manual confirmation",
+  "automation.policy.approvalAutomatic": "Run automatically",
+  "automation.policy.fixedTitle": "This is a fixed execution flow",
+  "automation.policy.fixedDescription":
+    "Existing steps continue to run with their current configuration. They are now shown as a clear ordered list instead of canvas positions and connectors.",
+  "automation.policy.stepsTitle": "Workflow steps",
+  "automation.policy.stepsDescription":
+    "Require a project agent for each stage; the project manager assigns them in order and passes results and deliverables forward.",
+  "automation.policy.stepFallback": "Step {{index}}",
+  "automation.policy.stepNoDescription": "No step description",
+  "automation.policy.addStep": "Add step",
+  "automation.policy.addFirstStep": "Add the first step",
+  "automation.policy.editStep": "Edit step",
+  "automation.policy.deleteStep": "Delete step",
+  "automation.policy.stepName": "Step name",
+  "automation.policy.stepNamePlaceholder": "For example: Interaction design",
+  "automation.policy.stepDescription": "Expected result",
+  "automation.policy.stepDescriptionPlaceholder":
+    "Describe the result expected when this step is complete",
+  "automation.policy.stepAgent": "Required agent",
+  "automation.policy.stepAgentPlaceholder": "Choose a project agent",
+  "automation.policy.stepAgentRequired":
+    "Choose an execution agent for step {{index}}",
+  "automation.policy.stepAgentUnavailable":
+    "Previous agent is unavailable ({{id}})",
+  "automation.policy.removeStep": "Remove “{{name}}”",
+  "automation.policy.dynamicTitle": "No predefined steps needed",
+  "automation.policy.dynamicDescription":
+    "The project manager agent dynamically breaks down and assigns work based on each Issue.",
+  "automation.policy.historyBack": "Back to policy",
+  "automation.policy.historyDescription":
+    "Issue execution records created by “{{name}}”. Open the corresponding Issue to inspect assignments, execution, and deliverables.",
+  "automation.policy.historyAll": "Project run history",
+  "automation.policy.historyEmpty": "No run history",
+  "automation.policy.historyEmptyDescription":
+    "After a policy triggers, open the corresponding Issue to inspect assignments, execution, and deliverables.",
+  "automation.policy.unnamedIssue": "Untitled Issue",
+  "automation.policy.run.pending": "Pending",
+  "automation.policy.run.queued": "Queued",
+  "automation.policy.run.waiting_runtime": "Waiting for runtime",
+  "automation.policy.run.waiting_device": "Waiting for device",
+  "automation.policy.run.running": "Running",
+  "automation.policy.run.succeeded": "Completed",
+  "automation.policy.run.failed": "Failed",
+  "automation.policy.run.skipped": "Skipped",
+  "automation.policy.run.cancelled": "Cancelled",
   "automation.title": "Automation",
   "automation.runs.title": "Run history",
   "automation.home.description":
