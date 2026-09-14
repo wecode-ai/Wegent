@@ -1,0 +1,9 @@
+# Requests matching a rule are handled by Rust. With no rules, every request
+# falls back to the Python backend.
+routes = []
+
+# Future example:
+# [[routes]]
+# methods = ["GET"]
+# path = "/api/example"
+# match_kind = "exact"

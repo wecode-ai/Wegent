@@ -1333,6 +1333,8 @@ Configuration File:
       WEGENT_FRONTEND_PORT  - Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
 
     Other Settings:
+      WEGENT_BACKEND_MODE  - Backend mode: python (default) or hybrid
+      WEGENT_PYTHON_UPSTREAM_PORT - Hybrid Python port (default: 8004)
       EXECUTOR_IMAGE        - Docker image for executor
       WEGENT_SOCKET_URL     - WebSocket URL (auto-computed: http://LOCAL_IP:BACKEND_PORT)
       TASK_API_DOMAIN       - URL for executor_manager to call backend (auto-computed)
@@ -1342,6 +1344,7 @@ Configuration File:
 Examples:
   $0                                    # Start with default configuration
   $0 backend frontend                   # Start only backend and frontend
+  WEGENT_BACKEND_MODE=hybrid $0 backend # Start Backend through the Rust gateway
   $0 be fe                              # Start only backend and frontend (short names)
   $0 --clean-frontend-cache             # Start after clearing frontend .next cache
   $0 --init                             # Initialize configuration interactively
@@ -1608,6 +1611,40 @@ is_port_listening() {
     [ -n "$(get_port_listener_pids "$port")" ]
 }
 
+force_stop_hybrid_backend() {
+    local expected_parent=$1
+    local state_file="$PID_DIR/backend-hybrid.state"
+    if [ ! -f "$state_file" ]; then
+        return
+    fi
+
+    local recorded_parent
+    recorded_parent=$(awk -F= '$1 == "parent" { print $2; exit }' "$state_file")
+    if [ "$recorded_parent" != "$expected_parent" ]; then
+        return
+    fi
+
+    local key value
+    for key in build python rust; do
+        value=$(awk -F= -v key="$key" '$1 == key { print $2; exit }' "$state_file")
+        if [[ "$value" =~ ^[0-9]+$ ]] && kill -0 "$value" 2>/dev/null; then
+            kill -9 "$value" 2>/dev/null || true
+        fi
+    done
+
+    value=$(awk -F= '$1 == "python_port" { print $2; exit }' "$state_file")
+    if [[ "$value" =~ ^[0-9]+$ ]]; then
+        local listener_pids
+        listener_pids=$(get_port_listener_pids "$value" | tr '\n' ' ')
+        if [ -n "$listener_pids" ]; then
+            echo -e "  Force killing hybrid Backend processes on port $value: $listener_pids"
+            echo "$listener_pids" | xargs kill -9 2>/dev/null || true
+        fi
+    fi
+
+    rm -f "$state_file"
+}
+
 # Check if port is in use
 check_port() {
     local port=$1
@@ -1801,6 +1838,9 @@ stop_services() {
                     kill -TERM "$pid" 2>/dev/null || true
                 else
                     # Force kill: SIGKILL immediately
+                    if [ "$service" = "backend" ]; then
+                        force_stop_hybrid_backend "$pid"
+                    fi
                     kill -9 -- -"$pid" 2>/dev/null || true
                     kill -9 "$pid" 2>/dev/null || true
                 fi
@@ -1873,6 +1913,9 @@ stop_services() {
             # Kill main process if still running
             if [ -f "$pid_file" ]; then
                 local pid=$(cat "$pid_file")
+                if [ "$service" = "backend" ]; then
+                    force_stop_hybrid_backend "$pid"
+                fi
                 if kill -0 "$pid" 2>/dev/null; then
                     echo -e "  ${YELLOW}Force killing $service process after graceful timeout${NC}"
                     kill -9 -- -"$pid" 2>/dev/null || true
@@ -2125,6 +2168,19 @@ start_services() {
         done
     fi
 
+    local backend_mode=${WEGENT_BACKEND_MODE:-python}
+    if [ "$start_backend" = true ]; then
+        case "$backend_mode" in
+            python|hybrid)
+                ;;
+            *)
+                echo -e "${RED}Invalid WEGENT_BACKEND_MODE: $backend_mode${NC}"
+                echo "Expected 'python' or 'hybrid'."
+                exit 1
+                ;;
+        esac
+    fi
+
     # Check if config file exists, if not, run init wizard first
     if [ ! -f "$CONFIG_FILE" ]; then
         echo -e "${YELLOW}╔════════════════════════════════════════════════════════╗${NC}"
@@ -2244,6 +2300,9 @@ start_services() {
 
     echo -e "${GREEN}Configuration:${NC}"
     echo -e "  Backend Port:        $BACKEND_PORT"
+    if [ "$start_backend" = true ]; then
+        echo -e "  Backend Mode:        $backend_mode"
+    fi
     echo -e "  Chat Shell Port:     $CHAT_SHELL_PORT"
     echo -e "  Executor Mgr Port:   $EXECUTOR_MANAGER_PORT"
     echo -e "  Knowledge Rtm Port:  $KNOWLEDGE_RUNTIME_PORT"
@@ -2328,6 +2387,13 @@ start_services() {
 
     # 1. Start Backend
     if [ "$start_backend" = true ]; then
+        local backend_process_command="uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug"
+        if [ "$backend_mode" = "hybrid" ]; then
+            backend_process_command="export WEGENT_HYBRID_STATE_FILE=\"$PID_DIR/backend-hybrid.state\" && exec \"$SCRIPT_DIR/backend-rs/scripts/start-hybrid-backend.sh\" --host 0.0.0.0 --port $BACKEND_PORT"
+        else
+            rm -f "$PID_DIR/backend-hybrid.state"
+        fi
+
         # EXECUTOR_MANAGER_URL: URL for backend to call executor_manager
         # BACKEND_INTERNAL_URL: URL passed into task runtime configs such as MCP
         # server URLs. Use TASK_API_DOMAIN so Docker executor containers can
@@ -2338,7 +2404,7 @@ start_services() {
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "backend" "backend" \
-            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export WEGENT_SOCKET_URL=\"$WEGENT_SOCKET_URL\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export WEGENT_BACKEND_PUBLIC_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && export LOG_FILE_ENABLED=$LOCAL_LOG_FILE_ENABLED && export LOG_DIR=\"$BACKEND_LOCAL_LOG_DIR\" && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
+            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export WEGENT_SOCKET_URL=\"$WEGENT_SOCKET_URL\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export WEGENT_BACKEND_PUBLIC_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && export LOG_FILE_ENABLED=$LOCAL_LOG_FILE_ENABLED && export LOG_DIR=\"$BACKEND_LOCAL_LOG_DIR\" && source .venv/bin/activate && $backend_process_command" \
             "$BACKEND_PORT"
     fi
 
