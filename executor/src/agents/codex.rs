@@ -3984,7 +3984,7 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<St
     let mut overrides = vec![
         format!(
             "skills.config={}",
-            serde_json::to_string(&json!([
+            toml_json_value(&json!([
                 {
                     "name": "browser:control-in-app-browser",
                     "enabled": false,
@@ -3994,7 +3994,6 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<St
                     "enabled": false,
                 },
             ]))
-            .unwrap_or_else(|_| "[]".to_owned())
         ),
         "features.non_prefixed_mcp_tool_names=true".to_owned(),
     ];
@@ -4807,6 +4806,14 @@ fn toml_json_value(value: &Value) -> String {
                 .collect::<Vec<_>>()
                 .join(",")
         ),
+        Value::Object(values) => format!(
+            "{{{}}}",
+            values
+                .iter()
+                .map(|(key, value)| format!("{}={}", toml_key_segment(key), toml_json_value(value)))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
         Value::Bool(value) => value.to_string(),
         Value::Number(value) => value.to_string(),
         Value::String(value) => toml_value(value),
@@ -4842,6 +4849,13 @@ fn parse_config_override_value(value: &str) -> Value {
     if value.starts_with('[') && value.ends_with(']') {
         if let Ok(parsed) = serde_json::from_str::<Value>(value) {
             return parsed;
+        }
+    }
+    if let Ok(mut parsed) =
+        toml_edit::de::from_str::<BTreeMap<String, Value>>(&format!("value={value}"))
+    {
+        if let Some(value) = parsed.remove("value") {
+            return value;
         }
     }
     if value.starts_with('"') && value.ends_with('"') {

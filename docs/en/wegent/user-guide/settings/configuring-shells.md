@@ -485,7 +485,7 @@ View Shell status via Web interface:
 
 **Error 1: Shell status is Unavailable**
 
-- Check if runtime type is correct (`ClaudeCode` or `Dify`)
+- Check if runtime type is correct (`Codex`, `ClaudeCode`, or `Dify`)
 - Check if configuration format complies with YAML specification
 - View backend logs: `docker-compose logs backend`
 

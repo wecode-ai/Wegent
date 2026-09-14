@@ -485,7 +485,7 @@ spec:
 
 **错误 1: Shell 状态为 Unavailable**
 
-- 检查运行时类型是否正确 (`ClaudeCode` 或 `Dify`)
+- 检查运行时类型是否正确 (`Codex`、`ClaudeCode` 或 `Dify`)
 - 检查配置格式是否符合 YAML 规范
 - 查看后端日志: `docker-compose logs backend`
 

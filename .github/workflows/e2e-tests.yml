@@ -1073,6 +1073,16 @@ jobs:
             rm executor_manager.pid
           fi
 
+      - name: Capture Executor Manager container logs
+        if: failure()
+        run: |
+          mkdir -p executor_manager/container-logs
+          for container_id in $(docker ps -aq --filter label=owner=executor_manager); do
+            container_name=$(docker inspect --format '{{.Name}}' "$container_id" | sed 's#^/##')
+            docker logs "$container_id" \
+              > "executor_manager/container-logs/${container_name}.log" 2>&1 || true
+          done
+
       - name: Remove Executor Manager Containers
         if: always()
         run: |
@@ -1124,6 +1134,7 @@ jobs:
             frontend/mock-model-server.log
             executor/local-executor.log
             executor_manager/executor_manager.log
+            executor_manager/container-logs/
           retention-days: 7
 
   # Merge test reports from all E2E jobs
