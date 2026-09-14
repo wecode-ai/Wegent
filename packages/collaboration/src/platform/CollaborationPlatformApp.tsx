@@ -4,7 +4,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
+  AlertTriangle,
+  CircleCheck,
   ChevronRight,
+  Clock3,
   Ellipsis,
   FolderPlus,
   FolderOpen,
@@ -39,6 +43,11 @@ import type {
   CollaborationWorkspaceView,
 } from "./types";
 import { useCollaborationPlatformController } from "./useCollaborationPlatformController";
+import {
+  createWorkspaceOperationsSnapshot,
+  workspaceIssueOperationState,
+  type WorkspaceOperationState,
+} from "./workspaceOperations";
 import {
   WorkspaceAgentsConfiguration,
   WorkspaceExecutionEnvironmentsConfiguration,
@@ -77,9 +86,6 @@ const platformMessages = {
     enterWorkspace: "进入空间",
     enterProject: "进入项目",
     projectCount: "项目",
-    memberCount: "成员",
-    agentCount: "智能体",
-    environmentCount: "执行环境",
     save: "保存",
     cancel: "取消",
     name: "名称",
@@ -94,6 +100,21 @@ const platformMessages = {
     configureAgents: "配置智能体",
     inviteMembers: "邀请成员",
     workspaceResources: "空间资源",
+    operationsOverview: "运行总览",
+    operationsHint: "跨项目查看当前正在推进、等待确认和发生异常的工作。",
+    operatingProjects: "项目运行状态",
+    operatingProjectsHint: "异常和待确认项目优先显示。",
+    needsAttention: "需要关注",
+    attentionCount: "项需要处理",
+    issues: "项 Issue",
+    noAttention: "当前没有异常或待确认事项",
+    running: "运行中",
+    waitingReview: "待确认",
+    failed: "异常",
+    pending: "待开始",
+    stable: "正常",
+    idle: "空闲",
+    updatedAt: "最近变化",
     viewAll: "查看全部",
     collaborationSpaces: "协作空间",
     collaborationSettings: "协作设置",
@@ -136,9 +157,6 @@ const platformMessages = {
     enterWorkspace: "Enter space",
     enterProject: "Enter project",
     projectCount: "Projects",
-    memberCount: "Members",
-    agentCount: "Agents",
-    environmentCount: "Execution environments",
     save: "Save",
     cancel: "Cancel",
     name: "Name",
@@ -154,6 +172,23 @@ const platformMessages = {
     configureAgents: "Configure agents",
     inviteMembers: "Invite members",
     workspaceResources: "Workspace resources",
+    operationsOverview: "Operations overview",
+    operationsHint:
+      "See what is running, waiting for review, or failing across projects.",
+    operatingProjects: "Project operations",
+    operatingProjectsHint:
+      "Projects with failures or review gates are shown first.",
+    needsAttention: "Needs attention",
+    attentionCount: "items need action",
+    issues: "issues",
+    noAttention: "No failures or review gates right now",
+    running: "Running",
+    waitingReview: "Awaiting review",
+    failed: "Failed",
+    pending: "Ready",
+    stable: "Healthy",
+    idle: "Idle",
+    updatedAt: "Last change",
     viewAll: "View all",
     collaborationSpaces: "Collaboration spaces",
     collaborationSettings: "Collaboration settings",
@@ -617,6 +652,223 @@ function ProjectCards({
       ))}
     </div>
   );
+}
+
+function WorkspaceHome({
+  projects,
+  projectIssues,
+  messages,
+  onOpenProject,
+  onOpenProjects,
+  onOpenIssue,
+}: {
+  projects: CollaborationProject[];
+  projectIssues: Record<string, CollaborationIssue[]>;
+  messages: PlatformMessages;
+  onOpenProject(project: CollaborationProject): void;
+  onOpenProjects(): void;
+  onOpenIssue(project: CollaborationProject, issue: CollaborationIssue): void;
+}) {
+  const snapshot = createWorkspaceOperationsSnapshot({
+    projects,
+    projectIssues,
+  });
+  const metrics = [
+    {
+      id: "running",
+      label: messages.running,
+      value: snapshot.totals.running,
+      icon: Activity,
+      tone: "running",
+    },
+    {
+      id: "review",
+      label: messages.waitingReview,
+      value: snapshot.totals.review,
+      icon: Clock3,
+      tone: "review",
+    },
+    {
+      id: "failed",
+      label: messages.failed,
+      value: snapshot.totals.failed,
+      icon: AlertTriangle,
+      tone: "failed",
+    },
+    {
+      id: "pending",
+      label: messages.pending,
+      value: snapshot.totals.pending,
+      icon: CircleCheck,
+      tone: "pending",
+    },
+  ];
+
+  return (
+    <div data-testid="collaboration-workspace-home">
+      <section
+        className="collaboration-workspace-operation-metrics"
+        aria-label={messages.operationsOverview}
+      >
+        {metrics.map((metric) => {
+          const Icon = metric.icon;
+          return (
+            <div data-tone={metric.tone} key={metric.id}>
+              <span>
+                <Icon aria-hidden="true" />
+              </span>
+              <strong>{metric.value}</strong>
+              <small>{metric.label}</small>
+            </div>
+          );
+        })}
+      </section>
+
+      <div className="collaboration-workspace-operations-layout">
+        <section className="collaboration-workspace-operations-projects">
+          <div className="collaboration-workspace-operations-heading">
+            <div>
+              <h2>{messages.operatingProjects}</h2>
+              <p>{messages.operatingProjectsHint}</p>
+            </div>
+            <button type="button" onClick={onOpenProjects}>
+              {messages.viewAll}
+              <ChevronRight aria-hidden="true" />
+            </button>
+          </div>
+          <div className="collaboration-workspace-operation-table">
+            {snapshot.operations.map((operation) => {
+              const projectState: WorkspaceOperationState | "idle" =
+                operation.failedCount > 0
+                  ? "failed"
+                  : operation.reviewCount > 0
+                    ? "review"
+                    : operation.runningCount > 0
+                      ? "running"
+                      : "idle";
+              return (
+                <button
+                  type="button"
+                  data-testid={`collaboration-workspace-operation-project-${operation.project.id}`}
+                  key={operation.project.id}
+                  onClick={() => onOpenProject(operation.project)}
+                >
+                  <span className="collaboration-project-card-mark">
+                    {operation.project.project_key.slice(0, 2)}
+                  </span>
+                  <span className="collaboration-workspace-operation-project-copy">
+                    <strong>{operation.project.name}</strong>
+                    <small>
+                      {operation.issues.length} {messages.issues}
+                    </small>
+                  </span>
+                  <OperationStateBadge
+                    messages={messages}
+                    state={projectState}
+                  />
+                  <span className="collaboration-workspace-operation-counts">
+                    <span data-tone="running">
+                      {operation.runningCount} {messages.running}
+                    </span>
+                    <span data-tone="review">
+                      {operation.reviewCount} {messages.waitingReview}
+                    </span>
+                    {operation.failedCount > 0 ? (
+                      <span data-tone="failed">
+                        {operation.failedCount} {messages.failed}
+                      </span>
+                    ) : null}
+                  </span>
+                  <time dateTime={operation.updatedAt}>
+                    {formatOperationTime(operation.updatedAt)}
+                  </time>
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="collaboration-workspace-attention">
+          <div className="collaboration-workspace-operations-heading">
+            <div>
+              <h2>{messages.needsAttention}</h2>
+              <p>
+                {snapshot.totals.failed + snapshot.totals.review}{" "}
+                {messages.attentionCount}
+              </p>
+            </div>
+          </div>
+          {snapshot.attentionItems.length > 0 ? (
+            <div className="collaboration-workspace-attention-list">
+              {snapshot.attentionItems.map(({ issue, project }) => {
+                const state = workspaceIssueOperationState(issue);
+                return (
+                  <button
+                    type="button"
+                    data-testid={`collaboration-workspace-attention-${issue.id}`}
+                    key={issue.id}
+                    onClick={() => onOpenIssue(project, issue)}
+                  >
+                    <OperationStateBadge messages={messages} state={state} />
+                    <strong>{issue.title}</strong>
+                    <span>{project.name}</span>
+                    <time dateTime={issue.updated_at}>
+                      {formatOperationTime(issue.updated_at)}
+                    </time>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="collaboration-workspace-attention-empty">
+              <CircleCheck aria-hidden="true" />
+              <strong>{messages.stable}</strong>
+              <span>{messages.noAttention}</span>
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function OperationStateBadge({
+  state,
+  messages,
+}: {
+  state: WorkspaceOperationState | "idle";
+  messages: PlatformMessages;
+}) {
+  const label =
+    state === "failed"
+      ? messages.failed
+      : state === "review"
+        ? messages.waitingReview
+        : state === "running"
+          ? messages.running
+          : state === "pending"
+            ? messages.pending
+            : state === "completed"
+              ? messages.stable
+              : messages.idle;
+  return (
+    <span className="collaboration-workspace-operation-state" data-tone={state}>
+      <i aria-hidden="true" />
+      {label}
+    </span>
+  );
+}
+
+function formatOperationTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function WorkspaceProjectList({
@@ -1190,7 +1442,7 @@ export function CollaborationPlatformApp({
             subtitle={
               host.location.workspaceView === "projects"
                 ? messages.noProjectsHint
-                : workspace.description || messages.workspaceHint
+                : messages.operationsHint
             }
             action={createProjectAction}
           />
@@ -1241,24 +1493,27 @@ export function CollaborationPlatformApp({
                 </div>
               </section>
             ) : (
-              <div className="collaboration-workspace-stats">
-                <div>
-                  <strong>{workspace.project_count}</strong>
-                  <span>{messages.projectCount}</span>
-                </div>
-                <div>
-                  <strong>{workspace.member_count}</strong>
-                  <span>{messages.memberCount}</span>
-                </div>
-                <div>
-                  <strong>{workspace.agent_count}</strong>
-                  <span>{messages.agentCount}</span>
-                </div>
-                <div>
-                  <strong>{workspace.execution_environment_count}</strong>
-                  <span>{messages.environmentCount}</span>
-                </div>
-              </div>
+              <WorkspaceHome
+                projects={state.projects}
+                projectIssues={state.projectIssues}
+                messages={messages}
+                onOpenProject={openProject}
+                onOpenProjects={() =>
+                  navigateWithin(host, {
+                    workspaceView: "projects",
+                    projectId: null,
+                    issueId: null,
+                  })
+                }
+                onOpenIssue={(project, issue) =>
+                  navigateWithin(host, {
+                    workspaceView: "projects",
+                    projectId: project.id,
+                    projectView: "board",
+                    issueId: issue.id,
+                  })
+                }
+              />
             )
           ) : null}
           {host.location.workspaceView === "projects" ? (
@@ -1269,66 +1524,6 @@ export function CollaborationPlatformApp({
                 messages={messages}
                 onOpen={openProject}
               />
-            </section>
-          ) : null}
-          {host.location.workspaceView === "home" ? (
-            <section className="collaboration-platform-panel">
-              <div className="collaboration-platform-panel-heading">
-                <h2>{messages.workspaceResources}</h2>
-                <button
-                  type="button"
-                  onClick={() =>
-                    navigateWithin(host, {
-                      workspaceView: "agents",
-                      projectId: null,
-                      issueId: null,
-                    })
-                  }
-                >
-                  {messages.viewAll}
-                </button>
-              </div>
-              <div className="collaboration-workspace-resource-summary">
-                <button
-                  type="button"
-                  onClick={() =>
-                    navigateWithin(host, {
-                      workspaceView: "members",
-                      projectId: null,
-                      issueId: null,
-                    })
-                  }
-                >
-                  <strong>{messages.members}</strong>
-                  <span>{workspace.member_count}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    navigateWithin(host, {
-                      workspaceView: "agents",
-                      projectId: null,
-                      issueId: null,
-                    })
-                  }
-                >
-                  <strong>{messages.agents}</strong>
-                  <span>{workspace.agent_count}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    navigateWithin(host, {
-                      workspaceView: "execution-environments",
-                      projectId: null,
-                      issueId: null,
-                    })
-                  }
-                >
-                  <strong>{messages.environments}</strong>
-                  <span>{workspace.execution_environment_count}</span>
-                </button>
-              </div>
             </section>
           ) : null}
         </div>

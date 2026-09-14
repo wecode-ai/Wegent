@@ -818,6 +818,47 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(manageResource).toHaveBeenNthCalledWith(2, "environments");
   });
 
+  it("summarizes cross-project operations and opens items that need attention", async () => {
+    const runningIssue = {
+      ...issue,
+      id: "issue-running",
+      status: "in_progress",
+      execution_state: "running",
+    };
+    const failedIssue = {
+      ...issue,
+      id: "issue-failed",
+      title: "发布流水线失败",
+      execution_state: "failed",
+    };
+    const { api } = createApi({
+      initialIssues: [runningIssue, failedIssue],
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+
+    expect(byTestId("collaboration-workspace-home")).toBeTruthy();
+    expect(
+      byTestId(`collaboration-workspace-operation-project-${project.id}`),
+    ).toBeTruthy();
+    expect(container.textContent).toContain("运行中");
+    expect(container.textContent).toContain("发布流水线失败");
+
+    await click(
+      byTestId(`collaboration-workspace-attention-${failedIssue.id}`),
+    );
+    const location = JSON.parse(byTestId("test-location").textContent ?? "{}");
+    expect(location).toMatchObject({
+      workspaceView: "projects",
+      projectId: project.id,
+      issueId: failedIssue.id,
+    });
+  });
+
   it.each(["Owner", "Maintainer"] as const)(
     "allows %s to view and save workspace settings",
     async (role) => {
