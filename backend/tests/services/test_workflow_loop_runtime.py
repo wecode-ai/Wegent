@@ -654,7 +654,7 @@ def test_route_event_uses_subject_binding_instead_of_transport_subscription(test
     assert routed is item
 
 
-def test_route_event_matches_platform_specific_condition(test_db):
+def test_route_webhook_event_matches_platform_without_fixed_subscription(test_db):
     project, item = _workflow_item(test_db)
     binding = LoopItemTaskBinding(
         cloud_project_id=str(project.id),
@@ -680,6 +680,12 @@ def test_route_event_matches_platform_specific_condition(test_db):
     workflow = dict(item.metadata_json["workflow"])
     nodes = [dict(node) for node in workflow["nodes"]]
     branch = next(node for node in nodes if node["id"] == "br")
+    branch["event_wait"] = {
+        "subject_source": "upstream_pull_request",
+        "collection_mode": "webhook",
+        "subscription_id": None,
+        "poll_interval_seconds": None,
+    }
     branch["branch_conditions"] = [
         {
             "source_type": "github",
