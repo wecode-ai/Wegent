@@ -1289,25 +1289,44 @@ function ScrollableMessagePaneContent({
           anchorElement.getBoundingClientRect())
 
     const anchorOffset = anchorRect.top - scroller.getBoundingClientRect().top
-    // Only the reader's own scrolling counts: anything the virtualizer wrote by itself is already
-    // part of the correction this rule is applying.
-    const readerScrollTop = scroller.scrollTop - anchor.scrollTopPx - selfScrollOffsetRef.current
+    // The offset this rule believes it left the scroller at: the sample plus every write it made
+    // since. Only what the reader moved beyond that is their own scrolling.
+    const believedScrollTop = anchor.scrollTopPx + selfScrollOffsetRef.current
+    // A shrinking layout also removes offsets: the browser clamps the offset to the new maximum, and
+    // that clamp is the layout's own doing exactly like the height change. Counting it as the
+    // reader's scrolling would make the next correction ask for an offset that does not exist.
+    const maximumOffset = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+    const clampedScrollTop = bottomOrigin
+      ? Math.min(0, Math.max(-maximumOffset, believedScrollTop))
+      : Math.min(maximumOffset, Math.max(0, believedScrollTop))
+    selfScrollOffsetRef.current += clampedScrollTop - believedScrollTop
+    const readerScrollTop = scroller.scrollTop - clampedScrollTop
     const correction = anchorOffset - anchor.offsetFromScrollerTop + readerScrollTop
-    // The layout change is accounted for from here on, whatever it turned out to be.
-    captureUserViewportAnchor()
     if (Math.abs(correction) < 1) {
+      // The sampled text is already back where it was, so the sample describes the settled layout.
+      captureUserViewportAnchor()
       scrollDiag(`ANCHOR skip (delta~0: ${Math.round(correction)})`)
       return
     }
+    const previousScrollTop = scroller.scrollTop
+    scroller.scrollTop = previousScrollTop + correction
+    const appliedScrollTop = scroller.scrollTop - previousScrollTop
+    // The browser clamps a write whose offset has no range yet: a transient layout (a row measured
+    // before the scroller's own range caught up) cannot put the text back, so this sample still owns
+    // the reader's position. Counting the write we did apply keeps the reader's own scrolling
+    // separable, and keeping the sample lets the next layout change finish the correction instead of
+    // adopting the clamped position as the one the reader chose.
+    selfScrollOffsetRef.current += appliedScrollTop
     scrollDiag(
-      `ANCHOR-RESTORE correction=${Math.round(correction)} scrollTop=${Math.round(scroller.scrollTop)}`,
+      `ANCHOR-RESTORE correction=${Math.round(correction)} applied=${Math.round(appliedScrollTop)} scrollTop=${Math.round(scroller.scrollTop)}`,
       true
     )
-    scroller.scrollTop += correction
     lastScrollPositionRef.current = getDistanceFromTop(scroller, bottomOrigin)
-    // The reader is settled again where this sample was taken, so the next layout change has to
-    // measure from here rather than from a baseline that already includes this correction.
-    captureUserViewportAnchor()
+    if (Math.abs(appliedScrollTop - correction) < 1) {
+      // The reader is settled again where this sample was taken, so the next layout change has to
+      // measure from here rather than from a baseline that already includes this correction.
+      captureUserViewportAnchor()
+    }
   }, [bottomOrigin, captureUserViewportAnchor])
 
   const handleContentLayoutChange = useCallback(() => {
