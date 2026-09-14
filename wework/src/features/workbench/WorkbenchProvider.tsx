@@ -119,6 +119,8 @@ import {
   applyRuntimeConversationGoalContinuation,
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
+  beginRuntimeGoalSnapshot,
+  isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationAssistantStarted,
   publishRuntimeTransportReplaced,
   runtimeConversationKey,
@@ -1888,14 +1890,14 @@ export function WorkbenchProvider({
     const expectedGoalStatus = lifecycleStore.getTask(address)?.goalStatus
     if (expectedGoalStatus === null || expectedGoalStatus === undefined) return
 
+    const snapshotVersion = beginRuntimeGoalSnapshot(address)
     void runtimeTasks
       .getRuntimeGoal(address)
       .then(response => {
-        if (!response.accepted) return
-        const goal = response.goal
-        if (!goal) return
+        if (!response.accepted || !isRuntimeGoalSnapshotCurrent(address, snapshotVersion)) return
+        const goal = response.goal ?? null
         setRuntimeConversationGoal(address, goal)
-        lifecycleStore.goalStatusReceived(address, goal.status)
+        lifecycleStore.goalStatusReceived(address, goal?.status ?? null)
       })
       .catch(error => {
         console.warn('[Wework] Runtime Goal snapshot sync failed', {

@@ -29,6 +29,8 @@ import {
   GOAL_IDLE_FOLLOW_UP_TEXT,
   GOAL_IDLE_INITIAL_TEXT,
   GOAL_IDLE_PROMPT,
+  GOAL_SNAPSHOT_RECONCILIATION_PROMPT,
+  GOAL_SNAPSHOT_RECONCILIATION_TEXT,
   GOAL_RESTART_COMPLETION_TEXT,
   GOAL_RESTART_INITIAL_TEXT,
   GOAL_RESTART_PROMPT,
@@ -51,6 +53,94 @@ import {
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
 const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}:default:0`
+
+async function verifyMissingGoalSnapshotReconciliation({ composerSelector, control }) {
+  control.setScenario('goal_snapshot_reconciliation')
+  const taskRowsBeforeGoal = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  await selectE2EModel(control)
+  await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`)
+  await control.command('click', '[data-testid="set-goal-button"]')
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    GOAL_SNAPSHOT_RECONCILIATION_PROMPT,
+    'goal_snapshot_reconciliation'
+  )
+  const goalTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeGoal,
+    'WEWORK_DESKTOP_E2E_GOAL_SNAPSHOT_RECONCILIATION'
+  )
+  const goalTaskId = goalTaskRowTestId.replace('runtime-local-task-row-', '')
+  const goalDotTestId = `runtime-local-task-goal-dot-${goalTaskId}`
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('goal-status-bar') &&
+      snapshot.testIds.includes(goalDotTestId) &&
+      snapshot.testIds.includes('pause-response-button'),
+    'The Goal snapshot reconciliation fixture did not become active'
+  )
+  const activeDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === goalTaskId &&
+      snapshot.pane?.goal?.status === 'active' &&
+      snapshot.pane.goal.threadId !== 'pending',
+    'The Goal snapshot reconciliation fixture did not expose a confirmed active Goal'
+  )
+  const address = activeDebugSnapshot.workbench.currentRuntimeTask
+  await control.command('dropNextRuntimeEvent', 'body', {
+    value: 'runtime.goal.cleared',
+  })
+  const clearResponse = JSON.parse(
+    await control.command('clearRuntimeGoalDirectly', 'body', {
+      value: JSON.stringify({ address }),
+    })
+  )
+  assert.equal(clearResponse.accepted, true, 'The executor rejected the direct Goal clear')
+  const staleSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    staleSnapshot.testIds.includes('goal-status-bar'),
+    true,
+    'The dropped Goal clear event did not preserve the stale Goal bar fixture'
+  )
+  assert.equal(
+    staleSnapshot.testIds.includes(goalDotTestId),
+    true,
+    'The dropped Goal clear event did not preserve the stale sidebar Goal fixture'
+  )
+
+  await control.command('dispatchRuntimeEventLagged', 'body')
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('goal-status-bar') && !snapshot.testIds.includes(goalDotTestId),
+    'The authoritative Goal snapshot did not clear the stale Goal UI after recovery'
+  )
+  const reconciledDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => snapshot.pane?.goal === null,
+    'The recovered pane retained a Goal that no longer existed in the executor'
+  )
+  assert.equal(
+    reconciledDebugSnapshot.pane?.goal,
+    null,
+    'The recovered pane did not accept the executor Goal null snapshot'
+  )
+
+  control.releaseGoalSnapshotReconciliationResponse()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GOAL_SNAPSHOT_RECONCILIATION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
 
 async function selectSupervisorModel(control) {
   await control.command(
@@ -1065,6 +1155,7 @@ export {
   verifyActiveGoalIdleUnreadLifecycle,
   verifyBusyTurnGoalHandoff,
   verifyCloudGoalRestartRecoveryLifecycle,
+  verifyMissingGoalSnapshotReconciliation,
   verifyTaskSupervisorLifecycle,
   verifyGoalRestartRecoveryLifecycle,
 }

@@ -6,6 +6,7 @@ import {
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
   beginRuntimeConversationHydration,
+  beginRuntimeGoalSnapshot,
   cacheConversationScrollSnapshot,
   cacheConversationVirtualMeasurements,
   cacheRuntimeConversationQueuedMessages,
@@ -22,6 +23,7 @@ import {
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
   getRuntimeConversationTurns,
+  isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationGuidanceInterrupted,
   optimisticallyInterruptRuntimeConversation,
   removeOptimisticRuntimeConversationGuidance,
@@ -665,6 +667,29 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMetadata(address).goal?.status).toBe('complete')
+  })
+
+  test('invalidates older Goal snapshot requests when newer state is committed', () => {
+    const olderSnapshot = beginRuntimeGoalSnapshot(address)
+    const newerSnapshot = beginRuntimeGoalSnapshot(address)
+
+    expect(isRuntimeGoalSnapshotCurrent(address, olderSnapshot)).toBe(false)
+    expect(isRuntimeGoalSnapshotCurrent(address, newerSnapshot)).toBe(true)
+
+    setRuntimeConversationGoal(address, null)
+
+    expect(isRuntimeGoalSnapshotCurrent(address, newerSnapshot)).toBe(false)
+  })
+
+  test('does not reuse Goal snapshot versions after conversation eviction', () => {
+    const preEvictionSnapshot = beginRuntimeGoalSnapshot(address)
+
+    evictRuntimeConversation(address)
+    const postEvictionSnapshot = beginRuntimeGoalSnapshot(address)
+
+    expect(postEvictionSnapshot).not.toBe(preEvictionSnapshot)
+    expect(isRuntimeGoalSnapshotCurrent(address, preEvictionSnapshot)).toBe(false)
+    expect(isRuntimeGoalSnapshotCurrent(address, postEvictionSnapshot)).toBe(true)
   })
 
   test('uses device and task identity across normalized workspace paths', () => {
