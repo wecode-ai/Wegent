@@ -570,6 +570,14 @@ export function createWeworkPlatformApi(
           : cloudApi.agents.update(projectId, agentId, input)
       },
     },
+    issues: {
+      ...cloudApi.issues,
+      async getBoardSnapshot(projectId) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.issues.getBoardSnapshot(projectId)
+          : cloudApi.issues.getBoardSnapshot(projectId)
+      },
+    },
     resources: {
       async list() {
         const localResources = localApi.resources
@@ -1134,15 +1142,8 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   const activeProject = props.activeProjectRef ?? null
   const [location, setLocation] = useState<CollaborationPlatformLocation>(initialLocation)
   const startupReadySent = useRef(false)
-  const pendingProjectNavigation = useRef<{ projectId: string | null } | null>(null)
 
   useEffect(() => {
-    const pending = pendingProjectNavigation.current
-    if (pending) {
-      const activeProjectId = activeProject ? String(activeProject.projectId) : null
-      if (activeProjectId !== pending.projectId) return
-      pendingProjectNavigation.current = null
-    }
     if (!platformApi?.projects.get || !activeProject) return
     if (String(location.projectId) === String(activeProject.projectId)) return
 
@@ -1205,11 +1206,6 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
             sidebarPresentation: 'full',
           },
           navigate: nextLocation => {
-            if (props.onActiveProjectChange) {
-              pendingProjectNavigation.current = {
-                projectId: nextLocation.projectId ? String(nextLocation.projectId) : null,
-              }
-            }
             setLocation(nextLocation)
             if (!nextLocation.projectId) {
               props.onActiveProjectChange?.(null)

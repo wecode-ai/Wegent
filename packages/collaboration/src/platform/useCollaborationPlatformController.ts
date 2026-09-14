@@ -82,12 +82,9 @@ export function useCollaborationPlatformController({
     error: null,
   });
   const loadRevisionRef = useRef(0);
-  const loadedScopeRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     const revision = ++loadRevisionRef.current;
-    const scope = `${location.workspaceId ?? ""}\u0000${location.projectId ?? ""}`;
-    const showLoading = loadedScopeRef.current !== scope;
     if (!api.workspaces) {
       if (revision !== loadRevisionRef.current) return;
       setState((current) => ({
@@ -99,7 +96,9 @@ export function useCollaborationPlatformController({
     }
     setState((current) => ({
       ...current,
-      loading: showLoading,
+      loading:
+        current.workspace?.id !== location.workspaceId ||
+        Boolean(location.projectId),
       error: null,
     }));
     try {
@@ -109,7 +108,6 @@ export function useCollaborationPlatformController({
       ]);
       if (revision !== loadRevisionRef.current) return;
       if (!location.workspaceId) {
-        loadedScopeRef.current = scope;
         setState((current) => ({
           ...current,
           workspaces,
@@ -136,7 +134,6 @@ export function useCollaborationPlatformController({
             ? null
             : await api.workspaces.getNavigationContext(location.workspaceId);
         if (revision !== loadRevisionRef.current) return;
-        loadedScopeRef.current = scope;
         setState((current) => ({
           ...current,
           workspaces,
@@ -198,7 +195,6 @@ export function useCollaborationPlatformController({
           : Promise.resolve([]),
       ]);
       if (revision !== loadRevisionRef.current) return;
-      loadedScopeRef.current = scope;
       setState((current) => ({
         ...current,
         workspaces,
@@ -220,7 +216,7 @@ export function useCollaborationPlatformController({
       setState((current) => ({
         ...current,
         loading: false,
-        error: showLoading ? loadFailedMessage : null,
+        error: loadFailedMessage,
       }));
     }
   }, [
