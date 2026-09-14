@@ -268,7 +268,7 @@ export function AigcVideoPanel({
                 onContinue={onChatButtonClick ? handleContinue : undefined}
                 onRender={
                   !shareToken && onChatButtonClick
-                    ? () => onChatButtonClick(t('highlightActions.renderRequest'))
+                    ? () => onChatButtonClick(t('materialEditor.timeline.render'))
                     : undefined
                 }
                 autoOpenOpenCut={autoOpenOpenCut && target.panel === 'timeline'}

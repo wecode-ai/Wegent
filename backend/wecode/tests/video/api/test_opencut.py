@@ -215,13 +215,11 @@ def test_storycut_bundle_contains_timeline_media_and_overlay_tracks(
         "image",
         "music",
     ]
-    assert all(
-        item["url"].startswith("/api/storycut/media-proxy?") for item in bundle["media"]
-    )
-    image_media = bundle["media"][0]
-    assert parse_qs(urlsplit(image_media["url"]).query)["url"] == [
-        "https://wx1.sinaimg.cn/large/image-1.jpg"
+    assert [item["url"] for item in bundle["media"]] == [
+        "https://wx1.sinaimg.cn/large/image-1.jpg",
+        "https://video.weibocdn.com/music-1.mp3",
     ]
+    image_media = bundle["media"][0]
     assert image_media["metadata"]["storycut"]["browserSafeSource"] == (
         image_media["url"]
     )
@@ -329,7 +327,7 @@ def test_storycut_bundle_keeps_https_wegent_image_source(monkeypatch) -> None:
     assert storycut["sourceUrl"] == source
 
 
-def test_storycut_bundle_uses_opencut_proxy_and_preserves_original_video(
+def test_storycut_bundle_uses_direct_https_and_preserves_original_video(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
@@ -358,10 +356,7 @@ def test_storycut_bundle_uses_opencut_proxy_and_preserves_original_video(
     )
 
     video = bundle["media"][0]
-    assert urlsplit(video["url"]).path == "/api/storycut/media-proxy"
-    assert parse_qs(urlsplit(video["url"]).query)["url"] == [
-        "https://f.video.weibocdn.com/video-1.mp4"
-    ]
+    assert video["url"] == "https://f.video.weibocdn.com/video-1.mp4"
     assert (
         video["metadata"]["originalSourceUrl"]
         == "https://f.video.weibocdn.com/video-1.mp4"
@@ -526,6 +521,88 @@ def test_storycut_save_payload_maps_edits_back_to_aigc_tracks() -> None:
     assert tracks["bgm"][0]["path"].endswith("music-1.mp3")
     assert tracks["bgm"][0]["volume_db"] == -6
     assert tracks["bgm"][0]["volume_scale"] == pytest.approx(0.501187)
+
+
+@pytest.mark.parametrize(
+    "track_type,metadata,expected_kind",
+    [
+        ("video", {"track_kind": "mg"}, "mg"),
+        ("video", {"trackKind": "mg"}, "mg"),
+        ("mg", {}, "mg"),
+        ("video", {"track_kind": "video"}, "video"),
+    ],
+)
+def test_save_preserves_mg_identity_without_reclassifying_regular_video(
+    track_type: str, metadata: dict, expected_kind: str
+) -> None:
+    ticks = 120000
+    payload = {
+        "media": [
+            {"id": "image", "url": "https://wx1.sinaimg.cn/large/image.jpg"},
+            {"id": "overlay", "url": "https://video.weibocdn.com/overlay.mp4"},
+        ],
+        "project": {
+            "scenes": [
+                {
+                    "isMain": True,
+                    "tracks": {
+                        "main": {
+                            "id": "storycut-main-video",
+                            "type": "video",
+                            "elements": [
+                                {
+                                    "id": "image-end",
+                                    "mediaId": "image",
+                                    "type": "image",
+                                    "startTime": 11 * ticks,
+                                    "duration": 3 * ticks,
+                                }
+                            ],
+                        },
+                        "overlay": [
+                            {
+                                "id": "renamed-overlay",
+                                "type": track_type,
+                                "elements": [
+                                    {
+                                        "id": "overlay-element",
+                                        "mediaId": "overlay",
+                                        "type": "video",
+                                        "startTime": 6 * ticks,
+                                        "duration": 8 * ticks,
+                                        "trimStart": ticks,
+                                        "storycut": metadata,
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                }
+            ],
+        },
+    }
+
+    tracks = storycut_payload_to_tracks(payload)
+
+    assert tracks["video"][0]["kind"] == "image"
+    assert tracks["video"][0]["timeline_window"] == {
+        "start": 11000,
+        "end": 14000,
+        "duration": 3000,
+    }
+    overlay = tracks["mg" if expected_kind == "mg" else "video"][-1]
+    assert overlay["kind"] == expected_kind
+    assert overlay["timeline_window"] == {
+        "start": 6000,
+        "end": 14000,
+        "duration": 8000,
+    }
+    assert overlay["source_window"]["start"] == 1000
+    assert overlay["path" if expected_kind == "mg" else "source_path"].endswith(
+        "overlay.mp4"
+    )
+    assert len(tracks["video"]) == (1 if expected_kind == "mg" else 2)
+    assert len(tracks["mg"]) == (1 if expected_kind == "mg" else 0)
 
 
 def test_opencut_save_rejects_unresolved_visual_media() -> None:

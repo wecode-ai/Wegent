@@ -16,8 +16,16 @@ jest.mock('@wecode/features/video/script/api', () => ({
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string) => (key === 'materialEditor.timeline.render' ? '渲染成片' : key),
   }),
+}))
+
+jest.mock('@wecode/features/video/materials_to_video/MaterialVideoPanel', () => ({
+  MaterialVideoPanel: ({ onRender }: { onRender?: () => Promise<void> }) => (
+    <button data-testid="test-material-save-render" onClick={onRender}>
+      Save and render
+    </button>
+  ),
 }))
 
 jest.mock('@/features/theme/ThemeProvider', () => ({
@@ -32,6 +40,25 @@ jest.mock('@/components/common/EnhancedMarkdown', () => ({
 describe('AigcVideoPanel layout', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+  })
+
+  it('sends the normal editing render instruction from the timeline editor', async () => {
+    const onChatButtonClick = jest.fn().mockResolvedValue(undefined)
+    render(
+      <AigcVideoPanel
+        embedded
+        onClose={jest.fn()}
+        panelProps={{
+          title: '视频剪辑',
+          link: '/chat?taskId=137&openPanel=timeline&sessionId=137',
+          onChatButtonClick,
+        }}
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('test-material-save-render'))
+
+    expect(onChatButtonClick).toHaveBeenCalledWith('渲染成片')
   })
 
   it('renders as an embedded panel and sends workflow actions', async () => {

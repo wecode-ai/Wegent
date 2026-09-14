@@ -309,9 +309,7 @@ def _browser_media_source(
     if kind in {"image", "video", *DIRECT_AUDIO_KINDS}:
         for source in (public_source, original_source):
             if _is_direct_media_source(source):
-                # Load through OpenCut's same-origin media endpoint so CDN
-                # referrer/CORS policies do not prevent browser decoding.
-                return _opencut_resource_proxy_url(_https_media_source(source))
+                return _https_media_source(source)
     return public_source
 
 
@@ -725,9 +723,11 @@ def _visual_item(
     if not source:
         return None
     metadata = {**_original_metadata(media), **_original_metadata(element)}
+    # OpenCut represents imported MG tracks as video; retain their semantic kind.
     kind = (
         "mg"
-        if str(track.get("type") or "") == "mg"
+        if "mg"
+        in (track.get("type"), metadata.get("track_kind"), metadata.get("trackKind"))
         else str(element.get("type") or "video")
     )
     params = _record(element.get("params"))
