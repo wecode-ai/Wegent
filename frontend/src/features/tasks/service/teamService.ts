@@ -2,11 +2,50 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { teamApis } from '@/apis/team'
 import type { Team } from '@/types/api'
 import type { TeamListResponse } from '@/apis/team'
 import { sortTeamsByUpdatedAt } from '@/utils/team'
+
+/** Delays between automatic retries of the team list request, in milliseconds. */
+export const TEAM_FETCH_RETRY_DELAYS_MS = [500, 1500]
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'))
+      return
+    }
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+
+    const onAbort = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+
+const fetchTeams = async (signal?: AbortSignal): Promise<Team[]> => {
+  const response = await teamApis.getTeams({ page: 1, limit: 100 }, 'all', undefined, { signal })
+  const items = Array.isArray(response.items) ? response.items : []
+  return sortTeamsByUpdatedAt(items)
+}
+
+export interface UseTeamsResult {
+  teams: Team[]
+  isTeamsLoading: boolean
+  /** Error from the latest failed load, cleared on success. */
+  loadError: Error | null
+  refreshTeams: () => Promise<Team[]>
+  addTeam: (team: Team) => void
+}
 
 /**
  * Service for team related business logic
@@ -20,28 +59,83 @@ export const teamService = {
   },
 
   /**
-   * React hook: Get team related status
+   * Fetch the accessible team list, retrying transient failures with backoff.
+   * A single failed request must never surface as "no agents available".
    */
-  useTeams() {
-    const [teams, setTeams] = useState<Team[]>([])
-    const [isTeamsLoading, setIsTeamsLoading] = useState(true)
+  async fetchTeamsWithRetry(signal?: AbortSignal): Promise<Team[]> {
+    let lastError: unknown
 
-    const refreshTeams = async () => {
-      setIsTeamsLoading(true)
+    for (let attempt = 0; attempt <= TEAM_FETCH_RETRY_DELAYS_MS.length; attempt += 1) {
       try {
-        const res = await teamApis.getTeams({ page: 1, limit: 100 }, 'all')
-        const items = Array.isArray(res.items) ? res.items : []
-        setTeams(sortTeamsByUpdatedAt(items))
-        return items
+        return await fetchTeams(signal)
       } catch (error) {
-        setTeams([])
-        throw error
-      } finally {
-        setIsTeamsLoading(false)
+        if (signal?.aborted) {
+          throw new DOMException('Aborted', 'AbortError')
+        }
+
+        lastError = error
+        const retryDelay = TEAM_FETCH_RETRY_DELAYS_MS[attempt]
+        if (retryDelay === undefined) {
+          break
+        }
+
+        await sleep(retryDelay, signal)
       }
     }
 
-    const addTeam = (newTeam: Team) => {
+    throw lastError
+  },
+
+  /**
+   * React hook: Get team related status
+   */
+  useTeams(): UseTeamsResult {
+    const [teams, setTeams] = useState<Team[]>([])
+    const [isTeamsLoading, setIsTeamsLoading] = useState(true)
+    const [loadError, setLoadError] = useState<Error | null>(null)
+    const retryAbortRef = useRef<AbortController | null>(null)
+
+    const refreshTeams = useCallback(async (): Promise<Team[]> => {
+      setIsTeamsLoading(true)
+
+      retryAbortRef.current?.abort()
+      const abortController = new AbortController()
+      retryAbortRef.current = abortController
+
+      try {
+        const sortedTeams = await teamService.fetchTeamsWithRetry(abortController.signal)
+
+        // Ignore completions from an aborted refresh so a newer request wins.
+        if (abortController.signal.aborted || retryAbortRef.current !== abortController) {
+          return []
+        }
+
+        setTeams(sortedTeams)
+        setLoadError(null)
+        return sortedTeams
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error
+        }
+
+        if (abortController.signal.aborted || retryAbortRef.current !== abortController) {
+          return []
+        }
+
+        console.error('[teamService] Failed to fetch teams:', error)
+        // Keep the previously loaded teams so a transient failure does not
+        // replace a usable list with the "no agents" empty state.
+        setLoadError(error instanceof Error ? error : new Error(String(error)))
+        throw error
+      } finally {
+        if (retryAbortRef.current === abortController) {
+          retryAbortRef.current = null
+          setIsTeamsLoading(false)
+        }
+      }
+    }, [])
+
+    const addTeam = useCallback((newTeam: Team) => {
       setTeams(prevTeams => {
         // Check if team already exists
         const exists = prevTeams.some(team => team.id === newTeam.id)
@@ -52,15 +146,22 @@ export const teamService = {
         const updatedTeams = [...prevTeams, newTeam]
         return sortTeamsByUpdatedAt(updatedTeams)
       })
-    }
+    }, [])
 
     useEffect(() => {
-      refreshTeams()
-    }, [])
+      void refreshTeams().catch(() => {
+        // Failure is surfaced through loadError.
+      })
+
+      return () => {
+        retryAbortRef.current?.abort()
+      }
+    }, [refreshTeams])
 
     return {
       teams,
       isTeamsLoading,
+      loadError,
       refreshTeams,
       addTeam,
     }

@@ -1365,6 +1365,7 @@ type WegentStorePluginSummary = {
   defaultPrompt?: PluginInterface['defaultPrompt']
   name: string
   packageId: string
+  installedPluginId?: number | null
   marketplace: string
   version?: string | null
   enabled: boolean
@@ -1924,7 +1925,7 @@ function toWegentStoreInstalledPlugin(
   const marketplace = isWegentCloudMarketplace(plugin.marketplace)
     ? INTERNAL_DEVICE_MARKETPLACE_ID
     : plugin.marketplace
-  return toInstalledPlugin(
+  const installed = toInstalledPlugin(
     {
       name: marketplace,
       path: storePath || plugin.pluginPath,
@@ -1949,6 +1950,17 @@ function toWegentStoreInstalledPlugin(
       },
     }
   )
+  return {
+    ...installed,
+    spec: {
+      ...installed.spec,
+      sourcePayload: {
+        ...(installed.spec.sourcePayload ?? {}),
+        managedByWegent: true,
+        cloudInstalledPluginId: plugin.installedPluginId ?? null,
+      },
+    },
+  }
 }
 
 /**

@@ -279,6 +279,11 @@ export function isCloudManagedInstalledPlugin(item: InstalledPlugin): boolean {
   return typeof item.spec.pluginId === 'number'
 }
 
+/** Package materialized from the account capability manifest into Wegent's managed store. */
+export function isWegentManagedStorePlugin(item: InstalledPlugin): boolean {
+  return item.spec.sourcePayload?.managedByWegent === true
+}
+
 function payloadString(payload: Record<string, unknown> | null | undefined, key: string): string {
   const value = payload?.[key]
   return typeof value === 'string' ? value.trim() : ''
