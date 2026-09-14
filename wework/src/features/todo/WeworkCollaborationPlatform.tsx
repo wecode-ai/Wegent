@@ -1146,7 +1146,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
     if (String(location.projectId) === activeProjectId) return
 
     let cancelled = false
-    void platformApi.projects.get(activeProjectId).then(project => {
+    void platformApi.projects.get(String(activeProject.projectId)).then(project => {
       if (cancelled || !project.workspace_id) return
       setLocation(current => ({
         ...current,
