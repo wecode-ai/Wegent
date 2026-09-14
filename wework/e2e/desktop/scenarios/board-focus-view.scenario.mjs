@@ -508,10 +508,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await captureScreenshot(control, '04-running-card-focus-view.png', ACTIVE_BOARD)
 
       await control.command(
-        'clickThenMacrotask',
-        `${ACTIVE_BOARD} button[data-testid="cloud-board-group-by"]`,
+        'select',
+        `${ACTIVE_BOARD} select[data-testid="cloud-board-group-by"]`,
         {
-          target: 'button[data-testid="cloud-board-group-option-priority"]',
+          value: 'priority',
         }
       )
       await control.command('waitFor', '[data-testid="cloud-board-focus-running"]', {
@@ -531,10 +531,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await captureScreenshot(control, '05-focus-view-hidden-for-priority-group.png', ACTIVE_BOARD)
 
       await control.command(
-        'clickThenMacrotask',
-        `${ACTIVE_BOARD} button[data-testid="cloud-board-group-by"]`,
+        'select',
+        `${ACTIVE_BOARD} select[data-testid="cloud-board-group-by"]`,
         {
-          target: 'button[data-testid="cloud-board-group-option-status"]',
+          value: 'status',
         }
       )
       await control.command('waitFor', '[data-testid="cloud-board-focus-running"]', {
