@@ -622,7 +622,8 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                 <ChatArea
                   teams={knowledgeTeams}
                   isTeamsLoading={isTeamsLoading}
-                  loadError={loadError}
+                  loadError={teams.length === 0 ? loadError : null}
+                  rawTeamsEmpty={teams.length === 0}
                   showRepositorySelector={false}
                   taskType="knowledge"
                   knowledgeBaseId={wiki.id}

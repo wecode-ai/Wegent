@@ -74,6 +74,7 @@ function TasksPageContent() {
             teams={teams}
             isTeamsLoading={isTeamsLoading}
             loadError={teams.length === 0 ? loadError : null}
+            rawTeamsEmpty={teams.length === 0}
             selectedTeamForNewTask={null}
             taskType="code"
             onRefreshTeams={handleRefreshTeams}

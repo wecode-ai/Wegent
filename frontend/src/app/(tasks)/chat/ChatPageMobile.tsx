@@ -339,7 +339,8 @@ export function ChatPageMobile() {
         <ChatArea
           teams={visibleTeams}
           isTeamsLoading={isTeamsLoading}
-          loadError={loadError}
+          loadError={teams.length === 0 ? loadError : null}
+          rawTeamsEmpty={teams.length === 0}
           selectedTeamForNewTask={_selectedTeamForNewTask}
           showRepositorySelector={showRepositorySelector}
           taskType={taskType}

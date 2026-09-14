@@ -41,6 +41,8 @@ interface QuickAccessCardsProps {
   isLoading?: boolean
   isTeamsLoading?: boolean
   loadError?: Error | null
+  /** Whether the raw team cache (before mode filtering) is empty. */
+  rawTeamsEmpty?: boolean
   hideSelected?: boolean
   onRefreshTeams?: () => Promise<Team[]>
   showWizardButton?: boolean
@@ -59,6 +61,7 @@ export function QuickAccessCards({
   isLoading,
   isTeamsLoading = false,
   loadError = null,
+  rawTeamsEmpty = teams.length === 0,
   hideSelected: _hideSelected = false,
   onRefreshTeams,
   showWizardButton: _showWizardButton = false,
@@ -393,7 +396,7 @@ export function QuickAccessCards({
 
   // Loading, failure and "no agents" are different states; an in-flight or
   // failed request must never be rendered as "no agents available".
-  if (isTeamsLoading && teams.length === 0) {
+  if (isTeamsLoading && rawTeamsEmpty) {
     return (
       <div
         className="flex flex-col items-center justify-center mt-8 mb-4"
@@ -417,7 +420,7 @@ export function QuickAccessCards({
     )
   }
 
-  if (loadError && teams.length === 0) {
+  if (loadError && rawTeamsEmpty) {
     return (
       <div
         className="flex flex-col items-center justify-center mt-8 mb-4"
@@ -466,7 +469,7 @@ export function QuickAccessCards({
     )
   }
 
-  if (teams.length === 0) {
+  if (rawTeamsEmpty) {
     return (
       <div className="flex flex-col items-center justify-center mt-8 mb-4">
         <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">

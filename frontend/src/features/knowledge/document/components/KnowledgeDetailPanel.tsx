@@ -291,6 +291,7 @@ export function KnowledgeDetailPanel({
             teams={filteredTeams}
             isTeamsLoading={isTeamsLoading}
             loadError={teams.length === 0 ? loadError : null}
+            rawTeamsEmpty={teams.length === 0}
             showRepositorySelector={false}
             taskType="knowledge"
             knowledgeBaseId={selectedKb.id}

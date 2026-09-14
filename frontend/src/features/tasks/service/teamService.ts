@@ -32,8 +32,8 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener('abort', onAbort, { once: true })
   })
 
-const fetchTeams = async (): Promise<Team[]> => {
-  const response = await teamApis.getTeams({ page: 1, limit: 100 }, 'all')
+const fetchTeams = async (signal?: AbortSignal): Promise<Team[]> => {
+  const response = await teamApis.getTeams({ page: 1, limit: 100 }, 'all', undefined, { signal })
   const items = Array.isArray(response.items) ? response.items : []
   return sortTeamsByUpdatedAt(items)
 }
@@ -67,7 +67,7 @@ export const teamService = {
 
     for (let attempt = 0; attempt <= TEAM_FETCH_RETRY_DELAYS_MS.length; attempt += 1) {
       try {
-        return await fetchTeams()
+        return await fetchTeams(signal)
       } catch (error) {
         if (signal?.aborted) {
           throw new DOMException('Aborted', 'AbortError')
@@ -104,12 +104,22 @@ export const teamService = {
 
       try {
         const sortedTeams = await teamService.fetchTeamsWithRetry(abortController.signal)
+
+        // Ignore completions from an aborted refresh so a newer request wins.
+        if (abortController.signal.aborted || retryAbortRef.current !== abortController) {
+          return []
+        }
+
         setTeams(sortedTeams)
         setLoadError(null)
         return sortedTeams
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') {
           throw error
+        }
+
+        if (abortController.signal.aborted || retryAbortRef.current !== abortController) {
+          return []
         }
 
         console.error('[teamService] Failed to fetch teams:', error)

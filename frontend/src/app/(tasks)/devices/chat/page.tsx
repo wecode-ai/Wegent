@@ -268,7 +268,8 @@ export default function DeviceChatPage() {
           <ChatArea
             teams={teams}
             isTeamsLoading={isTeamsLoading}
-            loadError={loadError}
+            loadError={teams.length === 0 ? loadError : null}
+            rawTeamsEmpty={teams.length === 0}
             showRepositorySelector={false}
             taskType="task"
             onRefreshTeams={handleRefreshTeams}

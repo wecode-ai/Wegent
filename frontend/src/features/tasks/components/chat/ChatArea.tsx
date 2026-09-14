@@ -214,6 +214,8 @@ interface ChatAreaProps {
   isTeamsLoading: boolean
   /** Error from the latest failed team list load, so the UI can offer a retry. */
   loadError?: Error | null
+  /** Whether the raw team cache (before any mode filtering) is empty. */
+  rawTeamsEmpty?: boolean
   selectedTeamForNewTask?: Team | null
   showRepositorySelector?: boolean
   taskType?: TaskType
@@ -265,6 +267,7 @@ function ChatAreaContent({
   teams,
   isTeamsLoading,
   loadError = null,
+  rawTeamsEmpty = teams.length === 0,
   selectedTeamForNewTask,
   showRepositorySelector = true,
   taskType = 'chat',
@@ -2626,6 +2629,7 @@ function ChatAreaContent({
                   isLoading={isTeamsLoading}
                   isTeamsLoading={isTeamsLoading}
                   loadError={loadError}
+                  rawTeamsEmpty={rawTeamsEmpty}
                   hideSelected={true}
                   onRefreshTeams={onRefreshTeams}
                   showWizardButton={effectiveTaskType === 'chat'}
