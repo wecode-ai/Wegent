@@ -36,6 +36,7 @@ from urllib.parse import urlsplit
 
 import socketio
 from prometheus_client import Counter
+from pydantic import ValidationError
 from redis.exceptions import RedisError
 from socketio.exceptions import ConnectionRefusedError
 from sqlalchemy.exc import SQLAlchemyError
@@ -78,6 +79,7 @@ from app.schemas.device import (
     DeviceStatusPayload,
     DeviceType,
 )
+from app.schemas.runtime_work import RuntimeModelSelection
 from app.services.channels.callback import (
     forward_event_to_channel_callbacks,
 )
@@ -670,6 +672,39 @@ def _is_runtime_task_reply_status(status: Any) -> bool:
     )
 
 
+def _runtime_task_notification_address(
+    *,
+    device_id: str,
+    local_task_id: str,
+    payload: dict[str, Any],
+    workspace_path: str = "",
+) -> dict[str, Any]:
+    """Build a replyable runtime address from a trusted executor event."""
+
+    address: dict[str, Any] = {
+        "deviceId": device_id,
+        "localTaskId": local_task_id,
+    }
+    if workspace_path:
+        address["workspacePath"] = workspace_path
+
+    raw_selection = payload.get("modelSelection") or payload.get("model_selection")
+    if not isinstance(raw_selection, dict):
+        return address
+    try:
+        model_selection = RuntimeModelSelection.model_validate(raw_selection)
+    except ValidationError:
+        logger.warning(
+            "[RuntimeTaskNotification] Ignored invalid model selection: "
+            "device_id=%s local_task_id=%s",
+            device_id,
+            local_task_id,
+        )
+        return address
+    address["modelSelection"] = model_selection.model_dump(by_alias=True)
+    return address
+
+
 def _summarize_runtime_notification_results(
     notification: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -768,17 +803,30 @@ def _project_execution_workflow_status(
         )
         .first()
     )
-    if binding is None or not binding.workflow_node_id:
+    if binding is None:
         return None
 
     from app.models.delivery import LoopItem
+    from app.services.project_workflow_projection import (
+        update_workflow_plan_task_status,
+    )
 
-    item = update_workflow_task_status(
-        db,
-        user_id=user_id,
-        device_id=device_id,
-        task_id=task_id,
-        execution_status=projected_status,
+    item = (
+        update_workflow_task_status(
+            db,
+            user_id=user_id,
+            device_id=device_id,
+            task_id=task_id,
+            execution_status=projected_status,
+        )
+        if binding.workflow_node_id
+        else update_workflow_plan_task_status(
+            db,
+            child_id=loop_item_id,
+            device_id=binding.device_id,
+            task_id=task_id,
+            execution_status=projected_status,
+        )
     )
     if item is None:
         return None
@@ -3101,12 +3149,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if not device_id or not local_task_id:
             return {"error": "Invalid runtime task update payload"}
 
-        address = {
-            "deviceId": device_id,
-            "localTaskId": local_task_id,
-        }
-        if workspace_path:
-            address["workspacePath"] = workspace_path
+        address = _runtime_task_notification_address(
+            device_id=device_id,
+            local_task_id=local_task_id,
+            payload=data,
+            workspace_path=workspace_path,
+        )
 
         status = str(data.get("status") or "updated")
         if not _is_runtime_task_terminal_status(status):
@@ -3378,10 +3426,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
             notification = (
                 await im_notification_dispatcher.send_runtime_task_update_for_user(
                     user_id=user_id,
-                    address={
-                        "deviceId": device_id,
-                        "localTaskId": local_task_id,
-                    },
+                    address=_runtime_task_notification_address(
+                        device_id=device_id,
+                        local_task_id=local_task_id,
+                        payload=payload,
+                    ),
                     title=title or local_task_id,
                     status=status,
                     content=content,

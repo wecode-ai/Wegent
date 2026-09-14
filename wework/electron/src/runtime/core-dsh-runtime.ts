@@ -1,4 +1,15 @@
-import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import semver from 'semver'
 import { hashComponentPath } from './component-update-manager.js'
@@ -28,6 +39,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-home-focus', 'wework-ui-home-focus'],
   ['@wegent/dsh-ui-home-developer', 'wework-ui-home-developer'],
   ['@wegent/dsh-ui-git', 'wework-ui-git'],
+  ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
 ] as const
 type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
 const INTERNAL_TELEMETRY_PACKAGE = '@wegent/dsh-internal-telemetry'
@@ -57,6 +69,7 @@ const CORE_UI_BUNDLES = [
   '@wegent/dsh-ui-home-focus',
   '@wegent/dsh-ui-home-developer',
   '@wegent/dsh-ui-git',
+  '@wegent/dsh-ui-outputs',
 ] as const
 interface RuntimeIdentity {
   dshVersion: string
@@ -322,12 +335,55 @@ async function prepareProfile(options: {
     const source = options.runtime.pluginRoots[packageName as CorePluginPackage]
     const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
     await rm(destination, { recursive: true, force: true })
-    await cp(source, destination, { recursive: true })
+    await copyManagedPlugin(source, destination)
   }
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
   await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(expectedStamp, null, 2)}\n`, {
     mode: 0o600,
   })
+}
+
+export async function copyManagedPlugin(
+  source: string,
+  destination: string,
+  options: {
+    platform?: NodeJS.Platform
+    linkDirectory?: typeof symlink
+  } = {}
+): Promise<void> {
+  const platform = options.platform ?? process.platform
+  if (platform !== 'win32') {
+    await cp(source, destination, { recursive: true })
+    return
+  }
+  await copyWindowsEntry(source, destination, options.linkDirectory ?? symlink)
+}
+
+async function copyWindowsEntry(
+  source: string,
+  destination: string,
+  linkDirectory: typeof symlink
+): Promise<void> {
+  const metadata = await lstat(source)
+  if (metadata.isSymbolicLink()) {
+    const target = await realpath(source)
+    const targetMetadata = await lstat(target)
+    if (targetMetadata.isDirectory()) {
+      await linkDirectory(target, destination, 'junction')
+    } else {
+      await cp(target, destination)
+    }
+    return
+  }
+  if (!metadata.isDirectory()) {
+    await cp(source, destination)
+    return
+  }
+  await mkdir(destination, { recursive: true, mode: 0o700 })
+  const entries = await readdir(source)
+  for (const entry of entries) {
+    await copyWindowsEntry(join(source, entry), join(destination, entry), linkDirectory)
+  }
 }
 
 async function ensureCoreWorkspace(workspacePath: string): Promise<void> {

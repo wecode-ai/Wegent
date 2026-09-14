@@ -37,7 +37,7 @@
     "cancel": "取消",
     "re_edit": "重新编辑",
     "re_edit_tooltip": "重新编辑",
-    "forward": "转发"
+    "forward": "发送到协作"
   },
   "edit": {
     "tooltip": "编辑消息",

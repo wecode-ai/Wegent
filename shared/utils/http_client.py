@@ -43,18 +43,17 @@ logger = logging.getLogger(__name__)
 def _inject_trace_headers(headers: dict) -> dict:
     """Inject W3C trace context and X-Request-ID into headers dict.
 
-    Safe to call even when OTEL is not enabled — will simply be a no-op.
+    Request ID propagation works independently of optional OTel instrumentation.
     """
     try:
-        from shared.telemetry.context import (
-            get_request_id,
-            inject_trace_context_to_headers,
-        )
+        from shared.telemetry.context.span import get_request_id
 
-        headers = inject_trace_context_to_headers(headers)
         request_id = get_request_id()
         if request_id:
             headers["X-Request-ID"] = request_id
+        from shared.telemetry.context import inject_trace_context_to_headers
+
+        headers = inject_trace_context_to_headers(headers)
     except Exception as e:
         logger.debug(f"Failed to inject trace context headers: {e}")
     return headers

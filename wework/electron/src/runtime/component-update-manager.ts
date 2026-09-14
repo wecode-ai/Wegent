@@ -29,6 +29,8 @@ export const MANAGED_COMPONENT_IDS = [
 ] as const
 
 const WEWORK_APP_STATIC_DIRECTORIES = ['vendor', 'wasm'] as const
+const COMPONENT_DOWNLOAD_MAX_ATTEMPTS = 3
+const COMPONENT_DOWNLOAD_RETRY_DELAY_MS = 1_000
 
 export type ManagedComponentId = (typeof MANAGED_COMPONENT_IDS)[number]
 
@@ -101,6 +103,7 @@ export interface ComponentUpdateManagerOptions {
   platform?: NodeJS.Platform
   arch?: string
   fetch?: typeof fetch
+  retryDelay?: (attempt: number) => Promise<void>
   log?: (event: Record<string, unknown>) => void
 }
 
@@ -112,6 +115,7 @@ export class ComponentUpdateManager {
   private readonly platform: NodeJS.Platform
   private readonly arch: string
   private readonly fetch: typeof fetch
+  private readonly retryDelay: (attempt: number) => Promise<void>
   private readonly log: (event: Record<string, unknown>) => void
   private activeStage: {
     id: string
@@ -131,6 +135,12 @@ export class ComponentUpdateManager {
     this.platform = options.platform ?? process.platform
     this.arch = options.arch ?? process.arch
     this.fetch = options.fetch ?? globalThis.fetch
+    this.retryDelay =
+      options.retryDelay ??
+      (attempt =>
+        new Promise(resolve => {
+          setTimeout(resolve, COMPONENT_DOWNLOAD_RETRY_DELAY_MS * attempt)
+        }))
   }
 
   async prepareStartup(): Promise<ComponentPaths> {
@@ -632,7 +642,7 @@ export class ComponentUpdateManager {
       while (!controller.signal.aborted && next < downloads.length) {
         const { id, component } = downloads[next++]!
         try {
-          await this.ensureComponent(id, component, controller.signal, bytes => {
+          await this.downloadComponent(id, component, controller.signal, bytes => {
             progress.downloadedBytes += bytes
             onProgress({ ...progress })
           })
@@ -647,6 +657,38 @@ export class ComponentUpdateManager {
     }
     await Promise.all(Array.from({ length: Math.min(3, downloads.length) }, worker))
     if (controller.signal.aborted) throw failure
+  }
+
+  private async downloadComponent(
+    id: ManagedComponentId,
+    component: RemoteComponent,
+    signal: AbortSignal,
+    onBytes: (bytes: number) => void
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= COMPONENT_DOWNLOAD_MAX_ATTEMPTS; attempt++) {
+      let attemptBytes = 0
+      try {
+        await this.ensureComponent(id, component, signal, bytes => {
+          attemptBytes += bytes
+          onBytes(bytes)
+        })
+        return
+      } catch (error) {
+        if (attemptBytes > 0) onBytes(-attemptBytes)
+        const canRetry =
+          attempt < COMPONENT_DOWNLOAD_MAX_ATTEMPTS &&
+          !signal.aborted &&
+          isTransientDownloadError(error)
+        if (!canRetry) throw error
+        this.log({
+          event: 'component-download-retry',
+          id,
+          attempt,
+          ...errorLogFields(error),
+        })
+        await this.retryDelay(attempt)
+      }
+    }
   }
 
   private async ensureComponent(
@@ -667,7 +709,7 @@ export class ComponentUpdateManager {
     try {
       const response = await this.fetch(component.downloadUrl, { cache: 'no-store', signal })
       if (!response.ok || !response.body) {
-        throw new Error(`Component download failed for ${id}: HTTP ${response.status}`)
+        throw new ComponentDownloadHttpError(id, response.status)
       }
       await pipeline(
         Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
@@ -724,6 +766,59 @@ export class ComponentUpdateManager {
     const temporary = `${path}.${process.pid}.tmp`
     await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 })
     await rename(temporary, path)
+  }
+}
+
+function isTransientDownloadError(error: unknown): boolean {
+  let current = error
+  const visited = new Set<unknown>()
+  while (current != null && !visited.has(current)) {
+    visited.add(current)
+    if (current instanceof ComponentDownloadHttpError) {
+      return current.status === 408 || current.status === 429 || current.status >= 500
+    }
+    if (current instanceof Error) {
+      const code = errorCode(current)
+      if (
+        code &&
+        /^(?:ECONNRESET|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_SOCKET)$/.test(
+          code
+        )
+      ) {
+        return true
+      }
+      if (/\b(?:fetch failed|network error|socket hang up|terminated)\b/i.test(current.message)) {
+        return true
+      }
+      current = current.cause
+      continue
+    }
+    break
+  }
+  return false
+}
+
+function errorLogFields(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) return { errorType: typeof error }
+  const code = errorCode(error)
+  return {
+    errorType: error.name,
+    ...(code ? { errorCode: code } : {}),
+  }
+}
+
+function errorCode(error: Error): string | null {
+  if (!('code' in error) || typeof error.code !== 'string') return null
+  return error.code
+}
+
+class ComponentDownloadHttpError extends Error {
+  constructor(
+    readonly id: ManagedComponentId,
+    readonly status: number
+  ) {
+    super(`Component download failed for ${id}: HTTP ${status}`)
+    this.name = 'ComponentDownloadHttpError'
   }
 }
 

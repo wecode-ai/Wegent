@@ -20,6 +20,7 @@ export interface StartupRecoveryDependencies {
   }
   clearCache: () => Promise<void>
   clearAppStorage: () => Promise<void>
+  disablePlugin: (name: string) => Promise<void>
   log: (
     step: string,
     status: 'started' | 'completed' | 'failed',
@@ -46,6 +47,12 @@ export class StartupRecoveryService {
     return this.operation
   }
 
+  disablePlugin(name: string): Promise<void> {
+    if (this.operation) return this.operation
+    this.operation = this.disablePluginOnce(name)
+    return this.operation
+  }
+
   private async runOnce(mode: StartupRecoveryMode): Promise<void> {
     this.dependencies.log(`startup-recovery-${mode}-cleanup`, 'started')
     try {
@@ -66,6 +73,23 @@ export class StartupRecoveryService {
     } catch (error) {
       this.dependencies.log(`startup-recovery-${mode}-cleanup`, 'failed', {
         errorType: error instanceof Error ? error.name : typeof error,
+      })
+      throw error
+    }
+    this.dependencies.relaunch()
+    this.dependencies.log('startup-recovery-relaunch', 'completed')
+    this.dependencies.shutdown()
+  }
+
+  private async disablePluginOnce(name: string): Promise<void> {
+    this.dependencies.log('startup-recovery-disable-plugin', 'started', { plugin: name })
+    try {
+      await this.dependencies.disablePlugin(name)
+      this.dependencies.log('startup-recovery-disable-plugin', 'completed', { plugin: name })
+    } catch (error) {
+      this.dependencies.log('startup-recovery-disable-plugin', 'failed', {
+        errorType: error instanceof Error ? error.name : typeof error,
+        plugin: name,
       })
       throw error
     }

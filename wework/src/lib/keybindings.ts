@@ -175,6 +175,18 @@ export function isEditableShortcutTarget(target: EventTarget | null): boolean {
   )
 }
 
+export function shouldIgnoreWorkbenchShortcut(event: KeyboardEvent): boolean {
+  if (event.isComposing) return true
+  if (!isEditableShortcutTarget(event.target)) return false
+  // Conversation autofocus must not disable workbench commands. Keep typing
+  // and Option-only text input in the editor, including custom bare-key bindings.
+  return (
+    (!event.metaKey && !event.ctrlKey) ||
+    !(event.target instanceof HTMLElement) ||
+    !event.target.closest('[data-testid="chat-message-input"]')
+  )
+}
+
 export function dispatchOpenTerminalShortcut() {
   const toggleButton = document.querySelector<HTMLButtonElement>(
     `[data-testid="${TOGGLE_BOTTOM_WORKSPACE_PANEL_BUTTON_TEST_ID}"]`

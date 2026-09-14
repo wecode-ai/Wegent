@@ -68,7 +68,15 @@ class ProjectBoardSnapshotService:
         project_id: int,
         user_id: int,
     ) -> ProjectBoardSnapshotResponse:
+        access = cloud_project_service.access(db, project_id, user_id)
         _, items = self.list_item_views(db, project_id, user_id)
+        if access.is_public_visitor:
+            return ProjectBoardSnapshotResponse(
+                items=items,
+                task_bindings=[],
+                members=[],
+                agents=[],
+            )
         item_ids = [item.id for item in items]
         bindings = loop_item_service.list_project_task_bindings(
             db,

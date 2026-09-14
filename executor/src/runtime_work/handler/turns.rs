@@ -260,7 +260,22 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new("runtime_queue_failed", error))
     }
 
-    pub(super) async fn spawn_turn(&self, mut turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
+    pub(super) async fn spawn_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
+        self.spawn_turn_with_capacity_override(turn, false).await
+    }
+
+    pub(super) async fn spawn_forced_turn(
+        &self,
+        turn: SpawnTurnRequest,
+    ) -> Result<(), AppIpcError> {
+        self.spawn_turn_with_capacity_override(turn, true).await
+    }
+
+    async fn spawn_turn_with_capacity_override(
+        &self,
+        mut turn: SpawnTurnRequest,
+        force_start: bool,
+    ) -> Result<(), AppIpcError> {
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();
         let _operation = self.turn_queue_operation.lock().await;
@@ -270,7 +285,11 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
-            let turn_to_start = scheduler.enqueue(turn);
+            let turn_to_start = if force_start {
+                Some(scheduler.enqueue_forced(turn))
+            } else {
+                scheduler.enqueue(turn)
+            };
             let queued_turns = turn_to_start
                 .is_none()
                 .then(|| scheduler.queued_turns.clone());
@@ -650,6 +669,7 @@ impl RuntimeWorkRpcHandler {
         }
         let mut event_request = request.clone();
         if let Some(active_turn) = active_turn {
+            event_mapper.observe_root_thread_id(&active_turn.thread_id);
             self.record_active_codex_transcript_item(local_task_id, &active_turn.turn_id, &message);
             event_request.subtask_id = active_turn.turn_id;
         }
@@ -885,6 +905,12 @@ impl RuntimeWorkRpcHandler {
                     );
                     let mut event_request = active_turn_request.clone();
                     event_request.subtask_id = turn_id.clone();
+                    active_turn_handler.register_thread_event_route(
+                        &thread_id,
+                        active_turn_local_task_id.clone(),
+                        event_request.clone(),
+                        true,
+                    );
                     emit_response_event(
                         &active_turn_handler.event_tx,
                         &active_turn_handler.device_id,
@@ -1380,30 +1406,42 @@ impl RuntimeWorkRpcHandler {
         let Some(workspace_path) = request.cwd() else {
             return;
         };
-        if infer_workspace_kind(workspace_path) == "chat" {
-            return;
+        if infer_workspace_kind(workspace_path) != "chat" {
+            match register_codex_global_thread_workspace_root(
+                thread_id,
+                workspace_path,
+                request.runtime_project_key.as_deref(),
+            ) {
+                Ok(Some(workspace_root)) => {
+                    log_executor_event(
+                        "runtime work codex thread workspace root registered",
+                        &[
+                            ("thread_id", thread_id.to_owned()),
+                            ("workspace_root", workspace_root),
+                        ],
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    log_executor_event(
+                        "runtime work codex thread workspace root registration failed",
+                        &[("thread_id", thread_id.to_owned()), ("error", error)],
+                    );
+                }
+            }
         }
-        match register_codex_global_thread_workspace_root(
+        // The rollout observer needs every thread it started, including
+        // standalone chats, because subagent rollouts are matched to it.
+        if let Err(error) = self.hook_service.rollout.register_root(
             thread_id,
-            workspace_path,
-            request.runtime_project_key.as_deref(),
+            hook_user(request),
+            PathBuf::from(workspace_path),
+            string_field(&request.model_config, "model_id"),
         ) {
-            Ok(Some(workspace_root)) => {
-                log_executor_event(
-                    "runtime work codex thread workspace root registered",
-                    &[
-                        ("thread_id", thread_id.to_owned()),
-                        ("workspace_root", workspace_root),
-                    ],
-                );
-            }
-            Ok(None) => {}
-            Err(error) => {
-                log_executor_event(
-                    "runtime work codex thread workspace root registration failed",
-                    &[("thread_id", thread_id.to_owned()), ("error", error)],
-                );
-            }
+            log_executor_event(
+                "runtime work codex rollout thread registration failed",
+                &[("thread_id", thread_id.to_owned()), ("error", error)],
+            );
         }
     }
 }
@@ -1519,6 +1557,29 @@ mod tests {
             vec!["waiting"]
         );
         assert_eq!(scheduler.active_tasks, 1);
+    }
+
+    #[test]
+    fn forced_enqueue_starts_new_work_without_disturbing_the_existing_queue() {
+        let mut scheduler = RuntimeTurnScheduler::new(1, VecDeque::new());
+        assert!(scheduler.enqueue(scheduled_turn("running")).is_some());
+        assert!(scheduler.enqueue(scheduled_turn("waiting")).is_none());
+
+        assert_eq!(
+            scheduler
+                .enqueue_forced(scheduled_turn("forced"))
+                .local_task_id,
+            "forced"
+        );
+        assert_eq!(scheduler.active_tasks, 2);
+        assert_eq!(
+            scheduler
+                .queued_turns
+                .iter()
+                .map(|turn| turn.local_task_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["waiting"]
+        );
     }
 
     #[test]

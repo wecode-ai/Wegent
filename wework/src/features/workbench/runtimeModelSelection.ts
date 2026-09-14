@@ -103,39 +103,18 @@ function configuredBooleanValue(
   return typeof value === 'boolean' ? value : null
 }
 
-function isNativeOpenAIResponsesModel(model: UnifiedModel, upstreamApiFormat: string): boolean {
-  if (upstreamApiFormat !== 'openai-responses') return false
-
-  const candidates = [
-    model.modelId,
-    model.name,
-    getRawStringConfigValue(model.config, 'model_id'),
-    getRawStringConfigValue(model.config, 'modelId'),
-    getRawStringConfigValue(model.config, 'model'),
-  ]
-  return candidates.some(candidate => {
-    const match = candidate
-      ?.trim()
-      .toLowerCase()
-      .match(/^gpt-(\d+)(?:\.(\d+))?(?:-|$)/)
-    if (!match) return false
-    const major = Number(match[1])
-    const minor = Number(match[2] ?? 0)
-    return major > 5 || (major === 5 && minor >= 4)
-  })
-}
-
 function cloudNativeToolCapabilities(
   model: UnifiedModel,
   upstreamApiFormat: string
 ): { nativeToolSearch: boolean; nativeNamespaceTools: boolean } {
-  const inferred = isNativeOpenAIResponsesModel(model, upstreamApiFormat)
+  const nativeByDefault = upstreamApiFormat === 'openai-responses'
   return {
     nativeToolSearch:
-      configuredBooleanValue(model.config, 'native_tool_search', 'nativeToolSearch') ?? inferred,
+      configuredBooleanValue(model.config, 'native_tool_search', 'nativeToolSearch') ??
+      nativeByDefault,
     nativeNamespaceTools:
       configuredBooleanValue(model.config, 'native_namespace_tools', 'nativeNamespaceTools') ??
-      inferred,
+      nativeByDefault,
   }
 }
 
@@ -260,12 +239,14 @@ export function selectedModelExecutionFields(
     const upstreamApiFormat = getCloudModelUpstreamApiFormat(selectedModel)
     if (upstreamApiFormat) {
       modelOptions[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] = upstreamApiFormat
-      const nativeCapabilities = cloudNativeToolCapabilities(selectedModel, upstreamApiFormat)
-      if (nativeCapabilities.nativeToolSearch) {
-        modelOptions[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION] = 'true'
-      }
-      if (nativeCapabilities.nativeNamespaceTools) {
-        modelOptions[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION] = 'true'
+      if (upstreamApiFormat === 'openai-responses') {
+        const nativeCapabilities = cloudNativeToolCapabilities(selectedModel, upstreamApiFormat)
+        modelOptions[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION] = String(
+          nativeCapabilities.nativeToolSearch
+        )
+        modelOptions[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION] = String(
+          nativeCapabilities.nativeNamespaceTools
+        )
       }
     }
     const codexCatalogModelId = cloudCodexCatalogModelId(selectedModel, upstreamApiFormat ?? '')

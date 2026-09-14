@@ -206,27 +206,29 @@ pub(crate) fn upstream_from_model_config(model_config: &Value) -> Option<LocalMo
         .or_else(|| non_empty_string(model_config, "apiKey"))
         .or_else(|| non_empty_string(model_config, "auth_token"))
         .unwrap_or_default();
+    let api_format = canonical_upstream_api_format(
+        &non_empty_string(model_config, "upstream_api_format")
+            .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
+            .or_else(|| non_empty_string(model_config, "api_format"))
+            .unwrap_or_else(|| "openai-responses".to_owned()),
+    );
+    let native_by_default = api_format == "openai-responses";
     Some(LocalModelProxyUpstream {
         base_url: base_url.trim_end_matches('/').to_owned(),
         request_url: non_empty_string(model_config, "responses_url")
             .or_else(|| non_empty_string(model_config, "responsesUrl"))
             .or_else(|| non_empty_string(model_config, "request_url"))
             .or_else(|| non_empty_string(model_config, "requestUrl")),
-        api_format: canonical_upstream_api_format(
-            &non_empty_string(model_config, "upstream_api_format")
-                .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
-                .or_else(|| non_empty_string(model_config, "api_format"))
-                .unwrap_or_else(|| "openai-responses".to_owned()),
-        ),
+        api_format,
         convert_custom_tools: non_empty_string(model_config, "tool_profile")
             .or_else(|| non_empty_string(model_config, "toolProfile"))
             .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
         native_tool_search: boolean_value(model_config, "native_tool_search")
             .or_else(|| boolean_value(model_config, "nativeToolSearch"))
-            .unwrap_or(false),
+            .unwrap_or(native_by_default),
         native_namespace_tools: boolean_value(model_config, "native_namespace_tools")
             .or_else(|| boolean_value(model_config, "nativeNamespaceTools"))
-            .unwrap_or(false),
+            .unwrap_or(native_by_default),
         api_key,
         default_headers: header_pairs(model_config.get("default_headers")),
         proxy_url: model_config
@@ -2392,6 +2394,11 @@ mod tests {
             .expect("model config should produce an upstream");
 
             assert_eq!(upstream.api_format, expected);
+            assert_eq!(upstream.native_tool_search, expected == "openai-responses");
+            assert_eq!(
+                upstream.native_namespace_tools,
+                expected == "openai-responses"
+            );
         }
     }
     use std::{

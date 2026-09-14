@@ -351,6 +351,11 @@ async def test_runtime_terminal_event_notifies_im_dispatcher(
             "taskId": "runtime-375023196",
             "taskTitle": "分析线上问题",
             "data": event_data,
+            "modelSelection": {
+                "modelName": "deepseek-v4-pro-responses(public)",
+                "modelType": "public",
+                "options": {"reasoning": "medium"},
+            },
         },
     )
 
@@ -360,6 +365,11 @@ async def test_runtime_terminal_event_notifies_im_dispatcher(
         address={
             "deviceId": "local-device",
             "localTaskId": "runtime-375023196",
+            "modelSelection": {
+                "modelName": "deepseek-v4-pro-responses(public)",
+                "modelType": "public",
+                "options": {"reasoning": "medium"},
+            },
         },
         title="分析线上问题",
         status=expected_status,

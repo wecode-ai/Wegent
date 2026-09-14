@@ -14,6 +14,9 @@ export type { CardBlock, MessageBlock, MessageBlockStatus } from './message-bloc
 export {
   getLatestThinkingContent,
   isGenericTaskStatusError,
+  limitWorkbenchProcessingBlock,
+  nestWorkbenchProcessingBlocks,
+  projectWorkbenchSubagentActivity,
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
   resolveStreamingThinkingContent
@@ -27,6 +30,7 @@ export type {
   WorkbenchFileChangesBlock,
   WorkbenchPlanBlock,
   WorkbenchProcessingBlock,
+  WorkbenchSubagentBlock,
   WorkbenchThinkingBlock,
   WorkbenchTextBlock,
   WorkbenchToolBlock,

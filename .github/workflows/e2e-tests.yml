@@ -37,9 +37,9 @@ jobs:
       - name: Classify changed paths
         id: classify
         env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          FORCE_ALL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
+          FORCE_ALL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
         run: |
           if [[ "$FORCE_ALL" == "true" ]]; then
             .github/scripts/classify-ci-changes.sh --all
@@ -326,6 +326,18 @@ jobs:
       qdrant:
         image: qdrant/qdrant:v1.15.4
 
+      minio:
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r0
+        env:
+          MINIO_ROOT_USER: wegent-e2e
+          MINIO_ROOT_PASSWORD: wegent-e2e-secret
+        options: >-
+          --health-cmd="curl -f http://localhost:9000/minio/health/live"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-start-period=20s
+          --health-retries=6
+
     steps:
       - name: Generate internal service token
         run: |
@@ -422,6 +434,11 @@ jobs:
           RAG_RUNTIME_MODE: remote
           KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           CHUNK_STORAGE_ENABLED: "true"
+          ATTACHMENT_S3_ENDPOINT: minio:9000
+          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
+          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
+          ATTACHMENT_S3_USE_SSL: "false"
+          DELIVERY_S3_BUCKET: wegent-deliveries
         run: |
           source .venv/bin/activate
           nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
@@ -480,6 +497,7 @@ jobs:
           wait_for_url http://localhost:8000/api/docs \
             && wait_for_url http://localhost:8200/internal/rag/health \
             && wait_for_url http://qdrant:6333/readyz \
+            && wait_for_url http://minio:9000/minio/health/live \
             && wait_for_url http://localhost:8100/health \
             && wait_for_url http://localhost:3000 \
             && wait_for_url http://localhost:9999/health \
@@ -521,7 +539,7 @@ jobs:
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
       - name: Run Provider-native E2E tests serially
-        if: matrix.shardIndex == 1
+        if: matrix.shardIndex == 4
         timeout-minutes: 15
         working-directory: ./frontend
         env:
@@ -978,6 +996,14 @@ jobs:
       - name: Verify Chat Shell is running
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
+
+      - name: Run Executor Manager resilience E2E tests
+        working-directory: ./executor_manager
+        env:
+          E2E_REDIS_URL: redis://localhost:6379/15
+          OTEL_ENABLED: "false"
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest e2e_tests/ --no-cov -v
 
       - name: Run Executor E2E tests
         env:

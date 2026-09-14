@@ -102,20 +102,15 @@ def acquire_lease(
         .first()
     )
     now = utcnow()
+    if request.parent_transcript_id is not None:
+        parent = get_transcript(
+            db,
+            user_id=user_id,
+            transcript_id=request.parent_transcript_id,
+            for_update=True,
+        )
+        forked_at_sequence = min(forked_at_sequence, parent.current_sequence)
     if transcript is None:
-        if request.parent_transcript_id is not None:
-            parent = get_transcript(
-                db,
-                user_id=user_id,
-                transcript_id=request.parent_transcript_id,
-                for_update=True,
-            )
-            if forked_at_sequence > parent.current_sequence:
-                raise WeworkTranscriptError(
-                    "invalid_fork_point",
-                    "Wework transcript fork point is newer than its parent",
-                    status_code=422,
-                )
         transcript = WeworkTranscript(
             user_id=user_id,
             transcript_id=transcript_id,

@@ -773,8 +773,11 @@ async fn run_cli_probe(
     args: &[&str],
     timeout: Duration,
 ) -> Result<std::process::Output, (String, bool)> {
-    let mut command = Command::new(executable);
+    let (program, prefix_args) =
+        crate::process::spawn_program_parts(executable.to_string_lossy().as_ref());
+    let mut command = Command::new(program);
     hide_windows_console(&mut command);
+    command.args(prefix_args);
     command.args(args);
     command.env_clear();
     command.envs(env);
@@ -973,6 +976,44 @@ mod tests {
             result.stdout["tool"],
             Value::String("wegent-definitely-missing-tool".to_owned())
         );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn hosting_cli_status_executes_node_batch_shims() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let script = directory.path().join("gh.mjs");
+        let shim = directory.path().join("gh.cmd");
+        std::fs::write(
+            &script,
+            "if (process.argv.includes('--version')) console.log('gh version fixture')\n",
+        )
+        .expect("CLI fixture script should be written");
+        std::fs::write(&shim, "@echo off\r\nnode \"%~dp0gh.mjs\" %*\r\n")
+            .expect("CLI fixture shim should be written");
+        let mut env = empty_env();
+        let path = std::env::join_paths(
+            std::iter::once(directory.path().to_path_buf()).chain(
+                std::env::var_os("PATH")
+                    .as_deref()
+                    .map(std::env::split_paths)
+                    .into_iter()
+                    .flatten(),
+            ),
+        )
+        .expect("fixture PATH should be valid");
+        env.insert("PATH".to_owned(), path.to_string_lossy().to_string());
+
+        let result = hosting_cli_status("gh", &env, 5.0).await;
+
+        assert!(result.success);
+        assert_eq!(result.stdout["installed"], Value::Bool(true));
+        assert_eq!(result.stdout["authenticated"], Value::Bool(true));
+        assert_eq!(
+            result.stdout["version"],
+            Value::String("gh version fixture".to_owned())
+        );
+        assert_eq!(result.stdout["detectionError"], Value::Null);
     }
 
     #[test]

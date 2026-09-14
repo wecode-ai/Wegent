@@ -19,6 +19,7 @@ export const CORE_PLUGIN_DIRECTORIES = [
   'ui-home-focus',
   'ui-home-developer',
   'ui-git',
+  'ui-outputs',
 ]
 
 const CORE_PLUGIN_TARGETS = {
@@ -42,6 +43,7 @@ const CORE_PLUGIN_TARGETS = {
   'ui-home-focus': 'wework-ui-home-focus',
   'ui-home-developer': 'wework-ui-home-developer',
   'ui-git': 'wework-ui-git',
+  'ui-outputs': 'wework-ui-outputs',
 }
 
 export function corePluginTarget(directory) {

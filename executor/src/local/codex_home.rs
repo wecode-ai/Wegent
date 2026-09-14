@@ -93,7 +93,7 @@ pub fn initialize_codex_home(
 pub fn import_external_content(
     request: ExternalContentImportRequest,
 ) -> Result<ExternalContentImportResult, String> {
-    let home = dirs::home_dir().ok_or_else(|| "Unable to resolve home directory".to_owned())?;
+    let home = external_content_home_path()?;
     let destination = wework_codex_home_path()?;
     import_external_content_from_paths(&request.source, &home, &destination)
 }
@@ -171,6 +171,19 @@ fn native_codex_home_path() -> Result<PathBuf, String> {
     dirs::home_dir()
         .map(|home| home.join(".codex"))
         .ok_or_else(|| "Unable to resolve native Codex home".to_owned())
+}
+
+fn external_content_home_path() -> Result<PathBuf, String> {
+    if env::var("VITE_WEWORK_E2E").as_deref() == Ok("true") {
+        if let Some(path) = non_empty_path(E2E_NATIVE_CODEX_HOME_ENV) {
+            return path
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| "Native Codex home parent is unavailable".to_owned());
+        }
+    }
+    crate::local::command::configured_home_dir()
+        .ok_or_else(|| "Unable to resolve home directory".to_owned())
 }
 
 fn read_codex_local_config_from_path(codex_home: &Path) -> Result<CodexLocalConfig, String> {

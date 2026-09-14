@@ -289,9 +289,23 @@ application launch to control CI duration. Test artifacts, captured model
 requests, and failure diagnostics are stored in
 `wework/test-results/desktop-e2e/`. Each scenario retains logs, screenshots,
 requests, and UI state while removing copied application bundles, Executor
-homes, extracted runtimes, and rebuildable Electron caches. The runner also
-compacts inactive result directories left by interrupted runs so repeated local
+homes, workspace fixtures, test archives, extracted runtimes, and every other
+rebuildable top-level test environment. `electron-user-data` retains diagnostic
+state only: materialized `managed-components`, `managed-runtimes`, DSH and
+Harness profiles, and Electron caches are recursively removed from both the
+main instance and nested plugin-development instances. The runner also compacts
+inactive result directories left by interrupted runs so repeated local
 execution does not continuously consume disk space.
+
+Before upload, GitHub Actions repeats the cleanup and excludes
+`managed-components` at any depth from the Artifact path so a teardown failure
+cannot upload the complete Web and WASM component payload from either the main
+instance or a nested plugin-development instance as diagnostic evidence. Both
+the top-level cleanup and Artifact paths also exclude test `.zip` archives.
+Diagnostic Artifacts use standard compression and should normally remain below
+20 MiB. They should contain logs, screenshots, requests, UI state, and necessary
+Electron persistence only, never rebuildable applications, runtimes, Executor
+homes, workspaces, test archives, or component directories.
 
 The local runner writes complete stdout and stderr from the prerequisite
 Electron and Executor build to
@@ -315,7 +329,7 @@ The GitHub Actions Executor E2E job loads a prebuilt Docker image after restorin
 
 The plugin scenario dynamically creates an isolated local Codex marketplace and a plugin with a Skill under the test-results directory. It then uses the real Electron renderer, Executor, and Codex app-server to verify marketplace discovery, installation, the install-time local authorization dialog, insertion of the plugin reference into the chat composer, unmatched resume auth text not opening a local auth card, composer filtering after uninstall, and uninstallation. It neither reads the user's Codex home nor mocks plugin APIs; marketplace data, plugin cache, and installation state remain inside the isolated test directory. Screenshots are retained for the critical stages, with application, Executor, and UI snapshot diagnostics retained on failure.
 
-The memory scenario is macOS-only. It executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Electron renderer. The test first waits for the renderer-process memory baseline to stabilize, then samples the aggregate physical footprint of associated Electron renderer processes every 500 milliseconds. It writes the samples, DOM node counts, and summary metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit peak growth to 384 MiB, settled growth after completion to 224 MiB, and the full physical-footprint range within the settled window to 16 MiB. The DOM gate checks the settled window after virtual-list convergence and allows at most 900 retained nodes by default. Transient peaks during streaming remain in the diagnostics but do not treat pre-convergence rendering as a leak. The limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`, and `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES`.
+The memory scenario is macOS-only. It keeps the bottom Terminal mounted, executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Electron renderer. The test first waits for the renderer-process memory baseline to stabilize, then samples the aggregate physical footprint of associated Electron renderer processes every 500 milliseconds. Each sample also forces renderer garbage collection through the Electron DevTools Protocol and reads actual JS heap usage. It writes the samples, DOM node counts, active-assistant content summary, and aggregate metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit physical-footprint peak growth to 384 MiB, settled growth after completion to 232 MiB, the full physical-footprint range within the settled window to 16 MiB, and the post-GC JS heap peak across the workload to 200 MiB. The DOM gate checks the settled window after virtual-list convergence and allows at most 512 additional nodes relative to baseline by default. Transient peaks during streaming remain in the diagnostics but do not treat pre-convergence rendering as a leak. The limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODE_GROWTH`, and `WEWORK_E2E_MEMORY_MAX_JS_HEAP_BYTES`. For focused very-long-stream reproduction, use `WEWORK_E2E_MEMORY_SECTION_COUNT` and `WEWORK_E2E_MEMORY_CHUNK_DELAY_MS` to configure response sections and chunk delay. The completion budget remains fixed at 30 seconds and cannot be relaxed through an environment variable.
 
 The concurrent-memory scenario is also macOS-only. It creates and holds 10 Responses streams at the same time, samples the process-group physical footprint for the Wework main process, Electron renderer/GPU/network processes, Executor processes, and the Codex app-server, and writes the evidence to `concurrent-memory.json`. Relative to the stable baseline, both the peak and active settled plateau may grow by at most 320 MiB, while the settled sampling window may vary by at most 64 MiB. The limits can be adjusted with `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB`, and `WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB`. The scenario also switches between the first and last tasks and waits for each task's prompt content to reappear.
 

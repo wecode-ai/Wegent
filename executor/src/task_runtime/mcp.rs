@@ -452,6 +452,7 @@ fn delivery_address(
         task_id: grant.task_id.clone(),
         task_title: None,
         backend_task_id: None,
+        model_selection: None,
         workflow_node_id: None,
     })
 }
@@ -3892,6 +3893,7 @@ mod tests {
                     task_id: "runtime-1".to_owned(),
                     task_title: Some("Implement".to_owned()),
                     backend_task_id: None,
+                    model_selection: None,
                     workflow_node_id: Some("implement".to_owned()),
                 },
             )

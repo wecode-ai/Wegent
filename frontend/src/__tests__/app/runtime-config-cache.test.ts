@@ -65,6 +65,24 @@ describe('runtime config caching', () => {
     expect(response.headers.get('Cache-Control')).toBe('max-age=60, stale-while-revalidate=300')
   })
 
+  test('code wiki creation is enabled unless the deployment explicitly disables it', async () => {
+    const previous = process.env.RUNTIME_ENABLE_CODE_WIKI
+
+    try {
+      delete process.env.RUNTIME_ENABLE_CODE_WIKI
+      await expect((await GET()).json()).resolves.toMatchObject({ enableCodeWiki: true })
+
+      process.env.RUNTIME_ENABLE_CODE_WIKI = 'false'
+      await expect((await GET()).json()).resolves.toMatchObject({ enableCodeWiki: false })
+    } finally {
+      if (previous === undefined) {
+        delete process.env.RUNTIME_ENABLE_CODE_WIKI
+      } else {
+        process.env.RUNTIME_ENABLE_CODE_WIKI = previous
+      }
+    }
+  })
+
   test('runtime config route exposes Wework code URL from runtime env only', async () => {
     const previousRuntimeUrl = process.env.RUNTIME_WEWORK_CODE_URL
     const previousPublicUrl = process.env.NEXT_PUBLIC_WEWORK_CODE_URL

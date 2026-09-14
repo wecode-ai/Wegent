@@ -732,6 +732,8 @@ describe('MessageList', () => {
 
     const { container } = render(
       <MessageList
+        onRetryFailedMessage={vi.fn()}
+        onSwitchModelForFailedMessage={vi.fn()}
         messages={[
           {
             id: 'assistant-streaming-windowed',
@@ -2355,6 +2357,66 @@ describe('MessageList', () => {
     expect(processContent.closest('[data-testid="message-assistant"]')).not.toHaveClass(
       'font-medium'
     )
+  })
+
+  test('keeps merged subagent activity anchored before later parent output', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-subagent-anchor',
+            role: 'assistant',
+            content: '父代理继续处理。',
+            status: 'streaming',
+            blocks: [
+              {
+                id: 'spawn-1',
+                subtaskId: 'turn-1',
+                type: 'tool',
+                toolName: 'spawnAgent',
+                toolInput: { prompt: '检查实现' },
+                toolOutput: { agentId: 'agent-1' },
+                status: 'done',
+                createdAt: 1770000000000,
+              },
+              {
+                id: 'subagent-agent-1',
+                subtaskId: 'turn-1',
+                type: 'subagent',
+                agentThreadId: 'agent-1',
+                title: 'Explorer',
+                status: 'streaming',
+                createdAt: 1770000002000,
+              },
+            ],
+            runtimeDisplayItems: [
+              {
+                id: 'spawn-1',
+                type: 'block',
+              },
+              {
+                id: 'assistant-text',
+                type: 'assistant_text',
+                content: '父代理继续处理。',
+              },
+              {
+                id: 'subagent-agent-1',
+                type: 'block',
+              },
+            ],
+            createdAt: '2026-02-03T02:40:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const subagentActivity = screen.getByTestId('subagent-activity-inline-group')
+    const assistantContent = screen.getByText('父代理继续处理。')
+
+    expect(
+      subagentActivity.compareDocumentPosition(assistantContent) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(screen.getAllByTestId('subagent-activity-inline-group')).toHaveLength(1)
   })
 
   test('does not restore hidden failed content from runtime display order', () => {
@@ -5020,6 +5082,8 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
+        onRetryFailedMessage={vi.fn()}
+        onSwitchModelForFailedMessage={vi.fn()}
       />
     )
 
@@ -5561,6 +5625,8 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
+        onRetryFailedMessage={vi.fn()}
+        onSwitchModelForFailedMessage={vi.fn()}
       />
     )
 

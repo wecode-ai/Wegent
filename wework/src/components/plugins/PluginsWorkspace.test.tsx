@@ -3136,6 +3136,25 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test('does not route accountAuth-only connectors to the cloud OAuth catalog', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceConnectorSlug: 'tianhe',
+      marketplaceConnectorAccountAuth: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    await userEvent.click(await screen.findByTestId('plugin-connection-manage-connector:tianhe'))
+    expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+      '此连接尚未提供页面登录入口'
+    )
+    expect(listWegentConnectorApps).not.toHaveBeenCalled()
+    expect(authorizeWegentConnector).not.toHaveBeenCalled()
+  })
+
   test('authorizes Wegent OAuth when managing a cloud plugin GitHub connector', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockSystemSkillsFetch({
@@ -4419,6 +4438,43 @@ describe('PluginsWorkspace', () => {
     await waitFor(() =>
       expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_uninstalled', { source: 'local' })
     )
+  })
+
+  test('loads grouped connectors when opening a personal installed summary', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockEmptyCloudPluginApis()
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [{ id: 'documents-local-id', name: 'documents', displayName: 'Documents' }],
+        },
+      ],
+      installedPluginNames: ['documents'],
+    })
+    const previous = vi.mocked(requestLocalExecutor).getMockImplementation()
+    vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'executor.plugins.manifest.read')
+        return Promise.resolve({
+          connectors: [
+            {
+              slug: 'site-a',
+              displayName: 'example.test',
+              authorizationGroup: { id: 'sites', displayName: 'Example account' },
+              authPolicy: 'optional',
+            },
+          ],
+        })
+      return previous?.(command, args) as Promise<unknown>
+    })
+    render(<PluginsWorkspace />)
+    await userEvent.click(
+      await screen.findByTestId('plugins-installed-strip-item-documents-local-id')
+    )
+    expect(await screen.findByTestId('plugin-connection-manage-group:sites')).toBeInTheDocument()
+    expectCodexAppServerRequest('plugin/read', { pluginName: 'documents' })
   })
 
   test('keeps local uninstall settled when cloud-link cleanup fails', async () => {

@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import { describe, expect, test, vi } from 'vitest'
-import { sendE2EKey } from './e2e-keyboard.js'
+import { sendE2EKey, sendE2EText } from './e2e-keyboard.js'
 
 const environment = {
   WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
@@ -8,7 +8,12 @@ const environment = {
 }
 
 function fixture() {
-  const view = { isDestroyed: () => false, focus: vi.fn(), sendInputEvent: vi.fn() }
+  const view = {
+    isDestroyed: () => false,
+    focus: vi.fn(),
+    insertText: vi.fn(),
+    sendInputEvent: vi.fn(),
+  }
   return { view, contents: view as unknown as WebContents, focusWindow: vi.fn() }
 }
 
@@ -35,12 +40,23 @@ describe('isolated native keyboard verification', () => {
     expect(await sendE2EKey(contents, 'Shift+Tab', focusWindow, environment)).toEqual({
       backend: 'electron-send-input-event',
       key: 'Shift+Tab',
+      phase: 'press',
     })
     expect(focusWindow).toHaveBeenCalledOnce()
     expect(view.focus).toHaveBeenCalledOnce()
     expect(view.sendInputEvent.mock.calls).toEqual([
       [{ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] }],
       [{ type: 'keyUp', keyCode: 'Tab', modifiers: ['shift'] }],
+    ])
+  })
+
+  test('keeps native Space pressed until a matching key-up event', async () => {
+    const { view, contents, focusWindow } = fixture()
+    await sendE2EKey(contents, 'Space', focusWindow, environment, 'down')
+    await sendE2EKey(contents, 'Space', focusWindow, environment, 'up')
+    expect(view.sendInputEvent.mock.calls).toEqual([
+      [{ type: 'keyDown', keyCode: 'Space', modifiers: [] }],
+      [{ type: 'keyUp', keyCode: 'Space', modifiers: [] }],
     ])
   })
 
@@ -52,6 +68,39 @@ describe('isolated native keyboard verification', () => {
       'char',
       'keyUp',
     ])
+  })
+
+  test.each([
+    ['Meta+B', 'B', ['meta']],
+    ['Control+B', 'B', ['control']],
+    ['Meta+Alt+B', 'B', ['meta', 'alt']],
+    ['Control+Shift+M', 'M', ['control', 'shift']],
+  ])('sends native shortcut %s without inserting a character', async (key, keyCode, modifiers) => {
+    const { view, contents, focusWindow } = fixture()
+    await sendE2EKey(contents, key as string, focusWindow, environment)
+    expect(view.sendInputEvent.mock.calls).toEqual([
+      [{ type: 'keyDown', keyCode, modifiers }],
+      [{ type: 'keyUp', keyCode, modifiers }],
+    ])
+  })
+
+  test('inserts ordinary text through a native character event', async () => {
+    const { view, contents, focusWindow } = fixture()
+    await sendE2EKey(contents, 'x', focusWindow, environment)
+    expect(view.sendInputEvent.mock.calls).toContainEqual([
+      { type: 'char', keyCode: 'x', modifiers: [] },
+    ])
+  })
+
+  test('inserts text through the focused native editor', async () => {
+    const { view, contents, focusWindow } = fixture()
+    await expect(sendE2EText(contents, '第一行', focusWindow, environment)).resolves.toEqual({
+      backend: 'electron-insert-text',
+      textLength: 3,
+    })
+    expect(focusWindow).toHaveBeenCalledOnce()
+    expect(view.focus).toHaveBeenCalledOnce()
+    expect(view.insertText).toHaveBeenCalledWith('第一行')
   })
 
   test.each([{}, { WEWORK_E2E_CONTROL_URL: environment.WEWORK_E2E_CONTROL_URL }])(
@@ -66,7 +115,7 @@ describe('isolated native keyboard verification', () => {
     }
   )
 
-  test.each(['Meta+Q', 'Control+W', 'constructor', 'text'])(
+  test.each(['Meta+Q', 'Control+W', 'constructor', 'text', 'Unknown+B'])(
     'rejects unsupported key %s',
     async key => {
       const { view, contents, focusWindow } = fixture()

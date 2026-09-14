@@ -289,8 +289,6 @@ const electronManifest = resolve(output, `${channel === 'stable' ? 'latest' : 'b
 for (const path of [
   installer,
   `${installer}.blockmap`,
-  resolve(output, hostUpdateName),
-  resolve(output, `${hostUpdateName}.blockmap`),
   componentManifestPath,
   electronManifest,
 ]) {
@@ -311,8 +309,21 @@ if (
 }
 
 const electron = await readFile(electronManifest, 'utf8')
-if (!electron.includes(installerName) && !electron.includes(hostUpdateName)) {
-  throw new Error('The Electron Windows updater manifest does not reference an update package.')
+const referencedUpdateNames = [installerName, hostUpdateName].filter(name =>
+  electron.includes(name)
+)
+if (referencedUpdateNames.length !== 1) {
+  throw new Error(
+    'The Electron Windows updater manifest must reference exactly one update package.'
+  )
+}
+
+const updatePackage = resolve(output, referencedUpdateNames[0])
+for (const path of [updatePackage, `${updatePackage}.blockmap`]) {
+  const file = await stat(path).catch(() => null)
+  if (!file?.isFile() || file.size === 0) {
+    throw new Error(`Referenced Windows update artifact is missing or empty: ${path}`)
+  }
 }
 
 console.log(`Verified Windows Electron updater artifacts for ${version} (${channel}).`)

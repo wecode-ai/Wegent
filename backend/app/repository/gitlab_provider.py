@@ -22,6 +22,9 @@ from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.schemas.github import Branch, Repository
 from shared.utils.url_util import build_url
 
+TRACKED_FILE_COUNT_PAGE_SIZE = 100
+MAX_TRACKED_FILE_COUNT_PAGES = 50
+
 
 class GitLabProvider(RepositoryProvider):
     """
@@ -1036,6 +1039,51 @@ class GitLabProvider(RepositoryProvider):
                 status = FileStatus.MODIFIED
             changed.append({"path": path, "status": status.value})
         return changed
+
+    def get_tracked_file_count(
+        self, token: str, git_domain: str, repo_name: str, ref: str
+    ) -> Optional[int]:
+        """Count blobs in GitLab's paginated recursive tree at ``ref``."""
+        api_base_url = self._get_api_base_url(git_domain)
+        encoded = quote(repo_name, safe="")
+        page = "1"
+        seen_pages: set[str] = set()
+        count = 0
+        while page and page not in seen_pages:
+            if len(seen_pages) >= MAX_TRACKED_FILE_COUNT_PAGES:
+                self.logger.info(
+                    "Tree pagination for %s at %s exceeded %s pages; repository size is unknown",
+                    repo_name,
+                    ref,
+                    MAX_TRACKED_FILE_COUNT_PAGES,
+                )
+                return None
+            seen_pages.add(page)
+            response = self._make_request_with_auth_retry(
+                method="GET",
+                url=f"{api_base_url}/projects/{encoded}/repository/tree",
+                token=token,
+                params={
+                    "ref": ref,
+                    "recursive": "true",
+                    "per_page": str(TRACKED_FILE_COUNT_PAGE_SIZE),
+                    "page": page,
+                },
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
+            )
+            entries = response.json()
+            if not isinstance(entries, list):
+                return None
+            count += sum(entry.get("type") == "blob" for entry in entries)
+            page = str((response.headers or {}).get("X-Next-Page") or "")
+        if page:
+            self.logger.info(
+                "Tree pagination for %s at %s repeated a page; repository size is unknown",
+                repo_name,
+                ref,
+            )
+            return None
+        return count
 
     def describe_repository(
         self, token: str, git_domain: str, repo_name: str

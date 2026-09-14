@@ -632,7 +632,6 @@ export function WorkspacePanelCards({
         title: !projectTerminalAvailable
           ? t('workbench.project_terminal_unavailable_tooltip')
           : undefined,
-        run: startTerminalSession,
       },
       desktop: {
         visible: cloudDesktopAvailable,
@@ -648,7 +647,6 @@ export function WorkspacePanelCards({
       projectDevice?.status,
       projectTerminalAvailable,
       showTerminalEntry,
-      startTerminalSession,
       t,
       toolsDisabled,
     ]

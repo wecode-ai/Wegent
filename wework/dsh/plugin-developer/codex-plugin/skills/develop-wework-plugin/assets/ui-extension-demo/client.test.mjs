@@ -142,7 +142,7 @@ test('registers every public Wework UI extension point through slot injection', 
     'wework.action',
     'wework.app',
     'wework.task.status',
-    'wework.environment.section',
+    'wework.conversation.summary',
     'wework.board.card.status',
     'wework.home',
     'wework.workspace.menu.section',
@@ -217,9 +217,10 @@ test('renders the demo components without Wework-private React imports', async (
     ['wework.app', { visible: true }, 'dsh-extension-demo-app'],
     ['wework.task.status', { task: { title: 'Demo task' } }, 'dsh-extension-demo-task-status'],
     [
-      'wework.environment.section',
-      { info: { workspacePath: '/workspace' } },
-      'dsh-extension-demo-environment-section',
+      'wework.conversation.summary',
+      {},
+      'dsh-extension-demo-summary-section',
+      'Demo summary section',
     ],
     ['wework.board.card.status', { itemId: 'DEMO-1' }, 'dsh-extension-demo-board-card-status'],
     [
@@ -246,9 +247,11 @@ test('renders the demo components without Wework-private React imports', async (
     ['wework.shell.after', {}, 'dsh-extension-demo-shell-after'],
     ['wework.shell.overlay', {}, 'dsh-extension-demo-overlay'],
   ]
-  for (const [slot, props, testId] of cases) {
+  for (const [slot, props, testId, expectedText] of cases) {
     const Component = components.get(slot)
     assert.equal(typeof Component, 'function', `${slot} did not register a component`)
-    assert.match(renderToStaticMarkup(React.createElement(Component, props)), new RegExp(testId))
+    const markup = renderToStaticMarkup(React.createElement(Component, props))
+    assert.match(markup, new RegExp(testId))
+    if (expectedText) assert.match(markup, new RegExp(expectedText))
   }
 })

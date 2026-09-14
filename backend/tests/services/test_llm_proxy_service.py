@@ -496,6 +496,38 @@ def test_cloud_runtime_protocol_comes_from_model_crd(
             "https://wegent.example/api/runtime-work/llm-responses-proxy"
         )
         assert resolved["default_headers"]["X-Wegent-Model-User-Id"] == "0"
+    assert config["native_tool_search"] is (expected == "openai-responses")
+    assert config["native_namespace_tools"] is (expected == "openai-responses")
+
+
+def test_cloud_runtime_can_bridge_standard_responses_tools(
+    test_db, test_user, monkeypatch
+):
+    from app.core.config import settings
+    from app.services.runtime_work_service import _runtime_model_override_values
+
+    model = _model_kind(0, protocol="openai-responses")
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "https://wegent.example")
+
+    config, _, _ = _runtime_model_override_values(
+        db=test_db,
+        user_id=test_user.id,
+        runtime="codex",
+        model_id=model.name,
+        model_type="public",
+        model_options={
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": "0",
+            "weworkCloudModelUpstreamApiFormat": "openai-responses",
+            "weworkCloudModelNativeToolSearch": "false",
+            "weworkCloudModelNativeNamespaceTools": "false",
+        },
+    )
+
+    assert config["native_tool_search"] is False
+    assert config["native_namespace_tools"] is False
 
 
 @pytest.mark.parametrize(

@@ -112,8 +112,23 @@ def make_code_project(db: Session, user: User, name: str = "Code project") -> Pr
 def test_cloud_robot_persists_exact_workspace_binding_in_metadata(
     test_db: Session, test_user: User
 ) -> None:
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+    from app.schemas.base_role import BaseRole
+
     project = create_project(test_db, test_user)
-    make_device(test_db, test_user, "cloud-dev-binding", "cloud")
+    device = make_device(test_db, test_user, "cloud-dev-binding", "cloud")
+    test_db.add(
+        ResourceMember(
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
     code_project = make_code_project(test_db, test_user)
     workspace = upsert_device_workspace(
         db=test_db,
@@ -1065,6 +1080,104 @@ def _running_ai_task(
     assert message.status == "streaming"
     assert (task.metadata_json or {})["ai_state"]["status"] == "running"
     return task, message
+
+
+@pytest.mark.parametrize("unset_value", [None, EPOCH_TIME])
+def test_running_ai_state_clears_completed_at_using_schema_contract(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    unset_value: datetime | None,
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Restart completed task",
+        description="",
+        status="todo",
+        completed_at=datetime(2026, 9, 10, 12),
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id="12",
+        sender_name="Code Reviewer",
+        metadata_json={"run_id": str(uuid.uuid4())},
+    )
+    contract_calls: list[tuple[object, str]] = []
+
+    def unset_for_connection(connection: object, attribute: str) -> datetime | None:
+        contract_calls.append((connection, attribute))
+        return unset_value
+
+    monkeypatch.setattr(
+        "app.services.project_chat.service.loop_unset_datetime_for_connection",
+        unset_for_connection,
+    )
+
+    project_chat_service._set_task_ai_state(
+        test_db,
+        row=row,
+        trigger=None,
+        agent=None,
+        status_value="running",
+    )
+
+    assert task.status == "in_progress"
+    assert task.completed_at == unset_value
+    assert len(contract_calls) == 1
+    assert contract_calls[0][1] == "completed_at"
+
+
+@pytest.mark.parametrize("unset_value", [None, EPOCH_TIME])
+def test_advance_to_review_clears_completed_at_using_schema_contract(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    unset_value: datetime | None,
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Review completed task",
+        description="",
+        status="in_progress",
+        completed_at=datetime(2026, 9, 10, 12),
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id="12",
+    )
+    contract_calls: list[tuple[object, str]] = []
+
+    def unset_for_connection(connection: object, attribute: str) -> datetime | None:
+        contract_calls.append((connection, attribute))
+        return unset_value
+
+    monkeypatch.setattr(
+        "app.services.project_chat.service.loop_unset_datetime_for_connection",
+        unset_for_connection,
+    )
+
+    project_chat_service._advance_task_to_review(test_db, row)
+
+    assert task.status == "in_review"
+    assert task.completed_at == unset_value
+    assert len(contract_calls) == 1
+    assert contract_calls[0][1] == "completed_at"
 
 
 def _expire_ai_lease(

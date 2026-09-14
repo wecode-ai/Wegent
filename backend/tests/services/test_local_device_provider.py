@@ -50,11 +50,15 @@ async def test_list_devices_excludes_remote_devices(test_db):
     assert devices == []
 
 
-async def test_app_provider_lists_app_devices_separately(test_db):
+async def test_app_provider_lists_app_devices_separately(test_db, monkeypatch):
     """Desktop app registrations keep their explicit app device type."""
     test_db.add(_local_device("app-device", DeviceType.APP.value))
     test_db.add(_local_device("local-device", DeviceType.LOCAL.value))
     test_db.commit()
+    monkeypatch.setattr(
+        "app.services.device.local_provider.cache_manager.mget_or_raise",
+        AsyncMock(return_value={}),
+    )
 
     app_devices = await AppDeviceProvider().list_devices(test_db, user_id=7)
     local_devices = await LocalDeviceProvider().list_devices(test_db, user_id=7)
@@ -84,11 +88,11 @@ async def test_app_status_only_uses_matching_runtime_heartbeat(
     }
     with (
         patch(
-            "app.services.device.local_provider.cache_manager.get",
+            "app.services.device.local_provider.cache_manager.get_or_raise",
             AsyncMock(return_value=online),
         ),
         patch(
-            "app.services.device.local_provider.cache_manager.mget",
+            "app.services.device.local_provider.cache_manager.mget_or_raise",
             AsyncMock(
                 return_value={
                     f"device:online:7:app-record-{record.id}": online,
@@ -127,10 +131,13 @@ async def test_heartbeat_without_capacity_clears_previous_observation():
     cache_set = AsyncMock(return_value=True)
     with (
         patch(
-            "app.services.device.local_provider.cache_manager.get",
+            "app.services.device.local_provider.cache_manager.get_or_raise",
             AsyncMock(return_value=previous),
         ),
-        patch("app.services.device.local_provider.cache_manager.set", cache_set),
+        patch(
+            "app.services.device.local_provider.cache_manager.set_or_raise",
+            cache_set,
+        ),
     ):
         refreshed = await LocalDeviceProvider().refresh_heartbeat(
             user_id=7,

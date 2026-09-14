@@ -1128,6 +1128,8 @@ describe('local codex plugin readState cache', () => {
                 {
                   slug: 'dingtalk',
                   authPolicy: 'on_install',
+                  displayName: 'example.test',
+                  authorizationGroup: { id: 'sites', displayName: 'Sites' },
                   accountAuth: {
                     protocolVersion: 1,
                     credentialType: 'oauth2',
@@ -1166,6 +1168,12 @@ describe('local codex plugin readState cache', () => {
         health: ['auth', 'health'],
         start: ['auth', 'login'],
       })
+    )
+    expect(
+      peeked?.installedPlugins[0]?.spec.components.connectors?.[0]?.authorizationGroup
+    ).toEqual({ id: 'sites', displayName: 'Sites' })
+    expect(peeked?.installedPlugins[0]?.spec.components.connectors?.[0]?.displayName).toBe(
+      'example.test'
     )
     expect(peeked?.installedPlugins[0]?.spec.components.connectors?.[0]?.accountAuth).toEqual({
       protocolVersion: 1,

@@ -8,6 +8,7 @@ import {
   resolveRuntimeTranscriptPageSize,
   rollbackRejectedRuntimeConversationTurn,
   runtimeTranscriptHasMoreBefore,
+  runtimeTurnNavigationLoadOptions,
 } from './useWorkbenchPaneSession'
 
 describe('resolveRuntimeTranscriptPageSize', () => {
@@ -40,6 +41,46 @@ describe('runtimeTranscriptHasMoreBefore', () => {
         hasMoreBefore: false,
       })
     ).toBe(true)
+  })
+})
+
+describe('runtimeTurnNavigationLoadOptions', () => {
+  test('uses the provider cursor for a navigation turn outside the loaded transcript page', () => {
+    expect(
+      runtimeTurnNavigationLoadOptions(
+        {
+          id: 'older-user',
+          turnIndex: 2,
+          messageIndex: 4,
+          cursor: 'opaque-older-page',
+          promptPreview: 'Older prompt',
+        },
+        [{ start: 100, end: 150 }],
+        50
+      )
+    ).toEqual({
+      limit: 50,
+      beforeCursor: 'opaque-older-page',
+    })
+  })
+
+  test('keeps offset navigation bounded by the next loaded transcript range', () => {
+    expect(
+      runtimeTurnNavigationLoadOptions(
+        {
+          id: 'older-user',
+          turnIndex: 2,
+          messageIndex: 40,
+          cursor: 'offset:40',
+          promptPreview: 'Older prompt',
+        },
+        [{ start: 60, end: 110 }],
+        50
+      )
+    ).toEqual({
+      limit: 50,
+      beforeCursor: 'offset:60',
+    })
   })
 })
 

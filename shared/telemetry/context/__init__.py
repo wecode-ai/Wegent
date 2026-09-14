@@ -62,6 +62,7 @@ def __getattr__(name: str):
         "init_request_context",
         "is_websocket_context",
         "record_stream_error",
+        "request_context",
         "restore_context_vars",
         "set_agent_context",
         "set_bot_context",
@@ -126,6 +127,7 @@ __all__ = [
     "get_server_ip",
     "is_websocket_context",
     "init_request_context",
+    "request_context",
     # WebSocket context
     "set_websocket_context",
     # Context copy/restore (for new event loops or threads)

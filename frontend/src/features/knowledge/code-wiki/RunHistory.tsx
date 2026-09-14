@@ -85,6 +85,22 @@ const TONE_CLASS: Record<string, string> = {
   idle: 'text-text-tertiary',
 }
 
+const STRATEGY_TITLE_KEYS: Record<string, string> = {
+  legacy: 'codeWiki.strategy.legacyTitle',
+  coordinator_adaptive: 'codeWiki.strategy.options.coordinator_adaptive.title',
+  coordinator_reviewed: 'codeWiki.strategy.options.coordinator_reviewed.title',
+  coordinator_solo: 'codeWiki.strategy.options.coordinator_solo.title',
+}
+
+/** A history row stores a stable strategy id, while readers need its localized name. */
+export function strategyTitle(
+  strategyId: string,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  const key = STRATEGY_TITLE_KEYS[strategyId]
+  return key ? t(key) : strategyId
+}
+
 function RunIcon({ status }: { status: CodeWikiRunRecord['status'] }) {
   if (status === 'running') return <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
   if (status === 'failed') return <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
@@ -103,6 +119,12 @@ function RunRow({
   const { t } = useTranslation('knowledge')
   const when = formatRelativeTime(run.started_at, t)
   const reason = failureText(run.failure_code, run.error_message, t)
+  const execution = [
+    run.strategy_id ? strategyTitle(run.strategy_id, t) : '',
+    run.mode ? t(`codeWiki.history.mode.${run.mode}`) : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
   const [working, setWorking] = useState(false)
   // Restoring replaces every page readers currently see. Asked for twice because
   // the pages it overwrites keep their document ids only for as long as they exist
@@ -134,18 +156,13 @@ function RunRow({
         <RunIcon status={run.status} />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2">
-          <span className="text-xs text-text-secondary">{when}</span>
-          {run.mode && (
-            <span className="text-[11px] text-text-tertiary">
-              {t(`codeWiki.history.mode.${run.mode}`)}
-            </span>
-          )}
-          {run.strategy_id && (
-            <span className="text-[11px] text-text-tertiary" data-testid="code-wiki-run-strategy">
-              {t('codeWiki.history.strategy', { strategy: run.strategy_id })}
-            </span>
-          )}
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2">
+          <span
+            className="truncate text-xs font-medium text-text-primary"
+            data-testid="code-wiki-run-summary"
+          >
+            {execution || when}
+          </span>
           {run.published && (
             <span className="rounded bg-primary/10 px-1 text-[11px] text-primary">
               {t('codeWiki.history.current')}
@@ -155,11 +172,31 @@ function RunRow({
         {/* Stated as missing rather than left blank. An empty commit is not a
             cosmetic gap: the next run has nothing to compare against and rebuilds
             the whole wiki, so it is worth being able to see that it happened. */}
-        <div className="truncate font-mono text-[11px] text-text-tertiary">
-          {run.commit ? (
-            run.commit.slice(0, 8)
-          ) : (
-            <span className="font-sans not-italic">{t('codeWiki.history.commitUnreported')}</span>
+        <div
+          className="mt-0.5 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 text-[11px] text-text-tertiary"
+          data-testid="code-wiki-run-details"
+        >
+          <span className="truncate">
+            {when}
+            {when && <span aria-hidden="true"> · </span>}
+            {run.commit ? (
+              <span className="font-mono">{run.commit.slice(0, 8)}</span>
+            ) : (
+              <span>{t('codeWiki.history.commitUnreported')}</span>
+            )}
+          </span>
+          {canRepublish(run) && (
+            <button
+              type="button"
+              onClick={() => setConfirming(true)}
+              disabled={working}
+              title={t('codeWiki.history.republishHint')}
+              data-testid={`code-wiki-republish-${run.generation_id}`}
+              // On touch the action keeps its reachable target; desktop history stays compact.
+              className="inline-flex min-h-11 items-center text-[11px] text-text-secondary underline-offset-2 hover:text-primary hover:underline disabled:opacity-50 lg:min-h-0"
+            >
+              {t('codeWiki.history.republish')}
+            </button>
           )}
         </div>
         {/* The task's own outcome, when it disagrees with the version's. A run that
@@ -174,22 +211,6 @@ function RunRow({
         {/* Only a completed version that is not the live one has anything to go
             back to. The gate is advisory now, so a run that went wrong does reach
             readers, and everything it replaced is still in the version store. */}
-        {canRepublish(run) && (
-          <button
-            type="button"
-            onClick={() => setConfirming(true)}
-            disabled={working}
-            title={t('codeWiki.history.republishHint')}
-            data-testid={`code-wiki-republish-${run.generation_id}`}
-            // Reachable on touch through the navigation drawer, so it is sized for
-            // one there and stays compact in the desktop sidebar, where the panel is
-            // a narrow column and a 44px button per row would crowd out the history
-            // it sits in.
-            className="mt-1 inline-flex min-h-11 items-center rounded border border-border px-3 text-[11px] text-text-secondary hover:border-primary/40 disabled:opacity-50 lg:min-h-0 lg:px-1.5 lg:py-0.5"
-          >
-            {t('codeWiki.history.republish')}
-          </button>
-        )}
         <AlertDialog
           open={confirming}
           onOpenChange={open => {
@@ -255,7 +276,7 @@ function RunRow({
         {reason && (
           <>
             <p
-              className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-[11px] text-amber-500"
+              className="mt-1 line-clamp-2 whitespace-pre-wrap break-words text-[11px] text-amber-500"
               title={reason}
               data-testid="code-wiki-run-error"
             >
@@ -264,7 +285,7 @@ function RunRow({
             <button
               type="button"
               onClick={() => setShowingFailure(true)}
-              className="mt-1 inline-flex min-h-11 items-center text-[11px] text-text-secondary underline-offset-2 hover:text-primary hover:underline lg:min-h-0"
+              className="mt-0.5 inline-flex min-h-11 items-center text-[11px] text-text-secondary underline-offset-2 hover:text-primary hover:underline lg:min-h-0"
               data-testid="code-wiki-run-error-details-trigger"
             >
               {t('codeWiki.history.viewFailure')}
@@ -345,7 +366,11 @@ export function RunHistory({ knowledgeBaseId, status, onRepublished }: RunHistor
           {chip.label}
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-3" data-testid="code-wiki-history">
+      <PopoverContent
+        align="end"
+        className="w-96 max-w-[calc(100vw-2rem)] p-3"
+        data-testid="code-wiki-history"
+      >
         <p className="mb-2 text-xs font-medium text-text-primary">{t('codeWiki.history.title')}</p>
         {loading && runs === null ? (
           <div className="flex justify-center py-4">

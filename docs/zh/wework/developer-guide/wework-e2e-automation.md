@@ -253,8 +253,18 @@ Electron 应用及其内置 Executor，再启动所选场景。可选的 `WEWORK
 Electron 应用；传入的应用必须使用桌面 E2E 的 Vite 环境变量构建。各生命周期场景
 复用一次应用启动以控制 CI 时长；测试过程、捕获的模型请求和失败诊断会保存在
 `wework/test-results/desktop-e2e/`。场景结束后会保留日志、截图、请求和 UI 状态，
-同时删除复制的应用包、Executor Home、解压 Runtime 和 Electron 可重建缓存；runner
-启动时也会清理之前异常中断留下的非活动结果目录，避免本地磁盘随运行次数持续增长。
+同时删除复制的应用包、Executor Home、工作区夹具、测试归档、解压 Runtime 和其他
+顶层可重建测试环境。`electron-user-data` 仅保留诊断状态；主实例和插件开发子实例中
+物化的 `managed-components`、`managed-runtimes`、DSH/Harness profile 和 Electron
+缓存都会递归删除。runner 启动时也会清理之前异常中断留下的非活动结果目录，避免
+本地磁盘随运行次数持续增长。
+
+GitHub Actions 上传前会再次执行同样的清理，并在 Artifact 路径中排除
+任意深度的 `managed-components`，防止 teardown 失败时把主实例或插件开发子实例的
+完整 Web/WASM 组件包上传为诊断证据；顶层清理和 Artifact 路径也都会排除测试 `.zip`
+归档。诊断 Artifact 使用标准压缩，正常目标是不超过 20 MiB；诊断包只应包含日志、
+截图、请求、UI 状态和必要的 Electron 持久化状态，不应包含任何可重新构建的应用、
+Runtime、Executor Home、工作区、测试归档或组件目录。
 
 本地 runner 会把前置 Electron 和 Executor 构建的完整 stdout、stderr 写入
 `wework/test-results/desktop-e2e/desktop-build-<pid>.log`，终端只显示构建阶段、
@@ -275,7 +285,7 @@ GitHub Actions 的 Executor E2E job 会在恢复 Python、Node.js 和 Playwright
 
 插件场景会在测试结果目录动态创建隔离的本地 Codex marketplace 和带 Skill 的插件，然后通过真实 Electron renderer、Executor 与 Codex app-server 验证市场展示、安装、安装时本地授权对话框、在对话编辑器中插入插件引用、无匹配 resume 不弹本地授权卡、卸载后 Composer 过滤及卸载。场景不访问个人 Codex home，也不 mock 插件 API；市场、插件缓存和安装状态都随测试结果目录清理。关键阶段会保留截图，失败时同时保留应用、Executor 和 UI 快照诊断。
 
-内存场景仅支持 macOS。它会通过真实 Codex 工具调用执行一个开发任务，再向真实 Electron renderer 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试先等待 Web Content 内存基线稳定，再每 500 毫秒采集 Wework 关联的全部 Electron renderer 进程的聚合 physical footprint，并将采样、DOM 节点数和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为峰值增长不超过 384 MiB、完成后的稳定态增长不超过 224 MiB、稳定窗口内最大波动范围不超过 16 MiB。DOM 门禁检查虚拟列表收敛后的稳定窗口，默认不得保留超过 900 个节点；流式渲染期间的瞬时峰值仍会记录在诊断中，但不会把收敛前的短暂渲染误判为泄漏。各阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`、`WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB` 和 `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES` 调整。
+内存场景仅支持 macOS。它会保持底部 Terminal 挂载，通过真实 Codex 工具调用执行一个开发任务，再向真实 Electron renderer 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试先等待 Web Content 内存基线稳定，再每 500 毫秒采集 Wework 关联的全部 Electron renderer 进程的聚合 physical footprint；同一次采样会通过 Electron DevTools Protocol 强制执行 renderer GC，并读取实际 JS heap 使用量。采样、DOM 节点数、当前 assistant 内容摘要和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为 physical footprint 峰值增长不超过 384 MiB、完成后的稳定态增长不超过 232 MiB、稳定窗口内最大波动范围不超过 16 MiB，以及整个输出阶段强制 GC 后的 JS heap 峰值不超过 200 MiB。DOM 门禁检查虚拟列表收敛后的稳定窗口，默认相对基线不得新增超过 512 个节点；流式渲染期间的瞬时峰值仍会记录在诊断中，但不会把收敛前的短暂渲染误判为泄漏。各阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`、`WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`、`WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODE_GROWTH` 和 `WEWORK_E2E_MEMORY_MAX_JS_HEAP_BYTES` 调整。聚焦复现超长流时，可通过 `WEWORK_E2E_MEMORY_SECTION_COUNT` 和 `WEWORK_E2E_MEMORY_CHUNK_DELAY_MS` 调整回复段数和分段间隔；完成预算固定为 30 秒，不能通过环境变量放宽。
 
 并发内存场景同样仅支持 macOS。它会创建并同时保持 10 个 Responses 流，采集 Wework 主进程、Electron renderer/GPU/network、Executor 和 Codex app-server 的进程组 physical footprint，并将证据写入 `concurrent-memory.json`。相对于稳定基线，峰值和活跃稳定平台的增长都不得超过 320 MiB，稳定采样窗口内的波动不得超过 64 MiB；可分别通过 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB`、`WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB` 和 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB` 调整。场景还会在首尾任务之间切换，并等待各自的 prompt 内容重新出现。
 

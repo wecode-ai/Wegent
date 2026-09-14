@@ -4,7 +4,7 @@ export const WEWORK_DSH_SLOTS = {
   pluginsAction: 'wework.plugins.action',
   boardCardStatus: 'wework.board.card.status',
   composerAction: 'wework.composer.action',
-  environmentSection: 'wework.environment.section',
+  conversationSummary: 'wework.conversation.summary',
   home: 'wework.home',
   projectCreateSection: 'wework.project.create.section',
   projectWorkSection: 'wework.project.work.section',
@@ -30,6 +30,8 @@ export interface WeworkDshSlotEntry {
   id: string
   label?: string
   order?: number
+  requiredHostServices?: readonly string[]
+  when?: import('../../../dsh/app-wework/client').WeworkContextExpression
   [key: string]: unknown
 }
 
