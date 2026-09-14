@@ -11,6 +11,7 @@ import {
   selectE2EModel,
 } from '../modules/shared.mjs'
 import { currentRuntimeTaskFromDebugSnapshot } from '../modules/workspace-flows.mjs'
+import { sendPrompt } from '../modules/conversation-navigation.mjs'
 import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
 import { configureClaude, createRemoteProject } from './claude-runtime.scenario.mjs'
 import {
@@ -289,8 +290,9 @@ export async function createDesktopScenario({
       timeoutMs: workbenchReadyTimeoutMs,
       visible: true,
     })
-    await control.command('submit', ACTIVE_COMPOSER_SELECTOR, {
-      value: `TASK_TOKEN_CASE:${caseId}`,
+    await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, `TASK_TOKEN_CASE:${caseId}`)
+    await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+      text: `TASK_TOKEN_CASE:${caseId}`,
     })
     const result = await wait(
       () => results.get(caseId),
