@@ -42,6 +42,9 @@ export function createSharedWorkspaceProjectManageApi(
         capabilityDescription: values.capability_description,
       }),
     removeMember: (projectId, userId) => api.members.remove(projectId, userId),
+    transferOwnership: api.members.transferOwnership
+      ? (projectId, userId) => api.members.transferOwnership!(projectId, userId)
+      : undefined,
     updateItem: (itemId, values) =>
       api.issues.update(itemId, {
         version: values.version,

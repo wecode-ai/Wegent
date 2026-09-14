@@ -8,36 +8,60 @@ import type {
   CollaborationView,
 } from "./types";
 
-export function canEditCollaborationIssue(
-  issue: Pick<CollaborationIssue, "can_edit">,
+function isLocalProject(
+  project: Pick<CollaborationProject, "project_store">,
 ): boolean {
-  return issue.can_edit === true;
+  return project.project_store === "local";
+}
+
+export function canEditCollaborationIssue(
+  projectOrIssue:
+    | Pick<CollaborationProject, "project_store">
+    | (Pick<CollaborationIssue, "permissions"> & {
+        project_store?: CollaborationProject["project_store"];
+      }),
+  issue?: Pick<CollaborationIssue, "permissions">,
+): boolean {
+  const project = issue
+    ? (projectOrIssue as Pick<CollaborationProject, "project_store">)
+    : {
+        project_store:
+          "project_store" in projectOrIssue
+            ? (projectOrIssue.project_store ?? "backend")
+            : "backend",
+      };
+  const targetIssue = issue ?? projectOrIssue;
+  return (
+    isLocalProject(project) ||
+    ("permissions" in targetIssue &&
+      targetIssue.permissions?.edit_content === true)
+  );
 }
 
 export function canCommentCollaborationIssue(
-  project: Pick<CollaborationProject, "access_role" | "project_store">,
-  issue: Pick<CollaborationIssue, "can_view_detail">,
+  project: Pick<CollaborationProject, "project_store">,
+  issue: Pick<CollaborationIssue, "permissions">,
 ): boolean {
-  if (issue.can_view_detail === false) return false;
-  const role =
-    project.access_role ??
-    (project.project_store === "local" ? "Owner" : "RestrictedAnalyst");
-  return role !== "RestrictedAnalyst";
+  return isLocalProject(project) || issue.permissions?.comment === true;
 }
 
 export function canAssignCollaborationIssue(
-  project: Pick<CollaborationProject, "access_role" | "project_store">,
+  project: Pick<CollaborationProject, "project_store">,
+  issue: Pick<CollaborationIssue, "permissions">,
 ): boolean {
-  const role =
-    project.access_role ??
-    (project.project_store === "local" ? "Owner" : "RestrictedAnalyst");
-  return role === "Owner" || role === "Maintainer";
+  return (
+    isLocalProject(project) ||
+    issue.permissions?.assign === true ||
+    issue.permissions?.claim === true ||
+    issue.permissions?.handoff === true
+  );
 }
 
 export function canStartWorkOnCollaborationIssue(
-  issue: Pick<CollaborationIssue, "can_view_detail">,
+  project: Pick<CollaborationProject, "project_store">,
+  issue: Pick<CollaborationIssue, "permissions">,
 ): boolean {
-  return issue.can_view_detail !== false;
+  return isLocalProject(project) || issue.permissions?.execute === true;
 }
 
 export interface CollaborationIssueActionPermissions {
@@ -45,18 +69,26 @@ export interface CollaborationIssueActionPermissions {
   canComment: boolean;
   canAssign: boolean;
   canStartWork: boolean;
+  canSubmitReview: boolean;
+  canComplete: boolean;
+  canReopen: boolean;
 }
 
 export function getCollaborationIssueActionPermissions(
-  project: Pick<CollaborationProject, "access_role" | "project_store">,
-  issue: Pick<CollaborationIssue, "can_edit" | "can_view_detail">,
+  project: Pick<CollaborationProject, "project_store">,
+  issue: Pick<CollaborationIssue, "permissions">,
 ): CollaborationIssueActionPermissions {
-  const canStartWork = canStartWorkOnCollaborationIssue(issue);
+  const canStartWork = canStartWorkOnCollaborationIssue(project, issue);
   return {
-    canEdit: canEditCollaborationIssue(issue),
+    canEdit: canEditCollaborationIssue(project, issue),
     canComment: canCommentCollaborationIssue(project, issue),
-    canAssign: canStartWork && canAssignCollaborationIssue(project),
+    canAssign: canAssignCollaborationIssue(project, issue),
     canStartWork,
+    canSubmitReview:
+      isLocalProject(project) || issue.permissions?.submit_review === true,
+    canComplete:
+      isLocalProject(project) || issue.permissions?.complete === true,
+    canReopen: isLocalProject(project) || issue.permissions?.reopen === true,
   };
 }
 

@@ -105,6 +105,7 @@ export interface CollaborationIssue {
   completed_at: string | null;
   can_view_detail?: boolean;
   can_edit?: boolean;
+  permissions?: CollaborationIssuePermissions;
   assignment_history?: SharedIssueAssignmentHistoryEntry[];
   status_history?: SharedIssueStatusHistoryEntry[];
   automation?: { trigger?: string; [key: string]: unknown } | null;
@@ -125,6 +126,18 @@ export interface CollaborationIssue {
   execution_error?: string | null;
   source_record_id?: string | null;
   source_cells?: Record<string, unknown>;
+}
+
+export interface CollaborationIssuePermissions {
+  edit_content: boolean;
+  comment: boolean;
+  claim: boolean;
+  handoff: boolean;
+  assign: boolean;
+  execute: boolean;
+  submit_review: boolean;
+  complete: boolean;
+  reopen: boolean;
 }
 
 export type CollaborationAssignmentTargetType = "human" | "agent";

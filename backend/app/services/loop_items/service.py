@@ -60,6 +60,7 @@ from app.services.cloud_projects.access import (
     issue_permissions,
     require_cloud_project_role,
     require_issue_action,
+    required_issue_update_actions,
 )
 from app.services.delivery.storage import (
     DeliveryStorageUnavailableError,
@@ -150,6 +151,11 @@ class LoopItemService:
         permissions = issue_permissions(
             access,
             issue_creator_user_id=item.created_by_user_id,
+            assignee_user_id=item.assignee_user_id,
+            has_assignee=bool(
+                item.assignee_user_id or item.assignee_agent_id or item.assignee_team_id
+            ),
+            issue_status=item.status,
             user_id=user_id,
         )
         can_view_detail = not access.is_public_visitor or (
@@ -171,18 +177,18 @@ class LoopItemService:
         permissions = issue_permissions(
             access,
             issue_creator_user_id=item.created_by_user_id,
+            assignee_user_id=item.assignee_user_id,
+            has_assignee=bool(
+                item.assignee_user_id or item.assignee_agent_id or item.assignee_team_id
+            ),
+            issue_status=item.status,
             user_id=user_id,
         )
         values = {
             **item.__dict__,
             "can_view_detail": can_view_detail,
             "can_edit": can_edit,
-            "permissions": {
-                "edit_content": permissions.edit_content,
-                "comment": permissions.comment,
-                "assign": permissions.assign,
-                "execute": permissions.execute,
-            },
+            "permissions": permissions.as_dict(),
         }
         if item.assignee_user_id:
             assignee = db.get(User, item.assignee_user_id)
@@ -360,6 +366,13 @@ class LoopItemService:
                 access,
                 action=action,
                 issue_creator_user_id=item.created_by_user_id,
+                assignee_user_id=item.assignee_user_id,
+                has_assignee=bool(
+                    item.assignee_user_id
+                    or item.assignee_agent_id
+                    or item.assignee_team_id
+                ),
+                issue_status=item.status,
                 user_id=user_id,
             )
         return access
@@ -1243,20 +1256,41 @@ class LoopItemService:
         values: LoopItemUpdate,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
-        assignee_fields = {
-            "assignee_user_id",
-            "assignee_agent_id",
-            "assignee_team_id",
-        }
-        assignee_changed = bool(assignee_fields & values.model_fields_set)
-        self._require_item_access(
-            db,
-            item,
-            user_id,
-            action=(
-                IssueAction.ASSIGN if assignee_changed else IssueAction.EDIT_CONTENT
-            ),
+        assignee_changed = bool(
+            {
+                "assignee_user_id",
+                "assignee_agent_id",
+                "assignee_team_id",
+            }
+            & values.model_fields_set
         )
+        access = self._require_item_access(db, item, user_id)
+        required_actions = required_issue_update_actions(
+            changed_fields=set(values.model_fields_set),
+            current_assignee_user_id=item.assignee_user_id,
+            current_assignee_agent_id=item.assignee_agent_id,
+            current_assignee_team_id=item.assignee_team_id,
+            current_status=item.status,
+            requested_assignee_user_id=values.assignee_user_id,
+            requested_assignee_agent_id=values.assignee_agent_id,
+            requested_assignee_team_id=values.assignee_team_id,
+            requested_status=values.status,
+            user_id=user_id,
+        )
+        for action in required_actions:
+            require_issue_action(
+                access,
+                action=action,
+                issue_creator_user_id=item.created_by_user_id,
+                assignee_user_id=item.assignee_user_id,
+                has_assignee=bool(
+                    item.assignee_user_id
+                    or item.assignee_agent_id
+                    or item.assignee_team_id
+                ),
+                issue_status=item.status,
+                user_id=user_id,
+            )
         updates = values.model_dump(
             exclude={"version", "automation_rule_id", "notify_assignee"},
             exclude_unset=True,

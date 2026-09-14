@@ -957,6 +957,11 @@ export function createWebSharedWorkspaceApi(
       remove(projectId, userId) {
         return client.delete(`/v1/cloud-projects/${encoded(projectId)}/members/${encoded(userId)}`)
       },
+      transferOwnership(projectId, userId) {
+        return client.post(`/v1/cloud-projects/${encoded(projectId)}/transfer-ownership`, {
+          user_id: userId,
+        })
+      },
     },
     files: {
       async list(projectId, prefix) {

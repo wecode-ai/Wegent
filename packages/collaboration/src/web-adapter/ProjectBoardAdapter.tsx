@@ -402,9 +402,9 @@ export function ProjectBoardAdapter({
         renderItem={(issue, column) => {
           const nativeContainerProps: ProjectBoardIssueCardRenderContext["nativeContainerProps"] =
             {
-              draggable: canEditCollaborationIssue(issue),
+              draggable: canEditCollaborationIssue(project, issue),
               onDragStart: (event) => {
-                if (!canEditCollaborationIssue(issue)) {
+                if (!canEditCollaborationIssue(project, issue)) {
                   event.preventDefault();
                   return;
                 }
@@ -422,7 +422,10 @@ export function ProjectBoardAdapter({
                 const itemId = event.dataTransfer.getData("text/plain");
                 controller.setActiveDragItemId(null);
                 const movingIssue = issues.find((item) => item.id === itemId);
-                if (movingIssue && canEditCollaborationIssue(movingIssue)) {
+                if (
+                  movingIssue &&
+                  canEditCollaborationIssue(project, movingIssue)
+                ) {
                   controller.moveItem(itemId, column, issue.id);
                 }
               },

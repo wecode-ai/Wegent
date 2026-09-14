@@ -176,6 +176,8 @@ class IssueAssignmentService:
             access,
             action=IssueAction.ASSIGN,
             issue_creator_user_id=item.created_by_user_id,
+            assignee_user_id=item.assignee_user_id,
+            issue_status=item.status,
             user_id=user_id,
         )
         assignment = next(

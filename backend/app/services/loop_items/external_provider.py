@@ -36,8 +36,10 @@ from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
+    issue_permissions,
     require_cloud_project_role,
     require_issue_action,
+    required_issue_update_actions,
 )
 from app.services.delivery.storage import delivery_storage
 from app.services.loop_item_executions.service import (
@@ -333,8 +335,24 @@ class ExternalLoopItemProvider:
         project, number = self._resolve_project(db, item_id)
         if project.task_provider != "gitlab":
             return None
-        require_cloud_project_role(db, project.id, user_id, BaseRole.RestrictedAnalyst)
+        access = require_cloud_project_role(
+            db, project.id, user_id, BaseRole.RestrictedAnalyst
+        )
         issue = self._get_issue(project, number)
+        response = self._response(db, project, issue, access, user_id)
+        require_issue_action(
+            access,
+            action=IssueAction.EDIT_CONTENT,
+            issue_creator_user_id=int(response["created_by_user_id"]),
+            assignee_user_id=response.get("assignee_user_id"),
+            has_assignee=bool(
+                response.get("assignee_user_id")
+                or response.get("assignee_agent_id")
+                or response.get("assignee_team_id")
+            ),
+            issue_status=str(response["status"]),
+            user_id=user_id,
+        )
         description = str(issue.get("description") or "")
         if filename in description:
             attachment = next(
@@ -495,8 +513,19 @@ class ExternalLoopItemProvider:
         )
         issue = self._get_issue(project, number)
         response = self._response(db, project, issue, access, user_id)
-        if not response["can_edit"]:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        require_issue_action(
+            access,
+            action=IssueAction.EDIT_CONTENT,
+            issue_creator_user_id=int(response["created_by_user_id"]),
+            assignee_user_id=response.get("assignee_user_id"),
+            has_assignee=bool(
+                response.get("assignee_user_id")
+                or response.get("assignee_agent_id")
+                or response.get("assignee_team_id")
+            ),
+            issue_status=str(response["status"]),
+            user_id=user_id,
+        )
         description = str(issue.get("description") or "")
         updated = description
         for pattern in (WEGENT_ATTACHMENT_PATTERN, LEGACY_WEGENT_ATTACHMENT_PATTERN):
@@ -627,8 +656,31 @@ class ExternalLoopItemProvider:
         )
         current = self._get_issue(project, number)
         current_response = self._response(db, project, current, access, user_id)
-        if not current_response["can_edit"]:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        for action in required_issue_update_actions(
+            changed_fields=set(values.model_fields_set),
+            current_assignee_user_id=current_response.get("assignee_user_id"),
+            current_assignee_agent_id=current_response.get("assignee_agent_id"),
+            current_assignee_team_id=current_response.get("assignee_team_id"),
+            current_status=str(current_response["status"]),
+            requested_assignee_user_id=values.assignee_user_id,
+            requested_assignee_agent_id=values.assignee_agent_id,
+            requested_assignee_team_id=values.assignee_team_id,
+            requested_status=values.status,
+            user_id=user_id,
+        ):
+            require_issue_action(
+                access,
+                action=action,
+                issue_creator_user_id=int(current_response["created_by_user_id"]),
+                assignee_user_id=current_response.get("assignee_user_id"),
+                has_assignee=bool(
+                    current_response.get("assignee_user_id")
+                    or current_response.get("assignee_agent_id")
+                    or current_response.get("assignee_team_id")
+                ),
+                issue_status=str(current_response["status"]),
+                user_id=user_id,
+            )
         payload: dict[str, object] = {}
         dumped = values.model_dump(exclude_unset=True)
         if "title" in dumped:
@@ -725,8 +777,19 @@ class ExternalLoopItemProvider:
         )
         issue = self._get_issue(project, number)
         response = self._base_response(db, project, issue, access, user_id)
-        if not response["can_edit"]:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        require_issue_action(
+            access,
+            action=IssueAction.COMPLETE,
+            issue_creator_user_id=int(response["created_by_user_id"]),
+            assignee_user_id=response.get("assignee_user_id"),
+            has_assignee=bool(
+                response.get("assignee_user_id")
+                or response.get("assignee_agent_id")
+                or response.get("assignee_team_id")
+            ),
+            issue_status=str(response["status"]),
+            user_id=user_id,
+        )
         self._update_issue(project, number, {"state": "closed"})
         self._invalidate_issue_page_cache(project.id)
 
@@ -1458,6 +1521,16 @@ class ExternalLoopItemProvider:
                 if assignee_team_name is None and assignee_team_id is not None:
                     team = db.get(Kind, assignee_team_id)
                     assignee_team_name = team.name if team is not None else None
+        permissions = issue_permissions(
+            access,
+            issue_creator_user_id=creator_id,
+            assignee_user_id=assignee_user_id,
+            has_assignee=bool(
+                assignee_user_id or assignee_agent_id or assignee_team_id
+            ),
+            issue_status=item_status,
+            user_id=user_id,
+        )
         return {
             "id": f"{project.project_key}-{number}",
             "cloud_project_id": str(project.id),
@@ -1480,6 +1553,7 @@ class ExternalLoopItemProvider:
             "created_by_user_name": creator_name,
             "can_view_detail": can_view,
             "can_edit": can_edit,
+            "permissions": permissions.as_dict(),
             "detail_loaded": include_description,
             "current_delivery_id": None,
             "version": self._derived_version(updated_at),

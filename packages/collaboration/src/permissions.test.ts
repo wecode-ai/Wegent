@@ -14,10 +14,26 @@ import {
 } from "./permissions";
 
 describe("collaboration permissions", () => {
-  it("fails closed when a cloud issue omits can_edit", () => {
-    expect(canEditCollaborationIssue({})).toBe(false);
-    expect(canEditCollaborationIssue({ can_edit: false })).toBe(false);
-    expect(canEditCollaborationIssue({ can_edit: true })).toBe(true);
+  const permissions = {
+    edit_content: false,
+    comment: false,
+    claim: false,
+    handoff: false,
+    assign: false,
+    execute: false,
+    submit_review: false,
+    complete: false,
+    reopen: false,
+  };
+
+  it("uses server permissions and fails closed when a cloud issue omits them", () => {
+    expect(canEditCollaborationIssue({ project_store: "backend" })).toBe(false);
+    expect(
+      canEditCollaborationIssue({
+        project_store: "backend",
+        permissions: { ...permissions, edit_content: true },
+      }),
+    ).toBe(true);
   });
 
   it("fails closed when a backend project omits access_role", () => {
@@ -47,8 +63,12 @@ describe("collaboration permissions", () => {
 
   it("keeps edit, comment, assignment and start-work permissions independent", () => {
     const readOnlyIssue = {
-      can_edit: false,
-      can_view_detail: true,
+      permissions: {
+        ...permissions,
+        comment: true,
+        assign: true,
+        execute: true,
+      },
     };
 
     expect(
@@ -61,63 +81,84 @@ describe("collaboration permissions", () => {
       canComment: true,
       canAssign: true,
       canStartWork: true,
+      canSubmitReview: false,
+      canComplete: false,
+      canReopen: false,
     });
     expect(
       getCollaborationIssueActionPermissions(
-        { access_role: "Reporter", project_store: "backend" },
-        readOnlyIssue,
+        { project_store: "backend" },
+        {
+          permissions: {
+            ...permissions,
+            comment: true,
+          },
+        },
       ),
     ).toEqual({
       canEdit: false,
       canComment: true,
       canAssign: false,
-      canStartWork: true,
+      canStartWork: false,
+      canSubmitReview: false,
+      canComplete: false,
+      canReopen: false,
     });
     expect(
       getCollaborationIssueActionPermissions(
-        { access_role: "RestrictedAnalyst", project_store: "backend" },
-        readOnlyIssue,
+        { project_store: "backend" },
+        { permissions },
       ),
     ).toEqual({
       canEdit: false,
       canComment: false,
       canAssign: false,
-      canStartWork: true,
+      canStartWork: false,
+      canSubmitReview: false,
+      canComplete: false,
+      canReopen: false,
     });
   });
 
-  it("requires project management permission for assignment", () => {
+  it("uses the server assignment capability", () => {
     expect(
-      canAssignCollaborationIssue({
-        access_role: "Maintainer",
-        project_store: "backend",
-      }),
+      canAssignCollaborationIssue(
+        { project_store: "backend" },
+        { permissions: { ...permissions, assign: true } },
+      ),
     ).toBe(true);
     expect(
-      canAssignCollaborationIssue({
-        access_role: "Developer",
-        project_store: "backend",
-      }),
+      canAssignCollaborationIssue(
+        { project_store: "backend" },
+        { permissions },
+      ),
     ).toBe(false);
   });
 
-  it("uses membership for comments and visibility for starting work", () => {
-    const reporter = {
-      access_role: "Reporter" as const,
-      project_store: "backend" as const,
-    };
-
+  it("keeps comment and execution capabilities independent", () => {
     expect(
-      canCommentCollaborationIssue(reporter, { can_view_detail: true }),
+      canCommentCollaborationIssue(
+        { project_store: "backend" },
+        { permissions: { ...permissions, comment: true } },
+      ),
     ).toBe(true);
     expect(
-      canCommentCollaborationIssue(reporter, { can_view_detail: false }),
+      canCommentCollaborationIssue(
+        { project_store: "backend" },
+        { permissions },
+      ),
     ).toBe(false);
-    expect(canStartWorkOnCollaborationIssue({ can_view_detail: true })).toBe(
-      true,
-    );
-    expect(canStartWorkOnCollaborationIssue({ can_view_detail: false })).toBe(
-      false,
-    );
+    expect(
+      canStartWorkOnCollaborationIssue(
+        { project_store: "backend" },
+        { permissions: { ...permissions, execute: true } },
+      ),
+    ).toBe(true);
+    expect(
+      canStartWorkOnCollaborationIssue(
+        { project_store: "backend" },
+        { permissions },
+      ),
+    ).toBe(false);
   });
 });

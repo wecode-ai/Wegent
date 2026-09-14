@@ -192,6 +192,14 @@ export function createSharedWorkspaceHttpApi(
           `/v1/workspaces/${encoded(workspaceId)}/members/${encoded(userId)}`,
         );
       },
+      async transferOwnership(workspaceId, userId) {
+        return mapCollaborationWorkspaceDto(
+          await transport.post(
+            `/v1/workspaces/${encoded(workspaceId)}/transfer-ownership`,
+            workspaceHttpRequestBody({ userId }),
+          ),
+        );
+      },
       async listAgents(workspaceId) {
         const response = await transport.get<{ items: unknown[] }>(
           `/v1/workspaces/${encoded(workspaceId)}/agents`,

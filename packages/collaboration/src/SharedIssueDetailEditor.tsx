@@ -579,6 +579,10 @@ export type TodoEditorProps = {
   showChildren?: boolean;
   showCurrentTaskOnly?: boolean;
   showAssignee?: boolean;
+  canAssign?: boolean;
+  canSubmitReview?: boolean;
+  canComplete?: boolean;
+  canReopen?: boolean;
   /**
    * Starting work is independent from editing the Issue. A visible Issue may
    * start a host execution even when its content is read-only.
@@ -1202,9 +1206,11 @@ export function TodoEditor(props: TodoEditorProps) {
   const assigneeTeam = wegentTeams.find(
     (team) => assigneeTarget === `team:${team.id}`,
   );
-  const canAssign = project
-    ? project.access_role === "Owner" || project.access_role === "Maintainer"
-    : false;
+  const canAssign =
+    props.canAssign ??
+    (project
+      ? project.access_role === "Owner" || project.access_role === "Maintainer"
+      : false);
   const creator =
     item?.created_by_user_name ||
     (item && item.created_by_user_id === editProps?.project?.current_user_id
@@ -1700,6 +1706,16 @@ export function TodoEditor(props: TodoEditorProps) {
   // Property controls, shared by the single-column chip row and the
   // two-column Xiaohongshu-style rail cells. The overlay select/input keeps
   // every cell editable in place regardless of where it is rendered.
+  const availableStatusOptions =
+    isCreate || !item
+      ? statusOptions
+      : statusOptions.filter((option) => {
+          if (option.id === status) return true;
+          if (status === "completed") return props.canReopen !== false;
+          if (option.id === "completed") return props.canComplete !== false;
+          if (option.id === "in_review") return props.canSubmitReview !== false;
+          return true;
+        });
   const statusSelect = (
     <IssueDetailStatusSelect
       testId={
@@ -1708,9 +1724,9 @@ export function TodoEditor(props: TodoEditorProps) {
       accessibleLabel={t("todo.issue_status", "状态")}
       value={status}
       onChange={setStatus}
-      disabled={!editable}
+      disabled={!editable || availableStatusOptions.length < 2}
       className={overlayControlClass}
-      statuses={statusOptions}
+      statuses={availableStatusOptions}
       includeUnset={status === ""}
     />
   );
