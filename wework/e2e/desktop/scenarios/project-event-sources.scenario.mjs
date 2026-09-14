@@ -508,8 +508,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       database
         .prepare(
           `select metadata
-             from project_automation_runs
-            where task_id = ?
+             from loop_items
+            where resource_type = 'automation_run'
+              and task_id = ?
             order by created_at, id`
         )
         .all(itemId)
