@@ -885,7 +885,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       backendUrl = cloudBackendUrl
       token = authToken
       databasePath = cloudDatabasePath ?? ''
-      const projects = await request('/api/v1/cloud-projects')
+      const { items: projects } = await request('/api/v1/cloud-projects')
       project =
         projects.find(item => item.name === PROJECT_NAME) ??
         (await request('/api/v1/cloud-projects', {
