@@ -14,7 +14,7 @@ use std::{
 const DEFAULT_SOURCE: &str = ".wegent-default-mcp-source.json";
 
 pub(super) fn declared(server: &Value) -> bool {
-    server.get("command").is_none_or(Value::is_null)
+    server.get("command").map_or(true, Value::is_null)
         && server
             .get("headers")
             .and_then(Value::as_object)
