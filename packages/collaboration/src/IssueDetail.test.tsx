@@ -128,6 +128,9 @@ describe("IssueDetail browser due date boundary", () => {
       const editor = editorFrom(render());
       const extensions = editor.props.extensions;
 
+      if (_ === "edit") {
+        expect(editor.props.showAssignee).toBe(false);
+      }
       expect(extensions.dueDateInputType).toBe("datetime-local");
       expect(extensions.dueDateFromSource(issue.due_at)).toBe(
         "2026-09-12T10:30",

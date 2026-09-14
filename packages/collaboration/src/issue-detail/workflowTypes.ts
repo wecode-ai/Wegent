@@ -53,6 +53,9 @@ export interface SharedWorkflowNode {
   required_deliverables?: IssueWorkflowDeliverableRequirement[];
   workspace_policy: "none" | "composer" | "inherit";
   automation_rule_id?: string | null;
+  required_assignee_type?: "user" | "agent" | "team" | null;
+  required_assignee_id?: string | null;
+  required_assignee_name?: string | null;
   status: WorkflowNodeStatus;
   task_statuses?: Record<string, string>;
   delivery_ids?: string[];

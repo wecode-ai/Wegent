@@ -209,13 +209,21 @@ export function IssueDetail({
     createCollaborationTranslator(
       messages === collaborationMessages.en ? "en" : "zh-CN",
     );
+  const currentAssignment =
+    assignments
+      .filter((assignment) => assignment.status === "active")
+      .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
+      .at(-1) ?? null;
 
   return (
     <div
-      className="collaboration-dialog-backdrop"
+      className="collaboration-dialog-backdrop collaboration-issue-detail-backdrop"
       data-testid={collaborationTestIds.issueDetail}
+      onMouseDown={(event) => {
+        if (event.currentTarget === event.target) onClose();
+      }}
     >
-      <div className="collaboration-issue-detail-shared-host">
+      <div className="collaboration-issue-detail-shared-host collaboration-issue-detail-github-host">
         <SharedIssueDetailEditor
           port={port}
           mode="edit"
@@ -227,8 +235,11 @@ export function IssueDetail({
           onUpdated={(updated) => onChange(updated)}
           presentation="workspace-panel"
           workspacePanelFill
+          readFirst
           showPanelControls
+          showFullscreenControl={false}
           showAssignee={false}
+          currentAssignment={currentAssignment}
           canStartWork={permissions.canStartWork}
           onCreateTask={onCreateTask}
           translate={editorTranslate}
@@ -249,6 +260,7 @@ export function IssueDetail({
                 executions={executions}
                 canComment={permissions.canComment}
                 canAssign={permissions.canAssign}
+                showCurrentAssignment={false}
                 translate={editorTranslate}
                 onIssueChange={onChange}
                 onAssignmentsChange={onAssignmentsChange}

@@ -201,17 +201,12 @@ function workspaceTabIframe(
   tab: WorkspaceTab,
   wegentUrl: string | null | undefined
 ): { appKey: string; embeddedBrowserLabel?: string; src: string; title: string } | null {
-  if (tab.kind === 'board' && tab.fixed) {
-    const src = resolveCloudAppUrl(wegentUrl, '/collaboration', tab)
-    return src ? { appKey: 'collaboration', src, title: tab.title } : null
-  }
-
   const appId = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)?.[1]
   if (!appId) return null
   const app = resolveDshApp(appId)
   if (app?.mode === 'iframe') {
     const src =
-      app.urlSource === 'cloud-web' ? resolveCloudAppUrl(wegentUrl, app.cloudPath, tab) : app.url
+      app.urlSource === 'cloud-web' ? resolveCloudAppUrl(wegentUrl, app.cloudPath) : app.url
     return src ? { appKey: app.id, src, title: app.label } : null
   }
   const harnessApp = resolveRunningHarnessApp(appId)
@@ -225,22 +220,12 @@ function workspaceTabIframe(
     : null
 }
 
-function collaborationPath(tab: WorkspaceTab): string {
-  const route = new URL(tab.contentRoute, window.location.origin)
-  const projectId = route.searchParams.get('projectId')
-  const itemId = route.searchParams.get('itemId')
-  if (!projectId) return '/collaboration'
-  const projectPath = `/collaboration/${encodeURIComponent(projectId)}`
-  return itemId ? `${projectPath}/issues/${encodeURIComponent(itemId)}` : projectPath
-}
-
 function resolveCloudAppUrl(
   wegentUrl: string | null | undefined,
-  cloudPath: string | undefined,
-  tab: WorkspaceTab
+  cloudPath: string | undefined
 ): string | null {
   if (!wegentUrl) return null
-  const destination = tab.kind === 'board' ? collaborationPath(tab) : cloudPath
+  const destination = cloudPath
   if (!destination) return wegentUrl
 
   const url = new URL(wegentUrl)

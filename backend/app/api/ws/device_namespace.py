@@ -804,17 +804,30 @@ def _project_execution_workflow_status(
         )
         .first()
     )
-    if binding is None or not binding.workflow_node_id:
+    if binding is None:
         return None
 
     from app.models.delivery import LoopItem
+    from app.services.project_workflow_projection import (
+        update_workflow_plan_task_status,
+    )
 
-    item = update_workflow_task_status(
-        db,
-        user_id=user_id,
-        device_id=device_id,
-        task_id=task_id,
-        execution_status=projected_status,
+    item = (
+        update_workflow_task_status(
+            db,
+            user_id=user_id,
+            device_id=device_id,
+            task_id=task_id,
+            execution_status=projected_status,
+        )
+        if binding.workflow_node_id
+        else update_workflow_plan_task_status(
+            db,
+            child_id=loop_item_id,
+            device_id=binding.device_id,
+            task_id=task_id,
+            execution_status=projected_status,
+        )
     )
     if item is None:
         return None

@@ -58,6 +58,7 @@ export function ProjectManageView<
   host,
   project,
   boardCardDisplay,
+  section = "all",
   renderProviderSettings,
   onProjectUpdated,
 }: {
@@ -65,6 +66,7 @@ export function ProjectManageView<
   host: ProjectManageHost;
   project: Project;
   boardCardDisplay?: ProjectManageCardDisplay;
+  section?: "all" | "overview" | "members" | "agents" | "board";
   renderProviderSettings?(
     context: ProjectManageExtensionContext<Project>,
   ): React.ReactNode;
@@ -668,17 +670,118 @@ export function ProjectManageView<
       <div className="mx-auto max-w-[900px]">
         <header className="pb-7">
           <h1 className="text-heading-lg font-semibold">
-            {host.translate("todo.manage_project", "管理项目")}
+            {section === "members"
+              ? host.translate("todo.project_members", "项目成员")
+              : section === "agents"
+                ? host.translate("todo.project_agents", "智能体")
+                : section === "board"
+                  ? host.translate("todo.board_settings", "看板设置")
+                  : host.translate(
+                      "todo.project_basic_information",
+                      "基本信息",
+                    )}
           </h1>
           <p className="mt-1 text-sm text-text-muted">
-            {host.translate(
-              "todo.manage_project_description",
-              "管理项目成员、标签和看板布局。",
-            )}
+            {section === "members"
+              ? host.translate(
+                  "todo.project_members_description",
+                  "成员可以访问项目任务和共享文件。",
+                )
+              : section === "agents"
+                ? host.translate(
+                    "todo.project_agents_description",
+                    "管理当前项目可以分配和调度的智能体。",
+                  )
+                : section === "board"
+                  ? host.translate(
+                      "todo.board_layout_edit_description",
+                      "调整状态顺序和任务卡展示字段。",
+                    )
+                  : host.translate(
+                      "todo.project_basic_information_description",
+                      "管理项目属性、标签与任务来源。",
+                    )}
           </p>
         </header>
 
-        <section className="border-t border-border py-6">
+        {(section === "all" || section === "overview") && (
+          <section className="border-t border-border py-6">
+            <h2 className="text-heading-md font-semibold">
+              {host.translate("todo.project_information", "项目信息")}
+            </h2>
+            <dl className="mt-4 grid gap-4 rounded-xl bg-muted px-4 py-4 sm:grid-cols-2">
+              <div>
+                <dt className="text-xs text-text-muted">
+                  {host.translate("todo.project_name", "项目名称")}
+                </dt>
+                <dd className="mt-1 text-sm font-medium">{project.name}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-text-muted">
+                  {host.translate("todo.project_identifier", "项目标识")}
+                </dt>
+                <dd className="mt-1 text-sm font-medium">
+                  {project.project_key}
+                </dd>
+              </div>
+              <div className="sm:col-span-2">
+                <dt className="text-xs text-text-muted">
+                  {host.translate("todo.project_description", "项目说明")}
+                </dt>
+                <dd className="mt-1 text-sm">
+                  {project.description ||
+                    host.translate(
+                      "todo.project_description_empty",
+                      "暂无说明",
+                    )}
+                </dd>
+              </div>
+            </dl>
+          </section>
+        )}
+
+        {(section === "all" || section === "overview") && (
+          <section className="border-t border-border py-6">
+            <h2 className="text-heading-md font-semibold">
+              {host.translate("todo.project_access", "项目访问范围")}
+            </h2>
+            <p className="mt-1 text-sm text-text-muted">
+              {host.translate(
+                "todo.project_access_description",
+                "决定空间成员是否可以发现并进入这个项目。",
+              )}
+            </p>
+            <div className="mt-4 grid max-w-md grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+              {(["private", "public"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  data-testid={`cloud-project-manage-visibility-${value}`}
+                  disabled={visibilityBusy}
+                  onClick={() => void saveVisibility(value)}
+                  className={classNames(
+                    "h-8 rounded-md text-xs",
+                    visibility === value
+                      ? "bg-background shadow-sm"
+                      : "text-text-muted",
+                  )}
+                >
+                  {value === "private"
+                    ? host.translate("todo.private_project", "私有项目")
+                    : host.translate("todo.public_project", "公开项目")}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section
+          className={
+            section === "all" || section === "members"
+              ? "border-t border-border py-6"
+              : "hidden"
+          }
+        >
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-heading-md font-semibold">
@@ -874,32 +977,17 @@ export function ProjectManageView<
                   </span>
                 </button>
               ))}
-              <div className="grid grid-cols-2 gap-1 rounded-lg bg-background/70 p-1">
-                {(["private", "public"] as const).map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    data-testid={`cloud-project-manage-visibility-${value}`}
-                    disabled={visibilityBusy}
-                    onClick={() => void saveVisibility(value)}
-                    className={classNames(
-                      "h-8 rounded-md text-xs",
-                      visibility === value
-                        ? "bg-background shadow-sm"
-                        : "text-text-muted",
-                    )}
-                  >
-                    {value === "private"
-                      ? host.translate("todo.private_project", "私有项目")
-                      : host.translate("todo.public_project", "公开项目")}
-                  </button>
-                ))}
-              </div>
             </div>
           )}
         </section>
 
-        <section className="border-t border-border py-6">
+        <section
+          className={
+            section === "all" || section === "overview"
+              ? "border-t border-border py-6"
+              : "hidden"
+          }
+        >
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-heading-md font-semibold">
@@ -1039,12 +1127,16 @@ export function ProjectManageView<
           </div>
         </section>
 
-        {renderProviderSettings?.({
-          updateProject: (values) => updateProject(values, projectScope),
-          reportError,
-        })}
+        <div
+          className={section === "all" || section === "agents" ? "" : "hidden"}
+        >
+          {renderProviderSettings?.({
+            updateProject: (values) => updateProject(values, projectScope),
+            reportError,
+          })}
+        </div>
 
-        {externalProvider && (
+        {(section === "all" || section === "overview") && externalProvider && (
           <section className="border-t border-border py-6">
             <h2 className="text-heading-md font-semibold">
               {host.translate("todo.task_source", "任务来源")}
@@ -1115,19 +1207,21 @@ export function ProjectManageView<
           </section>
         )}
 
-        <BoardLayoutEditor
-          statuses={statuses}
-          display={display}
-          statusBusy={statusBusy}
-          displayBusy={displayBusy}
-          canEditStatuses={project.task_provider === "local"}
-          onStatusesChange={(next) => void saveStatuses(next)}
-          onDisplayChange={(key, checked) => void saveDisplay(key, checked)}
-          renderActionMenu={host.renderActionMenu}
-          translate={(key, fallback, options) =>
-            host.translate(key, fallback ?? key, options)
-          }
-        />
+        {(section === "all" || section === "board") && (
+          <BoardLayoutEditor
+            statuses={statuses}
+            display={display}
+            statusBusy={statusBusy}
+            displayBusy={displayBusy}
+            canEditStatuses={project.task_provider === "local"}
+            onStatusesChange={(next) => void saveStatuses(next)}
+            onDisplayChange={(key, checked) => void saveDisplay(key, checked)}
+            renderActionMenu={host.renderActionMenu}
+            translate={(key, fallback, options) =>
+              host.translate(key, fallback ?? key, options)
+            }
+          />
+        )}
         {error && <p className="pb-6 text-xs text-destructive">{error}</p>}
       </div>
     </div>

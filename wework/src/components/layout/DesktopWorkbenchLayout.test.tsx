@@ -141,6 +141,9 @@ const sharedWorkspaceApiMock = {
       if (!project) throw new Error(`Project ${projectId} was not found`)
       return { ...project, id: String(project.id) }
     },
+    async listExecutionEnvironments() {
+      return []
+    },
   },
   issues: {
     async getBoardSnapshot(projectId: string) {
@@ -155,6 +158,70 @@ const sharedWorkspaceApiMock = {
         members: [],
         agents: [],
       }
+    },
+    async update(_issueId: string, input: Record<string, unknown>) {
+      return input
+    },
+  },
+  members: {
+    async list() {
+      return []
+    },
+    async searchUsers() {
+      return []
+    },
+    async add() {
+      throw new Error('Not implemented in layout test')
+    },
+    async update() {
+      throw new Error('Not implemented in layout test')
+    },
+    async remove() {},
+  },
+  agents: {
+    async list() {
+      return []
+    },
+    async create() {
+      throw new Error('Not implemented in layout test')
+    },
+    async update() {
+      throw new Error('Not implemented in layout test')
+    },
+  },
+  files: {
+    async list() {
+      return []
+    },
+    async listDeliveryFiles() {
+      return []
+    },
+    async createFolder() {
+      throw new Error('Not implemented in layout test')
+    },
+    async upload() {
+      throw new Error('Not implemented in layout test')
+    },
+    async access() {
+      throw new Error('Not implemented in layout test')
+    },
+    async read() {
+      throw new Error('Not implemented in layout test')
+    },
+    async move() {
+      throw new Error('Not implemented in layout test')
+    },
+    async remove() {},
+    async accessDeliveryFile() {
+      throw new Error('Not implemented in layout test')
+    },
+    async readDeliveryFile() {
+      throw new Error('Not implemented in layout test')
+    },
+  },
+  attachments: {
+    async list() {
+      return []
     },
   },
 } as unknown as SharedWorkspaceApi
@@ -1745,7 +1812,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
   })
 
-  test('keeps a newly added board tab on the existing project workbench', () => {
+  test('opens a newly added board tab in the collaboration platform', () => {
     deliveryApiMock.available = true
     const boardTab = {
       id: 'board-new',
@@ -1786,8 +1853,8 @@ describe('DesktopWorkbenchLayout', () => {
       </WorkspaceTabsContext.Provider>
     )
 
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeInTheDocument()
-    expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-collaboration-platform')).toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-platform-root')).toBeInTheDocument()
   })
 
   test('keeps a retained board bound to its own workspace tab route', async () => {
@@ -1860,8 +1927,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
-    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    await userEvent.click(screen.getByTestId('collaboration-tab-manage'))
+    await userEvent.click(screen.getByTestId('collaboration-project-settings-board'))
+    expect(screen.getByTestId('collaboration-tab-manage')).toHaveClass('bg-background')
 
     view.rerender(
       <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
@@ -1870,7 +1938,11 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    expect(screen.getByTestId('collaboration-tab-manage')).toHaveClass('bg-background')
+    expect(screen.getByTestId('collaboration-project-settings-board')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
     expect(actions.updateActiveTab).not.toHaveBeenCalled()
 
     view.rerender(
@@ -1880,7 +1952,11 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    expect(screen.getByTestId('collaboration-tab-manage')).toHaveClass('bg-background')
+    expect(screen.getByTestId('collaboration-project-settings-board')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
   })
 
   test('returns to the workspace after opening settings from its account menu', async () => {
@@ -1908,7 +1984,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(await screen.findByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('returns to the exact previous workspace route after opening settings', async () => {
@@ -1937,7 +2013,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(window.location.pathname).toBe('/todo')
     expect(window.location.search).toContain('projectId=project-1')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(await screen.findByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('returns to the previous page after opening settings through direct navigation', async () => {
@@ -1964,7 +2040,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(await screen.findByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('keeps the active task return route when an inactive project space is retained', () => {
@@ -2060,7 +2136,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(await screen.findByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('keeps the settings return path when the layout remounts at the settings route', async () => {
@@ -2119,7 +2195,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(await screen.findByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('uses the independent board tab instead of a work-items sidebar destination', () => {

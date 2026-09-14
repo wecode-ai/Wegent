@@ -38,6 +38,7 @@ import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
+import { WeworkCollaborationPlatform } from '@/features/todo/WeworkCollaborationPlatform'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import { projectSpaceApis, projectSpaceRef } from '@/features/todo/projectSpaceSelection'
@@ -157,7 +158,6 @@ export function DesktopWorkbenchLayout({
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
     createProject: onCreateProject,
-    createLocalRuntimeProject: onCreateLocalRuntimeProject,
     createGitWorkspaceProject: onCreateGitWorkspaceProject,
     prepareDeviceWorkspace: onPrepareDeviceWorkspace,
     deleteDeviceWorkspace: onDeleteDeviceWorkspace,
@@ -1109,80 +1109,119 @@ export function DesktopWorkbenchLayout({
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
           {workItemSurfaceOpen &&
             (workItemUser && workItemServicesReady ? (
-              <CloudTodoWorkspace
-                user={workItemUser}
-                localProjects={localTodoProjects}
-                runtimeWork={state.runtimeWork}
-                runtimeTaskLifecycle={runtimeTaskLifecycle}
-                services={services}
-                embedded={defaultWorkItemsOpen}
-                embeddedTitle={defaultWorkItemsOpen ? 'project' : 'workspace'}
-                startupActive={routeActive && routeWorkItemsOpen}
-                onCreateLocalCodeProject={onCreateLocalRuntimeProject}
-                onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-                onListDeviceDirectories={onListDeviceDirectories}
-                onCreateDeviceDirectory={onCreateDeviceDirectory}
-                onCloneGitRepository={onCloneGitRepository}
-                onOpenRuntimeTask={openProjectSpaceRuntimeTask}
-                onArchiveRuntimeTasks={onArchiveChatConversations}
-                onOpenSettings={options => openSettings(options)}
-                onLogout={onLogout}
-                activeProjectRef={
-                  ownedWorkspaceTab?.kind === 'board'
-                    ? projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
-                    : undefined
-                }
-                defaultProjectRequested={
-                  defaultWorkItemsOpen ||
-                  (ownedWorkspaceTab?.kind === 'board' &&
-                    projectSpaceRouteRequestsDefaultProject(ownedWorkspaceTab.contentRoute))
-                }
-                focusedItemId={
-                  ownedWorkspaceTab?.kind === 'board'
-                    ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'itemId')
-                    : undefined
-                }
-                onFocusedItemHandled={() => {
-                  if (
-                    !workspaceTabs ||
-                    ownedWorkspaceTab?.kind !== 'board' ||
-                    workspaceTabs.activeTabId !== ownedWorkspaceTab.id
-                  ) {
-                    return
+              defaultWorkItemsOpen ? (
+                <CloudTodoWorkspace
+                  user={workItemUser}
+                  localProjects={localTodoProjects}
+                  runtimeWork={state.runtimeWork}
+                  runtimeTaskLifecycle={runtimeTaskLifecycle}
+                  services={services}
+                  embedded
+                  embeddedTitle="project"
+                  startupActive={routeActive && routeWorkItemsOpen}
+                  onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                  onArchiveRuntimeTasks={onArchiveChatConversations}
+                  onOpenSettings={options => openSettings(options)}
+                  onLogout={onLogout}
+                  activeProjectRef={
+                    ownedWorkspaceTab?.kind === 'board'
+                      ? projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
+                      : undefined
                   }
-                  const projectRef = projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
-                  const defaultProjectRequested = projectSpaceRouteRequestsDefaultProject(
-                    ownedWorkspaceTab.contentRoute
-                  )
-                  workspaceTabs.updateActiveTab({
-                    contentRoute: projectRef
-                      ? projectSpaceContentRoute(projectRef)
-                      : defaultProjectRequested
-                        ? defaultProjectSpaceContentRoute()
-                        : '/todo',
-                  })
-                }}
-                onActiveProjectChange={project => {
-                  if (
-                    !workspaceTabs ||
-                    ownedWorkspaceTab?.kind !== 'board' ||
-                    workspaceTabs.activeTabId !== ownedWorkspaceTab.id
-                  ) {
-                    return
+                  defaultProjectRequested
+                  focusedItemId={
+                    ownedWorkspaceTab?.kind === 'board'
+                      ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'itemId')
+                      : undefined
                   }
-                  if (!project) {
+                  onFocusedItemHandled={() => {
+                    if (
+                      !workspaceTabs ||
+                      ownedWorkspaceTab?.kind !== 'board' ||
+                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id
+                    ) {
+                      return
+                    }
                     workspaceTabs.updateActiveTab({
-                      title: t('workbench.workspace_tab_board', '协作'),
-                      contentRoute: '/todo',
+                      contentRoute: defaultProjectSpaceContentRoute(),
                     })
-                    return
+                  }}
+                  onActiveProjectChange={project => {
+                    if (
+                      !workspaceTabs ||
+                      ownedWorkspaceTab?.kind !== 'board' ||
+                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id ||
+                      !project
+                    ) {
+                      return
+                    }
+                    workspaceTabs.updateActiveTab({
+                      title: project.name,
+                      contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
+                    })
+                  }}
+                />
+              ) : (
+                <WeworkCollaborationPlatform
+                  user={workItemUser}
+                  localProjects={localTodoProjects}
+                  runtimeWork={state.runtimeWork}
+                  runtimeTaskLifecycle={runtimeTaskLifecycle}
+                  services={services}
+                  startupActive={routeActive && routeWorkItemsOpen}
+                  onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                  onArchiveRuntimeTasks={onArchiveChatConversations}
+                  onOpenSettings={options => openSettings(options)}
+                  onLogout={onLogout}
+                  activeProjectRef={
+                    ownedWorkspaceTab?.kind === 'board'
+                      ? projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
+                      : undefined
                   }
-                  workspaceTabs.updateActiveTab({
-                    title: project.name,
-                    contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
-                  })
-                }}
-              />
+                  defaultProjectRequested={
+                    ownedWorkspaceTab?.kind === 'board' &&
+                    projectSpaceRouteRequestsDefaultProject(ownedWorkspaceTab.contentRoute)
+                  }
+                  focusedItemId={
+                    ownedWorkspaceTab?.kind === 'board'
+                      ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'itemId')
+                      : undefined
+                  }
+                  onFocusedItemHandled={() => {
+                    if (
+                      !workspaceTabs ||
+                      ownedWorkspaceTab?.kind !== 'board' ||
+                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id
+                    ) {
+                      return
+                    }
+                    const projectRef = projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
+                    workspaceTabs.updateActiveTab({
+                      contentRoute: projectRef ? projectSpaceContentRoute(projectRef) : '/todo',
+                    })
+                  }}
+                  onActiveProjectChange={project => {
+                    if (
+                      !workspaceTabs ||
+                      ownedWorkspaceTab?.kind !== 'board' ||
+                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id
+                    ) {
+                      return
+                    }
+                    if (!project) {
+                      workspaceTabs.updateActiveTab({
+                        title: t('workbench.workspace_tab_board', '协作'),
+                        contentRoute: '/todo',
+                      })
+                      return
+                    }
+                    workspaceTabs.updateActiveTab({
+                      title: project.name,
+                      contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
+                    })
+                  }}
+                />
+              )
             ) : (
               <div
                 data-testid="cloud-board-loading"

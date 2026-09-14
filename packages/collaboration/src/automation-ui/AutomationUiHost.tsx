@@ -70,6 +70,7 @@ export function useTranslation(namespace: string): AutomationUiTranslation {
           ? valuesOrFallback
           : interpolationValues;
       const shared = translateAutomationMessage(locale, key, values);
+      if (shared !== key) return shared;
       const hostResult = hostT(key, valuesOrFallback, interpolationValues);
       if (
         typeof hostResult === "string" &&
@@ -78,7 +79,6 @@ export function useTranslation(namespace: string): AutomationUiTranslation {
       ) {
         return hostResult;
       }
-      if (shared !== key) return shared;
       return typeof valuesOrFallback === "string" ? valuesOrFallback : key;
     },
     [hostT, locale],

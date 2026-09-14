@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import { describe, expect, test, vi } from 'vitest'
-import { sendE2EKey } from './e2e-keyboard.js'
+import { sendE2EKey, sendE2EText } from './e2e-keyboard.js'
 
 const environment = {
   WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
@@ -8,7 +8,12 @@ const environment = {
 }
 
 function fixture() {
-  const view = { isDestroyed: () => false, focus: vi.fn(), sendInputEvent: vi.fn() }
+  const view = {
+    isDestroyed: () => false,
+    focus: vi.fn(),
+    insertText: vi.fn(),
+    sendInputEvent: vi.fn(),
+  }
   return { view, contents: view as unknown as WebContents, focusWindow: vi.fn() }
 }
 
@@ -85,6 +90,17 @@ describe('isolated native keyboard verification', () => {
     expect(view.sendInputEvent.mock.calls).toContainEqual([
       { type: 'char', keyCode: 'x', modifiers: [] },
     ])
+  })
+
+  test('inserts text through the focused native editor', async () => {
+    const { view, contents, focusWindow } = fixture()
+    await expect(sendE2EText(contents, '第一行', focusWindow, environment)).resolves.toEqual({
+      backend: 'electron-insert-text',
+      textLength: 3,
+    })
+    expect(focusWindow).toHaveBeenCalledOnce()
+    expect(view.focus).toHaveBeenCalledOnce()
+    expect(view.insertText).toHaveBeenCalledWith('第一行')
   })
 
   test.each([{}, { WEWORK_E2E_CONTROL_URL: environment.WEWORK_E2E_CONTROL_URL }])(

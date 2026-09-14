@@ -15,6 +15,7 @@ from app.models.delivery import (
     LoopItem,
     LoopItemTaskBinding,
     ProjectAutomationRun,
+    ProjectWorkflowPlanItem,
     ProjectWorkflowRun,
     loop_datetime_is_unset,
     loop_unset_datetime_for_connection,
@@ -252,12 +253,6 @@ def update_workflow_task_status(
     )
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
-    metadata = dict(item.metadata_json or {})
-    workflow = metadata.get("workflow")
-    raw_nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
-    if not isinstance(raw_nodes, list):
-        raise HTTPException(status.HTTP_409_CONFLICT, "Issue has no workflow")
-
     bindings = (
         db.query(LoopItemTaskBinding)
         .filter(
@@ -276,11 +271,93 @@ def update_workflow_task_status(
         if candidate.workflow_node_id == binding.workflow_node_id
     ]
     runtime_task_id = f"{binding.device_id}:{task_id}"
+    return _update_workflow_node_task_status(
+        db,
+        item=item,
+        workflow_node_id=binding.workflow_node_id,
+        runtime_task_id=runtime_task_id,
+        execution_status=execution_status,
+        bound_task_ids=[
+            f"{candidate.device_id}:{candidate.task_id}"
+            for candidate in bindings
+            if candidate.device_id and candidate.task_id
+        ],
+    )
+
+
+def update_workflow_plan_task_status(
+    db: Session,
+    *,
+    child_id: str,
+    device_id: str,
+    task_id: str,
+    execution_status: str,
+) -> LoopItem | None:
+    """Project a materialized plan child's Runtime state onto its parent stage."""
+
+    child = db.get(LoopItem, child_id)
+    if child is None or not child.parent_id:
+        return None
+    child_metadata = (
+        child.metadata_json if isinstance(child.metadata_json, dict) else {}
+    )
+    plan_metadata = child_metadata.get("workflow_plan")
+    if not isinstance(plan_metadata, dict):
+        return None
+    workflow_run_id = str(plan_metadata.get("run_id") or "")
+    plan_item_id = str(plan_metadata.get("plan_item_id") or "")
+    workflow_node_id = str(plan_metadata.get("stage_id") or "")
+    if not all((workflow_run_id, plan_item_id, workflow_node_id)):
+        return None
+    workflow_run = db.get(ProjectWorkflowRun, workflow_run_id)
+    plan_item = db.get(ProjectWorkflowPlanItem, plan_item_id)
+    if (
+        workflow_run is None
+        or workflow_run.parent_id != child.parent_id
+        or plan_item is None
+        or plan_item.parent_id != workflow_run.id
+        or plan_item.loop_item_id != child.id
+    ):
+        return None
+    item = (
+        db.query(LoopItem)
+        .filter(LoopItem.id == child.parent_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if item is None:
+        return None
+    runtime_task_id = f"{device_id}:{task_id}"
+    return _update_workflow_node_task_status(
+        db,
+        item=item,
+        workflow_node_id=workflow_node_id,
+        runtime_task_id=runtime_task_id,
+        execution_status=execution_status,
+        bound_task_ids=[runtime_task_id],
+    )
+
+
+def _update_workflow_node_task_status(
+    db: Session,
+    *,
+    item: LoopItem,
+    workflow_node_id: str,
+    runtime_task_id: str,
+    execution_status: str,
+    bound_task_ids: list[str],
+) -> LoopItem:
+    metadata = dict(item.metadata_json or {})
+    workflow = metadata.get("workflow")
+    raw_nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+    if not isinstance(raw_nodes, list):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Issue has no workflow")
+
     changed = False
     nodes: list[dict] = []
     for raw_node in raw_nodes:
         node = dict(raw_node) if isinstance(raw_node, dict) else {}
-        if node.get("id") == binding.workflow_node_id:
+        if node.get("id") == workflow_node_id:
             task_statuses = dict(node.get("task_statuses") or {})
             previous_status = task_statuses.get(runtime_task_id)
             if task_statuses.get(runtime_task_id) != execution_status:
@@ -289,11 +366,7 @@ def update_workflow_task_status(
             ordered_task_ids = list(
                 dict.fromkeys(
                     [
-                        *[
-                            f"{candidate.device_id}:{candidate.task_id}"
-                            for candidate in bindings
-                            if candidate.device_id and candidate.task_id
-                        ],
+                        *bound_task_ids,
                         *(node.get("task_ids") or []),
                         runtime_task_id,
                     ]
@@ -318,7 +391,7 @@ def update_workflow_task_status(
                 "[IssueTaskStatusSync] workflow task projected item=%s node=%s "
                 "runtime_task=%s previous=%s next=%s node_status=%s",
                 item.id,
-                binding.workflow_node_id,
+                workflow_node_id,
                 runtime_task_id,
                 previous_status,
                 execution_status,

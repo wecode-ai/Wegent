@@ -28,8 +28,12 @@ export interface CollaborationPlatformHostAdapter {
   capabilities: {
     automation: boolean;
     dingtalkAitable: boolean;
+    projectLocation?: "cloud" | "local";
+    workspaceLocations?: readonly ("local" | "cloud")[];
+    sidebarPresentation?: "full" | "context";
   };
   navigate(location: CollaborationPlatformLocation): void;
+  manageResource?(kind: "agents" | "environments", resourceId?: string): void;
   notify?(message: string, kind: "success" | "error"): void;
   openExternal?(url: string): void;
 }

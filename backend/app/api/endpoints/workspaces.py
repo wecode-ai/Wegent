@@ -28,6 +28,7 @@ from app.schemas.workspace import (
     WorkspaceMemberListResponse,
     WorkspaceMemberResponse,
     WorkspaceMemberUpdate,
+    WorkspaceNavigationContextResponse,
     WorkspaceResponse,
     WorkspaceUpdate,
 )
@@ -44,11 +45,11 @@ def _response(
     workspace: object,
     current_user: User,
 ) -> WorkspaceResponse:
-    access = workspace_service.access(db, int(workspace.id), current_user.id)
+    role = workspace_service.access(db, int(workspace.id), current_user.id).role
     return WorkspaceResponse.model_validate(
         {
             **workspace.__dict__,
-            "access_role": access.role,
+            "access_role": role,
             **workspace_service.summary_counts(db, int(workspace.id)),
         }
     )
@@ -112,6 +113,23 @@ def get_workspace(
 ) -> WorkspaceResponse:
     workspace = workspace_service.get(db, workspace_id, current_user.id)
     return _response(db, workspace, current_user)
+
+
+@router.get(
+    "/{workspace_id}/navigation-context",
+    response_model=WorkspaceNavigationContextResponse,
+)
+def get_workspace_navigation_context(
+    workspace_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> WorkspaceNavigationContextResponse:
+    workspace = workspace_service.navigation_context(
+        db,
+        workspace_id,
+        current_user.id,
+    )
+    return WorkspaceNavigationContextResponse.model_validate(workspace)
 
 
 @router.patch("/{workspace_id}", response_model=WorkspaceResponse)

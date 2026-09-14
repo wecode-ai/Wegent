@@ -42,6 +42,7 @@ describe("workspace DTO mappers", () => {
         device_key: "device-cloud-runner",
         name: "Cloud Runner",
         kind: "cloud_host",
+        coding_tools: ["claude_code", "codex"],
         owner_type: "workspace",
         owner_id: "workspace-1",
         owner_name: "研发空间",
@@ -53,6 +54,7 @@ describe("workspace DTO mappers", () => {
       device_id: 22,
       device_key: "device-cloud-runner",
       kind: "cloud_host",
+      coding_tools: ["claude_code", "codex"],
       owner_type: "workspace",
     });
   });

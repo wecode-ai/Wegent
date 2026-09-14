@@ -4,6 +4,7 @@
 
 import {
   createSharedWorkspaceHttpApi,
+  mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
   mapWorkspaceDeliveryAssetDto,
   mapWorkspaceDeliveryDto,
@@ -50,7 +51,7 @@ type ProjectAutomationApi = ReturnType<typeof createProjectAutomationApi>
 type ProjectIncomingHookApi = ReturnType<typeof createProjectIncomingHookApi>
 type RuntimeProfileApi = ReturnType<typeof createRuntimeProfileApi>
 
-type ProjectMethod = 'list' | 'create' | 'update' | 'archive'
+type ProjectMethod = 'list' | 'get' | 'create' | 'update' | 'archive'
 
 export type WeworkAutomationSharedWorkspaceApi = SharedWorkspaceAutomationApi
 
@@ -69,7 +70,7 @@ export interface WeworkDeliverySharedWorkspaceApi {
 }
 
 export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
-  projects: ['list', 'create', 'update', 'archive'],
+  projects: ['list', 'get', 'create', 'update', 'archive'],
   myWork: ['list'],
   issues: [
     'list',
@@ -127,7 +128,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
 }
 
 export const WEWORK_DELIVERY_SHARED_WORKSPACE_MISSING_METHODS = {
-  projects: ['get', 'importMessages'],
+  projects: ['importMessages'],
   comments: ['list', 'create'],
   automations: [
     'list',
@@ -395,6 +396,13 @@ export function createWeworkDeliverySharedWorkspaceApi(
     projects: {
       async list() {
         return (await deliveryApi.listCloudProjects()).items.map(toProject)
+      },
+      async get(projectId) {
+        const project = (await deliveryApi.listCloudProjects()).items.find(
+          candidate => String(candidate.id) === String(projectId)
+        )
+        if (!project) throw new Error(`Project ${projectId} was not found`)
+        return toProject(project)
       },
       create(input) {
         return deliveryApi
@@ -902,6 +910,25 @@ export function createWeworkSharedWorkspaceApi<
       },
       get(projectId) {
         return client.get<CloudProject>(`/v1/cloud-projects/${encodeURIComponent(projectId)}`)
+      },
+      async listExecutionEnvironments(projectId) {
+        const response = await client.get<{ items: Array<Record<string, unknown>> }>(
+          `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments`
+        )
+        return response.items.map(mapCollaborationExecutionEnvironmentDto)
+      },
+      async addExecutionEnvironment(projectId, deviceId) {
+        return mapCollaborationExecutionEnvironmentDto(
+          await client.post<Record<string, unknown>>(
+            `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments`,
+            { device_id: deviceId }
+          )
+        )
+      },
+      removeExecutionEnvironment(projectId, deviceId) {
+        return client.delete(
+          `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments/${encodeURIComponent(deviceId)}`
+        )
       },
       importMessages(projectId, input) {
         return client.post<{ issue: CloudLoopItem }>(

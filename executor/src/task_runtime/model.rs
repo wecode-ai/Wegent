@@ -210,11 +210,13 @@ pub struct LocalExecution {
     pub rejected_reason: Option<String>,
     pub runtime_device_id: Option<String>,
     pub runtime_task_id: Option<String>,
+    #[serde(rename = "runtime_payload")]
     pub execution_payload: Option<Value>,
     pub max_retries: i64,
     pub agent_name: String,
     pub agent_system_prompt: String,
     pub agent_model: Option<String>,
+    pub agent_local_project_id: Option<i64>,
     pub agent_max_concurrent_executions: u64,
     pub agent_plugins: Vec<Value>,
     pub version: i64,

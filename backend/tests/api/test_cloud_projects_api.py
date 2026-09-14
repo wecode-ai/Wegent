@@ -1835,7 +1835,7 @@ def test_cloud_project_robot_binds_default_runtime_profile(
     assert cleared.json()["defaultRuntimeProfileId"] is None
 
 
-def test_cloud_project_codex_agent_authorizes_owned_execution_environment_once(
+def test_cloud_project_codex_agent_requires_explicit_project_environment(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -1852,9 +1852,21 @@ def test_cloud_project_codex_agent_authorizes_owned_execution_environment_once(
             "metadata": {"name": "personal-codex-device"},
         },
     )
-    test_db.add(device)
+    other_device = Kind(
+        kind="Device",
+        name="other-personal-codex-device",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {"deviceType": "local"},
+            "metadata": {"name": "other-personal-codex-device"},
+        },
+    )
+    test_db.add_all([device, other_device])
     test_db.commit()
     test_db.refresh(device)
+    test_db.refresh(other_device)
 
     project_response = test_client.post(
         "/api/v1/cloud-projects",
@@ -1875,11 +1887,42 @@ def test_cloud_project_codex_agent_authorizes_owned_execution_environment_once(
         headers=_auth(test_token),
         json=agent_payload,
     )
+    assert created.status_code == 422
+    assert created.json()["detail"] == (
+        "Execution environment is not configured in this Project"
+    )
+
+    selected = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": device.id},
+    )
+    assert selected.status_code == 201, selected.text
+    assert selected.json()["device_id"] == device.id
+
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json=agent_payload,
+    )
     assert created.status_code == 201, created.text
     agent = created.json()
     assert agent["executionDeviceId"] == device.name
 
-    bindings = (
+    project_bindings = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Device",
+            ResourceMember.resource_id == device.id,
+            ResourceMember.entity_type == "project",
+            ResourceMember.entity_id == str(project["id"]),
+        )
+        .all()
+    )
+    assert len(project_bindings) == 1
+    assert project_bindings[0].role == "Developer"
+    assert project_bindings[0].invited_by_user_id == test_user.id
+    assert (
         test_db.query(ResourceMember)
         .filter(
             ResourceMember.resource_type == "Device",
@@ -1887,14 +1930,12 @@ def test_cloud_project_codex_agent_authorizes_owned_execution_environment_once(
             ResourceMember.entity_type == "workspace",
             ResourceMember.entity_id == str(project["workspace_id"]),
         )
-        .all()
+        .count()
+        == 0
     )
-    assert len(bindings) == 1
-    assert bindings[0].role == "Developer"
-    assert bindings[0].invited_by_user_id == test_user.id
 
     listed = test_client.get(
-        f"/api/v1/workspaces/{project['workspace_id']}/execution-environments",
+        f"/api/v1/cloud-projects/{project['id']}/execution-environments",
         headers=_auth(test_token),
     )
     assert listed.status_code == 200
@@ -1911,30 +1952,50 @@ def test_cloud_project_codex_agent_authorizes_owned_execution_environment_once(
     )
     assert created_again.status_code == 201, created_again.text
 
+    rejected_update = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents/{agent['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": agent["version"],
+            "executionDeviceId": other_device.name,
+        },
+    )
+    assert rejected_update.status_code == 422
+    assert rejected_update.json()["detail"] == (
+        "Execution environment is not configured in this Project"
+    )
+
+    selected_other = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": other_device.id},
+    )
+    assert selected_other.status_code == 201, selected_other.text
+
     updated = test_client.patch(
         f"/api/v1/cloud-projects/{project['id']}/chat-agents/{agent['id']}",
         headers=_auth(test_token),
         json={
             "version": agent["version"],
-            "executionDeviceId": device.name,
+            "executionDeviceId": other_device.name,
         },
     )
     assert updated.status_code == 200, updated.text
-    assert updated.json()["executionDeviceId"] == device.name
+    assert updated.json()["executionDeviceId"] == other_device.name
     assert (
         test_db.query(ResourceMember)
         .filter(
             ResourceMember.resource_type == "Device",
             ResourceMember.resource_id == device.id,
-            ResourceMember.entity_type == "workspace",
-            ResourceMember.entity_id == str(project["workspace_id"]),
+            ResourceMember.entity_type == "project",
+            ResourceMember.entity_id == str(project["id"]),
         )
         .count()
         == 1
     )
 
 
-def test_cloud_project_wegent_agent_authorizes_accessible_team_once(
+def test_cloud_project_wegent_agent_does_not_grant_team_to_workspace(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -1967,20 +2028,6 @@ def test_cloud_project_wegent_agent_authorizes_accessible_team_once(
     agent = created.json()
     assert agent["wegentTeamId"] == team.id
 
-    bindings = (
-        test_db.query(ResourceMember)
-        .filter(
-            ResourceMember.resource_type == "Team",
-            ResourceMember.resource_id == team.id,
-            ResourceMember.entity_type == "workspace",
-            ResourceMember.entity_id == str(project["workspace_id"]),
-        )
-        .all()
-    )
-    assert len(bindings) == 1
-    assert bindings[0].role == "Developer"
-    assert bindings[0].invited_by_user_id == test_user.id
-
     created_again = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/chat-agents",
         headers=_auth(test_token),
@@ -2007,7 +2054,7 @@ def test_cloud_project_wegent_agent_authorizes_accessible_team_once(
             ResourceMember.entity_id == str(project["workspace_id"]),
         )
         .count()
-        == 1
+        == 0
     )
 
 

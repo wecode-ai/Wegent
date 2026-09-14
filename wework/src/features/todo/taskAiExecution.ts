@@ -12,6 +12,7 @@ import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-atta
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import type { ModelOptions, ModelSelectionConfig, ModelType, UnifiedModel } from '@/types/api'
 import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
+import { publishProjectSpaceTaskBindingChanged, projectSpaceRef } from './projectSpaceSelection'
 
 export interface TaskAiRuntimeBridge {
   createProjectRuntimeTask: (
@@ -390,7 +391,20 @@ export async function startTaskAiRun({
         throw new Error('项目空间任务绑定服务不可用')
       }
       await deliveryApi.bindTask(task.id, nextAddress, task.title)
-      return () => deliveryApi.unbindTask(task.id, nextAddress)
+      const projectRef = projectSpaceRef(project)
+      publishProjectSpaceTaskBindingChanged({
+        task: nextAddress,
+        project: projectRef,
+        type: 'bound',
+      })
+      return async () => {
+        await deliveryApi.unbindTask(task.id, nextAddress)
+        publishProjectSpaceTaskBindingChanged({
+          task: nextAddress,
+          project: projectRef,
+          type: 'unbound',
+        })
+      }
     },
     onError,
     onRuntimeTaskOptimisticOpen: async nextAddress => {

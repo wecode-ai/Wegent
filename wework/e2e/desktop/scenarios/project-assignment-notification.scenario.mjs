@@ -495,7 +495,20 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
       await control.command('waitFor', `[data-testid="wework-notification-${clickable.id}"]`)
       await control.command('click', `[data-testid="wework-notification-${clickable.id}"]`)
-      await control.command('waitFor', `${activeSurface} [data-testid="cloud-todo-workspace"]`)
+      await control.command(
+        'waitFor',
+        `${activeSurface} [data-testid="wework-collaboration-platform"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeSurface} [data-testid="collaboration-platform-root"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       const afterClick = await ownerRequest('/api/v1/wework-notifications')
       assert.ok(afterClick.items.find(item => item.id === clickable.id)?.read_at)
       await captureScreenshot(control, 'wework-notification-board-home.png')
@@ -702,6 +715,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         'completed',
         'The completed Runtime Task status was not reflected in the open Issue detail'
       )
+      await control.command('click', `${activeSurface} [data-testid="cloud-todo-toggle-tasks"]`)
       await control.command('waitFor', `${activeSurface} [data-testid="todo-detail-deliveries"]`, {
         text: '1 个附件',
         timeoutMs: uiTimeoutMs,
