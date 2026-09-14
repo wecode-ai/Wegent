@@ -11,9 +11,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPOSITORY_ROOT=${WEGENT_REPOSITORY_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}
 BACKEND_DIR="$REPOSITORY_ROOT/backend"
-BACKEND_RS_DIR="$REPOSITORY_ROOT/backend-rs"
+BACKEND_RS_DIR=${WEGENT_RS_PROJECT_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}
+RS_BINARY_NAME=${WEGENT_RS_BINARY_NAME:-wegent-backend-rs}
 
 PUBLIC_HOST=${WEGENT_RS_LISTEN_HOST:-0.0.0.0}
 PUBLIC_PORT=${WEGENT_RS_LISTEN_PORT:-8000}
@@ -22,6 +23,11 @@ RS_TARGET_DIR=${WEGENT_RS_TARGET_DIR:-$BACKEND_RS_DIR/target}
 ROUTES_FILE=${WEGENT_RS_ROUTES_FILE:-$BACKEND_RS_DIR/config/routes.toml}
 PYTHON_UVICORN=${WEGENT_PYTHON_UVICORN:-$BACKEND_DIR/.venv/bin/uvicorn}
 STATE_FILE=${WEGENT_HYBRID_STATE_FILE:-}
+# start.sh already exports LOG_DIR for the Backend. Reuse it for Rust so both
+# processes are discoverable in the same service log directory. These may be
+# overridden directly without adding any new .env contract.
+BREEZE_LOG_DIR=${BREEZE_LOG_DIR:-${LOG_DIR:-$REPOSITORY_ROOT/logs/backend}}
+BREEZE_PROFILE_LOG_PATH=${BREEZE_PROFILE_LOG_PATH:-$BREEZE_LOG_DIR/profile.log}
 
 show_help() {
     cat <<EOF
@@ -33,8 +39,11 @@ Options:
   -h, --help           Show this help message
 
 Environment:
+  WEGENT_REPOSITORY_ROOT       Wegent repository containing the Python Backend
   WEGENT_PYTHON_UPSTREAM_PORT  Loopback Python port (default: 8004)
   WEGENT_RS_ROUTES_FILE        TOML route selection file
+  WEGENT_RS_PROJECT_DIR        Rust Backend project directory
+  WEGENT_RS_BINARY_NAME        Rust Backend binary name
   WEGENT_RS_TARGET_DIR         Cargo target directory
 EOF
 }
@@ -165,12 +174,12 @@ trap cleanup EXIT
 
 write_state
 
-RS_BINARY="$RS_TARGET_DIR/release/wegent-backend-rs"
+RS_BINARY="$RS_TARGET_DIR/release/$RS_BINARY_NAME"
 echo "Building Wegent Rust gateway (release)..."
 CARGO_TARGET_DIR="$RS_TARGET_DIR" cargo build \
     --release \
     --manifest-path "$BACKEND_RS_DIR/Cargo.toml" \
-    --bin wegent-backend-rs &
+    --bin "$RS_BINARY_NAME" &
 BUILD_PID=$!
 write_state
 if wait "$BUILD_PID"; then
@@ -228,6 +237,8 @@ WEGENT_RS_LISTEN_HOST="$PUBLIC_HOST" \
 WEGENT_RS_LISTEN_PORT="$PUBLIC_PORT" \
 WEGENT_PYTHON_UPSTREAM_URL="http://127.0.0.1:$PYTHON_UPSTREAM_PORT" \
 WEGENT_RS_ROUTES_FILE="$ROUTES_FILE" \
+BREEZE_LOG_DIR="$BREEZE_LOG_DIR" \
+BREEZE_PROFILE_LOG_PATH="$BREEZE_PROFILE_LOG_PATH" \
 "$RS_BINARY" &
 RUST_PID=$!
 write_state
