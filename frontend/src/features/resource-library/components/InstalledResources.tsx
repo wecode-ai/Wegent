@@ -44,7 +44,6 @@ import { useUser } from '@/features/common/UserContext'
 import { canEditContent } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ResourceLibraryInstall, ResourceLibraryListing } from '../types'
-import type { ResourceListState } from '@/features/settings/components/SkillListWithScope'
 import { ResourceDetailDrawer } from './ResourceDetailDrawer'
 import { ResourceListingCard } from './ResourceListingCard'
 import { AutoEnabledSkillConfigDialog } from '@/features/settings/components/skills/AutoEnabledSkillConfigDialog'
@@ -58,11 +57,7 @@ interface InstalledResourcesProps {
   resourceType: InstalledResourceType
   keyword?: string
   groupNamespaces?: string[]
-  excludeGroupOwned?: boolean
   groups?: Group[]
-  hideLoadingState?: boolean
-  hideEmptyState?: boolean
-  onListStateChange?: (state: ResourceListState) => void
 }
 
 interface InstalledResource extends ResourceLibraryInstall {
@@ -73,24 +68,10 @@ function hasInstalledListing(install: ResourceLibraryInstall): install is Instal
   return install.install_status === 'installed' && Boolean(install.listing)
 }
 
-function isGroupOwnedSkill(install: ResourceLibraryInstall): boolean {
-  return (
-    install.resource_type === 'skill' &&
-    (install.installed_reference.ownership === 'group' ||
-      install.installed_reference.kind === 'Skill' ||
-      (Boolean(install.installed_reference.namespace) &&
-        install.installed_reference.kind !== 'SkillBinding'))
-  )
-}
-
-function normalizeInstalls(
-  items: ResourceLibraryInstall[],
-  excludeGroupOwned = false
-): InstalledResource[] {
+function normalizeInstalls(items: ResourceLibraryInstall[]): InstalledResource[] {
   const installsByListingId = new Map<number, InstalledResource>()
 
   items.filter(hasInstalledListing).forEach(install => {
-    if (excludeGroupOwned && isGroupOwnedSkill(install)) return
     if (installsByListingId.has(install.listing.id)) return
 
     installsByListingId.set(install.listing.id, {
@@ -183,11 +164,7 @@ export function InstalledResources({
   resourceType,
   keyword,
   groupNamespaces,
-  excludeGroupOwned = false,
   groups = [],
-  hideLoadingState = false,
-  hideEmptyState = false,
-  onListStateChange,
 }: InstalledResourcesProps) {
   const router = useRouter()
   const { t } = useTranslation('resource-library')
@@ -241,7 +218,7 @@ export function InstalledResources({
       ])
 
       if (requestGeneration === requestGenerationRef.current) {
-        setInstalls(normalizeInstalls(items, excludeGroupOwned))
+        setInstalls(normalizeInstalls(items))
         setSkillBindings(bindings)
       }
     } catch {
@@ -254,7 +231,7 @@ export function InstalledResources({
         setIsLoading(false)
       }
     }
-  }, [excludeGroupOwned, groupNamespacesKey, isGroupMode, resourceType])
+  }, [groupNamespacesKey, isGroupMode, resourceType])
 
   useEffect(() => {
     void loadInstalls()
@@ -268,14 +245,6 @@ export function InstalledResources({
     const normalizedKeyword = keyword?.trim().toLowerCase() || ''
     return installs.filter(install => matchesKeyword(install.listing, normalizedKeyword))
   }, [installs, keyword])
-
-  useEffect(() => {
-    onListStateChange?.({
-      loading: isLoading,
-      hasItems: filteredInstalls.length > 0,
-      hasError,
-    })
-  }, [filteredInstalls.length, hasError, isLoading, onListStateChange])
 
   const handleUse = (listing: ResourceLibraryListing) => {
     if (listing.resource_type !== 'agent') return
@@ -349,8 +318,6 @@ export function InstalledResources({
   }
 
   if (isLoading) {
-    if (hideLoadingState) return null
-
     return (
       <div
         className={getResourceGridClassName(true)}
@@ -386,8 +353,6 @@ export function InstalledResources({
   }
 
   if (filteredInstalls.length === 0) {
-    if (hideEmptyState) return null
-
     return (
       <div
         className="flex min-h-[260px] items-center justify-center rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary"

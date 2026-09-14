@@ -7,19 +7,11 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { fetchUnifiedSkillsList, UnifiedSkill } from '@/apis/skills'
 import { fetchTeamSkills, TeamSkillsResponse } from '@/apis/team'
-import type { Team } from '@/types/api'
+import type { SkillRef, Team } from '@/types/api'
 import { isChatShell } from '../service/messageService'
 import { filterVisibleSkills } from '@/utils/skillVisibility'
 
-/**
- * Skill reference with full identification info for backend
- * Backend needs name + namespace + is_public to uniquely identify a skill
- */
-export interface SkillRef {
-  name: string
-  namespace: string
-  is_public: boolean
-}
+export type { SkillRef } from '@/types/api'
 
 export type AutoAvailableSkill = UnifiedSkill & {
   availabilitySources: Array<'agent_builtin' | 'my_default'>
@@ -242,6 +234,7 @@ export function useSkillSelector({
       const skill = availableSkills.find(s => s.name === name)
       if (skill) {
         return {
+          skill_id: skill.id,
           name: skill.name,
           namespace: skill.namespace,
           is_public: skill.is_public,
