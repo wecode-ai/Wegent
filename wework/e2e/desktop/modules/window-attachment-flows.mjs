@@ -61,6 +61,7 @@ import {
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const MODEL_RESPONSE_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
+const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 
 async function waitForProcessExit(processId, message) {
   const startedAt = Date.now()
@@ -349,7 +350,8 @@ async function verifyBackgroundTaskWindowLifecycle({
     control,
     composerSelector,
     WINDOW_LIFECYCLE_PROMPT,
-    'window_lifecycle'
+    'window_lifecycle',
+    MODEL_REQUEST_TIMEOUT_MS
   )
   await withTimeout(
     control.awaitWindowLifecycleResponseStarted(),

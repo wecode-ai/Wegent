@@ -55,6 +55,9 @@ interface BrowserAnnotationSession {
   runtime: BrowserPageRuntime | null
   runtimeRevision: number
   originalView: boolean
+  requestedOriginalView: boolean
+  originalViewRequestId: number
+  appliedOriginalViewRequestId: number
   unresolvedIds: string[]
 }
 
@@ -121,9 +124,10 @@ export class BrowserAnnotationController {
     const session = this.session(label)
     session.mode = 'off'
     session.originalView = false
-    session.runtimeRevision += 1
+    session.requestedOriginalView = false
+    session.originalViewRequestId += 1
     if (this.draft?.label === label) this.closeDraft(false)
-    this.sync(label)
+    this.sync(label, null, session.originalViewRequestId)
     this.publish(label)
   }
 
@@ -140,10 +144,10 @@ export class BrowserAnnotationController {
 
   setOriginalView(label: string, enabled: boolean): void {
     const session = this.session(label)
-    session.originalView = enabled
-    session.runtimeRevision += 1
-    this.sync(label)
-    this.publish(label)
+    if (session.requestedOriginalView === enabled) return
+    session.requestedOriginalView = enabled
+    session.originalViewRequestId += 1
+    this.sync(label, null, session.originalViewRequestId)
   }
 
   state(label: string): BrowserAnnotationState {
@@ -252,6 +256,10 @@ export class BrowserAnnotationController {
       this.runtimeReady(label, event)
       return
     }
+    if (type === 'runtime-rendered') {
+      this.runtimeRendered(label, event)
+      return
+    }
     if (type === 'create-draft') {
       void this.createDraft(label, event)
       return
@@ -319,6 +327,9 @@ export class BrowserAnnotationController {
     if (navigated) {
       session.mode = 'off'
       session.originalView = false
+      session.requestedOriginalView = false
+      session.originalViewRequestId += 1
+      session.appliedOriginalViewRequestId = session.originalViewRequestId
       if (this.draft?.label === label) this.closeDraft(false)
     }
     session.runtime = {
@@ -329,6 +340,22 @@ export class BrowserAnnotationController {
     session.runtimeRevision += 1
     session.unresolvedIds = []
     this.sync(label)
+    this.publish(label)
+  }
+
+  private runtimeRendered(label: string, event: Record<string, unknown>): void {
+    const requestId = integerValue(event.renderRequestId)
+    const session = this.session(label)
+    if (
+      requestId === null ||
+      requestId !== session.originalViewRequestId ||
+      requestId <= session.appliedOriginalViewRequestId
+    ) {
+      return
+    }
+    session.appliedOriginalViewRequestId = requestId
+    session.originalView = session.requestedOriginalView
+    session.runtimeRevision += 1
     this.publish(label)
   }
 
@@ -415,7 +442,11 @@ export class BrowserAnnotationController {
     this.publish(label)
   }
 
-  private sync(label: string, point: { x: number; y: number } | null = null): void {
+  private sync(
+    label: string,
+    point: { x: number; y: number } | null = null,
+    renderRequestId: number | null = null
+  ): void {
     const session = this.session(label)
     const key = this.currentKey(label)
     const comments = key ? (this.comments.get(key) ?? []) : []
@@ -432,8 +463,13 @@ export class BrowserAnnotationController {
           designChanges: comment.designChanges,
           textChange: comment.textChange,
         })),
-        originalView: session.originalView,
+        originalView: session.requestedOriginalView,
       },
+      renderRequestId:
+        renderRequestId ??
+        (session.appliedOriginalViewRequestId < session.originalViewRequestId
+          ? session.originalViewRequestId
+          : null),
     })
   }
 
@@ -463,6 +499,9 @@ export class BrowserAnnotationController {
       runtime: null,
       runtimeRevision: 0,
       originalView: false,
+      requestedOriginalView: false,
+      originalViewRequestId: 0,
+      appliedOriginalViewRequestId: 0,
       unresolvedIds: [],
     }
     const browserState = safeBrowserState(this.options.browser, label)
@@ -516,6 +555,10 @@ function canonicalPageUrl(value: string): string {
 
 function sameStringArray(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function integerValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null
 }
 
 function sameAnchorIdentity(left: BrowserElementAnchor, right: BrowserElementAnchor): boolean {

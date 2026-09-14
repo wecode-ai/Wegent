@@ -237,7 +237,7 @@ export class SqliteSyncOutbox {
     return Boolean(this.selectTranscriptPending.get(transcriptId))
   }
 
-  fork(turn, transcriptId) {
+  fork(turn, transcriptId, forkedAtSequence = turn.baseSequence) {
     const pending = this.selectSessionPending.all(turn.sessionId)
     const start = pending.findIndex(item => item.turn_id === turn.turnId)
     if (start < 0) throw new Error(`Pending transcript turn is unavailable: ${turn.turnId}`)
@@ -245,7 +245,7 @@ export class SqliteSyncOutbox {
       this.updateForkRoute.run(
         transcriptId,
         turn.transcriptId,
-        turn.baseSequence,
+        forkedAtSequence,
         Date.now(),
         turn.sessionId
       )
@@ -255,7 +255,7 @@ export class SqliteSyncOutbox {
           index,
           index + 1,
           turn.transcriptId,
-          turn.baseSequence,
+          forkedAtSequence,
           item.turn_id
         )
       }
@@ -367,7 +367,7 @@ export class MemorySyncOutbox {
     return this.turns.some(turn => turn.transcriptId === transcriptId)
   }
 
-  fork(turn, transcriptId) {
+  fork(turn, transcriptId, forkedAtSequence = turn.baseSequence) {
     const sessionTurns = this.turns
       .filter(item => item.sessionId === turn.sessionId)
       .sort((left, right) => left.sequence - right.sequence)
@@ -376,7 +376,7 @@ export class MemorySyncOutbox {
     this.routes.set(turn.sessionId, {
       transcriptId,
       parentTranscriptId: turn.transcriptId,
-      forkedAtSequence: turn.baseSequence,
+      forkedAtSequence,
       acknowledgedSequence: 0,
     })
     for (const [index, item] of sessionTurns.slice(start).entries()) {
@@ -385,7 +385,7 @@ export class MemorySyncOutbox {
         baseSequence: index,
         cloudSequence: index + 1,
         parentTranscriptId: turn.transcriptId,
-        forkedAtSequence: turn.baseSequence,
+        forkedAtSequence,
       })
     }
   }

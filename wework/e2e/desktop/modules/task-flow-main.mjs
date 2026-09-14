@@ -1138,6 +1138,7 @@ async function main() {
         backendUrl: cloudEnvironment.backendUrl,
         databasePath: cloudEnvironment.databasePath,
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
+        setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),
       })
     } else {
       executorBinary = await buildExecutor()
@@ -1768,7 +1769,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         restartDesktopApp,
         TURN_NAVIGATION_ONLY_TURN_COUNT
       )
-      await verifyTurnNavigationTracksVisibleTurnMessages(control, 2)
+      await verifyTurnNavigationTracksVisibleTurnMessages(control)
       console.log(`Wework desktop turn-navigation E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -2781,6 +2782,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         console.log(`Wework message restoration desktop E2E passed. Evidence: ${resultDir}`)
         return
       }
+      await control.command('waitFor', '[data-testid="final-processing-toggle"]', {
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
       await control.command('click', '[data-testid="final-processing-toggle"]')
       await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

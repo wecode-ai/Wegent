@@ -35,12 +35,23 @@ describe('isolated native keyboard verification', () => {
     expect(await sendE2EKey(contents, 'Shift+Tab', focusWindow, environment)).toEqual({
       backend: 'electron-send-input-event',
       key: 'Shift+Tab',
+      phase: 'press',
     })
     expect(focusWindow).toHaveBeenCalledOnce()
     expect(view.focus).toHaveBeenCalledOnce()
     expect(view.sendInputEvent.mock.calls).toEqual([
       [{ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] }],
       [{ type: 'keyUp', keyCode: 'Tab', modifiers: ['shift'] }],
+    ])
+  })
+
+  test('keeps native Space pressed until a matching key-up event', async () => {
+    const { view, contents, focusWindow } = fixture()
+    await sendE2EKey(contents, 'Space', focusWindow, environment, 'down')
+    await sendE2EKey(contents, 'Space', focusWindow, environment, 'up')
+    expect(view.sendInputEvent.mock.calls).toEqual([
+      [{ type: 'keyDown', keyCode: 'Space', modifiers: [] }],
+      [{ type: 'keyUp', keyCode: 'Space', modifiers: [] }],
     ])
   })
 
@@ -51,6 +62,28 @@ describe('isolated native keyboard verification', () => {
       'keyDown',
       'char',
       'keyUp',
+    ])
+  })
+
+  test.each([
+    ['Meta+B', 'B', ['meta']],
+    ['Control+B', 'B', ['control']],
+    ['Meta+Alt+B', 'B', ['meta', 'alt']],
+    ['Control+Shift+M', 'M', ['control', 'shift']],
+  ])('sends native shortcut %s without inserting a character', async (key, keyCode, modifiers) => {
+    const { view, contents, focusWindow } = fixture()
+    await sendE2EKey(contents, key as string, focusWindow, environment)
+    expect(view.sendInputEvent.mock.calls).toEqual([
+      [{ type: 'keyDown', keyCode, modifiers }],
+      [{ type: 'keyUp', keyCode, modifiers }],
+    ])
+  })
+
+  test('inserts ordinary text through a native character event', async () => {
+    const { view, contents, focusWindow } = fixture()
+    await sendE2EKey(contents, 'x', focusWindow, environment)
+    expect(view.sendInputEvent.mock.calls).toContainEqual([
+      { type: 'char', keyCode: 'x', modifiers: [] },
     ])
   })
 
@@ -66,7 +99,7 @@ describe('isolated native keyboard verification', () => {
     }
   )
 
-  test.each(['Meta+Q', 'Control+W', 'constructor', 'text'])(
+  test.each(['Meta+Q', 'Control+W', 'constructor', 'text', 'Unknown+B'])(
     'rejects unsupported key %s',
     async key => {
       const { view, contents, focusWindow } = fixture()

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
-import { join } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
@@ -16,15 +18,18 @@ import {
 import {
   assistantMessage,
   createSse,
+  functionCall,
   mcpToolRequestEvents,
   namespacedFunctionCall,
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
   selectMcpTool,
+  selectShellToolCommand,
   streamingTextEvents,
 } from '../modules/response-protocol.mjs'
 
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const PROJECT_ID = '700000000000000001'
 const AGENT_ID = 'agent-project-automation'
 const RULE_ID = 'automation-rule-1'
@@ -41,7 +46,29 @@ const MOONSHOT_OVERRIDE_FOLLOW_UP =
   'WEWORK_PROJECT_AUTOMATION_MOONSHOT_FOLLOW_UP: verify immutable task model routing.'
 const MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION =
   'WEWORK_PROJECT_AUTOMATION_MOONSHOT_FOLLOW_UP_COMPLETE'
+const MOONSHOT_OVERRIDE_INITIAL_COMPLETION = '真实自动化执行已完成。\n\n[打开任务文件](README.md)'
 const CLOUD_MODEL_UPSTREAM_ID = 'desktop-e2e-public-upstream-model'
+const CODEX_PLUGIN_NAME = 'wework-plugin-example'
+const CODEX_PLUGIN_MARKETPLACE = 'wegent'
+const CODEX_PLUGIN_MCP_NAMESPACE = 'example'
+const CODEX_PLUGIN_SKILL_NAME = 'hello-wework'
+const CODEX_PLUGIN_SKILL_MARKER = '# Hello Wework'
+const CODEX_PLUGIN_PROMPT = '使用 Wework 插件示例向 Collaboration E2E 问好。'
+const CODEX_PLUGIN_COMPLETION = 'Hello, Collaboration E2E!'
+const CODEX_PLUGIN_ID = `${CODEX_PLUGIN_NAME}@${CODEX_PLUGIN_MARKETPLACE}`
+const CODEX_PLUGIN_ARTIFACT_NAME = 'collaboration-codex-plugin-result.txt'
+const CODEX_PLUGIN_ARTIFACT_LINES = [
+  `Skill marker: ${CODEX_PLUGIN_SKILL_MARKER}`,
+  `MCP output: ${CODEX_PLUGIN_COMPLETION}`,
+  `Plugin: ${CODEX_PLUGIN_ID}`,
+]
+const CODEX_PLUGIN_ARTIFACT_CONTENT = `${CODEX_PLUGIN_ARTIFACT_LINES.join('\n')}\n`
+const CODEX_PLUGIN_BOARD_SEARCH_CALL_ID = 'collaboration-codex-plugin-board-item-search'
+const CODEX_PLUGIN_BOARD_CALL_ID = 'collaboration-codex-plugin-board-item'
+const CODEX_PLUGIN_SKILL_CALL_ID = 'collaboration-codex-plugin-skill'
+const CODEX_PLUGIN_MCP_SEARCH_CALL_ID = 'collaboration-codex-plugin-mcp-search'
+const CODEX_PLUGIN_MCP_CALL_ID = 'collaboration-codex-plugin-mcp'
+const CODEX_PLUGIN_ARTIFACT_CALL_ID = 'collaboration-codex-plugin-artifact'
 
 const PROJECT = {
   id: PROJECT_ID,
@@ -388,7 +415,13 @@ function assertExecutionTruthContract(execution) {
   }
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  executorHome,
+  resultDir,
+  uiTimeoutMs,
+  workspacePath,
+}) {
   // Cloud executions are claimed asynchronously. Keep the assertion budget
   // beyond one complete claim window so a commit at the boundary is observed.
   const automationRuntimeTimeoutMs = Math.max(
@@ -433,6 +466,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   let cloudApi = null
   let cloudProject = null
   let cloudAgent = null
+  let cloudEnvironment = null
   let cloudRuntimeProfile = null
   let localDefaultAgent = null
   let wegentAgent = null
@@ -440,6 +474,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   let personalApiKey = null
   let managerToolCalls = 0
   const upstreamResponseRequests = []
+  let moonshotOverrideIssueId = null
+  let codexPluginSkillPath = null
   let uiProject = { ...PROJECT }
   let nextBoardItemSequence = 201
   let orchestratedItemId = null
@@ -447,11 +483,27 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   let workflowTaskBindings = []
   let resolveFirstContinuationStarted
   let releaseFirstContinuation
+  let resolveCodexPluginCompletionStarted
+  let releaseCodexPluginCompletion
+  let resolveMoonshotFollowUpStarted
+  let releaseMoonshotFollowUp
   const firstContinuationStarted = new Promise(resolve => {
     resolveFirstContinuationStarted = resolve
   })
   const firstContinuationRelease = new Promise(resolve => {
     releaseFirstContinuation = resolve
+  })
+  const codexPluginCompletionStarted = new Promise(resolve => {
+    resolveCodexPluginCompletionStarted = resolve
+  })
+  const codexPluginCompletionRelease = new Promise(resolve => {
+    releaseCodexPluginCompletion = resolve
+  })
+  const moonshotFollowUpStarted = new Promise(resolve => {
+    resolveMoonshotFollowUpStarted = resolve
+  })
+  const moonshotFollowUpRelease = new Promise(resolve => {
+    releaseMoonshotFollowUp = resolve
   })
 
   const cloudRequest = (pathname, options) => {
@@ -465,6 +517,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       ...options,
       useApiKey: true,
     })
+  }
+
+  function requestWorkspacePath(payload) {
+    const match = JSON.stringify(payload).match(/<cwd>([^<]+)<\/cwd>/u)
+    assert.ok(match?.[1], 'The Codex request did not expose its execution workspace')
+    return match[1]
   }
 
   async function allExecutions(projectId) {
@@ -576,6 +634,45 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     )
     assert.ok(localDefaultDevice?.device_id, 'Real Wework local executor fixture is missing')
     assert.ok(cloudExecutionDevice?.device_id, 'Real Wework cloud executor fixture is missing')
+    assert.ok(cloudEnvironment, 'Real cloud environment was not attached to the scenario')
+    const pluginRelease = await cloudEnvironment.publishPluginRelease({
+      slug: CODEX_PLUGIN_NAME,
+      version: '0.1.0',
+      packageRoot: join(
+        REPOSITORY_ROOT,
+        'wework',
+        'resources',
+        'bundled-plugins',
+        CODEX_PLUGIN_NAME
+      ),
+    })
+    await cloudRequest(
+      `/api/plugins/marketplace/${pluginRelease.pluginId}/install?device_id=${CLOUD_DEVICE_ID}`,
+      { method: 'POST' }
+    )
+    codexPluginSkillPath = join(
+      cloudEnvironment.remoteCodexHome,
+      'plugins',
+      'cache',
+      CODEX_PLUGIN_MARKETPLACE,
+      CODEX_PLUGIN_NAME,
+      '0.1.0',
+      'skills',
+      CODEX_PLUGIN_SKILL_NAME,
+      'SKILL.md'
+    )
+    await waitForValue(
+      () => readFile(codexPluginSkillPath, 'utf8').catch(() => ''),
+      content => content.includes(CODEX_PLUGIN_SKILL_MARKER),
+      'The collaboration Codex plugin did not synchronize to the cloud execution environment',
+      uiTimeoutMs
+    )
+    const codexPlugin = {
+      id: `${CODEX_PLUGIN_NAME}@${CODEX_PLUGIN_MARKETPLACE}`,
+      pluginName: CODEX_PLUGIN_NAME,
+      marketplaceId: CODEX_PLUGIN_MARKETPLACE,
+      displayName: 'Wework 插件示例',
+    }
     cloudRuntimeProfile = await cloudRequest('/api/v1/runtime-profiles', {
       method: 'POST',
       body: JSON.stringify({
@@ -623,6 +720,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         executionMode: 'auto',
         executionDeviceId: localDefaultDevice.device_id,
         workspaceBinding: { type: 'standalone' },
+        plugins: [codexPlugin],
       }),
     })
     wegentAgent = await cloudRequest(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
@@ -648,6 +746,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(localDefaultAgent.executionDeviceId, localDefaultDevice.device_id)
     assert.equal(localDefaultAgent.model, DEFAULT_MODEL_ID)
     assert.equal(localDefaultAgent.modelType, 'runtime')
+    assert.deepEqual(
+      localDefaultAgent.plugins,
+      [codexPlugin],
+      'The Codex robot response lost its configured plugin'
+    )
     await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
       timeoutMs: uiTimeoutMs,
     })
@@ -679,6 +782,110 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
+    await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
+    await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', `${activeBoard} [data-testid="workspace-create-task-tab"]`)
+    const taskProjectButton = `${activeBoard} [data-testid="workspace-issue-composer"] [data-testid="project-work-button"]`
+    await control.command('waitFor', taskProjectButton, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', taskProjectButton)
+    await control.command('waitFor', '[data-testid="project-options-list"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const taskProjectMenuSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const currentTaskProjectId = taskProjectMenuSnapshot.testIds
+      .find(testId => testId.startsWith('project-selected-icon-'))
+      ?.slice('project-selected-icon-'.length)
+    let taskTargetProjectTestId = null
+    for (const testId of taskProjectMenuSnapshot.testIds.filter(
+      candidate =>
+        candidate.startsWith('project-option-') &&
+        candidate !== `project-option-${currentTaskProjectId ?? ''}` &&
+        !taskProjectMenuSnapshot.testIds.includes(
+          `project-bind-workspace-${candidate.slice('project-option-'.length)}`
+        )
+    )) {
+      const projectText = await control.command('getText', `[data-testid="${testId}"]`, {
+        visible: true,
+      })
+      if (projectText.includes('project-automation-primary')) {
+        taskTargetProjectTestId = testId
+        break
+      }
+    }
+    assert.ok(
+      taskTargetProjectTestId,
+      'Task creation requires another runtime project for project-switch regression coverage'
+    )
+    const taskTargetProjectText = await control.command(
+      'getText',
+      `[data-testid="${taskTargetProjectTestId}"]`,
+      { visible: true }
+    )
+    assert.ok(
+      taskTargetProjectText.includes('project-automation-primary'),
+      'The task regression did not select the primary runtime project'
+    )
+    const taskTargetProjectName = 'project-automation-primary'
+    await control.command('click', `[data-testid="${taskTargetProjectTestId}"]`, {
+      visible: true,
+    })
+    const taskTargetWorkspaceSelector = '[data-testid^="project-workspace-option-"]'
+    if (
+      Number(
+        await control.command('getElementCount', taskTargetWorkspaceSelector, {
+          visible: true,
+        })
+      ) > 0
+    ) {
+      await control.command('clickWhenEnabled', taskTargetWorkspaceSelector, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+    }
+    await control.command('waitFor', taskProjectButton, {
+      timeoutMs: uiTimeoutMs,
+      text: taskTargetProjectName,
+      visible: true,
+    })
+    const switchedTaskTitle = '创建任务时切换运行项目'
+    await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      value: switchedTaskTitle,
+    })
+    await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
+    const switchedTaskIssue = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
+      response => (response.items ?? []).find(item => item.title === switchedTaskTitle),
+      'The project-switched task Issue was not persisted',
+      uiTimeoutMs
+    ).then(response => response.items.find(item => item.title === switchedTaskTitle))
+    const switchedTaskBindings = await waitForValue(
+      () => cloudRequest(`/api/v1/loop-items/${switchedTaskIssue.id}/tasks`),
+      bindings => bindings.length > 0,
+      'The project-switched task was not bound to its Issue',
+      uiTimeoutMs
+    )
+    const switchedTaskBinding = switchedTaskBindings[0]
+    const switchedTaskRuntimeLog = await waitForValue(
+      () => readFile(join(resultDir, 'executor.log'), 'utf8').catch(() => ''),
+      content =>
+        new RegExp(
+          `local_task_id=${switchedTaskBinding.task_id}[^\\n]*project_name=${taskTargetProjectName}(?:\\s|$)`
+        ).test(content),
+      'The created task did not run in the runtime project selected before submission',
+      uiTimeoutMs
+    )
+    assert.match(
+      switchedTaskRuntimeLog,
+      new RegExp(
+        `local_task_id=${switchedTaskBinding.task_id}[^\\n]*project_name=${taskTargetProjectName}(?:\\s|$)`
+      )
+    )
 
     const statusWorkflowRule = await cloudRequest(
       `/api/v1/cloud-projects/${projectId}/automations`,
@@ -989,8 +1196,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         method: 'POST',
         body: JSON.stringify({
           title: MOONSHOT_OVERRIDE_ISSUE_TITLE,
-          description:
+          description: [
             'The robot defaults to a local GPT runtime. This Issue must execute on the cloud public Moonshot fixture and preserve that identity for follow-up messages.',
+            CODEX_PLUGIN_PROMPT,
+          ].join('\n\n'),
           status: 'inbox',
           priority: 'high',
           tags: ['runtime-v2-model-override'],
@@ -1007,6 +1216,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }),
       }
     )
+    moonshotOverrideIssueId = moonshotOverrideIssue.id
     assert.equal(moonshotOverrideIssue.assignee_agent_id, localDefaultAgent.id)
     assert.equal(
       moonshotOverrideIssue.execution_config?.execution_device_id,
@@ -1081,6 +1291,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     )
     await control.command('select', executionModel, { value: `public:${CLOUD_MODEL_NAME}` })
     await control.command('select', executionProject, { value: 'standalone' })
+    await captureScreenshot(control, 'project-automation-codex-plugin-01-bound-agent-runtime.png')
     const initialUpstreamRequestOffset = upstreamResponseRequests.length
     await control.command('setLocalProxyUrl', 'body', {
       value: 'http://127.0.0.1:1',
@@ -1108,6 +1319,44 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       uiTimeoutMs
     ).then(response => response.items.find(candidate => candidate.id === moonshotOverrideIssue.id))
     assert.equal(persistedMoonshotIssue.execution_config.model, CLOUD_MODEL_NAME)
+
+    const moonshotTaskListSelector = `${activeBoard} [data-testid="cloud-todo-card-tasks-${moonshotOverrideIssue.id}"]`
+    const moonshotProgressPopup = `[data-testid="cloud-todo-card-progress-popup-${moonshotOverrideIssue.id}"]`
+    const moonshotPopupConversation = `${moonshotProgressPopup} [data-testid="cloud-todo-card-popup-conversation-${moonshotOverrideIssue.id}"]`
+    await withTimeout(
+      codexPluginCompletionStarted,
+      automationRuntimeTimeoutMs,
+      'The Codex plugin execution did not reach its final completion response'
+    )
+    try {
+      await control.command('waitFor', moonshotTaskListSelector, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('scrollIntoView', moonshotTaskListSelector)
+      await control.command('scrollIntoView', moonshotOverrideCard, { visible: true })
+      await control.command('hover', moonshotOverrideCard, { visible: true })
+      await control.command('waitFor', moonshotProgressPopup, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command(
+        'waitFor',
+        `${moonshotPopupConversation} [data-testid="pause-response-button"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await captureScreenshot(control, 'project-automation-codex-plugin-02-running.png')
+      await control.command('press', 'body', { key: 'Escape' })
+      await control.command('waitFor', moonshotProgressPopup, {
+        timeoutMs: uiTimeoutMs,
+        visible: false,
+      })
+    } finally {
+      releaseCodexPluginCompletion()
+    }
 
     const moonshotExecution = await waitForCompletedExecution(
       projectId,
@@ -1159,15 +1408,33 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The Issue execution did not reach the selected Moonshot model service',
       uiTimeoutMs
     )
-    const initialIssueRequests = initialMoonshotRequests.filter(request =>
-      JSON.stringify(request).includes(`task_id: ${moonshotOverrideIssue.id}`)
+    const initialIssueRequests = initialMoonshotRequests.filter(request => {
+      const requestText = JSON.stringify(request)
+      return (
+        requestText.includes(`task_id: ${moonshotOverrideIssue.id}`) &&
+        !requestText.includes('"request_kind":"prewarm"')
+      )
+    })
+    assert.ok(
+      [5, 6, 7].includes(initialIssueRequests.length),
+      `The Codex plugin flow did not execute Issue read, Skill read, MCP discovery/call, artifact write, and completion in a valid number of model turns: ${initialIssueRequests.length}`
     )
-    assert.ok(initialIssueRequests.length > 0, 'The Issue produced no correlated upstream request')
     assert.ok(
       initialIssueRequests.every(request => request.model === CLOUD_MODEL_UPSTREAM_ID),
       'The Issue produced a duplicate request through a model other than Moonshot'
     )
-    await control.command('setLocalProxyUrl', 'body', { value: '' })
+    assert.ok(
+      initialIssueRequests.some(request =>
+        JSON.stringify(request).includes(CODEX_PLUGIN_SKILL_MARKER)
+      ),
+      'The Codex plugin Skill content never returned to the model'
+    )
+    assert.ok(
+      initialIssueRequests.some(request =>
+        JSON.stringify(request).includes(CODEX_PLUGIN_COMPLETION)
+      ),
+      'The Codex plugin MCP output never returned to the model'
+    )
 
     const runtimeWork = await waitForValue(
       () => cloudRequest('/api/runtime-work'),
@@ -1185,51 +1452,88 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(runtimeTasksForIssue.length, 1, 'The Issue created more than one Runtime task')
     assert.equal(projectedMoonshotTask.modelSelection?.modelName, CLOUD_MODEL_NAME)
     assert.equal(projectedMoonshotTask.modelSelection?.modelType, 'public')
+    assert.ok(
+      projectedMoonshotTask.workspacePath,
+      'The projected Runtime task did not expose its execution workspace'
+    )
     assert.equal(
       Object.hasOwn(projectedMoonshotTask, 'runtimeHandle'),
       false,
       'The private Runtime handle escaped the cloud projection boundary'
     )
+    assert.equal(
+      await readFile(join(projectedMoonshotTask.workspacePath, CODEX_PLUGIN_ARTIFACT_NAME), 'utf8'),
+      CODEX_PLUGIN_ARTIFACT_CONTENT,
+      'The real Codex Runtime did not persist the Skill, MCP, and Plugin evidence artifact'
+    )
 
-    await control.command('drag', moonshotOverrideCard, {
-      target: `${activeBoard} [data-testid="cloud-todo-column-dropzone-in_review"]`,
-    })
-    await waitForValue(
+    const completedMoonshotIssue = await waitForValue(
       () => cloudRequest(`/api/v1/loop-items/${moonshotOverrideIssue.id}`),
-      item => item.status === 'in_review',
-      'The completed Issue did not reach the review state required for board follow-up',
+      item =>
+        item.status === 'in_review' &&
+        item.execution_state === 'succeeded' &&
+        item.ai_state?.status === 'succeeded' &&
+        item.ai_state?.project_chat_message_id &&
+        item.ai_state?.runtime_device_id === CLOUD_DEVICE_ID &&
+        item.ai_state?.runtime_task_id === moonshotExecution.runtimeTaskId,
+      'The completed Codex Runtime did not automatically project the Issue and completion activity to review',
       uiTimeoutMs
     )
-    await control.command(
-      'waitFor',
-      `${activeBoard} [data-testid="cloud-todo-card-tasks-${moonshotOverrideIssue.id}"]`,
-      {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      }
-    )
-    const moonshotProgressPopup = `[data-testid="cloud-todo-card-progress-popup-${moonshotOverrideIssue.id}"]`
-    const moonshotPopupConversation = `${moonshotProgressPopup} [data-testid="cloud-todo-card-popup-conversation-${moonshotOverrideIssue.id}"]`
+    assert.equal(completedMoonshotIssue.ai_state.agent_id, localDefaultAgent.id)
+    await control.command('setLocalProxyUrl', 'body', { value: '' })
+
+    await control.command('scrollIntoView', moonshotTaskListSelector)
+    await control.command('waitFor', moonshotTaskListSelector, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     const moonshotPopupModelSelector = `${moonshotPopupConversation} [data-testid="model-selector-button"]`
     const moonshotPopupInput = `${moonshotPopupConversation} [data-testid="chat-message-input"]`
     const moonshotPopupSend = `${moonshotPopupConversation} [data-testid="send-message-button"]`
+    const taskFileLink = `${moonshotPopupConversation} [data-testid="assistant-markdown-link"]`
     await control.command('scrollIntoView', moonshotOverrideCard, { visible: true })
     await control.command('hover', moonshotOverrideCard, { visible: true })
     await control.command('waitFor', moonshotProgressPopup, {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
+    await control.command(
+      'waitFor',
+      `${moonshotPopupConversation} [data-testid="message-assistant"]`,
+      {
+        text: CODEX_PLUGIN_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      }
+    )
+    await control.command('waitFor', taskFileLink, {
+      text: '打开任务文件',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await captureScreenshot(control, 'project-automation-codex-plugin-03-completed-evidence.png')
     const [moonshotPopupMetrics] = JSON.parse(
       await control.command('getElementMetrics', moonshotProgressPopup)
     )
+    const [moonshotCardMetrics] = JSON.parse(
+      await control.command('getElementMetrics', moonshotOverrideCard)
+    )
     const [bodyMetrics] = JSON.parse(await control.command('getElementMetrics', 'body'))
+    const popupHorizontalGap =
+      moonshotPopupMetrics.left >= moonshotCardMetrics.right
+        ? moonshotPopupMetrics.left - moonshotCardMetrics.right
+        : moonshotCardMetrics.left - moonshotPopupMetrics.right
     assert.ok(
-      Math.abs(moonshotPopupMetrics.top - 48) <= 1,
-      `The board popup did not keep its stable viewport top: ${JSON.stringify(moonshotPopupMetrics)}`
+      Math.abs(popupHorizontalGap - 10) <= 1,
+      `The board popup was not positioned beside its card: ${JSON.stringify({
+        moonshotCardMetrics,
+        moonshotPopupMetrics,
+      })}`
     )
     assert.ok(
-      Math.abs(bodyMetrics.right - moonshotPopupMetrics.right - 8) <= 1,
-      `The board popup did not stay at the viewport right edge: ${JSON.stringify({
+      moonshotPopupMetrics.top >= bodyMetrics.top + 8 - 1 &&
+        moonshotPopupMetrics.bottom <= bodyMetrics.bottom - 8 + 1,
+      `The board popup escaped the viewport bounds: ${JSON.stringify({
         bodyMetrics,
         moonshotPopupMetrics,
       })}`
@@ -1240,14 +1544,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         `${moonshotPopupConversation} [data-testid="right-workspace-chat-scroll-area"]`
       )
     )
+    assert.equal(
+      popupScrollMetrics.scrollOrigin,
+      'bottom',
+      `The board popup did not use the task conversation bottom-origin scroll model: ${JSON.stringify(popupScrollMetrics)}`
+    )
     const popupDistanceFromBottom =
       popupScrollMetrics.scrollOrigin === 'bottom'
-        ? Math.max(
-            0,
-            popupScrollMetrics.scrollHeight -
-              popupScrollMetrics.clientHeight +
-              popupScrollMetrics.scrollTop
-          )
+        ? Math.max(0, -popupScrollMetrics.scrollTop)
         : Math.max(
             0,
             popupScrollMetrics.scrollHeight -
@@ -1259,6 +1563,37 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       `The board popup did not start from the latest message: ${JSON.stringify(popupScrollMetrics)}`
     )
     await captureScreenshot(control, 'project-automation-board-hover-stable-latest.png')
+    await control.command('click', taskFileLink, { visible: true })
+    await control.command(
+      'waitFor',
+      '[data-testid="workspace-tab-select-fixed-task"][aria-selected="true"]',
+      {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      }
+    )
+    await waitForValue(
+      async () => JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')),
+      snapshot =>
+        snapshot.workbench?.currentRuntimeTask?.taskId === moonshotExecution.runtimeTaskId,
+      'The board-popup file action did not return to its bound Runtime task',
+      uiTimeoutMs
+    )
+    await control.command('click', '[data-testid="new-chat-button"]', { visible: true })
+    await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', boardWorkspaceTabSelector, { visible: true })
+    await control.command('waitFor', moonshotOverrideCard, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('hover', moonshotOverrideCard, { visible: true })
+    await control.command('waitFor', moonshotProgressPopup, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     const followUpRequestOffset = upstreamResponseRequests.length
     await control.command('click', moonshotPopupInput, { visible: true })
     await waitForValue(
@@ -1283,6 +1618,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     )
     assert.ok(!popupModelLabel.includes(DEFAULT_MODEL_LABEL))
     await control.command('click', moonshotPopupSend, { visible: true })
+    await withTimeout(
+      moonshotFollowUpStarted,
+      uiTimeoutMs,
+      'The board popup follow-up did not start streaming'
+    )
     const followUpRequests = await waitForValue(
       () => Promise.resolve(upstreamResponseRequests.slice(followUpRequestOffset)),
       requests =>
@@ -1298,29 +1638,64 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       CLOUD_MODEL_UPSTREAM_ID,
       'The board popup follow-up used the global default instead of the task model'
     )
-    await control.command('press', 'body', { key: 'Escape' })
-    await control.command('hover', moonshotOverrideCard, { visible: true })
-    await control.command('waitFor', moonshotProgressPopup, {
-      timeoutMs: uiTimeoutMs,
-      visible: true,
-    })
-    await control.command(
-      'click',
-      `[data-testid="cloud-todo-card-progress-pin-${moonshotOverrideIssue.id}"]`,
-      { visible: true }
+    assert.equal(
+      await control.command('getAttribute', boardWorkspaceTabSelector, {
+        value: 'aria-selected',
+      }),
+      'true',
+      'A locally handled board-popup message unexpectedly left the project-space tab'
     )
-    await waitForValue(
-      () => control.command('getAttribute', moonshotProgressPopup, { value: 'data-pinned' }),
-      value => value === 'true',
-      'The board popup did not stay pinned in place',
-      uiTimeoutMs
-    )
-    await captureScreenshot(control, 'project-automation-board-hover-pinned.png')
-    await control.command('press', 'body', { key: 'Escape' })
-    await control.command('waitFor', moonshotProgressPopup, {
-      timeoutMs: uiTimeoutMs,
-      visible: false,
-    })
+    try {
+      await control.command('press', 'body', { key: 'Escape' })
+      await control.command('waitFor', moonshotProgressPopup, {
+        timeoutMs: uiTimeoutMs,
+        visible: false,
+      })
+      await control.command('waitFor', moonshotOverrideCard, {
+        stableMs: 500,
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('pointerMove', 'body')
+      await control.command('hover', moonshotOverrideCard, { visible: true })
+      await control.command('waitFor', moonshotProgressPopup, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      const moonshotPopupPause = `${moonshotPopupConversation} [data-testid="pause-response-button"]`
+      await control.command('waitFor', moonshotPopupPause, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('pointerDown', moonshotPopupPause)
+      await captureScreenshot(control, 'project-automation-board-hover-running-stop-ready.png')
+      await control.command('click', moonshotPopupPause, { visible: true })
+      const moonshotPopupStoppedNotice = `${moonshotPopupConversation} [data-testid="assistant-stopped-notice"]`
+      await control.command('waitFor', moonshotPopupStoppedNotice, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await waitForValue(
+        () => control.command('getAttribute', moonshotProgressPopup, { value: 'data-pinned' }),
+        value => value === 'true',
+        'The board popup did not pin after the stop action completed',
+        uiTimeoutMs
+      )
+      const moonshotPopupClose = `${moonshotProgressPopup}[data-pinned="true"] [data-testid="cloud-todo-card-progress-popup-${moonshotOverrideIssue.id}-close"]`
+      await control.command('waitFor', moonshotPopupClose, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await captureScreenshot(control, 'project-automation-board-hover-stopped-pinned.png')
+      await control.command('click', moonshotPopupClose, { visible: true })
+      await control.command('waitFor', moonshotProgressPopup, {
+        timeoutMs: uiTimeoutMs,
+        visible: false,
+      })
+      await captureScreenshot(control, 'project-automation-board-hover-closed.png')
+    } finally {
+      releaseMoonshotFollowUp()
+    }
 
     await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       timeoutMs: uiTimeoutMs,
@@ -2008,13 +2383,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('waitFor', '[data-testid="ai-coordinator-prompt"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('click', '[data-testid^="execution-node-step-"]', {
+    const executionNodeSelector = '[data-testid^="execution-node-step-"]'
+    await control.command('waitFor', executionNodeSelector, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', executionNodeSelector, {
       visible: true,
     })
     await control.command('click', '[data-testid="automation-canvas-fit-view"]', {
       visible: true,
     })
-    await control.command('hover', '[data-testid^="execution-node-step-"]', {
+    await control.command('hover', executionNodeSelector, {
       visible: true,
     })
     await control.command('waitFor', '[data-testid^="automation-node-insert-before-step-"]', {
@@ -2573,6 +2953,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   return {
     requiresCloudEnvironment: true,
 
+    setCloudEnvironment(value) {
+      cloudEnvironment = value
+    },
+
     async prepareCloud({ authToken, backendUrl }) {
       cloudApi = { authToken, backendUrl }
       const createdKey = await requestJson(backendUrl, authToken, '/api/api-keys', {
@@ -2635,10 +3019,33 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     },
 
     async handleHttp(request, response, url) {
-      if (request.method === 'POST' && url.pathname === '/v1/responses' && cloudApi) {
+      const cloudResponsesProxy = url.pathname === '/api/runtime-work/llm-responses-proxy/responses'
+      if (
+        request.method === 'POST' &&
+        (url.pathname === '/v1/responses' || cloudResponsesProxy) &&
+        cloudApi
+      ) {
         const payload = await readJson(request)
         const responseId = `project-automation-real-${Date.now()}`
         const serialized = JSON.stringify(payload)
+        if (cloudResponsesProxy && payload.model === PROJECT_CHAT_REMOTE_MODEL_NAME) {
+          remoteProjectChatRequests.push(payload)
+          assert.equal(request.headers['x-wegent-model-type'], 'public')
+          assert.equal(request.headers['x-wegent-model-namespace'], 'default')
+          assert.equal(request.headers['x-wegent-model-user-id'], '0')
+          assert.ok(
+            serialized.includes(CHECKPOINT_TASK_PROMPT),
+            'The remote project-chat request lost the user prompt'
+          )
+          response.writeHead(200, {
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-cache',
+            connection: 'keep-alive',
+          })
+          const stream = streamingTextEvents('project-chat-remote', CHECKPOINT_TASK_COMPLETION_TEXT)
+          response.end(createSse([...stream.start, ...stream.finish]))
+          return true
+        }
         upstreamResponseRequests.push(payload)
         const writeEvents = events => {
           response.writeHead(200, {
@@ -2650,6 +3057,150 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }
         if (serialized.includes('"request_kind":"prewarm"')) {
           writeEvents([responseCreated(responseId), responseCompleted(responseId)])
+          return true
+        }
+        if (
+          moonshotOverrideIssueId &&
+          serialized.includes(`task_id: ${moonshotOverrideIssueId}`) &&
+          !serialized.includes(MOONSHOT_OVERRIDE_FOLLOW_UP)
+        ) {
+          assert.ok(
+            codexPluginSkillPath,
+            'The Codex plugin execution started before its Skill synchronized'
+          )
+          const advertisedToolNames = new Set(
+            (Array.isArray(payload.tools) ? payload.tools : [])
+              .map(tool => tool?.name ?? tool?.function?.name)
+              .filter(Boolean)
+          )
+          const directToolName = candidates =>
+            candidates.find(candidate => advertisedToolNames.has(candidate))
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_ARTIFACT_CALL_ID)) {
+            assert.ok(
+              CODEX_PLUGIN_ARTIFACT_LINES.every(line => serialized.includes(line)),
+              'The Codex workspace artifact did not contain Skill, MCP, and Plugin evidence'
+            )
+            resolveCodexPluginCompletionStarted()
+            await codexPluginCompletionRelease
+            writeEvents([
+              responseCreated(responseId),
+              assistantMessage(
+                `${CODEX_PLUGIN_COMPLETION}\n\n${MOONSHOT_OVERRIDE_INITIAL_COMPLETION}`
+              ),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_MCP_CALL_ID)) {
+            assert.ok(
+              serialized.includes(CODEX_PLUGIN_COMPLETION),
+              'The Codex plugin MCP result did not return to the model'
+            )
+            const artifactCommand = [
+              `printf '%s\\n' ${CODEX_PLUGIN_ARTIFACT_LINES.map(line => JSON.stringify(line)).join(
+                ' '
+              )}`,
+              `> ${JSON.stringify(CODEX_PLUGIN_ARTIFACT_NAME)}`,
+              `&& cat ${JSON.stringify(CODEX_PLUGIN_ARTIFACT_NAME)}`,
+            ].join(' ')
+            const shell = selectShellToolCommand(
+              payload,
+              artifactCommand,
+              requestWorkspacePath(payload)
+            )
+            writeEvents([
+              responseCreated(responseId),
+              ...functionCall(CODEX_PLUGIN_ARTIFACT_CALL_ID, shell.name, shell.arguments),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_MCP_SEARCH_CALL_ID)) {
+            const tool = selectMcpTool(payload, CODEX_PLUGIN_MCP_NAMESPACE, 'hello_wework', {
+              name: 'Collaboration E2E',
+            })
+            writeEvents([
+              responseCreated(responseId),
+              ...namespacedFunctionCall(
+                CODEX_PLUGIN_MCP_CALL_ID,
+                tool.namespace,
+                tool.name,
+                tool.arguments
+              ),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_SKILL_CALL_ID)) {
+            assert.ok(
+              serialized.includes(CODEX_PLUGIN_SKILL_MARKER),
+              'The Codex plugin Skill file was not read through the real tool loop'
+            )
+            const selection = mcpToolRequestEvents(payload, {
+              toolName: 'hello_wework',
+              argumentsValue: { name: 'Collaboration E2E' },
+              directToolName: directToolName([`${CODEX_PLUGIN_MCP_NAMESPACE}__hello_wework`]),
+              searchCallId: CODEX_PLUGIN_MCP_SEARCH_CALL_ID,
+              toolCallId: CODEX_PLUGIN_MCP_CALL_ID,
+            })
+            writeEvents([
+              responseCreated(responseId),
+              ...selection.events,
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_BOARD_CALL_ID)) {
+            assert.ok(
+              serialized.includes(CODEX_PLUGIN_PROMPT),
+              'The assigned Codex runtime did not read the Issue before executing its plugin'
+            )
+            assert.ok(
+              serialized.includes(CODEX_PLUGIN_NAME) &&
+                serialized.includes(CODEX_PLUGIN_SKILL_NAME),
+              'The assigned Codex runtime did not load its configured plugin Skill'
+            )
+            const shell = selectShellToolCommand(
+              payload,
+              `sed -n '1,80p' ${JSON.stringify(codexPluginSkillPath)}`,
+              dirname(codexPluginSkillPath)
+            )
+            writeEvents([
+              responseCreated(responseId),
+              ...functionCall(CODEX_PLUGIN_SKILL_CALL_ID, shell.name, shell.arguments),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_BOARD_SEARCH_CALL_ID)) {
+            const boardTool = selectMcpTool(payload, 'wework_space', 'get_board_item', {})
+            writeEvents([
+              responseCreated(responseId),
+              ...namespacedFunctionCall(
+                CODEX_PLUGIN_BOARD_CALL_ID,
+                boardTool.namespace,
+                boardTool.name,
+                boardTool.arguments
+              ),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          const selection = mcpToolRequestEvents(payload, {
+            toolName: 'get_board_item',
+            argumentsValue: {},
+            directToolName: directToolName([
+              'wework_space__get_board_item',
+              'wegent-wework-space_get_board_item',
+            ]),
+            searchCallId: CODEX_PLUGIN_BOARD_SEARCH_CALL_ID,
+            toolCallId: CODEX_PLUGIN_BOARD_CALL_ID,
+          })
+          writeEvents([
+            responseCreated(responseId),
+            ...selection.events,
+            responseCompleted(responseId),
+          ])
           return true
         }
         if (
@@ -2671,11 +3222,23 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           return true
         }
         if (serialized.includes(MOONSHOT_OVERRIDE_FOLLOW_UP)) {
-          writeEvents([
-            responseCreated(responseId),
-            assistantMessage(MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION),
-            responseCompleted(responseId),
-          ])
+          response.writeHead(200, {
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-cache',
+            connection: 'keep-alive',
+          })
+          response.flushHeaders()
+          response.write(createSse([responseCreated(responseId)]))
+          resolveMoonshotFollowUpStarted()
+          await moonshotFollowUpRelease
+          if (!response.destroyed) {
+            response.end(
+              createSse([
+                assistantMessage(MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION),
+                responseCompleted(responseId),
+              ])
+            )
+          }
           return true
         }
         if (serialized.includes('请确认当前分派结果')) {
@@ -2805,7 +3368,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }
         writeEvents([
           responseCreated(responseId),
-          assistantMessage('真实自动化执行已完成。'),
+          assistantMessage(
+            serialized.includes(`task_id: ${moonshotOverrideIssueId}`)
+              ? MOONSHOT_OVERRIDE_INITIAL_COMPLETION
+              : '真实自动化执行已完成。'
+          ),
           responseCompleted(responseId),
         ])
         return true
@@ -3077,29 +3644,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         json(response, 200, { data: [LOCAL_CODEX_MODEL, PROJECT_CHAT_REMOTE_MODEL, MODEL] })
         return true
       }
-      if (
-        request.method === 'POST' &&
-        url.pathname === '/api/runtime-work/llm-responses-proxy/responses'
-      ) {
-        const payload = await readJson(request)
-        remoteProjectChatRequests.push(payload)
-        assert.equal(request.headers['x-wegent-model-type'], 'public')
-        assert.equal(request.headers['x-wegent-model-namespace'], 'default')
-        assert.equal(request.headers['x-wegent-model-user-id'], '0')
-        assert.equal(payload.model, PROJECT_CHAT_REMOTE_MODEL_NAME)
-        assert.ok(
-          JSON.stringify(payload).includes(CHECKPOINT_TASK_PROMPT),
-          'The remote project-chat request lost the user prompt'
-        )
-        response.writeHead(200, {
-          'content-type': 'text/event-stream; charset=utf-8',
-          'cache-control': 'no-cache',
-          connection: 'keep-alive',
-        })
-        const stream = streamingTextEvents('project-chat-remote', CHECKPOINT_TASK_COMPLETION_TEXT)
-        response.end(createSse([...stream.start, ...stream.finish]))
-        return true
-      }
       if (request.method === 'GET' && url.pathname === '/api/teams') {
         json(response, 200, { items: [TEAM], total: 1 })
         return true
@@ -3293,6 +3837,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-add-board"]')
+      await control.command('navigate', 'body', {
+        value: `/todo?projectStore=backend&projectId=${PROJECT_ID}`,
+      })
       await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -3310,28 +3857,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           }
         )
       }
-      await control.command('click', `${activeBoard} [data-testid="cloud-project-settings"]`)
-      await control.command('waitFor', `${activeBoard} [data-testid="project-space-settings"]`, {
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
         timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command('waitFor', `${activeBoard} [data-testid="project-space-api-wiki"]`, {
-        text: 'POST /api/v1/cloud-projects',
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command(
-        'waitFor',
-        `${activeBoard} [data-testid="project-space-device-concurrency"]`,
-        {
-          timeoutMs: uiTimeoutMs,
-          visible: true,
-        }
-      )
-      const projectSelector = `${activeBoard} [data-testid="cloud-sidebar-project-${PROJECT_ID}"]`
-      await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
-      await control.command('click', projectSelector)
-      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
         visible: true,
       })
       await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-add"]`, {
@@ -3458,6 +3985,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           !snapshot.testIds.includes('pause-response-button'),
         'Project chat remained in the thinking state after the runtime task completed',
         uiTimeoutMs
+      )
+      const runtimeIndex = JSON.parse(
+        await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
+      )
+      const projectChatTasks = Object.values(runtimeIndex.tasks ?? {})
+        .filter(task => String(task.runtime_handle?.cloudProjectId ?? '') === PROJECT_ID)
+        .sort((left, right) => Number(right.created_at ?? 0) - Number(left.created_at ?? 0))
+      assert.equal(
+        projectChatTasks[0]?.workspace_path,
+        workspacePath,
+        'Project sidebar chat inherited worktree mode instead of using the primary workspace'
       )
       await captureScreenshot(control, 'project-chat-model-routing.png')
       await control.command(

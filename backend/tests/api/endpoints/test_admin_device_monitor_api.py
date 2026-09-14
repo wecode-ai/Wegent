@@ -75,7 +75,7 @@ async def test_admin_device_monitor_filters_online_devices_by_version(
     )
 
     with patch(
-        "app.api.endpoints.admin.device_monitor.cache_manager.mget",
+        "app.api.endpoints.admin.device_monitor.cache_manager.mget_or_raise",
         new=AsyncMock(
             return_value={
                 online_key: {
@@ -132,7 +132,7 @@ async def test_admin_device_monitor_ignores_version_filter_for_offline_status(
     )
 
     with patch(
-        "app.api.endpoints.admin.device_monitor.cache_manager.mget",
+        "app.api.endpoints.admin.device_monitor.cache_manager.mget_or_raise",
         new=AsyncMock(
             return_value={
                 online_key: {
@@ -277,7 +277,7 @@ async def test_admin_device_monitor_upgrades_only_eligible_local_devices(
     device_monitor.admin_device_batch_manager._reset_for_tests()
     with (
         patch(
-            "app.services.device.admin_device_batch.cache_manager.mget",
+            "app.services.device.admin_device_batch.cache_manager.mget_or_raise",
             new=AsyncMock(
                 return_value={
                     ready_key: {

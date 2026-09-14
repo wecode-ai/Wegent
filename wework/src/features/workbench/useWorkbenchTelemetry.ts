@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskSummary } from '@/types/api'
 import type { RuntimeTaskLifecycleStoreSnapshot } from './runtimeTaskLifecycle'
-import type { ExecutionTarget, TelemetryFailureReason, TelemetryResult } from '@/telemetry/events'
+import type { TelemetryFailureReason, TelemetryResult } from '@/telemetry/events'
 import { track } from '@/telemetry/client'
+import { telemetryExecutionTarget } from '@/telemetry/executionTarget'
 import {
   activeRuntimeRunTraceId,
   mintRuntimeRunTraceId,
@@ -30,13 +31,6 @@ interface ObservedTask {
 // Re-running the same task within this window counts as a retry rather than a
 // fresh interaction, signaling impatience or a failing flow.
 const TASK_RETRY_WINDOW_MS = 60_000
-
-function executionTarget(deviceId: string, devices: DeviceInfo[]): ExecutionTarget {
-  const device = devices.find(item => item.device_id === deviceId)
-  if (device?.device_type === 'local' || device?.device_type === 'app') return 'local'
-  if (device?.device_type === 'cloud' || device?.device_type === 'remote') return 'cloud'
-  return deviceId === 'local-device' ? 'local' : 'unknown'
-}
 
 function taskResult(task: RuntimeTaskSummary | null): TelemetryResult {
   if (task?.turnStatus === 'interrupted' || task?.status === 'cancelled') return 'cancelled'
@@ -95,7 +89,7 @@ export function useWorkbenchTelemetry({
       ) {
         return
       }
-      const target = executionTarget(snapshot.address.deviceId, devices)
+      const target = telemetryExecutionTarget(snapshot.address.deviceId, devices)
       const current: ObservedTask = previous ?? {
         firstResponseRecorded: false,
         running: false,
@@ -197,7 +191,7 @@ export function useWorkbenchTelemetry({
         track('$ai_trace', {
           $ai_trace_id: traceId,
           $ai_trace_phase: 'end',
-          execution_target: executionTarget(snapshot.address.deviceId, devicesRef.current),
+          execution_target: telemetryExecutionTarget(snapshot.address.deviceId, devicesRef.current),
           result: 'cancelled',
         })
         settleRuntimeRunTraceId(snapshot.address)

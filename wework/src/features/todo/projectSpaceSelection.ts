@@ -1,8 +1,14 @@
-import { isDefaultWorkItemProject, type CloudProject } from '@/api/deliveries'
+import { isDefaultWorkItemProject, type CloudLoopItem, type CloudProject } from '@/api/deliveries'
+import { canEditCollaborationIssue } from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeProjectSpaceRef, RuntimeTaskAddress } from '@/types/api'
 
 export type ProjectSpaceApi = NonNullable<WorkbenchServices['deliveryApi']>
+export interface ProjectSpaceTaskContextApi {
+  findCloudContextForTask(
+    task: RuntimeTaskAddress
+  ): Promise<{ project: CloudProject; loop_item: CloudLoopItem | null }>
+}
 export type LocatedProjectSpace = CloudProject & {
   location: 'local' | 'cloud'
 }
@@ -14,6 +20,13 @@ export interface ProjectSpaceOption {
 }
 
 export { isDefaultWorkItemProject }
+
+export function canEditProjectSpaceIssue(issue: {
+  can_edit?: boolean
+  project_store?: 'local' | 'backend'
+}): boolean {
+  return issue.project_store === 'local' ? true : canEditCollaborationIssue(issue)
+}
 
 export function projectStoreLocation(
   projectStore: RuntimeProjectSpaceRef['projectStore']
@@ -109,11 +122,11 @@ export function projectSupportsRobotAutomation(project: CloudProject): boolean {
 }
 
 export async function findProjectSpaceContextForTask(
-  apis: ProjectSpaceApi[],
+  apis: ProjectSpaceTaskContextApi[],
   task: RuntimeTaskAddress,
   timeoutMs = 5_000
-): ReturnType<ProjectSpaceApi['findCloudContextForTask']> {
-  type TaskContext = Awaited<ReturnType<ProjectSpaceApi['findCloudContextForTask']>>
+): ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']> {
+  type TaskContext = Awaited<ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']>>
   const results: Array<PromiseSettledResult<TaskContext> | undefined> = new Array(apis.length)
   let resolveUserContext: ((context: TaskContext) => void) | undefined
   const userContextFound = new Promise<TaskContext>(resolve => {

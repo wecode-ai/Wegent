@@ -2,7 +2,7 @@ import extract from 'extract-zip'
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { FeedbackBundleManager } from './feedback-bundle-manager.js'
 
 const temporaryRoots: string[] = []
@@ -23,7 +23,9 @@ describe('FeedbackBundleManager', () => {
       join(logs, 'executor.log'),
       'Authorization: Bearer top-secret\npassword=hunter2\nstatus=401\n'
     )
-    const manager = createManager(root, logs)
+    const downloadsDirectory = vi.fn(() => join(root, 'downloads'))
+    const manager = createManager(root, logs, downloadsDirectory)
+    expect(downloadsDirectory).not.toHaveBeenCalled()
 
     const preview = await manager.preview({
       includeRuntimeLogs: true,
@@ -42,6 +44,7 @@ describe('FeedbackBundleManager', () => {
         },
       ],
     })
+    expect(downloadsDirectory).not.toHaveBeenCalled()
 
     expect(preview.reportId).toMatch(/^WF-[A-F0-9]+$/)
     expect(preview.entries.map(entry => entry.archivePath)).toEqual(
@@ -55,6 +58,7 @@ describe('FeedbackBundleManager', () => {
     )
     expect(JSON.stringify(preview.entries)).not.toContain('task-secret')
     const exported = await manager.confirm(preview.stagingId)
+    expect(downloadsDirectory).toHaveBeenCalledOnce()
     await expect(stat(exported.path)).resolves.toMatchObject({ size: expect.any(Number) })
 
     const extracted = join(root, 'extracted')
@@ -95,11 +99,15 @@ describe('FeedbackBundleManager', () => {
   })
 })
 
-function createManager(root: string, logs: string): FeedbackBundleManager {
+function createManager(
+  root: string,
+  logs: string,
+  downloadsDirectory: () => string = () => join(root, 'downloads')
+): FeedbackBundleManager {
   return new FeedbackBundleManager({
     appVersion: () => '1.2.3',
     cacheDirectory: join(root, 'cache'),
-    downloadsDirectory: join(root, 'downloads'),
+    downloadsDirectory,
     logDirectories: [logs],
   })
 }

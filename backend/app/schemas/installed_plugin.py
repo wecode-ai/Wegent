@@ -79,10 +79,26 @@ class PluginLocalAuthDefinition(BaseModel):
     logoutOnUninstall: bool = True
 
 
+class PluginAuthorizationGroup(BaseModel):
+    """Presentation group; connector identities remain independent."""
+
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,99}$")
+    displayName: str = Field(min_length=1, max_length=100)
+
+
 class PluginConnectorComponent(BaseModel):
     """Cloud or device connector required by a plugin."""
 
     slug: str
+    displayName: Optional[str] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    description: Optional[str] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    authorizationGroup: Optional[PluginAuthorizationGroup] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     authPolicy: Literal["on_install", "on_use", "optional"] = "optional"
     localAuth: Optional[PluginLocalAuthDefinition] = Field(
         default=None,

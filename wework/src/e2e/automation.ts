@@ -835,7 +835,11 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
   return element.textContent?.trim() ?? ''
 }
 
-async function pressNativeDesktopControlKey(selector: string, key: string): Promise<string> {
+async function pressNativeDesktopControlKey(
+  selector: string,
+  key: string,
+  phase: 'press' | 'down' | 'up' = 'press'
+): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
   await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
     windowLabel,
@@ -847,20 +851,21 @@ async function pressNativeDesktopControlKey(selector: string, key: string): Prom
   element.focus()
   if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
   const received: KeyboardEvent[] = []
+  const eventType = phase === 'up' ? 'keyup' : 'keydown'
   const recordKey = (event: KeyboardEvent) => received.push(event)
-  document.addEventListener('keydown', recordKey, true)
+  window.addEventListener(eventType, recordKey, true)
   try {
-    await invokeDesktopHost('e2e.pressKey', { windowLabel, key })
+    await invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase })
     await waitForDesktopControlTick()
     if (!received.some(event => event.isTrusted && event.target === element)) {
       throw new Error(
-        `Native key did not reach its target: windowFocused=${document.hasFocus()}, ` +
+        `Native ${eventType} did not reach its target: windowFocused=${document.hasFocus()}, ` +
           `active=${document.activeElement?.getAttribute('data-testid') ?? ''}, ` +
           `received=${received.map(event => event.key).join(',')}`
       )
     }
   } finally {
-    document.removeEventListener('keydown', recordKey, true)
+    window.removeEventListener(eventType, recordKey, true)
   }
   return document.activeElement?.getAttribute('data-testid') ?? ''
 }
@@ -1712,14 +1717,61 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     }
     case 'performanceSnapshot': {
-      const processMemory = navigator.platform.toLowerCase().includes('mac')
-        ? await invokeDesktopHost('e2e.getProcessSnapshot')
-        : null
+      const debugSnapshot = getWorkbenchDebugSnapshot()
+      const currentRuntimeTask = debugSnapshot.workbench?.currentRuntimeTask
+      const runtimeMessages = currentRuntimeTask
+        ? getRuntimeConversationMessagesForLogicalAddress({
+            deviceId: currentRuntimeTask.deviceId,
+            taskId: currentRuntimeTask.taskId,
+            threadId: currentRuntimeTask.threadId,
+            workspacePath: currentRuntimeTask.workspacePath,
+          })
+        : []
+      const activeAssistantMessage = runtimeMessages.findLast(
+        message => message.role === 'assistant'
+      )
+      const narrativeBlocks =
+        activeAssistantMessage?.blocks?.filter(
+          block => block.type === 'thinking' || block.type === 'text' || block.type === 'plan'
+        ) ?? []
+      const assistantContentElements = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="assistant-message-content"]')
+      )
+      const [processMemory, rendererHeap] = await Promise.all([
+        navigator.platform.toLowerCase().includes('mac')
+          ? invokeDesktopHost('e2e.getProcessSnapshot')
+          : null,
+        invokeDesktopHost('e2e.getRendererHeapUsage'),
+      ])
       return JSON.stringify({
         timestamp: Date.now(),
         domNodeCount: document.getElementsByTagName('*').length,
+        assistantDom: {
+          contentElementCount: assistantContentElements.length,
+          textChars: assistantContentElements.reduce(
+            (total, element) => total + (element.textContent?.length ?? 0),
+            0
+          ),
+          markdownChunkCount: document.querySelectorAll('[data-markdown-window-chunk]').length,
+        },
+        activeRuntimeAssistant: activeAssistantMessage
+          ? {
+              contentChars: activeAssistantMessage.content.length,
+              contentOriginalChars: activeAssistantMessage.contentOriginalChars ?? null,
+              contentTruncated: activeAssistantMessage.contentTruncated === true,
+              displayItemCount: activeAssistantMessage.runtimeDisplayItems?.length ?? 0,
+              maxNarrativeBlockChars: Math.max(
+                0,
+                ...narrativeBlocks.map(block => block.content.length)
+              ),
+              truncatedNarrativeBlockCount: narrativeBlocks.filter(
+                block => block.contentTruncated === true
+              ).length,
+            }
+          : null,
         runtimeConversationCache: getRuntimeConversationCacheStats(),
         processMemory,
+        rendererHeap,
       })
     }
     case 'focusMainWindow':
@@ -2301,12 +2353,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
       const startedAt = Date.now()
       while (Date.now() - startedAt < timeoutMs) {
-        const element = findDesktopControlElements(command.selector).find(candidate =>
-          (candidate.textContent ?? '').includes(text)
+        const element = findDesktopControlElements(command.selector).find(
+          candidate =>
+            (!command.visible || desktopControlElementVisible(candidate)) &&
+            (candidate.textContent ?? '').includes(text)
         )
         if (element) {
           element.dataset.e2eAnchorId = value
-          return element.textContent?.trim() ?? ''
+          return element.dataset.testid ?? element.textContent?.trim() ?? ''
         }
         await waitForDesktopControlTick()
       }
@@ -2445,6 +2499,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'nativePress': {
       return pressNativeDesktopControlKey(command.selector, command.key ?? '')
+    }
+    case 'nativeKeyDownOnly': {
+      return pressNativeDesktopControlKey(command.selector, command.key ?? '', 'down')
+    }
+    case 'nativeKeyUp': {
+      return pressNativeDesktopControlKey(command.selector, command.key ?? '', 'up')
     }
     case 'select': {
       const element = findDesktopControlElements(command.selector)[0]

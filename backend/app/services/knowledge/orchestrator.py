@@ -63,6 +63,7 @@ from app.services.knowledge.retrieval_profile import (
 )
 from app.stores.tasks import task_store
 from shared.models import SearchHints
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -3012,15 +3013,18 @@ class KnowledgeOrchestrator:
                 "error_message": str(e),
             }
 
+    @trace_async(span_name="knowledge.retrieve", tracer_name="backend.services")
     async def retrieve_knowledge(
         self,
         *,
-        db: Session,
-        user: User,
+        user_id: int,
         knowledge_base_id: int,
         query: str,
+        task_id: int | None = None,
         max_results: int = 10,
         document_ids: Optional[List[int]] = None,
+        folder_ids: Optional[List[int]] = None,
+        include_subfolders: bool = True,
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
         context_window: int = 128000,
         used_context_tokens: int = 0,
@@ -3035,12 +3039,14 @@ class KnowledgeOrchestrator:
         remote RAG gateways with automatic fallback.
 
         Args:
-            db: Database session.
-            user: Current user (for access control).
+            user_id: Current user ID for access control.
             knowledge_base_id: Target knowledge base ID.
             query: Search query text.
+            task_id: Optional task context for resolving delegated read access.
             max_results: Maximum number of results to return (default: 10, max: 50).
             document_ids: Optional list of document IDs to restrict search scope.
+            folder_ids: Optional list of folder IDs to restrict search scope.
+            include_subfolders: Whether folder scope includes descendants.
             route_mode: Routing strategy:
                 - "auto": Let Backend decide based on token budget (default).
                 - "direct_injection": Fetch all chunks for direct context injection.
@@ -3062,125 +3068,30 @@ class KnowledgeOrchestrator:
         Raises:
             ValueError: If knowledge base not found, access denied, or config invalid.
         """
-        # Validate and normalize parameters
+        from app.services.knowledge.search_execution import knowledge_search_runner
+
         if max_results < 1:
             max_results = 10
         if max_results > 50:
             max_results = 50
 
-        # Verify knowledge base access (single point of permission check)
-        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
-            db=db,
+        return await knowledge_search_runner.retrieve(
+            user_id=user_id,
+            task_id=task_id,
             knowledge_base_id=knowledge_base_id,
-            user_id=user.id,
-        )
-        if knowledge_base is None:
-            raise ValueError(f"Knowledge base {knowledge_base_id} not found")
-        if not has_access:
-            raise ValueError(f"Access denied to knowledge base {knowledge_base_id}")
-
-        # Check RAG configuration
-        spec = (
-            (knowledge_base.json or {}).get("spec", {}) if knowledge_base.json else {}
-        )
-        retrieval_config = spec.get("retrievalConfig")
-        if not retrieval_config:
-            raise ValueError(
-                f"Knowledge base {knowledge_base_id} has no RAG configuration"
-            )
-        retriever_name = retrieval_config.get("retriever_name")
-        embedding_config = retrieval_config.get("embedding_config")
-        if not retriever_name or not embedding_config:
-            raise ValueError(
-                f"Knowledge base {knowledge_base_id} has incomplete RAG configuration"
-            )
-
-        # Use runtime resolver and gateway for retrieval (supports remote fallback)
-        from app.services.rag.gateway_factory import get_query_gateway
-        from app.services.rag.local_gateway import LocalRagGateway
-        from app.services.rag.remote_gateway import (
-            RemoteRagGatewayError,
-            should_fallback_to_local,
-        )
-        from app.services.rag.retrieval_service import RetrievalService
-        from app.services.rag.runtime_resolver import RagRuntimeResolver
-        from shared.models import RetrievalScope
-
-        runtime_resolver = RagRuntimeResolver()
-        retrieval_service = RetrievalService()
-        scope = RetrievalScope(document_ids=document_ids) if document_ids else None
-
-        # Build runtime spec for gateway routing
-        runtime_spec = runtime_resolver.build_query_runtime_spec(
-            db=db,
-            knowledge_base_ids=[knowledge_base_id],
             query=query,
             max_results=max_results,
-            scope=scope,
+            document_ids=document_ids,
+            folder_ids=folder_ids,
+            include_subfolders=include_subfolders,
             route_mode=route_mode,
-            user_id=user.id,
-            user_name=user.user_name,
             context_window=context_window,
             used_context_tokens=used_context_tokens,
             reserved_output_tokens=reserved_output_tokens,
             context_buffer_ratio=context_buffer_ratio,
             max_direct_chunks=max_direct_chunks,
             search_hints=search_hints,
-            restricted_mode=False,
         )
-
-        # Finalize route mode based on context budget
-        resolved_route_mode = retrieval_service.decide_route_mode_for_chat_shell(
-            query=query,
-            knowledge_base_ids=[knowledge_base_id],
-            db=db,
-            route_mode=route_mode,
-            scope=scope,
-            metadata_condition=None,
-            context_window=context_window,
-            used_context_tokens=used_context_tokens,
-            reserved_output_tokens=reserved_output_tokens,
-            context_buffer_ratio=context_buffer_ratio,
-            max_direct_chunks=max_direct_chunks,
-        )
-        runtime_spec = runtime_spec.model_copy(
-            update={"route_mode": resolved_route_mode}
-        )
-
-        # Build KB configs for remote gateway if needed
-        if resolved_route_mode == "rag_retrieval":
-            kb_configs = runtime_resolver.build_query_knowledge_base_configs(
-                db=db,
-                knowledge_base_ids=[knowledge_base_id],
-                user_name=user.user_name,
-            )
-            runtime_spec = runtime_spec.model_copy(
-                update={"knowledge_base_configs": kb_configs}
-            )
-
-        # Execute query with remote fallback support
-        rag_gateway = get_query_gateway()
-        try:
-            result = await rag_gateway.query(runtime_spec, db=db)
-        except RemoteRagGatewayError as exc:
-            if should_fallback_to_local(exc):
-                logger.warning(
-                    f"[Orchestrator] Remote query failed for KB {knowledge_base_id}, "
-                    f"falling back to local gateway: {exc}"
-                )
-                result = await LocalRagGateway().query(runtime_spec, db=db)
-            else:
-                raise
-
-        # Normalize result format for API consumers
-        return {
-            "query": query,
-            "knowledge_base_id": knowledge_base_id,
-            "mode": result.get("mode", "rag_retrieval"),
-            "records": result.get("records", []),
-            "total": result.get("total", 0),
-            "total_estimated_tokens": result.get("total_estimated_tokens", 0),
-        }
 
 
 # Singleton instance

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { ChevronDown, Search } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -29,6 +29,7 @@ interface TaskHistorySectionProps {
   isSearchResult: boolean
   onTaskSelect: () => void
   onSelectMultiple: (taskId: number) => void
+  projectSection?: ReactNode
 }
 
 /**
@@ -52,6 +53,7 @@ export default function TaskHistorySection({
   isSearchResult,
   onTaskSelect,
   onSelectMultiple,
+  projectSection,
 }: TaskHistorySectionProps) {
   const { t } = useTranslation()
   const { projectTaskIds } = useProjectContext()
@@ -74,7 +76,9 @@ export default function TaskHistorySection({
 
   return (
     <>
-      {!isCollapsed && !isSearchResult && <ProjectSection onTaskSelect={onTaskSelect} />}
+      {!isCollapsed &&
+        !isSearchResult &&
+        (projectSection ?? <ProjectSection onTaskSelect={onTaskSelect} />)}
 
       {filteredPersonalTasks.length > 0 && (
         <DroppableHistory>

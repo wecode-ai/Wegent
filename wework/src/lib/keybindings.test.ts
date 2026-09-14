@@ -7,6 +7,7 @@ import {
   TOGGLE_MODEL_SELECTOR_COMMAND,
   TOGGLE_PRIORITY_FILTER_COMMAND,
   isEditableShortcutTarget,
+  shouldIgnoreWorkbenchShortcut,
   dispatchOpenSettingsShortcut,
   dispatchOpenTerminalShortcut,
   dispatchToggleModelSelectorShortcut,
@@ -139,6 +140,46 @@ describe('keybindings', () => {
     terminal.appendChild(terminalTextarea)
     expect(isEditableShortcutTarget(terminalTextarea)).toBe(false)
   })
+
+  it.each(['textarea', 'contenteditable', 'paragraph'])(
+    'allows modified workbench shortcuts from a composer %s',
+    kind => {
+      const composer = document.createElement(kind === 'textarea' ? 'textarea' : 'div')
+      composer.dataset.testid = 'chat-message-input'
+      const target = kind === 'paragraph' ? document.createElement('p') : composer
+      if (target !== composer) composer.appendChild(target)
+      if (kind !== 'textarea') {
+        composer.contentEditable = 'true'
+        Object.defineProperty(target, 'isContentEditable', { value: true })
+      }
+      const shouldIgnore = (init: KeyboardEventInit) => {
+        const event = new KeyboardEvent('keydown', init)
+        Object.defineProperty(event, 'target', { value: target })
+        return shouldIgnoreWorkbenchShortcut(event)
+      }
+
+      expect(shouldIgnore({ key: 'j', metaKey: true })).toBe(false)
+      expect(shouldIgnore({ key: 'j', ctrlKey: true })).toBe(false)
+      expect(shouldIgnore({ key: 'u', metaKey: true, altKey: true })).toBe(false)
+      expect(shouldIgnore({ key: 'j' })).toBe(true)
+      expect(shouldIgnore({ key: 'J', shiftKey: true })).toBe(true)
+      expect(shouldIgnore({ key: 'å', altKey: true })).toBe(true)
+      expect(shouldIgnore({ key: 'j', metaKey: true, isComposing: true })).toBe(true)
+      expect(isEditableShortcutTarget(target)).toBe(true)
+    }
+  )
+
+  it.each(['input', 'textarea', 'select', 'div'])(
+    'keeps workbench shortcuts out of other editable %s targets',
+    tag => {
+      const target = document.createElement(tag)
+      if (tag === 'div') Object.defineProperty(target, 'isContentEditable', { value: true })
+      const event = new KeyboardEvent('keydown', { key: 'j', metaKey: true })
+      Object.defineProperty(event, 'target', { value: target })
+
+      expect(shouldIgnoreWorkbenchShortcut(event)).toBe(true)
+    }
+  )
 
   it('uses the existing bottom panel toggle button when available', () => {
     const button = document.createElement('button')

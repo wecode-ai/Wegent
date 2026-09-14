@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { appendFile, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { createSingleRootLocalProject } from '../modules/shared.mjs'
@@ -11,6 +11,8 @@ const FIRST_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_FIRST'
 const FIRST_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_FIRST_COMPLETE'
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND_COMPLETE'
+const LONG_HISTORY_ITEM_COUNT = 1_200
+const HYDRATION_RESPONSE_TIMEOUT_MS = 3_000
 
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
@@ -59,6 +61,65 @@ async function waitForNewTaskRow(control, knownRows, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error('Timed out waiting for the running-history task row')
+}
+
+function appendLongRunningHistory(rollout, threadId) {
+  const records = rollout
+    .split('\n')
+    .filter(Boolean)
+    .map(line => JSON.parse(line))
+  const turnId = records.findLast(
+    record => record.type === 'event_msg' && record.payload?.type === 'task_started'
+  )?.payload?.turn_id
+  assert.ok(turnId, 'The running-history rollout did not contain an active turn')
+  const firstOrdinal = Math.max(0, ...records.map(record => Number(record.ordinal) || 0)) + 1
+  return Array.from({ length: LONG_HISTORY_ITEM_COUNT }, (_, index) =>
+    JSON.stringify({
+      timestamp: '2026-09-13T13:23:16.000Z',
+      ordinal: firstOrdinal + index,
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed',
+        thread_id: threadId,
+        turn_id: turnId,
+        item: {
+          id: `long-history-command-${index}`,
+          type: 'CommandExecution',
+          command: ['printf', String(index)],
+          status: 'completed',
+        },
+      },
+    })
+  ).join('\n')
+}
+
+async function findRolloutPath(directory, threadId) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      const nested = await findRolloutPath(path, threadId)
+      if (nested) return nested
+    } else if (entry.name.endsWith(`${threadId}.jsonl`)) {
+      return path
+    }
+  }
+  return null
+}
+
+async function waitForLongHistoryHydration(control, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(
+      await control.command('performanceSnapshot', 'body', {
+        timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
+      })
+    )
+    if (snapshot.activeRuntimeAssistant?.displayItemCount >= LONG_HISTORY_ITEM_COUNT) {
+      return snapshot
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('Timed out waiting for the long running transcript to hydrate')
 }
 
 export function createDesktopScenario({
@@ -181,6 +242,14 @@ export function createDesktopScenario({
         assert.ok(task, 'The running-history task was missing from the persisted runtime index')
         delete task.runtime_handle?.completedTranscriptMessages
         delete task.runtime_handle?.completedTranscriptThreadId
+        const threadId = task.thread_id
+        assert.equal(typeof threadId, 'string', 'The running-history task has no Codex thread')
+        const threadPath = await findRolloutPath(join(executorHome, 'codex', 'sessions'), threadId)
+        assert.ok(threadPath, 'The running-history Codex rollout was not found')
+        const rollout = await readFile(threadPath, 'utf8')
+        const longHistory = appendLongRunningHistory(rollout, threadId)
+        await appendFile(threadPath, `${longHistory}\n`, 'utf8')
+        task.runtime_handle.cloudTranscript ??= {}
         await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
       })
       await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
@@ -189,6 +258,25 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
+      const hydrationStartedAt = Date.now()
+      const performanceSnapshot = JSON.parse(
+        await control.command('performanceSnapshot', 'body', {
+          timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
+        })
+      )
+      assert.ok(
+        Date.now() - hydrationStartedAt < HYDRATION_RESPONSE_TIMEOUT_MS,
+        'Hydrating a long running transcript blocked the renderer'
+      )
+      const hydratedSnapshot = await waitForLongHistoryHydration(control, uiTimeoutMs)
+      assert.ok(
+        hydratedSnapshot.runtimeConversationCache?.messageEntries >= 1,
+        'The long running transcript was not restored into the conversation cache'
+      )
+      assert.ok(
+        hydratedSnapshot.activeRuntimeAssistant?.displayItemCount >= LONG_HISTORY_ITEM_COUNT,
+        'The restored conversation did not include the complete long tool history'
+      )
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FIRST_COMPLETION,
         timeoutMs: uiTimeoutMs,

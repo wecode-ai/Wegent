@@ -71,7 +71,7 @@ describe('theme token guard', () => {
   test('styles do not reference the removed background token alias', () => {
     const guardedStylePaths = [
       resolve(process.cwd(), 'src/styles/globals.css'),
-      resolve(sourceRoot, 'features/todo/task-detail-layout.css'),
+      resolve(process.cwd(), '../packages/collaboration/src/issue-detail/task-detail-layout.css'),
     ]
 
     for (const stylePath of guardedStylePaths) {

@@ -76,7 +76,7 @@ export class FeedbackBundleManager {
     private readonly options: {
       appVersion: () => string
       cacheDirectory: string
-      downloadsDirectory: string
+      downloadsDirectory: () => string
       logDirectories: string[]
     }
   ) {}
@@ -101,11 +101,9 @@ export class FeedbackBundleManager {
 
   async confirm(stagingIdInput: string): Promise<{ reportId: string; path: string }> {
     const { stagingId, staged } = await this.resolveStaged(stagingIdInput)
-    await ensureDirectory(this.options.downloadsDirectory)
-    const destination = join(
-      this.options.downloadsDirectory,
-      `wework-feedback-${staged.reportId}.zip`
-    )
+    const downloadsDirectory = this.options.downloadsDirectory()
+    await ensureDirectory(downloadsDirectory)
+    const destination = join(downloadsDirectory, `wework-feedback-${staged.reportId}.zip`)
     try {
       await rename(staged.path, destination)
     } catch (moveError) {

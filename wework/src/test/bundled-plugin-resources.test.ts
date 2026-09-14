@@ -33,6 +33,32 @@ describe('bundled plugin resources', () => {
     expect(packageScript).toContain("join(electronRoot, 'resources', 'bundled-plugins')")
   })
 
+  test('packages a runnable MCP server in the plugin example', () => {
+    const resourcesDirectory = resolve(process.cwd(), 'resources')
+    const mcpManifest = JSON.parse(
+      readFileSync(
+        resolve(resourcesDirectory, 'bundled-plugins/wework-plugin-example/.mcp.json'),
+        'utf8'
+      )
+    ) as {
+      mcpServers?: Record<
+        string,
+        {
+          command?: string
+          args?: string[]
+          cwd?: string
+        }
+      >
+    }
+    const example = mcpManifest.mcpServers?.example
+
+    expect(example).toEqual({
+      command: 'node',
+      args: ['./mcp/server.mjs'],
+      cwd: '.',
+    })
+  })
+
   test('installs the stable Wework project-space capability by default', () => {
     const resourcesDirectory = resolve(process.cwd(), 'resources')
     const codexMarketplace = JSON.parse(

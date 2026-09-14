@@ -8,6 +8,7 @@ import type {
   RuntimeAdditionalContext,
   RuntimeContextUsage,
   RuntimeGoalCreateInput,
+  RuntimeName,
   RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTurnNavigationItem,
@@ -24,6 +25,7 @@ import type {
   WorkbenchFileChangesBlock,
   WorkbenchPlanBlock,
   WorkbenchProcessingBlock,
+  WorkbenchSubagentBlock,
   WorkbenchThinkingBlock,
   WorkbenchTextBlock,
   WorkbenchToolBlock,
@@ -45,6 +47,8 @@ export type ThinkingBlock = WorkbenchThinkingBlock
 export type TextBlock = WorkbenchTextBlock
 
 export type PlanBlock = WorkbenchPlanBlock
+
+export type SubagentBlock = WorkbenchSubagentBlock<TurnFileChangesSummary>
 
 export type FileChangesBlock = WorkbenchFileChangesBlock<TurnFileChangesSummary>
 
@@ -104,6 +108,9 @@ export interface QueuedWorkbenchMessage {
   id: string
   content: string
   status: QueuedMessageStatus
+  runtimeQueued?: boolean
+  runtimeQueuePosition?: number | null
+  runtimeTurnIdsBeforeStart?: string[]
   deliveryMode?: 'message' | 'guidance'
   awaitingTurnStart?: boolean
   awaitingGuidanceAcceptance?: boolean
@@ -133,6 +140,7 @@ export interface GuidanceWorkbenchMessage {
 }
 
 export interface RuntimePaneTranscript {
+  runtime?: RuntimeName
   messages: WorkbenchMessage[]
   turns: RuntimeConversationTurn[]
   running?: boolean
@@ -151,12 +159,14 @@ export interface RuntimeConversationTurn {
   id: string | null
   clientUserMessageId?: string
   runtimeMessageIndex?: number
+  itemMerge?: 'prepend'
   items: RuntimeConversationItem[]
   status: RuntimeWorkbenchMessageStatus
   completedAt?: string | number | null
   error?: string
   errorType?: string
   stoppedNotice?: boolean | null
+  contentTruncated?: boolean
   streamingThinkingContent?: string
   fileChanges?: TurnFileChangesSummary
   references?: CodexReference[]
@@ -188,6 +198,7 @@ export interface RuntimePaneTranscriptLoadOptions {
   afterCursor?: string | null
   refresh?: boolean
   includeFullContent?: boolean
+  navigationOnly?: boolean
 }
 
 export type RuntimeTranscriptLoader = (

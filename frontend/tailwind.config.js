@@ -14,6 +14,7 @@ export default {
     './src/features/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
+    '../packages/collaboration/src/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
     extend: {

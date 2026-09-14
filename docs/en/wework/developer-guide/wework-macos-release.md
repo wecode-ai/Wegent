@@ -222,6 +222,16 @@ readiness, and includes bytes transferred before a failed differential attempt.
 The local Squirrel.Mac handoff of the cached ZIP is not counted as network
 traffic.
 
+When one component download encounters an explicitly transient transport
+failure, the client makes at most three attempts, waiting one second and then
+two seconds before retrying. Retries are limited to interrupted connections,
+DNS, connection, or request timeouts, HTTP 408, HTTP 429, and HTTP 5xx
+responses. Other HTTP 4xx responses, archive size or SHA-256 mismatches, and
+extracted-content SHA-256 mismatches are not retried and remain real update
+failures. Bytes transferred by a failed component attempt are removed from the
+current progress before retrying. Failure events in `app-update.log` record the
+sanitized error type, code, message, and first-level cause without logging URLs.
+
 Wework no longer packages or downloads a second Node runtime. At startup it
 creates a lightweight `node` entry under the user data directory, prepends it
 to `PATH`, points `WEWORK_NODE_PATH`, `NODE`, and `npm_node_execpath` at

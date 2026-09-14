@@ -313,7 +313,7 @@ export class WeworkSync {
     const delivered = await this.reconcilePendingSegment(turn)
     await this.releaseLease(turn, lease)
     if (!delivered) {
-      this.forkPendingTurn(turn)
+      this.forkPendingTurn(turn, Math.min(turn.baseSequence, lease.currentSequence))
       return
     }
     await this.acknowledgeNativeTurn(delivered)
@@ -423,11 +423,11 @@ export class WeworkSync {
     return encryption
   }
 
-  forkPendingTurn(turn) {
+  forkPendingTurn(turn, forkedAtSequence = turn.baseSequence) {
     const transcriptId = `fork-${createHash('sha256')
       .update(`${this.clientId}\u0000${turn.transcriptId}\u0000${turn.turnId}`)
       .digest('hex')}`
-    this.outbox.fork(turn, transcriptId)
+    this.outbox.fork(turn, transcriptId, forkedAtSequence)
   }
 
   async pullTranscripts() {

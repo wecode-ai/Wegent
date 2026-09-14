@@ -24,8 +24,10 @@ import {
 } from '@/api/local/codexOfficialModels'
 import {
   cancelLocalCodexLogin,
-  hasLocalCodexAccount,
+  listLocalCodexAccounts,
   startLocalCodexLogin,
+  switchLocalCodexAccount,
+  type LocalCodexAccounts,
 } from '@/api/local/codexAuth'
 import { getLocalCodexAuthStatus, type LocalRuntimeAuthStatus } from '@/api/local/runtimeAuthStatus'
 import { createModelApi } from '@/api/models'
@@ -68,6 +70,7 @@ import {
   type LocalModelConfig,
   type LocalModelCatalogSnapshot,
   type LocalModelApiFormat,
+  type LocalModelCodexToolCompatibility,
   type LocalModelToolProfile,
   type LocalModelWebSearchMode,
 } from '@/features/model-settings/localModelSettings'
@@ -148,75 +151,84 @@ function modelMeta(model: UnifiedModel): string {
 
 function LocalCodexModelRow({
   status,
+  accounts,
   loading,
   error,
   loginState,
   loginError,
+  switchingAccountId,
   onLogin,
   onCancelLogin,
+  onSwitchAccount,
 }: {
   status: LocalRuntimeAuthStatus | null
+  accounts: LocalCodexAccounts | null
   loading: boolean
   error: string | null
   loginState: 'idle' | 'starting' | 'waiting' | 'cancelling'
   loginError: string | null
+  switchingAccountId: string | null
   onLogin: () => void
   onCancelLogin: () => void
+  onSwitchAccount: (accountId: string) => void
 }) {
   const { t } = useTranslation('common')
   const exists = status?.exists === true
+  const activeAccount = accounts?.accounts.find(account => account.id === accounts.activeAccountId)
+  const loginBusy = loginState !== 'idle'
   return (
     <div
       data-testid="local-codex-model-row"
-      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2.5"
+      className="rounded-lg border border-border bg-background px-3 py-2.5"
     >
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-semibold text-text-primary">
-            {t('workbench.local_codex_model_title', 'Codex 账号')}
-          </h3>
-          <span
-            data-testid="local-codex-model-status-pill"
-            className={`rounded-full px-2 py-0.5 text-xs ${
-              exists ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
-            }`}
-          >
-            {loading
-              ? t('workbench.local_codex_account_checking', '检查中')
-              : exists
-                ? t('workbench.local_codex_account_signed_in', '已登录')
-                : t('workbench.local_codex_account_signed_out', '未登录')}
-          </span>
-        </div>
-        <div className="mt-1 text-xs leading-5 text-text-secondary">
-          {loading
-            ? t('workbench.local_codex_account_checking_description', '正在检查账号状态...')
-            : loginState === 'waiting' || loginState === 'cancelling'
-              ? t(
-                  'workbench.local_codex_login_waiting',
-                  '请在浏览器中完成登录，完成后这里会自动更新。'
-                )
-              : exists
-                ? t(
-                    'workbench.local_codex_account_signed_in_description',
-                    '当前设备已可使用 Codex。'
-                  )
-                : t(
-                    'workbench.local_codex_account_signed_out_description',
-                    '登录 ChatGPT 账号以在 Wework 中使用 Codex。'
-                  )}
-        </div>
-        {error && <div className="mt-1 text-xs text-red-500">{error}</div>}
-        {loginError && (
-          <div data-testid="local-codex-login-error" className="mt-1 text-xs text-red-500">
-            {loginError}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-text-primary">
+              {t('workbench.local_codex_model_title', 'Codex 账号')}
+            </h3>
+            <span
+              data-testid="local-codex-model-status-pill"
+              className={`rounded-full px-2 py-0.5 text-xs ${
+                exists ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
+              }`}
+            >
+              {loading
+                ? t('workbench.local_codex_account_checking', '检查中')
+                : exists
+                  ? t('workbench.local_codex_account_signed_in', '已登录')
+                  : t('workbench.local_codex_account_signed_out', '未登录')}
+            </span>
           </div>
-        )}
-      </div>
-      {!loading && (
-        <div className="flex items-center gap-2">
-          {!exists &&
-            (loginState === 'waiting' || loginState === 'cancelling' ? (
+          <div className="mt-1 text-xs leading-5 text-text-secondary">
+            {loading
+              ? t('workbench.local_codex_account_checking_description', '正在检查账号状态...')
+              : loginState === 'waiting' || loginState === 'cancelling'
+                ? t(
+                    'workbench.local_codex_login_waiting',
+                    '请在浏览器中完成登录，完成后这里会自动更新。'
+                  )
+                : activeAccount?.email ||
+                  (exists
+                    ? t(
+                        'workbench.local_codex_account_signed_in_description',
+                        '当前设备已可使用 Codex。'
+                      )
+                    : t(
+                        'workbench.local_codex_account_signed_out_description',
+                        '登录 ChatGPT 账号以在 Wework 中使用 Codex。'
+                      ))}
+          </div>
+          {error && <div className="mt-1 text-xs text-red-500">{error}</div>}
+          {loginError && (
+            <div data-testid="local-codex-login-error" className="mt-1 text-xs text-red-500">
+              {loginError}
+            </div>
+          )}
+        </div>
+        {!loading && (
+          <div className="flex items-center gap-2">
+            {loginState === 'waiting' || loginState === 'cancelling' ? (
               <button
                 type="button"
                 data-testid="local-codex-login-cancel-button"
@@ -242,9 +254,52 @@ function LocalCodexModelRow({
                 ) : null}
                 {loginState === 'starting'
                   ? t('workbench.local_codex_login_opening', '正在打开...')
-                  : t('workbench.local_codex_login_action', '登录')}
+                  : exists
+                    ? t('workbench.local_codex_add_account', '添加账号')
+                    : t('workbench.local_codex_login_action', '登录')}
               </button>
-            ))}
+            )}
+          </div>
+        )}
+      </div>
+      {!loading && accounts && accounts.accounts.length > 0 && (
+        <div data-testid="local-codex-account-list" className="mt-3 grid gap-1">
+          {accounts.accounts.map(account => {
+            const active = account.id === accounts.activeAccountId
+            const switching = account.id === switchingAccountId
+            return (
+              <div
+                key={account.id}
+                data-testid={`local-codex-account-${account.id}`}
+                className="flex min-h-10 items-center justify-between gap-3 rounded-md px-2 py-1.5 hover:bg-muted"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm text-text-primary">
+                    {account.email || t('workbench.local_codex_account_unknown', 'ChatGPT 账号')}
+                  </div>
+                  {account.planType && (
+                    <div className="text-xs text-text-muted">{account.planType}</div>
+                  )}
+                </div>
+                {active ? (
+                  <span className="shrink-0 text-xs text-text-muted">
+                    {t('workbench.local_codex_account_current', '当前账号')}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid={`local-codex-account-switch-${account.id}`}
+                    onClick={() => onSwitchAccount(account.id)}
+                    disabled={loginBusy || switchingAccountId !== null}
+                    className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {switching && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {t('workbench.local_codex_account_switch', '切换')}
+                  </button>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
@@ -264,6 +319,7 @@ interface LocalModelFormState {
   }>
   baseUrl: string
   apiFormat: LocalModelApiFormat
+  codexToolCompatibility: LocalModelCodexToolCompatibility
   toolProfile: LocalModelToolProfile
   requestPath: string
   apiKey: string
@@ -301,6 +357,7 @@ const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   additionalModels: [],
   baseUrl: '',
   apiFormat: 'openai-responses',
+  codexToolCompatibility: 'native',
   toolProfile: 'custom',
   requestPath: DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   apiKey: '',
@@ -402,6 +459,7 @@ function isLocalModelFormDirty(
       form.additionalModels.length > 0 ||
       form.baseUrl.trim() !== '' ||
       form.apiFormat !== 'openai-responses' ||
+      form.codexToolCompatibility !== 'native' ||
       form.requestPath !== DEFAULT_LOCAL_MODEL_REQUEST_PATH ||
       form.apiKey.trim() !== '' ||
       form.contextWindow.trim() !== '' ||
@@ -432,6 +490,9 @@ function isLocalModelFormDirty(
     form.additionalModels.length > 0 ||
     form.baseUrl !== editingModel.baseUrl ||
     form.apiFormat !== editingModel.apiFormat ||
+    form.codexToolCompatibility !==
+      (editingModel.codexToolCompatibility ??
+        (editingModel.apiFormat === 'openai-responses' ? 'native' : 'standard')) ||
     form.toolProfile !== editingModel.toolProfile ||
     form.requestPath !== (editingModel.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH) ||
     form.apiKey.trim() !== '' ||
@@ -1158,6 +1219,9 @@ function LocalModelSettingsSection({
       additionalModels: [],
       baseUrl: model.baseUrl,
       apiFormat: model.apiFormat,
+      codexToolCompatibility:
+        model.codexToolCompatibility ??
+        (model.apiFormat === 'openai-responses' ? 'native' : 'standard'),
       toolProfile: model.toolProfile,
       requestPath: model.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH,
       apiKey: '',
@@ -1245,6 +1309,7 @@ function LocalModelSettingsSection({
       additionalModels: [],
       baseUrl: profile.baseUrl,
       apiFormat: profile.apiFormat,
+      codexToolCompatibility: profile.apiFormat === 'openai-responses' ? 'native' : 'standard',
       toolProfile: profile.toolProfile,
       requestPath: profile.requestPath,
       contextWindow:
@@ -1414,6 +1479,7 @@ function LocalModelSettingsSection({
           toolProfile: form.toolProfile,
           baseUrl: form.baseUrl,
           apiFormat: form.apiFormat,
+          codexToolCompatibility: form.codexToolCompatibility,
           requestPath: form.requestPath,
           apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
           contextWindow: providerModelDefaults?.contextWindow ?? form.contextWindow,
@@ -1487,6 +1553,7 @@ function LocalModelSettingsSection({
         modelId: editingModel.modelId,
         baseUrl: editingModel.baseUrl,
         apiFormat: editingModel.apiFormat,
+        codexToolCompatibility: editingModel.codexToolCompatibility,
         toolProfile: editingModel.toolProfile,
         requestPath: editingModel.requestPath,
         apiKey: null,
@@ -1969,6 +2036,8 @@ function LocalModelSettingsSection({
                         const toolProfile = defaultLocalModelToolProfile(apiFormat)
                         updateForm({
                           apiFormat,
+                          codexToolCompatibility:
+                            apiFormat === 'openai-responses' ? 'native' : 'standard',
                           toolProfile,
                           ...(form.catalogEntry
                             ? {
@@ -2211,6 +2280,8 @@ function LocalModelSettingsSection({
                   <CustomModelCapabilitiesForm
                     entry={form.catalogEntry}
                     contextWindow={form.contextWindow}
+                    apiFormat={form.apiFormat}
+                    codexToolCompatibility={form.codexToolCompatibility}
                     onContextWindowChange={value => {
                       const parsed = Number(value)
                       updateForm({
@@ -2222,6 +2293,9 @@ function LocalModelSettingsSection({
                         },
                       })
                     }}
+                    onCodexToolCompatibilityChange={codexToolCompatibility =>
+                      updateForm({ codexToolCompatibility })
+                    }
                     onChange={catalogEntry => updateForm({ catalogEntry })}
                   />
                 )}
@@ -2605,12 +2679,15 @@ function DisconnectedCloudModelsSection({
 function DisconnectedCloudCodexSyncSection({
   onOpenCloudSettings,
   status,
+  accounts,
   loading,
   error,
   loginState,
   loginError,
+  switchingAccountId,
   onLogin,
   onCancelLogin,
+  onSwitchAccount,
   codexOfficialModels,
   codexOfficialLoading,
   codexOfficialError,
@@ -2618,12 +2695,15 @@ function DisconnectedCloudCodexSyncSection({
 }: {
   onOpenCloudSettings?: () => void
   status: LocalRuntimeAuthStatus | null
+  accounts: LocalCodexAccounts | null
   loading: boolean
   error: string | null
   loginState: 'idle' | 'starting' | 'waiting' | 'cancelling'
   loginError: string | null
+  switchingAccountId: string | null
   onLogin: () => void
   onCancelLogin: () => void
+  onSwitchAccount: (accountId: string) => void
   codexOfficialModels: CodexOfficialModelList | null
   codexOfficialLoading: boolean
   codexOfficialError: string | null
@@ -2645,12 +2725,15 @@ function DisconnectedCloudCodexSyncSection({
       <CodexSettingsGroup title={t('workbench.codex_settings_auth_group_title')}>
         <LocalCodexModelRow
           status={status}
+          accounts={accounts}
           loading={loading}
           error={error}
           loginState={loginState}
           loginError={loginError}
+          switchingAccountId={switchingAccountId}
           onLogin={onLogin}
           onCancelLogin={onCancelLogin}
+          onSwitchAccount={onSwitchAccount}
         />
 
         <div
@@ -2805,8 +2888,10 @@ export function ModelSettingsPage({
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [localAuthStatus, setLocalAuthStatus] = useState<LocalRuntimeAuthStatus | null>(null)
+  const [localCodexAccounts, setLocalCodexAccounts] = useState<LocalCodexAccounts | null>(null)
   const [localAuthLoading, setLocalAuthLoading] = useState(true)
   const [localAuthError, setLocalAuthError] = useState<string | null>(null)
+  const [switchingLocalAccountId, setSwitchingLocalAccountId] = useState<string | null>(null)
   const [localLoginState, setLocalLoginState] = useState<
     'idle' | 'starting' | 'waiting' | 'cancelling'
   >('idle')
@@ -2843,7 +2928,12 @@ export function ModelSettingsPage({
     setLocalAuthLoading(true)
     setLocalAuthError(null)
     try {
-      setLocalAuthStatus(await getLocalCodexAuthStatus())
+      const [status, accounts] = await Promise.all([
+        getLocalCodexAuthStatus(),
+        listLocalCodexAccounts(),
+      ])
+      setLocalAuthStatus(status)
+      setLocalCodexAccounts(accounts)
     } catch (statusError) {
       setLocalAuthError(
         getErrorMessage(
@@ -2879,6 +2969,7 @@ export function ModelSettingsPage({
     setLocalLoginState('starting')
     setLocalLoginError(null)
     try {
+      const initialAuthSha256 = localAuthStatus?.sha256 ?? null
       const login = await startLocalCodexLogin()
       if (localLoginGenerationRef.current !== generation) {
         void cancelLocalCodexLogin(login.loginId)
@@ -2892,9 +2983,9 @@ export function ModelSettingsPage({
       setLocalLoginState('waiting')
       const deadline = Date.now() + 5 * 60 * 1000
       while (localLoginGenerationRef.current === generation) {
-        const hasAccount = await hasLocalCodexAccount()
+        const nextStatus = await getLocalCodexAuthStatus()
         if (localLoginGenerationRef.current !== generation) return
-        if (hasAccount) {
+        if (nextStatus.exists && nextStatus.sha256 !== initialAuthSha256) {
           localLoginIdRef.current = null
           setLocalLoginState('idle')
           await loadLocalAuthStatus()
@@ -2923,6 +3014,29 @@ export function ModelSettingsPage({
           t('workbench.local_codex_login_failed', 'Codex 登录失败，请重试')
         )
       )
+    }
+  }
+
+  const handleSwitchLocalCodexAccount = async (accountId: string) => {
+    if (switchingLocalAccountId || localLoginState !== 'idle') return
+    setSwitchingLocalAccountId(accountId)
+    setLocalLoginError(null)
+    try {
+      setLocalCodexAccounts(await switchLocalCodexAccount(accountId))
+      setLocalAuthStatus(await getLocalCodexAuthStatus())
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    } catch (switchError) {
+      setLocalLoginError(
+        getErrorMessage(
+          switchError,
+          t(
+            'workbench.local_codex_account_switch_failed',
+            '切换失败，请等待正在运行的 Codex 任务结束后重试'
+          )
+        )
+      )
+    } finally {
+      setSwitchingLocalAccountId(null)
     }
   }
 
@@ -3124,12 +3238,15 @@ export function ModelSettingsPage({
             <DisconnectedCloudCodexSyncSection
               onOpenCloudSettings={onOpenCloudSettings}
               status={localAuthStatus}
+              accounts={localCodexAccounts}
               loading={localAuthLoading}
               error={localAuthError}
               loginState={localLoginState}
               loginError={localLoginError}
+              switchingAccountId={switchingLocalAccountId}
               onLogin={() => void handleLocalCodexLogin()}
               onCancelLogin={() => void handleCancelLocalCodexLogin()}
+              onSwitchAccount={accountId => void handleSwitchLocalCodexAccount(accountId)}
               codexOfficialModels={codexOfficialModels}
               codexOfficialLoading={codexOfficialLoading}
               codexOfficialError={codexOfficialError}
@@ -3191,12 +3308,15 @@ export function ModelSettingsPage({
               <CodexSettingsGroup title={t('workbench.codex_settings_auth_group_title')}>
                 <LocalCodexModelRow
                   status={localAuthStatus}
+                  accounts={localCodexAccounts}
                   loading={localAuthLoading}
                   error={localAuthError}
                   loginState={localLoginState}
                   loginError={localLoginError}
+                  switchingAccountId={switchingLocalAccountId}
                   onLogin={() => void handleLocalCodexLogin()}
                   onCancelLogin={() => void handleCancelLocalCodexLogin()}
+                  onSwitchAccount={accountId => void handleSwitchLocalCodexAccount(accountId)}
                 />
 
                 <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-background px-4 py-3">

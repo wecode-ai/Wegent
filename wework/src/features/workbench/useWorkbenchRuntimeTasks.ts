@@ -603,11 +603,13 @@ function runtimeTranscriptRequestKey(
 ): string {
   return JSON.stringify({
     address: getRuntimeTaskRouteKey(address),
+    threadId: address.threadId ?? null,
     limit: options.limit ?? null,
     beforeCursor: options.beforeCursor ?? null,
     afterCursor: options.afterCursor ?? null,
     refresh: options.refresh ?? null,
     includeFullContent: options.includeFullContent ?? null,
+    navigationOnly: options.navigationOnly ?? null,
   })
 }
 

@@ -31,7 +31,12 @@ import {
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
-import type { Attachment, RuntimeProjectPluginRef, RuntimeTaskAddress } from '@/types/api'
+import type {
+  Attachment,
+  ModelSelectionConfig,
+  RuntimeProjectPluginRef,
+  RuntimeTaskAddress,
+} from '@/types/api'
 import {
   localProjectAssociationFromTags,
   localProjectAssociationTag,
@@ -81,6 +86,7 @@ interface LocalTaskBindingRecord {
   task_id: string
   task_title: string | null
   backend_task_id: number | null
+  modelSelection?: ModelSelectionConfig | null
   workflow_node_id?: string | null
   binding_type: 'system' | 'user'
   linked_at: string
@@ -899,12 +905,13 @@ export function createLocalDeliveryApi(
     },
     async listLoopItemExecutions(
       projectId: CloudProjectId,
-      options: { agent_id?: string; status?: string } = {}
+      options: { agent_id?: string; status?: string; include_terminal?: boolean } = {}
     ): Promise<{ items: CloudLoopItemExecution[] }> {
       const records = await request<LocalLoopItemExecution[]>('executions.list', {
         project_id: String(projectId),
         agent_id: options.agent_id ?? null,
         status: options.status ?? null,
+        include_terminal: options.include_terminal ?? false,
       })
       return {
         items: records.map(record => ({
@@ -1141,6 +1148,8 @@ export function createLocalDeliveryApi(
       workflowNodeId?: string | null
     ) {
       const projectId = await resolveProjectId(itemId)
+      const modelSelection =
+        task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
       await request('todos.bind', {
         project_id: projectId,
         item_id: itemId,
@@ -1148,6 +1157,7 @@ export function createLocalDeliveryApi(
           ...task,
           ...(taskTitle ? { taskTitle } : {}),
           ...(workflowNodeId ? { workflowNodeId } : {}),
+          ...(modelSelection ? { modelSelection } : {}),
         },
       })
     },

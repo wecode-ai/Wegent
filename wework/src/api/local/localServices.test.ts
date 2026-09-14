@@ -3274,15 +3274,56 @@ describe('createLocalAppServices', () => {
           upstream_api_format: 'openai-responses',
           tool_profile: 'custom',
           codex_catalog_model_id: catalogModelId,
+          native_tool_search: true,
+          native_namespace_tools: true,
           model_context_window: 1_048_576,
           reasoning: { effort: 'high' },
         })
       )
-      expect(payload.executionRequest.model_config).not.toHaveProperty('native_tool_search')
-      expect(payload.executionRequest.model_config).not.toHaveProperty('native_namespace_tools')
       expect(payload.executionRequest.model_config).not.toHaveProperty('vision_sidecar')
     }
   )
+
+  test('bridges Codex tools for a standard Responses local model', async () => {
+    saveLocalModelConfig({
+      id: 'azure-standard-responses',
+      providerProfileId: 'custom',
+      displayName: 'Azure Responses',
+      modelId: 'gpt-deployment',
+      baseUrl: 'https://azure.example/openai/v1',
+      apiFormat: 'openai-responses',
+      codexToolCompatibility: 'standard',
+      toolProfile: 'custom',
+      requestPath: '/responses',
+      apiKey: 'azure-key',
+      catalogReady: true,
+    })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-azure-standard-responses',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Azure Responses',
+      modelId: 'local-model:azure-standard-responses',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        upstream_api_format: 'openai-responses',
+        native_tool_search: false,
+        native_namespace_tools: false,
+      })
+    )
+  })
 
   test('routes DeepSeek images through a configured vision proxy model', async () => {
     const visionCatalog = createDefaultLocalModelCatalogEntry({

@@ -1187,6 +1187,13 @@
       }
     },
     "reader": {
+      "update": "Update Wiki",
+      "updateTitle": "Update Wiki",
+      "updateDescription": "Choose how to update. The server checks the repository before deciding the actual mode.",
+      "checkAndUpdate": "Check and update (recommended)",
+      "checkAndUpdateHint": "Skip when unchanged, update incrementally when safe, otherwise rebuild in full.",
+      "fullUpdate": "Regenerate in full",
+      "startUpdate": "Start update",
       "regenerate": "Regenerate",
       "regenerating": "Generating…",
       "upToDate": "Already up to date with the repository",
@@ -1202,6 +1209,8 @@
       "backToChat": "Back to conversation",
       "openNavigation": "Page navigation",
       "generateFirst": "Generate",
+      "generateFirstTitle": "Generate Wiki",
+      "generateFirstDescription": "Read the repository and generate the first documentation version. This may take a few minutes.",
       "regenerateConfirmTitle": "Regenerate this wiki?",
       "regenerateConfirmBody": "The whole repository is read again and every page rewritten, which usually takes minutes rather than seconds. The current pages stay readable until the new version is published.",
       "cancelConfirmTitle": "Stop this generation?",
@@ -1263,13 +1272,12 @@
       "current": "Current",
       "none": "No runs yet",
       "mode": {
-        "full": "Full",
-        "incremental": "Incremental",
-        "custom": "Custom"
+        "full": "Full generation",
+        "incremental": "Incremental update",
+        "custom": "Custom generation"
       },
       "commitUnreported": "no commit reported",
       "taskFailed": "The task failed",
-      "strategy": "Strategy: {{strategy}}",
       "republish": "Restore this version",
       "republished": "This version is published again",
       "republishedDescription": "The page content has been refreshed.",

@@ -1,3 +1,9 @@
+import type {
+  MicrophoneDiagnosticOptions,
+  MicrophoneDiagnosticResult,
+} from './device-diagnostics.js'
+export type * from './device-diagnostics.js'
+
 export interface WeworkDesktopDescription {
   readonly protocolVersion: number
   readonly capabilities: readonly string[]
@@ -27,6 +33,9 @@ export interface WeworkRendererHealthSnapshot {
 }
 
 export interface WeworkDesktopService {
+  readonly deviceDiagnostics: {
+    microphone(options?: MicrophoneDiagnosticOptions): Promise<MicrophoneDiagnosticResult>
+  }
   readonly app: {
     getVersion(): Promise<{ readonly version: string }>
   }

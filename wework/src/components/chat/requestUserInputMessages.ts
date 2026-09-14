@@ -48,6 +48,14 @@ export function requestUserInputResponseKey(response: RequestUserInputResponse):
   return null
 }
 
+export function requestUserInputResponseText(response: RequestUserInputResponse): string {
+  const answers = Object.values(response.answers)
+    .flatMap(answer => answer.answers)
+    .map(answer => answer.trim())
+    .filter(Boolean)
+  return answers.length > 0 ? answers.join('\n') : '继续'
+}
+
 export function isImplementationPlanRequestUserInput(
   payload: RequestUserInputPayload | null | undefined
 ): boolean {

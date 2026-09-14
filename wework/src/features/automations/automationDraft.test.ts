@@ -41,6 +41,8 @@ describe('automationModelFields', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '0',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        weworkCloudModelNativeToolSearch: 'true',
+        weworkCloudModelNativeNamespaceTools: 'true',
       },
     })
   })

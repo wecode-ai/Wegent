@@ -169,6 +169,7 @@ export interface ChatInputProps {
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeComments?: CodeCommentContext[]
   onCancelQueuedMessage?: (id: string) => void
+  onForceStartQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
   onInterruptAndSendQueuedMessage?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
@@ -580,6 +581,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     guidanceMessages = [],
     codeComments = [],
     onCancelQueuedMessage,
+    onForceStartQueuedMessage,
     onSendQueuedAsGuidance,
     onInterruptAndSendQueuedMessage,
     onEditQueuedMessage,
@@ -845,6 +847,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       queuedMessages={queuedMessages}
       guidanceMessages={guidanceMessages}
       onCancelQueuedMessage={onCancelQueuedMessage}
+      onForceStartQueuedMessage={onForceStartQueuedMessage}
       onSendQueuedAsGuidance={onSendQueuedAsGuidance}
       onInterruptAndSendQueuedMessage={onInterruptAndSendQueuedMessage}
       onEditQueuedMessage={onEditQueuedMessage ? handleEditQueuedMessage : undefined}

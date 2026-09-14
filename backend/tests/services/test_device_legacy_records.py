@@ -64,6 +64,16 @@ def isolated_cache(monkeypatch):
         "mget",
         AsyncMock(side_effect=lambda keys: {key: values.get(key) for key in keys}),
     )
+    monkeypatch.setattr(
+        record_operations.cache_manager,
+        "get_or_raise",
+        AsyncMock(side_effect=lambda key: values.get(key)),
+    )
+    monkeypatch.setattr(
+        record_operations.cache_manager,
+        "mget_or_raise",
+        AsyncMock(side_effect=lambda keys: {key: values.get(key) for key in keys}),
+    )
     return values
 
 

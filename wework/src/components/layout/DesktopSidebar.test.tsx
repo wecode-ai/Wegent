@@ -242,6 +242,23 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-chat-section-new-chat-button')).toBeInTheDocument()
   })
 
+  test('renders Board as the selected default work-items view', async () => {
+    const onOpenMyWork = vi.fn()
+
+    renderSidebar({
+      taskView: 'default-work-items',
+      onOpenMyWork,
+    })
+
+    const myWorkButton = screen.getByTestId('task-my-work-button')
+    expect(myWorkButton).toHaveTextContent('看板')
+    expect(myWorkButton).toHaveAttribute('aria-current', 'page')
+
+    await userEvent.click(myWorkButton)
+
+    expect(onOpenMyWork).toHaveBeenCalledOnce()
+  })
+
   test('shows a discoverable project creation action when the project list is empty', async () => {
     renderSidebar({
       projects: [],
@@ -1359,6 +1376,10 @@ describe('DesktopSidebar', () => {
 
     fireEvent.keyDown(window, { key: 'p', metaKey: true, shiftKey: true })
     expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+    input.dataset.testid = 'chat-message-input'
+    input.focus()
+    fireEvent.keyDown(input, { key: 'p', metaKey: true, shiftKey: true })
+    expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
     input.remove()
   })
 

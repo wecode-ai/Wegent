@@ -22,6 +22,7 @@ import { UserProvider } from '@/features/common/UserContext'
 import { TaskSessionProvider } from '@/features/tasks/session/TaskSession'
 import { SocketProvider } from '@/contexts/SocketContext'
 import { DeviceProvider } from '@/contexts/DeviceContext'
+import { ProjectProvider } from '@/features/projects/contexts/projectContext'
 
 const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea'), {
   ssr: false,
@@ -86,9 +87,11 @@ export default function TasksPage() {
     <UserProvider>
       <SocketProvider>
         <DeviceProvider>
-          <TaskSessionProvider>
-            <TasksPageContent />
-          </TaskSessionProvider>
+          <ProjectProvider>
+            <TaskSessionProvider>
+              <TasksPageContent />
+            </TaskSessionProvider>
+          </ProjectProvider>
         </DeviceProvider>
       </SocketProvider>
     </UserProvider>

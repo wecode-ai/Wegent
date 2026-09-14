@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "node scripts/prepare-file-viewer-assets.mjs && next dev",
-    "build": "node scripts/prepare-file-viewer-assets.mjs && NODE_OPTIONS='--max-old-space-size=2048' next build",
+    "build": "node scripts/prepare-file-viewer-assets.mjs && NODE_OPTIONS='--max-old-space-size=4096' next build",
     "start": "next start",
     "lint": "next lint",
     "format": "prettier --write .",
@@ -101,6 +101,7 @@
     "@uiw/react-markdown-editor": "^6.1.4",
     "@uiw/react-md-editor": "^4.0.8",
     "@wegent/chat-core": "workspace:*",
+    "@wegent/collaboration": "workspace:*",
     "@xyflow/react": "^12.11.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -42,7 +42,14 @@ async function waitForStartupLogs(resultDir) {
 }
 
 export async function createDesktopScenario({ resultDir }) {
+  let restartDesktopApp
   return {
+    appEnvironment: { WEWORK_E2E_BACKGROUND_WINDOW: '0' },
+
+    setRestartDesktopApp(restart) {
+      restartDesktopApp = restart
+    },
+
     async verify(control) {
       const snapshot = await waitForClosedStartupSplash(control)
       assert.deepEqual(
@@ -69,6 +76,22 @@ export async function createDesktopScenario({ resultDir }) {
       assert.ok(
         startupReady <= taskListReady && taskListReady < splashClosed,
         'The startup stages were logged out of order'
+      )
+
+      // Consent is already saved by common bootstrap. Restart without clicking or focusing
+      // anything so the assertion exercises startup autofocus itself.
+      assert.ok(restartDesktopApp, 'The startup focus scenario requires the desktop restart hook')
+      await restartDesktopApp()
+      await waitForClosedStartupSplash(control)
+      await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="chat-message-input"][contenteditable="true"]:focus'
+      )
+      const focusSnapshot = JSON.parse(await control.command('getComposerFocusSnapshot', 'body'))
+      await writeFile(
+        join(resultDir, 'startup-composer-focus.json'),
+        `${JSON.stringify(focusSnapshot, null, 2)}\n`
       )
     },
 

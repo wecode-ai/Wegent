@@ -156,6 +156,136 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
   })
 
+  test('renders a compact subagent chip that opens the child conversation', () => {
+    const onOpenSubagent = vi.fn()
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            id: 'subagent-thread-1',
+            subtaskId: 'turn-1',
+            type: 'subagent',
+            title: 'Repository explorer',
+            description: 'Inspect the runtime event flow',
+            status: 'streaming',
+            createdAt: 1770000000000,
+            children: [
+              {
+                id: 'child-text',
+                subtaskId: 'turn-1',
+                parentToolUseId: 'subagent-thread-1',
+                type: 'text',
+                content: 'Tracing the stream now',
+                status: 'streaming',
+                createdAt: 1770000000100,
+              },
+            ],
+          },
+        ]}
+        isStreaming
+        forceExpanded
+        onOpenSubagent={onOpenSubagent}
+      />
+    )
+
+    expect(screen.getByTestId('subagent-activity-inline-group')).toHaveTextContent(
+      'Repository explorer'
+    )
+    expect(screen.getByTestId('subagent-activity-inline-group')).toHaveTextContent('工作中')
+    expect(screen.queryByText('Inspect the runtime event flow')).not.toBeInTheDocument()
+    expect(screen.queryByText('Tracing the stream now')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '打开 Repository explorer 子代理' }))
+
+    expect(onOpenSubagent).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'subagent-thread-1' })
+    )
+  })
+
+  test('groups parallel subagents and delegates selection to the conversation opener', () => {
+    const onOpenSubagent = vi.fn()
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            id: 'subagent-thread-1',
+            subtaskId: 'turn-1',
+            type: 'subagent',
+            title: 'Explorer',
+            status: 'streaming',
+            createdAt: 1770000000000,
+            children: [
+              {
+                id: 'child-text-1',
+                subtaskId: 'turn-1',
+                parentToolUseId: 'subagent-thread-1',
+                type: 'text',
+                content: 'Explorer output',
+                status: 'streaming',
+                createdAt: 1770000000100,
+              },
+            ],
+          },
+          {
+            id: 'subagent-thread-2',
+            subtaskId: 'turn-1',
+            type: 'subagent',
+            title: 'Reviewer',
+            status: 'streaming',
+            createdAt: 1770000000200,
+            children: [
+              {
+                id: 'child-text-2',
+                subtaskId: 'turn-1',
+                parentToolUseId: 'subagent-thread-2',
+                type: 'text',
+                content: 'Reviewer output',
+                status: 'streaming',
+                createdAt: 1770000000300,
+              },
+            ],
+          },
+        ]}
+        isStreaming
+        onOpenSubagent={onOpenSubagent}
+      />
+    )
+
+    expect(screen.getAllByTestId('subagent-activity-chip')).toHaveLength(2)
+    expect(screen.getByTestId('subagent-activity-status')).toHaveTextContent('工作中')
+    expect(screen.queryByText('Explorer output')).not.toBeInTheDocument()
+    expect(screen.queryByText('Reviewer output')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '打开 Reviewer 子代理' }))
+
+    expect(onOpenSubagent).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'subagent-thread-2' })
+    )
+  })
+
+  test('shows interrupted subagents as interrupted instead of failed or working', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            id: 'subagent-thread-1',
+            subtaskId: 'turn-1',
+            type: 'subagent',
+            title: 'Interrupted reviewer',
+            status: 'error',
+            agentStatus: 'interrupted',
+            createdAt: 1770000000000,
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    expect(screen.getByTestId('subagent-activity-status')).toHaveTextContent('已中断')
+    expect(screen.getByTestId('subagent-activity-status')).not.toHaveTextContent('失败')
+    expect(screen.getByTestId('subagent-activity-status')).not.toHaveTextContent('工作中')
+  })
+
   test('hides zero-second duration while restoring a completed transcript', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={false} />)
 

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -149,6 +149,38 @@ test.each([
     expect(builderConfig.mac.signIgnore).toEqual(signIgnore)
     expect(builderConfig.win.electronLanguages).toEqual(['en-US', 'zh-CN'])
     expect(builderConfig.linux.electronLanguages).toEqual(['en-US', 'zh-CN'])
+  }
+)
+
+test.each(['', 'true'])(
+  'preserves runtime and microphone entitlements for installer and Host update builds (%s)',
+  async onlineUpdateBuild => {
+    const config = JSON.parse(
+      execFileSync(
+        process.execPath,
+        ['-e', 'process.stdout.write(JSON.stringify(require(process.argv[1])))', builderConfigPath],
+        {
+          encoding: 'utf8',
+          env: { ...process.env, WEWORK_ONLINE_UPDATE_BUILD: onlineUpdateBuild },
+        }
+      )
+    )
+
+    expect(config.mac.hardenedRuntime).toBe(true)
+    expect(config.mac.extendInfo.NSMicrophoneUsageDescription).toContain('microphone')
+    for (const path of [config.mac.entitlements, config.mac.entitlementsInherit]) {
+      const entitlements = await readFile(path, 'utf8')
+      for (const key of [
+        'com.apple.security.cs.allow-jit',
+        'com.apple.security.cs.allow-unsigned-executable-memory',
+        'com.apple.security.cs.disable-library-validation',
+        'com.apple.security.device.audio-input',
+      ]) {
+        expect(entitlements).toMatch(
+          new RegExp(`<key>${key.replaceAll('.', '\\.')}</key>\\s*<true/>`)
+        )
+      }
+    }
   }
 )
 
