@@ -1243,6 +1243,17 @@ where
 
     pub async fn apply_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
         let _sync_guard = self.sync_lock.lock().await;
+        let plugins_only = payload.get("scope").and_then(Value::as_str) == Some("plugins");
+        if plugins_only
+            && (payload.get("plugins").and_then(Value::as_array).is_none()
+                || payload.get("skills").is_some()
+                || payload.get("mcps").is_some())
+        {
+            return Err(CapabilitySyncError::invalid_payload(
+                "Plugin reconciliation requires a complete plugins array and no other capabilities"
+                    .to_owned(),
+            ));
+        }
         let mode = payload
             .get("mode")
             .and_then(Value::as_str)
@@ -1261,7 +1272,7 @@ where
             self.store.load_manifest_with_plugin_store_migration()?
         };
 
-        if mode == "replace" {
+        if mode == "replace" || plugins_only {
             let desired_skills = skill_specs
                 .iter()
                 .map(|spec| spec.name.clone())
@@ -1270,8 +1281,10 @@ where
                 .iter()
                 .map(|spec| spec.key.clone())
                 .collect::<BTreeSet<_>>();
-            self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
-            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest)?;
+            if !plugins_only {
+                self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
+            }
+            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest, plugins_only)?;
         }
 
         let mut skill_results = Vec::with_capacity(skill_specs.len());
@@ -1282,7 +1295,9 @@ where
         for spec in &plugin_specs {
             plugin_results.push(self.sync_plugin(spec, &mut manifest).await);
         }
-        self.record_mcps(payload.get("mcps"), mode, &mut manifest)?;
+        if !plugins_only {
+            self.record_mcps(payload.get("mcps"), mode, &mut manifest)?;
+        }
         self.store
             .garbage_collect_unreferenced_managed_plugins(&manifest)?;
         self.store.manifest.save_with_revision_bump(manifest)?;
@@ -1293,6 +1308,7 @@ where
 
         Ok(json!({
             "success": success,
+            "scope": if plugins_only { "plugins" } else { "all" },
             "skills": skill_results,
             "plugins": plugin_results,
         }))
@@ -1505,6 +1521,7 @@ where
         &self,
         desired: &BTreeSet<String>,
         manifest: &mut Value,
+        cloud_only: bool,
     ) -> Result<(), CapabilitySyncError> {
         let stale = object_map(manifest.get("plugins"))
             .unwrap_or_default()
@@ -1512,6 +1529,17 @@ where
             .filter(|(key, plugin)| {
                 !desired.contains(key)
                     && plugin.get("managed").and_then(Value::as_bool) != Some(false)
+                    && (!cloud_only
+                        || (plugin.get("managed").and_then(Value::as_bool) == Some(true)
+                            && plugin
+                                .get("installed_plugin_id")
+                                .and_then(Value::as_i64)
+                                .is_some()
+                            && CLOUD_MANAGED_PLUGIN_MARKETPLACES.contains(
+                                &PluginSyncSpec::from_manifest_entry(key, plugin)
+                                    .marketplace
+                                    .as_str(),
+                            )))
             })
             .collect::<Vec<_>>();
         if stale.is_empty() {

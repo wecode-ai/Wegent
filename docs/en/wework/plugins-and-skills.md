@@ -8,6 +8,14 @@ A Skill gives AI task-specific instructions and resources. A plugin can package 
 
 Open **Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
 
+## Refresh and repair installation state
+
+If the installed strip disagrees with marketplace cards, or a local installation remains after uninstalling, click **Refresh** at the top right of the Plugins page. Wework first refreshes plugin data, then asynchronously checks cloud-managed plugins for the current account and device and reports the result.
+
+Cloud installation records define the expected state. Reconciliation restores missing plugin contents and runtime registrations at the device's selected version and removes managed remnants of cloud-uninstalled plugins. It does not replace personal plugins, independent Skills, or MCP servers. If a cloud installation record still exists, refresh restores the installation; use the plugin's **Uninstall** action to remove it.
+
+This feature requires matching backend, desktop, and local executor support. When offline, using an unsupported runtime, or unable to read complete plugin data, Wework reports that the check could not complete. A failed read is never treated as an empty installation list for cleanup.
+
 ## Manage Codex plugins and Wework plugins
 
 In the Wework desktop app, open **Plugins → Manage plugins** and switch between two management surfaces:

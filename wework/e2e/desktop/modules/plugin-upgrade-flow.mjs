@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { access, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { fetchJson, resultDir } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
@@ -78,6 +78,45 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   })
   await control.command('click', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`)
   await capture('01-old-installed')
+  setPhase('plugin-refresh-restores-missing-package')
+  const capabilityManifestPath = join(dirname(codexHome), 'capabilities/manifest.json')
+  const readCapabilities = async () => JSON.parse(await readFile(capabilityManifestPath, 'utf8'))
+  const managedKey = `${pluginKey}@wegent`
+  const beforeRepair = await readCapabilities()
+  const managed = beforeRepair.plugins[managedKey]
+  assert.ok(managed?.store_path, 'Managed package must have an authoritative store path')
+  const personalRoot = join(codexHome, 'plugins/cache/wework-personal/reconcile-keep/1.0.0')
+  await mkdir(personalRoot, { recursive: true })
+  await writeFile(join(personalRoot, 'marker'), 'Keep personal plugin')
+  await rm(managed.store_path, { recursive: true })
+  await rm(oldRoot, { recursive: true })
+  await control.command('click', '[data-testid="plugin-detail-back-button"]')
+  let reconciliationRevision = 0
+  const refreshAndVerify = async () => {
+    await control.command('click', '[data-testid="plugins-refresh-button"]')
+    reconciliationRevision += 1
+    await control.command(
+      'waitFor',
+      `[data-testid="plugins-refresh-button"][data-reconciliation-revision="${reconciliationRevision}"]`,
+      { timeoutMs: 60000 }
+    )
+    assert.equal(await readFile(join(personalRoot, 'marker'), 'utf8'), 'Keep personal plugin')
+  }
+  await refreshAndVerify()
+  assert.equal(
+    JSON.parse(await readFile(join(oldRoot, '.codex-plugin/plugin.json'), 'utf8')).version,
+    oldVersion
+  )
+  const repaired = await readCapabilities()
+  assert.deepEqual(repaired.skills, beforeRepair.skills)
+  assert.deepEqual(repaired.mcps, beforeRepair.mcps)
+  await refreshAndVerify()
+  assert.equal(
+    Object.keys((await readCapabilities()).plugins).filter(key => key === managedKey).length,
+    1
+  )
+  await capture('01b-refresh-repaired-and-idempotent')
+  await control.command('click', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`)
   setPhase('plugin-upgrade-publish-current')
   await env.publishPluginRelease({
     slug: pluginKey,
@@ -122,6 +161,10 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     join(resultDir, 'plugin-upgrade-actual-manifest-after-update.json'),
     JSON.stringify(currentManifest, null, 2)
   )
+  const beforeUninstall = await readCapabilities()
+  const removedEntry = beforeUninstall.plugins[managedKey]
+  const residueBackup = join(resultDir, 'plugin-reconciliation-residue')
+  await cp(removedEntry.store_path, residueBackup, { recursive: true })
   setPhase('plugin-upgrade-uninstall')
   await control.command('click', `[data-testid="plugin-detail-actions-${installedId}"]`)
   await control.command('waitFor', `[data-testid="plugin-detail-uninstall-${installedId}"]`)
@@ -142,6 +185,20 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   )
   await assert.rejects(access(currentManifestPath), { code: 'ENOENT' })
   await assert.rejects(access(newRoot), { code: 'ENOENT' })
+  setPhase('plugin-refresh-cleans-cloud-uninstall-residue')
+  // Reproduce a missed device cleanup after a successful cloud uninstall.
+  await cp(residueBackup, removedEntry.store_path, { recursive: true })
+  await cp(residueBackup, newRoot, { recursive: true })
+  const stale = await readCapabilities()
+  stale.plugins[managedKey] = removedEntry
+  await writeFile(capabilityManifestPath, JSON.stringify(stale))
+  await control.command('click', '[data-testid="plugin-detail-back-button"]')
+  await refreshAndVerify()
+  assert.equal((await readCapabilities()).plugins[managedKey], undefined)
+  await assert.rejects(access(removedEntry.store_path), { code: 'ENOENT' })
+  await assert.rejects(access(newRoot), { code: 'ENOENT' })
+  await capture('05b-refresh-cleared-uninstalled-residue')
+  await control.command('click', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`)
   setPhase('plugin-upgrade-reinstall')
   await control.command('click', '[data-testid="plugin-detail-back-button"]')
   await control.command('waitFor', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`)
