@@ -823,7 +823,11 @@ export function TodoEditor(props: TodoEditorProps) {
         loadedEditItemIdRef.current !== editItemId
       )
         return;
-      setTasks(nextTasks);
+      setTasks(
+        nextTasks.length > 0
+          ? nextTasks
+          : (initialTaskBindingsRef.current ?? nextTasks),
+      );
     } catch {
       // Independent detail sources fail closed without hiding available data.
     }

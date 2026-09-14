@@ -284,9 +284,10 @@ describe('TodoEditor external item sync', () => {
 
   it('shows board task bindings immediately while the detail refresh is pending', async () => {
     const never = new Promise<never>(() => undefined)
+    const pendingBindings = deferred<LoopItemTaskBinding[]>()
     const pendingBindingsApi = {
       listDeliveries: vi.fn(() => never),
-      listTaskBindings: vi.fn(() => never),
+      listTaskBindings: vi.fn(() => pendingBindings.promise),
       listLoopItemAttachments: vi.fn(() => never),
       listLoopItemCollaborators: vi.fn(() => never),
       listCloudProjectMembers: vi.fn(() => never),
@@ -340,7 +341,14 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
+    expect(await screen.findByTestId('cloud-todo-toggle-tasks')).toBeInTheDocument()
+
+    await act(async () => {
+      pendingBindings.resolve([])
+      await pendingBindings.promise
+    })
+
+    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
     expect(screen.getByTestId('cloud-todo-open-task-conversation-8')).toHaveTextContent(
       '看板已加载的任务'
     )
