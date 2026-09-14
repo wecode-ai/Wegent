@@ -863,6 +863,7 @@ export function createDesktopScenario({
   workspacePath,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
+  const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
   let active = false
   let generatedImageStage = 'initial'
   let subagentStage = 'initial'
@@ -1119,11 +1120,18 @@ export function createDesktopScenario({
       false,
       'The child agent stream leaked into the root conversation'
     )
-    await capture(control, 'streaming-text-subagent-01-inline-activity.png')
+    await captureSubagent(control, 'streaming-text-subagent-01-inline-activity.png')
     await control.command('click', '[data-testid="subagent-activity-chip"]')
     await control.command('waitFor', '[data-testid="subagent-conversation-panel"]', {
       timeoutMs: uiTimeoutMs,
     })
+    assert.equal(
+      await control.command('getAttribute', '[data-testid="right-workspace-subagents-tab"]', {
+        value: 'aria-selected',
+      }),
+      'true',
+      'The subagent conversation was not opened inside the active right workspace tab'
+    )
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
       text: SUBAGENT_CHILD_PARTIAL,
       timeoutMs: uiTimeoutMs,
@@ -1135,18 +1143,25 @@ export function createDesktopScenario({
       false,
       'The rendered child agent stream leaked into the root conversation'
     )
-    await capture(control, 'streaming-text-subagent-02-streaming-conversation.png')
+    await captureSubagent(control, 'streaming-text-subagent-02-streaming-conversation.png')
     releaseSubagentCompletion()
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
       text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
       timeoutMs: uiTimeoutMs,
     })
-    await capture(control, 'streaming-text-subagent-03-completed-conversation.png')
+    await captureSubagent(control, 'streaming-text-subagent-03-completed-conversation.png')
 
     await control.command('click', '[data-testid="subagent-conversation-back"]')
     await control.command('waitFor', '[data-testid="subagent-overview-panel"]', {
       timeoutMs: uiTimeoutMs,
     })
+    assert.equal(
+      await control.command('getAttribute', '[data-testid="right-workspace-subagents-tab"]', {
+        value: 'aria-selected',
+      }),
+      'true',
+      'The subagent overview lost its right workspace tab'
+    )
     assert.equal(
       Number(await control.command('getElementCount', '[data-testid="subagent-overview-item"]')),
       1,
@@ -1159,13 +1174,13 @@ export function createDesktopScenario({
       false,
       'A completed subagent retained the running preview'
     )
-    await capture(control, 'streaming-text-subagent-04-completed-overview.png')
+    await captureSubagent(control, 'streaming-text-subagent-04-completed-overview.png')
 
-    await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+    await control.command('click', '[data-testid="right-workspace-subagents-tab-close-button"]')
     await control.command('waitFor', '[data-testid="environment-subagents-section"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await capture(control, 'streaming-text-subagent-05-environment-summary.png')
+    await captureSubagent(control, 'streaming-text-subagent-05-environment-summary.png')
 
     const readyCountBeforeReload = control.readyCount
     await control.command('reloadMainWindow', 'body')
@@ -1185,13 +1200,20 @@ export function createDesktopScenario({
     await control.command('waitFor', '[data-testid="subagent-overview-panel"]', {
       timeoutMs: uiTimeoutMs,
     })
+    assert.equal(
+      await control.command('getAttribute', '[data-testid="right-workspace-subagents-tab"]', {
+        value: 'aria-selected',
+      }),
+      'true',
+      'The restored subagent overview was not opened inside the right workspace tab'
+    )
     await control.command('click', '[data-testid="subagent-overview-item"]')
     await control.command('waitFor', '[data-testid="subagent-conversation-panel"]', {
       text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
       timeoutMs: uiTimeoutMs,
     })
-    await capture(control, 'streaming-text-subagent-06-restored-history.png')
-    await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+    await captureSubagent(control, 'streaming-text-subagent-06-restored-history.png')
+    await control.command('click', '[data-testid="right-workspace-subagents-tab-close-button"]')
   }
 
   return {
