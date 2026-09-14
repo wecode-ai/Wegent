@@ -3545,6 +3545,11 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
     let context_window =
         codex_model_context_window(model_config).unwrap_or(DEFAULT_CODEX_MODEL_CONTEXT_WINDOW);
     overrides.push(format!("model_context_window={context_window}"));
+    if let Some(auto_compact_limit) = codex_auto_compact_token_limit(model_config, context_window) {
+        overrides.push(format!(
+            "model_auto_compact_token_limit={auto_compact_limit}"
+        ));
+    }
     overrides
 }
 
@@ -3623,6 +3628,27 @@ fn codex_model_context_window(model_config: &Value) -> Option<i64> {
         .or_else(|| model_config.get("contextWindow"))
         .and_then(value_i64)
         .filter(|value| *value > 0)
+}
+
+fn codex_model_max_output_tokens(model_config: &Value) -> Option<i64> {
+    model_config
+        .get("max_output_tokens")
+        .or_else(|| model_config.get("maxOutputTokens"))
+        .and_then(value_i64)
+        .filter(|value| *value > 0)
+}
+
+/// Token threshold at which Codex must compact before the upstream rejects the turn.
+///
+/// Upstream providers count the completion budget against the same window as the input,
+/// and the configured output ceiling travels with every request, so the usable input
+/// budget is `context_window - max_output_tokens`. Without this override Codex derives its
+/// auto-compaction threshold from the raw context window (90%, and 95% as a hard cap),
+/// which stays far above the input budget and lets conversations grow until the upstream
+/// fails the turn with a context-length error.
+fn codex_auto_compact_token_limit(model_config: &Value, context_window: i64) -> Option<i64> {
+    let max_output_tokens = codex_model_max_output_tokens(model_config)?;
+    (max_output_tokens < context_window).then(|| context_window - max_output_tokens)
 }
 
 fn configured_codex_provider(

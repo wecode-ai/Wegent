@@ -6944,6 +6944,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         config: {
           weworkModelKind: 'model-interface',
           model_context_window: 1_000_000,
+          max_output_tokens: 384_000,
           ui: { family: 'model-interface', controls: ['collaborationMode'] },
         },
         runtime: { family: 'openai.openai-responses' },
@@ -7054,7 +7055,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     await waitFor(() =>
-      expect(screen.getByTestId('runtime-context-window')).toHaveTextContent('1000000')
+      expect(screen.getByTestId('runtime-context-window')).toHaveTextContent('616000')
     )
   })
 

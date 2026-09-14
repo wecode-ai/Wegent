@@ -1789,6 +1789,7 @@ export interface RuntimeTokenUsageBreakdown {
 export interface RuntimeContextUsage {
   total: RuntimeTokenUsageBreakdown
   last: RuntimeTokenUsageBreakdown
+  /** Context window the reported usage is measured against, excluding the model's output budget. */
   modelContextWindow: number
 }
 
