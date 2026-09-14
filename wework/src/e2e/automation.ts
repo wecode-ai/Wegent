@@ -1155,7 +1155,7 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
   )
 }
 
-async function fillDesktopControlElement(element: HTMLElement, value: string) {
+export async function fillDesktopControlElement(element: HTMLElement, value: string) {
   element.focus()
 
   const codeMirrorRoot = element.closest<HTMLElement>('.cm-editor')
@@ -1170,6 +1170,7 @@ async function fillDesktopControlElement(element: HTMLElement, value: string) {
     return
   }
 
+  const ownValueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set
   if (element instanceof HTMLSelectElement) {
     selectDesktopControlOption(element, value)
     return
@@ -1180,6 +1181,9 @@ async function fillDesktopControlElement(element: HTMLElement, value: string) {
         : HTMLTextAreaElement.prototype
     const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
     setter?.call(element, value)
+  } else if (ownValueSetter) {
+    ownValueSetter.call(element, value)
+    return
   } else if (element.isContentEditable) {
     const selection = window.getSelection()
     const range = document.createRange()
@@ -1207,20 +1211,14 @@ async function fillDesktopControlElement(element: HTMLElement, value: string) {
     }
     return
   } else {
-    const valueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set
-    if (valueSetter) {
-      valueSetter.call(element, value)
-      return
-    } else {
-      const selection = window.getSelection()
-      const range = document.createRange()
-      range.selectNodeContents(element)
-      range.collapse(false)
-      selection?.removeAllRanges()
-      selection?.addRange(range)
-      document.execCommand('selectAll', false)
-      document.execCommand('insertText', false, value)
-    }
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    range.collapse(false)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    document.execCommand('selectAll', false)
+    document.execCommand('insertText', false, value)
   }
 
   element.dispatchEvent(
