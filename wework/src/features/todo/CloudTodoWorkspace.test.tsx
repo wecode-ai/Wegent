@@ -303,6 +303,17 @@ const item = {
   updated_at: '2026-07-22T00:00:00Z',
   completed_at: null,
   can_edit: true,
+  permissions: {
+    edit_content: true,
+    comment: true,
+    claim: true,
+    handoff: true,
+    assign: true,
+    execute: true,
+    submit_review: true,
+    complete: true,
+    reopen: true,
+  },
 }
 
 describe('workItemTaskInput', () => {
@@ -4463,11 +4474,12 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', inboxItem.id)
   })
 
-  it('fails closed when dragging a cloud Issue without can_edit', async () => {
+  it('fails closed when dragging a cloud Issue without permissions', async () => {
     const readOnlyItem = {
       ...item,
       status: 'inbox' as const,
       can_edit: undefined,
+      permissions: undefined,
       project_store: 'backend' as const,
     }
     const workbenchServices = services()
