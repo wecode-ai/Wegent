@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { HostCapabilityRouter } from '../host/capability-router.js'
 import { HostPipeServer } from '../host/host-pipe.js'
-import { DesktopRuntime, type CoreDshHandle } from './desktop-runtime.js'
+import {
+  DesktopRuntime,
+  type CoreDshHandle,
+  type DesktopRuntimeOptions,
+  type ManagedExecutorHandle,
+} from './desktop-runtime.js'
 import type { DshRuntimeOptions } from './dsh-runtime.js'
 
 interface Deferred<T> {
@@ -42,6 +47,37 @@ class FakeCoreDsh implements CoreDshHandle {
   }
 }
 
+class FakeExecutor implements ManagedExecutorHandle {
+  startCalls = 0
+  stopCalls = 0
+  startHang: Deferred<void> | null = null
+  requestHang: Deferred<unknown> | null = null
+  readonly requests: string[] = []
+
+  async start(): Promise<void> {
+    this.startCalls += 1
+    if (this.startHang) await this.startHang.promise
+  }
+
+  async stop(): Promise<void> {
+    this.stopCalls += 1
+  }
+
+  environment(): NodeJS.ProcessEnv {
+    return { WEGENT_APP_IPC_TOKEN: 'test-token' }
+  }
+
+  async request<Result>(method: string): Promise<Result> {
+    this.requests.push(method)
+    if (this.requestHang) return (await this.requestHang.promise) as Result
+    return undefined as Result
+  }
+
+  pid(): number | null {
+    return 2
+  }
+}
+
 const prepareState = vi.hoisted(() => ({
   prepareCalls: 0,
   resolveLaunch: null as ((value: unknown) => void) | null,
@@ -68,13 +104,17 @@ function createCoreDsh(options: DshRuntimeOptions): CoreDshHandle {
   return fake
 }
 
-function createRuntime(environment: NodeJS.ProcessEnv): DesktopRuntime {
+function createRuntime(
+  environment: NodeJS.ProcessEnv,
+  overrides: Partial<DesktopRuntimeOptions> = {}
+): DesktopRuntime {
   return new DesktopRuntime({
     environment,
     dataDirectory: '/tmp/wework-desktop-runtime-test/data',
     logDirectory: '/tmp/wework-desktop-runtime-test/logs',
     hostPipe,
     createCoreDsh,
+    ...overrides,
   })
 }
 
@@ -238,6 +278,56 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(created).toHaveLength(0)
     expect(runtime.state().coreDshUrl).toBeNull()
     expect(runtime.state().ready).toBe(false)
+  })
+
+  test('starts Core DSH in parallel with the executor without blocking on Codex', async () => {
+    const executor = new FakeExecutor()
+    executor.startHang = deferred()
+    nextStartHang = deferred()
+    const startupSteps: string[] = []
+    const runtime = createRuntime(
+      {
+        DEVICE_NAME: 'test-device',
+        WEGENT_APP_IPC_DEVICE_ID: 'test-device-id',
+        WEWORK_EXECUTOR_PATH: '/executor',
+        WEWORK_HARNESS_RUNTIME_ROOT: '/tmp/wework-harness-root',
+      },
+      {
+        createExecutor: () => executor,
+        onStartupStep: (step, status) => startupSteps.push(`${step}:${status}`),
+      }
+    )
+
+    const start = runtime.start()
+    await vi.waitFor(() => {
+      expect(executor.startCalls).toBe(1)
+      expect(prepareState.prepareCalls).toBe(1)
+    })
+
+    prepareState.resolveLaunch?.({
+      command: 'node',
+      entry: 'entry.js',
+      args: [],
+      cwd: '/tmp/wework-harness-root',
+      dshHome: '/tmp/wework-harness-root/home',
+      environment: {},
+      profile: 'test',
+      version: '0.0.0',
+      sourceFingerprint: 'test',
+    })
+    await vi.waitFor(() => expect(created).toHaveLength(1))
+    expect(created[0].startCalls).toBe(1)
+    expect(runtime.state().ready).toBe(false)
+    expect(startupSteps).toContain('core-dsh-process-start:started')
+
+    executor.startHang.resolve()
+    await flush()
+    expect(executor.requests).toEqual([])
+
+    nextStartHang.resolve()
+    await start
+
+    expect(runtime.state().ready).toBe(true)
   })
 
   test('negative: normal start reaches ready and stop tears everything down', async () => {
