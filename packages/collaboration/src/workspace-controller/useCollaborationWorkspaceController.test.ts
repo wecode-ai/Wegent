@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
+  CollaborationAssignment,
   CollaborationAttachment,
   CollaborationComment,
   CollaborationIssue,
@@ -316,6 +317,126 @@ describe("collaboration workspace controller", () => {
     expect(state.comments).toEqual([comment]);
   });
 
+  it("selects a cached board issue before its detail snapshot finishes loading", async () => {
+    state = {
+      ...state,
+      project,
+      issues: [issue],
+    };
+    const issueResponse = deferred<CollaborationIssue>();
+    const api = createApi();
+    api.issues.get = vi.fn().mockReturnValue(issueResponse.promise);
+    const { commands } = createController(api);
+
+    const load = commands.loadSelectedIssue(issue.id);
+
+    expect(state.selectedIssue).toEqual(issue);
+    expect(state.attachments).toEqual([]);
+    expect(state.comments).toEqual([]);
+
+    issueResponse.resolve(issue);
+    await load;
+    expect(state.attachments).toEqual([attachment]);
+    expect(state.comments).toEqual([comment]);
+  });
+
+  it("does not let a stale detail load overwrite a comment changed while it was loading", async () => {
+    state = {
+      ...state,
+      project,
+      issues: [issue],
+    };
+    const assignmentsResponse = deferred<CollaborationAssignment[]>();
+    const api = createApi();
+    api.comments.list = vi.fn().mockResolvedValue([]);
+    api.assignments = {
+      list: vi.fn().mockReturnValue(assignmentsResponse.promise),
+      create: vi.fn(),
+    };
+    const { commands } = createController(api);
+    const newerComment = {
+      ...comment,
+      id: "comment-new",
+      body: "submitted while loading",
+    };
+    const loadedAssignment = {
+      id: "assignment-new",
+      loop_item_id: issue.id,
+      target_type: "human",
+      target_id: "1",
+      target_name: "owner",
+      status: "active",
+      workflow_step: null,
+      created_at: "2026-09-10T00:00:01Z",
+      updated_at: "2026-09-10T00:00:01Z",
+    } satisfies CollaborationAssignment;
+
+    const load = commands.loadSelectedIssue(issue.id);
+    await vi.waitFor(() => {
+      expect(api.assignments?.list).toHaveBeenCalledWith(issue.id);
+    });
+
+    commands.replaceComments(issue.id, [newerComment]);
+    assignmentsResponse.resolve([loadedAssignment]);
+    await load;
+
+    expect(state.selectedIssue).toEqual(issue);
+    expect(state.attachments).toEqual([attachment]);
+    expect(state.comments).toEqual([newerComment]);
+    expect(state.assignments).toEqual([loadedAssignment]);
+  });
+
+  it("ignores a collection mutation that belongs to another issue", () => {
+    const otherIssue = {
+      ...issue,
+      id: "issue-2",
+      sequence_number: 2,
+      title: "Other issue",
+    };
+    state = {
+      ...state,
+      project,
+      issues: [issue, otherIssue],
+      selectedIssue: otherIssue,
+      comments: [comment],
+    };
+    const { commands } = createController();
+    const staleComment = {
+      ...comment,
+      id: "comment-stale",
+      body: "belongs to issue 1",
+    };
+
+    commands.replaceComments(issue.id, [staleComment]);
+
+    expect(state.selectedIssue).toEqual(otherIssue);
+    expect(state.comments).toEqual([comment]);
+  });
+
+  it("keeps the current detail collections visible while reloading the same issue", async () => {
+    state = {
+      ...state,
+      project,
+      issues: [issue],
+      selectedIssue: issue,
+      attachments: [attachment],
+      comments: [comment],
+    };
+    const issueResponse = deferred<CollaborationIssue>();
+    const api = createApi();
+    api.issues.get = vi.fn().mockReturnValue(issueResponse.promise);
+    const { commands } = createController(api);
+
+    const load = commands.loadSelectedIssue(issue.id);
+
+    expect(state.selectedIssue).toEqual(issue);
+    expect(state.attachments).toEqual([attachment]);
+    expect(state.comments).toEqual([comment]);
+
+    issueResponse.resolve(issue);
+    await load;
+  });
+
   it("treats an empty assignments API response as authoritative", async () => {
     const legacyAssignedIssue = {
       ...issue,
@@ -606,6 +727,57 @@ describe("collaboration workspace controller", () => {
     ]);
   });
 
+  it("reconciles an open Issue with the latest project snapshot", async () => {
+    const completedIssue = {
+      ...issue,
+      status: "completed" as const,
+      version: 2,
+      completed_at: "2026-09-13T09:00:00Z",
+    };
+    state = {
+      ...state,
+      projects: [project],
+      project,
+      issues: [issue],
+      selectedIssue: issue,
+    };
+    const api = createApi();
+    api.issues.getBoardSnapshot = vi.fn().mockResolvedValue({
+      items: [completedIssue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+    const { commands } = createController(api);
+
+    await commands.loadProjectSnapshot(project.id);
+
+    expect(state.issues).toEqual([completedIssue]);
+    expect(state.selectedIssue).toEqual(completedIssue);
+  });
+
+  it("clears an open Issue that is absent from the loaded project snapshot", async () => {
+    state = {
+      ...state,
+      projects: [project],
+      project,
+      issues: [issue],
+      selectedIssue: issue,
+    };
+    const api = createApi();
+    api.issues.getBoardSnapshot = vi.fn().mockResolvedValue({
+      items: [],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+    const { commands } = createController(api);
+
+    await commands.loadProjectSnapshot(project.id);
+
+    expect(state.selectedIssue).toBeNull();
+  });
+
   it("ignores a project response that finishes after a newer project load", async () => {
     const newerProject = {
       ...project,
@@ -759,12 +931,36 @@ describe("collaboration workspace controller", () => {
     expect(state.comments).toEqual([]);
   });
 
+  it("ignores an issue response after the current project is cleared", async () => {
+    let resolveIssue: ((value: CollaborationIssue) => void) | undefined;
+    const api = createApi();
+    api.issues.get = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveIssue = resolve;
+        }),
+    );
+    const { commands } = createController(api);
+
+    const load = commands.loadSelectedIssue(issue.id);
+    commands.clearProject();
+    resolveIssue?.(issue);
+    await load;
+
+    expect(state.project).toBeNull();
+    expect(state.selectedIssue).toBeNull();
+    expect(state.attachments).toEqual([]);
+    expect(state.comments).toEqual([]);
+  });
+
   it("reloads the board and reports a conflict after a reorder version conflict", async () => {
     const api = createApi();
     api.issues.update = vi
       .fn()
       .mockResolvedValue({ ...issue, status: "completed", version: 2 });
-    api.issues.reorder = vi.fn().mockRejectedValue({ status: 409 });
+    api.issues.reorder = vi
+      .fn()
+      .mockRejectedValue({ code: "version_conflict" });
     const { commands, notify } = createController(api);
     const optimisticIssue = { ...issue, status: "completed" };
 
@@ -879,5 +1075,138 @@ describe("collaboration workspace controller", () => {
 
     expect(api.projects.get).not.toHaveBeenCalled();
     expect(state.project).toEqual(assigneeProject);
+  });
+
+  it("reapplies a group change to the latest project after a version conflict", async () => {
+    const statusProject = {
+      ...project,
+      board_config: {
+        group_by: "status" as const,
+        processing_start_status_id: "processing",
+        statuses: [],
+      },
+    };
+    const latestProject = { ...statusProject, version: 2 };
+    const assigneeProject = {
+      ...latestProject,
+      board_config: {
+        ...latestProject.board_config,
+        group_by: "assignee" as const,
+      },
+      version: 3,
+    };
+    state = { ...state, projects: [statusProject], project: statusProject };
+    const api = createApi();
+    api.projects.get = vi.fn().mockResolvedValue(latestProject);
+    api.projects.update = vi
+      .fn()
+      .mockRejectedValueOnce({ status: 409 })
+      .mockResolvedValueOnce(assigneeProject);
+    const { commands, notify } = createController(api);
+
+    await commands.changeProjectGroup({
+      project: statusProject,
+      groupBy: "assignee",
+      defaultStatuses: [],
+    });
+
+    expect(api.projects.get).toHaveBeenCalledWith(project.id);
+    expect(api.projects.update).toHaveBeenLastCalledWith(project.id, {
+      version: 2,
+      boardConfig: {
+        ...latestProject.board_config,
+        group_by: "assignee",
+      },
+    });
+    expect(state.project).toEqual(assigneeProject);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("recognizes the local version_conflict error protocol", async () => {
+    const statusProject = {
+      ...project,
+      board_config: {
+        group_by: "status" as const,
+        processing_start_status_id: "processing",
+        statuses: [],
+      },
+    };
+    const latestProject = { ...statusProject, version: 2 };
+    const priorityProject = {
+      ...latestProject,
+      board_config: {
+        ...latestProject.board_config,
+        group_by: "priority" as const,
+      },
+      version: 3,
+    };
+    state = { ...state, projects: [statusProject], project: statusProject };
+    const api = createApi();
+    api.projects.get = vi.fn().mockResolvedValue(latestProject);
+    api.projects.update = vi
+      .fn()
+      .mockRejectedValueOnce({ code: "version_conflict" })
+      .mockResolvedValueOnce(priorityProject);
+    const { commands, notify } = createController(api);
+
+    await commands.changeProjectGroup({
+      project: statusProject,
+      groupBy: "priority",
+      defaultStatuses: [],
+    });
+
+    expect(api.projects.get).toHaveBeenCalledWith(project.id);
+    expect(state.project).toEqual(priorityProject);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("does not let an older group change overwrite the latest selection", async () => {
+    const statusProject = {
+      ...project,
+      board_config: {
+        group_by: "status" as const,
+        processing_start_status_id: "processing",
+        statuses: [],
+      },
+    };
+    const tagProject = {
+      ...statusProject,
+      board_config: {
+        ...statusProject.board_config,
+        group_by: "tag" as const,
+      },
+      version: 2,
+    };
+    let rejectOlder!: (error: unknown) => void;
+    const olderUpdate = new Promise<CollaborationProject>(
+      (_resolve, reject) => {
+        rejectOlder = reject;
+      },
+    );
+    state = { ...state, projects: [statusProject], project: statusProject };
+    const api = createApi();
+    api.projects.update = vi
+      .fn()
+      .mockReturnValueOnce(olderUpdate)
+      .mockResolvedValueOnce(tagProject);
+    const { commands, notify } = createController(api);
+
+    const olderChange = commands.changeProjectGroup({
+      project: statusProject,
+      groupBy: "priority",
+      defaultStatuses: [],
+    });
+    await commands.changeProjectGroup({
+      project: statusProject,
+      groupBy: "tag",
+      defaultStatuses: [],
+    });
+    rejectOlder({ status: 409 });
+    await olderChange;
+
+    expect(api.projects.get).not.toHaveBeenCalled();
+    expect(api.projects.update).toHaveBeenCalledTimes(2);
+    expect(state.project).toEqual(tagProject);
+    expect(notify).not.toHaveBeenCalled();
   });
 });

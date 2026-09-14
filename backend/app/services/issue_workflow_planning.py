@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import re
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -21,6 +23,7 @@ from app.models.delivery import (
 )
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate
 from app.schemas.issue_workflow import (
@@ -114,7 +117,14 @@ class IssueWorkflowPlanningService:
             item.model_copy(update={"stage_id": stage_id}) for item in values.items
         ]
         for item in items:
-            self._validate_assignee(db, issue, user_id, item)
+            self._validate_assignee(
+                db,
+                issue,
+                user_id,
+                item,
+                workflow=workflow,
+                stage_id=stage_id,
+            )
         self._supersede_items(db, run.id)
         for order, item in enumerate(items):
             db.add(
@@ -254,7 +264,8 @@ class IssueWorkflowPlanningService:
         run.status = "completed"
         run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         run.version += 1
-        has_next_stage = self._complete_stage(workflow, self._run_stage(run))
+        completed_stage_id = self._run_stage(run)
+        has_next_stage = self._complete_stage(workflow, completed_stage_id)
         if has_next_stage:
             workflow.update(
                 {
@@ -272,7 +283,16 @@ class IssueWorkflowPlanningService:
                 by_user_id=user_id,
             )
             next_run = self.ensure_run(db, issue=issue, user_id=user_id)
+            activity_payload = self._persist_stage_completion_activity(
+                db,
+                issue=issue,
+                run=run,
+                workflow=workflow,
+                completed_stage_id=completed_stage_id,
+                has_next_stage=True,
+            )
             db.commit()
+            self._push_stage_completion_activity(activity_payload)
             db.refresh(next_run)
             return self._view(db, issue, next_run)
         workflow["orchestration_status"] = "completed"
@@ -293,7 +313,16 @@ class IssueWorkflowPlanningService:
             issue,
             run_status="succeeded",
         )
+        activity_payload = self._persist_stage_completion_activity(
+            db,
+            issue=issue,
+            run=run,
+            workflow=workflow,
+            completed_stage_id=completed_stage_id,
+            has_next_stage=False,
+        )
         db.commit()
+        self._push_stage_completion_activity(activity_payload)
         db.refresh(run)
         return self._view(db, issue, run)
 
@@ -319,6 +348,7 @@ class IssueWorkflowPlanningService:
         if child is None or not child.parent_id:
             raise ValueError("Workflow task not found")
         issue = self._issue(db, child.parent_id, user_id, for_update=True)
+        workflow = self._workflow(issue)
         plan_metadata = self._child_plan_metadata(child)
         run_id = str(plan_metadata.get("run_id") or "")
         plan_item_id = str(plan_metadata.get("plan_item_id") or "")
@@ -374,6 +404,15 @@ class IssueWorkflowPlanningService:
         current = self.get(db, issue_id=issue.id, user_id=user_id)
         if current is None:
             raise ValueError("The Issue has no active workflow plan")
+        if (
+            str(workflow.get("approval_policy") or "required") == "automatic"
+            and current.status == "awaiting_review"
+        ):
+            return self.approve_review(
+                db,
+                issue_id=issue.id,
+                user_id=user_id,
+            )
         return current
 
     def sync_from_child(
@@ -684,7 +723,27 @@ class IssueWorkflowPlanningService:
         issue: LoopItem,
         user_id: int,
         item: WorkflowPlanItemCreate,
+        *,
+        workflow: dict,
+        stage_id: str,
     ) -> None:
+        stage = next(
+            (
+                node
+                for node in workflow.get("nodes", [])
+                if isinstance(node, dict) and str(node.get("id")) == stage_id
+            ),
+            None,
+        )
+        if stage is not None:
+            required_type = str(stage.get("required_assignee_type") or "")
+            required_id = str(stage.get("required_assignee_id") or "")
+            if required_type and (
+                item.assignee_type != required_type or item.assignee_id != required_id
+            ):
+                raise ValueError(
+                    "Workflow plan assignee does not match the stage constraint"
+                )
         if item.assignee_type == "user":
             members = cloud_project_service.list_members(
                 db,
@@ -1014,6 +1073,113 @@ class IssueWorkflowPlanningService:
             node.get("status") not in {"completed", "forced_completed"}
             for node in required
         )
+
+    @staticmethod
+    def _stage_marker_token(*values: object) -> str:
+        token = "_".join(str(value or "") for value in values)
+        token = re.sub(r"[^A-Za-z0-9]+", "_", token).strip("_").upper()
+        return token or "STAGE"
+
+    def _persist_stage_completion_activity(
+        self,
+        db: Session,
+        *,
+        issue: LoopItem,
+        run: ProjectWorkflowRun,
+        workflow: dict,
+        completed_stage_id: str,
+        has_next_stage: bool,
+    ) -> dict | None:
+        nodes = [node for node in workflow.get("nodes", []) if isinstance(node, dict)]
+        completed_stage = next(
+            (node for node in nodes if str(node.get("id") or "") == completed_stage_id),
+            {},
+        )
+        ready_stages = [node for node in nodes if node.get("status") == "ready"]
+        completed_token = self._stage_marker_token(
+            completed_stage.get("id"),
+            completed_stage.get("name"),
+        )
+        if has_next_stage and ready_stages:
+            next_token = self._stage_marker_token(
+                *(
+                    value
+                    for stage in ready_stages
+                    for value in (stage.get("id"), stage.get("name"))
+                )
+            )
+            marker = (
+                f"WORKFLOW_STAGE_{completed_token}_COMPLETED_"
+                f"NEXT_{next_token}_READY"
+            )
+        else:
+            marker = (
+                f"WORKFLOW_STAGE_{completed_token}_COMPLETED_" "ALL_STAGES_COMPLETED"
+            )
+        message_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                (
+                    "wegent:workflow-stage-completed:"
+                    f"{issue.id}:{run.id}:{completed_stage_id}"
+                ),
+            )
+        )
+        existing = (
+            db.query(ProjectChatMessage)
+            .filter(ProjectChatMessage.message_id == message_id)
+            .one_or_none()
+        )
+        if existing is not None:
+            return None
+        assignee_type = str(completed_stage.get("required_assignee_type") or "")
+        assignee_id = str(completed_stage.get("required_assignee_id") or "")
+        agent = (
+            db.get(ProjectChatAgent, assignee_id)
+            if assignee_type == "agent" and assignee_id
+            else None
+        )
+        sender_name = (
+            (agent.title or agent.name)
+            if agent is not None
+            else str(completed_stage.get("name") or "自动化工作流")
+        )
+        row = ProjectChatMessage(
+            message_id=message_id,
+            client_message_id=message_id,
+            project_id=str(issue.cloud_project_id),
+            task_id=issue.id,
+            sender_type="agent",
+            sender_id=assignee_id or f"workflow:{run.id}",
+            sender_name=sender_name,
+            message_type="text",
+            content=marker,
+            metadata_json={
+                "kind": "workflow_stage_completed",
+                "workflow_run_id": str(run.id),
+                "workflow_stage_id": completed_stage_id,
+                "next_stage_ids": [
+                    str(stage.get("id") or "") for stage in ready_stages
+                ],
+                "workflow_completed": not has_next_stage,
+            },
+            agent_id=assignee_id if assignee_type == "agent" else "",
+            status="completed",
+        )
+        db.add(row)
+        db.flush()
+        db.refresh(row)
+        from app.services.project_chat.service import project_chat_service
+
+        return project_chat_service.to_view(row).model_dump(by_alias=True)
+
+    @staticmethod
+    def _push_stage_completion_activity(payload: dict | None) -> None:
+        if payload is None:
+            return
+        from app.services.project_chat.push import push_project_chat_message
+
+        push_project_chat_message(payload)
 
     def _view(
         self,

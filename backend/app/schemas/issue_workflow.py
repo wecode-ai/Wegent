@@ -360,6 +360,8 @@ class WorkflowNodeDefinition(BaseModel):
     )
     workspace_policy: Literal["none", "composer", "inherit"] = "composer"
     automation_rule_id: str | None = Field(default=None, max_length=64)
+    required_assignee_type: WorkflowPlanItemAssigneeType | None = None
+    required_assignee_id: str | None = Field(default=None, min_length=1, max_length=128)
     execution_config: WorkflowExecutionConfig | None = None
     execution_config_override: bool = False
 
@@ -409,6 +411,10 @@ class WorkflowNodeDefinition(BaseModel):
                 self.event_wait = WorkflowEventWaitConfig()
         if self.automation_rule_id and self.execution_mode != "robot":
             raise ValueError("workflow automation rule requires robot execution")
+        if bool(self.required_assignee_type) != bool(self.required_assignee_id):
+            raise ValueError(
+                "workflow stage assignee constraint requires both type and id"
+            )
         if unknown := set(self.dependency_context) - set(self.depends_on):
             raise ValueError(
                 "workflow dependency context references non-dependencies: "
@@ -457,6 +463,17 @@ class ProjectWorkflowDefinition(BaseModel):
                 raise ValueError(
                     "AI stage constraints cannot define execution configuration: "
                     + ", ".join(configured_nodes)
+                )
+        else:
+            constrained_nodes = [
+                node.id
+                for node in self.nodes
+                if node.required_assignee_type is not None
+            ]
+            if constrained_nodes:
+                raise ValueError(
+                    "manual workflow stages cannot constrain AI plan assignees: "
+                    + ", ".join(constrained_nodes)
                 )
         node_ids = [node.id for node in self.nodes]
         if len(node_ids) != len(set(node_ids)):

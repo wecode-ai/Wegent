@@ -325,12 +325,15 @@ describe('shared IssueDetail', () => {
     })
 
     expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-tasks')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-tasks')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-state-summary')).toHaveTextContent('待开始')
+    expect(screen.getByTestId('cloud-todo-state-summary')).not.toHaveTextContent('执行任务')
     expect(screen.getByTestId('collaboration-comments')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail-assignee')).not.toBeInTheDocument()
-    expect(screen.getByRole('option', { name: '张三' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: '代码机器人' })).toBeInTheDocument()
+    expect(screen.queryByTestId('collaboration-assignment-target')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('collaboration-assignment-workflow-step')).not.toBeInTheDocument()
 
+    fireEvent.click(screen.getByTestId('cloud-todo-edit-content'))
     fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
       target: { value: '新描述' },
     })
@@ -351,14 +354,10 @@ describe('shared IssueDetail', () => {
         tags: [],
       })
     )
-    fireEvent.change(screen.getByTestId('collaboration-assignment-target'), {
-      target: { value: 'human:5' },
-    })
-    fireEvent.change(screen.getByTestId('collaboration-assignment-workflow-step'), {
-      target: { value: '交互设计' },
-    })
+    fireEvent.click(screen.getByTestId('collaboration-issue-mention-trigger'))
+    fireEvent.click(screen.getByTestId(`collaboration-issue-mention-member-${member.user_id}`))
     fireEvent.change(screen.getByTestId('collaboration-issue-comment'), {
-      target: { value: assignmentComment.body },
+      target: { value: `@${member.user_name} ${assignmentComment.body}` },
     })
     fireEvent.click(screen.getByTestId('collaboration-issue-comment-submit'))
 
@@ -366,8 +365,8 @@ describe('shared IssueDetail', () => {
       expect(createAssignment).toHaveBeenCalledWith(issue.id, {
         targetType: 'human',
         targetId: '5',
-        workflowStep: '交互设计',
-        commentBody: assignmentComment.body,
+        workflowStep: null,
+        commentBody: `@${member.user_name} ${assignmentComment.body}`,
         notifyTarget: true,
       })
     )
@@ -437,7 +436,7 @@ describe('shared IssueDetail', () => {
     expect(screen.queryByTestId('cloud-todo-detail-tag-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail-tag-tag-remove-只读')).not.toBeInTheDocument()
     expect(screen.getByTestId('collaboration-issue-comment')).toBeEnabled()
-    expect(screen.getByTestId('collaboration-assignment-target')).toBeEnabled()
+    expect(screen.queryByTestId('collaboration-assignment-target')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(onCreateTask).toHaveBeenCalledWith()
     expect(screen.getByTestId('cloud-todo-add-collaborator')).toBeDisabled()
@@ -477,7 +476,7 @@ describe('shared IssueDetail', () => {
     })
 
     expect(screen.getByTestId('collaboration-issue-comment')).toBeEnabled()
-    expect(screen.getByTestId('collaboration-assignment-target')).toBeDisabled()
+    expect(screen.queryByTestId('collaboration-assignment-target')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(onCreateTask).toHaveBeenCalledWith()
   })
@@ -493,7 +492,7 @@ describe('shared IssueDetail', () => {
     })
 
     expect(screen.getByTestId('collaboration-issue-comment')).toBeDisabled()
-    expect(screen.getByTestId('collaboration-assignment-target')).toBeDisabled()
+    expect(screen.queryByTestId('collaboration-assignment-target')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(onCreateTask).toHaveBeenCalledWith()
   })
@@ -679,6 +678,7 @@ describe('shared IssueDetail', () => {
 
     renderDetail(api)
 
+    fireEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByText('实现任务')).toBeInTheDocument()
     expect(document.querySelector('[title="张三"]')).toBeInTheDocument()
 
@@ -744,6 +744,7 @@ describe('shared IssueDetail', () => {
       },
     })
 
+    fireEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     fireEvent.click(await screen.findByTestId('cloud-todo-workflow-replan'))
     await waitFor(() => expect(replan).toHaveBeenCalledWith(issue.id))
 
@@ -814,6 +815,7 @@ describe('shared IssueDetail', () => {
       onChange,
     })
 
+    fireEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     fireEvent.click(await screen.findByTestId('cloud-todo-run-workflow-node-automation-stage'))
     await waitFor(() =>
       expect(runWorkflowNode).toHaveBeenCalledWith(
@@ -907,6 +909,7 @@ describe('shared IssueDetail', () => {
       onChange,
     })
 
+    fireEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     fireEvent.click(await screen.findByTestId('cloud-todo-approve-workflow-node-review-stage'))
     const deliverable = await screen.findByTestId('workflow-deliverable-input-report')
     fireEvent.change(deliverable.querySelector('textarea')!, {

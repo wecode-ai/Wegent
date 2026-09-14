@@ -225,16 +225,18 @@ describe('createWebSharedWorkspaceApi', () => {
       .mockResolvedValueOnce({
         items: [
           {
-            device_id: 'device-cloud',
+            device_id: 21,
+            device_key: 'device-cloud',
             name: 'Cloud Runner',
             status: 'online',
-            device_type: 'cloud',
+            kind: 'cloud_host',
           },
           {
-            device_id: 'device-offline',
+            device_id: 22,
+            device_key: 'device-offline',
             name: 'Offline Runner',
             status: 'offline',
-            device_type: 'cloud',
+            kind: 'cloud_host',
           },
         ],
       })
@@ -327,6 +329,7 @@ describe('createWebSharedWorkspaceApi', () => {
         },
       },
     ])
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project-1/execution-environments')
     expect(client.get).toHaveBeenCalledWith('/plugins/installed?device_id=device-cloud')
   })
 

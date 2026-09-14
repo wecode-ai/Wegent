@@ -182,24 +182,25 @@ function createApi() {
 }
 
 function renderState(
-  api: AutomationCloudApi,
+  api: AutomationCloudApi | undefined,
   currentProject: AutomationProject,
   cacheSource?: object,
+  projectApi = {
+    saveWorkflow: vi.fn(),
+    clearLegacyWorkflow: vi.fn(),
+  },
 ) {
   hookRuntime.beginRender();
   const state = useAutomationCloudState({
     api,
     cacheSource,
-    projectApi: {
-      clearLegacyWorkflow: vi.fn(),
-    },
+    projectApi,
     project: currentProject,
     canManage: true,
     legacyUpgradeRequiredMessage: "upgrade required",
     serviceUnavailableMessage: "unavailable",
     managePermissionMessage: "forbidden",
     runtimeUserRequiredMessage: "user required",
-    duplicateName: (name) => `${name} copy`,
   });
   hookRuntime.flushEffects();
   return state;
@@ -213,6 +214,65 @@ async function flushPromises() {
 describe("useAutomationCloudState async scope", () => {
   beforeEach(() => {
     hookRuntime.reset();
+  });
+
+  it("loads and saves a local project workflow without a cloud automation API", async () => {
+    const localProject = {
+      ...project("local"),
+      workflow_definition: {
+        version: 1,
+        stage_mode: "dag" as const,
+        advancement_policy: "manual" as const,
+        nodes: [
+          {
+            id: "step-1",
+            name: "Implement",
+            depends_on: [],
+            required: true,
+            workspace_policy: "composer" as const,
+          },
+        ],
+      },
+    };
+    const saveWorkflow = vi
+      .fn()
+      .mockImplementation(
+        async (
+          currentProject: AutomationProject,
+          workflowDefinition: AutomationProject["workflow_definition"],
+        ) => ({
+          ...currentProject,
+          workflow_definition: workflowDefinition,
+          version: currentProject.version + 1,
+          updated_at: "2026-09-14T00:00:00Z",
+        }),
+      );
+    const projectApi = {
+      saveWorkflow,
+      clearLegacyWorkflow: vi.fn(),
+    };
+
+    let state = renderState(undefined, localProject, undefined, projectApi);
+    await flushPromises();
+    state = renderState(undefined, localProject, undefined, projectApi);
+
+    expect(state.error).toBe("");
+    expect(state.rules).toHaveLength(1);
+    expect(state.rules[0]?.persisted).toBe(true);
+
+    const saved = await state.persistRule({
+      ...state.rules[0]!,
+      name: "Updated local policy",
+    });
+
+    expect(saveWorkflow).toHaveBeenCalledOnce();
+    expect(saved).toMatchObject({
+      id: "legacy-workflow-local",
+      name: "Updated local policy",
+      persisted: true,
+      origin: "legacy_workflow",
+      version: 2,
+    });
   });
 
   it("resets scoped state and rejects old rules, runs, error and loading writes", async () => {

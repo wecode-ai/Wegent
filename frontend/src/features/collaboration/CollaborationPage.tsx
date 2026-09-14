@@ -4,32 +4,31 @@
 
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
-  CollaborationApp,
   CollaborationPlatformApp,
-  type CollaborationHostAdapter,
   type CollaborationLocale,
   type CollaborationPlatformHostAdapter,
   type CollaborationPlatformLocation,
-  type CollaborationProject,
   type CollaborationView,
   type CollaborationWorkspaceView,
 } from '@wegent/collaboration'
 import { toast } from 'sonner'
 
 import { apiClient } from '@/apis/client'
+import TopNavigation from '@/features/layout/TopNavigation'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
+import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
+import { webAutomationUiHost } from '@/features/collaboration/automation/WebAutomationHost'
+import { collaborationLocationPath } from '@/features/collaboration/routes'
 import {
   CollapsedSidebarButtons,
   ResizableSidebar,
   TaskSidebar,
 } from '@/features/tasks/components/sidebar'
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
-import { webAutomationUiHost } from '@/features/collaboration/automation/WebAutomationHost'
-import { CollaborationProjectSection } from './CollaborationProjectSection'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
@@ -51,27 +50,67 @@ function workspaceViewFromPath(pathname: string): CollaborationWorkspaceView {
   return 'home'
 }
 
-export function collaborationLocationPath(location: CollaborationPlatformLocation): string {
-  if (!location.workspaceId) {
-    return location.platformView === 'resources' ? '/collaboration/resources' : '/collaboration'
+function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: ReactNode }) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const isMobile = useIsMobile()
+  const { selectTask } = useTaskSession()
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
+  const [isCollapsed, setIsCollapsed] = useState(false)
+
+  useEffect(() => {
+    setIsCollapsed(localStorage.getItem('task-sidebar-collapsed') === 'true')
+  }, [])
+
+  useEffect(() => {
+    setIsMobileSidebarOpen(false)
+  }, [pathname])
+
+  const handleToggleCollapsed = () => {
+    setIsCollapsed(current => {
+      const next = !current
+      localStorage.setItem('task-sidebar-collapsed', String(next))
+      return next
+    })
   }
-  const workspaceBase = `/collaboration/workspaces/${encodeURIComponent(location.workspaceId)}`
-  if (!location.projectId) {
-    const suffix: Record<CollaborationWorkspaceView, string> = {
-      home: '',
-      projects: '/projects',
-      members: '/members',
-      agents: '/agents',
-      'execution-environments': '/execution-environments',
-      settings: '/settings',
-    }
-    return `${workspaceBase}${suffix[location.workspaceView]}`
+
+  const handleNewTask = () => {
+    selectTask(null)
+    router.replace('/chat')
   }
-  const projectBase = `${workspaceBase}/projects/${encodeURIComponent(location.projectId)}`
-  const query = location.projectView === 'board' ? '' : `?view=${location.projectView}`
-  return location.issueId
-    ? `${projectBase}/issues/${encodeURIComponent(location.issueId)}${query}`
-    : `${projectBase}${query}`
+
+  return (
+    <div className="flex smart-h-screen bg-base text-text-primary box-border">
+      {isCollapsed && !isMobile && (
+        <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
+      )}
+      <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
+        <TaskSidebar
+          isMobileSidebarOpen={isMobileSidebarOpen}
+          setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+          pageType="collaboration"
+          isCollapsed={isCollapsed}
+          onToggleCollapsed={handleToggleCollapsed}
+          contextSection={sidebar}
+        />
+      </ResizableSidebar>
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="lg:hidden">
+          <TopNavigation
+            variant="with-sidebar"
+            onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+            isSidebarCollapsed={isCollapsed}
+          />
+        </div>
+        <div
+          className="min-h-0 min-w-0 flex-1 overflow-hidden"
+          data-testid="collaboration-page-main"
+        >
+          {main}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export function CollaborationPage() {
@@ -79,16 +118,7 @@ export function CollaborationPage() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const { getCurrentLanguage } = useTranslation()
-  const isMobile = useIsMobile()
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-  const [isCollapsed, setIsCollapsed] = useState(false)
-  const [collaborationProjects, setCollaborationProjects] = useState<CollaborationProject[]>([])
-  const [createProjectRequestKey, setCreateProjectRequestKey] = useState(0)
   const api = useMemo(() => createWebSharedWorkspaceApi(apiClient), [])
-
-  useEffect(() => {
-    setIsCollapsed(localStorage.getItem('task-sidebar-collapsed') === 'true')
-  }, [])
 
   const segments = pathname.split('/').filter(Boolean)
   const workspaceRoute = segments[1] === 'workspaces'
@@ -97,8 +127,10 @@ export function CollaborationPage() {
   const projectId = projectRoute && segments[4] ? decodeURIComponent(segments[4]) : null
   const issueId =
     projectRoute && segments[5] === 'issues' && segments[6] ? decodeURIComponent(segments[6]) : null
+  const removedMyWorkRoute = pathname === '/collaboration/my-work'
+  const removedResourcesRoute = pathname === '/collaboration/resources'
   const legacyProjectId =
-    !workspaceRoute && segments[1] && segments[1] !== 'resources'
+    !workspaceRoute && segments[1] && segments[1] !== 'resources' && !removedMyWorkRoute
       ? decodeURIComponent(segments[1])
       : null
   const legacyIssueId =
@@ -111,60 +143,89 @@ export function CollaborationPage() {
       ? (rawView as CollaborationView)
       : 'board'
   const locale: CollaborationLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
-  const location: CollaborationPlatformLocation = {
-    platformView: pathname === '/collaboration/resources' ? 'resources' : 'spaces',
-    workspaceId,
-    workspaceView: workspaceViewFromPath(pathname),
-    projectId,
+  useEffect(() => {
+    if (removedMyWorkRoute || removedResourcesRoute) {
+      router.replace('/collaboration')
+      return
+    }
+    if (!legacyProjectId) return
+    let active = true
+    void api.projects
+      .get(legacyProjectId)
+      .then(project => {
+        if (!active) return
+        if (!project.workspace_id) {
+          toast.error('该项目未关联协作空间')
+          router.replace('/collaboration')
+          return
+        }
+        router.replace(
+          collaborationLocationPath({
+            platformView: 'spaces',
+            workspaceId: project.workspace_id,
+            workspaceView: 'projects',
+            projectId: project.id,
+            projectView,
+            issueId: legacyIssueId,
+          })
+        )
+      })
+      .catch(error => {
+        if (!active) return
+        toast.error(error instanceof Error ? error.message : '项目加载失败')
+        router.replace('/collaboration')
+      })
+    return () => {
+      active = false
+    }
+  }, [
+    api,
+    legacyIssueId,
+    legacyProjectId,
     projectView,
-    issueId,
-  }
+    removedMyWorkRoute,
+    removedResourcesRoute,
+    router,
+  ])
 
   const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
       capabilities: {
         automation: true,
         dingtalkAitable: false,
-      },
-      location,
-      navigate(nextLocation) {
-        router.push(collaborationLocationPath(nextLocation))
-      },
-      openExternal(url) {
-        window.open(url, '_blank', 'noopener,noreferrer')
-      },
-      notify(message, kind) {
-        if (kind === 'success') toast.success(message)
-        else toast.error(message)
-      },
-    }),
-    [location, router]
-  )
-  const projectHost = useMemo<CollaborationHostAdapter>(
-    () => ({
-      capabilities: {
-        myWork: false,
-        automation: true,
-        dingtalkAitable: false,
+        projectLocation: 'cloud',
+        workspaceLocations: ['cloud'],
+        sidebarPresentation: 'context',
       },
       location: {
-        projectId: legacyProjectId,
-        issueId: legacyIssueId,
-        view: projectView,
-        rootView: 'home',
-      },
-      onProjectsChange: setCollaborationProjects,
+        platformView: 'spaces',
+        workspaceId,
+        workspaceView: workspaceViewFromPath(pathname),
+        projectId,
+        projectView,
+        issueId,
+      } satisfies CollaborationPlatformLocation,
       navigate(nextLocation) {
-        const query = nextLocation.view === 'board' ? '' : `?view=${nextLocation.view}`
-        if (!nextLocation.projectId) {
-          router.push('/collaboration')
-        } else if (nextLocation.issueId) {
-          router.push(
-            `/collaboration/${encodeURIComponent(nextLocation.projectId)}/issues/${encodeURIComponent(nextLocation.issueId)}${query}`
-          )
-        } else {
-          router.push(`/collaboration/${encodeURIComponent(nextLocation.projectId)}${query}`)
+        const nextPath = collaborationLocationPath(nextLocation)
+        const updatesCurrentIssueDrawer =
+          Boolean(projectId) &&
+          nextLocation.platformView === 'spaces' &&
+          nextLocation.workspaceId === workspaceId &&
+          nextLocation.projectId === projectId &&
+          nextLocation.projectView === projectView &&
+          nextLocation.issueId !== issueId
+        if (updatesCurrentIssueDrawer) {
+          window.history.pushState(null, '', nextPath)
+          return
         }
+        router.push(nextPath)
+      },
+      manageResource(kind, resourceId) {
+        if (kind === 'agents') {
+          router.push('/resource-library?tab=mine&type=agent&scope=personal')
+          return
+        }
+        router.push(resourceId ? `/devices?deviceId=${encodeURIComponent(resourceId)}` : '/devices')
       },
       openExternal(url) {
         window.open(url, '_blank', 'noopener,noreferrer')
@@ -174,65 +235,29 @@ export function CollaborationPage() {
         else toast.error(message)
       },
     }),
-    [legacyIssueId, legacyProjectId, projectView, router]
+    [issueId, pathname, projectId, projectView, router, workspaceId]
   )
 
-  const toggleCollapsed = () => {
-    setIsCollapsed(current => {
-      const next = !current
-      localStorage.setItem('task-sidebar-collapsed', String(next))
-      return next
-    })
+  if (legacyProjectId) {
+    return (
+      <CollaborationWebShell
+        sidebar={<div className="h-full" />}
+        main={
+          <div className="flex h-full items-center justify-center text-sm text-text-muted">
+            正在进入协作空间…
+          </div>
+        }
+      />
+    )
   }
 
   return (
-    <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      {isCollapsed && !isMobile && (
-        <CollapsedSidebarButtons
-          onNewTask={() => router.push('/chat')}
-          onExpand={toggleCollapsed}
-        />
-      )}
-      <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={toggleCollapsed}>
-        <TaskSidebar
-          isMobileSidebarOpen={isMobileSidebarOpen}
-          setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-          pageType="collaboration"
-          isCollapsed={isCollapsed}
-          onToggleCollapsed={toggleCollapsed}
-          projectSection={
-            legacyProjectId ? (
-              <CollaborationProjectSection
-                locale={locale}
-                onAdd={() => setCreateProjectRequestKey(current => current + 1)}
-                onSelect={nextProjectId =>
-                  router.push(`/collaboration/${encodeURIComponent(nextProjectId)}`)
-                }
-                projects={collaborationProjects}
-                selectedProjectId={legacyProjectId}
-              />
-            ) : undefined
-          }
-        />
-      </ResizableSidebar>
-      <main className={`min-w-0 flex-1 ${legacyProjectId ? 'overflow-auto' : 'overflow-hidden'}`}>
-        {legacyProjectId ? (
-          <CollaborationApp
-            api={api}
-            host={projectHost}
-            locale={locale}
-            automationUiHost={webAutomationUiHost}
-            createProjectRequestKey={createProjectRequestKey}
-          />
-        ) : (
-          <CollaborationPlatformApp
-            api={api}
-            host={platformHost}
-            locale={locale}
-            automationUiHost={webAutomationUiHost}
-          />
-        )}
-      </main>
-    </div>
+    <CollaborationPlatformApp
+      api={api}
+      host={platformHost}
+      locale={locale}
+      automationUiHost={webAutomationUiHost}
+      renderShell={({ main, sidebar }) => <CollaborationWebShell main={main} sidebar={sidebar} />}
+    />
   )
 }

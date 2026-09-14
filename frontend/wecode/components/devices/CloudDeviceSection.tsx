@@ -80,6 +80,7 @@ function getPrimaryDevice(devices: DeviceInfo[]): DeviceInfo {
 
 interface CloudDeviceSectionProps {
   cloudDevices: DeviceInfo[]
+  highlightedDeviceId?: number | null
   onDeviceCreated: () => void
   onDeleteDevice: (device: DeviceInfo) => Promise<void>
   onSetDefault: (device: DeviceInfo) => Promise<void>
@@ -93,6 +94,7 @@ interface CloudDeviceSectionProps {
 
 export function CloudDeviceSection({
   cloudDevices,
+  highlightedDeviceId,
   onDeviceCreated,
   onDeleteDevice: _onDeleteDevice,
   onSetDefault,
@@ -207,6 +209,7 @@ export function CloudDeviceSection({
             <CloudMachineCard
               key={sandboxId}
               devices={devices}
+              highlightedDeviceId={highlightedDeviceId}
               onStartTask={onStartTask}
               onSetDefault={onSetDefault}
               onDelete={device => setDeviceToDelete(device)}
@@ -251,6 +254,7 @@ export function CloudDeviceSection({
 
 interface CloudMachineCardProps {
   devices: DeviceInfo[]
+  highlightedDeviceId?: number | null
   onStartTask: (deviceId: string) => void
   onSetDefault: (device: DeviceInfo) => Promise<void>
   onDelete: (device: DeviceInfo) => void
@@ -271,6 +275,7 @@ const MIN_UPGRADE_VERSION = '1.6.5'
 
 function CloudMachineCard({
   devices,
+  highlightedDeviceId,
   onStartTask,
   onSetDefault,
   onDelete,
@@ -282,6 +287,7 @@ function CloudMachineCard({
   t,
 }: CloudMachineCardProps) {
   const primaryDevice = getPrimaryDevice(devices)
+  const highlighted = devices.some(device => device.id === highlightedDeviceId)
   const orderedDevices = useMemo(
     () =>
       [...devices].sort(
@@ -328,8 +334,10 @@ function CloudMachineCard({
   return (
     <div
       data-testid={`cloud-machine-card-${primaryDevice.cloud_config?.sandboxId ?? primaryDevice.device_id}`}
+      data-highlighted={highlighted ? 'true' : undefined}
       className={cn(
-        'bg-surface border rounded-lg p-4',
+        'bg-surface border rounded-lg p-4 transition-shadow',
+        highlighted && 'ring-2 ring-primary/20 shadow-sm',
         primaryDevice.is_default ? 'border-primary' : 'border-border'
       )}
     >
@@ -479,6 +487,7 @@ function DeviceCapabilityRow({ device, onStartTask, t }: DeviceCapabilityRowProp
   return (
     <div
       data-testid={`cloud-runtime-row-${device.bind_shell ?? 'claudecode'}-${device.device_id}`}
+      data-device-record-id={device.id}
       className="grid grid-cols-[100px_1fr_60px_auto] items-center gap-3 py-2"
     >
       {/* Capability type badge - fixed width */}

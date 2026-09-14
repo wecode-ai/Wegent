@@ -834,6 +834,42 @@ describe('CloudTodoBoardCard', () => {
     )
   })
 
+  it('pins task progress without opening the Issue card', () => {
+    const onClick = vi.fn()
+    const onPreviewPinnedChange = vi.fn()
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup',
+            running: true,
+          },
+        ]}
+        onClick={onClick}
+        onArchive={vi.fn()}
+        onPreviewPinnedChange={onPreviewPinnedChange}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    const progressTrigger = screen.getByTestId('cloud-todo-card-tasks-WEG-85')
+    fireEvent.click(progressTrigger)
+    fireEvent.keyDown(progressTrigger, { key: 'Enter' })
+
+    expect(onClick).not.toHaveBeenCalled()
+    expect(onPreviewPinnedChange).toHaveBeenNthCalledWith(1, true)
+    expect(onPreviewPinnedChange).toHaveBeenNthCalledWith(2, true)
+  })
+
   it('keeps repeated task text out of the card and switches the shared hover conversation', async () => {
     const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {

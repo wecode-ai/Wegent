@@ -15,7 +15,7 @@ import type {
   AutomationProject,
   ProjectWorkflowDefinition,
 } from "../automation";
-import type { AutomationIncomingHook } from "./AutomationRulesView.jsx";
+import type { AutomationIncomingHook } from "./AutomationRulesView.types";
 
 function automationRule(rule: WorkspaceAutomationRule): AutomationBackendRule {
   return rule as unknown as AutomationBackendRule;
@@ -114,6 +114,18 @@ export function createSharedWorkspaceAutomationPorts<
         }
       : undefined,
     projectApi: {
+      async saveWorkflow(
+        project: P,
+        workflowDefinition: ProjectWorkflowDefinition,
+      ) {
+        return (await api.projects.update(String(project.id), {
+          version: project.version,
+          workflowDefinition: workflowDefinition as unknown as Record<
+            string,
+            unknown
+          >,
+        })) as unknown as P;
+      },
       async clearLegacyWorkflow(
         project: P,
         workflowDefinition: ProjectWorkflowDefinition,

@@ -224,7 +224,9 @@ function boundIssueStatus(
 ): RuntimeBoundIssueStatus | null {
   if (statuses.includes('running')) return 'in_progress'
   if (statuses.includes('queued')) return 'pending'
-  if (statuses.some(status => status === 'failed' || status === 'cancelled')) {
+  if (
+    statuses.some(status => status === 'succeeded' || status === 'failed' || status === 'cancelled')
+  ) {
     return 'in_review'
   }
   return null

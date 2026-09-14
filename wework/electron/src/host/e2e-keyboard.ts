@@ -26,6 +26,18 @@ const MODIFIERS: Record<string, 'shift' | 'control' | 'alt' | 'meta'> = {
 
 export type E2EKeyPhase = 'press' | 'down' | 'up'
 
+function requireE2EControl(environment: NodeJS.ProcessEnv) {
+  if (!environment.WEWORK_E2E_CONTROL_URL || environment.VITE_WEWORK_E2E !== 'true') {
+    throw new HostCapabilityError('e2e_control_required', 'An isolated E2E controller is required')
+  }
+}
+
+function requireAvailableContents(contents: WebContents) {
+  if (contents.isDestroyed()) {
+    throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
+  }
+}
+
 export async function sendE2EKey(
   contents: WebContents,
   key: string,
@@ -33,18 +45,14 @@ export async function sendE2EKey(
   environment: NodeJS.ProcessEnv = process.env,
   phase: E2EKeyPhase = 'press'
 ) {
-  if (!environment.WEWORK_E2E_CONTROL_URL || environment.VITE_WEWORK_E2E !== 'true') {
-    throw new HostCapabilityError('e2e_control_required', 'An isolated E2E controller is required')
-  }
+  requireE2EControl(environment)
   const parts = key.split('+')
   const mainKey = parts.pop() ?? ''
   const keyCode = Object.hasOwn(KEYS, mainKey) ? KEYS[mainKey] : undefined
   if (!keyCode || parts.some(part => !Object.hasOwn(MODIFIERS, part))) {
     throw new HostCapabilityError('e2e_invalid_key', 'Unsupported verification key')
   }
-  if (contents.isDestroyed()) {
-    throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
-  }
+  requireAvailableContents(contents)
   const modifiers: KeyboardInputEvent['modifiers'] = parts.map(part => MODIFIERS[part])
   await focusWindow()
   contents.focus()
@@ -61,4 +69,18 @@ export async function sendE2EKey(
     contents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
   }
   return { backend: 'electron-send-input-event', key, phase }
+}
+
+export async function sendE2EText(
+  contents: WebContents,
+  text: string,
+  focusWindow: () => void | Promise<void>,
+  environment: NodeJS.ProcessEnv = process.env
+) {
+  requireE2EControl(environment)
+  requireAvailableContents(contents)
+  await focusWindow()
+  contents.focus()
+  contents.insertText(text)
+  return { backend: 'electron-insert-text', textLength: text.length }
 }

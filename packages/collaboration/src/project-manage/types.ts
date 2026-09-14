@@ -33,6 +33,9 @@ export interface ProjectManageCardDisplay {
 
 export interface ProjectManageProject {
   id: string;
+  name: string;
+  description: string;
+  project_key: string;
   task_provider: string;
   provider_config: {
     repository?: string;

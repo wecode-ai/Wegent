@@ -4,6 +4,7 @@
 
 export * from "./IssueDetailCore";
 export * from "./IssueActivityPanel";
+export * from "./IssueAutomationExecutionSummary";
 export * from "./IssueDetailControls";
 export * from "./IssueDetailDraft";
 export * from "./IssueDetailCloudSections";

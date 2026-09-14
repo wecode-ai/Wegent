@@ -20,6 +20,7 @@ import type {
   CollaborationRole,
   CollaborationUser,
   CollaborationWorkspace,
+  CollaborationWorkspaceNavigationContext,
 } from "../types";
 
 export interface WorkspacePage<T> {
@@ -334,6 +335,17 @@ export interface SharedWorkspaceProjectsApi {
     input: WorkspaceProjectUpdateInput,
   ): Promise<CollaborationProject>;
   archive(projectId: string, version: number): Promise<void>;
+  listExecutionEnvironments(
+    projectId: string,
+  ): Promise<CollaborationExecutionEnvironment[]>;
+  addExecutionEnvironment(
+    projectId: string,
+    deviceId: number,
+  ): Promise<CollaborationExecutionEnvironment>;
+  removeExecutionEnvironment(
+    projectId: string,
+    deviceId: number,
+  ): Promise<void>;
   importMessages(
     projectId: string,
     input: WorkspaceMessageImportInput,
@@ -409,6 +421,9 @@ export interface SharedWorkspaceAssignmentsApi {
 export interface SharedCollaborationWorkspacesApi {
   list(): Promise<CollaborationWorkspace[]>;
   get(workspaceId: string): Promise<CollaborationWorkspace>;
+  getNavigationContext?(
+    workspaceId: string,
+  ): Promise<CollaborationWorkspaceNavigationContext>;
   create(input: WorkspaceCreateInput): Promise<CollaborationWorkspace>;
   update(
     workspaceId: string,

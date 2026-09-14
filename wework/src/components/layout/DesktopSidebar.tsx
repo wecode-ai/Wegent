@@ -4102,7 +4102,7 @@ export function DesktopSidebar({
               {onOpenMyWork ? (
                 <DesktopSidebarNavItem
                   icon={ListTodo}
-                  label={t('workbench.work_item_create_title', '我的任务')}
+                  label={t('workbench.work_item_create_title', '看板')}
                   testId="task-my-work-button"
                   selected={taskView === 'default-work-items'}
                   onClick={onOpenMyWork}

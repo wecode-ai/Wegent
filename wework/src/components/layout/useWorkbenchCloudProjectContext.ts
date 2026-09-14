@@ -135,7 +135,11 @@ function pendingBindingTargetsTask(address: RuntimeTaskAddress): boolean {
 
 function publishBoundProjectSpaceContext(update: BoundProjectSpaceContextUpdate) {
   rememberProjectTaskStore(update.task, update.project.project_store)
-  publishProjectSpaceTaskBindingChanged(update.task)
+  publishProjectSpaceTaskBindingChanged({
+    task: update.task,
+    project: projectSpaceRef(update.project),
+    type: 'bound',
+  })
   const pendingBinding = pendingTodoBindingsByTask.get(runtimeTaskKey(update.task))
   if (pendingBinding) clearPendingBinding(pendingBinding)
   for (const listener of boundProjectSpaceContextListeners) listener(update)
@@ -458,7 +462,7 @@ export function useWorkbenchCloudProjectContext({
 
   useEffect(() => {
     if (!contextRuntimeTask) return
-    return subscribeProjectSpaceTaskContextChanged(task => {
+    return subscribeProjectSpaceTaskContextChanged(({ task }) => {
       if (
         task.deviceId !== contextRuntimeTask.deviceId ||
         task.taskId !== contextRuntimeTask.taskId
@@ -514,7 +518,10 @@ export function useWorkbenchCloudProjectContext({
         if (!active || !updatedItem) return
         setBoundCloudItem(updatedItem)
         setDeliveryItem(cloudItemAsLocalWorkItem(updatedItem, contextRuntimeTask))
-        publishProjectSpaceTaskContextChanged(contextRuntimeTask)
+        publishProjectSpaceTaskContextChanged({
+          task: contextRuntimeTask,
+          project: projectSpaceRef(boundCloudProject),
+        })
       })
       .catch(error => {
         if (!active) return
@@ -565,7 +572,11 @@ export function useWorkbenchCloudProjectContext({
         .then(context => {
           if (!active || contextLookupGenerationRef.current !== lookupGeneration) return
           if (rememberProjectTaskStore(contextRuntimeTask, context.project.project_store)) {
-            publishProjectSpaceTaskBindingChanged(contextRuntimeTask)
+            publishProjectSpaceTaskBindingChanged({
+              task: contextRuntimeTask,
+              project: projectSpaceRef(context.project),
+              type: 'bound',
+            })
           }
           setBoundCloudProject(context.project)
           setBoundCloudItem(context.loop_item)
@@ -1229,6 +1240,11 @@ export function useWorkbenchCloudProjectContext({
     void api
       .unbindCloudContext(contextRuntimeTask)
       .then(() => {
+        publishProjectSpaceTaskBindingChanged({
+          task: contextRuntimeTask,
+          project: projectSpaceRef(boundCloudProject),
+          type: 'unbound',
+        })
         setBoundCloudProject(null)
         setBoundCloudItem(null)
         setDeliveryItem(null)

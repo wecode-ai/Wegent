@@ -42,6 +42,7 @@ interface MessageTurnNavigationProps {
 
 interface UserTurn {
   id: string
+  turnId?: string | null
   turnIndex: number
   messageIndex: number
   promptPreview: string
@@ -58,6 +59,7 @@ interface MessageTurnMarker extends UserTurn {
 
 interface PendingScrollTarget {
   navigationId: string
+  turnId?: string | null
   messageIndex: number
 }
 
@@ -388,6 +390,7 @@ export function MessageTurnNavigation({
       if (loadedMessageId) {
         setPendingScrollTarget({
           navigationId: marker.id,
+          turnId: marker.turnId,
           messageIndex: marker.messageIndex,
         })
         setLoadingMarkerId(marker.id)
@@ -401,6 +404,7 @@ export function MessageTurnNavigation({
       }
       setPendingScrollTarget({
         navigationId: marker.id,
+        turnId: marker.turnId,
         messageIndex: marker.messageIndex,
       })
       setLoadingMarkerId(marker.id)
@@ -548,7 +552,8 @@ function buildUserTurnsForNavigation(
   navigation?: RuntimeTurnNavigationItem[]
 ): UserTurn[] {
   const messageTurns = buildUserTurns(messages)
-  if (!navigation || navigation.length === 0) return messageTurns
+  if (navigation === undefined) return messageTurns
+  if (navigation.length === 0) return []
 
   const navigationTurns = buildUserTurnsFromNavigation(navigation, messages)
   return navigationTurns.length >= messageTurns.length ? navigationTurns : messageTurns
@@ -575,6 +580,7 @@ function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
 
     turns.push({
       id: message.id,
+      turnId: message.turnId,
       turnIndex: turns.length,
       messageIndex:
         typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index,
@@ -596,14 +602,21 @@ function buildUserTurnsFromNavigation(
   const loadedTurns = buildUserTurns(messages)
   const loadedTurnsByIndex = new Map(loadedTurns.map(turn => [turn.messageIndex, turn]))
   const loadedTurnsById = new Map(loadedTurns.map(turn => [turn.id, turn]))
+  const loadedTurnsByTurnId = new Map(
+    loadedTurns.flatMap(turn => (turn.turnId ? [[turn.turnId, turn] as const] : []))
+  )
   const uniqueNavigation = deduplicateNavigationItems(navigation, loadedTurnsByIndex)
 
   const navigationTurns = uniqueNavigation.map((item, index) => {
-    const loadedTurn = loadedTurnsByIndex.get(item.messageIndex) ?? loadedTurnsById.get(item.id)
+    const loadedTurn =
+      (item.turnId ? loadedTurnsByTurnId.get(item.turnId) : undefined) ??
+      loadedTurnsByIndex.get(item.messageIndex) ??
+      loadedTurnsById.get(item.id)
     return {
       id: loadedTurn?.id ?? item.id,
+      turnId: item.turnId ?? loadedTurn?.turnId,
       turnIndex: typeof item.turnIndex === 'number' ? item.turnIndex : index,
-      messageIndex: item.messageIndex,
+      messageIndex: loadedTurn?.messageIndex ?? item.messageIndex,
       promptPreview: loadedTurn?.promptPreview ?? item.promptPreview,
       responsePreview: loadedTurn?.responsePreview || item.responsePreview || '',
       cursor: item.cursor ?? null,
@@ -760,6 +773,13 @@ function findLoadedNavigationMessageId(
   messages: WorkbenchMessage[],
   target: PendingScrollTarget
 ): string | null {
+  if (target.turnId) {
+    const turnMessage = messages.find(
+      message => message.role === 'user' && message.turnId === target.turnId
+    )
+    if (turnMessage) return turnMessage.id
+  }
+
   const indexedMessage = messages.find(
     message => message.role === 'user' && message.runtimeMessageIndex === target.messageIndex
   )

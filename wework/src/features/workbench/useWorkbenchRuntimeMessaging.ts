@@ -1814,9 +1814,15 @@ export function useWorkbenchRuntimeMessaging({
             modelOptions: taskRequest.modelOptions,
           }
         : options.executionModel
-      const baseIntent = taskRequest
-        ? { ...prepared.intent, execution: taskRequest.execution }
-        : prepared.intent
+      const workspaceExecution = taskRequest
+        ? taskRequest.execution
+        : Object.prototype.hasOwnProperty.call(options, 'workspaceExecution')
+          ? (options.workspaceExecution ?? undefined)
+          : prepared.intent.execution
+      const baseIntent = {
+        ...prepared.intent,
+        execution: workspaceExecution,
+      }
       const intent = executionModel
         ? applyExecutionModelOverride(baseIntent, executionModel)
         : options.modelId

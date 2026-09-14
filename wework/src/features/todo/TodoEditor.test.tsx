@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@/i18n'
-import type { CloudLoopItem, CloudProject, WorkflowPlan } from '@/api/deliveries'
+import type {
+  CloudLoopItem,
+  CloudProject,
+  LoopItemTaskBinding,
+  WorkflowPlan,
+} from '@/api/deliveries'
 import { TodoEditor } from './TodoEditor'
 import { markdownAttachmentRows } from './attachmentMarkdown'
 
@@ -123,6 +128,7 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent(
       '交付结果 · 1 个附件'
     )
@@ -270,13 +276,86 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByTestId('cloud-todo-open-task-conversation-7')).toHaveTextContent(
       '立即显示的本地任务'
     )
   })
 
-  it('keeps same-item data during refresh and clears it when switching items', async () => {
+  it('shows board task bindings immediately while the detail refresh is pending', async () => {
     const never = new Promise<never>(() => undefined)
+    const pendingBindings = deferred<LoopItemTaskBinding[]>()
+    const pendingBindingsApi = {
+      listDeliveries: vi.fn(() => never),
+      listTaskBindings: vi.fn(() => pendingBindings.promise),
+      listLoopItemAttachments: vi.fn(() => never),
+      listLoopItemCollaborators: vi.fn(() => never),
+      listCloudProjectMembers: vi.fn(() => never),
+    } as never
+    const projectChatAgentApi = {
+      list: vi.fn(() => never),
+    } as never
+    const teamApi = {
+      listTeams: vi.fn(() => never),
+    } as never
+
+    const { rerender } = render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={pendingBindingsApi}
+        projectChatAgentApi={projectChatAgentApi}
+        teamApi={teamApi}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.queryByTestId('cloud-todo-toggle-tasks')).not.toBeInTheDocument()
+
+    rerender(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={pendingBindingsApi}
+        projectChatAgentApi={projectChatAgentApi}
+        teamApi={teamApi}
+        initialTaskBindings={[
+          {
+            id: 8,
+            device_id: 'local-device',
+            task_id: 'board-task',
+            task_title: '看板已加载的任务',
+          },
+        ]}
+        currentUserId={1}
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-todo-toggle-tasks')).toBeInTheDocument()
+
+    await act(async () => {
+      pendingBindings.resolve([])
+      await pendingBindings.promise
+    })
+
+    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
+    expect(screen.getByTestId('cloud-todo-open-task-conversation-8')).toHaveTextContent(
+      '看板已加载的任务'
+    )
+  })
+
+  it('keeps same-item data during refresh and clears it when switching items', async () => {
+    const staleRefresh = deferred<LoopItemTaskBinding[]>()
     const switchingApi = {
       listDeliveries: vi.fn(async () => ({ items: [] })),
       listTaskBindings: vi
@@ -289,7 +368,15 @@ describe('TodoEditor external item sync', () => {
             task_title: '第一个 Issue 的任务',
           },
         ])
-        .mockImplementation(() => never),
+        .mockImplementationOnce(() => staleRefresh.promise)
+        .mockResolvedValueOnce([
+          {
+            id: 9,
+            device_id: 'local-device',
+            task_id: 'second-task',
+            task_title: '第二个 Issue 的任务',
+          },
+        ]),
       listLoopItemAttachments: vi.fn(async () => []),
       listLoopItemCollaborators: vi.fn(async () => []),
       listCloudProjectMembers: vi.fn(async () => []),
@@ -316,13 +403,30 @@ describe('TodoEditor external item sync', () => {
     )
     const view = render(renderEditor(baseItem, 0))
 
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByText('第一个 Issue 的任务')).toBeInTheDocument()
 
     view.rerender(renderEditor(baseItem, 1))
     expect(screen.getByText('第一个 Issue 的任务')).toBeInTheDocument()
 
     view.rerender(renderEditor(secondItem, 1))
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
+    expect(await screen.findByText('第二个 Issue 的任务')).toBeInTheDocument()
     expect(screen.queryByText('第一个 Issue 的任务')).not.toBeInTheDocument()
+
+    await act(async () => {
+      staleRefresh.resolve([
+        {
+          id: 10,
+          device_id: 'local-device',
+          task_id: 'stale-task',
+          task_title: '过期刷新结果',
+        },
+      ])
+      await staleRefresh.promise
+    })
+
+    expect(screen.queryByText('过期刷新结果')).not.toBeInTheDocument()
   })
 
   it('shows the automation provenance on a generated task', () => {
@@ -611,6 +715,7 @@ describe('TodoEditor workflow plans', () => {
     )
 
     await vi.waitFor(() => expect(workflowApi.getWorkflowPlan).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
     await userEvent.click(screen.getByTestId('cloud-todo-workflow-approve'))
     await vi.waitFor(() =>
       expect(screen.getByTestId('cloud-todo-workflow-plan')).toHaveTextContent('Approved plan')
@@ -653,6 +758,7 @@ describe('TodoEditor workflow plans', () => {
     )
 
     await vi.waitFor(() => expect(workflowApi.getWorkflowPlan).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
     await userEvent.click(screen.getByTestId('cloud-todo-workflow-approve'))
     await vi.waitFor(() => expect(workflowApi.approveWorkflowPlan).toHaveBeenCalledTimes(1))
 
@@ -710,6 +816,7 @@ describe('TodoEditor workflow plans', () => {
       />
     )
 
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByTestId('cloud-todo-workflow-error-summary')).toHaveTextContent(
       '启动超时'
     )
@@ -774,6 +881,7 @@ describe('TodoEditor workflow node actions', () => {
       />
     )
 
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     await userEvent.click(await screen.findByTestId('cloud-todo-run-workflow-node-implementation'))
 
     await vi.waitFor(() => {
@@ -860,6 +968,7 @@ describe('TodoEditor workflow node actions', () => {
       />
     )
 
+    await user.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     await user.click(await screen.findByTestId('cloud-todo-approve-workflow-node-review'))
     const deliverable = screen.getByTestId('workflow-deliverable-input-summary')
     await user.type(deliverable.querySelector('textarea')!, '通过共享流程完成')

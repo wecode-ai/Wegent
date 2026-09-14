@@ -9,10 +9,8 @@ import {
 } from "./messages";
 
 const SOURCE_FILES = [
-  "AutomationRulesView.jsx",
-  "AutomationWorkflowCanvas.jsx",
+  "AutomationPolicyView.tsx",
   "ProjectAutomationRulesView.tsx",
-  "EventSubscriptionManager.tsx",
 ] as const;
 
 function sourceText(source: (typeof SOURCE_FILES)[number]): string {

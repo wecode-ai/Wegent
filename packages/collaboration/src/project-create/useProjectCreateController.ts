@@ -44,6 +44,7 @@ export function useProjectCreateController({
   host,
   labels,
   onCreated,
+  resourceSetup,
 }: ProjectCreateDialogProps) {
   const initialLocation =
     targets.find((target) => target.location === defaultLocation)?.location ??
@@ -59,6 +60,10 @@ export function useProjectCreateController({
   const [repositoryAddress, setRepositoryAddress] = useState("");
   const [token, setToken] = useState("");
   const [aitableUrl, setAitableUrl] = useState("");
+  const [memberUserIds, setMemberUserIds] = useState<number[]>([]);
+  const [agentTeamIds, setAgentTeamIds] = useState<number[]>([]);
+  const [executionEnvironmentDeviceIds, setExecutionEnvironmentDeviceIds] =
+    useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repositoryProvider =
@@ -107,6 +112,13 @@ export function useProjectCreateController({
         providerConfig,
         ...(location === "cloud" ? { visibility } : {}),
       });
+      if (resourceSetup) {
+        await resourceSetup.configure(project, {
+          memberUserIds,
+          agentTeamIds,
+          executionEnvironmentDeviceIds,
+        });
+      }
       host?.track?.("created");
       onCreated(project, location);
     } catch (cause) {
@@ -133,6 +145,9 @@ export function useProjectCreateController({
       saving,
       error,
       canSubmit,
+      memberUserIds,
+      agentTeamIds,
+      executionEnvironmentDeviceIds,
     },
     commands: {
       setName,
@@ -143,6 +158,9 @@ export function useProjectCreateController({
       setRepositoryAddress,
       setToken,
       setAitableUrl,
+      setMemberUserIds,
+      setAgentTeamIds,
+      setExecutionEnvironmentDeviceIds,
       clearError: () => setError(null),
       submit,
     },

@@ -22,7 +22,10 @@ from app.models.delivery import (
     loop_datetime_value_is_unset,
     loop_unset_datetime_for_connection,
 )
+from app.models.kind import Kind
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import (
     ProjectChatAgentCreate,
@@ -48,7 +51,6 @@ from app.services.project_chat.workspace_binding import (
     read_agent_workspace_binding,
     write_workspace_binding,
 )
-from app.services.workspaces.storage import workspace_id_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,35 @@ PROJECT_CHAT_FAILED_EVENTS = {
     "runtime_task.failed",
     "runtime.tasks.failed",
 }
+
+
+def require_project_execution_environment(
+    db: Session,
+    *,
+    project_id: int | str,
+    execution_device_id: str,
+) -> None:
+    configured = (
+        db.query(ResourceMember)
+        .join(Kind, Kind.id == ResourceMember.resource_id)
+        .filter(
+            ResourceMember.resource_type == ResourceType.DEVICE.value,
+            ResourceMember.entity_type == "project",
+            ResourceMember.entity_id == str(project_id),
+            ResourceMember.status == MemberStatus.APPROVED.value,
+            Kind.kind == "Device",
+            Kind.name == execution_device_id,
+            Kind.is_active.is_(True),
+        )
+        .first()
+    )
+    if configured is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Execution environment is not configured in this Project",
+        )
+
+
 PROJECT_CHAT_CANCELLED_EVENTS = {
     "cancelled",
     "canceled",
@@ -228,19 +259,10 @@ class ProjectChatService:
             task_id=None,
             required_role=BaseRole.Reporter,
         )
-        workspace_id = workspace_id_for_project(db, project.id)
         if request.runtime == "wegent":
             from app.services.project_automation_domain import runnable_wegent_team
-            from app.services.workspaces import workspace_service
 
-            team = runnable_wegent_team(db, user_id, request.wegent_team_id)
-            if workspace_id is not None:
-                workspace_service.ensure_accessible_agent_authorized(
-                    db,
-                    workspace_id=workspace_id,
-                    user_id=user_id,
-                    team_id=int(team.id),
-                )
+            runnable_wegent_team(db, user_id, request.wegent_team_id)
         elif request.default_runtime_profile_id:
             from app.services.runtime_profiles import runtime_profile_service
 
@@ -252,13 +274,10 @@ class ProjectChatService:
             status="ready",
         )
         if request.runtime == "codex":
-            if workspace_id is not None and request.execution_device_id:
-                from app.services.workspaces import workspace_service
-
-                workspace_service.ensure_owned_execution_environment_authorized(
+            if request.execution_device_id:
+                require_project_execution_environment(
                     db,
-                    workspace_id=workspace_id,
-                    user_id=user_id,
+                    project_id=project.id,
                     execution_device_id=request.execution_device_id,
                 )
             workspace_binding = (
@@ -355,22 +374,8 @@ class ProjectChatService:
         )
         if runtime == "wegent":
             from app.services.project_automation_domain import runnable_wegent_team
-            from app.services.workspaces import workspace_service
 
-            team = runnable_wegent_team(db, row.created_by_user_id or user_id, team_id)
-            project = db.get(CloudProject, project_id)
-            workspace_id = (
-                workspace_id_for_project(db, project.id)
-                if project is not None
-                else None
-            )
-            if workspace_id is not None:
-                workspace_service.ensure_accessible_agent_authorized(
-                    db,
-                    workspace_id=workspace_id,
-                    user_id=user_id,
-                    team_id=int(team.id),
-                )
+            runnable_wegent_team(db, row.created_by_user_id or user_id, team_id)
             row.device_id = None
             row.local_project_id = None
             metadata[BOT_RUNTIME_PROFILE_ID_KEY] = None
@@ -420,19 +425,10 @@ class ProjectChatService:
                 or BOT_DEFAULT_EXECUTION_ENVIRONMENT
             )
             device_id = str(row.device_id or "")
-            project = db.get(CloudProject, project_id)
-            workspace_id = (
-                workspace_id_for_project(db, project.id)
-                if project is not None
-                else None
-            )
-            if workspace_id is not None and device_id:
-                from app.services.workspaces import workspace_service
-
-                workspace_service.ensure_owned_execution_environment_authorized(
+            if device_id:
+                require_project_execution_environment(
                     db,
-                    workspace_id=workspace_id,
-                    user_id=user_id,
+                    project_id=project_id,
                     execution_device_id=device_id,
                 )
             if "workspace_binding" in request.model_fields_set:

@@ -54,6 +54,7 @@ const environment: CollaborationExecutionEnvironment = {
   device_key: "device-macbook",
   name: "MacBook Pro",
   kind: "local_device",
+  coding_tools: ["claude_code", "codex"],
   owner_type: "user",
   owner_id: "7",
   owner_name: "李明",
@@ -90,6 +91,17 @@ function createApi(options?: {
     projectAgent({ id: agentId, status: "archived", version: 2 }),
   );
   const api = {
+    projects: {
+      listExecutionEnvironments: vi.fn(
+        async () => options?.environments ?? [environment],
+      ),
+    },
+    resources: {
+      list: vi.fn(async () => ({
+        agents: [],
+        execution_environments: [],
+      })),
+    },
     agents: {
       list: vi.fn(async () => options?.agents ?? [projectAgent()]),
       create,
@@ -98,9 +110,6 @@ function createApi(options?: {
     workspaces: {
       listAgents: vi.fn(
         async () => options?.workspaceAgents ?? [workspaceAgent],
-      ),
-      listExecutionEnvironments: vi.fn(
-        async () => options?.environments ?? [environment],
       ),
     },
   } as unknown as SharedWorkspaceApi;
@@ -166,6 +175,7 @@ describe("ProjectAgentConfiguration", () => {
     const { api, create } = createApi();
     await render(api);
 
+    await click("project-agent-add");
     await change("project-agent-wegent-team", "12");
     await click("project-agent-wegent-create");
     expect(create).toHaveBeenNthCalledWith(1, project.id, {
@@ -175,6 +185,7 @@ describe("ProjectAgentConfiguration", () => {
     });
     expect(element("project-agent-row-created-wegent")).toBeTruthy();
 
+    await click("project-agent-add");
     await click("project-agent-mode-codex");
     await change("project-agent-codex-name", "Codex 产品工程师");
     await change("project-agent-codex-capability", "实现产品需求");
@@ -214,11 +225,12 @@ describe("ProjectAgentConfiguration", () => {
     ).toBeNull();
   });
 
-  it("shows actionable empty states for missing workspace resources", async () => {
+  it("keeps project Agent management available without workspace resources", async () => {
     const { api } = createApi({ workspaceAgents: [], environments: [] });
     await render(api);
+    await click("project-agent-add");
     expect(element("project-agent-wegent-empty").textContent).toContain(
-      "Workspace",
+      "智能体",
     );
 
     await click("project-agent-mode-codex");
@@ -227,9 +239,26 @@ describe("ProjectAgentConfiguration", () => {
     ).toContain("执行环境");
 
     await render(api, { ...project, workspace_id: null });
+    expect(element("project-agent-config")).toBeTruthy();
+  });
+
+  it("keeps creation separate from the configured Agent list", async () => {
+    const { api } = createApi();
+    await render(api);
+
     expect(
-      element("project-agent-config-missing-workspace").textContent,
-    ).toContain("Workspace");
+      document.querySelector('[data-testid="project-agent-dialog"]'),
+    ).toBeNull();
+    expect(element("project-agent-list")).toBeTruthy();
+
+    await click("project-agent-add");
+    expect(element("project-agent-dialog")).toBeTruthy();
+
+    await click("project-agent-dialog-close");
+    expect(
+      document.querySelector('[data-testid="project-agent-dialog"]'),
+    ).toBeNull();
+    expect(element("project-agent-list")).toBeTruthy();
   });
 
   it("translates execution environment kind and status labels", async () => {
@@ -251,6 +280,7 @@ describe("ProjectAgentConfiguration", () => {
       );
     });
 
+    await click("project-agent-add");
     await click("project-agent-mode-codex");
     expect(element("project-agent-codex-environment").textContent).toContain(
       "MacBook Pro · LOCALIZED LOCAL · LOCALIZED ONLINE",

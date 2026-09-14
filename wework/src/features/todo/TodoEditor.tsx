@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from 'react'
 import {
   TodoEditor as SharedIssueDetailEditor,
+  type CollaborationAssignment,
   createSharedIssueDetailPort,
   type SharedEditorIssue,
   type SharedEditorProject,
@@ -79,16 +80,21 @@ export type TodoEditorProps = TodoEditorApiProps & {
   projectChatClient?: ProjectChatClient
   selfManagedExecution?: boolean
   currentUserId?: string | number
+  currentAssignment?: CollaborationAssignment | null
   localProjects?: ProjectWithTasks[]
   allItems: CloudLoopItem[]
   onClose: () => void
   presentation?: 'modal' | 'workspace-panel'
   workspacePanelFill?: boolean
+  readFirst?: boolean
   showPanelControls?: boolean
+  showFullscreenControl?: boolean
   showChildren?: boolean
   showCurrentTaskOnly?: boolean
   taskRefreshKey?: string | number
+  initialTaskBindings?: LoopItemTaskBinding[]
   headerActions?: ReactNode
+  showAdditionalTaskAction?: boolean
   selectedTaskId?: string | null
   onCreateTask?: (workflowNodeId?: string) => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
@@ -220,12 +226,31 @@ export function TodoEditor(props: TodoEditorProps) {
     onClose: props.onClose,
     presentation: props.presentation,
     workspacePanelFill: props.workspacePanelFill,
+    readFirst: props.readFirst,
     showPanelControls: props.showPanelControls,
+    showFullscreenControl: props.showFullscreenControl,
     showChildren: props.showChildren,
     showCurrentTaskOnly: props.showCurrentTaskOnly,
     taskRefreshKey: props.taskRefreshKey,
-    headerActions: props.headerActions,
+    initialTaskBindings: props.initialTaskBindings as SharedIssueDetailTaskBinding[] | undefined,
+    headerActions:
+      props.mode === 'edit' && props.showAdditionalTaskAction && props.onCreateTask ? (
+        <>
+          {props.headerActions}
+          <button
+            type="button"
+            data-testid="cloud-todo-create-task"
+            onClick={() => props.onCreateTask?.()}
+            className="task-detail-workspace-edit"
+          >
+            {t('todo.add_task', '新增任务')}
+          </button>
+        </>
+      ) : (
+        props.headerActions
+      ),
     selectedTaskId: props.selectedTaskId,
+    currentAssignment: props.currentAssignment,
     onCreateTask: props.onCreateTask,
     onOpenTaskConversation: props.onOpenTaskConversation
       ? (task: SharedIssueDetailTaskBinding) =>

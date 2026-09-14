@@ -82,8 +82,8 @@ describe('CloudProjectManageView', () => {
 
     render(<CloudProjectManageView api={api} project={project} />)
 
-    expect(await screen.findByRole('heading', { name: '管理项目' })).toBeInTheDocument()
-    expect(screen.getByText('管理项目成员、标签和看板布局。')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '基本信息' })).toBeInTheDocument()
+    expect(screen.getByText('管理项目属性、标签与任务来源。')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-board-layout-settings')).toBeInTheDocument()
     expect(screen.queryByTestId('event-subscription-settings')).not.toBeInTheDocument()
     expect(screen.queryByTestId('event-subscription-create')).not.toBeInTheDocument()
