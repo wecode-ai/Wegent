@@ -208,10 +208,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command(
-        'click',
-        `${activeBoard} [data-testid="collaboration-workspace-${WORKSPACE.id}"]`
-      )
+      const workspaceSelector = `${activeBoard} [data-testid="collaboration-workspace-${WORKSPACE.id}"]`
+      await control.command('waitFor', workspaceSelector, {
+        text: WORKSPACE.name,
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', workspaceSelector)
       await control.command(
         'waitFor',
         `${activeBoard} [data-testid="collaboration-workspace-project-${PROJECT.id}"]`,
