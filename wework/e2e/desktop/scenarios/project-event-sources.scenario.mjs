@@ -805,12 +805,25 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     })
   }
 
-  async function waitForProcessedEvents(hookId, count) {
+  function normalizedChangeRequestTypes(events) {
+    return new Set(
+      events
+        .flatMap(event => event.normalizedEvents.map(item => item.event_type ?? item.eventType))
+        .filter(eventType => eventType?.startsWith('change_request.'))
+    )
+  }
+
+  async function waitForProcessedEvents(hookId, expectedTypes) {
     return waitForValue(
       () =>
         request(`/api/v1/cloud-projects/${project.id}/incoming-hooks/${hookId}/events?limit=200`),
-      events => events.filter(event => event.status === 'processed').length >= count,
-      `Subscription ${hookId} did not process ${count} events`,
+      events => {
+        const actual = normalizedChangeRequestTypes(
+          events.filter(event => event.status === 'processed')
+        )
+        return expectedTypes.every(eventType => actual.has(eventType))
+      },
+      `Subscription ${hookId} did not process every expected event type`,
       uiTimeoutMs * 3
     )
   }
@@ -822,16 +835,12 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         .run(hook.id)
       database.prepare("update loop_items set status='active' where id = ?").run(hook.id)
     })
-    const processed = await waitForProcessedEvents(hook.id, expectedTypes.length)
+    const processed = await waitForProcessedEvents(hook.id, expectedTypes)
     assertEventTypeCoverage(processed, sourceType, expectedTypes, 'poll')
   }
 
   function assertEventTypeCoverage(events, sourceType, expectedTypes, mode) {
-    const actual = new Set(
-      events
-        .flatMap(event => event.normalizedEvents.map(item => item.event_type ?? item.eventType))
-        .filter(eventType => eventType?.startsWith('change_request.'))
-    )
+    const actual = normalizedChangeRequestTypes(events)
     assert.deepEqual(
       [...actual].sort(),
       [...expectedTypes].sort(),
@@ -1092,7 +1101,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           sequence += 1
           await deliverWebhook(webhook, sourceType, eventType, sequence)
         }
-        const processed = await waitForProcessedEvents(webhook.id, expectedTypes.length)
+        const processed = await waitForProcessedEvents(webhook.id, expectedTypes)
         assertEventTypeCoverage(processed, sourceType, expectedTypes, 'webhook')
         if (sourceType === 'github') {
           sequence += 1
