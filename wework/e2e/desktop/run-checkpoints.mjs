@@ -16,6 +16,7 @@ const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
+  'plugin-capabilities': './scenarios/plugin-capabilities.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
@@ -63,6 +64,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'plugin-capabilities',
   'plugin-account-auth',
   'codex-account-login',
   'cloud-space-mention',

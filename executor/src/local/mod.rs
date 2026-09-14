@@ -20,6 +20,7 @@ pub mod plugin_import;
 pub mod pty;
 pub mod session;
 pub mod session_gateway;
+pub mod skill_install;
 pub mod turn_file_changes_commands;
 pub mod workspace_files;
 

@@ -152,7 +152,7 @@ fn initialize_codex_home_from_paths(
     ))
 }
 
-fn wework_codex_home_path() -> Result<PathBuf, String> {
+pub(super) fn wework_codex_home_path() -> Result<PathBuf, String> {
     if let Some(path) = non_empty_path(CODEX_HOME_ENV) {
         return Ok(path);
     }

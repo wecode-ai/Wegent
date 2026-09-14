@@ -101,6 +101,9 @@ pub(super) fn is_allowed_plugin_app_server_method(method: &str) -> bool {
             | "config/value/write"
             | "skills/list"
             | "skills/config/write"
+            | "mcpServerStatus/list"
+            | "mcpServer/oauth/login"
+            | "config/mcpServer/reload"
             | "app/list"
     )
 }

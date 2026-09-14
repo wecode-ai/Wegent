@@ -9,6 +9,8 @@ import enLocalRuntime from './locales/en/localRuntime.json'
 import zhLocalRuntime from './locales/zh-CN/localRuntime.json'
 import enSites from './locales/en/sites.json'
 import zhSites from './locales/zh-CN/sites.json'
+import enCapabilities from './locales/en/capabilities.json'
+import zhCapabilities from './locales/zh-CN/capabilities.json'
 import enHooks from './locales/en/hooks.json'
 import zhHooks from './locales/zh-CN/hooks.json'
 import { extensionI18nResources } from '@extensions/i18n'
@@ -28,6 +30,7 @@ i18n
         localRuntime: enLocalRuntime,
         sites: enSites,
         hooks: enHooks,
+        capabilities: enCapabilities,
         ...(extensionI18nResources.en ?? {}),
       },
       'zh-CN': {
@@ -36,6 +39,7 @@ i18n
         localRuntime: zhLocalRuntime,
         sites: zhSites,
         hooks: zhHooks,
+        capabilities: zhCapabilities,
         ...(extensionI18nResources['zh-CN'] ?? {}),
       },
     },
@@ -43,7 +47,15 @@ i18n
     fallbackLng: 'zh-CN',
     supportedLngs: ['zh-CN', 'en'],
     defaultNS: 'common',
-    ns: ['common', 'chat', 'localRuntime', 'sites', 'hooks', ...extensionNamespaces],
+    ns: [
+      'common',
+      'chat',
+      'localRuntime',
+      'sites',
+      'hooks',
+      'capabilities',
+      ...extensionNamespaces,
+    ],
     interpolation: { escapeValue: false },
   })
 

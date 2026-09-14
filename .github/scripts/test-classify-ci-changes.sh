@@ -97,10 +97,57 @@ assert_plugin_auth_case "native auth source" true \
   "executor/src/plugin_account_auth/mod.rs"
 assert_plugin_auth_case "explicit full regression" true --all
 
+assert_desktop_case() {
+  local name="$1"
+  local expected="$2"
+  shift 2
+
+  local output
+  output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$@")"
+  if ! grep -Fq -- "$expected" <<<"$output"; then
+    printf 'Desktop case "%s" failed:\n%s\n' "$name" "$output" >&2
+    exit 1
+  fi
+}
+
+assert_desktop_output() {
+  local name="$1"
+  local expected="$2"
+  shift 2
+
+  local output
+  output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$@")"
+  if [[ "$output" != "$expected" ]]; then
+    printf 'Desktop output case "%s" failed:\n%s\n' "$name" "$output" >&2
+    exit 1
+  fi
+}
+
+assert_desktop_output "plugin capabilities owns Skills and MCP workspace" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-17","name":"Core / shard 17","segments":"plugin-capabilities"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=false' \
+  "wework/src/components/plugins/capabilities/SkillsPanel.tsx"
+assert_desktop_output "plugin capabilities owns plugin workspace" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-17","name":"Core / shard 17","segments":"plugin-capabilities"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=false' \
+  "wework/src/components/plugins/PluginsWorkspace.tsx"
 assert_checkpoint_runtime_failure_rejected() {
   local temp_dir
   temp_dir="$(mktemp -d)"
   printf '#!/bin/sh\nexit 23\n' > "$temp_dir/node"
+  chmod +x "$temp_dir/node"
   chmod +x "$temp_dir/node"
   if PATH="$temp_dir:$PATH" GITHUB_OUTPUT="$temp_dir/output" "$desktop_classifier" --all \
     >"$temp_dir/stdout" 2>"$temp_dir/stderr"; then
@@ -568,7 +615,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"harness-apps,browser-annotation-design"},{"id":"core-2","name":"Core / shard 2","segments":"supervisor-lifecycle,remote-device-onboarding"},{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat,local-file-preview"},{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture"},{"id":"core-5","name":"Core / shard 5","segments":"conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core"},{"id":"core-6","name":"Core / shard 6","segments":"claude-runtime,workspace-tabs,task-attachments"},{"id":"core-7","name":"Core / shard 7","segments":"task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction"},{"id":"core-8","name":"Core / shard 8","segments":"window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors"},{"id":"core-9","name":"Core / shard 9","segments":"project-automation"},{"id":"core-10","name":"Core / shard 10","segments":"resilience"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments,automation-lifecycle"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,split-workbench,priority-filter,board-focus-view"},{"id":"core-13","name":"Core / shard 13","segments":"rendering-extensions"},{"id":"core-14","name":"Core / shard 14","segments":"runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import"},{"id":"core-15","name":"Core / shard 15","segments":"local-harness,running-conversation-history,native-window-chrome"},{"id":"core-16","name":"Core / shard 16","segments":"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing,computer-use,codex-account-login"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"harness-apps,browser-annotation-design"},{"id":"core-2","name":"Core / shard 2","segments":"supervisor-lifecycle,remote-device-onboarding"},{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat,local-file-preview"},{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture"},{"id":"core-5","name":"Core / shard 5","segments":"conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core"},{"id":"core-6","name":"Core / shard 6","segments":"claude-runtime,workspace-tabs,task-attachments"},{"id":"core-7","name":"Core / shard 7","segments":"task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction"},{"id":"core-8","name":"Core / shard 8","segments":"window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors"},{"id":"core-9","name":"Core / shard 9","segments":"project-automation"},{"id":"core-10","name":"Core / shard 10","segments":"resilience"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments,automation-lifecycle"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,split-workbench,priority-filter,board-focus-view"},{"id":"core-13","name":"Core / shard 13","segments":"rendering-extensions"},{"id":"core-14","name":"Core / shard 14","segments":"runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import"},{"id":"core-15","name":"Core / shard 15","segments":"local-harness,running-conversation-history,native-window-chrome"},{"id":"core-16","name":"Core / shard 16","segments":"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing,computer-use,codex-account-login,plugin-capabilities"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-worktree-device-restart,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth,cloud-device-lifecycle"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"}]}
 wework_desktop_other_e2e=true
@@ -867,13 +914,13 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "executor/src/runtime_work/codex_transcript_page.rs"
 
-assert_desktop_case "plugin files select plugin lifecycle and project plugin coverage" \
+assert_desktop_case "generic plugin files select plugin lifecycle and project plugin coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
-  "wework/src/components/plugins/PluginsWorkspace.tsx"
+  "wework/src/components/plugins/PluginMarketplaceWorkspace.tsx"
 
 assert_desktop_case "Core DSH plugin files select their desktop checkpoint" \
   'wework_desktop_e2e=true
