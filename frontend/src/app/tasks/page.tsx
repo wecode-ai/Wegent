@@ -73,9 +73,10 @@ function TasksPageContent() {
           <ChatArea
             teams={teams}
             isTeamsLoading={isTeamsLoading}
-            loadError={loadError}
+            loadError={teams.length === 0 ? loadError : null}
             selectedTeamForNewTask={null}
             taskType="code"
+            onRefreshTeams={handleRefreshTeams}
           />
         </div>
       </div>

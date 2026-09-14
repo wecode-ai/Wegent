@@ -60,4 +60,32 @@ describe('teamService.fetchTeamsWithRetry', () => {
     await assertion
     expect(mockGetTeams).toHaveBeenCalledTimes(TEAM_FETCH_RETRY_DELAYS_MS.length + 1)
   })
+
+  it('aborts pending retries when the signal is aborted', async () => {
+    mockGetTeams.mockRejectedValue(new Error('network error'))
+
+    const abortController = new AbortController()
+    const request = teamService.fetchTeamsWithRetry(abortController.signal)
+    const assertion = expect(request).rejects.toThrow('Aborted')
+
+    abortController.abort()
+
+    await assertion
+    expect(mockGetTeams).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not send another request after aborting during a retry delay', async () => {
+    mockGetTeams.mockRejectedValueOnce(new Error('network error'))
+    mockGetTeams.mockResolvedValueOnce({ total: 1, items: [makeTeam(1)] })
+
+    const abortController = new AbortController()
+    const request = teamService.fetchTeamsWithRetry(abortController.signal)
+    const assertion = expect(request).rejects.toThrow('Aborted')
+
+    await jest.advanceTimersByTimeAsync(TEAM_FETCH_RETRY_DELAYS_MS[0] - 1)
+    abortController.abort()
+
+    await assertion
+    expect(mockGetTeams).toHaveBeenCalledTimes(1)
+  })
 })

@@ -290,7 +290,7 @@ export function KnowledgeDetailPanel({
           <ChatArea
             teams={filteredTeams}
             isTeamsLoading={isTeamsLoading}
-            loadError={loadError}
+            loadError={teams.length === 0 ? loadError : null}
             showRepositorySelector={false}
             taskType="knowledge"
             knowledgeBaseId={selectedKb.id}
