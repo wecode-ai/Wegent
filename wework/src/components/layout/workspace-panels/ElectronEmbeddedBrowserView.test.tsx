@@ -454,4 +454,48 @@ describe('ElectronEmbeddedBrowserView', () => {
     expect(host.style.width).toBe('800px')
     expect(host.style.height).toBe('500px')
   })
+
+  test('syncs a position-only layout change after React commits it', () => {
+    const view = render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-position-change"
+        visualRect={{ x: 0, y: 0, width: 400, height: 300 }}
+      />
+    )
+    const placeholder = view.getByTestId('workspace-browser-electron-webview-placeholder')
+    const placeholderRect = vi.spyOn(placeholder, 'getBoundingClientRect')
+    placeholderRect.mockReturnValue({
+      height: 300,
+      left: 700,
+      top: 120,
+      width: 400,
+    } as DOMRect)
+    resizeObserverCallbacks[0]?.()
+
+    const host = screen.getByTestId('workspace-browser-electron-webview')
+    expect(host.style.left).toBe('700px')
+    expect(host.style.width).toBe('400px')
+
+    placeholderRect.mockReturnValue({
+      height: 300,
+      left: 500,
+      top: 120,
+      width: 400,
+    } as DOMRect)
+    view.rerender(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-position-change"
+        visualRect={{ x: 200, y: 0, width: 400, height: 300 }}
+      />
+    )
+
+    expect(host.style.left).toBe('500px')
+    expect(host.style.top).toBe('120px')
+    expect(host.style.width).toBe('400px')
+    expect(host.style.height).toBe('300px')
+  })
 })

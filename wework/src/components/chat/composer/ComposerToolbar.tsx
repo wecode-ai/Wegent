@@ -145,11 +145,14 @@ export function ComposerToolbar({
       data-testid="composer-toolbar"
       data-compact={compact ? 'true' : 'false'}
       className={cn(
-        'mt-auto flex min-h-8 min-w-0 items-center justify-between gap-2 pt-1',
+        'mt-auto flex min-h-8 min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 pt-1',
         className
       )}
     >
-      <div data-composer-toolbar-group="features" className="flex min-w-0 items-center gap-2">
+      <div
+        data-composer-toolbar-group="features"
+        className="flex min-w-0 flex-auto flex-wrap items-center gap-x-2 gap-y-1"
+      >
         <AddContextMenu
           disabled={disabled}
           onFileSelect={onFileSelect}
@@ -197,7 +200,10 @@ export function ComposerToolbar({
           />
         ) : null}
       </div>
-      <div data-composer-toolbar-group="actions" className="flex min-w-0 items-center gap-1.5">
+      <div
+        data-composer-toolbar-group="actions"
+        className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5"
+      >
         {showExecutionTools ? (
           <>
             <PermissionModeSelector
