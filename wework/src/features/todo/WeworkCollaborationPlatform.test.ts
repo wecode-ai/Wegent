@@ -133,6 +133,12 @@ function createLocalDeliveryApi() {
         },
       ],
     }),
+    getBoardSnapshot: vi.fn().mockResolvedValue({
+      items: [],
+      task_bindings: [],
+      members: [],
+      agents: [],
+    }),
   } as unknown as DeliveryApi
 }
 
@@ -1105,6 +1111,31 @@ describe('Wework collaboration workspace API', () => {
       }),
     ])
     expect(listCloudMembers).not.toHaveBeenCalled()
+  })
+
+  it('loads local workspace project snapshots through the local API', async () => {
+    const localDeliveryApi = createLocalDeliveryApi()
+    const getCloudBoardSnapshot = vi.fn()
+    const cloudApi = {
+      workspaces: {},
+      projects: {},
+      issues: {
+        getBoardSnapshot: getCloudBoardSnapshot,
+      },
+    } as unknown as SharedWorkspaceApi
+    const api = createWeworkPlatformApi(
+      cloudApi,
+      localDeliveryApi,
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    await api?.issues.getBoardSnapshot('local-project')
+
+    expect(localDeliveryApi.getBoardSnapshot).toHaveBeenCalledWith('local-project')
+    expect(getCloudBoardSnapshot).not.toHaveBeenCalled()
   })
 
   it('keeps local navigation projects available when the cloud project list fails', async () => {
