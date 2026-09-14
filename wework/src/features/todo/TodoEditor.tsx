@@ -92,6 +92,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   showChildren?: boolean
   showCurrentTaskOnly?: boolean
   taskRefreshKey?: string | number
+  initialTaskBindings?: LoopItemTaskBinding[]
   headerActions?: ReactNode
   showAdditionalTaskAction?: boolean
   selectedTaskId?: string | null
@@ -231,6 +232,7 @@ export function TodoEditor(props: TodoEditorProps) {
     showChildren: props.showChildren,
     showCurrentTaskOnly: props.showCurrentTaskOnly,
     taskRefreshKey: props.taskRefreshKey,
+    initialTaskBindings: props.initialTaskBindings as SharedIssueDetailTaskBinding[] | undefined,
     headerActions:
       props.mode === 'edit' && props.showAdditionalTaskAction && props.onCreateTask ? (
         <>

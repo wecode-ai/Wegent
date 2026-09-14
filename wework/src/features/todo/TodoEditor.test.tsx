@@ -282,6 +282,44 @@ describe('TodoEditor external item sync', () => {
     )
   })
 
+  it('shows board task bindings immediately while the detail refresh is pending', async () => {
+    const never = new Promise<never>(() => undefined)
+    const pendingBindingsApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(() => never),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+    } as never
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={pendingBindingsApi}
+        initialTaskBindings={[
+          {
+            id: 8,
+            device_id: 'local-device',
+            task_id: 'board-task',
+            task_title: '看板已加载的任务',
+          },
+        ]}
+        currentUserId={1}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
+    expect(screen.getByTestId('cloud-todo-open-task-conversation-8')).toHaveTextContent(
+      '看板已加载的任务'
+    )
+  })
+
   it('keeps same-item data during refresh and clears it when switching items', async () => {
     const staleRefresh = deferred<LoopItemTaskBinding[]>()
     const switchingApi = {

@@ -585,6 +585,7 @@ export type TodoEditorProps = {
    */
   canStartWork?: boolean;
   taskRefreshKey?: string | number;
+  initialTaskBindings?: SharedIssueDetailTaskBinding[];
   headerActions?: ReactNode;
   selectedTaskId?: string | null;
   onCreateTask?: (workflowNodeId?: string) => void;
@@ -724,7 +725,9 @@ export function TodoEditor(props: TodoEditorProps) {
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [selectedDelivery, setSelectedDelivery] =
     useState<DeliveryDetail | null>(null);
-  const [tasks, setTasks] = useState<LoopItemTaskBinding[]>([]);
+  const [tasks, setTasks] = useState<LoopItemTaskBinding[]>(
+    () => props.initialTaskBindings ?? [],
+  );
   const [attachments, setAttachments] = useState<CloudLoopItemAttachment[]>([]);
   const [collaborators, setCollaborators] = useState<
     CloudLoopItemCollaborator[]
@@ -786,6 +789,8 @@ export function TodoEditor(props: TodoEditorProps) {
       ? workflowPlanErrorState.error
       : null;
   const loadedEditItemIdRef = useRef(editItemId);
+  const initialTaskBindingsRef = useRef(props.initialTaskBindings);
+  initialTaskBindingsRef.current = props.initialTaskBindings;
   const taskBindingsRequestIdRef = useRef(0);
   const deliveriesRequestIdRef = useRef(0);
   const selectedDeliveryRequestIdRef = useRef(0);
@@ -921,7 +926,7 @@ export function TodoEditor(props: TodoEditorProps) {
     selectedDeliveryRequestIdRef.current += 1;
     setDeliveries([]);
     setSelectedDelivery(null);
-    setTasks([]);
+    setTasks(initialTaskBindingsRef.current ?? []);
     setAttachments([]);
     setCollaborators([]);
     setDownloadingAttachmentId(null);

@@ -5459,6 +5459,7 @@ export function CloudTodoWorkspace({
                   selectedItem.workflow?.advancement_policy !== 'ai' &&
                   !selectedItem.workflow?.nodes.length
                 }
+                initialTaskBindings={activeItemTaskBindings[selectedItem.id]}
                 taskRefreshKey={boardRefreshNonce}
                 onWorkflowPlanChanged={() => {
                   setBoardRefreshNonce(value => value + 1)
