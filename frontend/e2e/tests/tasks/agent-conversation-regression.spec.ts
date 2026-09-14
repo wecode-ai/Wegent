@@ -88,6 +88,7 @@ test.describe('Agent conversation regression', () => {
   const createdProjectIds = new Set<number>()
   const createdGitAccountIds = new Set<string>()
   const streamRuleMatchTexts = new Set<string>()
+  const toolScenarioMatchTexts = new Set<string>()
 
   test.beforeAll(async ({ request }) => {
     apiClient = createApiClient(request)
@@ -102,6 +103,7 @@ test.describe('Agent conversation regression', () => {
 
   test.afterEach(async ({ request }) => {
     await cleanupStreamRules(request)
+    await cleanupToolScenarios(request)
     await clearMockModelRequests(request)
     await cleanupCreatedTasks(request)
     await cleanupCreatedProjects(request)
@@ -469,6 +471,55 @@ test.describe('Agent conversation regression', () => {
     )
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
+  })
+
+  test('coding mode Codex uses configured Skill and MCP', async ({ page, request }) => {
+    const prompt = `CODEX_SKILL_MCP_E2E_${makeContextToken('capability')}`
+    const successMarker = 'CODEX_SKILL_MCP_EFFECTIVE'
+    await resetMockMcp(request)
+    await configureToolScenario(request, prompt, [
+      {
+        toolCalls: [
+          {
+            toolName: 'exec_command',
+            arguments: {
+              cmd: "test -f .codex/skills/interactive/SKILL.md && printf 'CODEX_SKILL_DEPLOYED'",
+            },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolName: 'get_document_info',
+            arguments: { nodeId: 'doc-d1' },
+          },
+        ],
+      },
+      { responseContent: successMarker },
+    ])
+
+    await openTaskPage(page, '/chat?agent=code', codexCodeTeam.id, 'code')
+    await sendMessage(page, prompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+    await expect(page.getByTestId('messages-container')).toContainText(successMarker, {
+      timeout: RESPONSE_TIMEOUT_MS,
+    })
+    await waitForBackendTerminal(request, taskId)
+
+    const calls = await getMockMcpCalls(request)
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        name: 'get_document_info',
+        arguments: expect.objectContaining({ nodeId: 'doc-d1' }),
+        isError: false,
+      })
+    )
+    const captures = await loadCapturedModelRequests(request)
+    expect(
+      captures.some(capture => JSON.stringify(capture.body).includes('CODEX_SKILL_DEPLOYED'))
+    ).toBe(true)
   })
 
   test('Wework app device supports ClaudeCode dialogue and follow-up', async ({
@@ -866,6 +917,16 @@ test.describe('Agent conversation regression', () => {
       shellName: CODEX_SHELL_NAME,
       bindMode: ['code'],
       modelName: CODEX_MODEL_NAME,
+      skills: ['interactive'],
+      skillRefs: { interactive: interactiveSkillRef },
+      preloadSkills: ['interactive'],
+      preloadSkillRefs: { interactive: interactiveSkillRef },
+      mcpServers: {
+        'e2e-docs': {
+          type: 'streamable-http',
+          url: `${CODEX_MODEL_SERVER_URL}/mcp?service=docs`,
+        },
+      },
     })
     deviceTeam = await createTeam(request, {
       teamName: `${TEST_PREFIX}-device-team`,
@@ -934,6 +995,7 @@ test.describe('Agent conversation regression', () => {
       skillRefs?: Record<string, SkillRefMeta>
       preloadSkills?: string[]
       preloadSkillRefs?: Record<string, SkillRefMeta>
+      mcpServers?: Record<string, unknown>
     }
   ): Promise<CreatedTeam> {
     const botResponse = await request.post(`${API_BASE_URL}/api/bots`, {
@@ -950,6 +1012,7 @@ test.describe('Agent conversation regression', () => {
         skill_refs: options.skillRefs,
         preload_skills: options.preloadSkills,
         preload_skill_refs: options.preloadSkillRefs,
+        mcp_servers: options.mcpServers,
         namespace: 'default',
         is_active: true,
       },
@@ -1245,6 +1308,60 @@ test.describe('Agent conversation regression', () => {
       },
     })
     expect(response.status()).toBe(200)
+  }
+
+  async function configureToolScenario(
+    request: APIRequestContext,
+    matchText: string,
+    steps: Array<{
+      toolCalls?: Array<{ toolName: string; arguments: Record<string, unknown> }>
+      responseContent?: string
+    }>
+  ): Promise<void> {
+    toolScenarioMatchTexts.add(matchText)
+    const response = await request.post(`${MOCK_MODEL_SERVER_URL}/tool-scenarios`, {
+      ...MOCK_MODEL_CONTROL_REQUEST_OPTIONS,
+      data: { matchText, steps },
+    })
+    expect(response.status()).toBe(200)
+  }
+
+  async function cleanupToolScenarios(request: APIRequestContext): Promise<void> {
+    const matchTexts = [...toolScenarioMatchTexts]
+    toolScenarioMatchTexts.clear()
+    await Promise.all(
+      matchTexts.map(matchText =>
+        request
+          .delete(
+            `${MOCK_MODEL_SERVER_URL}/tool-scenarios?matchText=${encodeURIComponent(matchText)}`,
+            MOCK_MODEL_CONTROL_REQUEST_OPTIONS
+          )
+          .catch(() => null)
+      )
+    )
+  }
+
+  async function resetMockMcp(request: APIRequestContext): Promise<void> {
+    const response = await request.post(
+      `${MOCK_MODEL_SERVER_URL}/mcp-control/reset`,
+      MOCK_MODEL_CONTROL_REQUEST_OPTIONS
+    )
+    expect(response.status()).toBe(200)
+  }
+
+  async function getMockMcpCalls(request: APIRequestContext): Promise<
+    Array<{
+      name: string
+      arguments: Record<string, unknown>
+      isError: boolean
+    }>
+  > {
+    const response = await request.get(
+      `${MOCK_MODEL_SERVER_URL}/mcp-control/calls`,
+      MOCK_MODEL_CONTROL_REQUEST_OPTIONS
+    )
+    expect(response.status()).toBe(200)
+    return response.json()
   }
 
   function containsInteractiveFormAnswer(

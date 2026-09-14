@@ -1284,7 +1284,7 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
-  it('saves Codex as the default coding engine', async () => {
+  it('keeps Claude Code as the default coding engine', async () => {
     render(
       <TeamEditDialog
         open
@@ -1300,14 +1300,14 @@ describe('Simple TeamEditDialog', () => {
 
     await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
 
-    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'codex-agent' } })
+    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'code-agent' } })
     fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => {
       expect(mockedCreateBot).toHaveBeenCalledWith(
         expect.objectContaining({
-          shell_name: 'Codex',
+          shell_name: 'ClaudeCode',
         })
       )
     })

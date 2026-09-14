@@ -9,6 +9,7 @@ import type { Bot, TaskType } from '@/types/api'
 export type SimpleExecutorMode = 'simple' | 'complex' | 'custom'
 export type CodingExecutorRuntime = 'codex' | 'claude_code'
 export type ExecutorNormalizationReason = 'requires_coding_agent' | null
+export const DEFAULT_CODING_EXECUTOR_RUNTIME: CodingExecutorRuntime = 'claude_code'
 
 export interface SimpleBindModeOption {
   value: Extract<TaskType, 'chat' | 'code' | 'task' | 'video' | 'image'>
@@ -118,7 +119,7 @@ export function resolveShellForExecutor(
   shells: UnifiedShell[],
   mode: SimpleExecutorMode,
   customShellName?: string,
-  codingRuntime: CodingExecutorRuntime = 'codex'
+  codingRuntime: CodingExecutorRuntime = DEFAULT_CODING_EXECUTOR_RUNTIME
 ): UnifiedShell | null {
   if (mode === 'simple') {
     return shells.find(shell => shell.shellType === 'Chat') ?? null
@@ -142,7 +143,11 @@ export function resolveSimpleExecutorFromBot(bot: Bot | undefined): {
   customShellName: string
 } {
   if (!bot) {
-    return { mode: 'simple', codingRuntime: 'codex', customShellName: '' }
+    return {
+      mode: 'simple',
+      codingRuntime: DEFAULT_CODING_EXECUTOR_RUNTIME,
+      customShellName: '',
+    }
   }
 
   const shellType = bot.shell_type.toLowerCase()
@@ -155,7 +160,11 @@ export function resolveSimpleExecutorFromBot(bot: Bot | undefined): {
   }
 
   if (bot.shell_name === 'Chat') {
-    return { mode: 'simple', codingRuntime: 'codex', customShellName: '' }
+    return {
+      mode: 'simple',
+      codingRuntime: DEFAULT_CODING_EXECUTOR_RUNTIME,
+      customShellName: '',
+    }
   }
 
   if (!bot.shell_name && shellType === 'codex') {
@@ -166,7 +175,11 @@ export function resolveSimpleExecutorFromBot(bot: Bot | undefined): {
     return { mode: 'complex', codingRuntime: 'claude_code', customShellName: '' }
   }
 
-  return { mode: 'custom', codingRuntime: 'codex', customShellName: bot.shell_name }
+  return {
+    mode: 'custom',
+    codingRuntime: DEFAULT_CODING_EXECUTOR_RUNTIME,
+    customShellName: bot.shell_name,
+  }
 }
 
 export function normalizeExecutorForBindMode(
@@ -174,7 +187,7 @@ export function normalizeExecutorForBindMode(
   bindMode: TaskType[],
   shells: UnifiedShell[],
   customShellName?: string,
-  codingRuntime: CodingExecutorRuntime = 'codex'
+  codingRuntime: CodingExecutorRuntime = DEFAULT_CODING_EXECUTOR_RUNTIME
 ): NormalizedExecutor {
   if (!bindModeRequiresCodingAgent(bindMode)) {
     return { mode, codingRuntime, reason: null }
@@ -189,16 +202,16 @@ export function normalizeExecutorForBindMode(
     return { mode, codingRuntime, reason: null }
   }
 
-  if (resolveShellForExecutor(shells, 'complex', undefined, 'codex')) {
-    return { mode: 'complex', codingRuntime: 'codex', reason: 'requires_coding_agent' }
-  }
-
   if (resolveShellForExecutor(shells, 'complex', undefined, 'claude_code')) {
     return {
       mode: 'complex',
       codingRuntime: 'claude_code',
       reason: 'requires_coding_agent',
     }
+  }
+
+  if (resolveShellForExecutor(shells, 'complex', undefined, 'codex')) {
+    return { mode: 'complex', codingRuntime: 'codex', reason: 'requires_coding_agent' }
   }
 
   return { mode, codingRuntime, reason: 'requires_coding_agent' }
