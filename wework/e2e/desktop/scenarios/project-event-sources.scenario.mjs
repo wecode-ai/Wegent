@@ -614,6 +614,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
               loop_state: 'active',
               attempts: 0,
               activated_at: activatedAt,
+              catch_up_done: true,
               depends_on: ['start'],
               body_node_ids: ['loop-start', 'event-branch', 'github-handler', 'gitlab-handler'],
               loop_config: { max_attempts: 2 },
@@ -632,7 +633,6 @@ export function createDesktopScenario({ uiTimeoutMs }) {
               node_type: 'branch',
               loop_id: 'repair-loop',
               status: 'waiting',
-              catch_up_done: true,
               depends_on: ['loop-start'],
               event_wait: {
                 subject_source: 'upstream_pull_request',
