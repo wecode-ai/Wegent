@@ -159,7 +159,8 @@ describe('CollaborationApp project collaboration groups', () => {
 
     render(<CollaborationApp api={api} host={automationHost()} locale="zh-CN" pollIntervalMs={0} />)
 
-    fireEvent.click(await screen.findByTestId('collaboration-project-settings-dispatch'))
+    fireEvent.click(await screen.findByTestId('collaboration-project-settings-participants'))
+    fireEvent.click(await screen.findByTestId('collaboration-participants-tab-groups'))
     fireEvent.click(await screen.findByTestId('collaboration-group-add-group-1'))
     await waitFor(() =>
       expect(addCollaborationGroup).toHaveBeenCalledWith(project.id, workspaceGroup.id)
@@ -181,17 +182,17 @@ describe('CollaborationApp project collaboration groups', () => {
 
     render(<CollaborationApp api={api} host={automationHost()} locale="zh-CN" pollIntervalMs={0} />)
 
-    fireEvent.click(await screen.findByTestId('collaboration-project-settings-dispatch'))
+    fireEvent.click(await screen.findByTestId('collaboration-project-settings-participants'))
+    fireEvent.click(await screen.findByTestId('collaboration-participants-tab-groups'))
     fireEvent.click(await screen.findByTestId('collaboration-group-open-create'))
     fireEvent.change(await screen.findByTestId('collaboration-group-name'), {
       target: { value: '项目交付组' },
     })
-    fireEvent.click(screen.getByLabelText('代码智能体'))
+    fireEvent.change(screen.getByTestId('collaboration-group-description'), {
+      target: { value: '持续检查并处理项目 Issue' },
+    })
     fireEvent.change(screen.getByTestId('collaboration-group-leader'), {
       target: { value: 'agent:12' },
-    })
-    fireEvent.change(screen.getByTestId('collaboration-group-prompt'), {
-      target: { value: '检查待办并持续分配下一个 Issue' },
     })
     fireEvent.click(screen.getByTestId('collaboration-group-create'))
 
@@ -201,9 +202,37 @@ describe('CollaborationApp project collaboration groups', () => {
     const savedInput = createCollaborationGroup.mock.calls.at(-1)?.[1]
     expect(savedInput).toMatchObject({
       name: '项目交付组',
+      description: '持续检查并处理项目 Issue',
       leader: { kind: 'agent', id: '12' },
       members: [{ kind: 'agent', id: '12' }],
+      stages: [],
     })
-    expect(savedInput.policy.prompt).toBe('检查待办并持续分配下一个 Issue')
+    expect(savedInput).not.toHaveProperty('policy')
+  })
+
+  it('keeps automatic processing separate from collaboration participants', async () => {
+    const api = projectApi()
+
+    render(<CollaborationApp api={api} host={automationHost()} locale="zh-CN" pollIntervalMs={0} />)
+
+    const settings = await screen.findByTestId('project-settings-shell')
+    expect(settings).toHaveTextContent('基本信息')
+    expect(settings).toHaveTextContent('协作成员')
+    expect(settings).toHaveTextContent('执行环境')
+    expect(settings).toHaveTextContent('自动处理')
+    expect(screen.queryByTestId('collaboration-project-settings-groups')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('collaboration-project-settings-participants'))
+    expect(await screen.findByTestId('collaboration-project-participants-page')).toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-participants-tab-agents')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+
+    fireEvent.click(screen.getByTestId('collaboration-project-settings-automatic-processing'))
+    expect(
+      await screen.findByTestId('collaboration-project-automatic-processing-page')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('collaboration-project-participants-page')).not.toBeInTheDocument()
   })
 })

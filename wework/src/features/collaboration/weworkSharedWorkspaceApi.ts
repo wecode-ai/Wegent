@@ -55,11 +55,11 @@ type ProjectMethod = 'list' | 'get' | 'create' | 'update' | 'archive'
 export interface WeworkAutomationSharedWorkspaceApi {
   projects: Pick<SharedWorkspaceApi['projects'], 'update'>
   automations?: Pick<
-    SharedWorkspaceApi['automations'],
+    NonNullable<SharedWorkspaceApi['automations']>,
     'list' | 'create' | 'migrateWorkflow' | 'update' | 'remove' | 'runNow' | 'listRuns'
   >
   incomingHooks?: Pick<
-    SharedWorkspaceApi['incomingHooks'],
+    NonNullable<SharedWorkspaceApi['incomingHooks']>,
     'catalog' | 'list' | 'create' | 'update' | 'rotate' | 'remove'
   >
 }
@@ -165,8 +165,8 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_MISSING_METHODS = {
 } as const satisfies {
   projects: readonly (keyof SharedWorkspaceApi['projects'])[]
   comments: readonly (keyof SharedWorkspaceApi['comments'])[]
-  automations: readonly (keyof SharedWorkspaceApi['automations'])[]
-  incomingHooks: readonly (keyof SharedWorkspaceApi['incomingHooks'])[]
+  automations: readonly (keyof NonNullable<SharedWorkspaceApi['automations']>)[]
+  incomingHooks: readonly (keyof NonNullable<SharedWorkspaceApi['incomingHooks']>)[]
   runtimeProfiles: readonly (keyof SharedWorkspaceApi['runtimeProfiles'])[]
   agents: readonly (keyof SharedWorkspaceApi['agents'])[]
 }
@@ -451,6 +451,12 @@ export function createWeworkDeliverySharedWorkspaceApi(
               workflow_definition: input.workflowDefinition as Parameters<
                 DeliveryApi['updateCloudProject']
               >[1]['workflow_definition'],
+              collaboration_groups: input.collaborationGroups as Parameters<
+                DeliveryApi['updateCloudProject']
+              >[1]['collaboration_groups'],
+              automatic_processing_rules: input.automaticProcessingRules as Parameters<
+                DeliveryApi['updateCloudProject']
+              >[1]['automatic_processing_rules'],
             }) as Parameters<DeliveryApi['updateCloudProject']>[1]
           )
           .then(toProject)

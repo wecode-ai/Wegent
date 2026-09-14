@@ -2131,35 +2131,66 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click(await screen.findByTestId('cloud-sidebar-project-22'))
     expect(await screen.findByTestId('cloud-todo-card-LOCAL-1')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
-    expect(await screen.findByTestId('cloud-project-members-toggle')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-project-settings-files'))
-    expect(await screen.findByTestId('cloud-files-upload')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-project-settings-dispatch'))
     expect(
-      await screen.findByTestId('collaboration-project-dispatch-unavailable')
-    ).toBeInTheDocument()
-    expect(screen.queryByTestId('collaboration-dispatch-configure-agents')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-project-settings-agents'))
-    expect(screen.getByTestId('cloud-project-settings-agents')).toHaveAttribute(
-      'aria-current',
-      'page'
+      [
+        'cloud-project-board-view',
+        'cloud-project-table-view',
+        'cloud-project-files-view',
+        'cloud-project-manage-view',
+      ].map(testId => screen.getByTestId(testId).textContent)
+    ).toEqual(['看板', '表格', '文件', '项目设置'])
+    await userEvent.click(screen.getByTestId('cloud-project-files-view'))
+    expect(await screen.findByTestId('cloud-files-upload')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
+    expect
+      .soft(
+        Array.from(
+          screen
+            .getByTestId('project-settings-shell')
+            .querySelectorAll<HTMLButtonElement>('aside nav button')
+        ).map(button => button.textContent)
+      )
+      .toEqual(['基本信息', '协作成员', '执行环境', '自动处理'])
+    await userEvent.click(screen.getByTestId('cloud-project-settings-participants'))
+    expect(screen.getByTestId('collaboration-participants-tab-agents')).toHaveAttribute(
+      'aria-selected',
+      'true'
     )
+    expect(
+      [
+        'collaboration-participants-tab-agents',
+        'collaboration-participants-tab-members',
+        'collaboration-participants-tab-groups',
+      ].map(testId => screen.getByTestId(testId).textContent)
+    ).toEqual(['智能体', '项目成员', '协作小组'])
+    await userEvent.click(screen.getByTestId('collaboration-participants-tab-groups'))
+    expect(await screen.findByTestId('collaboration-group-open-create')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('collaboration-participants-tab-agents'))
     expect(await screen.findByTestId('project-agent-config')).toBeInTheDocument()
     await userEvent.click(await screen.findByTestId('project-agent-add'))
     expect(screen.getByTestId('project-agent-dialog')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('project-agent-mode-codex'))
-    await userEvent.type(screen.getByTestId('project-agent-codex-name'), 'Offline Codex')
-    expect(screen.queryByTestId('project-agent-codex-environment')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('project-agent-codex-create'))
-    expect(createLocalAgent).toHaveBeenCalledWith(
-      localProject.id,
-      expect.objectContaining({
-        name: 'Offline Codex',
-        runtime: 'codex',
-      })
+    expect(screen.getByTestId('project-agent-mode-existing')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-agent-mode-create'))
+    await userEvent.type(screen.getByTestId('project-agent-local-name'), '本地评审智能体')
+    await userEvent.type(
+      screen.getByTestId('project-agent-local-capability'),
+      '评审当前项目的代码变更'
     )
-    expect(await screen.findByTestId('project-agent-row-offline-local-codex')).toBeInTheDocument()
+    await userEvent.type(
+      screen.getByTestId('project-agent-local-system-prompt'),
+      '检查代码、测试和风险'
+    )
+    expect(screen.queryByTestId('project-agent-open-create')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-agent-execution-environment')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-agent-local-create'))
+    expect(createLocalAgent).toHaveBeenCalledWith(localProject.id, {
+      name: '本地评审智能体',
+      runtime: 'codex',
+      capabilityDescription: '评审当前项目的代码变更',
+      systemPrompt: '检查代码、测试和风险',
+    })
+    await userEvent.click(screen.getByTestId('cloud-project-settings-automatic-processing'))
+    expect(await screen.findByTestId('automatic-processing')).toBeInTheDocument()
 
     expect(cloudApi.listLoopItems).not.toHaveBeenCalled()
     expect(cloudApi.listCloudProjectMembers).not.toHaveBeenCalled()
@@ -2231,7 +2262,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
-    await userEvent.click(screen.getByTestId('cloud-project-settings-dispatch'))
+    await userEvent.click(screen.getByTestId('cloud-project-settings-participants'))
+    await userEvent.click(screen.getByTestId('collaboration-participants-tab-groups'))
     await userEvent.click(await screen.findByTestId('collaboration-group-open-create'))
     expect(await screen.findByTestId('collaboration-group-form')).toBeInTheDocument()
 
@@ -2590,7 +2622,8 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('高')
     expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
 
-    await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
+    await userEvent.click(screen.getByTestId('cloud-board-settings'))
+    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-board-layout-settings')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-board-display-menu'))
     expect(screen.getByTestId('cloud-project-card-display-settings')).toBeInTheDocument()
@@ -2603,7 +2636,7 @@ describe('CloudTodoWorkspace', () => {
         })
       )
     )
-    await userEvent.click(screen.getByTestId('cloud-project-board-view'))
+    await userEvent.click(screen.getByTestId('project-board-settings-close'))
     expect(screen.queryByText('hongyu9')).not.toBeInTheDocument()
     expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
   })
@@ -3797,6 +3830,12 @@ describe('CloudTodoWorkspace', () => {
     fireEvent.click(await screen.findByTestId('cloud-project-manage-view'))
     expect(screen.getByTestId('project-settings-shell')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '基本信息' })).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('cloud-project-settings-participants'))
+    expect(screen.getByTestId('collaboration-participants-tab-agents')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    fireEvent.click(screen.getByTestId('collaboration-participants-tab-members'))
     expect(await screen.findByText('2 位成员')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cloud-project-members-toggle'))
     expect(await screen.findByTestId('cloud-project-member-1')).toBeInTheDocument()
@@ -3859,10 +3898,15 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
-    await userEvent.click(screen.getByTestId('cloud-project-settings-dispatch'))
-    expect(screen.getByRole('heading', { name: '协作组' })).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-settings-participants'))
+    await userEvent.click(screen.getByTestId('collaboration-participants-tab-groups'))
+    expect(screen.getByTestId('collaboration-participants-tab-groups')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('collaboration-participants-panel-groups')).toBeInTheDocument()
     expect(screen.queryByText('项目管理者')).not.toBeInTheDocument()
-    expect(screen.getByTestId('collaboration-project-dispatch-policy')).toBeInTheDocument()
+    expect(screen.queryByTestId('automatic-processing')).not.toBeInTheDocument()
     await userEvent.click(await screen.findByTestId('collaboration-group-open-create'))
     expect(await screen.findByTestId('collaboration-group-form')).toBeInTheDocument()
     expect(screen.queryByTestId('project-automation-policy')).not.toBeInTheDocument()
@@ -3889,7 +3933,10 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
     expect(screen.queryByText('自动化')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
-    expect(screen.queryByTestId('cloud-project-settings-dispatch')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-settings-participants')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('cloud-project-settings-automatic-processing')
+    ).not.toBeInTheDocument()
   })
 
   it('uses shared project view permissions for restricted analysts', async () => {
@@ -3936,12 +3983,13 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     expect(screen.getByTestId('cloud-project-board-view')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-table-view')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-files-view')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-manage-view')).toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-project-files-view')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
-    expect(screen.getByTestId('cloud-project-settings-files')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-project-settings-dispatch')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-settings-project')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-settings-participants')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-settings-automatic-processing')).toBeInTheDocument()
   })
 
   it('keeps project views restricted when a non-owner payload omits access_role', async () => {
@@ -5890,8 +5938,7 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
-    await userEvent.click(screen.getByTestId('cloud-project-settings-files'))
+    await userEvent.click(screen.getByTestId('cloud-project-files-view'))
     expect(
       screen.getByTestId('cloud-project-header').querySelector('.electron-titlebar-drag-region')
     ).toBeInTheDocument()

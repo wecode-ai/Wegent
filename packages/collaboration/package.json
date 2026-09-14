@@ -16,10 +16,6 @@
       "types": "./src/automation/index.ts",
       "import": "./src/automation/index.ts"
     },
-    "./automation-ui": {
-      "types": "./src/automation-ui/index.ts",
-      "import": "./src/automation-ui/index.ts"
-    },
     "./project-manage": {
       "types": "./src/project-manage/index.ts",
       "import": "./src/project-manage/index.ts"

@@ -316,6 +316,12 @@ impl LocalTaskStore {
         if let Some(workflow_definition) = input.workflow_definition {
             metadata["workflow_definition"] = workflow_definition;
         }
+        if let Some(collaboration_groups) = input.collaboration_groups {
+            metadata["collaboration_groups"] = collaboration_groups;
+        }
+        if let Some(automatic_processing_rules) = input.automatic_processing_rules {
+            metadata["automatic_processing_rules"] = automatic_processing_rules;
+        }
         let connection = self.connection()?;
         let updated = connection.execute(
             "UPDATE loop_items
@@ -711,6 +717,7 @@ impl LocalTaskStore {
         let mut metadata = json!({
             "runtime": "codex",
             "model": input.model,
+            "capability_description": input.capability_description.unwrap_or_default(),
             "system_prompt": input.system_prompt.unwrap_or_default(),
             "visibility": input.visibility.unwrap_or_else(|| "creator_admin".to_owned()),
             "execution_environment": input.execution_environment.unwrap_or_else(|| "local".to_owned()),
@@ -764,6 +771,9 @@ impl LocalTaskStore {
         }
         if let Some(model) = input.model.as_ref() {
             metadata["model"] = json!(model);
+        }
+        if let Some(description) = input.capability_description.as_ref() {
+            metadata["capability_description"] = json!(description);
         }
         if let Some(prompt) = input.system_prompt.as_ref() {
             metadata["system_prompt"] = json!(prompt);
@@ -3785,6 +3795,7 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .get("model")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
+        capability_description: text("capability_description", ""),
         system_prompt: text("system_prompt", ""),
         status: row.status.unwrap_or_else(|| "active".to_owned()),
         visibility: text("visibility", "creator_admin"),

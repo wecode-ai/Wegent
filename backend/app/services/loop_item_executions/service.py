@@ -21,7 +21,7 @@ from urllib.parse import urlsplit
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 
 from app.models.delivery import (
     CloudProject,
@@ -199,11 +199,15 @@ def runtime_configuration_complete(
     workspace_binding_required: bool = False,
     workspace_binding: object = None,
 ) -> bool:
-    """Return whether an execution snapshot contains a runnable Runtime."""
+    """Return whether non-device Runtime configuration is complete.
 
+    A project-authorized Runtime selects and binds the device when it claims
+    the execution, so assignment does not require a pre-bound device.
+    """
+
+    del execution_device_id
     return bool(
-        execution_device_id
-        and (not require_model or (isinstance(model, str) and bool(model.strip())))
+        (not require_model or (isinstance(model, str) and bool(model.strip())))
         and (not workspace_binding_required or isinstance(workspace_binding, dict))
     )
 
@@ -445,6 +449,112 @@ def _owned_execution_device_ids(
         device_id=submitted_device_id,
     )
     return device_identity_ids(device) if device is not None else [submitted_device_id]
+
+
+def _project_allows_device(
+    db: Session,
+    *,
+    cloud_project_id: str,
+    owner_user_id: int,
+    submitted_device_id: str,
+) -> bool:
+    """Apply the optional Device-to-project allowlist for an owned device."""
+
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+    from app.services.device.identity import resolve_owned_device_alias
+
+    device = resolve_owned_device_alias(
+        db,
+        user_id=owner_user_id,
+        device_id=submitted_device_id,
+    )
+    if device is None:
+        return False
+    grants = (
+        db.query(ResourceMember.resource_id)
+        .join(Kind, Kind.id == ResourceMember.resource_id)
+        .filter(
+            ResourceMember.resource_type == ResourceType.DEVICE.value,
+            ResourceMember.entity_type == "project",
+            ResourceMember.entity_id == str(cloud_project_id),
+            ResourceMember.status == MemberStatus.APPROVED.value,
+            Kind.kind == "Device",
+            Kind.user_id == owner_user_id,
+            Kind.is_active.is_(True),
+        )
+        .all()
+    )
+    return not grants or int(device.id) in {
+        int(resource_id) for (resource_id,) in grants
+    }
+
+
+def _issue_runtime_device(
+    db: Session,
+    *,
+    loop_item_id: str,
+    exclude_execution_id: int,
+) -> str:
+    """Return the latest device that actually claimed this Issue."""
+
+    previous = (
+        db.query(LoopItemExecution)
+        .filter(
+            LoopItemExecution.loop_item_id == loop_item_id,
+            LoopItemExecution.id != exclude_execution_id,
+            LoopItemExecution.runtime_device_id != "",
+        )
+        .order_by(LoopItemExecution.id.desc())
+        .first()
+    )
+    return str(previous.runtime_device_id or "") if previous is not None else ""
+
+
+def _matches_issue_device_affinity(
+    db: Session,
+    *,
+    execution: LoopItemExecution,
+    owner_user_id: int,
+    submitted_device_id: str,
+) -> bool:
+    """Keep every execution of one Issue on its latest claimed device."""
+
+    affinity_device_id = _issue_runtime_device(
+        db,
+        loop_item_id=execution.loop_item_id,
+        exclude_execution_id=execution.id,
+    )
+    return not affinity_device_id or _same_runtime_device(
+        db,
+        owner_user_id=owner_user_id,
+        left_device_id=affinity_device_id,
+        right_device_id=submitted_device_id,
+    )
+
+
+def _execution_is_claimable_by_device(
+    db: Session,
+    *,
+    execution: LoopItemExecution,
+    owner_user_id: int,
+    submitted_device_id: str,
+) -> bool:
+    """Apply default-owner access, optional project allowlist, and affinity."""
+
+    if not execution.execution_device_id and not _project_allows_device(
+        db,
+        cloud_project_id=execution.cloud_project_id,
+        owner_user_id=owner_user_id,
+        submitted_device_id=submitted_device_id,
+    ):
+        return False
+    return _matches_issue_device_affinity(
+        db,
+        execution=execution,
+        owner_user_id=owner_user_id,
+        submitted_device_id=submitted_device_id,
+    )
 
 
 def _active_agent_counts(
@@ -702,6 +812,7 @@ class LoopItemExecutionService:
         team: Kind,
         assigner_user_id: int,
         priority: str | None,
+        automation_context: dict[str, Any] | None = None,
     ) -> LoopItemExecution:
         """Create the authoritative run for a Wegent Team assignment."""
 
@@ -717,7 +828,7 @@ class LoopItemExecutionService:
             environment="managed",
             execution_device_id=None,
             priority=priority,
-            automation_context=None,
+            automation_context=automation_context,
             requires_approval=False,
         )
 
@@ -940,7 +1051,7 @@ class LoopItemExecutionService:
             max_retries=DEFAULT_MAX_RETRIES,
             approval_status="pending" if requires_approval else "",
             execution_note=(
-                "Select a device and model before this execution can start"
+                "Select a model or workspace before this execution can start"
                 if waiting_runtime
                 else ""
             ),
@@ -957,7 +1068,11 @@ class LoopItemExecutionService:
         db.add(row)
         db.flush()
         row.runtime_task_id = runtime_task_id_for(row.id)
-        if not waiting_runtime and executor_type != "wegent_team":
+        if (
+            not waiting_runtime
+            and executor_type != "wegent_team"
+            and execution_device_id
+        ):
             self._persist_runtime_request_intent(db, execution=row)
         self._set_automation_run_status(
             db,
@@ -1094,7 +1209,7 @@ class LoopItemExecutionService:
         row.approved_by_user_id = user_id
         row.approved_at = now
         row.execution_note = (
-            "Select a device and model before this execution can start"
+            "Select a model or workspace before this execution can start"
             if needs_runtime
             else ""
         )
@@ -1357,6 +1472,11 @@ class LoopItemExecutionService:
             owner_user_id=owner_user_id,
             submitted_device_id=execution_device_id,
         )
+        canonical_execution_device_id = _canonical_execution_device(
+            db,
+            owner_user_id=owner_user_id,
+            submitted_device_id=execution_device_id,
+        )
         running_count = _runtime_capacity_used(
             db,
             owner_user_id=owner_user_id,
@@ -1381,8 +1501,13 @@ class LoopItemExecutionService:
             .filter(
                 LoopItemExecution.executor_owner_user_id == owner_user_id,
                 LoopItemExecution.agent_id == agent_id,
-                LoopItemExecution.execution_device_id.in_(execution_device_ids),
-                LoopItemExecution.execution_environment == environment,
+                or_(
+                    and_(
+                        LoopItemExecution.execution_device_id.in_(execution_device_ids),
+                        LoopItemExecution.execution_environment == environment,
+                    ),
+                    LoopItemExecution.execution_device_id == "",
+                ),
                 LoopItemExecution.status == STATUS_QUEUED,
             )
             .order_by(
@@ -1393,7 +1518,19 @@ class LoopItemExecutionService:
         )
         if assigner_filter is not None:
             query = query.filter(LoopItemExecution.assigner_user_id == assigner_filter)
-        candidate = query.first()
+        candidate = next(
+            (
+                row
+                for row in query.all()
+                if _execution_is_claimable_by_device(
+                    db,
+                    execution=row,
+                    owner_user_id=owner_user_id,
+                    submitted_device_id=execution_device_id,
+                )
+            ),
+            None,
+        )
         if candidate is None:
             return None
         if candidate.execution_scope in _occupied_execution_scopes(
@@ -1412,6 +1549,10 @@ class LoopItemExecutionService:
             .update(
                 {
                     "status": STATUS_CLAIMED,
+                    "execution_device_id": (
+                        candidate.execution_device_id or canonical_execution_device_id
+                    ),
+                    "execution_environment": environment,
                     "claimed_at": now,
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
@@ -1450,6 +1591,11 @@ class LoopItemExecutionService:
             owner_user_id=owner_user_id,
             submitted_device_id=execution_device_id,
         )
+        canonical_execution_device_id = _canonical_execution_device(
+            db,
+            owner_user_id=owner_user_id,
+            submitted_device_id=execution_device_id,
+        )
         running_count = _runtime_capacity_used(
             db,
             owner_user_id=owner_user_id,
@@ -1461,8 +1607,13 @@ class LoopItemExecutionService:
             return None
         queue_filters = (
             LoopItemExecution.executor_owner_user_id == owner_user_id,
-            LoopItemExecution.execution_device_id.in_(execution_device_ids),
-            LoopItemExecution.execution_environment == environment,
+            or_(
+                and_(
+                    LoopItemExecution.execution_device_id.in_(execution_device_ids),
+                    LoopItemExecution.execution_environment == environment,
+                ),
+                LoopItemExecution.execution_device_id == "",
+            ),
             LoopItemExecution.status == STATUS_QUEUED,
         )
         agent_ids = {
@@ -1475,44 +1626,9 @@ class LoopItemExecutionService:
         active_counts = _active_agent_counts(db, agent_ids)
         limits = _agent_limits(db, agent_ids)
 
-        active_execution = aliased(LoopItemExecution)
-        scope_is_available = or_(
-            LoopItemExecution.execution_scope == "",
-            ~db.query(active_execution.id)
-            .filter(
-                active_execution.status.in_(CAPACITY_STATUSES),
-                active_execution.execution_scope == LoopItemExecution.execution_scope,
-            )
-            .exists(),
-        )
-        ranked = (
-            db.query(
-                LoopItemExecution.id.label("execution_id"),
-                func.row_number()
-                .over(
-                    partition_by=LoopItemExecution.agent_id,
-                    order_by=(
-                        LoopItemExecution.priority_weight.desc(),
-                        LoopItemExecution.queued_at.asc(),
-                        LoopItemExecution.id.asc(),
-                    ),
-                )
-                .label("agent_queue_rank"),
-            )
-            .filter(*queue_filters, scope_is_available)
-            .subquery()
-        )
-        candidate_ids = [
-            int(execution_id)
-            for (execution_id,) in db.query(ranked.c.execution_id)
-            .filter(ranked.c.agent_queue_rank == 1)
-            .all()
-        ]
-        if not candidate_ids:
-            return None
         rows = (
             db.query(LoopItemExecution)
-            .filter(LoopItemExecution.id.in_(candidate_ids))
+            .filter(*queue_filters)
             .order_by(
                 LoopItemExecution.priority_weight.desc(),
                 LoopItemExecution.queued_at.asc(),
@@ -1520,9 +1636,23 @@ class LoopItemExecutionService:
             )
             .all()
         )
+        rows = [
+            row
+            for row in rows
+            if _execution_is_claimable_by_device(
+                db,
+                execution=row,
+                owner_user_id=owner_user_id,
+                submitted_device_id=execution_device_id,
+            )
+        ]
+        occupied_scopes = _occupied_execution_scopes(
+            db,
+            {row.execution_scope for row in rows if row.execution_scope},
+        )
         candidate = _fair_single_candidate(
             rows,
-            occupied_scopes=set(),
+            occupied_scopes=occupied_scopes,
             active_counts=active_counts,
             limits=limits,
         )
@@ -1539,6 +1669,10 @@ class LoopItemExecutionService:
             .update(
                 {
                     "status": STATUS_CLAIMED,
+                    "execution_device_id": (
+                        candidate.execution_device_id or canonical_execution_device_id
+                    ),
+                    "execution_environment": environment,
                     "claimed_at": now,
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
@@ -1722,86 +1856,19 @@ class LoopItemExecutionService:
         runtime_active_task_ids: set[str] | frozenset[str],
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ) -> Optional[LoopItemExecution]:
-        """Claim a legacy project-robot run without a persisted device binding."""
+        """Use the unified project-authorized claim path for old callers."""
 
-        submitted_execution_device_id = execution_device_id
-        execution_device_id = _canonical_execution_device(
+        return self.claim_next_for_device(
             db,
-            owner_user_id=owner_user_id,
-            submitted_device_id=execution_device_id,
-        )
-        occupied = _runtime_capacity_used(
-            db,
-            owner_user_id=owner_user_id,
+            execution_device_id=execution_device_id,
+            environment="local",
             runtime_instance_id=runtime_instance_id,
+            device_capacity=device_capacity,
             runtime_active=runtime_active,
             runtime_active_task_ids=runtime_active_task_ids,
+            owner_user_id=owner_user_id,
+            lease_seconds=lease_seconds,
         )
-        if occupied is None or occupied >= device_capacity:
-            return None
-        candidates = (
-            db.query(LoopItemExecution)
-            .join(ProjectChatAgent, ProjectChatAgent.id == LoopItemExecution.agent_id)
-            .filter(
-                LoopItemExecution.executor_owner_user_id == owner_user_id,
-                LoopItemExecution.execution_environment == "local",
-                LoopItemExecution.status == STATUS_QUEUED,
-                or_(
-                    LoopItemExecution.execution_device_id.is_(None),
-                    LoopItemExecution.execution_device_id == "",
-                ),
-                ProjectChatAgent.created_by_user_id == owner_user_id,
-                ProjectChatAgent.status == "active",
-            )
-            .order_by(
-                LoopItemExecution.priority_weight.desc(),
-                LoopItemExecution.queued_at.asc(),
-                LoopItemExecution.id.asc(),
-            )
-            .all()
-        )
-        agent_ids = {row.agent_id for row in candidates if row.agent_id}
-        execution_scopes = {
-            row.execution_scope for row in candidates if row.execution_scope
-        }
-        occupied_scopes = _occupied_execution_scopes(db, execution_scopes)
-        active_counts = _active_agent_counts(db, agent_ids)
-        limits = _agent_limits(db, agent_ids)
-        candidate = _fair_single_candidate(
-            candidates,
-            occupied_scopes=occupied_scopes,
-            active_counts=active_counts,
-            limits=limits,
-        )
-        if candidate is None:
-            return None
-
-        now = utcnow()
-        claimed = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.id == candidate.id,
-                LoopItemExecution.status == STATUS_QUEUED,
-            )
-            .update(
-                {
-                    "status": STATUS_CLAIMED,
-                    "execution_device_id": execution_device_id,
-                    "claimed_at": now,
-                    "heartbeat_at": now,
-                    "lease_expires_at": now + timedelta(seconds=lease_seconds),
-                    "runtime_device_id": submitted_execution_device_id,
-                    "runtime_instance_id": runtime_instance_id,
-                    "runtime_task_id": runtime_task_id_for(candidate.id),
-                    "version": LoopItemExecution.version + 1,
-                }
-            )
-        )
-        db.commit()
-        if claimed != 1:
-            return None
-        db.refresh(candidate)
-        return candidate
 
     def mark_start_requested(
         self,

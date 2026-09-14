@@ -224,7 +224,10 @@ export type SharedIssueDetailWorkspaceApi = Omit<
   >,
   "automations"
 > & {
-  automations?: Pick<SharedWorkspaceApi["automations"], "runWorkflowNode">;
+  automations?: Pick<
+    NonNullable<SharedWorkspaceApi["automations"]>,
+    "runWorkflowNode"
+  >;
   agents: Pick<SharedWorkspaceApi["agents"], "list">;
 };
 

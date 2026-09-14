@@ -174,7 +174,7 @@ class LoopItemAssign(ProjectChatSchema):
     notify_self: bool = False
 
     version: int = Field(ge=1)
-    assignee_type: Literal["user", "agent"]
+    assignee_type: Literal["user", "agent", "team"]
     assignee_id: str = Field(min_length=1, max_length=128)
     workflow_step: str | None = Field(default=None, max_length=128)
     trigger: Literal[

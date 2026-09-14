@@ -4,9 +4,12 @@
 
 export * from "./ProjectManageView";
 export * from "./ProjectSettingsShell";
+export * from "./ProjectSettingsPage";
+export * from "./ProjectCollaborationParticipants";
+export * from "./ProjectBoardSettingsDialog";
 export * from "./ProjectExecutionEnvironments";
-export * from "./ProjectDispatchSettings";
 export * from "./ProjectCollaborationGroups";
+export * from "./ProjectAutomaticProcessing";
 export * from "./memberSearch";
 export * from "./projectMutationQueue";
 export * from "./BoardLayoutEditor";

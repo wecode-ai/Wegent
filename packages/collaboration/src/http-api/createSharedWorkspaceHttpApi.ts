@@ -41,8 +41,7 @@ export interface SharedWorkspaceHttpApi {
     | "listCollaborationGroups"
     | "addCollaborationGroup"
     | "createCollaborationGroup"
-    | "runCollaborationGroup"
-    | "listCollaborationGroupRuns"
+    | "updateCollaborationGroup"
     | "removeCollaborationGroup"
   >;
   comments: SharedWorkspaceCommentsApi;
@@ -119,8 +118,8 @@ function mapWorkspaceMemberDto(input: unknown): CollaborationMember {
 function mapCollaborationGroupDto(input: unknown): CollaborationGroup {
   const row = record(input);
   const members = Array.isArray(row.members) ? row.members : [];
+  const stages = Array.isArray(row.stages) ? row.stages : [];
   const leader = record(row.leader);
-  const policy = record(row.policy);
   return {
     id: String(row.id),
     workspace_id: String(row.workspace_id ?? row.workspaceId),
@@ -132,37 +131,34 @@ function mapCollaborationGroupDto(input: unknown): CollaborationGroup {
     leader: {
       kind: leader.kind === "human" ? "human" : "agent",
       id: String(leader.id),
+      responsibility: String(leader.responsibility ?? ""),
     },
     members: members.map((member) => {
       const value = record(member);
       return {
         kind: value.kind === "human" ? "human" : "agent",
         id: String(value.id),
+        responsibility: String(value.responsibility ?? ""),
       };
     }),
     coordination_mode: "manager",
-    policy: {
-      prompt: String(policy.prompt ?? ""),
-      trigger_type:
-        policy.trigger_type === "schedule" || policy.triggerType === "schedule"
-          ? "schedule"
-          : policy.trigger_type === "event" || policy.triggerType === "event"
-            ? "event"
-            : "manual",
-      event_type:
-        (policy.event_type ?? policy.eventType) == null
-          ? null
-          : String(policy.event_type ?? policy.eventType),
-      event_config: record(policy.event_config ?? policy.eventConfig),
-      cron_expression:
-        (policy.cron_expression ?? policy.cronExpression) == null
-          ? null
-          : String(policy.cron_expression ?? policy.cronExpression),
-      timezone: String(policy.timezone ?? "Asia/Shanghai"),
-      issue_selector: record(policy.issue_selector ?? policy.issueSelector),
-      output_policy: record(policy.output_policy ?? policy.outputPolicy),
-      enabled: policy.enabled !== false,
-    },
+    stages: stages.map((stage) => {
+      const value = record(stage);
+      const assignee = value.assignee == null ? null : record(value.assignee);
+      return {
+        id: String(value.id),
+        name: String(value.name ?? ""),
+        description: String(value.description ?? ""),
+        assignee:
+          assignee === null
+            ? null
+            : {
+                kind: assignee.kind === "human" ? "human" : "agent",
+                id: String(assignee.id),
+                responsibility: String(assignee.responsibility ?? ""),
+              },
+      };
+    }),
     version: Number(row.version ?? 1),
     created_by_user_id: Number(
       row.created_by_user_id ?? row.createdByUserId ?? 0,
@@ -359,20 +355,12 @@ export function createSharedWorkspaceHttpApi(
           ),
         );
       },
-      async runCollaborationGroup(projectId, groupId) {
-        return transport.post<{ id: string; status: string }>(
-          `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups/${encoded(groupId)}/run`,
-        );
-      },
-      async listCollaborationGroupRuns(projectId, groupId) {
-        const response = await transport.get<unknown[]>(
-          `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups/${encoded(groupId)}/runs`,
-        );
-        return response.map(
-          (run) =>
-            keysToCamelCase(
-              run,
-            ) as import("../ports/SharedWorkspaceApi").WorkspaceAutomationRun,
+      async updateCollaborationGroup(projectId, groupId, input) {
+        return mapCollaborationGroupDto(
+          await transport.patch(
+            `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups/${encoded(groupId)}`,
+            workspaceHttpRequestBody(input),
+          ),
         );
       },
       async removeCollaborationGroup(projectId, groupId) {

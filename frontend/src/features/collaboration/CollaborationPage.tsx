@@ -223,10 +223,12 @@ export function CollaborationPage() {
       },
       manageResource(kind, resourceId) {
         if (kind === 'agents') {
-          router.push('/resource-library?tab=mine&type=agent&scope=personal')
+          router.push('/resource-library?tab=mine&type=agent&scope=personal&action=create-agent')
           return
         }
-        router.push(resourceId ? `/devices?deviceId=${encodeURIComponent(resourceId)}` : '/devices')
+        router.push(
+          resourceId ? `/devices?deviceId=${encodeURIComponent(resourceId)}` : '/devices?register=1'
+        )
       },
       openExternal(url) {
         window.open(url, '_blank', 'noopener,noreferrer')

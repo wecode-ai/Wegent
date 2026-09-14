@@ -155,23 +155,6 @@ export function createDesktopScenario({
     await control.command('fill', scoped('[data-testid="project-agent-codex-prompt"]'), {
       value: prompt,
     })
-    await control.command('waitFor', scoped('[data-testid="project-agent-codex-environment"]'), {
-      enabled: true,
-      timeoutMs: uiTimeoutMs,
-    })
-    const environmentOptionSelector = scoped(
-      '[data-testid="project-agent-codex-environment"] option:not([value=""])'
-    )
-    await control.command('waitFor', environmentOptionSelector, {
-      timeoutMs: uiTimeoutMs,
-    })
-    const environmentId = await control.command('getAttribute', environmentOptionSelector, {
-      value: 'value',
-    })
-    assert.match(environmentId, /^device:/, 'The selected environment must be a local device')
-    await control.command('select', scoped('[data-testid="project-agent-codex-environment"]'), {
-      value: environmentId,
-    })
     await control.command(
       'clickWhenEnabled',
       scoped('[data-testid="project-agent-codex-create"]'),

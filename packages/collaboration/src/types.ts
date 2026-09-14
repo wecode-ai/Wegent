@@ -57,6 +57,7 @@ export interface CollaborationProject {
     show_tags: boolean;
     show_date: boolean;
   };
+  collaboration_groups?: CollaborationGroup[];
   created_by_user_id: number;
   current_user_id?: number;
   current_user_name?: string;
@@ -184,6 +185,7 @@ export interface CollaborationExecutionEnvironment {
 }
 
 export interface CollaborationOwnedAgent extends CollaborationAgent {
+  location?: "local" | "cloud";
   owner_type: "user" | "workspace";
   owner_id: string;
   owner_name: string;
@@ -199,6 +201,14 @@ export interface CollaborationPlatformResources {
 export interface CollaborationGroupMember {
   kind: "human" | "agent";
   id: string;
+  responsibility: string;
+}
+
+export interface CollaborationGroupStage {
+  id: string;
+  name: string;
+  description: string;
+  assignee: CollaborationGroupMember | null;
 }
 
 export interface CollaborationGroup {
@@ -211,17 +221,7 @@ export interface CollaborationGroup {
   leader: CollaborationGroupMember;
   members: CollaborationGroupMember[];
   coordination_mode: "manager";
-  policy: {
-    prompt: string;
-    trigger_type: "manual" | "schedule" | "event";
-    event_type: string | null;
-    event_config: Record<string, unknown>;
-    cron_expression: string | null;
-    timezone: string;
-    issue_selector: Record<string, unknown>;
-    output_policy: Record<string, unknown>;
-    enabled: boolean;
-  };
+  stages: CollaborationGroupStage[];
   version: number;
   created_by_user_id: number;
   created_at: string;
@@ -352,6 +352,7 @@ export interface CollaborationCapabilities {
   myWork?: boolean;
   automation: boolean;
   dingtalkAitable: boolean;
+  projectLocation?: "cloud" | "local";
 }
 
 export type CollaborationView =
@@ -373,6 +374,7 @@ export interface CollaborationHostAdapter {
   capabilities: CollaborationCapabilities;
   location: CollaborationLocation;
   navigate(location: CollaborationLocation): void;
+  manageResource?(kind: "agents" | "environments", resourceId?: string): void;
   onProjectsChange?(projects: CollaborationProject[]): void;
   openExternal?(url: string): void;
   notify?(message: string, kind?: "success" | "error"): void;

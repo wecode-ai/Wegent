@@ -147,6 +147,14 @@ describe('CollaborationPage platform routing', () => {
     expect(mockPush).toHaveBeenCalledWith('/devices?deviceId=device%2F21')
   })
 
+  it('opens device registration from execution environment management', () => {
+    render(<CollaborationPage />)
+
+    capturedHost?.manageResource?.('environments')
+
+    expect(mockPush).toHaveBeenCalledWith('/devices?register=1')
+  })
+
   it('maps a nested Workspace, Project and Issue URL into the shared location', () => {
     mockPathname = '/collaboration/workspaces/workspace%201/projects/project%252/issues/issue%253'
     mockSearchParams = new URLSearchParams('view=table')

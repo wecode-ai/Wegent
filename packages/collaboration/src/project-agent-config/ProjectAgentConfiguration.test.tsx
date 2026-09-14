@@ -148,9 +148,20 @@ describe("ProjectAgentConfiguration", () => {
     });
   }
 
-  it("creates managed Wegent and custom Codex agents through the shared API", async () => {
+  it("adds an existing Agent and opens the standard Agent creator", async () => {
     const { api, create } = createApi();
-    await render(api);
+    const onCreateAgent = vi.fn();
+    await act(async () => {
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          project={project}
+          onError={vi.fn()}
+          onCreateAgent={onCreateAgent}
+          translate={(_key, fallback) => fallback}
+        />,
+      );
+    });
 
     await click("project-agent-add");
     await change("project-agent-wegent-team", "12");
@@ -163,19 +174,48 @@ describe("ProjectAgentConfiguration", () => {
     expect(element("project-agent-row-created-wegent")).toBeTruthy();
 
     await click("project-agent-add");
-    await click("project-agent-mode-codex");
-    await change("project-agent-codex-name", "Codex 产品工程师");
-    await change("project-agent-codex-capability", "实现产品需求");
-    await change("project-agent-codex-prompt", "遵循项目规范");
-    await click("project-agent-codex-create");
+    await click("project-agent-mode-create");
+    expect(
+      document.querySelector('[data-testid="project-agent-codex-name"]'),
+    ).toBeNull();
+    await click("project-agent-open-create");
+    expect(onCreateAgent).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenCalledTimes(1);
+  });
 
-    expect(create).toHaveBeenNthCalledWith(2, project.id, {
-      name: "Codex 产品工程师",
-      runtime: "codex",
-      capabilityDescription: "实现产品需求",
-      systemPrompt: "遵循项目规范",
+  it("creates a local Agent inside a local project without choosing an environment", async () => {
+    const { api, create } = createApi({ workspaceAgents: [] });
+    await act(async () => {
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          project={{ ...project, project_store: "local" }}
+          onError={vi.fn()}
+          translate={(_key, fallback) => fallback}
+        />,
+      );
     });
+
+    await click("project-agent-add");
+    await click("project-agent-mode-create");
+    await change("project-agent-local-name", "本地代码评审");
+    await change("project-agent-local-capability", "评审当前项目代码");
+    await change("project-agent-local-system-prompt", "先检查测试，再给出结论");
+    await click("project-agent-local-create");
+
+    expect(create).toHaveBeenCalledWith(project.id, {
+      name: "本地代码评审",
+      runtime: "codex",
+      capabilityDescription: "评审当前项目代码",
+      systemPrompt: "先检查测试，再给出结论",
+    });
+    expect(
+      document.querySelector('[data-testid="project-agent-dialog"]'),
+    ).toBeNull();
     expect(element("project-agent-row-created-codex")).toBeTruthy();
+    expect(
+      document.querySelector('[data-testid*="execution-environment"]'),
+    ).toBeNull();
   });
 
   it("archives an existing project agent with optimistic concurrency", async () => {
@@ -203,11 +243,8 @@ describe("ProjectAgentConfiguration", () => {
       "智能体",
     );
 
-    await click("project-agent-mode-codex");
-    expect(element("project-agent-codex-name")).toBeTruthy();
-    expect(
-      document.querySelector('[data-testid="project-agent-codex-environment"]'),
-    ).toBeNull();
+    await click("project-agent-mode-create");
+    expect(element("project-agent-open-create")).toBeTruthy();
 
     await render(api, { ...project, workspace_id: null });
     expect(element("project-agent-config")).toBeTruthy();

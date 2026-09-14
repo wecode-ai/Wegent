@@ -6,6 +6,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
+  CollaborationGroupCreateInput,
+  CollaborationGroupUpdateInput,
+} from "../ports/SharedWorkspaceApi";
+import type {
   CollaborationGroup,
   CollaborationExecutionEnvironment,
   CollaborationMember,
@@ -427,24 +431,7 @@ export function useCollaborationPlatformController({
           })),
         }));
       },
-      async createCollaborationGroup(input: {
-        name: string;
-        description?: string;
-        leader: { kind: "human" | "agent"; id: string };
-        members: Array<{ kind: "human" | "agent"; id: string }>;
-        coordinationMode: "manager";
-        policy: {
-          prompt: string;
-          triggerType: "manual" | "schedule" | "event";
-          eventType: string | null;
-          eventConfig: Record<string, unknown>;
-          cronExpression: string | null;
-          timezone: string;
-          issueSelector: Record<string, unknown>;
-          outputPolicy: Record<string, unknown>;
-          enabled: boolean;
-        };
-      }) {
+      async createCollaborationGroup(input: CollaborationGroupCreateInput) {
         if (!api.workspaces || !location.workspaceId) {
           throw new Error("Workspace API is unavailable");
         }
@@ -455,6 +442,26 @@ export function useCollaborationPlatformController({
         setState((current) => ({
           ...current,
           collaborationGroups: [...current.collaborationGroups, group],
+        }));
+        return group;
+      },
+      async updateCollaborationGroup(
+        groupId: string,
+        input: CollaborationGroupUpdateInput,
+      ) {
+        if (!api.workspaces || !location.workspaceId) {
+          throw new Error("Workspace API is unavailable");
+        }
+        const group = await api.workspaces.updateCollaborationGroup(
+          location.workspaceId,
+          groupId,
+          input,
+        );
+        setState((current) => ({
+          ...current,
+          collaborationGroups: current.collaborationGroups.map((candidate) =>
+            candidate.id === group.id ? group : candidate,
+          ),
         }));
         return group;
       },

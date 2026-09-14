@@ -77,7 +77,7 @@ const platformMessages = {
     allProjects: "全部项目",
     members: "成员",
     agents: "智能体",
-    collaborationGroups: "协作组",
+    collaborationGroups: "协作小组",
     environments: "执行环境",
     settings: "空间设置",
     basicInformation: "基本信息",
@@ -1223,6 +1223,7 @@ export function CollaborationPlatformApp({
             capabilities: {
               automation: host.capabilities.automation,
               dingtalkAitable: host.capabilities.dingtalkAitable,
+              projectLocation: host.capabilities.projectLocation,
             },
             location: {
               projectId: host.location.projectId,
@@ -1238,6 +1239,7 @@ export function CollaborationPlatformApp({
               }),
             notify: host.notify,
             openExternal: host.openExternal,
+            manageResource: host.manageResource,
             projectAgentConfiguration: host.projectAgentConfiguration,
           }}
           onCreateTask={onCreateTask}
@@ -1439,12 +1441,12 @@ export function CollaborationPlatformApp({
         },
         {
           id: "collaboration-groups",
-          label: locale === "zh-CN" ? "协作组" : "Collaboration groups",
+          label: locale === "zh-CN" ? "协作小组" : "Collaboration groups",
           testId: "collaboration-workspace-nav-collaboration-groups",
           content: (
             <div className="collaboration-platform-page">
               <PageHeader
-                title={locale === "zh-CN" ? "协作组" : "Collaboration groups"}
+                title={locale === "zh-CN" ? "协作小组" : "Collaboration groups"}
                 subtitle={`${messages.settings} · ${workspace.name}`}
               />
               <WorkspaceCollaborationGroupsConfiguration

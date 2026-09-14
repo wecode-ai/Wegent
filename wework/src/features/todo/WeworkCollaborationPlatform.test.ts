@@ -1198,6 +1198,55 @@ describe('Wework collaboration workspace API', () => {
     ])
   })
 
+  it('persists local automatic processing rules without a cloud automation service', async () => {
+    let project = {
+      id: 'local-project',
+      name: 'Local project',
+      project_store: 'local' as const,
+      version: 1,
+      automatic_processing_rules: [],
+    }
+    const deliveryApi = {
+      listCloudProjects: vi.fn(async () => ({ items: [project] })),
+      updateCloudProject: vi.fn(async (_projectId: string, input: Record<string, unknown>) => {
+        project = {
+          ...project,
+          version: project.version + 1,
+          automatic_processing_rules:
+            (input.automatic_processing_rules as typeof project.automatic_processing_rules) ?? [],
+        }
+        return project
+      }),
+    } as unknown as DeliveryApi
+    const api = createLocalWorkspaceApi(deliveryApi, 1, 'admin', null)
+
+    const created = await api?.automations?.create('local-project', {
+      name: '新 Issue 自动处理',
+      enabled: true,
+      triggerType: 'event',
+      eventType: 'task.created',
+      eventConfig: { executionTarget: 'existing_issue' },
+      targetKind: 'agent',
+      targetId: 'agent-1',
+    })
+
+    expect(created).toMatchObject({
+      projectId: 'local-project',
+      name: '新 Issue 自动处理',
+      targetKind: 'agent',
+      targetId: 'agent-1',
+      version: 1,
+    })
+    await expect(api?.automations?.list('local-project')).resolves.toEqual([created])
+    expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith(
+      'local-project',
+      expect.objectContaining({
+        version: 1,
+        automatic_processing_rules: [created],
+      })
+    )
+  })
+
   it('keeps project execution environment methods when local and cloud APIs are combined', async () => {
     const cloudEnvironment = {
       id: 'cloud-environment',

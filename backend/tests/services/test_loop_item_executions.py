@@ -33,7 +33,10 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.models.user import User
+from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import LoopItemAssign
 from app.schemas.runtime_profile import RuntimeProfileCreate
 from app.services.board_team_execution import dispatch_board_robot_execution
@@ -271,6 +274,26 @@ def _ensure_device(
     db.commit()
     db.refresh(device)
     return device
+
+
+def _authorize_project_device(
+    db: Session,
+    project: CloudProject,
+    device: Kind,
+    user: User,
+) -> None:
+    db.add(
+        ResourceMember(
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=user.id,
+        )
+    )
+    db.commit()
 
 
 def _make_execution(
@@ -4663,20 +4686,23 @@ def test_public_cloud_model_uses_backend_gateway_config(
     assert payload["executionRequest"]["enable_deep_thinking"] is False
 
 
-def test_unbound_project_robot_waits_for_runtime_selection(
+def test_unbound_project_robot_is_claimed_by_project_authorized_device(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
+    device = _ensure_device(test_db, test_user, "local-device", device_type="local")
+    _authorize_project_device(test_db, project, device, test_user)
     bot = ProjectChatAgent(
         id=f"B{uuid.uuid4().hex[:10]}",
         cloud_project_id=project.id,
-        title="Old Local Bot",
-        name="Old Local Bot",
+        title="Unbound Local Bot",
+        name="Unbound Local Bot",
         status="active",
         created_by_user_id=test_user.id,
         device_id="",
         metadata_json={
             "runtime": "codex",
+            "model": "test-model",
             "execution_mode": "auto",
             "visibility": "public",
         },
@@ -4697,20 +4723,224 @@ def test_unbound_project_robot_waits_for_runtime_selection(
     )
     test_db.commit()
 
-    claimed = loop_item_execution_service.claim_next_unbound_local(
+    assert execution.status == "queued"
+    assert execution.execution_device_id == ""
+
+    claimed = loop_item_execution_service.claim_next_for_device(
         test_db,
         owner_user_id=test_user.id,
         execution_device_id="local-device",
+        environment="local",
         runtime_instance_id="runtime-1",
         device_capacity=1,
         runtime_active=0,
         runtime_active_task_ids=set(),
     )
 
-    assert claimed is None
-    assert execution.status == "waiting_runtime"
-    assert execution.execution_device_id == ""
-    assert execution.executor_owner_user_id == test_user.id
+    assert claimed is not None
+    assert claimed.id == execution.id
+    assert claimed.status == "claimed"
+    assert claimed.execution_device_id == "local-device"
+    assert claimed.runtime_device_id == "local-device"
+
+
+def test_unbound_project_robot_allows_owned_device_when_project_has_no_allowlist(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    _ensure_device(test_db, test_user, "unapproved-device", device_type="local")
+    bot = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Unbound Local Bot",
+        name="Unbound Local Bot",
+        status="active",
+        created_by_user_id=test_user.id,
+        device_id="",
+        metadata_json={
+            "runtime": "codex",
+            "model": "test-model",
+            "execution_mode": "auto",
+            "visibility": "public",
+        },
+    )
+    test_db.add(bot)
+    test_db.commit()
+    item = _make_item(test_db, project, test_user)
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=item.cloud_project_id,
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="local",
+        execution_device_id="",
+        priority="medium",
+    )
+    test_db.commit()
+
+    claimed = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        owner_user_id=test_user.id,
+        execution_device_id="unapproved-device",
+        environment="local",
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+
+    assert claimed is not None
+    assert claimed.id == execution.id
+    assert claimed.execution_device_id == "unapproved-device"
+
+
+def test_unbound_project_robot_enforces_explicit_project_device_allowlist(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    allowed_device = _ensure_device(
+        test_db, test_user, "allowlisted-device", device_type="local"
+    )
+    _ensure_device(test_db, test_user, "other-owned-device", device_type="local")
+    _authorize_project_device(test_db, project, allowed_device, test_user)
+    bot = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Allowlisted Bot",
+        name="Allowlisted Bot",
+        status="active",
+        created_by_user_id=test_user.id,
+        device_id="",
+        metadata_json={
+            "runtime": "codex",
+            "model": "test-model",
+            "execution_mode": "auto",
+            "visibility": "public",
+        },
+    )
+    test_db.add(bot)
+    test_db.commit()
+    item = _make_item(test_db, project, test_user)
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=item.cloud_project_id,
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="local",
+        execution_device_id="",
+        priority="medium",
+    )
+    test_db.commit()
+
+    rejected = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        owner_user_id=test_user.id,
+        execution_device_id="other-owned-device",
+        environment="local",
+        runtime_instance_id="runtime-other",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    claimed = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        owner_user_id=test_user.id,
+        execution_device_id="allowlisted-device",
+        environment="local",
+        runtime_instance_id="runtime-allowed",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+
+    assert rejected is None
+    assert claimed is not None
+    assert claimed.id == execution.id
+    assert claimed.execution_device_id == "allowlisted-device"
+
+
+def test_unbound_execution_keeps_issue_on_latest_runtime_device(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    first_device = _ensure_device(
+        test_db, test_user, "issue-device-a", device_type="local"
+    )
+    second_device = _ensure_device(
+        test_db, test_user, "issue-device-b", device_type="local"
+    )
+    _authorize_project_device(test_db, project, first_device, test_user)
+    _authorize_project_device(test_db, project, second_device, test_user)
+    bot = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Affinity Bot",
+        name="Affinity Bot",
+        status="active",
+        created_by_user_id=test_user.id,
+        device_id="",
+        metadata_json={
+            "runtime": "codex",
+            "model": "test-model",
+            "execution_mode": "auto",
+            "visibility": "public",
+        },
+    )
+    test_db.add(bot)
+    test_db.commit()
+    item = _make_item(test_db, project, test_user)
+    previous = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        executor_owner_user_id=test_user.id,
+        agent_id=bot.id,
+        execution_environment="local",
+        execution_device_id="issue-device-a",
+        runtime_device_id="issue-device-a",
+        status="completed",
+    )
+    test_db.add(previous)
+    test_db.commit()
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="local",
+        execution_device_id="",
+        priority="medium",
+    )
+    test_db.commit()
+
+    wrong_device_claim = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        owner_user_id=test_user.id,
+        execution_device_id="issue-device-b",
+        environment="local",
+        runtime_instance_id="runtime-b",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    right_device_claim = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        owner_user_id=test_user.id,
+        execution_device_id="issue-device-a",
+        environment="local",
+        runtime_instance_id="runtime-a",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+
+    assert wrong_device_claim is None
+    assert right_device_claim is not None
+    assert right_device_claim.id == execution.id
+    assert right_device_claim.execution_device_id == "issue-device-a"
+    assert right_device_claim.runtime_device_id == "issue-device-a"
 
 
 def test_waiting_runtime_rejects_plugin_credentials_before_creating_execution(

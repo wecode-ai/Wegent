@@ -115,6 +115,34 @@ describe("CollaborationProjectViewShell permissions", () => {
     });
   });
 
+  it("renders files through the standard project tab when no host extension exists", () => {
+    const options = buildCollaborationProjectViewOptions({
+      project: { access_role: "Owner" },
+      labels,
+      testIds,
+      automationSupported: false,
+    });
+
+    expect(options.map((option) => option.id)).toEqual([
+      "board",
+      "table",
+      "files",
+      "manage",
+    ]);
+    expect(
+      resolveCollaborationProjectView({
+        extensions,
+        options,
+        slots,
+        view: "files",
+      }),
+    ).toEqual({
+      content: "files-content",
+      view: "files",
+      viewChanged: false,
+    });
+  });
+
   it("limits a system board to its explicitly enabled standard views", () => {
     const options = buildCollaborationProjectViewOptions({
       project: { access_role: "Owner" },
@@ -192,6 +220,7 @@ describe("CollaborationProjectViewShell permissions", () => {
     expect(options.map((option) => option.id)).toEqual([
       "board",
       "table",
+      "files",
       "manage",
     ]);
   });

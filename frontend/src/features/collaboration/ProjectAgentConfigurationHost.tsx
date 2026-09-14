@@ -4,9 +4,8 @@
 
 'use client'
 
-import type { ChangeEvent } from 'react'
 import type { ProjectAgentConfigurationHost } from '@wegent/collaboration'
-import { Bot, Code2 } from 'lucide-react'
+import { Bot, Plus } from 'lucide-react'
 
 import {
   simpleChoiceCardBaseClass,
@@ -14,6 +13,8 @@ import {
   simpleChoiceCardUnselectedClass,
 } from '@/components/common/simple-choice-card-styles'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Dialog,
   DialogContent,
@@ -21,7 +22,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -30,12 +30,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
 const modeIcons = {
-  codex: Code2,
-  wegent: Bot,
+  create: Plus,
+  existing: Bot,
 } as const
 
 export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
@@ -127,15 +126,16 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
     )
   },
   renderTextControl({ ariaLabel, multiline, onChange, placeholder, testId, value }) {
-    const props = {
-      'aria-label': ariaLabel,
-      'data-testid': testId,
-      onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-        onChange(event.target.value),
-      placeholder,
-      value,
-    }
-    return multiline ? <Textarea {...props} /> : <Input {...props} />
+    const Control = multiline ? Textarea : Input
+    return (
+      <Control
+        aria-label={ariaLabel}
+        data-testid={testId}
+        onChange={event => onChange(event.target.value)}
+        placeholder={placeholder}
+        value={value}
+      />
+    )
   },
   renderPrimaryAction({ children, disabled, onClick, testId }) {
     return (

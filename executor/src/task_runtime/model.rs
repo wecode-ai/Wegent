@@ -65,6 +65,8 @@ pub struct ProjectUpdate {
     pub card_display: Option<Value>,
     pub pull_request_automation: Option<Value>,
     pub workflow_definition: Option<Value>,
+    pub collaboration_groups: Option<Value>,
+    pub automatic_processing_rules: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -101,6 +103,7 @@ pub struct TaskUpdate {
 pub struct ChatAgentCreate {
     pub name: String,
     pub model: Option<String>,
+    pub capability_description: Option<String>,
     pub system_prompt: Option<String>,
     pub visibility: Option<String>,
     pub execution_environment: Option<String>,
@@ -123,6 +126,7 @@ pub struct ChatAgentUpdate {
     pub version: i64,
     pub name: Option<String>,
     pub model: Option<String>,
+    pub capability_description: Option<String>,
     pub system_prompt: Option<String>,
     pub status: Option<String>,
     pub visibility: Option<String>,
@@ -144,6 +148,7 @@ pub struct ChatAgent {
     pub name: String,
     pub runtime: String,
     pub model: Option<String>,
+    pub capability_description: String,
     pub system_prompt: String,
     pub status: String,
     pub visibility: String,

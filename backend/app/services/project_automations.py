@@ -43,6 +43,7 @@ from app.services.project_automation_domain import (
 from app.services.project_automation_domain import metadata as _metadata
 from app.services.project_automation_domain import next_run as _next_run
 from app.services.project_automation_domain import (
+    project_agent,
     role_config,
     runtime_config,
     text,
@@ -76,7 +77,7 @@ def _canonical_event_config(
         config["transition"] = "entered_processing"
     else:
         config.pop("transition", None)
-    if event_type in {"task.created", "task.status_changed"}:
+    if event_type in {"task.created", "task.tag_added", "task.status_changed"}:
         config["execution_target"] = "existing_issue"
     elif event_type and not config.get("execution_target"):
         config["execution_target"] = "create_issue"
@@ -97,11 +98,7 @@ class ProjectAutomationService:
             .order_by(ProjectAutomationRule.updated_at.desc())
             .all()
         )
-        return [
-            self._rule_view(db, row)
-            for row in rows
-            if not _metadata(row).get("collaboration_group_id")
-        ]
+        return [self._rule_view(db, row) for row in rows]
 
     def create(
         self,
@@ -196,35 +193,58 @@ class ProjectAutomationService:
         user_id: int,
         values: ProjectAutomationCreate,
     ) -> ProjectAutomationRule:
-        configured_mode = values.assignment_mode
-        configured_manager = values.manager_type
-        role_source = values.role_source
-        validate_assignment(
+        dispatch_target = self._validate_dispatch_target(
             db,
             project_id=project_id,
             user_id=user_id,
-            mode=configured_mode,
-            manager=configured_manager,
-            agent_id=values.agent_id,
-            wegent_team_id=values.wegent_team_id,
-            model=values.model,
-            environment=values.execution_environment,
-            device_id=values.execution_device_id,
-            role_source=role_source,
+            target_kind=values.target_kind,
+            target_id=values.target_id,
         )
-        self._validate_runtime_strategy(
-            db,
-            project_id=project_id,
-            user_id=user_id,
-            trigger_type=values.trigger_type,
-            assignment_mode=configured_mode,
-            manager_type=configured_manager,
-            role_source=role_source,
-            agent_id=values.agent_id,
-            runtime_source=values.runtime_source,
-            runtime_profile_id=values.runtime_profile_id,
-            runtime_user_id=values.runtime_user_id,
+        configured_mode = "manual" if dispatch_target else values.assignment_mode
+        configured_manager = None if dispatch_target else values.manager_type
+        role_source = (
+            "agent"
+            if dispatch_target and dispatch_target["kind"] == "agent"
+            else "generic" if dispatch_target else values.role_source
         )
+        agent_id = (
+            str(dispatch_target["id"])
+            if dispatch_target and dispatch_target["kind"] == "agent"
+            else values.agent_id if not dispatch_target else None
+        )
+        runtime_source = (
+            "agent_default"
+            if dispatch_target and dispatch_target["kind"] == "agent"
+            else "runtime_user" if dispatch_target else values.runtime_source
+        )
+        runtime_user_id = user_id if dispatch_target else values.runtime_user_id
+        if dispatch_target is None:
+            validate_assignment(
+                db,
+                project_id=project_id,
+                user_id=user_id,
+                mode=configured_mode,
+                manager=configured_manager,
+                agent_id=agent_id,
+                wegent_team_id=values.wegent_team_id,
+                model=values.model,
+                environment=values.execution_environment,
+                device_id=values.execution_device_id,
+                role_source=role_source,
+            )
+            self._validate_runtime_strategy(
+                db,
+                project_id=project_id,
+                user_id=user_id,
+                trigger_type=values.trigger_type,
+                assignment_mode=configured_mode,
+                manager_type=configured_manager,
+                role_source=role_source,
+                agent_id=agent_id,
+                runtime_source=runtime_source,
+                runtime_profile_id=values.runtime_profile_id,
+                runtime_user_id=runtime_user_id,
+            )
         validate_trigger(values.trigger_type, values.event_type, values.cron_expression)
         event_config = _canonical_event_config(
             values.event_type if values.trigger_type == "event" else None,
@@ -248,9 +268,7 @@ class ProjectAutomationService:
             title=values.name,
             description=values.prompt,
             assignee_agent_id=(
-                str(values.agent_id)
-                if configured_mode == "manual" and values.agent_id
-                else ""
+                str(agent_id) if configured_mode == "manual" and agent_id else ""
             ),
             status="enabled" if values.enabled else "disabled",
             due_at=next_run_at if values.enabled else None,
@@ -263,11 +281,11 @@ class ProjectAutomationService:
                 model=values.model,
                 environment=values.execution_environment,
                 device_id=values.execution_device_id,
-                agent_id=values.agent_id,
+                agent_id=agent_id,
                 role_source=role_source,
-                runtime_source=values.runtime_source,
+                runtime_source=runtime_source,
                 runtime_profile_id=values.runtime_profile_id,
-                runtime_user_id=values.runtime_user_id,
+                runtime_user_id=runtime_user_id,
                 base={
                     "trigger_type": values.trigger_type,
                     "event_type": (
@@ -281,6 +299,7 @@ class ProjectAutomationService:
                     ),
                     "timezone": values.timezone,
                     "last_run_at": None,
+                    "dispatch_target": dispatch_target,
                 },
             ),
         )
@@ -363,7 +382,7 @@ class ProjectAutomationService:
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "Event automation requires a supported execution_target",
             )
-        if event_type in {"task.created", "task.status_changed"}:
+        if event_type in {"task.created", "task.tag_added", "task.status_changed"}:
             if target != "existing_issue":
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -441,7 +460,39 @@ class ProjectAutomationService:
             expression = None
         validate_trigger(trigger_type, event_type, expression)
 
-        if values.assignment_mode is None:
+        current_target = rule_metadata.get("dispatch_target")
+        current_target = (
+            dict(current_target) if isinstance(current_target, dict) else None
+        )
+        target_changed = "target_kind" in values.model_fields_set
+        dispatch_target = (
+            self._validate_dispatch_target(
+                db,
+                project_id=project_id,
+                user_id=user_id,
+                target_kind=values.target_kind,
+                target_id=values.target_id,
+            )
+            if target_changed
+            else current_target
+        )
+        if dispatch_target is not None:
+            configured_mode = "manual"
+            configured_manager = None
+            agent_id = (
+                str(dispatch_target["id"])
+                if dispatch_target["kind"] == "agent"
+                else None
+            )
+            wegent_team_id = None
+            model = None
+            environment = None
+            device_id = (
+                values.execution_device_id
+                if "execution_device_id" in values.model_fields_set
+                else text(dispatch_target.get("execution_device_id"))
+            )
+        elif values.assignment_mode is None:
             configured_mode = assignment_mode(rule_metadata)
             configured_manager = manager_type(rule_metadata)
             agent_id = row.assignee_agent_id or None
@@ -461,10 +512,24 @@ class ProjectAutomationService:
             device_id = values.execution_device_id
         current_role = role_config(rule_metadata)
         current_runtime = runtime_config(rule_metadata)
-        role_source = values.role_source or str(current_role.get("source") or "agent")
+        role_source = (
+            "agent"
+            if dispatch_target and dispatch_target["kind"] == "agent"
+            else (
+                "generic"
+                if dispatch_target
+                else values.role_source or str(current_role.get("source") or "agent")
+            )
+        )
         runtime_source = values.runtime_source or str(
             current_runtime.get("source") or "agent_default"
         )
+        if dispatch_target:
+            runtime_source = (
+                "agent_default"
+                if dispatch_target["kind"] == "agent"
+                else "runtime_user"
+            )
         runtime_profile_id = (
             values.runtime_profile_id
             if "runtime_profile_id" in values.model_fields_set
@@ -476,32 +541,33 @@ class ProjectAutomationService:
             else integer(current_runtime.get("user_id"))
         )
 
-        validate_assignment(
-            db,
-            project_id=project_id,
-            user_id=row.created_by_user_id,
-            mode=configured_mode,
-            manager=configured_manager,
-            agent_id=agent_id,
-            wegent_team_id=wegent_team_id,
-            model=model,
-            environment=environment,
-            device_id=device_id,
-            role_source=role_source,
-        )
-        self._validate_runtime_strategy(
-            db,
-            project_id=project_id,
-            user_id=row.created_by_user_id,
-            trigger_type=trigger_type,
-            assignment_mode=configured_mode,
-            manager_type=configured_manager,
-            role_source=role_source,
-            agent_id=agent_id,
-            runtime_source=runtime_source,
-            runtime_profile_id=runtime_profile_id,
-            runtime_user_id=runtime_user_id,
-        )
+        if dispatch_target is None:
+            validate_assignment(
+                db,
+                project_id=project_id,
+                user_id=row.created_by_user_id,
+                mode=configured_mode,
+                manager=configured_manager,
+                agent_id=agent_id,
+                wegent_team_id=wegent_team_id,
+                model=model,
+                environment=environment,
+                device_id=device_id,
+                role_source=role_source,
+            )
+            self._validate_runtime_strategy(
+                db,
+                project_id=project_id,
+                user_id=row.created_by_user_id,
+                trigger_type=trigger_type,
+                assignment_mode=configured_mode,
+                manager_type=configured_manager,
+                role_source=role_source,
+                agent_id=agent_id,
+                runtime_source=runtime_source,
+                runtime_profile_id=runtime_profile_id,
+                runtime_user_id=runtime_user_id,
+            )
         row.assignee_agent_id = (
             str(agent_id) if configured_mode == "manual" and agent_id else ""
         )
@@ -534,6 +600,14 @@ class ProjectAutomationService:
                 "event_config": event_config,
                 "cron_expression": expression,
                 "timezone": timezone_name,
+                "dispatch_target": (
+                    {
+                        **dispatch_target,
+                        "execution_device_id": device_id,
+                    }
+                    if dispatch_target
+                    else None
+                ),
             }
         )
         row.metadata_json = self._bind_self_managed_workflow(
@@ -1415,6 +1489,10 @@ class ProjectAutomationService:
             model = None
         last_run = rule_metadata.get("last_run_at")
         database_timezone = database_datetime_timezone(db)
+        dispatch_target = rule_metadata.get("dispatch_target")
+        dispatch_target = (
+            dict(dispatch_target) if isinstance(dispatch_target, dict) else None
+        )
         return {
             "id": row.id,
             "project_id": str(row.cloud_project_id),
@@ -1432,7 +1510,18 @@ class ProjectAutomationService:
             "model": model,
             "agent_name": display_name,
             "execution_environment": environment,
-            "execution_device_id": device_id,
+            "execution_device_id": (
+                text(dispatch_target.get("execution_device_id"))
+                if dispatch_target
+                else device_id
+            ),
+            "target_kind": (
+                str(dispatch_target.get("kind")) if dispatch_target else None
+            ),
+            "target_id": (str(dispatch_target.get("id")) if dispatch_target else None),
+            "target_name": (
+                str(dispatch_target.get("name")) if dispatch_target else None
+            ),
             "role_source": str(role.get("source") or "agent"),
             "runtime_source": str(runtime.get("source") or "agent_default"),
             "runtime_profile_id": text(runtime.get("runtime_profile_id")),
@@ -1451,6 +1540,73 @@ class ProjectAutomationService:
             "created_at": _utc_aware(row.created_at, database_timezone),
             "updated_at": _utc_aware(row.updated_at, database_timezone),
         }
+
+    @staticmethod
+    def _validate_dispatch_target(
+        db: Session,
+        *,
+        project_id: str,
+        user_id: int,
+        target_kind: str | None,
+        target_id: str | None,
+    ) -> dict[str, object] | None:
+        if target_kind is None or target_id is None:
+            return None
+        if target_kind == "human":
+            member = next(
+                (
+                    item
+                    for item in cloud_project_service.list_members(
+                        db, int(project_id), user_id
+                    )
+                    if str(item["user_id"]) == str(target_id)
+                ),
+                None,
+            )
+            if member is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Dispatch target is not a Project member",
+                )
+            return {
+                "kind": "human",
+                "id": str(target_id),
+                "name": str(member["user_name"]),
+            }
+        if target_kind == "agent":
+            agent = project_agent(db, project_id, target_id)
+            return {
+                "kind": "agent",
+                "id": str(agent.id),
+                "name": str(agent.title or agent.name or "AI"),
+            }
+        if target_kind == "collaboration_group":
+            from app.services.workspaces import workspace_service
+
+            group = next(
+                (
+                    item
+                    for item in workspace_service.list_project_collaboration_groups(
+                        db, int(project_id), user_id
+                    )
+                    if str(item["id"]) == str(target_id)
+                ),
+                None,
+            )
+            if group is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Collaboration group is not available in this Project",
+                )
+            return {
+                "kind": "collaboration_group",
+                "id": str(group["id"]),
+                "name": str(group["name"]),
+            }
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Unknown dispatch target kind",
+        )
 
     @staticmethod
     def _validate_runtime_strategy(

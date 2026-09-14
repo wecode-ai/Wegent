@@ -4,7 +4,7 @@
 
 import type { ReactNode } from "react";
 
-export type ProjectAgentMode = "wegent" | "codex";
+export type ProjectAgentMode = "existing" | "create";
 
 export interface ProjectAgentModeOption {
   description: string;

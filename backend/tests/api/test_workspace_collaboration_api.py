@@ -182,34 +182,60 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
         json={
             "name": "交付协作组",
             "description": "人与智能体共同交付",
-            "leader": {"kind": "human", "id": str(test_user.id)},
+            "leader": {
+                "kind": "human",
+                "id": str(test_user.id),
+                "responsibility": "确认目标并验收",
+            },
             "members": [
-                {"kind": "human", "id": str(test_user.id)},
-                {"kind": "agent", "id": str(team.id)},
+                {
+                    "kind": "human",
+                    "id": str(test_user.id),
+                    "responsibility": "确认目标并验收",
+                },
+                {
+                    "kind": "agent",
+                    "id": str(team.id),
+                    "responsibility": "实现并提交结果",
+                },
             ],
             "coordination_mode": "manager",
+            "stages": [
+                {
+                    "id": "implement",
+                    "name": "实现",
+                    "description": "完成需求实现",
+                    "assignee": {
+                        "kind": "agent",
+                        "id": str(team.id),
+                        "responsibility": "实现并提交结果",
+                    },
+                }
+            ],
         },
     )
     assert create_response.status_code == 201
     group = create_response.json()
     assert group["owner_type"] == "workspace"
     assert group["owner_id"] == str(workspace["id"])
-    assert group["leader"] == {"kind": "human", "id": str(test_user.id)}
-    assert group["members"] == [
-        {"kind": "human", "id": str(test_user.id)},
-        {"kind": "agent", "id": str(team.id)},
-    ]
-    assert group["policy"] == {
-        "prompt": "",
-        "trigger_type": "manual",
-        "event_type": None,
-        "event_config": {},
-        "cron_expression": None,
-        "timezone": "Asia/Shanghai",
-        "issue_selector": {},
-        "output_policy": {},
-        "enabled": True,
+    assert group["leader"] == {
+        "kind": "human",
+        "id": str(test_user.id),
+        "responsibility": "确认目标并验收",
     }
+    assert group["members"] == [
+        {
+            "kind": "human",
+            "id": str(test_user.id),
+            "responsibility": "确认目标并验收",
+        },
+        {
+            "kind": "agent",
+            "id": str(team.id),
+            "responsibility": "实现并提交结果",
+        },
+    ]
+    assert group["stages"][0]["name"] == "实现"
 
     enable_response = test_client.post(
         (
@@ -279,52 +305,17 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert project_codex_group["leader"] == {
         "kind": "agent",
         "id": codex_agent.id,
+        "responsibility": "",
     }
-    assert project_codex_group["members"] == [{"kind": "agent", "id": codex_agent.id}]
-    projected_codex_rule = next(
-        rule
-        for rule in test_db.query(ProjectAutomationRule).all()
-        if isinstance(rule.metadata_json, dict)
+    assert project_codex_group["members"] == [
+        {"kind": "agent", "id": codex_agent.id, "responsibility": ""}
+    ]
+    assert not any(
+        isinstance(rule.metadata_json, dict)
         and rule.metadata_json.get("collaboration_group_id")
         == int(project_codex_group["id"])
+        for rule in test_db.query(ProjectAutomationRule).all()
     )
-    assert projected_codex_rule.assignee_agent_id == codex_agent.id
-    assert projected_codex_rule.metadata_json["action"] == "execute"
-    assert "manager" not in projected_codex_rule.metadata_json
-    dispatch = AsyncMock()
-    monkeypatch.setattr(
-        "app.services.project_automation_execution."
-        "project_automation_execution.dispatch",
-        dispatch,
-    )
-    run_response = test_client.post(
-        (
-            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
-            f"{project_codex_group['id']}/run"
-        ),
-        headers=_auth(test_token),
-    )
-    assert run_response.status_code == 200
-    assert run_response.json()["status"] == "pending"
-    dispatch.assert_awaited_once()
-    runs_response = test_client.get(
-        (
-            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
-            f"{project_codex_group['id']}/runs"
-        ),
-        headers=_auth(test_token),
-    )
-    assert runs_response.status_code == 200
-    assert [run["id"] for run in runs_response.json()] == [run_response.json()["id"]]
-    human_runs_response = test_client.get(
-        (
-            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
-            f"{project_group['id']}/runs"
-        ),
-        headers=_auth(test_token),
-    )
-    assert human_runs_response.status_code == 200
-    assert human_runs_response.json() == []
     assert test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
         headers=_auth(test_token),
@@ -338,44 +329,51 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
         headers=_auth(test_token),
         json={
             "version": group["version"],
-            "leader": {"kind": "agent", "id": str(team.id)},
-            "coordination_mode": "manager",
-            "policy": {
-                "prompt": "持续处理项目中的待办",
-                "trigger_type": "schedule",
-                "cron_expression": "0 9 * * 1-5",
-                "timezone": "Asia/Shanghai",
-                "output_policy": {"mode": "comment"},
-                "enabled": True,
+            "leader": {
+                "kind": "agent",
+                "id": str(team.id),
+                "responsibility": "负责拆解和收敛",
             },
+            "coordination_mode": "manager",
+            "stages": [],
         },
     )
     assert update_response.status_code == 200
     updated = update_response.json()
-    assert updated["leader"] == {"kind": "agent", "id": str(team.id)}
-    assert updated["coordination_mode"] == "manager"
-    assert updated["policy"]["trigger_type"] == "schedule"
-    assert updated["version"] == group["version"] + 1
-    projected_rule = next(
-        rule
-        for rule in test_db.query(ProjectAutomationRule).all()
-        if isinstance(rule.metadata_json, dict)
-        and rule.metadata_json.get("collaboration_group_id") == int(group["id"])
-    )
-    assert str(projected_rule.cloud_project_id) == str(project["id"])
-    assert projected_rule.due_at is not None
-    assert projected_rule.metadata_json["manager"] == {
-        "type": "wegent",
-        "wegent_team_id": team.id,
+    assert updated["leader"] == {
+        "kind": "agent",
+        "id": str(team.id),
+        "responsibility": "负责拆解和收敛",
     }
-    assert "输出要求" in projected_rule.description
-    assert (
-        test_client.get(
-            f"/api/v1/cloud-projects/{project['id']}/automations",
-            headers=_auth(test_token),
-        ).json()
-        == []
+    assert updated["coordination_mode"] == "manager"
+    assert updated["stages"] == []
+    assert updated["version"] == group["version"] + 1
+
+    project_update_response = test_client.patch(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{project_group['id']}"
+        ),
+        headers=_auth(test_token),
+        json={
+            "version": project_group["version"],
+            "description": "项目内维护的人机协作组织",
+            "members": [
+                {
+                    "kind": "human",
+                    "id": str(test_user.id),
+                    "responsibility": "项目负责人",
+                },
+                {
+                    "kind": "agent",
+                    "id": str(project_only_team.id),
+                    "responsibility": "执行任务",
+                },
+            ],
+        },
     )
+    assert project_update_response.status_code == 200
+    assert project_update_response.json()["description"] == "项目内维护的人机协作组织"
 
     list_response = test_client.get(
         f"/api/v1/workspaces/{workspace['id']}/collaboration-groups",

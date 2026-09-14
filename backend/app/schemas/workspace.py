@@ -126,34 +126,14 @@ class WorkspaceAgentListResponse(BaseModel):
 class CollaborationGroupMember(BaseModel):
     kind: Literal["human", "agent"]
     id: SnowflakeId
+    responsibility: str = Field(default="", max_length=2_000)
 
 
-class CollaborationGroupPolicy(BaseModel):
-    prompt: str = Field(default="", max_length=100_000)
-    trigger_type: Literal["manual", "schedule", "event"] = "manual"
-    event_type: str | None = Field(default=None, min_length=1, max_length=100)
-    event_config: dict[str, object] = Field(default_factory=dict)
-    cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
-    timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
-    issue_selector: dict[str, object] = Field(default_factory=dict)
-    output_policy: dict[str, object] = Field(default_factory=dict)
-    enabled: bool = True
-
-    @model_validator(mode="after")
-    def validate_trigger(self) -> "CollaborationGroupPolicy":
-        if self.trigger_type == "schedule" and not self.cron_expression:
-            raise ValueError("Scheduled collaboration requires cron_expression")
-        if self.trigger_type == "event" and not self.event_type:
-            raise ValueError("Event collaboration requires event_type")
-        if self.trigger_type != "schedule" and self.cron_expression:
-            raise ValueError(
-                "cron_expression is only valid for scheduled collaboration"
-            )
-        if self.trigger_type != "event" and (self.event_type or self.event_config):
-            raise ValueError(
-                "event configuration is only valid for event collaboration"
-            )
-        return self
+class CollaborationGroupStage(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=20_000)
+    assignee: CollaborationGroupMember | None = None
 
 
 class CollaborationGroupCreate(BaseModel):
@@ -162,15 +142,7 @@ class CollaborationGroupCreate(BaseModel):
     leader: CollaborationGroupMember
     members: list[CollaborationGroupMember] = Field(min_length=1)
     coordination_mode: Literal["manager"] = "manager"
-    policy: CollaborationGroupPolicy = Field(default_factory=CollaborationGroupPolicy)
-
-    @model_validator(mode="after")
-    def validate_execution_policy(self) -> "CollaborationGroupCreate":
-        if self.policy.trigger_type != "manual" and self.leader.kind != "agent":
-            raise ValueError(
-                "Scheduled and event collaboration requires an Agent leader"
-            )
-        return self
+    stages: list[CollaborationGroupStage] = Field(default_factory=list, max_length=50)
 
 
 class CollaborationGroupUpdate(BaseModel):
@@ -179,7 +151,7 @@ class CollaborationGroupUpdate(BaseModel):
     leader: CollaborationGroupMember | None = None
     members: list[CollaborationGroupMember] | None = Field(default=None, min_length=1)
     coordination_mode: Literal["manager"] | None = None
-    policy: CollaborationGroupPolicy | None = None
+    stages: list[CollaborationGroupStage] | None = Field(default=None, max_length=50)
     version: int = Field(ge=1)
 
     @model_validator(mode="after")
@@ -192,7 +164,7 @@ class CollaborationGroupUpdate(BaseModel):
                 self.leader,
                 self.members,
                 self.coordination_mode,
-                self.policy,
+                self.stages,
             )
         ):
             raise ValueError(
@@ -211,7 +183,7 @@ class CollaborationGroupResponse(BaseModel):
     leader: CollaborationGroupMember
     members: list[CollaborationGroupMember]
     coordination_mode: Literal["manager"]
-    policy: CollaborationGroupPolicy
+    stages: list[CollaborationGroupStage]
     version: int
     created_by_user_id: int
     created_at: datetime

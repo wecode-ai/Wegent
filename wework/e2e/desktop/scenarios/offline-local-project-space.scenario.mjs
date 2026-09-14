@@ -264,13 +264,9 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'click',
         scoped('[data-testid="collaboration-project-settings-dispatch"]')
       )
-      await control.command(
-        'waitFor',
-        scoped('[data-testid="collaboration-project-dispatch-unavailable"]'),
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
+      await control.command('waitFor', scoped('[data-testid="project-automation-policy"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         Number(
           await control.command(
@@ -285,11 +281,11 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         Number(
           await control.command(
             'getElementCount',
-            scoped('[data-testid="project-automation-policy"]')
+            scoped('[data-testid="collaboration-project-dispatch-unavailable"]')
           )
         ),
         0,
-        'The removed DAG policy editor must not remain in local Project settings'
+        'Local collaboration groups must not depend on the cloud collaboration-group service'
       )
       assert.equal(
         Number(

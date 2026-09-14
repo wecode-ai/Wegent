@@ -37,8 +37,10 @@ import { useCollaborationWorkspaceController } from "./workspace-controller";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
 import { ProjectIssueTable, useIssueAssignmentsByIssueId } from "./platform";
 import {
-  ProjectDispatchSettings,
+  ProjectCollaborationParticipants,
   ProjectCollaborationGroups,
+  ProjectAutomaticProcessing,
+  ProjectBoardSettingsDialog,
   ProjectExecutionEnvironments,
   ProjectSettingsShell,
 } from "./project-manage";
@@ -114,6 +116,7 @@ export function CollaborationApp({
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [createIssueOpen, setCreateIssueOpen] = useState(false);
+  const [boardSettingsOpen, setBoardSettingsOpen] = useState(false);
   const [settingsSectionId, setSettingsSectionId] = useState("project");
   const { state, commands } = useCollaborationWorkspaceController({
     api,
@@ -146,7 +149,6 @@ export function CollaborationApp({
       issues,
       enabled: project !== null,
     });
-
   useEffect(() => {
     host.onProjectsChange?.(projects);
   }, [host, projects]);
@@ -340,8 +342,16 @@ export function CollaborationApp({
               issues.length === 0 ? (
                 <div
                   data-testid={collaborationTestIds.board}
-                  className="flex min-h-0 flex-1"
+                  className="relative flex min-h-0 flex-1"
                 >
+                  <button
+                    className="absolute right-4 top-4 z-10 flex h-8 items-center rounded-lg px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                    data-testid="collaboration-board-settings"
+                    onClick={() => setBoardSettingsOpen(true)}
+                    type="button"
+                  >
+                    {translate("todo.board_settings", "看板设置")}
+                  </button>
                   <div
                     className="collaboration-empty-project"
                     data-testid="collaboration-empty-project"
@@ -454,6 +464,7 @@ export function CollaborationApp({
                     );
                   }}
                   onCreateIssue={() => setCreateIssueOpen(true)}
+                  onOpenBoardSettings={() => setBoardSettingsOpen(true)}
                   onGroupByChange={(groupBy) =>
                     commands.changeProjectGroup({
                       project,
@@ -540,65 +551,50 @@ export function CollaborationApp({
                     ),
                   },
                   {
-                    id: "members",
-                    label: messages.projectMembers,
-                    testId: "collaboration-project-settings-members",
+                    id: "collaboration-participants",
+                    label: messages.collaborationParticipants,
+                    testId: "collaboration-project-settings-participants",
                     content: (
-                      <CollaborationSettings
-                        api={api}
-                        project={project}
-                        onChange={commands.replaceProject}
-                        onError={() =>
-                          commands.reportError(messages.saveFailed)
+                      <ProjectCollaborationParticipants
+                        translate={translate}
+                        membersContent={
+                          <CollaborationSettings
+                            api={api}
+                            embedded
+                            project={project}
+                            onChange={commands.replaceProject}
+                            onError={() =>
+                              commands.reportError(messages.saveFailed)
+                            }
+                            translate={translate}
+                            section="members"
+                          />
                         }
-                        translate={translate}
-                        section="members"
-                      />
-                    ),
-                  },
-                  {
-                    id: "agents",
-                    label: messages.projectAgents,
-                    testId: "collaboration-project-settings-agents",
-                    content: (
-                      <CollaborationSettings
-                        agentConfigurationHost={host.projectAgentConfiguration}
-                        api={api}
-                        project={project}
-                        onChange={commands.replaceProject}
-                        onError={() =>
-                          commands.reportError(messages.saveFailed)
+                        agentsContent={
+                          <CollaborationSettings
+                            agentConfigurationHost={
+                              host.projectAgentConfiguration
+                            }
+                            api={api}
+                            embedded
+                            project={project}
+                            onChange={commands.replaceProject}
+                            onError={() =>
+                              commands.reportError(messages.saveFailed)
+                            }
+                            onAgentsChange={() =>
+                              void commands.refreshProjectAgents(project.id)
+                            }
+                            onCreateAgent={
+                              host.manageResource
+                                ? () => host.manageResource?.("agents")
+                                : undefined
+                            }
+                            translate={translate}
+                            section="agents"
+                          />
                         }
-                        onAgentsChange={() =>
-                          void commands.refreshProjectAgents(project.id)
-                        }
-                        translate={translate}
-                        section="agents"
-                      />
-                    ),
-                  },
-                  {
-                    id: "environments",
-                    label: messages.projectEnvironments,
-                    testId: "collaboration-project-settings-environments",
-                    content: (
-                      <ProjectExecutionEnvironments
-                        api={api}
-                        project={project}
-                        translate={translate}
-                      />
-                    ),
-                  },
-                  {
-                    id: "dispatch",
-                    label: messages.assignmentAndDispatch,
-                    testId: "collaboration-project-settings-dispatch",
-                    content: (
-                      <ProjectDispatchSettings
-                        translate={translate}
-                        collaborationGroupsContent={
-                          project.workspace_id &&
-                          api.workspaces?.listCollaborationGroups &&
+                        groupsContent={
                           api.projects.listCollaborationGroups ? (
                             <ProjectCollaborationGroups
                               api={api}
@@ -612,40 +608,58 @@ export function CollaborationApp({
                                 project.access_role === "Maintainer"
                               }
                             />
-                          ) : undefined
+                          ) : (
+                            <div
+                              className="rounded-xl border border-border bg-surface-subtle px-5 py-4 text-sm text-text-muted"
+                              data-testid="collaboration-project-groups-unavailable"
+                            >
+                              {translate(
+                                "todo.collaboration_groups_unavailable_description",
+                                "协作小组服务当前不可用。",
+                              )}
+                            </div>
+                          )
                         }
                       />
                     ),
                   },
                   {
-                    id: "board",
-                    label: messages.boardSettings,
-                    testId: "collaboration-project-settings-board",
+                    id: "environments",
+                    label: messages.projectEnvironments,
+                    testId: "collaboration-project-settings-environments",
                     content: (
-                      <CollaborationSettings
+                      <ProjectExecutionEnvironments
                         api={api}
                         project={project}
-                        onChange={commands.replaceProject}
-                        onError={() =>
-                          commands.reportError(messages.saveFailed)
-                        }
                         translate={translate}
-                        section="board"
+                        onRegisterDevice={
+                          host.manageResource
+                            ? () => host.manageResource?.("environments")
+                            : undefined
+                        }
                       />
                     ),
                   },
-                  {
-                    id: "files",
-                    label: messages.files,
-                    testId: "collaboration-project-settings-files",
-                    content: (
-                      <CollaborationFilesAdapter
-                        api={api}
-                        project={project}
-                        locale={locale}
-                      />
-                    ),
-                  },
+                  ...(host.capabilities.automation && api.automations
+                    ? [
+                        {
+                          id: "automatic-processing",
+                          label: messages.automaticProcessing,
+                          testId:
+                            "collaboration-project-settings-automatic-processing",
+                          content: (
+                            <ProjectAutomaticProcessing
+                              api={api}
+                              project={project}
+                              members={members}
+                              agents={agents}
+                              locale={locale}
+                              translate={translate}
+                            />
+                          ),
+                        },
+                      ]
+                    : []),
                 ]}
               />
             ),
@@ -700,6 +714,23 @@ export function CollaborationApp({
           onError={() => commands.reportError(messages.saveFailed)}
         />
       )}
+      {boardSettingsOpen && project ? (
+        <ProjectBoardSettingsDialog
+          title={messages.boardSettings}
+          closeLabel={messages.close}
+          onClose={() => setBoardSettingsOpen(false)}
+        >
+          <CollaborationSettings
+            api={api}
+            embedded
+            project={project}
+            onChange={commands.replaceProject}
+            onError={() => commands.reportError(messages.saveFailed)}
+            translate={translate}
+            section="board"
+          />
+        </ProjectBoardSettingsDialog>
+      ) : null}
       {selectedIssue && project ? (
         renderIssueDetail ? (
           renderIssueDetail({

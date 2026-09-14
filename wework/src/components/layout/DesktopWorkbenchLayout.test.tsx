@@ -1927,9 +1927,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    await userEvent.click(screen.getByTestId('collaboration-tab-manage'))
-    await userEvent.click(screen.getByTestId('collaboration-project-settings-board'))
-    expect(screen.getByTestId('collaboration-tab-manage')).toHaveClass('bg-background')
+    await userEvent.click(screen.getByTestId('collaboration-board-settings'))
+    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '看板设置' })).toBeInTheDocument()
 
     view.rerender(
       <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
@@ -1938,11 +1938,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('collaboration-tab-manage')).toHaveClass('bg-background')
-    expect(screen.getByTestId('collaboration-project-settings-board')).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
+    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
     expect(actions.updateActiveTab).not.toHaveBeenCalled()
 
     view.rerender(
@@ -1952,11 +1948,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('collaboration-tab-manage')).toHaveClass('bg-background')
-    expect(screen.getByTestId('collaboration-project-settings-board')).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
+    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
   })
 
   test('returns to the workspace after opening settings from its account menu', async () => {

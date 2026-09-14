@@ -1212,6 +1212,222 @@
   gap: 8px;
 }
 
+.collaboration-group-create-card,
+.collaboration-group-detail-section {
+  padding: 20px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 14px;
+  background: rgb(var(--color-bg-surface));
+}
+
+.collaboration-group-create-card {
+  margin-bottom: 20px;
+}
+
+.collaboration-group-create-heading,
+.collaboration-group-section-heading,
+.collaboration-group-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.collaboration-group-create-heading h3,
+.collaboration-group-section-heading h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.collaboration-group-create-heading p,
+.collaboration-group-section-heading p {
+  margin: 4px 0 0;
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
+}
+
+.collaboration-group-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 18px 0;
+}
+
+.collaboration-group-field-grid > label {
+  display: grid;
+  gap: 7px;
+  color: rgb(var(--color-text-primary));
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.collaboration-group-field-grid input,
+.collaboration-group-field-grid select,
+.collaboration-group-field-grid textarea,
+.collaboration-group-member-row > input,
+.collaboration-group-stage-row input,
+.collaboration-group-stage-row textarea,
+.collaboration-group-stage-row select {
+  width: 100%;
+  min-height: 38px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  outline: 0;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
+  font: inherit;
+  font-weight: 400;
+}
+
+.collaboration-group-field-grid textarea,
+.collaboration-group-stage-row textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.collaboration-group-field-grid small {
+  color: rgb(var(--color-text-muted));
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.collaboration-group-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.collaboration-group-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 12px;
+  background: rgb(var(--color-bg-surface));
+}
+
+.collaboration-group-card.compact {
+  justify-content: space-between;
+}
+
+.collaboration-group-card-header {
+  justify-content: flex-start;
+}
+
+.collaboration-group-card-header > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.collaboration-group-card-header small,
+.collaboration-group-card-meta {
+  color: rgb(var(--color-text-muted));
+  font-size: 11px;
+}
+
+.collaboration-group-card > p {
+  min-height: 34px;
+  margin: 0;
+  color: rgb(var(--color-text-secondary));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.collaboration-group-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.collaboration-group-detail-form {
+  display: grid;
+  gap: 14px;
+}
+
+.collaboration-group-back {
+  margin: 0 0 10px -8px;
+}
+
+.collaboration-group-member-picker,
+.collaboration-group-stage-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.collaboration-group-member-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(220px, 1.2fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 10px;
+}
+
+.collaboration-group-member-row > label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.collaboration-group-member-row > label > input {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.collaboration-group-member-row > label > span:last-child {
+  display: grid;
+}
+
+.collaboration-group-member-row small {
+  color: rgb(var(--color-text-muted));
+  font-size: 11px;
+}
+
+.collaboration-group-stage-row {
+  display: grid;
+  grid-template-columns: 28px minmax(240px, 1fr) minmax(160px, 0.55fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 10px;
+}
+
+.collaboration-group-stage-row > div {
+  display: grid;
+  gap: 8px;
+}
+
+.collaboration-group-stage-index {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: rgb(var(--color-text-muted));
+  background: rgb(var(--color-bg-subtle));
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.collaboration-group-save-actions {
+  position: sticky;
+  bottom: 0;
+  padding: 12px 0 2px;
+  background: rgb(var(--color-bg-base) / 0.92);
+  backdrop-filter: blur(8px);
+}
+
 .collaboration-resource-authorization {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) auto;

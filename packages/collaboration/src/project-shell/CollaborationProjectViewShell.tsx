@@ -16,6 +16,7 @@ import { ProjectShell, type ProjectShellProps } from "./ProjectShell";
 export const collaborationProjectViewIds = [
   "board",
   "table",
+  "files",
   "manage",
 ] as const;
 
@@ -76,7 +77,7 @@ export function resolveCollaborationProjectView({
   );
   const requestedView = exactExtension
     ? view
-    : view === "automation" || view === "files"
+    : view === "automation"
       ? "manage"
       : view;
   const accessibleView = options.some((option) => option.id === requestedView)

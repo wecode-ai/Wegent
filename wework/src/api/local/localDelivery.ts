@@ -119,6 +119,7 @@ export interface LocalProjectChatAgent {
   name: string
   runtime: 'codex'
   model: string | null
+  capabilityDescription: string
   systemPrompt: string
   status: 'active' | 'archived'
   visibility: 'private' | 'creator_admin' | 'public'
@@ -237,6 +238,14 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
       !Array.isArray(record.metadata.workflow_definition)
         ? (record.metadata.workflow_definition as CloudProject['workflow_definition'])
         : undefined,
+    collaboration_groups: Array.isArray(record.metadata.collaboration_groups)
+      ? (record.metadata.collaboration_groups as NonNullable<CloudProject['collaboration_groups']>)
+      : [],
+    automatic_processing_rules: Array.isArray(record.metadata.automatic_processing_rules)
+      ? (record.metadata.automatic_processing_rules as NonNullable<
+          CloudProject['automatic_processing_rules']
+        >)
+      : [],
     created_by_user_id: 0,
     current_user_id: 0,
     current_user_name: '',
@@ -375,6 +384,7 @@ type LocalAgentRecord = Record<string, unknown> & {
   project_id?: string
   name?: string
   model?: string | null
+  capability_description?: string
   system_prompt?: string
   status?: string
   visibility?: string
@@ -405,6 +415,7 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
     name: record.name ?? 'AI',
     runtime: 'codex',
     model: record.model ?? null,
+    capabilityDescription: record.capability_description ?? '',
     systemPrompt: record.system_prompt ?? '',
     status: record.status === 'archived' ? 'archived' : 'active',
     visibility: (record.visibility as LocalProjectChatAgent['visibility']) ?? 'creator_admin',
@@ -438,6 +449,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         runtime: 'codex' | 'wegent'
         wegentTeamId?: number | null
         model?: string | null
+        capabilityDescription?: string
         systemPrompt?: string
         visibility?: LocalProjectChatAgent['visibility']
         executionEnvironment?: LocalProjectChatAgent['executionEnvironment']
@@ -457,6 +469,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         agent: {
           name: input.name,
           model: input.model ?? null,
+          capability_description: input.capabilityDescription ?? '',
           system_prompt: input.systemPrompt ?? '',
           visibility: input.visibility ?? 'creator_admin',
           execution_environment: input.executionEnvironment ?? 'local',
@@ -480,6 +493,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         wegentTeamId?: number | null
         name?: string
         model?: string | null
+        capabilityDescription?: string
         systemPrompt?: string
         status?: 'active' | 'archived'
         visibility?: LocalProjectChatAgent['visibility']
@@ -502,6 +516,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           version: input.version,
           name: input.name,
           model: input.model,
+          capability_description: input.capabilityDescription,
           system_prompt: input.systemPrompt,
           status: input.status,
           visibility: input.visibility,
@@ -822,6 +837,8 @@ export function createLocalDeliveryApi(
         card_display?: CloudProject['card_display']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
+        collaboration_groups?: CloudProject['collaboration_groups']
+        automatic_processing_rules?: CloudProject['automatic_processing_rules']
         version: number
       }
     ) {

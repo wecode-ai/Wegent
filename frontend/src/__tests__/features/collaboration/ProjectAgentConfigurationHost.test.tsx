@@ -14,7 +14,6 @@ jest.mock('@/hooks/useTranslation', () => ({
 describe('webProjectAgentConfigurationHost', () => {
   it('renders project Agent controls with the existing web design system', () => {
     const onModeChange = jest.fn()
-    const onTextChange = jest.fn()
 
     render(
       webProjectAgentConfigurationHost.renderDialog({
@@ -35,25 +34,18 @@ describe('webProjectAgentConfigurationHost', () => {
               options: [
                 {
                   description: '使用已有智能体',
-                  label: 'Wegent',
-                  testId: 'mode-wegent',
-                  value: 'wegent',
+                  label: '已有智能体',
+                  testId: 'mode-existing',
+                  value: 'existing',
                 },
                 {
-                  description: '创建专用智能体',
-                  label: 'Codex',
-                  testId: 'mode-codex',
-                  value: 'codex',
+                  description: '使用标准表单',
+                  label: '新建智能体',
+                  testId: 'mode-create',
+                  value: 'create',
                 },
               ],
-              value: 'wegent',
-            })}
-            {webProjectAgentConfigurationHost.renderTextControl({
-              ariaLabel: '智能体名称',
-              onChange: onTextChange,
-              placeholder: '输入名称',
-              testId: 'agent-name',
-              value: '',
+              value: 'existing',
             })}
             {webProjectAgentConfigurationHost.renderSelect({
               ariaLabel: '选择智能体',
@@ -61,6 +53,13 @@ describe('webProjectAgentConfigurationHost', () => {
               options: [{ label: '研发团队', value: '12' }],
               placeholder: '选择智能体',
               testId: 'agent-select',
+              value: '',
+            })}
+            {webProjectAgentConfigurationHost.renderTextControl({
+              ariaLabel: '名称',
+              onChange: jest.fn(),
+              placeholder: '智能体名称',
+              testId: 'agent-name',
               value: '',
             })}
             {webProjectAgentConfigurationHost.renderPrimaryAction({
@@ -82,22 +81,18 @@ describe('webProjectAgentConfigurationHost', () => {
       'p-0',
       'sm:max-w-[520px]'
     )
-    expect(screen.getByTestId('mode-wegent-card')).toHaveClass(
+    expect(screen.getByTestId('mode-existing-card')).toHaveClass(
       'border',
       'border-primary',
       'bg-primary/5',
       'ring-1'
     )
-    expect(screen.getByTestId('mode-codex-card')).toHaveClass('border-border', 'bg-base')
+    expect(screen.getByTestId('mode-create-card')).toHaveClass('border-border', 'bg-base')
     expect(screen.getByTestId('agent-select')).toHaveClass('border-border', 'rounded-lg')
+    expect(screen.getByTestId('agent-name')).toHaveClass('border-border', 'rounded-lg')
     expect(screen.getByTestId('agent-submit')).toHaveClass('bg-primary', 'rounded-lg')
 
-    fireEvent.click(screen.getByTestId('mode-codex'))
-    expect(onModeChange).toHaveBeenCalledWith('codex')
-
-    fireEvent.change(screen.getByTestId('agent-name'), {
-      target: { value: 'Codex 产品工程师' },
-    })
-    expect(onTextChange).toHaveBeenCalledWith('Codex 产品工程师')
+    fireEvent.click(screen.getByTestId('mode-create'))
+    expect(onModeChange).toHaveBeenCalledWith('create')
   })
 })

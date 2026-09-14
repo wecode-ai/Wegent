@@ -49,6 +49,8 @@ export interface WorkspaceProjectUpdateInput {
   cardDisplay?: CollaborationProject["card_display"];
   pullRequestAutomation?: Record<string, unknown>;
   workflowDefinition?: Record<string, unknown>;
+  collaborationGroups?: import("../types").CollaborationGroup[];
+  automaticProcessingRules?: WorkspaceAutomationRule[];
 }
 
 export interface WorkspaceMyWorkItem extends CollaborationIssue {
@@ -173,20 +175,23 @@ export interface WorkspaceAgentCreateInput {
 export interface CollaborationGroupCreateInput {
   name: string;
   description?: string;
-  leader: { kind: "human" | "agent"; id: string };
-  members: Array<{ kind: "human" | "agent"; id: string }>;
+  leader: { kind: "human" | "agent"; id: string; responsibility?: string };
+  members: Array<{
+    kind: "human" | "agent";
+    id: string;
+    responsibility?: string;
+  }>;
   coordinationMode: "manager";
-  policy: {
-    prompt: string;
-    triggerType: "manual" | "schedule" | "event";
-    eventType: string | null;
-    eventConfig: Record<string, unknown>;
-    cronExpression: string | null;
-    timezone: string;
-    issueSelector: Record<string, unknown>;
-    outputPolicy: Record<string, unknown>;
-    enabled: boolean;
-  };
+  stages?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    assignee?: {
+      kind: "human" | "agent";
+      id: string;
+      responsibility?: string;
+    } | null;
+  }>;
 }
 
 export interface CollaborationGroupUpdateInput extends Partial<CollaborationGroupCreateInput> {
@@ -277,6 +282,9 @@ export interface WorkspaceAutomationRule {
   name: string;
   enabled: boolean;
   version: number;
+  targetKind?: "human" | "agent" | "collaboration_group" | null;
+  targetId?: string | null;
+  targetName?: string | null;
   [key: string]: unknown;
 }
 
@@ -392,14 +400,11 @@ export interface SharedWorkspaceProjectsApi {
     projectId: string,
     input: CollaborationGroupCreateInput,
   ): Promise<import("../types").CollaborationGroup>;
-  runCollaborationGroup?(
+  updateCollaborationGroup?(
     projectId: string,
     groupId: string,
-  ): Promise<{ id: string; status: string }>;
-  listCollaborationGroupRuns?(
-    projectId: string,
-    groupId: string,
-  ): Promise<WorkspaceAutomationRun[]>;
+    input: CollaborationGroupUpdateInput,
+  ): Promise<import("../types").CollaborationGroup>;
   removeCollaborationGroup?(projectId: string, groupId: string): Promise<void>;
 }
 
@@ -773,8 +778,8 @@ export interface SharedWorkspaceApi {
   files: SharedWorkspaceFilesApi;
   deliveries: SharedWorkspaceDeliveriesApi;
   executions: SharedWorkspaceExecutionsApi;
-  automations: SharedWorkspaceAutomationsApi;
-  incomingHooks: SharedWorkspaceIncomingHooksApi;
+  automations?: SharedWorkspaceAutomationsApi;
+  incomingHooks?: SharedWorkspaceIncomingHooksApi;
   automationExecutionCatalog?: SharedWorkspaceAutomationExecutionCatalogApi;
   runtimeProfiles: SharedWorkspaceRuntimeProfilesApi;
   agents: SharedWorkspaceAgentsApi;

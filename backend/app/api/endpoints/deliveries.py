@@ -1051,6 +1051,7 @@ async def update_loop_item(
         return LoopItemResponse.model_validate(response)
     existing = loop_item_service.get(db, item_id, current_user.id)
     previous_status = existing.status
+    previous_tags = set(existing.tags)
     project = cloud_project_service.get(
         db,
         int(existing.cloud_project_id),
@@ -1227,6 +1228,35 @@ async def update_loop_item(
                 item.id,
                 previous_status,
                 item.status,
+            )
+    added_tags = set(item.tags) - previous_tags
+    if added_tags:
+        try:
+            await project_incoming_hook_service.ingest_internal(
+                db,
+                ProjectAutomationEvent(
+                    event_type="task.tag_added",
+                    project_id=str(item.cloud_project_id),
+                    subject_id=str(item.id),
+                    source="board",
+                    actor_user_id=current_user.id,
+                    payload={
+                        **_loop_item_response(db, item, current_user).model_dump(
+                            mode="json"
+                        ),
+                        "added_tags": sorted(added_tags),
+                    },
+                ),
+            )
+            db.refresh(item)
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "Project automatic processing failed after tags were added "
+                "project=%s task=%s tags=%s",
+                item.cloud_project_id,
+                item.id,
+                sorted(added_tags),
             )
     publish_loop_item_changed(
         db,

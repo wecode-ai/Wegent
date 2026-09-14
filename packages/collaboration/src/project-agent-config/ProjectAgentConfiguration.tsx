@@ -31,6 +31,7 @@ export function ProjectAgentConfiguration({
   project,
   onError,
   onAgentsChange,
+  onCreateAgent,
   translate,
 }: {
   api: SharedWorkspaceApi;
@@ -38,16 +39,17 @@ export function ProjectAgentConfiguration({
   project: CollaborationProject;
   onError(): void;
   onAgentsChange?(): void;
+  onCreateAgent?(): void;
   translate: CollaborationTranslate;
 }) {
   const workspaceId = project.workspace_id;
-  const [mode, setMode] = useState<ProjectAgentMode>("wegent");
+  const [mode, setMode] = useState<ProjectAgentMode>("existing");
   const [agents, setAgents] = useState<ProjectAgentConfigurationRecord[]>([]);
   const [workspaceAgents, setWorkspaceAgents] = useState<
     CollaborationOwnedAgent[]
   >([]);
   const [selectedTeamId, setSelectedTeamId] = useState("");
-  const [codexName, setCodexName] = useState("");
+  const [localName, setLocalName] = useState("");
   const [capabilityDescription, setCapabilityDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [loading, setLoading] = useState(true);
@@ -87,7 +89,15 @@ export function ProjectAgentConfiguration({
           ...personalResources.agents,
           ...nextWorkspaceAgents,
         ]) {
-          if (agent.status === "available" && agent.team_id) {
+          const matchesProjectLocation =
+            project.project_store === "local"
+              ? agent.location === "local"
+              : agent.location !== "local";
+          if (
+            matchesProjectLocation &&
+            agent.status === "available" &&
+            agent.team_id
+          ) {
             availableAgents.set(agent.team_id, agent);
           }
         }
@@ -112,7 +122,7 @@ export function ProjectAgentConfiguration({
     return () => {
       active = false;
     };
-  }, [api, project.id, workspaceId]);
+  }, [api, project.id, project.project_store, workspaceId]);
 
   useEffect(() => {
     if (!composerOpen) return;
@@ -160,20 +170,22 @@ export function ProjectAgentConfiguration({
     }
   }
 
-  async function createCodexAgent() {
-    if (!codexName.trim()) return;
-    const created = await createAgent(
-      createCodexProjectAgentInput({
-        name: codexName,
-        capabilityDescription,
-        systemPrompt,
-      }),
-    );
-    if (!created) return;
-    setCodexName("");
-    setCapabilityDescription("");
-    setSystemPrompt("");
-    setComposerOpen(false);
+  async function createLocalAgent() {
+    if (!localName.trim()) return;
+    if (
+      await createAgent(
+        createCodexProjectAgentInput({
+          name: localName,
+          capabilityDescription,
+          systemPrompt,
+        }),
+      )
+    ) {
+      setLocalName("");
+      setCapabilityDescription("");
+      setSystemPrompt("");
+      setComposerOpen(false);
+    }
   }
 
   async function archiveAgent(agent: ProjectAgentConfigurationRecord) {
@@ -202,7 +214,7 @@ export function ProjectAgentConfiguration({
   const dialogTitle = translate("todo.add_project_agent", "添加智能体");
   const dialogDescription = translate(
     "todo.add_project_agent_description",
-    "选择已有智能体，或为当前项目创建专用智能体。",
+    "选择已有智能体，或使用标准表单新建智能体。",
   );
   const closeLabel = translate("common.close", "关闭");
 
@@ -403,7 +415,10 @@ export function ProjectAgentConfiguration({
           className={styles.addButton}
           data-testid="project-agent-add"
           disabled={loading}
-          onClick={() => setComposerOpen(true)}
+          onClick={() => {
+            setMode("existing");
+            setComposerOpen(true);
+          }}
           type="button"
         >
           {translate("todo.add_project_agent", "添加智能体")}
@@ -485,27 +500,27 @@ export function ProjectAgentConfiguration({
                       options: [
                         {
                           description: translate(
-                            "todo.choose_wegent_agent_description",
-                            "使用资源库中已有的智能体",
+                            "todo.choose_existing_agent_description",
+                            "从我的智能体或空间共享智能体中选择",
                           ),
                           label: translate(
-                            "todo.choose_wegent_agent",
-                            "Wegent 智能体",
+                            "todo.choose_existing_agent",
+                            "已有智能体",
                           ),
-                          testId: "project-agent-mode-wegent",
-                          value: "wegent",
+                          testId: "project-agent-mode-existing",
+                          value: "existing",
                         },
                         {
                           description: translate(
-                            "todo.create_codex_agent_description",
-                            "配置能力说明和提示词",
+                            "todo.create_agent_description",
+                            "使用标准智能体创建表单",
                           ),
                           label: translate(
-                            "todo.create_codex_agent",
-                            "Codex 智能体",
+                            "todo.create_agent",
+                            "新建智能体",
                           ),
-                          testId: "project-agent-mode-codex",
-                          value: "codex",
+                          testId: "project-agent-mode-create",
+                          value: "create",
                         },
                       ],
                       value: mode,
@@ -515,45 +530,45 @@ export function ProjectAgentConfiguration({
                       <button
                         autoFocus
                         className={`${styles.modeButton} ${
-                          mode === "wegent" ? styles.modeButtonActive : ""
+                          mode === "existing" ? styles.modeButtonActive : ""
                         }`}
-                        data-testid="project-agent-mode-wegent"
-                        onClick={() => setMode("wegent")}
+                        data-testid="project-agent-mode-existing"
+                        onClick={() => setMode("existing")}
                         type="button"
                       >
                         {translate(
-                          "todo.choose_wegent_agent",
-                          "选择 Wegent 智能体",
+                          "todo.choose_existing_agent",
+                          "已有智能体",
                         )}
                       </button>
                       <button
                         className={`${styles.modeButton} ${
-                          mode === "codex" ? styles.modeButtonActive : ""
+                          mode === "create" ? styles.modeButtonActive : ""
                         }`}
-                        data-testid="project-agent-mode-codex"
-                        onClick={() => setMode("codex")}
+                        data-testid="project-agent-mode-create"
+                        onClick={() => setMode("create")}
                         type="button"
                       >
                         {translate(
-                          "todo.create_codex_agent",
-                          "自定义 Codex 智能体",
+                          "todo.create_agent",
+                          "新建智能体",
                         )}
                       </button>
                     </div>
                   )}
 
-                  {mode === "wegent" ? (
+                  {mode === "existing" ? (
                     workspaceAgents.length ? (
                       <div className={styles.form}>
                         <label className={styles.field}>
                           {translate(
                             "todo.workspace_wegent_agent",
-                            "Wegent 智能体",
+                            "智能体",
                           )}
                           {renderSelectControl({
                             ariaLabel: translate(
                               "todo.workspace_wegent_agent",
-                              "Wegent 智能体",
+                              "智能体",
                             ),
                             onChange: setSelectedTeamId,
                             options: workspaceAgents.map((agent) => ({
@@ -599,72 +614,98 @@ export function ProjectAgentConfiguration({
                         </span>
                       </p>
                     )
-                  ) : (
+                  ) : project.project_store === "local" ? (
                     <div className={styles.form}>
                       <label className={styles.field}>
-                        {translate("todo.agent_name", "智能体名称")}
+                        {translate("common.name", "名称")}
                         {renderTextControl({
-                          ariaLabel: translate("todo.agent_name", "智能体名称"),
-                          onChange: setCodexName,
+                          ariaLabel: translate("common.name", "名称"),
+                          onChange: setLocalName,
                           placeholder: translate(
                             "todo.agent_name_placeholder",
-                            "例如：Codex 产品工程师",
+                            "例如：代码评审智能体",
                           ),
-                          testId: "project-agent-codex-name",
-                          value: codexName,
+                          testId: "project-agent-local-name",
+                          value: localName,
                         })}
                       </label>
                       <label className={styles.field}>
-                        {translate("todo.agent_capability", "能力说明")}
+                        {translate(
+                          "todo.capability_description",
+                          "能力说明",
+                        )}
                         {renderTextControl({
                           ariaLabel: translate(
-                            "todo.agent_capability",
+                            "todo.capability_description",
                             "能力说明",
                           ),
                           multiline: true,
                           onChange: setCapabilityDescription,
                           placeholder: translate(
-                            "todo.agent_capability_placeholder",
-                            "说明这个智能体适合完成什么工作",
+                            "todo.capability_description_placeholder",
+                            "说明这个智能体适合处理什么工作",
                           ),
-                          testId: "project-agent-codex-capability",
+                          testId: "project-agent-local-capability",
                           value: capabilityDescription,
                         })}
                       </label>
                       <label className={styles.field}>
-                        {translate("todo.agent_system_prompt", "提示词")}
+                        {translate("todo.system_prompt", "系统提示词")}
                         {renderTextControl({
                           ariaLabel: translate(
-                            "todo.agent_system_prompt",
-                            "提示词",
+                            "todo.system_prompt",
+                            "系统提示词",
                           ),
                           multiline: true,
                           onChange: setSystemPrompt,
                           placeholder: translate(
-                            "todo.agent_system_prompt_placeholder",
-                            "输入执行任务时使用的角色和约束",
+                            "todo.system_prompt_placeholder",
+                            "定义智能体的职责、约束和输出要求",
                           ),
-                          testId: "project-agent-codex-prompt",
+                          testId: "project-agent-local-system-prompt",
                           value: systemPrompt,
                         })}
                       </label>
                       <div className={styles.formFooter}>
                         <p className={styles.hint}>
                           {translate(
-                            "todo.codex_runtime_selection_hint",
-                            "运行环境在启动任务时选择，不与智能体绑定。",
+                            "todo.local_agent_environment_hint",
+                            "本地智能体运行时自动使用当前项目可用设备，无需在创建时绑定运行环境。",
                           )}
                         </p>
                         {renderPrimaryAction({
                           children: busy
                             ? translate("common.creating", "创建中…")
                             : translate(
-                                "todo.create_project_agent",
-                                "创建智能体",
+                                "todo.create_local_agent",
+                                "创建本地智能体",
                               ),
-                          disabled: !codexName.trim() || busy,
-                          onClick: () => void createCodexAgent(),
-                          testId: "project-agent-codex-create",
+                          disabled: busy || !localName.trim(),
+                          onClick: () => void createLocalAgent(),
+                          testId: "project-agent-local-create",
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={styles.form}>
+                      <div className={styles.formFooter}>
+                        <p className={styles.hint}>
+                          {translate(
+                            "todo.create_agent_standard_form_hint",
+                            "将打开与资源库一致的新建智能体表单。创建后可将它加入当前项目。",
+                          )}
+                        </p>
+                        {renderPrimaryAction({
+                          children: translate(
+                            "todo.open_create_agent",
+                            "打开新建智能体",
+                          ),
+                          disabled: busy || !onCreateAgent,
+                          onClick: () => {
+                            setComposerOpen(false);
+                            onCreateAgent?.();
+                          },
+                          testId: "project-agent-open-create",
                         })}
                       </div>
                     </div>

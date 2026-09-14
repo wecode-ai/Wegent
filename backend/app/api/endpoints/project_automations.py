@@ -36,6 +36,7 @@ from app.schemas.workspace import (
     CollaborationGroupCreate,
     CollaborationGroupListResponse,
     CollaborationGroupResponse,
+    CollaborationGroupUpdate,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.project_automation_execution import project_automation_execution
@@ -103,6 +104,28 @@ def add_project_collaboration_group(
     )
 
 
+@router.patch(
+    "/{project_id}/collaboration-groups/{group_id}",
+    response_model=CollaborationGroupResponse,
+)
+def update_project_collaboration_group(
+    project_id: int,
+    group_id: int,
+    values: CollaborationGroupUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CollaborationGroupResponse:
+    return CollaborationGroupResponse.model_validate(
+        workspace_service.update_project_collaboration_group(
+            db,
+            project_id,
+            group_id,
+            current_user.id,
+            values,
+        )
+    )
+
+
 @router.delete(
     "/{project_id}/collaboration-groups/{group_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -116,47 +139,6 @@ def remove_project_collaboration_group(
     workspace_service.remove_project_collaboration_group(
         db, project_id, group_id, current_user.id
     )
-
-
-@router.post(
-    "/{project_id}/collaboration-groups/{group_id}/run",
-    response_model=ProjectAutomationRunView,
-)
-async def run_project_collaboration_group(
-    project_id: int,
-    group_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> ProjectAutomationRunView:
-    return ProjectAutomationRunView.model_validate(
-        await workspace_service.run_project_collaboration_group(
-            db,
-            project_id,
-            group_id,
-            current_user.id,
-        )
-    )
-
-
-@router.get(
-    "/{project_id}/collaboration-groups/{group_id}/runs",
-    response_model=list[ProjectAutomationRunView],
-)
-def list_project_collaboration_group_runs(
-    project_id: int,
-    group_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> list[ProjectAutomationRunView]:
-    return [
-        ProjectAutomationRunView.model_validate(run)
-        for run in workspace_service.list_project_collaboration_group_runs(
-            db,
-            project_id,
-            group_id,
-            current_user.id,
-        )
-    ]
 
 
 @router.get("/{project_id}/automations", response_model=list[ProjectAutomationView])
