@@ -118,14 +118,26 @@ export async function stopDispatchRun(
   projectId: string,
   run: { id: string; automationId: string; taskId: string }
 ): Promise<void> {
-  await webApi(page, `/api/v1/loop-items/${run.taskId}/workflow-plan/pause`, { method: 'POST' })
+  const plan = await webApi<{ manager_run: { id: string; status: string } | null }>(
+    page,
+    `/api/v1/loop-items/${run.taskId}/workflow-plan`
+  )
+  const activeStatuses = ['pending', 'queued', 'waiting_device', 'running']
+  if (plan.manager_run && activeStatuses.includes(plan.manager_run.status)) {
+    const stopped = await webApi<{ status: string }>(
+      page,
+      `/api/v1/cloud-projects/${projectId}/automation-runs/${plan.manager_run.id}/cancel`,
+      { method: 'POST' }
+    )
+    expect(stopped.status).toBe('cancelled')
+  }
   const runs = await webApi<Array<{ id: string; status: string }>>(
     page,
     `/api/v1/cloud-projects/${projectId}/automations/${run.automationId}/runs`
   )
   let current = runs.find(candidate => candidate.id === run.id)
   if (!current) throw new Error('Dispatch run disappeared before cleanup')
-  if (['pending', 'queued', 'waiting_device', 'running'].includes(current.status)) {
+  if (activeStatuses.includes(current.status)) {
     current = await webApi(
       page,
       `/api/v1/cloud-projects/${projectId}/automation-runs/${run.id}/cancel`,
