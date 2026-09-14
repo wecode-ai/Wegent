@@ -24,6 +24,7 @@ use tokio::{
 };
 
 use crate::{
+    agent_session,
     agents::{
         runtime_capabilities,
         task_identity::{task_identity_env, TASK_SCOPED_ENV_KEYS},
@@ -279,8 +280,13 @@ impl AgentEngine for CodexAppServerEngine {
     fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
         let binary = self.binary.clone();
         Box::pin(async move {
-            match run_codex_app_server_turn(&binary, request, None, None, None).await {
-                Ok(turn) => turn.outcome,
+            let resume_thread_id = agent_session::load_saved_codex_thread_id(&request);
+            let session_request = request.clone();
+            match run_codex_app_server_turn(&binary, request, resume_thread_id, None, None).await {
+                Ok(turn) => {
+                    agent_session::save_codex_thread_id(&session_request, &turn.thread_id);
+                    turn.outcome
+                }
                 Err(message) => ExecutionOutcome::Failed { message },
             }
         })
