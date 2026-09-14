@@ -22,7 +22,11 @@ function normalizeToolStatus(status: ToolBlock['status']): ToolStatus {
 }
 
 export function blockToToolPair(block: ToolBlock): ToolPair {
-  const normalizedToolName = normalizeToolName(block.tool_name || 'unknown')
+  const rawToolName = block.tool_name || 'unknown'
+  const normalizedToolName =
+    block.tool_protocol === 'mcp' || block.tool_protocol === 'mcp_call'
+      ? rawToolName
+      : normalizeToolName(rawToolName)
   const rawToolUseStep: ThinkingStep = {
     title: `Using ${normalizedToolName}`,
     next_action: 'continue',

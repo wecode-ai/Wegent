@@ -269,6 +269,7 @@ export interface ChatBlock {
   content?: string
   tool_use_id?: string
   tool_name?: string
+  tool_protocol?: string
   tool_input?: Record<string, unknown>
   tool_output?: unknown
   parent_tool_use_id?: string
