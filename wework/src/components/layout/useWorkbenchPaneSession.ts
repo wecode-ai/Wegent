@@ -336,7 +336,6 @@ export function useWorkbenchPaneSession({
   const [transcriptHasMoreBefore, setTranscriptHasMoreBefore] = useState(false)
   const [transcriptBeforeCursor, setTranscriptBeforeCursor] = useState<string | null>(null)
   const [transcriptLoadingMoreBefore, setTranscriptLoadingMoreBefore] = useState(false)
-  const [transcriptLoadingFullContent, setTranscriptLoadingFullContent] = useState(false)
   const [transcriptFullContent, setTranscriptFullContent] = useState(false)
   const [loadedTranscriptRanges, setLoadedTranscriptRanges] = useState<LoadedTranscriptRange[]>([])
   const [turnNavigation, setTurnNavigation] = useState<RuntimeTurnNavigationItem[]>([])
@@ -712,7 +711,6 @@ export function useWorkbenchPaneSession({
     setTranscriptHasMoreBefore(false)
     setTranscriptBeforeCursor(null)
     setTranscriptLoadingMoreBefore(false)
-    setTranscriptLoadingFullContent(false)
     setTranscriptFullContent(false)
     setLoadedTranscriptRanges([])
     setTurnNavigation([])
@@ -1024,38 +1022,6 @@ export function useWorkbenchPaneSession({
     },
     [dispatchMessages, runtimeTaskLoadTarget, runtimeTranscriptPageSize, transcriptFullContent]
   )
-
-  const loadFullTranscript = useCallback(async () => {
-    if (!runtimeTaskLoadTarget || transcriptLoadingFullContent || transcriptFullContent) return
-
-    const { address } = runtimeTaskLoadTarget
-    setTranscriptLoadingFullContent(true)
-    try {
-      const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
-        includeFullContent: true,
-        refresh: true,
-      })
-      const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
-      setTranscriptFullContent(transcript.fullContent === true)
-      setTranscriptHasMoreBefore(false)
-      setTranscriptBeforeCursor(null)
-      setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
-      setTurnNavigation(current =>
-        transcript.turnNavigation && transcript.turnNavigation.length > 0
-          ? transcript.turnNavigation
-          : current
-      )
-      dispatchMessages({ type: 'reset', messages: nextMessages })
-    } catch (error) {
-      console.error('[Wework] Runtime pane full transcript load failed', {
-        address,
-        error,
-      })
-      throw error
-    } finally {
-      setTranscriptLoadingFullContent(false)
-    }
-  }, [dispatchMessages, runtimeTaskLoadTarget, transcriptFullContent, transcriptLoadingFullContent])
 
   const getRuntimeModelFields = useCallback(
     (modelOptionsOverride?: ModelOptions) => {
@@ -3100,7 +3066,6 @@ export function useWorkbenchPaneSession({
     transcriptLoading,
     transcriptError,
     reloadRuntimeTranscript,
-    transcriptLoadingFullContent,
     transcriptLoadingMoreBefore,
     turnNavigation.length,
   ])
@@ -3131,7 +3096,6 @@ export function useWorkbenchPaneSession({
     reloadRuntimeTranscript,
     transcriptHasMoreBefore,
     transcriptLoadingMoreBefore,
-    transcriptLoadingFullContent,
     transcriptFullContent,
     loadedTranscriptRanges,
     turnNavigation,
@@ -3141,7 +3105,6 @@ export function useWorkbenchPaneSession({
     taskPlan,
     goalDraftActive,
     loadMoreTranscriptBefore,
-    loadFullTranscript,
     loadFullTranscriptForExport,
     loadTranscriptTurnNavigationItem,
     loadTranscriptGap,
