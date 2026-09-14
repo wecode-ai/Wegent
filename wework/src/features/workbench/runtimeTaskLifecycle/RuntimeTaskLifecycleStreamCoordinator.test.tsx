@@ -316,10 +316,14 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     store.syncRuntimeWork(activeWork)
     store.setCurrentTask(address)
     setRuntimeConversationGoal(address, {
+      threadId: 'thread-1',
       objective: 'Finish the task',
       status: 'active',
       tokenBudget: null,
       tokensUsed: 100,
+      timeUsedSeconds: 10,
+      createdAt: 1,
+      updatedAt: 2,
     })
     let streamHandlers: ChatStreamHandlers = {}
     const settledWork = runtimeWork(false)

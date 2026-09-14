@@ -571,6 +571,12 @@ export function useWorkbenchPaneSession({
     const { address } = runtimeTaskLoadTarget
     const syncConversationState = () => {
       const metadata = getRuntimeConversationMetadata(address)
+      if (metadata.goal && metadata.goal.threadId !== 'pending') {
+        clearRuntimePaneGoalSeed(address)
+        setPendingGoalState(current =>
+          current && isPendingGoalVisibleForRuntimeTarget(current, address) ? null : current
+        )
+      }
       setMessages(getRuntimeConversationMessages(address))
       setSubagentStatuses(metadata.subagentStatuses)
       setTaskPlan(metadata.taskPlan)
@@ -636,8 +642,7 @@ export function useWorkbenchPaneSession({
           const resolvedGoal = resolveHydratedRuntimeGoal(
             runtimeTaskLoadTarget.address,
             loadedGoal,
-            seededGoal?.goal ?? null,
-            lifecycleStore.getTask(runtimeTaskLoadTarget.address)?.goalStatus === 'active'
+            seededGoal
           )
           if (import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1') {
             console.info('[Wework] Runtime goal hydration resolved', {
@@ -3258,8 +3263,7 @@ function clearRuntimePaneGoalSeed(address: RuntimeTaskAddress) {
 function resolveHydratedRuntimeGoal(
   address: RuntimeTaskAddress,
   loadedGoal: RuntimeGoal | null,
-  seededGoal: RuntimeGoal | null,
-  preserveSeededGoal: boolean
+  seededGoal: PendingRuntimeGoalState | null
 ): RuntimeGoal | null {
   if (loadedGoal) return loadedGoal
 
@@ -3274,7 +3278,11 @@ function resolveHydratedRuntimeGoal(
     if (optimisticGoal) return optimisticGoal
   }
 
-  return preserveSeededGoal ? seededGoal : null
+  if (seededGoal?.goal.threadId === 'pending' && getRuntimePaneGoalSeed(address) === seededGoal) {
+    return seededGoal.goal
+  }
+
+  return null
 }
 
 function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {

@@ -67,6 +67,7 @@ const terminalConversationEvictionTimers = new Map<
   ReturnType<typeof globalThis.setTimeout>
 >()
 const goalSnapshotVersionsByConversation = new Map<string, number>()
+let nextRuntimeGoalSnapshotVersion = 1
 
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
@@ -116,7 +117,8 @@ export function setRuntimeConversationGoal(
 
 export function beginRuntimeGoalSnapshot(address: RuntimeTaskAddress): number {
   const key = runtimeConversationKey(address)
-  const version = (goalSnapshotVersionsByConversation.get(key) ?? 0) + 1
+  const version = nextRuntimeGoalSnapshotVersion
+  nextRuntimeGoalSnapshotVersion += 1
   goalSnapshotVersionsByConversation.set(key, version)
   return version
 }
@@ -130,10 +132,8 @@ export function isRuntimeGoalSnapshotCurrent(
 
 function invalidateRuntimeGoalSnapshots(address: RuntimeTaskAddress): void {
   const key = runtimeConversationKey(address)
-  goalSnapshotVersionsByConversation.set(
-    key,
-    (goalSnapshotVersionsByConversation.get(key) ?? 0) + 1
-  )
+  goalSnapshotVersionsByConversation.set(key, nextRuntimeGoalSnapshotVersion)
+  nextRuntimeGoalSnapshotVersion += 1
 }
 
 function reconcileRuntimeGoal(
@@ -949,6 +949,7 @@ export function clearRuntimeConversationCacheForTests() {
   projectedMessagesByConversation.clear()
   metadataByConversation.clear()
   goalSnapshotVersionsByConversation.clear()
+  nextRuntimeGoalSnapshotVersion = 1
   listenersByConversation.clear()
   retainingListenersByConversation.clear()
   runtimeTransportReplacedListeners.clear()

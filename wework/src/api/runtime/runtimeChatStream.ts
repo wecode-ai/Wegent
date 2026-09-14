@@ -16,8 +16,8 @@ let nextRuntimeChatStreamSubscriptionId = 1
 let activeRuntimeChatStreamSubscriptions = 0
 const RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-runtime-chat-stream'
 const STREAM_EVENT_BATCH_INTERVAL_MS = 16
-const E2E_DROPPED_RUNTIME_EVENTS_KEY = '__WEWORK_E2E_DROPPED_RUNTIME_EVENTS__'
-const E2E_RUNTIME_EVENT_DISPATCHERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_DISPATCHERS__'
+export const E2E_DROPPED_RUNTIME_EVENTS_KEY = '__WEWORK_E2E_DROPPED_RUNTIME_EVENTS__'
+export const E2E_RUNTIME_EVENT_DISPATCHERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_DISPATCHERS__'
 
 export function isRuntimeChatStreamDebugEnabled(): boolean {
   return (

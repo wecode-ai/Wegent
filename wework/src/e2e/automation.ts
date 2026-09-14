@@ -51,6 +51,10 @@ import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
 import { createTrayTaskMenuId } from '@/desktop/trayTaskMenuId'
+import {
+  E2E_DROPPED_RUNTIME_EVENTS_KEY,
+  E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
+} from '@/api/runtime/runtimeChatStream'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -1619,10 +1623,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
     case 'dropNextRuntimeEvent': {
       const root = globalThis as typeof globalThis & {
-        __WEWORK_E2E_DROPPED_RUNTIME_EVENTS__?: string[]
+        [E2E_DROPPED_RUNTIME_EVENTS_KEY]?: string[]
       }
-      root.__WEWORK_E2E_DROPPED_RUNTIME_EVENTS__ ??= []
-      root.__WEWORK_E2E_DROPPED_RUNTIME_EVENTS__.push(command.value ?? '')
+      root[E2E_DROPPED_RUNTIME_EVENTS_KEY] ??= []
+      root[E2E_DROPPED_RUNTIME_EVENTS_KEY].push(command.value ?? '')
       return ''
     }
     case 'clearRuntimeGoalDirectly':
@@ -1631,11 +1635,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     case 'dispatchRuntimeEventLagged': {
       const root = globalThis as typeof globalThis & {
-        __WEWORK_E2E_RUNTIME_EVENT_DISPATCHERS__?: Set<
+        [E2E_RUNTIME_EVENT_DISPATCHERS_KEY]?: Set<
           (event: { event: string; payload: Record<string, unknown> }) => void
         >
       }
-      const dispatchers = root.__WEWORK_E2E_RUNTIME_EVENT_DISPATCHERS__
+      const dispatchers = root[E2E_RUNTIME_EVENT_DISPATCHERS_KEY]
       if (!dispatchers?.size) {
         throw new Error('No runtime event dispatcher is registered')
       }

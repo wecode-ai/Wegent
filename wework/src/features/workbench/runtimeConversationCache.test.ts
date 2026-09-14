@@ -681,6 +681,17 @@ describe('runtimeConversationCache', () => {
     expect(isRuntimeGoalSnapshotCurrent(address, newerSnapshot)).toBe(false)
   })
 
+  test('does not reuse Goal snapshot versions after conversation eviction', () => {
+    const preEvictionSnapshot = beginRuntimeGoalSnapshot(address)
+
+    evictRuntimeConversation(address)
+    const postEvictionSnapshot = beginRuntimeGoalSnapshot(address)
+
+    expect(postEvictionSnapshot).not.toBe(preEvictionSnapshot)
+    expect(isRuntimeGoalSnapshotCurrent(address, preEvictionSnapshot)).toBe(false)
+    expect(isRuntimeGoalSnapshotCurrent(address, postEvictionSnapshot)).toBe(true)
+  })
+
   test('uses device and task identity across normalized workspace paths', () => {
     applyRuntimeConversationAction(address, {
       type: 'user_added',

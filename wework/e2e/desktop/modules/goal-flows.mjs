@@ -91,8 +91,9 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
     control,
     snapshot =>
       snapshot.workbench?.currentRuntimeTask?.taskId === goalTaskId &&
-      snapshot.pane?.goal?.status === 'active',
-    'The Goal snapshot reconciliation fixture did not expose an active Goal'
+      snapshot.pane?.goal?.status === 'active' &&
+      snapshot.pane.goal.threadId !== 'pending',
+    'The Goal snapshot reconciliation fixture did not expose a confirmed active Goal'
   )
   const address = activeDebugSnapshot.workbench.currentRuntimeTask
   await control.command('dropNextRuntimeEvent', 'body', {

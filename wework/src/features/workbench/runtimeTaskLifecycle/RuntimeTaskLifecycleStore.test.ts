@@ -1422,6 +1422,31 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.derived.shouldShowUnread).toBe(false)
   })
 
+  test('marks background Goal completion unread when Goal inactivity arrives after idle', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+
+    store.executorSettled(address)
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(false)
+
+    store.goalStatusReceived(address, null)
+
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(true)
+  })
+
+  test('does not let a stale active executor snapshot overwrite Goal completion', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+
+    store.goalStatusReceived(address, 'complete')
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: false, goalStatus: 'active', status: 'done' }))
+    )
+
+    expect(store.getTask(address)?.goalStatus).toBe('complete')
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(true)
+  })
+
   test.each(['paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const)(
     'settles execution when the Goal reports %s',
     goalStatus => {
