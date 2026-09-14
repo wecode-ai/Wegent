@@ -723,6 +723,8 @@ class TaskRequestBuilder:
                 "namespace": skill_ref.get("namespace", "default"),
                 "is_public": skill_ref.get("is_public", False),
             }
+            if skill_ref.get("skill_id") is not None:
+                explicit_ref["skill_id"] = skill_ref["skill_id"]
 
             if get_mcp_service_by_skill_name(skill_name):
                 explicit_ref["namespace"] = "default"

@@ -119,11 +119,9 @@ class ContextItem(BaseModel):
 
 
 class SkillRef(BaseModel):
-    """Skill reference with full identification info for backend.
+    """Skill reference retaining the canonical ID across shared bindings."""
 
-    Backend needs name + namespace + is_public to uniquely identify a skill.
-    """
-
+    skill_id: Optional[int] = Field(default=None, gt=0)
     name: str = Field(..., description="Skill name")
     namespace: str = Field(..., description="Skill namespace")
     is_public: bool = Field(..., description="Whether the skill is public")
