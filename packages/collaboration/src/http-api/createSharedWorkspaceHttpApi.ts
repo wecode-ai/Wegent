@@ -16,9 +16,11 @@ import type {
   SharedWorkspaceAgentsApi,
   SharedWorkspaceAssignmentsApi,
   SharedWorkspaceCommentsApi,
+  SharedWorkspaceProjectsApi,
   WorkspaceProjectAgent,
 } from "../ports/SharedWorkspaceApi";
 import type {
+  CollaborationGroup,
   CollaborationComment,
   CollaborationIssue,
   CollaborationMember,
@@ -34,6 +36,15 @@ export interface SharedWorkspaceHttpTransport {
 export interface SharedWorkspaceHttpApi {
   workspaces: SharedCollaborationWorkspacesApi;
   resources: SharedCollaborationResourcesApi;
+  projects: Pick<
+    SharedWorkspaceProjectsApi,
+    | "listCollaborationGroups"
+    | "addCollaborationGroup"
+    | "createCollaborationGroup"
+    | "runCollaborationGroup"
+    | "listCollaborationGroupRuns"
+    | "removeCollaborationGroup"
+  >;
   comments: SharedWorkspaceCommentsApi;
   assignments: SharedWorkspaceAssignmentsApi;
   agents: SharedWorkspaceAgentsApi;
@@ -105,14 +116,71 @@ function mapWorkspaceMemberDto(input: unknown): CollaborationMember {
   };
 }
 
+function mapCollaborationGroupDto(input: unknown): CollaborationGroup {
+  const row = record(input);
+  const members = Array.isArray(row.members) ? row.members : [];
+  const leader = record(row.leader);
+  const policy = record(row.policy);
+  return {
+    id: String(row.id),
+    workspace_id: String(row.workspace_id ?? row.workspaceId),
+    owner_type:
+      (row.owner_type ?? row.ownerType) === "project" ? "project" : "workspace",
+    owner_id: String(row.owner_id ?? row.ownerId),
+    name: String(row.name ?? ""),
+    description: String(row.description ?? ""),
+    leader: {
+      kind: leader.kind === "human" ? "human" : "agent",
+      id: String(leader.id),
+    },
+    members: members.map((member) => {
+      const value = record(member);
+      return {
+        kind: value.kind === "human" ? "human" : "agent",
+        id: String(value.id),
+      };
+    }),
+    coordination_mode: "manager",
+    policy: {
+      prompt: String(policy.prompt ?? ""),
+      trigger_type:
+        policy.trigger_type === "schedule" || policy.triggerType === "schedule"
+          ? "schedule"
+          : policy.trigger_type === "event" || policy.triggerType === "event"
+            ? "event"
+            : "manual",
+      event_type:
+        (policy.event_type ?? policy.eventType) == null
+          ? null
+          : String(policy.event_type ?? policy.eventType),
+      event_config: record(policy.event_config ?? policy.eventConfig),
+      cron_expression:
+        (policy.cron_expression ?? policy.cronExpression) == null
+          ? null
+          : String(policy.cron_expression ?? policy.cronExpression),
+      timezone: String(policy.timezone ?? "Asia/Shanghai"),
+      issue_selector: record(policy.issue_selector ?? policy.issueSelector),
+      output_policy: record(policy.output_policy ?? policy.outputPolicy),
+      enabled: policy.enabled !== false,
+    },
+    version: Number(row.version ?? 1),
+    created_by_user_id: Number(
+      row.created_by_user_id ?? row.createdByUserId ?? 0,
+    ),
+    created_at: String(row.created_at ?? row.createdAt ?? ""),
+    updated_at: String(row.updated_at ?? row.updatedAt ?? ""),
+  };
+}
+
 function mapProjectAgentDto(input: unknown): WorkspaceProjectAgent {
   const row = keysToCamelCase(input) as Record<string, unknown>;
+  const teamId = row.teamId ?? row.wegentTeamId;
   return {
     ...row,
     id: String(row.id),
     name: String(row.name ?? ""),
     ...(row.agentId == null ? {} : { agent_id: String(row.agentId) }),
-    ...(row.teamId == null ? {} : { team_id: Number(row.teamId) }),
+    ...(teamId == null ? {} : { team_id: Number(teamId) }),
   };
 }
 
@@ -213,6 +281,33 @@ export function createSharedWorkspaceHttpApi(
           `/v1/workspaces/${encoded(workspaceId)}/agents/${encoded(teamId)}`,
         );
       },
+      async listCollaborationGroups(workspaceId) {
+        const response = await transport.get<{ items: unknown[] }>(
+          `/v1/workspaces/${encoded(workspaceId)}/collaboration-groups`,
+        );
+        return response.items.map(mapCollaborationGroupDto);
+      },
+      async createCollaborationGroup(workspaceId, input) {
+        return mapCollaborationGroupDto(
+          await transport.post(
+            `/v1/workspaces/${encoded(workspaceId)}/collaboration-groups`,
+            workspaceHttpRequestBody(input),
+          ),
+        );
+      },
+      async updateCollaborationGroup(workspaceId, groupId, input) {
+        return mapCollaborationGroupDto(
+          await transport.patch(
+            `/v1/workspaces/${encoded(workspaceId)}/collaboration-groups/${encoded(groupId)}`,
+            workspaceHttpRequestBody(input),
+          ),
+        );
+      },
+      async removeCollaborationGroup(workspaceId, groupId) {
+        await transport.delete(
+          `/v1/workspaces/${encoded(workspaceId)}/collaboration-groups/${encoded(groupId)}`,
+        );
+      },
       async listExecutionEnvironments(workspaceId) {
         const response = await transport.get<{ items: unknown[] }>(
           `/v1/workspaces/${encoded(workspaceId)}/execution-environments`,
@@ -239,6 +334,50 @@ export function createSharedWorkspaceHttpApi(
       async list() {
         return mapCollaborationPlatformResourcesDto(
           await transport.get("/v1/resources"),
+        );
+      },
+    },
+    projects: {
+      async listCollaborationGroups(projectId) {
+        const response = await transport.get<{ items: unknown[] }>(
+          `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups`,
+        );
+        return response.items.map(mapCollaborationGroupDto);
+      },
+      async addCollaborationGroup(projectId, groupId) {
+        return mapCollaborationGroupDto(
+          await transport.post(
+            `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups/${encoded(groupId)}`,
+          ),
+        );
+      },
+      async createCollaborationGroup(projectId, input) {
+        return mapCollaborationGroupDto(
+          await transport.post(
+            `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups`,
+            workspaceHttpRequestBody(input),
+          ),
+        );
+      },
+      async runCollaborationGroup(projectId, groupId) {
+        return transport.post<{ id: string; status: string }>(
+          `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups/${encoded(groupId)}/run`,
+        );
+      },
+      async listCollaborationGroupRuns(projectId, groupId) {
+        const response = await transport.get<unknown[]>(
+          `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups/${encoded(groupId)}/runs`,
+        );
+        return response.map(
+          (run) =>
+            keysToCamelCase(
+              run,
+            ) as import("../ports/SharedWorkspaceApi").WorkspaceAutomationRun,
+        );
+      },
+      async removeCollaborationGroup(projectId, groupId) {
+        await transport.delete(
+          `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups/${encoded(groupId)}`,
         );
       },
     },

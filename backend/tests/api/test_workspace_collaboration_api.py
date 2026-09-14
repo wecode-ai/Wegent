@@ -12,7 +12,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
-from app.models.delivery import LoopItem, LoopItemComment, ProjectChatAgent
+from app.models.delivery import (
+    LoopItem,
+    LoopItemComment,
+    ProjectAutomationRule,
+    ProjectChatAgent,
+)
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import ResourceMember
@@ -140,6 +145,287 @@ def _wegent_team(test_db: Session, owner: User) -> Kind:
     test_db.commit()
     test_db.refresh(team)
     return team
+
+
+def test_workspace_collaboration_group_supports_human_or_agent_leader(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"协作组空间 {uuid.uuid4().hex[:6]}"},
+    )
+    assert workspace_response.status_code == 201
+    workspace = workspace_response.json()
+    project_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/projects",
+        headers=_auth(test_token),
+        json={"name": f"协作组项目 {uuid.uuid4().hex[:6]}"},
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+    team = _wegent_team(test_db, test_user)
+    agent_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/agents",
+        headers=_auth(test_token),
+        json={"team_id": team.id},
+    )
+    assert agent_response.status_code == 201
+
+    create_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/collaboration-groups",
+        headers=_auth(test_token),
+        json={
+            "name": "交付协作组",
+            "description": "人与智能体共同交付",
+            "leader": {"kind": "human", "id": str(test_user.id)},
+            "members": [
+                {"kind": "human", "id": str(test_user.id)},
+                {"kind": "agent", "id": str(team.id)},
+            ],
+            "coordination_mode": "manager",
+        },
+    )
+    assert create_response.status_code == 201
+    group = create_response.json()
+    assert group["owner_type"] == "workspace"
+    assert group["owner_id"] == str(workspace["id"])
+    assert group["leader"] == {"kind": "human", "id": str(test_user.id)}
+    assert group["members"] == [
+        {"kind": "human", "id": str(test_user.id)},
+        {"kind": "agent", "id": str(team.id)},
+    ]
+    assert group["policy"] == {
+        "prompt": "",
+        "trigger_type": "manual",
+        "event_type": None,
+        "event_config": {},
+        "cron_expression": None,
+        "timezone": "Asia/Shanghai",
+        "issue_selector": {},
+        "output_policy": {},
+        "enabled": True,
+    }
+
+    enable_response = test_client.post(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{group['id']}"
+        ),
+        headers=_auth(test_token),
+    )
+    assert enable_response.status_code == 201
+    assert enable_response.json()["id"] == group["id"]
+    assert test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth(test_token),
+    ).json()["items"] == [group]
+
+    project_only_team = _wegent_team(test_db, test_user)
+    _project_agent(
+        test_db,
+        project_id=str(project["id"]),
+        team_id=project_only_team.id,
+        owner=test_user,
+    )
+    project_group_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth(test_token),
+        json={
+            "name": "项目专属协作组",
+            "leader": {"kind": "human", "id": str(test_user.id)},
+            "members": [
+                {"kind": "human", "id": str(test_user.id)},
+                {"kind": "agent", "id": str(project_only_team.id)},
+            ],
+            "coordination_mode": "manager",
+        },
+    )
+    assert project_group_response.status_code == 201
+    project_group = project_group_response.json()
+    assert project_group["owner_type"] == "project"
+    assert project_group["owner_id"] == str(project["id"])
+
+    codex_agent = ProjectChatAgent(
+        id=str(9_000_000_000_000_000_000 + int(uuid.uuid4().hex[:12], 16)),
+        cloud_project_id=str(project["id"]),
+        title="项目 Codex Agent",
+        name="项目 Codex Agent",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "runtime": "codex",
+            "capability_description": "负责实现与验收",
+        },
+    )
+    test_db.add(codex_agent)
+    test_db.commit()
+    project_codex_group_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth(test_token),
+        json={
+            "name": "项目 Codex 协作组",
+            "leader": {"kind": "agent", "id": codex_agent.id},
+            "members": [{"kind": "agent", "id": codex_agent.id}],
+            "coordination_mode": "manager",
+        },
+    )
+    assert project_codex_group_response.status_code == 201
+    project_codex_group = project_codex_group_response.json()
+    assert project_codex_group["leader"] == {
+        "kind": "agent",
+        "id": codex_agent.id,
+    }
+    assert project_codex_group["members"] == [{"kind": "agent", "id": codex_agent.id}]
+    projected_codex_rule = next(
+        rule
+        for rule in test_db.query(ProjectAutomationRule).all()
+        if isinstance(rule.metadata_json, dict)
+        and rule.metadata_json.get("collaboration_group_id")
+        == int(project_codex_group["id"])
+    )
+    assert projected_codex_rule.assignee_agent_id == codex_agent.id
+    assert projected_codex_rule.metadata_json["action"] == "execute"
+    assert "manager" not in projected_codex_rule.metadata_json
+    dispatch = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.project_automation_execution."
+        "project_automation_execution.dispatch",
+        dispatch,
+    )
+    run_response = test_client.post(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{project_codex_group['id']}/run"
+        ),
+        headers=_auth(test_token),
+    )
+    assert run_response.status_code == 200
+    assert run_response.json()["status"] == "pending"
+    dispatch.assert_awaited_once()
+    runs_response = test_client.get(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{project_codex_group['id']}/runs"
+        ),
+        headers=_auth(test_token),
+    )
+    assert runs_response.status_code == 200
+    assert [run["id"] for run in runs_response.json()] == [run_response.json()["id"]]
+    human_runs_response = test_client.get(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{project_group['id']}/runs"
+        ),
+        headers=_auth(test_token),
+    )
+    assert human_runs_response.status_code == 200
+    assert human_runs_response.json() == []
+    assert test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth(test_token),
+    ).json()["items"] == [group, project_codex_group, project_group]
+
+    update_response = test_client.patch(
+        (
+            f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/"
+            f"{group['id']}"
+        ),
+        headers=_auth(test_token),
+        json={
+            "version": group["version"],
+            "leader": {"kind": "agent", "id": str(team.id)},
+            "coordination_mode": "manager",
+            "policy": {
+                "prompt": "持续处理项目中的待办",
+                "trigger_type": "schedule",
+                "cron_expression": "0 9 * * 1-5",
+                "timezone": "Asia/Shanghai",
+                "output_policy": {"mode": "comment"},
+                "enabled": True,
+            },
+        },
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["leader"] == {"kind": "agent", "id": str(team.id)}
+    assert updated["coordination_mode"] == "manager"
+    assert updated["policy"]["trigger_type"] == "schedule"
+    assert updated["version"] == group["version"] + 1
+    projected_rule = next(
+        rule
+        for rule in test_db.query(ProjectAutomationRule).all()
+        if isinstance(rule.metadata_json, dict)
+        and rule.metadata_json.get("collaboration_group_id") == int(group["id"])
+    )
+    assert str(projected_rule.cloud_project_id) == str(project["id"])
+    assert projected_rule.due_at is not None
+    assert projected_rule.metadata_json["manager"] == {
+        "type": "wegent",
+        "wegent_team_id": team.id,
+    }
+    assert "输出要求" in projected_rule.description
+    assert (
+        test_client.get(
+            f"/api/v1/cloud-projects/{project['id']}/automations",
+            headers=_auth(test_token),
+        ).json()
+        == []
+    )
+
+    list_response = test_client.get(
+        f"/api/v1/workspaces/{workspace['id']}/collaboration-groups",
+        headers=_auth(test_token),
+    )
+    assert list_response.status_code == 200
+    assert list_response.json()["items"] == [updated]
+
+    disable_response = test_client.delete(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{group['id']}"
+        ),
+        headers=_auth(test_token),
+    )
+    assert disable_response.status_code == 204
+
+    delete_project_group_response = test_client.delete(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{project_group['id']}"
+        ),
+        headers=_auth(test_token),
+    )
+    assert delete_project_group_response.status_code == 204
+
+    delete_project_codex_group_response = test_client.delete(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{project_codex_group['id']}"
+        ),
+        headers=_auth(test_token),
+    )
+    assert delete_project_codex_group_response.status_code == 204
+
+    delete_response = test_client.delete(
+        (
+            f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/"
+            f"{group['id']}"
+        ),
+        headers=_auth(test_token),
+    )
+    assert delete_response.status_code == 204
+    assert (
+        test_client.get(
+            f"/api/v1/workspaces/{workspace['id']}/collaboration-groups",
+            headers=_auth(test_token),
+        ).json()["items"]
+        == []
+    )
 
 
 def _project_agent(

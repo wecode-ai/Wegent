@@ -994,6 +994,29 @@ describe('Wework collaboration workspace API', () => {
     expect(listCloudExecutionEnvironments).toHaveBeenCalledWith('cloud-project')
   })
 
+  it('keeps local collaboration group requests off the cloud API', async () => {
+    const listCloudCollaborationGroups = vi.fn()
+    const cloudApi = {
+      workspaces: {
+        listCollaborationGroups: listCloudCollaborationGroups,
+      },
+      projects: {},
+    } as unknown as SharedWorkspaceApi
+    const api = createWeworkPlatformApi(
+      cloudApi,
+      createLocalDeliveryApi(),
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    await expect(
+      api?.workspaces?.listCollaborationGroups('wework-local-workspace')
+    ).resolves.toEqual([])
+    expect(listCloudCollaborationGroups).not.toHaveBeenCalled()
+  })
+
   it('keeps local project resource setup on the local API after creation', async () => {
     const listCloudMembers = vi.fn()
     const cloudApi = {

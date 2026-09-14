@@ -6,19 +6,13 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React from 'react'
 import type {
+  CollaborationGroup,
   CollaborationHostAdapter,
   CollaborationProject,
   SharedWorkspaceApi,
 } from '@wegent/collaboration'
 
 import { CollaborationApp } from '@wegent/collaboration'
-import { webAutomationUiHost } from '@/features/collaboration/automation/WebAutomationHost'
-
-Object.defineProperty(globalThis.crypto, 'randomUUID', {
-  configurable: true,
-  value: jest.fn(() => 'automation-test-id'),
-})
-
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (_key: string, fallback?: string) => fallback ?? _key,
@@ -37,57 +31,9 @@ jest.mock('@/components/ui/dropdown', () => ({
   DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 
-jest.mock('@xyflow/react', () => ({
-  Background: () => null,
-  BaseEdge: () => null,
-  Handle: () => null,
-  MiniMap: () => null,
-  Panel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Position: { Left: 'left', Right: 'right' },
-  ReactFlow: ({
-    children,
-    nodes = [],
-    nodeTypes = {},
-  }: {
-    children: React.ReactNode
-    nodes?: Array<{
-      id: string
-      type: string
-      data: Record<string, unknown>
-    }>
-    nodeTypes?: Record<
-      string,
-      React.ComponentType<{
-        id: string
-        data: Record<string, unknown>
-        selected: boolean
-      }>
-    >
-  }) => (
-    <div>
-      {nodes.map(node => {
-        const Node = nodeTypes[node.type]
-        return Node ? <Node key={node.id} id={node.id} data={node.data} selected={false} /> : null
-      })}
-      {children}
-    </div>
-  ),
-  SelectionMode: { Partial: 'partial' },
-  getBezierPath: () => ['', 0, 0],
-  useNodesState: (nodes: unknown[]) => [nodes, jest.fn(), jest.fn()],
-  useReactFlow: () => ({
-    fitView: jest.fn(),
-    getViewport: () => ({ x: 0, y: 0, zoom: 0.99 }),
-    setViewport: jest.fn(),
-    zoomIn: jest.fn(),
-    zoomOut: jest.fn(),
-  }),
-  useStore: () => false,
-  useViewport: () => ({ zoom: 0.99 }),
-}))
-
 const project: CollaborationProject = {
   id: 'project-1',
+  workspace_id: 'workspace-1',
   public_id: 'AUTO',
   project_key: 'AUTO',
   name: '自动化共享项目',
@@ -105,19 +51,72 @@ const project: CollaborationProject = {
   updated_at: '2026-09-10T00:00:00Z',
 }
 
-describe('CollaborationApp shared automation', () => {
-  function projectApi(automationOverrides: Record<string, unknown> = {}) {
+const workspaceGroup: CollaborationGroup = {
+  id: 'group-1',
+  workspace_id: 'workspace-1',
+  owner_type: 'workspace',
+  owner_id: 'workspace-1',
+  name: '空间交付组',
+  description: '',
+  leader: { kind: 'agent', id: 'agent-1' },
+  members: [{ kind: 'agent', id: 'agent-1' }],
+  coordination_mode: 'manager',
+  policy: {
+    prompt: '持续分配下一个 Issue',
+    trigger_type: 'event',
+    event_type: 'task.created',
+    event_config: {},
+    cron_expression: null,
+    timezone: 'Asia/Shanghai',
+    issue_selector: {},
+    output_policy: { mode: 'comment' },
+    enabled: true,
+  },
+  version: 1,
+  created_by_user_id: 1,
+  created_at: '2026-09-14T00:00:00Z',
+  updated_at: '2026-09-14T00:00:00Z',
+}
+
+describe('CollaborationApp project collaboration groups', () => {
+  function projectApi({
+    workspaceGroups = [workspaceGroup],
+    projectGroups = [],
+    addCollaborationGroup = jest.fn(),
+    createCollaborationGroup = jest.fn(),
+  }: {
+    workspaceGroups?: CollaborationGroup[]
+    projectGroups?: CollaborationGroup[]
+    addCollaborationGroup?: jest.Mock
+    createCollaborationGroup?: jest.Mock
+  } = {}) {
     return {
+      workspaces: {
+        listCollaborationGroups: jest.fn().mockResolvedValue(workspaceGroups),
+        listAgents: jest.fn().mockResolvedValue([]),
+        listMembers: jest.fn().mockResolvedValue([]),
+        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
+      },
+      resources: {
+        list: jest.fn().mockResolvedValue({
+          agents: [],
+          execution_environments: [],
+        }),
+      },
       projects: {
         get: jest.fn().mockResolvedValue(project),
         update: jest.fn().mockResolvedValue(project),
         listExecutionEnvironments: jest.fn().mockResolvedValue([]),
+        listCollaborationGroups: jest.fn().mockResolvedValue(projectGroups),
+        addCollaborationGroup,
+        createCollaborationGroup,
+        removeCollaborationGroup: jest.fn(),
       },
       issues: {
         getBoardSnapshot: jest.fn().mockResolvedValue({
           items: [],
           members: [],
-          agents: [],
+          agents: [{ id: 'agent-binding-1', team_id: 12, name: '代码智能体' }],
           taskBindings: [],
         }),
         update: jest.fn(),
@@ -132,7 +131,7 @@ describe('CollaborationApp shared automation', () => {
       agents: {
         list: jest.fn().mockResolvedValue([]),
       },
-      automations: automationOverrides,
+      automations: {},
       incomingHooks: {
         catalog: jest.fn().mockResolvedValue([]),
       },
@@ -154,77 +153,57 @@ describe('CollaborationApp shared automation', () => {
     }
   }
 
-  it('mounts the shared dispatch-policy view on Web', async () => {
-    const listAutomations = jest.fn().mockResolvedValue([])
-    const api = projectApi({ list: listAutomations })
+  it('adds a workspace collaboration group to the project', async () => {
+    const addCollaborationGroup = jest.fn().mockResolvedValue(workspaceGroup)
+    const api = projectApi({ addCollaborationGroup })
 
-    render(
-      <CollaborationApp
-        api={api}
-        host={automationHost()}
-        locale="zh-CN"
-        pollIntervalMs={0}
-        automationUiHost={webAutomationUiHost}
-      />
-    )
+    render(<CollaborationApp api={api} host={automationHost()} locale="zh-CN" pollIntervalMs={0} />)
 
     fireEvent.click(await screen.findByTestId('collaboration-project-settings-dispatch'))
-    expect(await screen.findByTestId('project-automation-policy')).toBeInTheDocument()
-    await waitFor(() => expect(listAutomations).toHaveBeenCalledWith(project.id))
-
-    fireEvent.click(screen.getByTestId('automation-welcome-create-policy'))
-
-    expect(await screen.findByTestId('automation-policy-name')).toBeInTheDocument()
+    fireEvent.click(await screen.findByTestId('collaboration-group-add-group-1'))
+    await waitFor(() =>
+      expect(addCollaborationGroup).toHaveBeenCalledWith(project.id, workspaceGroup.id)
+    )
   })
 
-  it('persists the shared natural-language dispatch policy on Web', async () => {
-    const createAutomation = jest.fn().mockImplementation(async (_projectId, input) => ({
-      id: 'automation-created',
-      projectId: project.id,
-      ...input,
-      executionEnvironment: input.executionEnvironment ?? 'cloud',
-      enabled: true,
-      nextRunAt: null,
-      lastRunAt: null,
-      lastRunStatus: null,
-      version: 1,
-      createdAt: '2026-09-11T00:00:00Z',
-      updatedAt: '2026-09-11T00:00:00Z',
+  it('creates a project-owned collaboration group', async () => {
+    const createCollaborationGroup = jest.fn().mockImplementation(async (_projectId, input) => ({
+      ...workspaceGroup,
+      id: 'project-group-1',
+      owner_type: 'project',
+      owner_id: project.id,
+      name: input.name,
     }))
     const api = projectApi({
-      list: jest.fn().mockResolvedValue([]),
-      create: createAutomation,
+      workspaceGroups: [],
+      createCollaborationGroup,
     })
 
-    render(
-      <CollaborationApp
-        api={api}
-        host={automationHost()}
-        locale="zh-CN"
-        pollIntervalMs={0}
-        automationUiHost={webAutomationUiHost}
-      />
-    )
+    render(<CollaborationApp api={api} host={automationHost()} locale="zh-CN" pollIntervalMs={0} />)
 
     fireEvent.click(await screen.findByTestId('collaboration-project-settings-dispatch'))
-    fireEvent.click(await screen.findByTestId('automation-welcome-create-policy'))
-    fireEvent.change(screen.getByTestId('automation-policy-name'), {
-      target: { value: 'Web dispatch policy' },
+    fireEvent.click(await screen.findByTestId('collaboration-group-open-create'))
+    fireEvent.change(await screen.findByTestId('collaboration-group-name'), {
+      target: { value: '项目交付组' },
     })
-    fireEvent.change(screen.getByTestId('automation-coordinator-prompt'), {
-      target: { value: 'Inspect pending Issues and create verifiable assignments.' },
+    fireEvent.click(screen.getByLabelText('代码智能体'))
+    fireEvent.change(screen.getByTestId('collaboration-group-leader'), {
+      target: { value: 'agent:12' },
     })
-    fireEvent.click(screen.getByTestId('automation-save-policy'))
+    fireEvent.change(screen.getByTestId('collaboration-group-prompt'), {
+      target: { value: '检查待办并持续分配下一个 Issue' },
+    })
+    fireEvent.click(screen.getByTestId('collaboration-group-create'))
 
     await waitFor(() =>
-      expect(createAutomation).toHaveBeenCalledWith(project.id, expect.anything())
+      expect(createCollaborationGroup).toHaveBeenCalledWith(project.id, expect.anything())
     )
-    const savedInput = createAutomation.mock.calls.at(-1)?.[1]
+    const savedInput = createCollaborationGroup.mock.calls.at(-1)?.[1]
     expect(savedInput).toMatchObject({
-      name: 'Web dispatch policy',
+      name: '项目交付组',
+      leader: { kind: 'agent', id: '12' },
+      members: [{ kind: 'agent', id: '12' }],
     })
-    expect(JSON.stringify(savedInput)).toContain(
-      'Inspect pending Issues and create verifiable assignments.'
-    )
+    expect(savedInput.policy.prompt).toBe('检查待办并持续分配下一个 Issue')
   })
 })

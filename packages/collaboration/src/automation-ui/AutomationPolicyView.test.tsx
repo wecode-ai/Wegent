@@ -4,34 +4,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act, type ReactNode } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("@xyflow/react", () => ({
-  Background: () => null,
-  MarkerType: { ArrowClosed: "arrowclosed" },
-  Position: { Left: "left", Right: "right" },
-  ReactFlow: ({
-    nodes,
-    edges,
-  }: {
-    nodes: Array<{ id: string; data: { label: ReactNode } }>;
-    edges: Array<{ id: string; source: string; target: string }>;
-  }) => (
-    <div data-testid="mock-automation-workflow-dag">
-      {nodes.map((node) => (
-        <div key={node.id}>{node.data.label}</div>
-      ))}
-      {edges.map((edge) => (
-        <span
-          data-testid={`mock-automation-workflow-edge-${edge.source}-${edge.target}`}
-          key={edge.id}
-        />
-      ))}
-    </div>
-  ),
-}));
 
 import type { AutomationUiRule, AutomationUiStep } from "../automation";
 import { AutomationPolicyView } from "./AutomationPolicyView";
@@ -314,9 +289,9 @@ describe("AutomationPolicyView", () => {
     await change("automation-workflow-step-name-1", "Codex");
     await change("automation-workflow-step-agent-1", "agent-codex");
 
-    expect(
-      document.querySelector('[data-testid^="mock-automation-workflow-edge-"]'),
-    ).toBeTruthy();
+    expect(element("automation-workflow-steps")).toBeTruthy();
+    expect(element("automation-workflow-step-0")).toBeTruthy();
+    expect(element("automation-workflow-step-1")).toBeTruthy();
 
     await click("automation-save-policy");
     await flush();

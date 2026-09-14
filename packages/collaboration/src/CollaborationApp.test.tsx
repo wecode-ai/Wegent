@@ -39,6 +39,7 @@ vi.mock("./workspace-controller", () => ({
 import { CollaborationApp } from "./CollaborationApp";
 import { CollaborationSettings } from "./CollaborationSettings";
 import {
+  ProjectCollaborationGroups,
   ProjectDispatchSettings,
   ProjectSettingsShell,
 } from "./project-manage";
@@ -105,22 +106,25 @@ function createHost(
   };
 }
 
-function renderApp(
-  host: CollaborationHostAdapter,
-  automationUiHost?: ComponentProps<
-    typeof CollaborationApp
-  >["automationUiHost"],
-) {
+function renderApp(host: CollaborationHostAdapter) {
+  const api = {
+    workspaces: {
+      listCollaborationGroups: vi.fn(async () => []),
+    },
+    projects: {
+      listCollaborationGroups: vi.fn(async () => []),
+    },
+  } as unknown as SharedWorkspaceApi;
   return CollaborationApp({
-    api: {} as SharedWorkspaceApi,
+    api,
     host,
-    automationUiHost,
   });
 }
 
 function createProject(version: number): CollaborationProject {
   return {
     id: "project-1",
+    workspace_id: "workspace-1",
     project_key: "PRJ",
     name: "Project",
     description: "",
@@ -342,50 +346,22 @@ describe("CollaborationApp API boundary", () => {
 
     expect(dispatchSection).toBeDefined();
     expect(dispatchSection?.content.type).toBe(ProjectDispatchSettings);
-    expect(dispatchSection?.content.props.managerName).toBe("Project owner");
-    expect(dispatchSection?.content.props.canManage).toBe(true);
-    expect(dispatchSection?.content.props.automationContent).toBeDefined();
+    expect(
+      dispatchSection?.content.props.collaborationGroupsContent,
+    ).toBeDefined();
+    expect(dispatchSection?.content.props.collaborationGroupsContent.type).toBe(
+      ProjectCollaborationGroups,
+    );
 
-    const configureAgents = vi.fn();
-    const continueManualAssignment = vi.fn();
     const unavailableState = ProjectDispatchSettings({
-      canManage: true,
-      managerName: "Project owner",
-      onConfigureAgents: configureAgents,
-      onContinueManualAssignment: continueManualAssignment,
-      translate: (_key, fallback) => fallback,
-    });
-    findByTestId(
-      unavailableState,
-      "collaboration-dispatch-configure-agents",
-    )?.props.onClick();
-    findByTestId(
-      unavailableState,
-      "collaboration-dispatch-continue-manual",
-    )?.props.onClick();
-    expect(configureAgents).toHaveBeenCalledOnce();
-    expect(continueManualAssignment).toHaveBeenCalledOnce();
-
-    dispatchSection?.content.props.onContinueManualAssignment();
-    expect(host.navigate).toHaveBeenLastCalledWith({
-      projectId: "project-1",
-      issueId: null,
-      view: "board",
-    });
-
-    const memberState = ProjectDispatchSettings({
-      canManage: false,
-      managerName: "Project owner",
-      onConfigureAgents: vi.fn(),
-      onContinueManualAssignment: vi.fn(),
       translate: (_key, fallback) => fallback,
     });
     expect(
-      findByTestId(memberState, "collaboration-dispatch-configure-agents"),
+      findByTestId(unavailableState, "collaboration-dispatch-configure-agents"),
     ).toBeUndefined();
     expect(
-      findByTestId(memberState, "collaboration-dispatch-continue-manual"),
-    ).toBeDefined();
+      findByTestId(unavailableState, "collaboration-dispatch-continue-manual"),
+    ).toBeUndefined();
   });
 
   it("keeps project files inside the shared settings module", () => {

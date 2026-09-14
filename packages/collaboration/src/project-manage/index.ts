@@ -6,6 +6,7 @@ export * from "./ProjectManageView";
 export * from "./ProjectSettingsShell";
 export * from "./ProjectExecutionEnvironments";
 export * from "./ProjectDispatchSettings";
+export * from "./ProjectCollaborationGroups";
 export * from "./memberSearch";
 export * from "./projectMutationQueue";
 export * from "./BoardLayoutEditor";

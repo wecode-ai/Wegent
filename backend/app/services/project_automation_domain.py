@@ -208,6 +208,8 @@ def validate_assignment(
 def validate_trigger(
     trigger_type: str, event_type: str | None, cron_expression: str | None
 ) -> None:
+    if trigger_type == "manual" and event_type is None and cron_expression is None:
+        return
     if trigger_type == "schedule":
         if not cron_expression:
             raise HTTPException(

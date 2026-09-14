@@ -58,6 +58,7 @@ import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import {
   CollaborationSettings,
   CollaborationProjectViewShell,
+  ProjectCollaborationGroups,
   ProjectIssueTable,
   ProjectCreateDialog,
   ProjectSpaceSidebar,
@@ -164,7 +165,6 @@ import {
 } from './CloudTodoBoardCard'
 import { CloudProjectManageView } from './CloudProjectManageView'
 import { waitForDwsAuthentication } from './dwsAuth'
-import { ProjectAutomationView } from './ProjectAutomationView'
 import {
   canEditProjectSpaceIssue,
   type LocatedProjectSpace,
@@ -1396,14 +1396,6 @@ export function CloudTodoWorkspace({
   const selectedProjectKey = selectedProject
     ? projectSpaceKey(projectSpaceRef(selectedProject))
     : null
-  const selectedProjectManagerName = selectedProject
-    ? (collaborationProjectMembers[selectedProjectKey ?? '']?.find(
-        member => member.user_id === selectedProject.created_by_user_id
-      )?.user_name ??
-      (selectedProject.created_by_user_id === user.id
-        ? user.user_name
-        : `#${selectedProject.created_by_user_id}`))
-    : user.user_name
   const activeItemTaskBindings = useMemo(() => {
     const refreshedBindings =
       itemTaskBindingsProjectKey === selectedProjectKey
@@ -4714,87 +4706,41 @@ export function CloudTodoWorkspace({
                         ? [
                             {
                               id: 'dispatch',
-                              label: t('todo.assignment_dispatch', '分配与调度'),
+                              label: t('todo.collaboration_groups', '协作组'),
                               testId: 'cloud-project-settings-dispatch',
                               content: (
                                 <ProjectDispatchSettings
-                                  canManage={['Owner', 'Maintainer'].includes(
-                                    selectedProject.access_role ?? 'Owner'
-                                  )}
-                                  managerName={selectedProjectManagerName}
-                                  onConfigureAgents={() => setProjectSettingsSectionId('agents')}
-                                  onContinueManualAssignment={() => setProjectView('board')}
                                   translate={(key, fallback, options) =>
                                     fallback === undefined
                                       ? t(key, options)
                                       : t(key, fallback, options)
                                   }
-                                  automationContent={
-                                    selectedProjectAgents.length > 0 ? (
-                                      <ProjectAutomationView
+                                  collaborationGroupsContent={
+                                    selectedProject.location === 'cloud' &&
+                                    selectedProject.workspace_id &&
+                                    cloudWorkspaceApi?.workspaces?.listCollaborationGroups &&
+                                    cloudWorkspaceApi.projects.listCollaborationGroups ? (
+                                      <ProjectCollaborationGroups
                                         key={selectedProject.id}
-                                        api={
-                                          selectedProject.location === 'local'
-                                            ? selectedProjectApi
-                                            : undefined
+                                        api={cloudWorkspaceApi}
+                                        projectId={String(selectedProject.id)}
+                                        workspaceId={String(selectedProject.workspace_id)}
+                                        locale={i18n.language.startsWith('zh') ? 'zh-CN' : 'en'}
+                                        members={
+                                          collaborationProjectMembers[selectedProjectKey ?? ''] ??
+                                          []
                                         }
-                                        workspaceApi={
-                                          selectedProject.location === 'cloud'
-                                            ? cloudWorkspaceApi
-                                            : undefined
-                                        }
-                                        projectAutomationApi={
-                                          selectedProject.location === 'local'
-                                            ? selectedProjectServices?.projectAutomationApi
-                                            : undefined
-                                        }
-                                        projectIncomingHookApi={
-                                          selectedProject.location === 'local'
-                                            ? selectedProjectServices?.projectIncomingHookApi
-                                            : undefined
-                                        }
-                                        project={selectedProject}
-                                        projectAgents={selectedProjectAgents.map(agent => ({
-                                          id: agent.id,
+                                        agents={selectedProjectAgents.map(agent => ({
+                                          id: String(agent.id),
                                           name: agent.name,
+                                          agent_id: String(agent.id),
+                                          ...(agent.wegentTeamId == null
+                                            ? {}
+                                            : { team_id: agent.wegentTeamId }),
                                         }))}
-                                        currentUserId={selectedProject.current_user_id}
-                                        canManageAgents={['Owner', 'Maintainer'].includes(
+                                        canManage={['Owner', 'Maintainer'].includes(
                                           selectedProject.access_role ?? 'Owner'
                                         )}
-                                        onProjectUpdated={updated =>
-                                          replaceProject(selectedProject, updated)
-                                        }
-                                        onOpenIssue={issueId => {
-                                          const existing = selectedProjectBoardItems.find(
-                                            item => item.id === issueId
-                                          )
-                                          if (existing) {
-                                            setSelectedItem(existing)
-                                            return
-                                          }
-                                          const issueRequest =
-                                            selectedProject.location === 'cloud'
-                                              ? cloudWorkspaceApi?.issues.get(issueId)
-                                              : selectedProjectApi
-                                                ? selectedProjectApi.getLoopItem(issueId)
-                                                : null
-                                          if (!issueRequest) return
-                                          void issueRequest
-                                            .then(issue =>
-                                              setSelectedItem({
-                                                ...(issue as LocatedLoopItem),
-                                                project_store: selectedProject.project_store,
-                                              })
-                                            )
-                                            .catch(cause =>
-                                              setBoardError(
-                                                cause instanceof Error
-                                                  ? cause.message
-                                                  : t('todo.work_item_detail_load_failed')
-                                              )
-                                            )
-                                        }}
                                       />
                                     ) : undefined
                                   }

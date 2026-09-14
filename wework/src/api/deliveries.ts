@@ -298,6 +298,7 @@ export interface ProjectTaskAttachment extends CloudLoopItemAttachment {
 
 export interface CloudProject {
   id: CloudProjectId
+  workspace_id?: string | null
   public_id: string
   project_key: string
   name: string

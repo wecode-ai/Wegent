@@ -21,7 +21,6 @@ import TopNavigation from '@/features/layout/TopNavigation'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
-import { webAutomationUiHost } from '@/features/collaboration/automation/WebAutomationHost'
 import { collaborationLocationPath } from '@/features/collaboration/routes'
 import {
   CollapsedSidebarButtons,
@@ -45,6 +44,7 @@ function workspaceViewFromPath(pathname: string): CollaborationWorkspaceView {
   if (pathname.endsWith('/projects')) return 'projects'
   if (pathname.endsWith('/members')) return 'members'
   if (pathname.endsWith('/agents')) return 'agents'
+  if (pathname.endsWith('/collaboration-groups')) return 'collaboration-groups'
   if (pathname.endsWith('/execution-environments')) return 'execution-environments'
   if (pathname.endsWith('/settings')) return 'settings'
   return 'home'
@@ -256,7 +256,6 @@ export function CollaborationPage() {
       api={api}
       host={platformHost}
       locale={locale}
-      automationUiHost={webAutomationUiHost}
       renderShell={({ main, sidebar }) => <CollaborationWebShell main={main} sidebar={sidebar} />}
     />
   )

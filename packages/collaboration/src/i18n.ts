@@ -23,7 +23,7 @@ export const collaborationMessages = {
     projectAgents: "智能体",
     projectEnvironments: "执行环境",
     boardSettings: "看板设置",
-    assignmentAndDispatch: "分配与调度",
+    assignmentAndDispatch: "协作组",
     projectFiles: "文件与产物",
     projectManager: "项目管理者",
     currentUser: "我自己",
@@ -128,7 +128,7 @@ export const collaborationMessages = {
     projectAgents: "Agents",
     projectEnvironments: "Execution environments",
     boardSettings: "Board settings",
-    assignmentAndDispatch: "Assignment & dispatch",
+    assignmentAndDispatch: "Collaboration groups",
     projectFiles: "Files & deliverables",
     projectManager: "Project manager",
     currentUser: "Me",
@@ -598,23 +598,19 @@ const sharedMessages: Record<
     "todo.workflow_task_status_running": "执行中",
     "todo.workflow_task_status_succeeded": "成功",
     "todo.workflow_manager": "工作流管理器",
-    "todo.assignment_and_dispatch": "分配与调度",
-    "todo.assignment_and_dispatch_description":
-      "明确谁负责项目，并约定 Issue 如何分配给成员或智能体。",
-    "todo.project_manager": "项目管理者",
+    "todo.collaboration_groups": "协作组",
+    "todo.collaboration_groups_description":
+      "组织人与智能体共同处理 Issue，并在同一个协作组中配置触发、协作和输出方式。",
+    "todo.collaboration_groups_unavailable": "暂时无法管理协作组",
+    "todo.collaboration_groups_unavailable_description":
+      "协作组服务当前不可用。Issue 的手动负责人设置不受影响。",
     "todo.current_user": "我自己",
-    "todo.project_manager_description":
-      "项目创建者默认负责成员、Issue 分配和交付确认。",
     "todo.assignment_source": "分配来源",
-    "todo.assignment_source_description":
-      "手动分配、成员主动参与和项目调度会分别记录来源与实际执行者。",
-    "todo.dispatch_policy": "项目调度原则",
-    "todo.dispatch_policy_unavailable_manager":
-      "当前空间未启用 AI 项目管家。先配置本项目智能体，再返回这里设置调度原则。",
-    "todo.dispatch_policy_unavailable_member":
-      "当前空间未启用 AI 项目管家。请联系项目管理员配置；你仍可手动分配 Issue 或主动开始处理。",
-    "todo.configure_project_agents": "配置项目智能体",
-    "todo.continue_manual_assignment": "继续使用手动分配",
+    "todo.assignment_mode": "分配方式",
+    "todo.shared_agent": "共享智能体",
+    "todo.project_owned_agent": "项目智能体",
+    "todo.codex_runtime_selection_hint":
+      "运行环境在启动任务时选择，不与智能体绑定。",
     "todo.workflow_open_task": "打开任务",
     "todo.workflow_outcome_passed": "已通过验收",
     "todo.workflow_runtime_title": "执行记录",
@@ -996,23 +992,20 @@ const sharedMessages: Record<
     "todo.workflow_task_status_running": "Running",
     "todo.workflow_task_status_succeeded": "Succeeded",
     "todo.workflow_manager": "Workflow manager",
-    "todo.assignment_and_dispatch": "Assignment and dispatch",
-    "todo.assignment_and_dispatch_description":
-      "Define who manages the project and how issues are assigned to members or agents.",
-    "todo.project_manager": "Project manager",
+    "todo.collaboration_groups": "Collaboration groups",
+    "todo.collaboration_groups_description":
+      "Organize people and agents to handle issues, with trigger, coordination, and output policies in one group.",
+    "todo.collaboration_groups_unavailable":
+      "Collaboration groups are temporarily unavailable",
+    "todo.collaboration_groups_unavailable_description":
+      "The collaboration group service is unavailable. Manual Issue assignment is unaffected.",
     "todo.current_user": "Me",
-    "todo.project_manager_description":
-      "The project creator manages members, issue assignment, and delivery confirmation by default.",
     "todo.assignment_source": "Assignment source",
-    "todo.assignment_source_description":
-      "Manual assignment, self-participation, and project dispatch record distinct sources and actual executors.",
-    "todo.dispatch_policy": "Project dispatch policy",
-    "todo.dispatch_policy_unavailable_manager":
-      "This workspace has no AI project manager enabled. Configure the agents available to this project, then return here to define its dispatch policy.",
-    "todo.dispatch_policy_unavailable_member":
-      "This workspace has no AI project manager enabled. Contact a project administrator to configure one; you can still assign issues manually or start work yourself.",
-    "todo.configure_project_agents": "Configure project agents",
-    "todo.continue_manual_assignment": "Continue with manual assignment",
+    "todo.assignment_mode": "Assignment mode",
+    "todo.shared_agent": "Shared agent",
+    "todo.project_owned_agent": "Project agent",
+    "todo.codex_runtime_selection_hint":
+      "Choose an execution environment when starting a run; it is not bound to the agent.",
     "todo.workflow_open_task": "Open task",
     "todo.workflow_outcome_passed": "Review passed",
     "todo.workflow_runtime_title": "Execution history",

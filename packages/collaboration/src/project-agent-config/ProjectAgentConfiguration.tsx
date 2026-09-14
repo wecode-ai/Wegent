@@ -7,11 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { CollaborationTranslate } from "../i18n";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
-import type {
-  CollaborationExecutionEnvironment,
-  CollaborationOwnedAgent,
-  CollaborationProject,
-} from "../types";
+import type { CollaborationOwnedAgent, CollaborationProject } from "../types";
 import {
   createCodexProjectAgentInput,
   createWegentProjectAgentInput,
@@ -24,25 +20,6 @@ type AgentMode = "wegent" | "codex";
 
 function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message ? cause.message : fallback;
-}
-
-function environmentLabel(
-  environment: CollaborationExecutionEnvironment,
-  translate: CollaborationTranslate,
-) {
-  const kind =
-    environment.kind === "cloud_host"
-      ? translate("todo.cloud_execution_environment", "云端执行环境")
-      : translate("todo.local_execution_environment", "本地执行环境");
-  const status =
-    environment.status === "online"
-      ? translate("todo.execution_environment_online", "在线")
-      : environment.status === "offline"
-        ? translate("todo.execution_environment_offline", "离线")
-        : environment.status === "provisioning"
-          ? translate("todo.execution_environment_provisioning", "准备中")
-          : translate("todo.execution_environment_error", "异常");
-  return `${environment.name} · ${kind} · ${status}`;
 }
 
 export function ProjectAgentConfiguration({
@@ -64,11 +41,7 @@ export function ProjectAgentConfiguration({
   const [workspaceAgents, setWorkspaceAgents] = useState<
     CollaborationOwnedAgent[]
   >([]);
-  const [environments, setEnvironments] = useState<
-    CollaborationExecutionEnvironment[]
-  >([]);
   const [selectedTeamId, setSelectedTeamId] = useState("");
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState("");
   const [codexName, setCodexName] = useState("");
   const [capabilityDescription, setCapabilityDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
@@ -85,9 +58,7 @@ export function ProjectAgentConfiguration({
   useEffect(() => {
     setAgents([]);
     setWorkspaceAgents([]);
-    setEnvironments([]);
     setSelectedTeamId("");
-    setSelectedEnvironmentId("");
     setComposerOpen(false);
     setError(null);
     let active = true;
@@ -98,38 +69,25 @@ export function ProjectAgentConfiguration({
       workspaceId && api.workspaces
         ? api.workspaces.listAgents(workspaceId)
         : [],
-      api.projects.listExecutionEnvironments(project.id),
     ])
-      .then(
-        ([
-          nextAgents,
-          personalResources,
-          nextWorkspaceAgents,
-          nextEnvironments,
-        ]) => {
-          if (!active) return;
-          setAgents(
-            nextAgents
-              .map(normalizeProjectAgent)
-              .filter((agent) => agent.status !== "archived"),
-          );
-          const availableAgents = new Map<number, CollaborationOwnedAgent>();
-          for (const agent of [
-            ...personalResources.agents,
-            ...nextWorkspaceAgents,
-          ]) {
-            if (agent.status === "available" && agent.team_id) {
-              availableAgents.set(agent.team_id, agent);
-            }
+      .then(([nextAgents, personalResources, nextWorkspaceAgents]) => {
+        if (!active) return;
+        setAgents(
+          nextAgents
+            .map(normalizeProjectAgent)
+            .filter((agent) => agent.status !== "archived"),
+        );
+        const availableAgents = new Map<number, CollaborationOwnedAgent>();
+        for (const agent of [
+          ...personalResources.agents,
+          ...nextWorkspaceAgents,
+        ]) {
+          if (agent.status === "available" && agent.team_id) {
+            availableAgents.set(agent.team_id, agent);
           }
-          setWorkspaceAgents([...availableAgents.values()]);
-          setEnvironments(
-            nextEnvironments.filter((environment) =>
-              Boolean(environment.device_key?.trim()),
-            ),
-          );
-        },
-      )
+        }
+        setWorkspaceAgents([...availableAgents.values()]);
+      })
       .catch((cause) => {
         if (!active) return;
         setError(
@@ -167,14 +125,6 @@ export function ProjectAgentConfiguration({
       ) ?? null,
     [selectedTeamId, workspaceAgents],
   );
-  const selectedEnvironment = useMemo(
-    () =>
-      environments.find(
-        (environment) => environment.id === selectedEnvironmentId,
-      ) ?? null,
-    [environments, selectedEnvironmentId],
-  );
-
   async function createAgent(input: Record<string, unknown>) {
     setBusy(true);
     setError(null);
@@ -206,11 +156,9 @@ export function ProjectAgentConfiguration({
   }
 
   async function createCodexAgent() {
-    if (!selectedEnvironment || !codexName.trim()) return;
+    if (!codexName.trim()) return;
     const created = await createAgent(
       createCodexProjectAgentInput({
-        project,
-        environment: selectedEnvironment,
         name: codexName,
         capabilityDescription,
         systemPrompt,
@@ -220,7 +168,6 @@ export function ProjectAgentConfiguration({
     setCodexName("");
     setCapabilityDescription("");
     setSystemPrompt("");
-    setSelectedEnvironmentId("");
     setComposerOpen(false);
   }
 
@@ -305,14 +252,9 @@ export function ProjectAgentConfiguration({
                       </span>
                       <span className={styles.metadata}>
                         {agent.runtime === "wegent"
-                          ? translate("todo.wegent_managed_agent", "云端托管")
-                          : `${
-                              agent.executionDeviceId ??
-                              translate(
-                                "todo.execution_environment_unbound",
-                                "未绑定执行环境",
-                              )
-                            }`}
+                          ? translate("todo.shared_agent", "共享智能体")
+                          : agent.capabilityDescription ||
+                            translate("todo.project_owned_agent", "项目智能体")}
                       </span>
                     </span>
                   </div>
@@ -473,7 +415,7 @@ export function ProjectAgentConfiguration({
                         )}
                       </p>
                     )
-                  ) : environments.length ? (
+                  ) : (
                     <div className={styles.form}>
                       <label className={styles.field}>
                         {translate("todo.agent_name", "智能体名称")}
@@ -518,42 +460,17 @@ export function ProjectAgentConfiguration({
                           value={systemPrompt}
                         />
                       </label>
-                      <label className={styles.field}>
-                        {translate("todo.execution_environment", "执行环境")}
-                        <select
-                          className={styles.select}
-                          data-testid="project-agent-codex-environment"
-                          onChange={(event) =>
-                            setSelectedEnvironmentId(event.target.value)
-                          }
-                          value={selectedEnvironmentId}
-                        >
-                          <option value="">
-                            {translate(
-                              "todo.select_execution_environment",
-                              "选择执行环境",
-                            )}
-                          </option>
-                          {environments.map((environment) => (
-                            <option key={environment.id} value={environment.id}>
-                              {environmentLabel(environment, translate)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
                       <div className={styles.formFooter}>
                         <p className={styles.hint}>
                           {translate(
-                            "todo.codex_environment_hint",
-                            "任务会在所选执行环境中运行，并绑定当前项目工作区。",
+                            "todo.codex_runtime_selection_hint",
+                            "运行环境在启动任务时选择，不与智能体绑定。",
                           )}
                         </p>
                         <button
                           className={styles.primaryButton}
                           data-testid="project-agent-codex-create"
-                          disabled={
-                            !codexName.trim() || !selectedEnvironment || busy
-                          }
+                          disabled={!codexName.trim() || busy}
                           onClick={() => void createCodexAgent()}
                           type="button"
                         >
@@ -566,16 +483,6 @@ export function ProjectAgentConfiguration({
                         </button>
                       </div>
                     </div>
-                  ) : (
-                    <p
-                      className={styles.empty}
-                      data-testid="project-agent-codex-environment-empty"
-                    >
-                      {translate(
-                        "todo.no_workspace_execution_environments",
-                        "项目还没有执行环境，请先在项目设置的执行环境页面添加。",
-                      )}
-                    </p>
                   )}
                 </div>
               </section>

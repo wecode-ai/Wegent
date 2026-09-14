@@ -66,7 +66,6 @@ import {
   subscribeProjectSpaceTaskContextChanged,
   type LocatedProjectSpace,
 } from './projectSpaceSelection'
-import { weworkAutomationUiHost } from './weworkAutomationUiHost'
 
 const initialLocation: CollaborationPlatformLocation = {
   platformView: 'spaces',
@@ -256,6 +255,10 @@ export function createLocalWorkspaceApi(
       listAgents: async () => [],
       addAgent: unavailable,
       removeAgent: unavailable,
+      listCollaborationGroups: async () => [],
+      createCollaborationGroup: unavailable,
+      updateCollaborationGroup: unavailable,
+      removeCollaborationGroup: unavailable,
       listExecutionEnvironments: executionEnvironments,
       addExecutionEnvironment: unavailable,
       removeExecutionEnvironment: unavailable,
@@ -449,6 +452,26 @@ export function createWeworkPlatformApi(
         return isLocalWorkspace(workspaceId)
           ? localApi.workspaces!.removeAgent(workspaceId, teamId)
           : cloudApi.workspaces!.removeAgent(workspaceId, teamId)
+      },
+      listCollaborationGroups(workspaceId) {
+        return isLocalWorkspace(workspaceId)
+          ? localApi.workspaces!.listCollaborationGroups(workspaceId)
+          : cloudApi.workspaces!.listCollaborationGroups(workspaceId)
+      },
+      createCollaborationGroup(workspaceId, input) {
+        return isLocalWorkspace(workspaceId)
+          ? localApi.workspaces!.createCollaborationGroup(workspaceId, input)
+          : cloudApi.workspaces!.createCollaborationGroup(workspaceId, input)
+      },
+      updateCollaborationGroup(workspaceId, groupId, input) {
+        return isLocalWorkspace(workspaceId)
+          ? localApi.workspaces!.updateCollaborationGroup(workspaceId, groupId, input)
+          : cloudApi.workspaces!.updateCollaborationGroup(workspaceId, groupId, input)
+      },
+      removeCollaborationGroup(workspaceId, groupId) {
+        return isLocalWorkspace(workspaceId)
+          ? localApi.workspaces!.removeCollaborationGroup(workspaceId, groupId)
+          : cloudApi.workspaces!.removeCollaborationGroup(workspaceId, groupId)
       },
       listExecutionEnvironments(workspaceId) {
         return isLocalWorkspace(workspaceId)
@@ -875,7 +898,6 @@ export function WeworkSharedProject({
           api={scopedApi}
           host={projectHost}
           locale={locale}
-          automationUiHost={weworkAutomationUiHost}
           showProjectBack={false}
           refreshProjectRequestKey={refreshProjectRequestKey}
           onCreateTask={

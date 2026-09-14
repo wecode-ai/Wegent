@@ -58,7 +58,7 @@ import {
   type SharedIssueDetailTaskBinding,
   type SharedIssueDetailWorkflowPlan,
 } from "./issue-detail";
-import { IssueWorkflowDag, type SharedWorkflowNode } from "./issue-detail";
+import { IssueWorkflowStages, type SharedWorkflowNode } from "./issue-detail";
 import "./issue-detail/issue-detail.css";
 import type {
   CollaborationAssignment,
@@ -2939,7 +2939,7 @@ export function TodoEditor(props: TodoEditorProps) {
                         </span>
                       </div>
                       {displayedWorkflow?.nodes?.length ? (
-                        <IssueWorkflowDag
+                        <IssueWorkflowStages
                           translate={workflowTranslate}
                           nodes={
                             displayedWorkflow.nodes as SharedWorkflowNode[]

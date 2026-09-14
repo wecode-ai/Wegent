@@ -97,7 +97,11 @@ class ProjectAutomationService:
             .order_by(ProjectAutomationRule.updated_at.desc())
             .all()
         )
-        return [self._rule_view(db, row) for row in rows]
+        return [
+            self._rule_view(db, row)
+            for row in rows
+            if not _metadata(row).get("collaboration_group_id")
+        ]
 
     def create(
         self,

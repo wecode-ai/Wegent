@@ -12,11 +12,7 @@ import type {
   SharedWorkspaceApi,
   WorkspaceProjectAgent,
 } from "../ports/SharedWorkspaceApi";
-import type {
-  CollaborationExecutionEnvironment,
-  CollaborationOwnedAgent,
-  CollaborationProject,
-} from "../types";
+import type { CollaborationOwnedAgent, CollaborationProject } from "../types";
 import { ProjectAgentConfiguration } from "./ProjectAgentConfiguration";
 
 const project: CollaborationProject = {
@@ -48,20 +44,6 @@ const workspaceAgent: CollaborationOwnedAgent = {
   execution_environment_ids: [],
 };
 
-const environment: CollaborationExecutionEnvironment = {
-  id: "environment-1",
-  device_id: 22,
-  device_key: "device-macbook",
-  name: "MacBook Pro",
-  kind: "local_device",
-  coding_tools: ["claude_code", "codex"],
-  owner_type: "user",
-  owner_id: "7",
-  owner_name: "李明",
-  status: "online",
-  updated_at: "2026-09-12T00:00:00Z",
-};
-
 function projectAgent(
   values: Partial<WorkspaceProjectAgent> = {},
 ): WorkspaceProjectAgent {
@@ -78,7 +60,6 @@ function projectAgent(
 function createApi(options?: {
   agents?: WorkspaceProjectAgent[];
   workspaceAgents?: CollaborationOwnedAgent[];
-  environments?: CollaborationExecutionEnvironment[];
 }) {
   const create = vi.fn(async (_projectId, input: Record<string, unknown>) =>
     projectAgent({
@@ -91,11 +72,7 @@ function createApi(options?: {
     projectAgent({ id: agentId, status: "archived", version: 2 }),
   );
   const api = {
-    projects: {
-      listExecutionEnvironments: vi.fn(
-        async () => options?.environments ?? [environment],
-      ),
-    },
+    projects: {},
     resources: {
       list: vi.fn(async () => ({
         agents: [],
@@ -190,7 +167,6 @@ describe("ProjectAgentConfiguration", () => {
     await change("project-agent-codex-name", "Codex 产品工程师");
     await change("project-agent-codex-capability", "实现产品需求");
     await change("project-agent-codex-prompt", "遵循项目规范");
-    await change("project-agent-codex-environment", environment.id);
     await click("project-agent-codex-create");
 
     expect(create).toHaveBeenNthCalledWith(2, project.id, {
@@ -198,12 +174,6 @@ describe("ProjectAgentConfiguration", () => {
       runtime: "codex",
       capabilityDescription: "实现产品需求",
       systemPrompt: "遵循项目规范",
-      executionDeviceId: "device-macbook",
-      executionEnvironment: "local",
-      workspaceBinding: {
-        type: "backend_project",
-        projectId: project.id,
-      },
     });
     expect(element("project-agent-row-created-codex")).toBeTruthy();
   });
@@ -226,7 +196,7 @@ describe("ProjectAgentConfiguration", () => {
   });
 
   it("keeps project Agent management available without workspace resources", async () => {
-    const { api } = createApi({ workspaceAgents: [], environments: [] });
+    const { api } = createApi({ workspaceAgents: [] });
     await render(api);
     await click("project-agent-add");
     expect(element("project-agent-wegent-empty").textContent).toContain(
@@ -234,9 +204,10 @@ describe("ProjectAgentConfiguration", () => {
     );
 
     await click("project-agent-mode-codex");
+    expect(element("project-agent-codex-name")).toBeTruthy();
     expect(
-      element("project-agent-codex-environment-empty").textContent,
-    ).toContain("执行环境");
+      document.querySelector('[data-testid="project-agent-codex-environment"]'),
+    ).toBeNull();
 
     await render(api, { ...project, workspace_id: null });
     expect(element("project-agent-config")).toBeTruthy();
@@ -259,31 +230,5 @@ describe("ProjectAgentConfiguration", () => {
       document.querySelector('[data-testid="project-agent-dialog"]'),
     ).toBeNull();
     expect(element("project-agent-list")).toBeTruthy();
-  });
-
-  it("translates execution environment kind and status labels", async () => {
-    const { api } = createApi();
-    await act(async () => {
-      root.render(
-        <ProjectAgentConfiguration
-          api={api}
-          project={project}
-          onError={vi.fn()}
-          translate={(key, fallback) => {
-            const translated: Record<string, string> = {
-              "todo.local_execution_environment": "LOCALIZED LOCAL",
-              "todo.execution_environment_online": "LOCALIZED ONLINE",
-            };
-            return translated[key] ?? fallback;
-          }}
-        />,
-      );
-    });
-
-    await click("project-agent-add");
-    await click("project-agent-mode-codex");
-    expect(element("project-agent-codex-environment").textContent).toContain(
-      "MacBook Pro · LOCALIZED LOCAL · LOCALIZED ONLINE",
-    );
   });
 });

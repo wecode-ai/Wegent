@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import {
@@ -7,31 +6,6 @@ import {
   type AutomationRulesViewProps,
 } from '@wegent/collaboration/automation-ui'
 import type { AutomationUiRule } from '@wegent/collaboration/automation'
-
-vi.mock('@xyflow/react', () => ({
-  Background: () => null,
-  MarkerType: { ArrowClosed: 'arrowclosed' },
-  Position: { Left: 'left', Right: 'right' },
-  ReactFlow: ({
-    nodes,
-    edges,
-  }: {
-    nodes: Array<{ id: string; data: { label: ReactNode } }>
-    edges: Array<{ id: string; source: string; target: string }>
-  }) => (
-    <div data-testid="mock-automation-workflow-dag">
-      {nodes.map(node => (
-        <div key={node.id}>{node.data.label}</div>
-      ))}
-      {edges.map(edge => (
-        <span
-          key={edge.id}
-          data-testid={`mock-automation-workflow-edge-${edge.source}-${edge.target}`}
-        />
-      ))}
-    </div>
-  ),
-}))
 
 function policyRule(overrides: Partial<AutomationUiRule> = {}): AutomationUiRule {
   return {

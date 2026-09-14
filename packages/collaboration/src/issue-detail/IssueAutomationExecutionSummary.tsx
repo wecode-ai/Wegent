@@ -95,9 +95,7 @@ export function IssueAutomationExecutionSummary({
   issueCompleted: boolean;
   translate: Translate;
 }) {
-  const stages = nodes.filter(
-    (node) => !node.node_type || node.node_type === "task",
-  );
+  const stages = nodes;
   if (stages.length === 0) return null;
 
   const completedCount = stages.filter((stage) =>

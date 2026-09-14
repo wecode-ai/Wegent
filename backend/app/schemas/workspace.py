@@ -123,6 +123,105 @@ class WorkspaceAgentListResponse(BaseModel):
     items: list[WorkspaceAgentResponse]
 
 
+class CollaborationGroupMember(BaseModel):
+    kind: Literal["human", "agent"]
+    id: SnowflakeId
+
+
+class CollaborationGroupPolicy(BaseModel):
+    prompt: str = Field(default="", max_length=100_000)
+    trigger_type: Literal["manual", "schedule", "event"] = "manual"
+    event_type: str | None = Field(default=None, min_length=1, max_length=100)
+    event_config: dict[str, object] = Field(default_factory=dict)
+    cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
+    timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
+    issue_selector: dict[str, object] = Field(default_factory=dict)
+    output_policy: dict[str, object] = Field(default_factory=dict)
+    enabled: bool = True
+
+    @model_validator(mode="after")
+    def validate_trigger(self) -> "CollaborationGroupPolicy":
+        if self.trigger_type == "schedule" and not self.cron_expression:
+            raise ValueError("Scheduled collaboration requires cron_expression")
+        if self.trigger_type == "event" and not self.event_type:
+            raise ValueError("Event collaboration requires event_type")
+        if self.trigger_type != "schedule" and self.cron_expression:
+            raise ValueError(
+                "cron_expression is only valid for scheduled collaboration"
+            )
+        if self.trigger_type != "event" and (self.event_type or self.event_config):
+            raise ValueError(
+                "event configuration is only valid for event collaboration"
+            )
+        return self
+
+
+class CollaborationGroupCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=20_000)
+    leader: CollaborationGroupMember
+    members: list[CollaborationGroupMember] = Field(min_length=1)
+    coordination_mode: Literal["manager"] = "manager"
+    policy: CollaborationGroupPolicy = Field(default_factory=CollaborationGroupPolicy)
+
+    @model_validator(mode="after")
+    def validate_execution_policy(self) -> "CollaborationGroupCreate":
+        if self.policy.trigger_type != "manual" and self.leader.kind != "agent":
+            raise ValueError(
+                "Scheduled and event collaboration requires an Agent leader"
+            )
+        return self
+
+
+class CollaborationGroupUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=20_000)
+    leader: CollaborationGroupMember | None = None
+    members: list[CollaborationGroupMember] | None = Field(default=None, min_length=1)
+    coordination_mode: Literal["manager"] | None = None
+    policy: CollaborationGroupPolicy | None = None
+    version: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "CollaborationGroupUpdate":
+        if all(
+            value is None
+            for value in (
+                self.name,
+                self.description,
+                self.leader,
+                self.members,
+                self.coordination_mode,
+                self.policy,
+            )
+        ):
+            raise ValueError(
+                "Collaboration group update must change at least one field"
+            )
+        return self
+
+
+class CollaborationGroupResponse(BaseModel):
+    id: SnowflakeId
+    workspace_id: SnowflakeId
+    owner_type: Literal["workspace", "project"]
+    owner_id: SnowflakeId
+    name: str
+    description: str
+    leader: CollaborationGroupMember
+    members: list[CollaborationGroupMember]
+    coordination_mode: Literal["manager"]
+    policy: CollaborationGroupPolicy
+    version: int
+    created_by_user_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CollaborationGroupListResponse(BaseModel):
+    items: list[CollaborationGroupResponse]
+
+
 class WorkspaceExecutionEnvironmentCreate(BaseModel):
     device_id: int = Field(ge=1)
 

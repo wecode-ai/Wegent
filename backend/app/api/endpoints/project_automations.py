@@ -32,14 +32,131 @@ from app.schemas.project_automation import (
     ProjectAutomationWorkflowMigration,
     ProjectAutomationWorkflowMigrationView,
 )
+from app.schemas.workspace import (
+    CollaborationGroupCreate,
+    CollaborationGroupListResponse,
+    CollaborationGroupResponse,
+)
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_automations import (
     project_automation_service,
 )
+from app.services.workspaces import workspace_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+@router.get(
+    "/{project_id}/collaboration-groups",
+    response_model=CollaborationGroupListResponse,
+)
+def list_project_collaboration_groups(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CollaborationGroupListResponse:
+    return CollaborationGroupListResponse(
+        items=[
+            CollaborationGroupResponse.model_validate(group)
+            for group in workspace_service.list_project_collaboration_groups(
+                db, project_id, current_user.id
+            )
+        ]
+    )
+
+
+@router.post(
+    "/{project_id}/collaboration-groups",
+    response_model=CollaborationGroupResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_project_collaboration_group(
+    project_id: int,
+    values: CollaborationGroupCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CollaborationGroupResponse:
+    return CollaborationGroupResponse.model_validate(
+        workspace_service.create_project_collaboration_group(
+            db, project_id, current_user.id, values
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/collaboration-groups/{group_id}",
+    response_model=CollaborationGroupResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_project_collaboration_group(
+    project_id: int,
+    group_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CollaborationGroupResponse:
+    return CollaborationGroupResponse.model_validate(
+        workspace_service.add_project_collaboration_group(
+            db, project_id, group_id, current_user.id
+        )
+    )
+
+
+@router.delete(
+    "/{project_id}/collaboration-groups/{group_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_project_collaboration_group(
+    project_id: int,
+    group_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    workspace_service.remove_project_collaboration_group(
+        db, project_id, group_id, current_user.id
+    )
+
+
+@router.post(
+    "/{project_id}/collaboration-groups/{group_id}/run",
+    response_model=ProjectAutomationRunView,
+)
+async def run_project_collaboration_group(
+    project_id: int,
+    group_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectAutomationRunView:
+    return ProjectAutomationRunView.model_validate(
+        await workspace_service.run_project_collaboration_group(
+            db,
+            project_id,
+            group_id,
+            current_user.id,
+        )
+    )
+
+
+@router.get(
+    "/{project_id}/collaboration-groups/{group_id}/runs",
+    response_model=list[ProjectAutomationRunView],
+)
+def list_project_collaboration_group_runs(
+    project_id: int,
+    group_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[ProjectAutomationRunView]:
+    return [
+        ProjectAutomationRunView.model_validate(run)
+        for run in workspace_service.list_project_collaboration_group_runs(
+            db,
+            project_id,
+            group_id,
+            current_user.id,
+        )
+    ]
 
 
 @router.get("/{project_id}/automations", response_model=list[ProjectAutomationView])

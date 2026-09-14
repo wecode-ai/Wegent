@@ -387,34 +387,39 @@
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.08);
 }
 
-.automation-policy-workflow-dag {
-  height: 168px;
-  overflow: hidden;
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 11px;
-  background: rgb(var(--color-bg-muted) / 0.3);
-}
-
-.automation-policy-workflow-dag .react-flow__node-default {
-  overflow: hidden;
-  border: 0;
-  border-radius: 11px;
+.automation-policy-workflow-steps {
+  display: grid;
+  gap: 10px;
+  margin: 0;
   padding: 0;
-  background: transparent;
-  box-shadow: 0 4px 14px rgb(0 0 0 / 0.07);
+  list-style: none;
 }
 
-.automation-policy-workflow-dag .react-flow__node-default > button {
+.automation-policy-workflow-steps li {
+  position: relative;
+}
+
+.automation-policy-workflow-steps li:not(:last-child)::after {
+  position: absolute;
+  top: 100%;
+  left: 24px;
+  width: 1px;
+  height: 10px;
+  background: rgb(var(--color-border));
+  content: "";
+}
+
+.automation-policy-workflow-steps button {
   display: grid;
   width: 100%;
   min-width: 0;
-  min-height: 72px;
-  grid-template-columns: 28px minmax(0, 1fr);
+  min-height: 68px;
+  grid-template-columns: 32px minmax(0, 1fr);
   align-items: center;
-  gap: 9px;
+  gap: 12px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 11px;
-  padding: 11px;
+  padding: 12px 14px;
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-surface));
   font: inherit;
@@ -426,26 +431,21 @@
     box-shadow 120ms ease;
 }
 
-.automation-policy-workflow-dag
-  .react-flow__node-default
-  > button:not(:disabled):hover {
+.automation-policy-workflow-steps button:not(:disabled):hover {
   border-color: rgb(var(--color-primary) / 0.35);
   background: rgb(var(--color-primary) / 0.025);
 }
 
-.automation-policy-workflow-dag .react-flow__node-default > button.is-selected {
+.automation-policy-workflow-steps button.is-selected {
   border-color: rgb(var(--color-primary) / 0.55);
   background: rgb(var(--color-primary) / 0.05);
   box-shadow: inset 0 0 0 1px rgb(var(--color-primary) / 0.12);
 }
 
-.automation-policy-workflow-dag
-  .react-flow__node-default
-  > button
-  > span:first-child {
+.automation-policy-workflow-steps button > span:first-child {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   place-items: center;
   border-radius: 8px;
   color: rgb(var(--color-primary));
@@ -454,16 +454,13 @@
   font-weight: 700;
 }
 
-.automation-policy-workflow-dag
-  .react-flow__node-default
-  > button
-  > span:last-child {
+.automation-policy-workflow-steps button > span:last-child {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-.automation-policy-workflow-dag strong {
+.automation-policy-workflow-steps strong {
   overflow: hidden;
   font-size: 13px;
   font-weight: 650;
@@ -471,7 +468,7 @@
   white-space: nowrap;
 }
 
-.automation-policy-workflow-dag em {
+.automation-policy-workflow-steps em {
   overflow: hidden;
   color: rgb(var(--color-primary));
   font-size: 10px;
@@ -481,7 +478,7 @@
   white-space: nowrap;
 }
 
-.automation-policy-workflow-dag small {
+.automation-policy-workflow-steps small {
   display: -webkit-box;
   overflow: hidden;
   color: rgb(var(--color-text-muted));
@@ -489,13 +486,6 @@
   line-height: 1.35;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-.automation-policy-workflow-dag .react-flow__handle {
-  width: 6px;
-  height: 6px;
-  border: 0;
-  background: rgb(var(--color-text-muted));
 }
 
 .automation-policy-add-step {

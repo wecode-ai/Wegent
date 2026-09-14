@@ -11,6 +11,7 @@ export type CollaborationWorkspaceView =
   | "projects"
   | "members"
   | "agents"
+  | "collaboration-groups"
   | "execution-environments"
   | "settings";
 

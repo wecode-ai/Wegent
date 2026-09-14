@@ -1,10 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useEffect, type ComponentType, type MouseEvent, type ReactNode } from 'react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { Delivery, WorkflowNodeInstance } from '@/api/deliveries'
-import { IssueWorkflowDag } from '@wegent/collaboration'
-
-const fitView = vi.fn()
+import { IssueWorkflowStages } from '@wegent/collaboration'
 
 const testTranslate = (key: string, options?: { count?: number }): string => {
   if (key === 'todo.workflow_task_count') return `${options?.count ?? 0} 个任务`
@@ -64,78 +61,6 @@ vi.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-vi.mock('@xyflow/react', () => ({
-  Background: () => null,
-  Controls: () => null,
-  Handle: () => null,
-  MarkerType: { ArrowClosed: 'arrowclosed' },
-  Position: { Left: 'left', Right: 'right' },
-  ReactFlow: ({
-    nodes,
-    nodeTypes,
-    children,
-    onInit,
-    onNodeClick,
-    preventScrolling,
-    zoomOnScroll,
-    zoomOnPinch,
-    zoomOnDoubleClick,
-    panOnDrag,
-  }: {
-    nodes: Array<{
-      id: string
-      type: string
-      parentId?: string
-      style?: { width?: number; height?: number }
-      data: Record<string, unknown>
-    }>
-    nodeTypes: Record<string, ComponentType<{ data: Record<string, unknown> }>>
-    children?: ReactNode
-    onInit?: (instance: { fitView: typeof fitView }) => void
-    onNodeClick?: (
-      event: MouseEvent<HTMLDivElement>,
-      node: { id: string; type: string; data: Record<string, unknown> }
-    ) => void
-    preventScrolling?: boolean
-    zoomOnScroll?: boolean
-    zoomOnPinch?: boolean
-    zoomOnDoubleClick?: boolean
-    panOnDrag?: boolean
-  }) => {
-    useEffect(() => {
-      onInit?.({ fitView })
-    }, [onInit])
-
-    return (
-      <div
-        data-testid="mock-react-flow"
-        data-prevent-scrolling={String(preventScrolling)}
-        data-zoom-on-scroll={String(zoomOnScroll)}
-        data-zoom-on-pinch={String(zoomOnPinch)}
-        data-zoom-on-double-click={String(zoomOnDoubleClick)}
-        data-pan-on-drag={String(panOnDrag)}
-      >
-        {nodes.map(node => {
-          const NodeComponent = nodeTypes[node.type]
-          return (
-            <div
-              key={node.id}
-              data-testid={`mock-flow-node-${node.id}`}
-              data-parent-id={node.parentId}
-              data-width={node.style?.width}
-              data-height={node.style?.height}
-              onClick={event => onNodeClick?.(event, node)}
-            >
-              <NodeComponent data={node.data} />
-            </div>
-          )
-        })}
-        {children}
-      </div>
-    )
-  },
-}))
-
 const stage = (
   id: string,
   overrides: Partial<WorkflowNodeInstance> = {}
@@ -149,210 +74,30 @@ const stage = (
   ...overrides,
 })
 
-describe('IssueWorkflowDag', () => {
-  beforeEach(() => {
-    fitView.mockReset()
-  })
-
-  test('focuses the current stage and follows it when execution advances', async () => {
-    const { rerender } = render(
-      <IssueWorkflowDag
-        translate={testTranslate}
-        nodes={[stage('编辑', { status: 'running' }), stage('审阅', { status: 'blocked' })]}
-        tasks={[]}
-      />
-    )
-
-    await waitFor(() =>
-      expect(fitView).toHaveBeenCalledWith({
-        padding: 0.25,
-        maxZoom: 1,
-        duration: 0,
-        nodes: [{ id: '编辑' }],
-      })
-    )
-
-    fitView.mockClear()
-    rerender(
-      <IssueWorkflowDag
-        translate={testTranslate}
-        nodes={[stage('编辑', { status: 'completed' }), stage('审阅', { status: 'ready' })]}
-        tasks={[]}
-      />
-    )
-
-    await waitFor(() =>
-      expect(fitView).toHaveBeenCalledWith({
-        padding: 0.25,
-        maxZoom: 1,
-        duration: 300,
-        nodes: [{ id: '审阅' }],
-      })
-    )
-  })
-
-  test('activates viewport interactions only after the graph is clicked', () => {
-    render(<IssueWorkflowDag translate={testTranslate} nodes={[stage('编辑')]} tasks={[]} />)
-
-    const graph = screen.getByTestId('cloud-todo-workflow-dag')
-    const flow = screen.getByTestId('mock-react-flow')
-    expect(flow).toHaveAttribute('data-prevent-scrolling', 'false')
-    expect(flow).toHaveAttribute('data-zoom-on-scroll', 'false')
-    expect(flow).toHaveAttribute('data-zoom-on-pinch', 'false')
-    expect(flow).toHaveAttribute('data-zoom-on-double-click', 'false')
-    expect(flow).toHaveAttribute('data-pan-on-drag', 'false')
-
-    fireEvent.pointerDown(graph)
-
-    expect(flow).toHaveAttribute('data-prevent-scrolling', 'true')
-    expect(flow).toHaveAttribute('data-zoom-on-scroll', 'true')
-    expect(flow).toHaveAttribute('data-zoom-on-pinch', 'true')
-    expect(flow).toHaveAttribute('data-zoom-on-double-click', 'true')
-    expect(flow).toHaveAttribute('data-pan-on-drag', 'true')
-
-    fireEvent.pointerDown(document.body)
-
-    expect(flow).toHaveAttribute('data-prevent-scrolling', 'false')
-    expect(flow).toHaveAttribute('data-zoom-on-scroll', 'false')
-    expect(flow).toHaveAttribute('data-zoom-on-pinch', 'false')
-    expect(flow).toHaveAttribute('data-zoom-on-double-click', 'false')
-    expect(flow).toHaveAttribute('data-pan-on-drag', 'false')
-  })
-
-  test('renders loop body nodes inside the loop container', () => {
+describe('IssueWorkflowStages', () => {
+  test('renders workflow stages once in their execution order', () => {
     render(
-      <IssueWorkflowDag
+      <IssueWorkflowStages
         translate={testTranslate}
         nodes={[
-          stage('start', { node_type: 'event', status: 'completed', required: false }),
-          stage('loop', {
-            node_type: 'loop',
-            depends_on: ['start'],
-            body_node_ids: ['loop-start', 'branch', 'loop-end'],
-          }),
-          stage('loop-start', {
-            node_type: 'loop_start',
-            loop_id: 'loop',
-            status: 'completed',
-          }),
-          stage('branch', {
-            node_type: 'branch',
-            loop_id: 'loop',
-            depends_on: ['loop-start'],
-            status: 'waiting',
-          }),
-          stage('loop-end', {
-            node_type: 'loop_end',
-            loop_id: 'loop',
-            depends_on: ['branch'],
-            status: 'blocked',
-          }),
-          stage('after', { depends_on: ['loop'], status: 'blocked' }),
+          stage('分析', { status: 'completed' }),
+          stage('实现', { status: 'running' }),
+          stage('验证', { status: 'blocked' }),
         ]}
         tasks={[]}
       />
     )
 
-    expect(screen.getByTestId('cloud-todo-workflow-loop-loop')).toBeInTheDocument()
-    expect(
-      Number(screen.getByTestId('mock-flow-node-loop').getAttribute('data-width'))
-    ).toBeGreaterThanOrEqual(560)
-    expect(screen.getByTestId('mock-flow-node-loop-start')).toHaveAttribute(
-      'data-parent-id',
-      'loop'
-    )
-    expect(screen.getByTestId('mock-flow-node-branch')).toHaveAttribute('data-parent-id', 'loop')
-    expect(screen.getByTestId('mock-flow-node-loop-end')).toHaveAttribute('data-parent-id', 'loop')
-    expect(screen.getByTestId('mock-flow-node-after')).not.toHaveAttribute('data-parent-id')
-    expect(screen.getByTestId('mock-flow-node-loop-start')).toHaveTextContent('流程控制')
-    expect(screen.getByTestId('mock-flow-node-loop-end')).toHaveTextContent('流程控制')
-  })
-
-  test('renders body nodes only once when only body_node_ids identifies membership', () => {
-    render(
-      <IssueWorkflowDag
-        translate={testTranslate}
-        nodes={[
-          stage('loop', {
-            node_type: 'loop',
-            body_node_ids: ['body'],
-          }),
-          stage('body', {
-            node_type: 'task',
-            depends_on: ['loop'],
-          }),
-          stage('after', { depends_on: ['loop'] }),
-        ]}
-        tasks={[]}
-      />
-    )
-
-    expect(screen.getAllByTestId('mock-flow-node-body')).toHaveLength(1)
-    expect(screen.getByTestId('mock-flow-node-body')).toHaveAttribute('data-parent-id', 'loop')
-    expect(screen.getByTestId('mock-flow-node-after')).not.toHaveAttribute('data-parent-id')
-  })
-
-  test('shows the branch event collector state on the node card', () => {
-    render(
-      <IssueWorkflowDag
-        translate={testTranslate}
-        nodes={[
-          stage('branch-poll', {
-            node_type: 'branch',
-            status: 'waiting',
-            collectors: { github: { collector_id: 'hook-1', mode: 'poll', status: 'active' } },
-          }),
-          stage('branch-webhook', {
-            node_type: 'branch',
-            status: 'waiting',
-            collectors: {
-              github: {
-                collector_id: 'hook-2',
-                mode: 'webhook',
-                status: 'needs_registration',
-              },
-            },
-          }),
-        ]}
-        tasks={[]}
-      />
-    )
-
-    expect(screen.getByTestId('mock-flow-node-branch-poll')).toHaveTextContent('轮询采集中')
-    expect(screen.getByTestId('mock-flow-node-branch-poll')).toHaveTextContent('等待事件')
-    expect(screen.getByTestId('mock-flow-node-branch-webhook')).toHaveTextContent('webhook 待注册')
-  })
-
-  test('prioritizes a failed collector state over webhook registration state', () => {
-    render(
-      <IssueWorkflowDag
-        translate={testTranslate}
-        nodes={[
-          stage('branch-error', {
-            node_type: 'branch',
-            status: 'waiting',
-            collectors: {
-              github: {
-                collector_id: 'hook-3',
-                mode: 'webhook',
-                status: 'error',
-                error: 'webhook registration failed',
-              },
-            },
-          }),
-        ]}
-        tasks={[]}
-      />
-    )
-
-    expect(screen.getByTestId('mock-flow-node-branch-error')).toHaveTextContent(
-      'webhook registration failed'
-    )
+    const stages = screen.getByTestId('cloud-todo-workflow-stages')
+    expect(within(stages).getAllByRole('button')).toHaveLength(3)
+    expect(stages).toHaveTextContent('分析')
+    expect(stages).toHaveTextContent('实现')
+    expect(stages).toHaveTextContent('验证')
   })
 
   test('shows the execution failure reason in the failed stage details', () => {
     render(
-      <IssueWorkflowDag
+      <IssueWorkflowStages
         translate={testTranslate}
         nodes={[stage('开发', { status: 'failed' })]}
         tasks={[]}
@@ -365,10 +110,10 @@ describe('IssueWorkflowDag', () => {
     )
   })
 
-  test('switches the detail panel when a completed graph node is clicked', () => {
+  test('switches the detail panel when a completed stage is clicked', () => {
     const onCreateTask = vi.fn()
     render(
-      <IssueWorkflowDag
+      <IssueWorkflowStages
         translate={testTranslate}
         nodes={[
           stage('设计', {
@@ -393,7 +138,7 @@ describe('IssueWorkflowDag', () => {
     expect(screen.getByTestId('cloud-todo-workflow-action-开发')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-workflow-action-设计')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('mock-flow-node-设计'))
+    fireEvent.click(screen.getByTestId('cloud-todo-workflow-node-设计'))
 
     expect(screen.getByTestId('cloud-todo-workflow-action-设计')).toHaveTextContent('设计任务')
     expect(screen.queryByTestId('cloud-todo-workflow-action-开发')).not.toBeInTheDocument()
@@ -404,12 +149,12 @@ describe('IssueWorkflowDag', () => {
     )
   })
 
-  test('links the selected graph node to the stage action panel', () => {
+  test('links the selected stage to the action panel', () => {
     const onCreateTask = vi.fn()
     const onRunAutomation = vi.fn()
 
     render(
-      <IssueWorkflowDag
+      <IssueWorkflowStages
         translate={testTranslate}
         nodes={[
           stage('编辑'),
@@ -430,7 +175,7 @@ describe('IssueWorkflowDag', () => {
     fireEvent.click(screen.getByTestId('cloud-todo-create-workflow-task-编辑'))
     expect(onCreateTask).toHaveBeenCalledWith('编辑')
 
-    fireEvent.click(screen.getByTestId('mock-flow-node-审阅'))
+    fireEvent.click(screen.getByTestId('cloud-todo-workflow-node-审阅'))
 
     expect(screen.queryByTestId('cloud-todo-workflow-action-编辑')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-workflow-action-审阅')).toHaveTextContent('AI 执行')
@@ -441,7 +186,7 @@ describe('IssueWorkflowDag', () => {
 
   test('keeps an unconfigured automatic stage out of the manual task flow', () => {
     render(
-      <IssueWorkflowDag
+      <IssueWorkflowStages
         translate={testTranslate}
         nodes={[stage('开发', { execution_mode: 'robot', automation_rule_id: null })]}
         tasks={[]}
@@ -465,7 +210,7 @@ describe('IssueWorkflowDag', () => {
     )
 
     render(
-      <IssueWorkflowDag
+      <IssueWorkflowStages
         translate={testTranslate}
         nodes={[stage('部署', { automation_rule_id: 'rule-1', status: 'failed' })]}
         tasks={[]}
@@ -490,7 +235,7 @@ describe('IssueWorkflowDag', () => {
 
   test('offers another task after a human stage has already started', () => {
     render(
-      <IssueWorkflowDag
+      <IssueWorkflowStages
         translate={testTranslate}
         nodes={[stage('编辑', { status: 'running' })]}
         tasks={[
@@ -512,7 +257,7 @@ describe('IssueWorkflowDag', () => {
   test('allows another task while a human stage awaits approval', () => {
     const onCreateTask = vi.fn()
     render(
-      <IssueWorkflowDag
+      <IssueWorkflowStages
         translate={testTranslate}
         nodes={[stage('编辑', { status: 'awaiting_approval' })]}
         tasks={[]}
@@ -538,7 +283,7 @@ describe('IssueWorkflowDag', () => {
     }
 
     render(
-      <IssueWorkflowDag
+      <IssueWorkflowStages
         translate={testTranslate}
         nodes={[
           stage('编辑', {
@@ -586,7 +331,7 @@ describe('IssueWorkflowDag', () => {
     const onDecide = vi.fn(async () => undefined)
     const onCompleteStage = vi.fn(async () => undefined)
     render(
-      <IssueWorkflowDag
+      <IssueWorkflowStages
         translate={testTranslate}
         nodes={[
           stage('编辑', {
@@ -673,7 +418,7 @@ describe('IssueWorkflowDag', () => {
     }
 
     render(
-      <IssueWorkflowDag
+      <IssueWorkflowStages
         translate={testTranslate}
         nodes={[
           stage('后端', {
@@ -725,7 +470,7 @@ describe('IssueWorkflowDag', () => {
   test('approves directly when every required deliverable is already fulfilled', async () => {
     const onDecide = vi.fn(async () => undefined)
     render(
-      <IssueWorkflowDag
+      <IssueWorkflowStages
         translate={testTranslate}
         nodes={[
           stage('后端', {

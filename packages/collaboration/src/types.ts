@@ -195,6 +195,38 @@ export interface CollaborationPlatformResources {
   execution_environments: CollaborationExecutionEnvironment[];
 }
 
+export interface CollaborationGroupMember {
+  kind: "human" | "agent";
+  id: string;
+}
+
+export interface CollaborationGroup {
+  id: string;
+  workspace_id: string;
+  owner_type: "workspace" | "project";
+  owner_id: string;
+  name: string;
+  description: string;
+  leader: CollaborationGroupMember;
+  members: CollaborationGroupMember[];
+  coordination_mode: "manager";
+  policy: {
+    prompt: string;
+    trigger_type: "manual" | "schedule" | "event";
+    event_type: string | null;
+    event_config: Record<string, unknown>;
+    cron_expression: string | null;
+    timezone: string;
+    issue_selector: Record<string, unknown>;
+    output_policy: Record<string, unknown>;
+    enabled: boolean;
+  };
+  version: number;
+  created_by_user_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export type EditableLocalCollaborationIssue = CollaborationIssue & {
   can_edit: true;
 };

@@ -269,6 +269,7 @@ vi.mock('./BackgroundTaskStarter', () => ({
 
 const project = {
   id: '11',
+  workspace_id: '101',
   public_id: 'cloud-public-id',
   project_key: 'WEG',
   name: 'Wegent V4',
@@ -688,6 +689,7 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
         if (url.endsWith('/chat-agents')) return []
         if (url.endsWith('/comments')) return []
         if (url.endsWith('/assignments')) return { items: [] }
+        if (url.endsWith('/collaboration-groups')) return { items: [] }
         throw new Error(`Unhandled collaboration test request: GET ${url}`)
       }),
       getBlob: vi.fn(),
@@ -2137,7 +2139,8 @@ describe('CloudTodoWorkspace', () => {
     expect(
       await screen.findByTestId('collaboration-project-dispatch-unavailable')
     ).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('collaboration-dispatch-configure-agents'))
+    expect(screen.queryByTestId('collaboration-dispatch-configure-agents')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-settings-agents'))
     expect(screen.getByTestId('cloud-project-settings-agents')).toHaveAttribute(
       'aria-current',
       'page'
@@ -2147,17 +2150,13 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('project-agent-dialog')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('project-agent-mode-codex'))
     await userEvent.type(screen.getByTestId('project-agent-codex-name'), 'Offline Codex')
-    await userEvent.selectOptions(
-      screen.getByTestId('project-agent-codex-environment'),
-      'device:local-device'
-    )
+    expect(screen.queryByTestId('project-agent-codex-environment')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('project-agent-codex-create'))
     expect(createLocalAgent).toHaveBeenCalledWith(
       localProject.id,
       expect.objectContaining({
         name: 'Offline Codex',
         runtime: 'codex',
-        executionDeviceId: 'local-device',
       })
     )
     expect(await screen.findByTestId('project-agent-row-offline-local-codex')).toBeInTheDocument()
@@ -2233,9 +2232,8 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
     await userEvent.click(screen.getByTestId('cloud-project-settings-dispatch'))
-    expect(
-      await screen.findByTestId('collaboration-project-dispatch-unavailable')
-    ).toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('collaboration-group-open-create'))
+    expect(await screen.findByTestId('collaboration-group-form')).toBeInTheDocument()
 
     view.rerender(
       <CloudTodoWorkspace
@@ -2244,7 +2242,7 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
-    expect(screen.getByTestId('collaboration-project-dispatch-unavailable')).toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-group-form')).toBeInTheDocument()
   })
 
   it('renames and archives a project from the sidebar menu', async () => {
@@ -3822,7 +3820,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
   })
 
-  it('shows assignment and dispatch inside settings for local project spaces', async () => {
+  it('uses collaboration groups for a cloud-owned project with local task storage', async () => {
     const workbenchServices = services({
       projectChatAgentApi: {
         list: vi.fn(async () => [
@@ -3862,11 +3860,12 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
     await userEvent.click(screen.getByTestId('cloud-project-settings-dispatch'))
-    expect(screen.getByRole('heading', { name: '分配与调度' })).toBeInTheDocument()
-    expect(screen.getByTestId('collaboration-project-manager-summary')).toHaveTextContent('local')
-    expect(screen.getByText('分配来源')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '协作组' })).toBeInTheDocument()
+    expect(screen.queryByText('项目管理者')).not.toBeInTheDocument()
     expect(screen.getByTestId('collaboration-project-dispatch-policy')).toBeInTheDocument()
-    expect(await screen.findByTestId('project-automation-policy')).toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('collaboration-group-open-create'))
+    expect(await screen.findByTestId('collaboration-group-form')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-automation-policy')).not.toBeInTheDocument()
   })
 
   it('hides the automation tab for DingTalk AI Table project spaces', async () => {

@@ -1,16 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Background,
-  Controls,
-  Handle,
-  MarkerType,
-  Position,
-  ReactFlow,
-  type Edge,
-  type Node,
-  type NodeProps,
-  type ReactFlowInstance,
-} from "@xyflow/react";
+import { useMemo, useState } from "react";
 import {
   Bot,
   Check,
@@ -21,11 +9,9 @@ import {
   Play,
   Plus,
   RefreshCw,
-  Repeat,
   UserRound,
   XCircle,
 } from "lucide-react";
-import { layoutWorkflowGraph } from "./workflowGraph";
 import {
   WorkflowStageCompletionDialog,
   type WorkflowDeliverableDraft,
@@ -53,7 +39,7 @@ function workflowNodeExecutionMode(
   return node.execution_mode ?? (node.automation_rule_id ? "robot" : "human");
 }
 
-export interface IssueWorkflowDagProps {
+export interface IssueWorkflowStagesProps {
   translate: IssueWorkflowTranslate;
   nodes: SharedWorkflowNode[];
   tasks: SharedWorkflowTaskBinding[];
@@ -79,36 +65,6 @@ export interface IssueWorkflowDagProps {
     reason: string,
   ) => Promise<void>;
 }
-
-interface RuntimeStageNodeData extends Record<string, unknown> {
-  stage: SharedWorkflowNode;
-  tasks: SharedWorkflowTaskBinding[];
-  translate: IssueWorkflowTranslate;
-  selected: boolean;
-  onSelect: (stageId: string) => void;
-}
-
-interface RuntimeLoopNodeData extends Record<string, unknown> {
-  stage: SharedWorkflowNode;
-  translate: IssueWorkflowTranslate;
-  selected: boolean;
-  childSelected: boolean;
-  onSelect: (stageId: string) => void;
-}
-
-type RuntimeStageFlowNode = Node<RuntimeStageNodeData, "runtimeStage">;
-type RuntimeLoopFlowNode = Node<RuntimeLoopNodeData, "runtimeLoop">;
-type RuntimeFlowNode = RuntimeStageFlowNode | RuntimeLoopFlowNode;
-
-const NODE_WIDTH = 208;
-const NODE_HEIGHT = 112;
-const LOOP_MIN_WIDTH = 560;
-const LOOP_HEADER_HEIGHT = 68;
-const LOOP_BODY_PADDING = 28;
-const CURRENT_STAGE_FIT_VIEW_OPTIONS = {
-  padding: 0.25,
-  maxZoom: 1,
-} as const;
 
 function workflowTaskStatusLabel(
   t: (key: string) => string,
@@ -138,239 +94,7 @@ function requirementDelivery(
   );
 }
 
-const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
-  data,
-}: NodeProps<RuntimeStageFlowNode>) {
-  const { stage, tasks, translate: t, selected, onSelect } = data;
-  const isLoopControl =
-    stage.node_type === "loop_start" || stage.node_type === "loop_end";
-  const statusLabel = isLoopControl
-    ? t("todo.workflow_structure_node")
-    : workflowNodeStatusLabel(t, stage.status);
-  const automated = workflowNodeExecutionMode(stage) === "robot";
-  const collectors =
-    stage.node_type === "branch" ? (stage.collectors ?? {}) : {};
-  const collectorLabels = Object.entries(collectors).map(
-    ([platform, collector]) => {
-      const platformLabel = platform === "gitlab" ? "GitLab" : "GitHub";
-      const stateLabel =
-        collector.status === "error"
-          ? collector.error || t("todo.workflow_branch_collector_error")
-          : collector.status === "needs_registration" ||
-              collector.mode === "webhook"
-            ? t("todo.workflow_branch_collector_webhook")
-            : t("todo.workflow_branch_collector_poll");
-      return `${platformLabel} ${stateLabel}`;
-    },
-  );
-
-  return (
-    <article
-      data-testid={`cloud-todo-workflow-node-${stage.id}`}
-      role="button"
-      tabIndex={0}
-      aria-pressed={selected}
-      onClick={() => onSelect(stage.id)}
-      onKeyDown={(event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        onSelect(stage.id);
-      }}
-      className={cn(
-        "issue-workflow-node relative flex h-[112px] w-[208px] cursor-pointer flex-col",
-        selected && "is-selected",
-      )}
-    >
-      <Handle type="target" position={Position.Left} className="!invisible" />
-      <header className="min-w-0">
-        <span className="block truncate text-sm font-medium text-text-primary">
-          {stage.name}
-        </span>
-        <span className="issue-workflow-node-kind">
-          {automated ? (
-            <Bot className="h-3.5 w-3.5" />
-          ) : (
-            <UserRound className="h-3.5 w-3.5" />
-          )}
-          {automated
-            ? t("todo.workflow_ai_execution")
-            : t("todo.workflow_stage_human_execution")}
-        </span>
-        {collectorLabels.length > 0 ? (
-          <span
-            className="block truncate text-xs leading-none text-text-muted"
-            title={collectorLabels.join("、")}
-          >
-            {collectorLabels.join("、")}
-          </span>
-        ) : null}
-      </header>
-      <footer className="issue-workflow-node-footer">
-        <span
-          className={cn(
-            "issue-workflow-status",
-            `is-${stage.status.replace(/_/g, "-")}`,
-          )}
-        >
-          {!isLoopControl && isWorkflowNodeCompleted(stage.status) ? (
-            <Check className="h-3 w-3" />
-          ) : null}
-          {statusLabel}
-        </span>
-        <span className="ml-auto">
-          {t("todo.workflow_task_count", { count: tasks.length })}
-        </span>
-      </footer>
-      <Handle type="source" position={Position.Right} className="!invisible" />
-    </article>
-  );
-});
-
-const RuntimeLoopNodeCard = memo(function RuntimeLoopNodeCard({
-  data,
-}: NodeProps<RuntimeLoopFlowNode>) {
-  const { stage, translate: t, selected, childSelected, onSelect } = data;
-  const statusLabel = workflowNodeStatusLabel(t, stage.status);
-
-  return (
-    <section
-      data-testid={`cloud-todo-workflow-loop-${stage.id}`}
-      className={cn(
-        "issue-workflow-loop relative h-full w-full",
-        (selected || childSelected) && "is-selected",
-      )}
-    >
-      <Handle type="target" position={Position.Left} className="!invisible" />
-      <button
-        type="button"
-        data-testid={`cloud-todo-workflow-loop-header-${stage.id}`}
-        onClick={() => onSelect(stage.id)}
-        className="issue-workflow-loop-header"
-      >
-        <span className="issue-workflow-loop-icon">
-          <Repeat className="h-4 w-4" />
-        </span>
-        <span className="min-w-0">
-          <small>{t("todo.workflow_loop", "循环")}</small>
-          <strong>{stage.name}</strong>
-        </span>
-        <span
-          className={cn(
-            "issue-workflow-status",
-            `is-${stage.status.replace(/_/g, "-")}`,
-          )}
-        >
-          {isWorkflowNodeCompleted(stage.status) ? (
-            <Check className="h-3 w-3" />
-          ) : null}
-          {statusLabel}
-        </span>
-      </button>
-      <Handle type="source" position={Position.Right} className="!invisible" />
-    </section>
-  );
-});
-
-const nodeTypes = {
-  runtimeStage: RuntimeStageNodeCard,
-  runtimeLoop: RuntimeLoopNodeCard,
-};
-
-function workflowEdge(
-  source: SharedWorkflowNode,
-  target: SharedWorkflowNode,
-  completed: boolean,
-): Edge {
-  const color = completed
-    ? "rgb(0 162 64 / 0.55)"
-    : "rgb(var(--color-text-muted) / 0.45)";
-  return {
-    id: `${source.id}-${target.id}`,
-    source: source.id,
-    target: target.id,
-    markerEnd: { type: MarkerType.ArrowClosed, color },
-    style: { stroke: color, strokeWidth: 1.5 },
-  };
-}
-
-function loopBodyLayout(
-  loop: SharedWorkflowNode,
-  body: SharedWorkflowNode[],
-  tasks: SharedWorkflowTaskBinding[],
-  translate: IssueWorkflowTranslate,
-  selectedStageId: string | null,
-  onSelect: (stageId: string) => void,
-): {
-  width: number;
-  height: number;
-  nodes: RuntimeStageFlowNode[];
-  edges: Edge[];
-} {
-  const bodyById = new Map(body.map((node) => [node.id, node]));
-  const edges = body.flatMap((node) =>
-    node.depends_on.flatMap((dependencyId) => {
-      const dependency = bodyById.get(dependencyId);
-      return dependency
-        ? [
-            workflowEdge(
-              dependency,
-              node,
-              isWorkflowNodeCompleted(dependency.status),
-            ),
-          ]
-        : [];
-    }),
-  );
-  const laidOut = layoutWorkflowGraph(
-    body.map(
-      (stage): RuntimeStageFlowNode => ({
-        id: stage.id,
-        type: "runtimeStage",
-        position: { x: 0, y: 0 },
-        data: {
-          stage,
-          tasks: tasks.filter((task) => task.workflow_node_id === stage.id),
-          translate,
-          selected: stage.id === selectedStageId,
-          onSelect,
-        },
-      }),
-    ),
-    edges,
-    {
-      nodeWidth: NODE_WIDTH,
-      nodeHeight: NODE_HEIGHT,
-      rankSep: 64,
-      nodeSep: 28,
-    },
-  ) as RuntimeStageFlowNode[];
-  const minX = Math.min(...laidOut.map((node) => node.position.x), 0);
-  const minY = Math.min(...laidOut.map((node) => node.position.y), 0);
-  const bodyWidth = Math.max(
-    NODE_WIDTH,
-    ...laidOut.map((node) => node.position.x - minX + NODE_WIDTH),
-  );
-  const bodyHeight = Math.max(
-    NODE_HEIGHT,
-    ...laidOut.map((node) => node.position.y - minY + NODE_HEIGHT),
-  );
-  return {
-    width: Math.max(LOOP_MIN_WIDTH, bodyWidth + LOOP_BODY_PADDING * 2),
-    height: LOOP_HEADER_HEIGHT + bodyHeight + LOOP_BODY_PADDING * 2,
-    edges,
-    nodes: laidOut.map((node) => ({
-      ...node,
-      parentId: loop.id,
-      extent: "parent",
-      position: {
-        x: node.position.x - minX + LOOP_BODY_PADDING,
-        y: node.position.y - minY + LOOP_HEADER_HEIGHT + LOOP_BODY_PADDING,
-      },
-    })),
-  };
-}
-
-export function IssueWorkflowDag({
+export function IssueWorkflowStages({
   translate,
   nodes,
   tasks,
@@ -383,7 +107,7 @@ export function IssueWorkflowDag({
   onOpenDelivery,
   onCompleteStage,
   onDecide,
-}: IssueWorkflowDagProps) {
+}: IssueWorkflowStagesProps) {
   const t = translate;
   const [decisionDraft, setDecisionDraft] = useState<{
     stageId: string;
@@ -398,156 +122,18 @@ export function IssueWorkflowDag({
   } | null>(null);
   const [busyStageId, setBusyStageId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [graphInteractionActive, setGraphInteractionActive] = useState(false);
-  const [stageSelection, setStageSelection] = useState<{
-    stageId: string;
-    currentStageId: string | null;
-  } | null>(null);
-  const graphContainerRef = useRef<HTMLDivElement | null>(null);
-  const flowInstanceRef = useRef<ReactFlowInstance<
-    RuntimeFlowNode,
-    Edge
-  > | null>(null);
   const currentStageId = useMemo(
     () => getCurrentWorkflowNode(nodes)?.id ?? null,
     [nodes],
   );
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
   const effectiveSelectedStageId =
-    stageSelection?.currentStageId === currentStageId &&
-    nodes.some((stage) => stage.id === stageSelection.stageId)
-      ? stageSelection.stageId
+    selectedStageId && nodes.some((stage) => stage.id === selectedStageId)
+      ? selectedStageId
       : currentStageId;
   const selectedStage = effectiveSelectedStageId
     ? nodes.find((stage) => stage.id === effectiveSelectedStageId)
     : undefined;
-  const graph = useMemo(() => {
-    const nodesById = new Map(nodes.map((node) => [node.id, node]));
-    const loopIdByNodeId = new Map<string, string>();
-    nodes.forEach((node) => {
-      if (node.loop_id) loopIdByNodeId.set(node.id, node.loop_id);
-      (node.body_node_ids ?? []).forEach((bodyId) =>
-        loopIdByNodeId.set(bodyId, node.id),
-      );
-    });
-    const topLevelStages = nodes.filter((node) => !loopIdByNodeId.has(node.id));
-    const topLevelIds = new Set(topLevelStages.map((node) => node.id));
-    const edges: Edge[] = topLevelStages.flatMap((node) =>
-      node.depends_on.flatMap((dependencyId) => {
-        const dependency = nodesById.get(dependencyId);
-        return dependency && topLevelIds.has(dependencyId)
-          ? [
-              workflowEdge(
-                dependency,
-                node,
-                isWorkflowNodeCompleted(dependency.status),
-              ),
-            ]
-          : [];
-      }),
-    );
-    const selectStage = (stageId: string) =>
-      setStageSelection({ stageId, currentStageId });
-    const loopLayouts = new Map(
-      topLevelStages
-        .filter((stage) => stage.node_type === "loop")
-        .map((loop) => {
-          const body = nodes.filter(
-            (node) => loopIdByNodeId.get(node.id) === loop.id,
-          );
-          return [
-            loop.id,
-            loopBodyLayout(
-              loop,
-              body,
-              tasks,
-              translate,
-              effectiveSelectedStageId,
-              selectStage,
-            ),
-          ] as const;
-        }),
-    );
-    const flowNodes: RuntimeFlowNode[] = topLevelStages.map((stage) => {
-      const loopLayout = loopLayouts.get(stage.id);
-      if (stage.node_type === "loop" && loopLayout) {
-        return {
-          id: stage.id,
-          type: "runtimeLoop",
-          position: { x: 0, y: 0 },
-          style: { width: loopLayout.width, height: loopLayout.height },
-          data: {
-            stage,
-            translate,
-            selected: stage.id === effectiveSelectedStageId,
-            childSelected: loopLayout.nodes.some((node) => node.data.selected),
-            onSelect: selectStage,
-          },
-        };
-      }
-      return {
-        id: stage.id,
-        type: "runtimeStage",
-        position: { x: 0, y: 0 },
-        data: {
-          stage,
-          tasks: tasks.filter((task) => task.workflow_node_id === stage.id),
-          translate,
-          selected: stage.id === effectiveSelectedStageId,
-          onSelect: selectStage,
-        },
-      };
-    });
-    const laidOutTopLevel = layoutWorkflowGraph(flowNodes, edges, {
-      nodeWidth: NODE_WIDTH,
-      nodeHeight: NODE_HEIGHT,
-      nodeSize: (node) => {
-        const loopLayout = loopLayouts.get(node.id);
-        return loopLayout
-          ? { width: loopLayout.width, height: loopLayout.height }
-          : { width: NODE_WIDTH, height: NODE_HEIGHT };
-      },
-    }) as RuntimeFlowNode[];
-    return {
-      edges: [
-        ...edges,
-        ...Array.from(loopLayouts.values()).flatMap((layout) => layout.edges),
-      ],
-      nodes: [
-        ...laidOutTopLevel,
-        ...Array.from(loopLayouts.values()).flatMap((layout) => layout.nodes),
-      ],
-    };
-  }, [currentStageId, effectiveSelectedStageId, nodes, tasks, translate]);
-  const focusCurrentStage = useCallback(
-    (instance: ReactFlowInstance<RuntimeFlowNode, Edge>, duration = 0) => {
-      void instance.fitView({
-        ...CURRENT_STAGE_FIT_VIEW_OPTIONS,
-        duration,
-        nodes: currentStageId ? [{ id: currentStageId }] : undefined,
-      });
-    },
-    [currentStageId],
-  );
-
-  useEffect(() => {
-    if (!flowInstanceRef.current) return;
-    focusCurrentStage(flowInstanceRef.current, 300);
-  }, [focusCurrentStage]);
-
-  useEffect(() => {
-    const deactivateGraphInteraction = (event: PointerEvent) => {
-      if (
-        event.target instanceof Node &&
-        !graphContainerRef.current?.contains(event.target)
-      ) {
-        setGraphInteractionActive(false);
-      }
-    };
-
-    document.addEventListener("pointerdown", deactivateGraphInteraction);
-    return () =>
-      document.removeEventListener("pointerdown", deactivateGraphInteraction);
-  }, []);
 
   const detailStages = selectedStage ? [selectedStage] : [];
 
@@ -628,41 +214,61 @@ export function IssueWorkflowDag({
 
   return (
     <>
-      <div
-        ref={graphContainerRef}
-        data-testid="cloud-todo-workflow-dag"
-        className="issue-workflow-dag"
-        onPointerDownCapture={() => setGraphInteractionActive(true)}
+      <ol
+        data-testid="cloud-todo-workflow-stages"
+        className="issue-workflow-stages"
       >
-        <ReactFlow
-          className="workflow-react-flow"
-          nodes={graph.nodes}
-          edges={graph.edges}
-          nodeTypes={nodeTypes}
-          onInit={(instance) => {
-            flowInstanceRef.current = instance;
-            focusCurrentStage(instance);
-          }}
-          onNodeClick={(_, node) =>
-            setStageSelection({ stageId: node.id, currentStageId })
-          }
-          minZoom={0.35}
-          maxZoom={1.5}
-          preventScrolling={graphInteractionActive}
-          zoomOnScroll={graphInteractionActive}
-          zoomOnPinch={graphInteractionActive}
-          zoomOnDoubleClick={graphInteractionActive}
-          zoomActivationKeyCode={null}
-          panOnDrag={graphInteractionActive}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable={false}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background gap={20} size={1} color="rgb(var(--color-border))" />
-          <Controls showInteractive={false} />
-        </ReactFlow>
-      </div>
+        {nodes.map((stage, index) => {
+          const automated = workflowNodeExecutionMode(stage) === "robot";
+          const stageTasks = tasks.filter(
+            (task) => task.workflow_node_id === stage.id,
+          );
+          return (
+            <li key={stage.id}>
+              <button
+                type="button"
+                data-testid={`cloud-todo-workflow-node-${stage.id}`}
+                aria-pressed={stage.id === effectiveSelectedStageId}
+                className={cn(
+                  "issue-workflow-stage",
+                  stage.id === effectiveSelectedStageId && "is-selected",
+                )}
+                onClick={() => setSelectedStageId(stage.id)}
+              >
+                <span className="issue-workflow-stage-index">{index + 1}</span>
+                <span className="issue-workflow-stage-summary">
+                  <strong>{stage.name}</strong>
+                  <small>
+                    {automated ? (
+                      <Bot className="h-3.5 w-3.5" />
+                    ) : (
+                      <UserRound className="h-3.5 w-3.5" />
+                    )}
+                    {automated
+                      ? t("todo.workflow_ai_execution")
+                      : t("todo.workflow_stage_human_execution")}
+                    {" · "}
+                    {t("todo.workflow_task_count", {
+                      count: stageTasks.length,
+                    })}
+                  </small>
+                </span>
+                <span
+                  className={cn(
+                    "issue-workflow-status",
+                    `is-${stage.status.replace(/_/g, "-")}`,
+                  )}
+                >
+                  {isWorkflowNodeCompleted(stage.status) ? (
+                    <Check className="h-3 w-3" />
+                  ) : null}
+                  {workflowNodeStatusLabel(t, stage.status)}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
       {detailStages.length > 0 ? (
         <section
           data-testid="cloud-todo-workflow-actions"

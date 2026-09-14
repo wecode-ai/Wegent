@@ -31,7 +31,7 @@ import type {
   AutomationRulesViewProps,
 } from "./AutomationRulesView.types";
 import { useAutomationLocale, useTranslation } from "./AutomationUiHost";
-import { SimpleWorkflowDag } from "./SimpleWorkflowDag";
+import { SequentialWorkflowSteps } from "./SequentialWorkflowSteps";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 type Translate = (
@@ -1160,7 +1160,7 @@ function PolicyEditor({
             ) : null}
           </div>
           {fixedSteps.length ? (
-            <SimpleWorkflowDag
+            <SequentialWorkflowSteps
               steps={fixedSteps}
               selectedStepId={selectedWorkflowStepId}
               canManage={Boolean(coordinator && canManage)}

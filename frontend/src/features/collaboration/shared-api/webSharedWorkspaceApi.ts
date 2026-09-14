@@ -661,6 +661,7 @@ export function createWebSharedWorkspaceApi(
     workspaces: sharedHttpApi.workspaces,
     resources: sharedHttpApi.resources,
     projects: {
+      ...sharedHttpApi.projects,
       async list(workspaceId) {
         const endpoint = workspaceId
           ? `/v1/workspaces/${encoded(workspaceId)}/projects`

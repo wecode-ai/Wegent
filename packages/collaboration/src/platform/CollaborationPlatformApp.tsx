@@ -16,7 +16,6 @@ import {
   createCollaborationTranslator,
   type CollaborationLocale,
 } from "../i18n";
-import type { AutomationUiHost } from "../automation-ui";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import { createWegentProjectAgentInput } from "../project-agent-config";
 import { ProjectCreateDialog, projectCreateLabels } from "../project-create";
@@ -41,6 +40,7 @@ import type {
 import { useCollaborationPlatformController } from "./useCollaborationPlatformController";
 import {
   WorkspaceAgentsConfiguration,
+  WorkspaceCollaborationGroupsConfiguration,
   WorkspaceExecutionEnvironmentsConfiguration,
   WorkspaceMembersConfiguration,
 } from "./WorkspaceResourceConfiguration";
@@ -66,6 +66,7 @@ const platformMessages = {
     allProjects: "全部项目",
     members: "成员",
     agents: "智能体",
+    collaborationGroups: "协作组",
     environments: "执行环境",
     settings: "空间设置",
     basicInformation: "基本信息",
@@ -124,6 +125,7 @@ const platformMessages = {
     allProjects: "All projects",
     members: "Members",
     agents: "Agents",
+    collaborationGroups: "Collaboration groups",
     environments: "Execution environments",
     settings: "Space settings",
     basicInformation: "Basic information",
@@ -800,7 +802,6 @@ export function CollaborationPlatformApp({
   api,
   host,
   locale = "zh-CN",
-  automationUiHost,
   onCreateTask,
   onReady,
   renderProject,
@@ -810,7 +811,6 @@ export function CollaborationPlatformApp({
   api: SharedWorkspaceApi;
   host: CollaborationPlatformHostAdapter;
   locale?: CollaborationLocale;
-  automationUiHost?: AutomationUiHost;
   onCreateTask?(
     project: CollaborationProject,
     issue: CollaborationIssue,
@@ -924,7 +924,6 @@ export function CollaborationPlatformApp({
         <CollaborationApp
           api={scopedApi}
           locale={locale}
-          automationUiHost={automationUiHost}
           showProjectBack={false}
           host={{
             capabilities: {
@@ -1063,6 +1062,7 @@ export function CollaborationPlatformApp({
       host.location.workspaceView === "settings" ||
       host.location.workspaceView === "members" ||
       host.location.workspaceView === "agents" ||
+      host.location.workspaceView === "collaboration-groups" ||
       host.location.workspaceView === "execution-environments"
         ? host.location.workspaceView
         : null;
@@ -1136,6 +1136,27 @@ export function CollaborationPlatformApp({
                 workspace={workspace}
                 agents={state.agents}
                 resources={state.resources}
+                locale={locale}
+                commands={commands}
+              />
+            </div>
+          ),
+        },
+        {
+          id: "collaboration-groups",
+          label: locale === "zh-CN" ? "协作组" : "Collaboration groups",
+          testId: "collaboration-workspace-nav-collaboration-groups",
+          content: (
+            <div className="collaboration-platform-page">
+              <PageHeader
+                title={locale === "zh-CN" ? "协作组" : "Collaboration groups"}
+                subtitle={`${messages.settings} · ${workspace.name}`}
+              />
+              <WorkspaceCollaborationGroupsConfiguration
+                workspace={workspace}
+                groups={state.collaborationGroups}
+                members={state.members}
+                agents={state.agents}
                 locale={locale}
                 commands={commands}
               />
@@ -1314,6 +1335,20 @@ export function CollaborationPlatformApp({
                 >
                   <strong>{messages.agents}</strong>
                   <span>{workspace.agent_count}</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="collaboration-workspace-nav-collaboration-groups"
+                  onClick={() =>
+                    navigateWithin(host, {
+                      workspaceView: "collaboration-groups",
+                      projectId: null,
+                      issueId: null,
+                    })
+                  }
+                >
+                  <strong>{messages.collaborationGroups}</strong>
+                  <span>{state.collaborationGroups.length}</span>
                 </button>
                 <button
                   type="button"

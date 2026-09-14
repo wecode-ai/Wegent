@@ -20,7 +20,6 @@ import type {
   CollaborationMember,
   CollaborationProject,
   CollaborationUser,
-  SharedWorkspaceAutomationApi,
   SharedWorkspaceApi,
   WeworkWorkspaceRuntimePort,
   WorkspaceBoardSnapshot,
@@ -53,7 +52,17 @@ type RuntimeProfileApi = ReturnType<typeof createRuntimeProfileApi>
 
 type ProjectMethod = 'list' | 'get' | 'create' | 'update' | 'archive'
 
-export type WeworkAutomationSharedWorkspaceApi = SharedWorkspaceAutomationApi
+export interface WeworkAutomationSharedWorkspaceApi {
+  projects: Pick<SharedWorkspaceApi['projects'], 'update'>
+  automations?: Pick<
+    SharedWorkspaceApi['automations'],
+    'list' | 'create' | 'migrateWorkflow' | 'update' | 'remove' | 'runNow' | 'listRuns'
+  >
+  incomingHooks?: Pick<
+    SharedWorkspaceApi['incomingHooks'],
+    'catalog' | 'list' | 'create' | 'update' | 'rotate' | 'remove'
+  >
+}
 
 export interface WeworkDeliverySharedWorkspaceApi {
   projects: Pick<SharedWorkspaceApi['projects'], ProjectMethod>
@@ -242,6 +251,7 @@ function toAgent(agent: ProjectBoardSnapshot['agents'][number]): CollaborationAg
   return {
     ...agent,
     id: String(agent.id),
+    ...(agent.wegentTeamId == null ? {} : { team_id: agent.wegentTeamId }),
   }
 }
 
@@ -285,7 +295,7 @@ function toIncomingHook(
 
 function createWeworkAutomationsApi(
   projectAutomationApi: ProjectAutomationApi
-): NonNullable<SharedWorkspaceAutomationApi['automations']> {
+): NonNullable<WeworkAutomationSharedWorkspaceApi['automations']> {
   return {
     async list(projectId) {
       return (await projectAutomationApi.list(projectId)).map(toAutomationRule)
@@ -329,7 +339,7 @@ function createWeworkAutomationsApi(
 
 function createWeworkIncomingHooksApi(
   projectIncomingHookApi: ProjectIncomingHookApi
-): NonNullable<SharedWorkspaceAutomationApi['incomingHooks']> {
+): NonNullable<WeworkAutomationSharedWorkspaceApi['incomingHooks']> {
   return {
     async catalog() {
       return (await projectIncomingHookApi.catalog()).map(item => ({ ...item }))
@@ -884,6 +894,7 @@ export function createWeworkSharedWorkspaceApi<
     resources: sharedHttpApi.resources,
     projects: {
       ...delivery.projects,
+      ...sharedHttpApi.projects,
       async list(workspaceId) {
         if (!workspaceId) return delivery.projects.list()
         const response = await client.get<{ items: CloudProject[] }>(

@@ -8,6 +8,7 @@ const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const CLOUD_WORKSPACE_ID = 'offline-cloud-workspace'
 const PROJECT_NAME = '离线本地项目空间'
 const ISSUE_NAME = '离线本地 Issue'
+const AGENT_NAME = '离线项目智能体'
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json' })
@@ -240,15 +241,66 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
 
       await control.command(
         'click',
+        scoped('[data-testid="collaboration-project-settings-agents"]')
+      )
+      await control.command('click', scoped('[data-testid="project-agent-add"]'))
+      await control.command('click', scoped('[data-testid="project-agent-mode-codex"]'))
+      await control.command('fill', scoped('[data-testid="project-agent-codex-name"]'), {
+        value: AGENT_NAME,
+      })
+      await control.command(
+        'clickWhenEnabled',
+        scoped('[data-testid="project-agent-codex-create"]'),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('waitFor', scoped('[data-testid="project-agent-list"]'), {
+        text: AGENT_NAME,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      await control.command(
+        'click',
         scoped('[data-testid="collaboration-project-settings-dispatch"]')
       )
-      await control.command('waitFor', scoped('[data-testid="project-automation-policy"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', scoped('[data-testid="automation-welcome-create-policy"]'), {
-        text: '创建第一条策略',
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="collaboration-project-dispatch-unavailable"]'),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-dispatch-configure-agents"]')
+          )
+        ),
+        0,
+        'Projects with an existing Agent must not prompt users to add another Agent'
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="project-automation-policy"]')
+          )
+        ),
+        0,
+        'The removed DAG policy editor must not remain in local Project settings'
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-dispatch-continue-manual"]')
+          )
+        ),
+        0,
+        'The removed manual-assignment fallback action must not remain in Project settings'
+      )
       await captureVerificationScreenshot(
         control,
         'offline-local-project-space-02-local-project-settings.png',

@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from 'vitest'
-import { createSharedWorkspaceAutomationPorts } from '@wegent/collaboration/automation-ui'
 import type {
   CloudLoopItem,
   CloudLoopItemCollaborator,
@@ -1101,7 +1100,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
 })
 
 describe('createWeworkAutomationSharedWorkspaceApi', () => {
-  it('routes local automation and legacy workflow clearing through shared ports', async () => {
+  it('routes local automation and incoming-hook requests', async () => {
     const deliveryApi = createMockDeliveryApi()
     const projectAutomationApi = {
       list: vi.fn().mockResolvedValue([]),
@@ -1125,31 +1124,11 @@ describe('createWeworkAutomationSharedWorkspaceApi', () => {
       projectAutomationApi as never,
       projectIncomingHookApi as never
     )
-    const ports = createSharedWorkspaceAutomationPorts<CloudProject>(workspaceApi)
-    const workflowDefinition = {
-      version: 3,
-      stage_mode: 'none' as const,
-      advancement_policy: 'manual' as const,
-      coordinator_prompt: '',
-      approval_policy: 'required' as const,
-      ai_automation_rule_id: null,
-      execution_config: null,
-      nodes: [],
-    }
-
-    await ports.automationApi.list('project-1')
-    await ports.incomingHooksApi.catalog()
-    await ports.projectApi.clearLegacyWorkflow(
-      { ...project, version: 4 } as CloudProject,
-      workflowDefinition
-    )
+    await workspaceApi.automations?.list('project-1')
+    await workspaceApi.incomingHooks?.catalog()
 
     expect(projectAutomationApi.list).toHaveBeenCalledWith('project-1')
     expect(projectIncomingHookApi.catalog).toHaveBeenCalledOnce()
-    expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith('project-1', {
-      version: 4,
-      workflow_definition: workflowDefinition,
-    })
   })
 })
 

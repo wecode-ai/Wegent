@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
+  CollaborationGroup,
   CollaborationExecutionEnvironment,
   CollaborationMember,
   CollaborationOwnedAgent,
@@ -26,6 +27,7 @@ export interface CollaborationPlatformState {
   projects: CollaborationProject[];
   members: CollaborationMember[];
   agents: CollaborationOwnedAgent[];
+  collaborationGroups: CollaborationGroup[];
   executionEnvironments: CollaborationExecutionEnvironment[];
   resources: CollaborationPlatformResources;
   loading: boolean;
@@ -73,6 +75,7 @@ export function useCollaborationPlatformController({
     projects: [],
     members: [],
     agents: [],
+    collaborationGroups: [],
     executionEnvironments: [],
     resources: emptyResources,
     loading: true,
@@ -108,6 +111,7 @@ export function useCollaborationPlatformController({
           projects: navigationProjects,
           members: [],
           agents: [],
+          collaborationGroups: [],
           executionEnvironments: [],
           resources: emptyResources,
           loading: false,
@@ -135,20 +139,28 @@ export function useCollaborationPlatformController({
           ),
           members: [],
           agents: [],
+          collaborationGroups: [],
           executionEnvironments: [],
           resources: emptyResources,
           loading: false,
         }));
         return;
       }
-      const [workspace, members, agents, executionEnvironments, resources] =
-        await Promise.all([
-          api.workspaces.get(location.workspaceId),
-          api.workspaces.listMembers(location.workspaceId),
-          api.workspaces.listAgents(location.workspaceId),
-          api.workspaces.listExecutionEnvironments(location.workspaceId),
-          api.resources ? api.resources.list() : emptyResources,
-        ]);
+      const [
+        workspace,
+        members,
+        agents,
+        collaborationGroups,
+        executionEnvironments,
+        resources,
+      ] = await Promise.all([
+        api.workspaces.get(location.workspaceId),
+        api.workspaces.listMembers(location.workspaceId),
+        api.workspaces.listAgents(location.workspaceId),
+        api.workspaces.listCollaborationGroups(location.workspaceId),
+        api.workspaces.listExecutionEnvironments(location.workspaceId),
+        api.resources ? api.resources.list() : emptyResources,
+      ]);
       if (revision !== loadRevisionRef.current) return;
       setState((current) => ({
         ...current,
@@ -161,6 +173,7 @@ export function useCollaborationPlatformController({
         ),
         members,
         agents,
+        collaborationGroups,
         executionEnvironments,
         resources,
         loading: false,
@@ -361,6 +374,52 @@ export function useCollaborationPlatformController({
             ...workspace,
             agent_count: Math.max(0, workspace.agent_count - 1),
           })),
+        }));
+      },
+      async createCollaborationGroup(input: {
+        name: string;
+        description?: string;
+        leader: { kind: "human" | "agent"; id: string };
+        members: Array<{ kind: "human" | "agent"; id: string }>;
+        coordinationMode: "manager";
+        policy: {
+          prompt: string;
+          triggerType: "manual" | "schedule" | "event";
+          eventType: string | null;
+          eventConfig: Record<string, unknown>;
+          cronExpression: string | null;
+          timezone: string;
+          issueSelector: Record<string, unknown>;
+          outputPolicy: Record<string, unknown>;
+          enabled: boolean;
+        };
+      }) {
+        if (!api.workspaces || !location.workspaceId) {
+          throw new Error("Workspace API is unavailable");
+        }
+        const group = await api.workspaces.createCollaborationGroup(
+          location.workspaceId,
+          input,
+        );
+        setState((current) => ({
+          ...current,
+          collaborationGroups: [...current.collaborationGroups, group],
+        }));
+        return group;
+      },
+      async removeCollaborationGroup(groupId: string) {
+        if (!api.workspaces || !location.workspaceId) {
+          throw new Error("Workspace API is unavailable");
+        }
+        await api.workspaces.removeCollaborationGroup(
+          location.workspaceId,
+          groupId,
+        );
+        setState((current) => ({
+          ...current,
+          collaborationGroups: current.collaborationGroups.filter(
+            (group) => group.id !== groupId,
+          ),
         }));
       },
       async addExecutionEnvironment(

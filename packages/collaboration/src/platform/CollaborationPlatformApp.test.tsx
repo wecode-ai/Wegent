@@ -184,6 +184,7 @@ function createApi({
   const projects = [...initialProjects];
   const workspaceMembers = [member];
   const workspaceAgents = [agent];
+  const collaborationGroups: import("../types").CollaborationGroup[] = [];
   const workspaceEnvironments = [environment];
   const personalResources = {
     agents: [agent, availableAgent],
@@ -280,6 +281,68 @@ function createApi({
         );
         if (index >= 0) workspaceAgents.splice(index, 1);
       }),
+      listCollaborationGroups: vi.fn(async () => [...collaborationGroups]),
+      createCollaborationGroup: vi.fn(
+        async (
+          workspaceId: string,
+          input: {
+            name: string;
+            description?: string;
+            leader: { kind: "human" | "agent"; id: string };
+            members: Array<{ kind: "human" | "agent"; id: string }>;
+            coordinationMode: "manager";
+            policy: {
+              prompt: string;
+              triggerType: "manual" | "schedule" | "event";
+              eventType: string | null;
+              eventConfig: Record<string, unknown>;
+              cronExpression: string | null;
+              timezone: string;
+              issueSelector: Record<string, unknown>;
+              outputPolicy: Record<string, unknown>;
+              enabled: boolean;
+            };
+          },
+        ) => {
+          const group: import("../types").CollaborationGroup = {
+            id: `group-${collaborationGroups.length + 1}`,
+            workspace_id: workspaceId,
+            owner_type: "workspace",
+            owner_id: workspaceId,
+            name: input.name,
+            description: input.description ?? "",
+            leader: input.leader,
+            members: input.members,
+            coordination_mode: input.coordinationMode,
+            policy: {
+              prompt: input.policy.prompt,
+              trigger_type: input.policy.triggerType,
+              event_type: input.policy.eventType,
+              event_config: input.policy.eventConfig,
+              cron_expression: input.policy.cronExpression,
+              timezone: input.policy.timezone,
+              issue_selector: input.policy.issueSelector,
+              output_policy: input.policy.outputPolicy,
+              enabled: input.policy.enabled,
+            },
+            version: 1,
+            created_by_user_id: 1,
+            created_at: "2026-09-14T00:00:00Z",
+            updated_at: "2026-09-14T00:00:00Z",
+          };
+          collaborationGroups.push(group);
+          return group;
+        },
+      ),
+      updateCollaborationGroup: vi.fn(),
+      removeCollaborationGroup: vi.fn(
+        async (_workspaceId: string, groupId: string) => {
+          const index = collaborationGroups.findIndex(
+            (group) => group.id === groupId,
+          );
+          if (index >= 0) collaborationGroups.splice(index, 1);
+        },
+      ),
       listExecutionEnvironments: vi.fn(async () => [...workspaceEnvironments]),
       addExecutionEnvironment: vi.fn(
         async (_workspaceId: string, input: { deviceId: number }) => {
@@ -1228,11 +1291,18 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
     await change(comment, `@${member.user_name} 请处理交互设计`);
     await click(byTestId("collaboration-issue-comment-submit"));
+    expect(api.comments.create).toHaveBeenLastCalledWith(
+      issue.id,
+      `@${member.user_name} 请处理交互设计`,
+    );
+    await click(byTestId("collaboration-issue-assignment-trigger"));
+    await click(
+      byTestId(`collaboration-issue-assign-member-${member.user_id}`),
+    );
     expect(api.assignments?.create).toHaveBeenLastCalledWith(issue.id, {
       targetType: "human",
       targetId: String(member.user_id),
       workflowStep: null,
-      commentBody: `@${member.user_name} 请处理交互设计`,
       notifyTarget: true,
     });
 
@@ -1240,12 +1310,17 @@ describe("CollaborationPlatformApp real component flow", () => {
     await click(byTestId(`collaboration-issue-mention-agent-${agent.id}`));
     await change(comment, `@${agent.name} 请开始实现`);
     await click(byTestId("collaboration-issue-comment-submit"));
+    expect(api.comments.create).toHaveBeenLastCalledWith(
+      issue.id,
+      `@${agent.name} 请开始实现`,
+    );
+    await click(byTestId("collaboration-issue-assignment-trigger"));
+    await click(byTestId(`collaboration-issue-assign-agent-${agent.id}`));
     expect(api.assignments?.create).toHaveBeenLastCalledWith(issue.id, {
       targetType: "agent",
       targetId: agent.id,
       workflowStep: null,
-      commentBody: `@${agent.name} 请开始实现`,
-      notifyTarget: false,
+      notifyTarget: true,
     });
   });
 

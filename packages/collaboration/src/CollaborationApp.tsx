@@ -33,17 +33,12 @@ import type {
   SharedWorkspaceApi,
   WorkspaceTaskBinding,
 } from "./ports/SharedWorkspaceApi";
-import {
-  ProjectAutomationRulesView,
-  createSharedWorkspaceAutomationPorts,
-  type AutomationUiHost,
-} from "./automation-ui";
-import type { AutomationProject } from "./automation";
 import { useCollaborationWorkspaceController } from "./workspace-controller";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
 import { ProjectIssueTable, useIssueAssignmentsByIssueId } from "./platform";
 import {
   ProjectDispatchSettings,
+  ProjectCollaborationGroups,
   ProjectExecutionEnvironments,
   ProjectSettingsShell,
 } from "./project-manage";
@@ -65,7 +60,6 @@ interface CollaborationAppProps {
   host: CollaborationHostAdapter;
   locale?: CollaborationLocale;
   pollIntervalMs?: number;
-  automationUiHost?: AutomationUiHost;
   createProjectRequestKey?: number;
   refreshProjectRequestKey?: number;
   showProjectBack?: boolean;
@@ -106,7 +100,6 @@ export function CollaborationApp({
   host,
   locale = "zh-CN",
   pollIntervalMs = 15_000,
-  automationUiHost,
   createProjectRequestKey = 0,
   refreshProjectRequestKey = 0,
   showProjectBack = true,
@@ -153,20 +146,6 @@ export function CollaborationApp({
       issues,
       enabled: project !== null,
     });
-  const automationPorts = useMemo(
-    () =>
-      host.location.view === "automation" || host.location.view === "manage"
-        ? createSharedWorkspaceAutomationPorts(api)
-        : null,
-    [api, host.location.view],
-  );
-  const projectManagerName = project
-    ? (members.find((member) => member.user_id === project.created_by_user_id)
-        ?.user_name ??
-      (project.created_by_user_id === project.current_user_id
-        ? (project.current_user_name ?? messages.currentUser)
-        : `#${project.created_by_user_id}`))
-    : messages.currentUser;
 
   useEffect(() => {
     host.onProjectsChange?.(projects);
@@ -319,18 +298,7 @@ export function CollaborationApp({
               <strong>{project.name}</strong>
               <small>
                 {locale === "zh-CN" ? "协作项目" : "Collaboration project"} ·{" "}
-                {members.length} {locale === "zh-CN" ? "位成员" : "members"} ·{" "}
-                <button
-                  type="button"
-                  className="collaboration-project-manager-link"
-                  data-testid="collaboration-project-manager-link"
-                  onClick={() => {
-                    setSettingsSectionId("dispatch");
-                    navigateView("manage");
-                  }}
-                >
-                  {messages.projectManager}: {projectManagerName}
-                </button>
+                {members.length} {locale === "zh-CN" ? "位成员" : "members"}
               </small>
             </span>
           }
@@ -626,62 +594,22 @@ export function CollaborationApp({
                     testId: "collaboration-project-settings-dispatch",
                     content: (
                       <ProjectDispatchSettings
-                        canManage={
-                          project.access_role === "Owner" ||
-                          project.access_role === "Maintainer"
-                        }
-                        managerName={projectManagerName}
-                        onConfigureAgents={() => setSettingsSectionId("agents")}
-                        onContinueManualAssignment={() =>
-                          host.navigate({
-                            projectId: project.id,
-                            issueId: null,
-                            view: "board",
-                          })
-                        }
                         translate={translate}
-                        automationContent={
-                          automationPorts && automationUiHost ? (
-                            <ProjectAutomationRulesView
-                              automationApi={automationPorts.automationApi}
-                              automationCacheSource={api.automations}
-                              projectApi={automationPorts.projectApi}
-                              incomingHooksApi={
-                                automationPorts.incomingHooksApi
-                              }
+                        collaborationGroupsContent={
+                          project.workspace_id &&
+                          api.workspaces?.listCollaborationGroups &&
+                          api.projects.listCollaborationGroups ? (
+                            <ProjectCollaborationGroups
+                              api={api}
+                              projectId={project.id}
+                              workspaceId={project.workspace_id}
                               locale={locale}
-                              uiHost={automationUiHost}
-                              project={
-                                project as CollaborationProject &
-                                  AutomationProject
-                              }
-                              projectAgents={agents}
-                              currentUserId={project.current_user_id}
+                              members={members}
+                              agents={agents}
                               canManage={
                                 project.access_role === "Owner" ||
                                 project.access_role === "Maintainer"
                               }
-                              onProjectUpdated={(updated) =>
-                                commands.replaceProject(
-                                  updated as CollaborationProject,
-                                )
-                              }
-                              onOpenIssue={(issueId) =>
-                                host.navigate({
-                                  projectId: project.id,
-                                  issueId,
-                                  view: "board",
-                                })
-                              }
-                              onRunRefreshError={(refreshError) => {
-                                console.error(
-                                  "[Web collaboration automation] run history refresh failed",
-                                  {
-                                    projectId: project.id,
-                                    error: refreshError,
-                                  },
-                                );
-                              }}
                             />
                           ) : undefined
                         }
