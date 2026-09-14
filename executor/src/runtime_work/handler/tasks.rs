@@ -386,6 +386,7 @@ impl RuntimeWorkRpcHandler {
             .get("workspaceSourceTask")
             .or_else(|| payload.get("workspace_source_task"))
             .and_then(Value::as_object);
+        let mut side_source = side_source_thread(&payload);
         let inherited_workspace_path = if let Some(source) = workspace_source_task {
             let source_device_id = source
                 .get("deviceId")
@@ -467,7 +468,9 @@ impl RuntimeWorkRpcHandler {
                 );
                 AppIpcError::new("bad_request", "workspacePath is required")
             })?;
-        let workspace_path = if request.workspace_source.as_deref() == Some("git_worktree") {
+        let workspace_path = if side_source.is_none()
+            && request.workspace_source.as_deref() == Some("git_worktree")
+        {
             let git_ref = payload
                 .get("execution")
                 .and_then(|execution| execution.get("workspace"))
@@ -619,7 +622,6 @@ impl RuntimeWorkRpcHandler {
             }
         } else {
             let initial_thread_goal = initial_thread_goal_from_payload(&payload);
-            let mut side_source = side_source_thread(&payload);
             if let Some(source) = &mut side_source {
                 self.wait_for_running_side_source_turn(&source.thread_id)
                     .await;

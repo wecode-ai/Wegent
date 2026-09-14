@@ -263,6 +263,14 @@ Backend 根据请求中的项目映射或独立设备工作区解析目标设备
 
 项目模式创建任务时，Wework 的执行工作区只有两种来源：`current_workspace` 使用项目主目录，`git_worktree` 通过目标设备的 `runtime.worktrees.prepare` 创建独立工作树。路径由该设备的 Worktree 设置、运行时任务 id 和项目目录名稳定拼出，不能由 UI 拼接任意路径。工作树创建请求可以携带显式 `branch`；如果没有显式分支，默认分支必须读取项目主目录的当前 Git 分支，而不是 Git 默认分支或 `HEAD` 字样。分支列表只负责展示可选分支，当前分支应排在第一位，其余分支保持 Git 返回顺序。
 
+临时侧边对话是父 LocalTask 的原地分支，不是新的工作区规划。Wework 通过
+`sideSource` 传递父任务的 `deviceId`、`workspacePath` 和 Codex `threadId`；
+创建请求必须清除项目当前选择的 `git_worktree` 策略。Executor 也必须把
+`sideSource` 视为权威目录绑定：即使请求同时错误携带
+`workspace_source=git_worktree`，仍直接使用父任务的 `workspacePath` 调用
+`thread/fork`，不能再创建一个工作树。这样主线程位于项目主目录或已有工作树时，
+侧边对话都会在同一目录中执行。
+
 Wework 在调用 create 前先生成客户端侧 `localTaskId`，并在请求体中作为 `localTaskId` 传给 Backend。Backend 只把这个值转发给目标设备，不把它写入中心数据库。前端会立即用 `deviceId + localTaskId` 打开运行时 URL、展示用户消息和等待态；如果设备返回了不同的 `localTaskId`，前端再切换到设备确认的地址。这样新建任务不需要等待 Backend RPC 完成或下一次列表刷新，队列发送也会等当前等待态进入真实 assistant turn 后再继续。
 
 运行时创建的持久化位置由具体 runtime 决定：

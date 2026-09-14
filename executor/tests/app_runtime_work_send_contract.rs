@@ -858,6 +858,12 @@ async fn runtime_tasks_create_ephemeral_codex_thread_hidden_from_task_list() {
                 "workspacePath": "/tmp/project",
                 "message": "quick side question",
                 "ephemeral": true,
+                "execution": {
+                    "workspace": {
+                        "source": "git_worktree",
+                        "branch": "feature/side-chat"
+                    }
+                },
                 "sideSource": {
                     "deviceId": "device-1",
                     "taskId": "main-task-1",
@@ -872,6 +878,7 @@ async fn runtime_tasks_create_ephemeral_codex_thread_hidden_from_task_list() {
                     "subtask_id": "side-turn-1",
                     "prompt": "quick side question",
                     "project_workspace_path": "/tmp/project",
+                    "workspace_source": "git_worktree",
                     "ephemeral": true,
                     "bot": [{"shell_type": "ClaudeCode"}],
                     "model_config": {
