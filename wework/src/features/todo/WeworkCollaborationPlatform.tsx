@@ -1134,13 +1134,19 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   const activeProject = props.activeProjectRef ?? null
   const [location, setLocation] = useState<CollaborationPlatformLocation>(initialLocation)
   const startupReadySent = useRef(false)
+  const pendingNavigationProjectIdRef = useRef<string | null | undefined>(undefined)
 
   useEffect(() => {
+    const activeProjectId = activeProject ? String(activeProject.projectId) : null
+    if (pendingNavigationProjectIdRef.current !== undefined) {
+      if (pendingNavigationProjectIdRef.current !== activeProjectId) return
+      pendingNavigationProjectIdRef.current = undefined
+    }
     if (!platformApi?.projects.get || !activeProject) return
-    if (String(location.projectId) === String(activeProject.projectId)) return
+    if (String(location.projectId) === activeProjectId) return
 
     let cancelled = false
-    void platformApi.projects.get(String(activeProject.projectId)).then(project => {
+    void platformApi.projects.get(activeProjectId).then(project => {
       if (cancelled || !project.workspace_id) return
       setLocation(current => ({
         ...current,
@@ -1198,6 +1204,11 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
             sidebarPresentation: 'full',
           },
           navigate: nextLocation => {
+            if (props.onActiveProjectChange) {
+              pendingNavigationProjectIdRef.current = nextLocation.projectId
+                ? String(nextLocation.projectId)
+                : null
+            }
             setLocation(nextLocation)
             if (!nextLocation.projectId) {
               props.onActiveProjectChange?.(null)

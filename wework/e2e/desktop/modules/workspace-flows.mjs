@@ -1448,6 +1448,10 @@ async function verifyWorkspaceTabIsolation(control) {
     }
   )
   const firstWorkspaceAgents = `${firstBoardContent} [data-testid="collaboration-workspace-nav-agents"]`
+  await control.command('waitFor', firstWorkspaceAgents, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', firstWorkspaceAgents)
   await waitForAttribute(
     control,

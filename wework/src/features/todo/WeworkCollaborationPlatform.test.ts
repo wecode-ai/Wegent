@@ -17,6 +17,7 @@ import {
   createWeworkPlatformApi,
   projectRuntimeStatusSignature,
   toWeworkIssueTaskBinding,
+  WeworkCollaborationPlatform,
   WeworkSharedProject,
 } from './WeworkCollaborationPlatform'
 
@@ -75,6 +76,45 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         )
       )
     },
+    CollaborationPlatformApp: ({
+      host,
+    }: {
+      host: {
+        location: {
+          platformView: 'spaces' | 'project'
+          workspaceId: string | null
+          workspaceView: 'home' | 'projects'
+          projectId: string | null
+          projectView: 'board'
+          issueId: string | null
+        }
+        navigate(next: {
+          platformView: 'spaces'
+          workspaceId: string
+          workspaceView: 'home'
+          projectId: null
+          projectView: 'board'
+          issueId: null
+        }): void
+      }
+    }) =>
+      createElement(
+        'button',
+        {
+          'data-testid': 'collaboration-platform-open-local-workspace',
+          onClick: () =>
+            host.navigate({
+              platformView: 'spaces',
+              workspaceId: 'wework-local-workspace',
+              workspaceView: 'home',
+              projectId: null,
+              projectView: 'board',
+              issueId: null,
+            }),
+          type: 'button',
+        },
+        host.location.projectId ?? 'workspace'
+      ),
   }
 })
 
@@ -144,6 +184,50 @@ function runtimeWork(tasks: RuntimeTaskSummary[]): RuntimeWorkListResponse {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it('does not restore a stale controlled project while workspace navigation propagates', async () => {
+    const getProject = vi.fn().mockResolvedValue({
+      id: 'default-work-items',
+      name: 'My tasks',
+      workspace_id: 'cloud-workspace',
+      project_store: 'backend',
+    })
+    const onActiveProjectChange = vi.fn()
+
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: {
+          id: 1,
+          user_name: 'admin',
+          email: 'admin@example.com',
+        } as never,
+        localProjects: [],
+        services: {
+          sharedWorkspaceApi: {
+            projects: {
+              get: getProject,
+            },
+          },
+        } as never,
+        activeProjectRef: {
+          projectStore: 'backend',
+          projectId: 'default-work-items',
+        },
+        onActiveProjectChange,
+      })
+    )
+
+    await screen.findByText('default-work-items')
+    await act(async () => {
+      screen.getByTestId('collaboration-platform-open-local-workspace').click()
+    })
+
+    expect(onActiveProjectChange).toHaveBeenCalledWith(null)
+    expect(getProject).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('collaboration-platform-open-local-workspace')).toHaveTextContent(
+      'workspace'
+    )
+  })
+
   it('maps shared board task bindings into the Issue drawer initial context', () => {
     expect(
       toWeworkIssueTaskBinding({
