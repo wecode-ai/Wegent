@@ -75,6 +75,17 @@ function issue(): CollaborationIssue {
     updated_at: '2026-09-10T00:00:00Z',
     completed_at: null,
     can_edit: true,
+    permissions: {
+      edit_content: true,
+      comment: true,
+      claim: true,
+      handoff: true,
+      assign: true,
+      execute: true,
+      submit_review: true,
+      complete: true,
+      reopen: true,
+    },
   }
 }
 

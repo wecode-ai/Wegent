@@ -605,6 +605,14 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       'update',
       'archive',
     ])
+    expect(WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS.members).toEqual([
+      'list',
+      'searchUsers',
+      'add',
+      'update',
+      'remove',
+      'transferOwnership',
+    ])
     expect(WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS.myWork).toEqual(['list'])
     expect(WEWORK_DELIVERY_SHARED_WORKSPACE_MISSING_METHODS).toEqual({
       projects: ['importMessages'],

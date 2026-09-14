@@ -108,7 +108,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
     'decideNode',
     'getStageContext',
   ],
-  members: ['list', 'searchUsers', 'add', 'update', 'remove'],
+  members: ['list', 'searchUsers', 'add', 'update', 'remove', 'transferOwnership'],
   files: [
     'list',
     'listDeliveryFiles',
