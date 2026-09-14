@@ -319,7 +319,6 @@ const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
 const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
 const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
   'WEWORK_DESKTOP_E2E_DEFAULT_ISSUE_CONTEXT: preserve this acceptance criterion.'
-const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 
 function assertDefaultIssueContextAbsent(request) {
   const serializedRequest = JSON.stringify(request.body)
@@ -2570,8 +2569,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           control,
           composerSelector,
           FOLLOW_UP_PROMPT,
-          'follow_up',
-          MODEL_REQUEST_TIMEOUT_MS
+          'follow_up'
         )
         try {
           await verifyTrackedTaskBoardRunningStatus(control, null)
