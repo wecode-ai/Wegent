@@ -18,6 +18,7 @@ export { IssueCreate, IssueDetail } from "./IssueDetail";
 export * from "./my-work";
 export * from "./ports/SharedWorkspaceApi";
 export * from "./project-board";
+export * from "./project-agent-config";
 export * from "./project-create";
 export * from "./project-manage";
 export * from "./project-shell";

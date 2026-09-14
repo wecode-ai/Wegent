@@ -31,6 +31,8 @@ Cross-client types, API clients, copy, test contracts, and host-independent Reac
 
 Web supplies Next.js routing, notifications, and external-link behavior through a host adapter. Wework uses the same adapter to inject local project storage and a **Desktop tools** entry. Only local projects, terminals, device execution, AI orchestration, and other behavior that depends on Electron, the local filesystem, or the local executor may enter the desktop-specific workspace. New portable behavior must land in the shared package first instead of being copied into both hosts and synchronized later.
 
+The shared package owns business state, field structure, and interaction contracts, but it must not duplicate a host's existing design system. Dialogs, tabs, selects, inputs, and primary actions should be injected through an explicit host adapter; the shared package keeps only a neutral default for host-independent use. Hosts pass brand colors through semantic CSS variables instead of hard-coding Web or Wework colors in shared components. The shared board sizing chain must preserve `min-width: 0`, `min-height: 0`, and vertical flex constraints so horizontal overflow remains inside the board scroll container instead of placing a page-level scrollbar above the remaining content.
+
 When chat messages enter a collaboration space, the Backend creates immutable message snapshots from a source Task the current user is authorized to access. The target may be a new Issue or a comment on an existing Issue. Clients must not write chat text directly as if it were a trusted snapshot.
 
 ## Domain relationships

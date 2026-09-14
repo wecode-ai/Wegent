@@ -1239,6 +1239,7 @@ export function CollaborationPlatformApp({
               }),
             notify: host.notify,
             openExternal: host.openExternal,
+            projectAgentConfiguration: host.projectAgentConfiguration,
           }}
           onCreateTask={onCreateTask}
         />

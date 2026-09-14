@@ -29,11 +29,11 @@ use tokio::{
 };
 
 use crate::{
+    agent_session,
     agents::interactive_mcp::{
         deferred_proxy_exception_failure, deferred_proxy_response_decision,
         proxy_deferred_mcp_tool, ClaudeFollowUpQuery, DeferredMcpResponseAction,
     },
-    claude_session,
     emitter::{EventEnvelope, ResponsesEventBuilder},
     logging::{log_executor_event, task_fields},
     process_environment,
@@ -460,7 +460,7 @@ impl AgentEngine for StreamProcessEngine {
                 CommandOutcome::Success { stdout } => {
                     let summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
-                        claude_session::save_session_id(&request, session_id);
+                        agent_session::save_session_id(&request, session_id);
                     }
                     let summary = handle_retryable_api_errors(
                         spec.clone(),
@@ -487,13 +487,13 @@ impl AgentEngine for StreamProcessEngine {
                     let stderr_text = decode_output(stderr.clone().into_bytes());
                     let stdout_text = decode_output(stdout.clone().into_bytes());
                     if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
-                        claude_session::delete_saved_session_files(&request);
+                        agent_session::delete_saved_session_files(&request);
                         let retry_spec = claude_spec_without_resume(&spec);
                         match run_command_output(retry_spec, timeout_seconds).await {
                             CommandOutcome::Success { stdout } => {
                                 let summary = collect_claude_stream_summary(&stdout);
                                 if let Some(session_id) = &summary.session_id {
-                                    claude_session::save_session_id(&request, session_id);
+                                    agent_session::save_session_id(&request, session_id);
                                 }
                                 summary.outcome
                             }
@@ -541,7 +541,7 @@ impl AgentEngine for StreamProcessEngine {
                 CommandOutcome::Success { stdout } => {
                     let summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
-                        claude_session::save_session_id(&request, session_id);
+                        agent_session::save_session_id(&request, session_id);
                     }
                     let follow_up_runner = FollowUpCommandRunner::Streaming {
                         sink,
@@ -574,7 +574,7 @@ impl AgentEngine for StreamProcessEngine {
                     let stderr_text = decode_output(stderr.clone().into_bytes());
                     let stdout_text = decode_output(stdout.clone().into_bytes());
                     if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
-                        claude_session::delete_saved_session_files(&request);
+                        agent_session::delete_saved_session_files(&request);
                         let retry_spec = claude_spec_without_resume(&spec);
                         let runner = FollowUpCommandRunner::Streaming {
                             sink: sink.clone(),
@@ -586,7 +586,7 @@ impl AgentEngine for StreamProcessEngine {
                             CommandOutcome::Success { stdout } => {
                                 let summary = collect_claude_stream_summary(&stdout);
                                 if let Some(session_id) = &summary.session_id {
-                                    claude_session::save_session_id(&request, session_id);
+                                    agent_session::save_session_id(&request, session_id);
                                 }
                                 let summary = handle_retryable_api_errors(
                                     spec.clone(),
@@ -655,7 +655,7 @@ async fn handle_retryable_api_errors(
             CommandOutcome::Success { stdout } => {
                 summary = collect_claude_stream_summary(&stdout);
                 if let Some(session_id) = &summary.session_id {
-                    claude_session::save_session_id(request, session_id);
+                    agent_session::save_session_id(request, session_id);
                 }
             }
             CommandOutcome::Failure { stderr, stdout, .. } => {
@@ -709,7 +709,7 @@ async fn handle_deferred_mcp_loop(
                 CommandOutcome::Success { stdout } => {
                     summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
-                        claude_session::save_session_id(&request, session_id);
+                        agent_session::save_session_id(&request, session_id);
                     }
                     continue;
                 }
@@ -783,7 +783,7 @@ async fn handle_deferred_mcp_loop(
                     CommandOutcome::Success { stdout } => {
                         summary = collect_claude_stream_summary(&stdout);
                         if let Some(session_id) = &summary.session_id {
-                            claude_session::save_session_id(&request, session_id);
+                            agent_session::save_session_id(&request, session_id);
                         }
                         if summary.deferred_tool_use.is_none() {
                             return summary.outcome;

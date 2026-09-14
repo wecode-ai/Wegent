@@ -6,7 +6,10 @@ use std::{env, fs, path::PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::protocol::ExecutionRequest;
+use crate::protocol::{AgentKind, ExecutionRequest};
+
+const CLAUDE_SESSION_MARKER: &str = ".claude_session_id";
+const CODEX_THREAD_MARKER: &str = ".codex_thread_id";
 
 pub(crate) fn load_saved_session_id(request: &ExecutionRequest) -> Option<String> {
     let task_id = task_session_identifier(&request.task_id);
@@ -21,28 +24,39 @@ pub(crate) fn load_saved_session_id(request: &ExecutionRequest) -> Option<String
 }
 
 pub(crate) fn save_session_id(request: &ExecutionRequest, session_id: &str) {
-    let session_id = session_id.trim();
-    if session_id.is_empty() || task_session_identifier(&request.task_id).is_none() {
-        return;
-    }
-
-    for path in writable_session_file_candidates(request) {
-        if write_session_file(&path, session_id).is_ok() {
-            return;
-        }
-    }
+    save_runtime_session(request, CLAUDE_SESSION_MARKER, session_id);
 }
 
 pub(crate) fn saved_executor_session(request: &ExecutionRequest) -> Option<Value> {
-    let session_id = read_session_file(request)?;
-    let mut session = json!({
-        "agent": "ClaudeCode",
-        "sessionId": session_id,
-    });
+    let (agent, id_key, marker) = match request.resolved_agent_kind() {
+        AgentKind::ClaudeCode => ("ClaudeCode", "sessionId", CLAUDE_SESSION_MARKER),
+        AgentKind::CodeX => ("Codex", "threadId", CODEX_THREAD_MARKER),
+        _ => return None,
+    };
+    let session_id = read_runtime_session(request, marker)?;
+    let mut session = json!({ "agent": agent });
+    session[id_key] = Value::String(session_id);
     if let Some(bot_id) = bot_id(&request.bot) {
         session["botId"] = Value::String(bot_id);
     }
     Some(session)
+}
+
+pub(crate) fn load_saved_codex_thread_id(request: &ExecutionRequest) -> Option<String> {
+    let task_id = task_session_identifier(&request.task_id);
+    if request.new_session || task_id.is_none() {
+        if request.new_session {
+            delete_saved_codex_thread_files(request);
+        }
+        return None;
+    }
+
+    read_runtime_session(request, CODEX_THREAD_MARKER)
+        .or_else(|| inherited_codex_thread_id(request))
+}
+
+pub(crate) fn save_codex_thread_id(request: &ExecutionRequest, thread_id: &str) {
+    save_runtime_session(request, CODEX_THREAD_MARKER, thread_id);
 }
 
 pub(crate) fn preferred_task_dir(request: &ExecutionRequest) -> Option<PathBuf> {
@@ -55,7 +69,11 @@ pub(crate) fn preferred_task_dir(request: &ExecutionRequest) -> Option<PathBuf> 
 }
 
 fn read_session_file(request: &ExecutionRequest) -> Option<String> {
-    for path in readable_session_file_candidates(request) {
+    read_runtime_session(request, CLAUDE_SESSION_MARKER)
+}
+
+fn read_runtime_session(request: &ExecutionRequest, marker: &str) -> Option<String> {
+    for path in readable_session_file_candidates(request, marker) {
         let Some(value) = read_trimmed_file(path) else {
             continue;
         };
@@ -106,12 +124,47 @@ fn inherited_session_id(request: &ExecutionRequest) -> Option<String> {
     })
 }
 
+fn inherited_codex_thread_id(request: &ExecutionRequest) -> Option<String> {
+    let current_bot_id = bot_id(&request.bot);
+    request.inherited_sessions.iter().find_map(|session| {
+        let agent = value_string(
+            session
+                .get("agent")
+                .or_else(|| session.get("agentName"))
+                .or_else(|| session.get("agent_name")),
+        )?;
+        if !agent.eq_ignore_ascii_case("Codex") {
+            return None;
+        }
+
+        if let (Some(current_bot_id), Some(inherited_bot_id)) = (
+            current_bot_id.as_deref(),
+            session
+                .get("botId")
+                .or_else(|| session.get("bot_id"))
+                .and_then(value_to_identifier),
+        ) {
+            if inherited_bot_id != current_bot_id {
+                return None;
+            }
+        }
+
+        value_string(session.get("threadId").or_else(|| session.get("thread_id")))
+    })
+}
+
 /// Delete the saved Claude session files for the current task.
 ///
 /// Called when the remembered Claude session no longer exists in the sandbox and
 /// the executor needs to fall back to a fresh session.
 pub(crate) fn delete_saved_session_files(request: &ExecutionRequest) {
     for path in removable_session_file_candidates(request) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn delete_saved_codex_thread_files(request: &ExecutionRequest) {
+    for path in writable_session_file_candidates(request, CODEX_THREAD_MARKER) {
         let _ = fs::remove_file(path);
     }
 }
@@ -123,51 +176,73 @@ fn write_session_file(path: &PathBuf, session_id: &str) -> std::io::Result<()> {
     fs::write(path, session_id)
 }
 
+fn save_runtime_session(request: &ExecutionRequest, marker: &str, session_id: &str) {
+    let session_id = session_id.trim();
+    if session_id.is_empty() || task_session_identifier(&request.task_id).is_none() {
+        return;
+    }
+
+    for path in writable_session_file_candidates(request, marker) {
+        if write_session_file(&path, session_id).is_ok() {
+            return;
+        }
+    }
+}
+
 fn read_trimmed_file(path: PathBuf) -> Option<String> {
     let value = fs::read_to_string(path).ok()?;
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_owned())
 }
 
-fn readable_session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
-    writable_session_file_candidates(request)
+fn readable_session_file_candidates(request: &ExecutionRequest, marker: &str) -> Vec<PathBuf> {
+    writable_session_file_candidates(request, marker)
 }
 
 fn removable_session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
-    candidates.extend(writable_session_file_candidates(request));
-    candidates.extend(legacy_workspace_session_file_candidates(request));
+    candidates.extend(writable_session_file_candidates(
+        request,
+        CLAUDE_SESSION_MARKER,
+    ));
+    candidates.extend(legacy_workspace_session_file_candidates(
+        request,
+        CLAUDE_SESSION_MARKER,
+    ));
 
     dedup_paths(candidates)
 }
 
-fn writable_session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
+fn writable_session_file_candidates(request: &ExecutionRequest, marker: &str) -> Vec<PathBuf> {
     let Some(task_id) = task_session_identifier(&request.task_id) else {
         return Vec::new();
     };
-    session_file_paths(executor_home_session_root().join(task_id), request)
+    session_file_paths(executor_home_session_root().join(task_id), request, marker)
 }
 
-fn legacy_workspace_session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
+fn legacy_workspace_session_file_candidates(
+    request: &ExecutionRequest,
+    marker: &str,
+) -> Vec<PathBuf> {
     let Some(task_id) = task_session_identifier(&request.task_id) else {
         return Vec::new();
     };
     let mut candidates = Vec::new();
 
     for root in workspace_roots() {
-        candidates.extend(session_file_paths(root.join(&task_id), request));
+        candidates.extend(session_file_paths(root.join(&task_id), request, marker));
     }
 
     candidates
 }
 
-fn session_file_paths(task_dir: PathBuf, request: &ExecutionRequest) -> Vec<PathBuf> {
+fn session_file_paths(task_dir: PathBuf, request: &ExecutionRequest, marker: &str) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Some(bot_id) = bot_id(&request.bot) {
-        paths.push(task_dir.join(format!(".claude_session_id_{bot_id}")));
+        paths.push(task_dir.join(format!("{marker}_{bot_id}")));
     }
-    paths.push(task_dir.join(".claude_session_id"));
+    paths.push(task_dir.join(marker));
     paths
 }
 
@@ -291,4 +366,80 @@ fn task_session_identifier(value: &str) -> Option<String> {
         return None;
     }
     Some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_inherited_thread_matches_agent_and_bot() {
+        let request = ExecutionRequest {
+            bot: json!([{"id": 42}]),
+            inherited_sessions: vec![
+                json!({
+                    "agent": "Codex",
+                    "botId": 41,
+                    "threadId": "wrong-bot-thread"
+                }),
+                json!({
+                    "agent": "ClaudeCode",
+                    "botId": 42,
+                    "sessionId": "claude-session"
+                }),
+                json!({
+                    "agent": "Codex",
+                    "botId": 42,
+                    "threadId": "codex-thread"
+                }),
+            ],
+            ..ExecutionRequest::default()
+        };
+
+        assert_eq!(
+            inherited_codex_thread_id(&request).as_deref(),
+            Some("codex-thread")
+        );
+    }
+
+    #[test]
+    fn codex_session_uses_a_distinct_thread_marker() {
+        let request = ExecutionRequest {
+            task_id: "15".to_owned(),
+            bot: json!([{"id": 87}]),
+            ..ExecutionRequest::default()
+        };
+
+        assert_eq!(
+            writable_session_file_candidates(&request, CODEX_THREAD_MARKER)
+                .first()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str()),
+            Some(".codex_thread_id_87")
+        );
+        assert_ne!(CODEX_THREAD_MARKER, CLAUDE_SESSION_MARKER);
+    }
+
+    #[test]
+    fn codex_new_session_cleanup_is_scoped_to_thread_markers() {
+        let request = ExecutionRequest {
+            task_id: "15".to_owned(),
+            bot: json!([{"id": 87}]),
+            ..ExecutionRequest::default()
+        };
+
+        let candidates = writable_session_file_candidates(&request, CODEX_THREAD_MARKER);
+
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates.iter().all(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(CODEX_THREAD_MARKER))
+        }));
+        assert!(candidates.iter().all(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_none_or(|name| !name.starts_with(CLAUDE_SESSION_MARKER))
+        }));
+    }
 }

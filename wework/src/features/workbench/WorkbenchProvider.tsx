@@ -881,7 +881,8 @@ export function WorkbenchProvider({
     })
   }, [])
   const [taskComposerCatalogsRequested, setTaskComposerCatalogsRequested] = useState(false)
-  const taskComposerCatalogsEnabled = loadTaskComposerCatalogs || taskComposerCatalogsRequested
+  const taskComposerCatalogsEnabled =
+    taskComposerCatalogsRequested || (loadTaskComposerCatalogs && state.runtimeWork !== null)
   const requestTaskComposerCatalogs = useCallback(() => {
     setTaskComposerCatalogsRequested(true)
   }, [])
@@ -2391,7 +2392,7 @@ export function WorkbenchProvider({
   useEffect(() => {
     if (
       prewarmComposerApps &&
-      isWorkbenchShellReady &&
+      state.runtimeWork !== null &&
       localAppsPrewarmSourceRef.current !== listLocalApps
     ) {
       localAppsPrewarmSourceRef.current = listLocalApps
@@ -2435,7 +2436,7 @@ export function WorkbenchProvider({
         localAppsRefreshTimerRef.current = null
       }
     }
-  }, [isWorkbenchShellReady, listLocalApps, prewarmComposerApps])
+  }, [listLocalApps, prewarmComposerApps, state.runtimeWork])
 
   // Plugin market UI resolves package logos into the catalog cache; overlay those
   // onto composer apps when the cache arrives after the warm path.

@@ -1018,6 +1018,12 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   logStartupStep('main-shell-load', 'started')
   await mainShellLoading
   logStartupStep('main-shell-load', 'completed')
+  if (!keepE2EWindowInBackground) {
+    mainWindow.show()
+    mainWindow.focus()
+    mainWindow.webContents.focus()
+  }
+  logStartupStep('main-shell-show', 'completed')
   logStartupStep('windows-create', 'completed')
 }
 
@@ -1406,6 +1412,7 @@ async function configureDesktopRuntime(): Promise<void> {
     environment,
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
+    onStartupStep: logStartupStep,
     readWorkbenchMode: async () =>
       normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
     createWorkbenchHostPipe: tabId => {
@@ -1782,9 +1789,15 @@ if (hasSingleInstanceLock) {
     } catch (error) {
       console.warn('[popout-window] failed to register global shortcut', error)
     }
-    await createWindow(
-      resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
-    )
+    await Promise.all([
+      createWindow(
+        resolveStartupSplashTheme(
+          startupPreferences.appearanceMode,
+          nativeTheme.shouldUseDarkColors
+        )
+      ),
+      configureDesktopRuntime(),
+    ])
     void startDesktopRuntime()
   })
 }
