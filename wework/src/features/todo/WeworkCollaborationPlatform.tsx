@@ -570,6 +570,14 @@ export function createWeworkPlatformApi(
           : cloudApi.agents.update(projectId, agentId, input)
       },
     },
+    issues: {
+      ...cloudApi.issues,
+      async getBoardSnapshot(projectId) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.issues.getBoardSnapshot(projectId)
+          : cloudApi.issues.getBoardSnapshot(projectId)
+      },
+    },
     resources: {
       async list() {
         const localResources = localApi.resources
