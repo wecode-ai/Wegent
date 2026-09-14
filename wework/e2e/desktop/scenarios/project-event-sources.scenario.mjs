@@ -425,6 +425,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   function withDatabase(action) {
     const database = new DatabaseSync(databasePath)
     try {
+      database.exec('PRAGMA busy_timeout = 30000')
       return action(database)
     } finally {
       database.close()
