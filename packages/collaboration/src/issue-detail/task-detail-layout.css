@@ -2521,7 +2521,7 @@
 .task-detail-workspace-panel .task-detail-comments-list {
   max-height: none;
   overflow: visible;
-  padding: 0;
+  padding: 0 0 96px;
 }
 
 @media (max-width: 1040px) {
