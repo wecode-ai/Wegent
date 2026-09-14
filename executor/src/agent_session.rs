@@ -45,6 +45,9 @@ pub(crate) fn saved_executor_session(request: &ExecutionRequest) -> Option<Value
 pub(crate) fn load_saved_codex_thread_id(request: &ExecutionRequest) -> Option<String> {
     let task_id = task_session_identifier(&request.task_id);
     if request.new_session || task_id.is_none() {
+        if request.new_session {
+            delete_saved_codex_thread_files(request);
+        }
         return None;
     }
 
@@ -156,6 +159,12 @@ fn inherited_codex_thread_id(request: &ExecutionRequest) -> Option<String> {
 /// the executor needs to fall back to a fresh session.
 pub(crate) fn delete_saved_session_files(request: &ExecutionRequest) {
     for path in removable_session_file_candidates(request) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn delete_saved_codex_thread_files(request: &ExecutionRequest) {
+    for path in writable_session_file_candidates(request, CODEX_THREAD_MARKER) {
         let _ = fs::remove_file(path);
     }
 }
@@ -409,5 +418,28 @@ mod tests {
             Some(".codex_thread_id_87")
         );
         assert_ne!(CODEX_THREAD_MARKER, CLAUDE_SESSION_MARKER);
+    }
+
+    #[test]
+    fn codex_new_session_cleanup_is_scoped_to_thread_markers() {
+        let request = ExecutionRequest {
+            task_id: "15".to_owned(),
+            bot: json!([{"id": 87}]),
+            ..ExecutionRequest::default()
+        };
+
+        let candidates = writable_session_file_candidates(&request, CODEX_THREAD_MARKER);
+
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates.iter().all(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(CODEX_THREAD_MARKER))
+        }));
+        assert!(candidates.iter().all(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_none_or(|name| !name.starts_with(CLAUDE_SESSION_MARKER))
+        }));
     }
 }
