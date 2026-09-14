@@ -394,6 +394,9 @@ pub async fn prepare_claude_runtime(
             ),
         ],
     );
+    if managed_wework_mcp_required(request) {
+        crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    }
     let mut claude_options = extract_claude_options(request, &global_mcps);
     inject_managed_wework_mcps(request, &mut claude_options.mcp_servers)?;
     if !claude_options.mcp_servers.is_empty() {
@@ -427,6 +430,19 @@ pub async fn prepare_claude_runtime(
     }
 
     Ok(spec)
+}
+
+fn managed_wework_mcp_required(request: &ExecutionRequest) -> bool {
+    let notifications_available = request
+        .backend_url
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+        && request
+            .auth_token
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty());
+    notifications_available
+        || crate::task_runtime::mcp::encoded_space_context_grant(request).is_some()
 }
 
 fn inject_managed_wework_mcps(
