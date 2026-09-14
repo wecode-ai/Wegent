@@ -285,14 +285,20 @@ describe('TodoEditor external item sync', () => {
   it('shows board task bindings immediately while the detail refresh is pending', async () => {
     const never = new Promise<never>(() => undefined)
     const pendingBindingsApi = {
-      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listDeliveries: vi.fn(() => never),
       listTaskBindings: vi.fn(() => never),
-      listLoopItemAttachments: vi.fn(async () => []),
-      listLoopItemCollaborators: vi.fn(async () => []),
-      listCloudProjectMembers: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(() => never),
+      listLoopItemCollaborators: vi.fn(() => never),
+      listCloudProjectMembers: vi.fn(() => never),
+    } as never
+    const projectChatAgentApi = {
+      list: vi.fn(() => never),
+    } as never
+    const teamApi = {
+      listTeams: vi.fn(() => never),
     } as never
 
-    render(
+    const { rerender } = render(
       <TodoEditor
         mode="edit"
         presentation="workspace-panel"
@@ -302,6 +308,26 @@ describe('TodoEditor external item sync', () => {
         onUpdated={vi.fn()}
         onClose={vi.fn()}
         api={pendingBindingsApi}
+        projectChatAgentApi={projectChatAgentApi}
+        teamApi={teamApi}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.queryByTestId('cloud-todo-toggle-tasks')).not.toBeInTheDocument()
+
+    rerender(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={pendingBindingsApi}
+        projectChatAgentApi={projectChatAgentApi}
+        teamApi={teamApi}
         initialTaskBindings={[
           {
             id: 8,
@@ -314,7 +340,7 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(screen.getByTestId('cloud-todo-open-task-conversation-8')).toHaveTextContent(
       '看板已加载的任务'
     )

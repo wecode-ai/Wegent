@@ -935,6 +935,14 @@ export function TodoEditor(props: TodoEditorProps) {
     setTasksExpanded(false);
   }, [editItemId, readFirst]);
 
+  useLayoutEffect(() => {
+    if (loadedEditItemIdRef.current !== editItemId) return;
+    if (!props.initialTaskBindings?.length) return;
+    setTasks((current) =>
+      current.length > 0 ? current : props.initialTaskBindings!,
+    );
+  }, [editItemId, props.initialTaskBindings]);
+
   // Edit mode loads everything tied to the item id.
   useEffect(() => {
     if (editItemId == null || editProjectId == null) return;
