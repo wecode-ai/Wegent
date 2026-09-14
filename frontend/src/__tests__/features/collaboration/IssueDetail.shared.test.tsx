@@ -199,11 +199,11 @@ describe('shared IssueDetail', () => {
     } as unknown as IssueDetailApi
   }
 
-  function renderDetail(
+  function detailView(
     api: IssueDetailApi,
     props: Partial<ComponentProps<typeof IssueDetail>> = {}
   ) {
-    return render(
+    return (
       <IssueDetail
         api={api}
         project={project}
@@ -219,6 +219,13 @@ describe('shared IssueDetail', () => {
         {...props}
       />
     )
+  }
+
+  function renderDetail(
+    api: IssueDetailApi,
+    props: Partial<ComponentProps<typeof IssueDetail>> = {}
+  ) {
+    return render(detailView(api, props))
   }
 
   it('creates an Issue through the same shared editor and detail port used by Wework', async () => {
@@ -412,6 +419,65 @@ describe('shared IssueDetail', () => {
     })
 
     expect(await screen.findByText(uploaded.display_name)).toBeVisible()
+    await act(async () => {
+      resolveAttachments([])
+    })
+    expect(screen.getByText(uploaded.display_name)).toBeVisible()
+  })
+
+  it('keeps an uploaded attachment when a list request starts during the upload', async () => {
+    const uploaded = {
+      id: 'attachment-concurrent-race',
+      loop_item_id: issue.id,
+      display_name: 'concurrent-race.txt',
+      content_type: 'text/plain',
+      size_bytes: 4,
+      created_by_user_id: 1,
+      created_at: '2026-09-14T00:00:00Z',
+      markdown_url: 'attachment://attachment-concurrent-race',
+    }
+    let resolveUpload: (attachment: typeof uploaded) => void = () => undefined
+    let resolveAttachments: (attachments: []) => void = () => undefined
+    const list = jest
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(
+        () =>
+          new Promise<[]>(resolve => {
+            resolveAttachments = resolve
+          })
+      )
+    const upload = jest.fn(
+      () =>
+        new Promise<typeof uploaded>(resolve => {
+          resolveUpload = resolve
+        })
+    )
+    const api = createApi({
+      attachments: {
+        list,
+        upload,
+        access: jest.fn(),
+        read: jest.fn(),
+        remove: jest.fn(),
+      },
+    })
+    const { rerender } = renderDetail(api)
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByTestId('cloud-todo-edit-content'))
+    fireEvent.change(screen.getByTestId('cloud-todo-attachment-input'), {
+      target: { files: [new File(['race'], uploaded.display_name, { type: 'text/plain' })] },
+    })
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
+
+    rerender(detailView({ ...api }))
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      resolveUpload(uploaded)
+    })
+    expect(await screen.findByText(uploaded.display_name)).toBeVisible()
+
     await act(async () => {
       resolveAttachments([])
     })

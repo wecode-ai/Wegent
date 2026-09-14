@@ -1487,6 +1487,7 @@ export function TodoEditor(props: TodoEditorProps) {
     setAttachmentError(null);
     try {
       const result = await uploadAttachments(editItemId, Array.from(files));
+      attachmentsRequestIdRef.current += 1;
       setAttachments((current) => [
         ...result.attachments.reverse(),
         ...current,
@@ -1526,6 +1527,7 @@ export function TodoEditor(props: TodoEditorProps) {
     setAttachmentError(null);
     void uploadAttachments(editItemId, files)
       .then((result) => {
+        attachmentsRequestIdRef.current += 1;
         setAttachments((current) => [
           ...result.attachments.reverse(),
           ...current,
@@ -1595,6 +1597,7 @@ export function TodoEditor(props: TodoEditorProps) {
     setAttachmentError(null);
     try {
       await editorPort.attachments.remove(attachment.id);
+      attachmentsRequestIdRef.current += 1;
       setAttachments((current) =>
         current.filter((entry) => entry.id !== attachment.id),
       );
