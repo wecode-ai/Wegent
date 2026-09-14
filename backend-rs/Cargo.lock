@@ -84,9 +84,9 @@ dependencies = [
 
 [[package]]
 name = "brz-http-server"
-version = "0.0.12"
+version = "0.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "804df8d9bd5b879ad50567d0be51e94b23e7c29e10137edf4367c1409e010d03"
+checksum = "ef63788232bb8095489e0f8ab5c2ce9d8a675b0a1fc227042603377ab07df166"
 dependencies = [
  "brz-ds",
  "brz-io",
@@ -131,10 +131,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "brz-metrics"
-version = "0.0.3"
+name = "brz-logs"
+version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d60fda46393ee2c2bdee8394d10b6b075128a9dc0cf6cab0159ea76279eabea4"
+checksum = "5409c80b351b87016b6778a2141d560d8a810ba0e093689461df56a8439742af"
+dependencies = [
+ "brz-ds",
+ "thiserror",
+ "time",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "brz-metrics"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1788265288ecfe57cfd485aedb2349c12b8d8b9a555f6da7c8b8051cc0539b7c"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -194,6 +207,15 @@ name = "crossbeam-utils"
 version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
+
+[[package]]
+name = "deranged"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
+dependencies = [
+ "powerfmt",
+]
 
 [[package]]
 name = "elsa"
@@ -527,6 +549,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-conv"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51d515d32fb182ee37cda2ccdcb92950d6a3c2893aa280e540671c2cd0f3b1d9"
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -552,6 +580,12 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "powerfmt"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "proc-macro2"
@@ -774,6 +808,25 @@ checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
 dependencies = [
  "cfg-if",
 ]
+
+[[package]]
+name = "time"
+version = "0.3.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9e442fc33d7fdb45aa9bfeb312c095964abdf596f7567261062b2a7107aaabd"
+dependencies = [
+ "deranged",
+ "num-conv",
+ "powerfmt",
+ "serde_core",
+ "time-core",
+]
+
+[[package]]
+name = "time-core"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b36ee98fd31ec7426d599183e8fe26932a8dc1fb76ddb6214d05493377d34ca"
 
 [[package]]
 name = "tokio"
@@ -1007,10 +1060,12 @@ version = "0.1.0"
 dependencies = [
  "brz-http-gateway",
  "brz-http-server",
+ "brz-logs",
+ "brz-metrics",
  "http",
+ "hyper",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

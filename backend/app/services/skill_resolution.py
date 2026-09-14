@@ -9,6 +9,8 @@ from typing import Any, Dict, List
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.schemas.namespace import GroupRole
+from app.services.group_permission import check_group_permission
 
 
 def build_skill_ref_meta(skill: Kind) -> Dict[str, Any]:
@@ -141,33 +143,20 @@ def find_skill_by_ref(
 
         from app.services.skill_binding_service import skill_binding_service
 
+        if skill_id in skill_binding_service.list_user_group_skill_ids(db, user_id):
+            return skill
+
+        if skill.namespace != "default" and check_group_permission(
+            db, user_id, skill.namespace, GroupRole.Reporter
+        ):
+            return skill
+
         if skill_binding_service.can_user_access_skill(
             db,
             skill=skill,
             user_id=user_id,
         ) and skill_id in skill_binding_service.list_user_default_skill_ids(
             db, user_id
-        ):
-            return skill
-        if (
-            team_namespace
-            and team_namespace != "default"
-            and (
-                (
-                    skill.namespace == team_namespace
-                    and skill_binding_service.can_user_access_skill(
-                        db,
-                        skill=skill,
-                        user_id=user_id,
-                    )
-                )
-                or skill_binding_service.is_skill_available_to_group(
-                    db,
-                    group_namespace=team_namespace,
-                    skill_id=skill_id,
-                    user_id=user_id,
-                )
-            )
         ):
             return skill
         return None

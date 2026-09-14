@@ -450,6 +450,52 @@ describe('ResourceLibraryPage', () => {
     )
   })
 
+  it.each(['tab=mine&type=agent&source=mine', 'tab=mine&type=agent'])(
+    'preserves the created-by-me selection when switching from %s to skills',
+    async query => {
+      const user = userEvent.setup()
+      mockSearchParams = new URLSearchParams(query)
+      const { rerender } = render(<ResourceLibraryPage />)
+
+      await user.click(screen.getByTestId('resource-type-skill-filter'))
+      const [nextHref] = mockReplace.mock.calls.at(-1)!
+      mockSearchParams = new URL(nextHref, 'http://localhost').searchParams
+      rerender(<ResourceLibraryPage />)
+
+      expect(screen.getByTestId('resource-library-source-segments')).toBeVisible()
+      expect(screen.getByTestId('resource-library-source-mine-button')).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+      expect(screen.getByTestId('resource-library-source-select')).toHaveTextContent('我创建的')
+      expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
+        'data-fixed-source',
+        'mine'
+      )
+      expect(screen.getByTestId('my-resource-management')).toHaveAttribute('data-types', 'skill')
+      expect(mockSearchParams.get('source')).not.toBe('personal')
+    }
+  )
+
+  it.each(['agent', 'skill'])(
+    'normalizes a stale personal source to the visible created-by-me filter for %s',
+    async type => {
+      mockSearchParams = new URLSearchParams(`tab=mine&type=${type}&source=personal`)
+      render(<ResourceLibraryPage />)
+
+      expect(screen.getByTestId('resource-library-source-mine-button')).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+      await waitFor(() =>
+        expect(mockReplace).toHaveBeenCalledWith(
+          `/resource-library?tab=mine&type=${type}&source=mine`,
+          { scroll: false }
+        )
+      )
+    }
+  )
+
   it('toggles between the resource library and My Capabilities', async () => {
     const user = userEvent.setup()
     render(<ResourceLibraryPage />)
@@ -626,10 +672,11 @@ describe('ResourceLibraryPage', () => {
     mockSearchParams = new URLSearchParams('tab=mine&type=skill&source=group&group=platform')
     const { unmount } = render(<ResourceLibraryPage />)
 
-    expect(screen.getByTestId('installed-resources')).toHaveAttribute(
-      'data-group-namespaces',
+    expect(screen.getByTestId('group-skill-management')).toHaveAttribute(
+      'data-selected-group',
       'platform'
     )
+    expect(screen.queryByTestId('installed-resources')).not.toBeInTheDocument()
     await user.click(await screen.findByTestId('resource-library-team-add-button'))
     expect(mockReplace).toHaveBeenCalledWith(
       '/resource-library?tab=mine&type=skill&source=group&group=platform&teamAction=add',
@@ -671,10 +718,11 @@ describe('ResourceLibraryPage', () => {
     expect(screen.queryByTestId('resource-library-team-add-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('resource-library-team-current-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('discover-resources')).not.toBeInTheDocument()
-    expect(screen.getByTestId('installed-resources')).toHaveAttribute(
-      'data-group-namespaces',
+    expect(screen.getByTestId('group-skill-management')).toHaveAttribute(
+      'data-selected-group',
       'platform'
     )
+    expect(screen.queryByTestId('installed-resources')).not.toBeInTheDocument()
   })
 
   it('persists the applied search and clears it from the compact search control', async () => {

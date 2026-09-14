@@ -2434,6 +2434,9 @@ function ChatAreaContent({
     availableSkills: skillSelector.availableSkills,
     teamSkillNames: skillSelector.teamSkillNames,
     preloadedSkillNames: skillSelector.preloadedSkillNames,
+    selectedSkillIds: skillSelector.selectedSkills.flatMap(skill =>
+      skill.skill_id === undefined ? [] : [skill.skill_id]
+    ),
     selectedSkillNames: skillSelector.selectedSkillNames,
     onToggleSkill: skillSelector.toggleSkill,
     // Video mode props - only passed when taskType is 'video'
