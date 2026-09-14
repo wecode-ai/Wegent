@@ -46,8 +46,14 @@ window.__ModuleLoader__.load({
             accept(envelope) {
               try {
                 const identity = readCloudIdentity(window.localStorage)
+                const enrichedEnvelope = enrichEnvelope(envelope)
                 Promise.resolve(
-                  backend.request('accept', identity ? { envelope, identity } : { envelope })
+                  backend.request(
+                    'accept',
+                    identity
+                      ? { envelope: enrichedEnvelope, identity }
+                      : { envelope: enrichedEnvelope }
+                  )
                 ).catch(() => {})
               } catch {}
             },
@@ -57,6 +63,46 @@ window.__ModuleLoader__.load({
     },
   }),
 })
+
+function enrichEnvelope(envelope) {
+  if (
+    !isRecord(envelope) ||
+    envelope.name !== 'smart_app_opened' ||
+    isRecord(envelope.context?.smartApp)
+  ) {
+    return envelope
+  }
+
+  const smartAppName = readActiveSmartAppName()
+  if (!smartAppName) return envelope
+
+  return {
+    ...envelope,
+    properties: {
+      ...(isRecord(envelope.properties) ? envelope.properties : {}),
+      smart_app_name: smartAppName,
+    },
+  }
+}
+
+function readActiveSmartAppName() {
+  const pathname = window.location?.pathname ?? ''
+  if (!/\/app\/harness-[^/]+$/.test(pathname)) return null
+
+  const tab = window.document?.querySelector?.(
+    'button[role="tab"][aria-selected="true"][data-tab-kind="auxiliary"]'
+  )
+  const title = tab?.getAttribute?.('title')
+  return isBoundedString(title) ? title.trim() : null
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isBoundedString(value) {
+  return typeof value === 'string' && value.trim() !== '' && value.trim().length <= 128
+}
 
 function readCloudIdentity(storage) {
   try {

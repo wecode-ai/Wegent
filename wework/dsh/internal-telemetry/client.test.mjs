@@ -127,12 +127,69 @@ test('forwards the connected cloud email prefix without exposing the full email'
   )
 })
 
+test('adds the active smart app tab name when the envelope has no app context', async () => {
+  const client = await loadClient({
+    location: { pathname: '/wework/app/app/harness-research-desk' },
+    activeSmartAppName: 'Research Desk',
+  })
+  const envelope = {
+    eventId: '110ec58a-a0f2-4ac4-8393-c866d813b8d1',
+    name: 'smart_app_opened',
+    properties: { domain: 'smart_app' },
+  }
+  const runtime = createRuntime({
+    ready: Promise.resolve({
+      enabled: true,
+      protocol: 'telemetry-sink/v1',
+      catalogVersion: 1,
+    }),
+  })
+
+  client.apply(runtime.context)
+  await settle()
+  runtime.sinks[0].accept(envelope)
+  await settle()
+
+  assert.equal(
+    JSON.stringify(runtime.calls[1]),
+    JSON.stringify([
+      'accept',
+      {
+        envelope: {
+          ...envelope,
+          properties: {
+            ...envelope.properties,
+            smart_app_name: 'Research Desk',
+          },
+        },
+      },
+    ])
+  )
+})
+
 async function loadClient(localStorageValues = {}) {
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
   let registration
+  const location = localStorageValues.location ?? { pathname: '/' }
+  const activeSmartAppName = localStorageValues.activeSmartAppName ?? null
   vm.runInNewContext(source, {
     Promise,
     window: {
+      location,
+      document: {
+        querySelector(selector) {
+          if (selector !== 'button[role="tab"][aria-selected="true"][data-tab-kind="auxiliary"]') {
+            return null
+          }
+          return activeSmartAppName
+            ? {
+                getAttribute(name) {
+                  return name === 'title' ? activeSmartAppName : null
+                },
+              }
+            : null
+        },
+      },
       localStorage: {
         getItem(key) {
           return localStorageValues[key] ?? null

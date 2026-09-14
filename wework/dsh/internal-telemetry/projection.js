@@ -15,7 +15,11 @@ export function projectEnvelope({ catalog, distinctId, envelope, runtime } = {})
   if (!isIsoTimestamp(envelope.occurredAt)) return rejected('invalid_occurred_at')
   if (!isRuntime(runtime)) return rejected('invalid_runtime')
 
-  const eventProperties = projectEventProperties(envelope.properties, catalogEvent.properties)
+  const eventProperties = projectEventProperties(
+    envelope.properties,
+    catalogEvent.properties,
+    catalogEvent.includeSmartAppIdentity
+  )
   if (!eventProperties.ok) return eventProperties
 
   const properties = {
@@ -27,6 +31,12 @@ export function projectEnvelope({ catalog, distinctId, envelope, runtime } = {})
     platform: runtime.platform,
     release_channel: runtime.releaseChannel,
   }
+  const smartAppName = projectSmartAppName(
+    envelope.properties,
+    catalogEvent.includeSmartAppIdentity
+  )
+  if (!smartAppName.ok) return smartAppName
+  Object.assign(properties, smartAppName.value)
 
   if (catalogEvent.includeSmartAppIdentity) {
     const smartAppProperties = projectSmartAppProperties(envelope.context?.smartApp)
@@ -54,10 +64,12 @@ function catalogEventFor(catalog, eventName) {
   }
 }
 
-function projectEventProperties(properties, definition) {
+function projectEventProperties(properties, definition, allowSmartAppName) {
   if (!isObject(properties) || !isObject(definition)) return rejected('invalid_property')
 
-  const propertyNames = Object.keys(properties)
+  const propertyNames = Object.keys(properties).filter(
+    name => !allowSmartAppName || name !== 'smart_app_name'
+  )
   for (const name of propertyNames) {
     if (!Object.hasOwn(definition, name)) return rejected('unknown_property')
   }
@@ -76,6 +88,14 @@ function projectEventProperties(properties, definition) {
   }
 
   return accepted(projected)
+}
+
+function projectSmartAppName(properties, allowSmartAppName) {
+  if (!allowSmartAppName || !isObject(properties) || !Object.hasOwn(properties, 'smart_app_name')) {
+    return accepted({})
+  }
+  if (!boundedString(properties.smart_app_name)) return rejected('invalid_smart_app_name')
+  return accepted({ smart_app_name: properties.smart_app_name })
 }
 
 function projectSmartAppProperties(smartApp) {

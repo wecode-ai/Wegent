@@ -79,6 +79,27 @@ test('projects a cloud email prefix as the PostHog distinct id', () => {
   assert.equal(projected.value.properties.distinct_id, 'cloud-user')
 })
 
+test('projects a plugin-enriched smart app name without requiring frontend context', () => {
+  const projected = projectEnvelope({
+    catalog: eventCatalog,
+    distinctId: DISTICT_ID,
+    envelope: smartAppEnvelope({
+      context: undefined,
+      properties: {
+        domain: 'smart_app',
+        smart_app_name: 'Research Desk',
+      },
+    }),
+    runtime: RUNTIME,
+  })
+
+  assert.equal(projected.ok, true)
+  assert.equal(projected.value.properties.smart_app_name, 'Research Desk')
+  assert.equal('smart_app_key' in projected.value.properties, false)
+  assert.equal('smart_app_version' in projected.value.properties, false)
+  assert.equal('smart_app_source' in projected.value.properties, false)
+})
+
 test('rejects unknown properties rather than silently forwarding them', () => {
   const envelope = smartAppEnvelope({
     properties: {
