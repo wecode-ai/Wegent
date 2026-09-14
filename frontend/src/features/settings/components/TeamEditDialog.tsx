@@ -63,6 +63,7 @@ import TeamModeChangeDialog from './team-edit/TeamModeChangeDialog'
 import SimpleTeamEditForm from './team-edit/SimpleTeamEditForm'
 import {
   bindModeRequiresCodingAgent,
+  DEFAULT_CODING_EXECUTOR_RUNTIME,
   getDefaultSimpleBindMode,
   getModelCategoryTypeForBindMode,
   isCodingAgentShell,
@@ -381,7 +382,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   // Simplified editor state
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [simpleExecutorMode, setSimpleExecutorMode] = useState<SimpleExecutorMode>('simple')
-  const [simpleCodingRuntime, setSimpleCodingRuntime] = useState<CodingExecutorRuntime>('codex')
+  const [simpleCodingRuntime, setSimpleCodingRuntime] = useState<CodingExecutorRuntime>(
+    DEFAULT_CODING_EXECUTOR_RUNTIME
+  )
   const [simpleCustomShellName, setSimpleCustomShellName] = useState('')
   const [simpleBotName, setSimpleBotName] = useState('')
   const [simpleModelName, setSimpleModelName] = useState('')
@@ -606,7 +609,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setRequireConfirmationMap({})
       setContextPassingMap({})
       setSimpleExecutorMode('simple')
-      setSimpleCodingRuntime('codex')
+      setSimpleCodingRuntime(DEFAULT_CODING_EXECUTOR_RUNTIME)
       setSimpleCustomShellName('')
       setSimpleBotName('')
       setSimpleModelName('')

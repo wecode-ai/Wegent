@@ -13,6 +13,10 @@ export interface ProjectAgentConfigurationRecord {
   version: number;
   wegentTeamId: number | null;
   capabilityDescription: string;
+  executionEnvironment: "local" | "cloud";
+  executionDeviceId: string | null;
+  model: string | null;
+  runtimeProfileId: string | null;
 }
 
 function value(
@@ -28,7 +32,13 @@ export function normalizeProjectAgent(
 ): ProjectAgentConfigurationRecord {
   const runtime = value(row, "runtime", "runtime");
   const status = value(row, "status", "status");
+  const executionEnvironment = value(
+    row,
+    "executionEnvironment",
+    "execution_environment",
+  );
   const rawTeamId = value(row, "wegentTeamId", "wegent_team_id");
+  const rawDeviceId = value(row, "executionDeviceId", "execution_device_id");
   return {
     id: String(row.id),
     name: String(row.name ?? ""),
@@ -39,6 +49,15 @@ export function normalizeProjectAgent(
     capabilityDescription: String(
       value(row, "capabilityDescription", "capability_description") ?? "",
     ),
+    executionEnvironment: executionEnvironment === "cloud" ? "cloud" : "local",
+    executionDeviceId:
+      rawDeviceId == null || rawDeviceId === "" ? null : String(rawDeviceId),
+    model: typeof row.model === "string" && row.model.trim() ? row.model : null,
+    runtimeProfileId:
+      String(
+        value(row, "defaultRuntimeProfileId", "default_runtime_profile_id") ||
+          "",
+      ) || null,
   };
 }
 

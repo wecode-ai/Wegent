@@ -282,6 +282,12 @@ class ProjectAutomationExecution:
                 issue_creator_user_id=int(item.created_by_user_id or owner.id),
             )
         workflow_snapshot = workflow.model_dump(mode="json")
+        if workflow.advancement_policy == "ai":
+            from app.services.issue_execution_configuration import (
+                require_coordinator_execution_config,
+            )
+
+            require_coordinator_execution_config(workflow.execution_config)
         item_metadata["workflow"] = workflow_snapshot
         item_metadata["workflow_automation"] = {
             "rule_id": str(rule.id),

@@ -16,23 +16,17 @@
  * to fetch the same team data.
  */
 
-import React, {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  useCallback,
-  ReactNode,
-} from 'react'
-import { teamApis } from '@/apis/team'
+import React, { createContext, useContext, ReactNode } from 'react'
 import type { Team } from '@/types/api'
-import { sortTeamsByUpdatedAt } from '@/utils/team'
+import { teamService } from '@/features/tasks/service/teamService'
 
 interface TeamContextType {
   /** List of teams */
   teams: Team[]
   /** Whether teams are currently loading */
   isTeamsLoading: boolean
+  /** Error from the latest failed load, cleared on success */
+  loadError: Error | null
   /** Refresh teams from API */
   refreshTeams: () => Promise<Team[]>
   /** Add a new team to the list (optimistic update) */
@@ -42,51 +36,14 @@ interface TeamContextType {
 const TeamContext = createContext<TeamContextType | undefined>(undefined)
 
 export function TeamProvider({ children }: { children: ReactNode }) {
-  const [teams, setTeams] = useState<Team[]>([])
-  const [isTeamsLoading, setIsTeamsLoading] = useState(true)
-
-  const refreshTeams = useCallback(async (): Promise<Team[]> => {
-    setIsTeamsLoading(true)
-    try {
-      const res = await teamApis.getTeams({ page: 1, limit: 100 }, 'all')
-      const items = Array.isArray(res.items) ? res.items : []
-      const sortedTeams = sortTeamsByUpdatedAt(items)
-      setTeams(sortedTeams)
-      return sortedTeams
-    } catch (error) {
-      console.error('[TeamContext] Failed to fetch teams:', error)
-      setTeams([])
-      throw error
-    } finally {
-      setIsTeamsLoading(false)
-    }
-  }, [])
-
-  const addTeam = useCallback((newTeam: Team) => {
-    setTeams(prevTeams => {
-      // Check if team already exists
-      const exists = prevTeams.some(team => team.id === newTeam.id)
-      if (exists) {
-        return prevTeams
-      }
-      // Add new team and re-sort
-      const updatedTeams = [...prevTeams, newTeam]
-      return sortTeamsByUpdatedAt(updatedTeams)
-    })
-  }, [])
-
-  // Fetch teams on mount
-  useEffect(() => {
-    refreshTeams().catch(() => {
-      // Error already logged in refreshTeams
-    })
-  }, [refreshTeams])
+  const { teams, isTeamsLoading, loadError, refreshTeams, addTeam } = teamService.useTeams()
 
   return (
     <TeamContext.Provider
       value={{
         teams,
         isTeamsLoading,
+        loadError,
         refreshTeams,
         addTeam,
       }}

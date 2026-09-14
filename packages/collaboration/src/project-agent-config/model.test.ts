@@ -44,6 +44,10 @@ describe("project agent configuration model", () => {
       version: 3,
       wegentTeamId: null,
       capabilityDescription: "实现需求",
+      executionEnvironment: "cloud",
+      executionDeviceId: "cloud-1",
+      model: null,
+      runtimeProfileId: null,
     });
   });
 

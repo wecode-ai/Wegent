@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ArrowUp, UserPlus } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { executionStatusLabel } from "./executionStatusLabel";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationAgent,
@@ -124,14 +125,11 @@ export function IssueActivityPanel({
   const [sending, setSending] = useState(false);
   const [composerExpanded, setComposerExpanded] = useState(false);
   const commentRef = useRef<HTMLTextAreaElement>(null);
-  const mentionFocusFrameRef = useRef<number | null>(null);
+  const mentionCaretRef = useRef<number | null>(null);
   const submissionIdRef = useRef(0);
   useEffect(() => {
     submissionIdRef.current += 1;
-    if (mentionFocusFrameRef.current !== null) {
-      window.cancelAnimationFrame(mentionFocusFrameRef.current);
-      mentionFocusFrameRef.current = null;
-    }
+    mentionCaretRef.current = null;
     setBody("");
     setMentionOpen(false);
     setAssignmentOpen(false);
@@ -139,12 +137,16 @@ export function IssueActivityPanel({
     setSending(false);
     return () => {
       submissionIdRef.current += 1;
-      if (mentionFocusFrameRef.current !== null) {
-        window.cancelAnimationFrame(mentionFocusFrameRef.current);
-        mentionFocusFrameRef.current = null;
-      }
+      mentionCaretRef.current = null;
     };
   }, [issue.id]);
+  useLayoutEffect(() => {
+    const caret = mentionCaretRef.current;
+    if (caret === null) return;
+    mentionCaretRef.current = null;
+    commentRef.current?.focus();
+    commentRef.current?.setSelectionRange(caret, caret);
+  }, [body]);
   const entries = useMemo(
     () => issueActivityEntries(assignments, comments, executions),
     [assignments, comments, executions],
@@ -177,10 +179,7 @@ export function IssueActivityPanel({
     const commentBody = submittedBody.trim();
     if (!commentBody) return;
     if (!canComment) return;
-    if (mentionFocusFrameRef.current !== null) {
-      window.cancelAnimationFrame(mentionFocusFrameRef.current);
-      mentionFocusFrameRef.current = null;
-    }
+    mentionCaretRef.current = null;
     setBody("");
     setMentionOpen(false);
     setComposerExpanded(false);
@@ -230,17 +229,10 @@ export function IssueActivityPanel({
       prefix.length + leadingSpace.length + target.name.length + 1;
     const nextBody = `${prefix}${leadingSpace}@${target.name}${trailingSpace}${suffix}`;
     const nextCaret = mentionEnd + trailingSpace.length;
+    mentionCaretRef.current = nextCaret;
     setBody(nextBody);
     setMentionOpen(false);
     setComposerExpanded(true);
-    if (mentionFocusFrameRef.current !== null) {
-      window.cancelAnimationFrame(mentionFocusFrameRef.current);
-    }
-    mentionFocusFrameRef.current = window.requestAnimationFrame(() => {
-      mentionFocusFrameRef.current = null;
-      textarea?.focus();
-      textarea?.setSelectionRange(nextCaret, nextCaret);
-    });
   };
 
   return (
@@ -431,10 +423,24 @@ export function IssueActivityPanel({
               data-testid={`collaboration-run-${entry.run.id}`}
               key={`run:${entry.run.id}`}
             >
-              <strong>{translate("todo.execution_run", "执行任务")}</strong>
+              <strong>
+                {entry.run.executor_type === "automation_manager"
+                  ? translate("todo.execution_manager_run", "AI 调度")
+                  : translate("todo.execution_run", "执行任务")}
+              </strong>
               <p>
-                {entry.run.task_title} · {entry.run.display_state}
+                {entry.run.task_title} ·{" "}
+                {executionStatusLabel(entry.run.display_state, translate)}
               </p>
+              {entry.run.executor_type === "automation_manager" &&
+              entry.run.display_state === "succeeded" ? (
+                <p>
+                  {translate(
+                    "todo.execution_manager_completed",
+                    "调度已完成；步骤执行与整个 Issue 的完成状态请查看上方进度。",
+                  )}
+                </p>
+              ) : null}
               <time>{entry.run.created_at.slice(0, 16).replace("T", " ")}</time>
             </article>
           );

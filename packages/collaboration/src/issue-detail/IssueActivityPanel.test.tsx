@@ -59,6 +59,31 @@ describe("IssueActivityPanel", () => {
     container.remove();
   });
 
+  it("identifies a successful manager run without claiming the Issue completed", () => {
+    render(issue, {
+      executions: [
+        {
+          id: 626,
+          loop_item_id: issue.id,
+          cloud_project_id: issue.cloud_project_id,
+          task_title: "Issue 智能调度",
+          executor_type: "automation_manager",
+          display_state: "succeeded",
+          created_at: "2026-09-14T10:24:48Z",
+        } as CollaborationExecution,
+      ],
+    });
+    const event = container.querySelector(
+      '[data-testid="collaboration-run-626"]',
+    )!;
+    expect(event.querySelector("strong")?.textContent).toBe("AI 调度");
+    expect(event.textContent).toContain("已完成");
+    expect(event.textContent).toContain(
+      "步骤执行与整个 Issue 的完成状态请查看上方进度",
+    );
+    expect(event.textContent).not.toContain("succeeded");
+  });
+
   function render(
     targetIssue: CollaborationIssue,
     options: {
@@ -225,6 +250,21 @@ describe("IssueActivityPanel", () => {
         .querySelector('[data-testid="collaboration-issue-comment-submit"]')
         ?.getAttribute("aria-label"),
     ).toBe("发送");
+  });
+
+  it("places the caret after a mention before the next input can arrive", async () => {
+    render(issue);
+    change("collaboration-issue-comment", "Keep this suffix");
+    const textarea = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="collaboration-issue-comment"]',
+    )!;
+    textarea.setSelectionRange(0, 0);
+    await click("collaboration-issue-mention-trigger");
+    await click("collaboration-issue-mention-member-7");
+    expect(textarea.value).toBe("@李明 Keep this suffix");
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.selectionStart).toBe(4);
+    expect(textarea.selectionEnd).toBe(4);
   });
 
   it("replaces the typed mention trigger instead of inserting a second at sign", async () => {

@@ -12,17 +12,20 @@ from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceExecutionEnvironmentCreate
 from app.services.workspaces.access import require_workspace_role
+from app.services.workspaces.environment_status import execution_environment_statuses
 from app.services.workspaces.resource_mapping import execution_environment_values
 from app.services.workspaces.storage import (
     ensure_resource_grant,
     resource_grant,
 )
+from shared.telemetry.decorators import trace_async
 
 
 class WorkspaceExecutionEnvironmentService:
     """Authorize execution environments for use in a Workspace."""
 
-    def list_execution_environments(
+    @trace_async("workspace.list_execution_environments", tracer_name="backend")
+    async def list_execution_environments(
         self, db: Session, workspace_id: int, user_id: int
     ) -> list[dict[str, object]]:
         require_workspace_role(db, workspace_id, user_id)
@@ -40,8 +43,14 @@ class WorkspaceExecutionEnvironmentService:
             .order_by(ResourceMember.created_at, ResourceMember.id)
             .all()
         )
+        connection_statuses = await execution_environment_statuses(
+            [device for _, device in rows]
+        )
         return [
-            execution_environment_values(db, grant, device) for grant, device in rows
+            execution_environment_values(
+                db, grant, device, connection_status=connection_statuses[device.id]
+            )
+            for grant, device in rows
         ]
 
     def require_execution_environment_authorized(
@@ -93,7 +102,8 @@ class WorkspaceExecutionEnvironmentService:
             role=BaseRole.Developer,
         )
 
-    def add_execution_environment(
+    @trace_async("workspace.add_execution_environment", tracer_name="backend")
+    async def add_execution_environment(
         self,
         db: Session,
         workspace_id: int,
@@ -125,6 +135,7 @@ class WorkspaceExecutionEnvironmentService:
                 status.HTTP_409_CONFLICT,
                 "Execution environment is already available in this Workspace",
             )
+        connection_statuses = await execution_environment_statuses([device])
         grant = ensure_resource_grant(
             db,
             workspace_id=workspace_id,
@@ -135,7 +146,9 @@ class WorkspaceExecutionEnvironmentService:
         )
         db.commit()
         db.refresh(grant)
-        return execution_environment_values(db, grant, device)
+        return execution_environment_values(
+            db, grant, device, connection_status=connection_statuses[device.id]
+        )
 
     def remove_execution_environment(
         self, db: Session, workspace_id: int, device_id: int, user_id: int

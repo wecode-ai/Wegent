@@ -714,6 +714,21 @@ class ProjectAutomationService:
                 status.HTTP_409_CONFLICT,
                 "Workflow automations can only run from a workflow stage",
             )
+        definition = project_automation_execution._workflow_definition(rule)
+        if definition is not None and definition.advancement_policy == "ai":
+            from app.services.issue_execution_configuration import (
+                project_automation_execution_config,
+                require_coordinator_execution_config,
+            )
+
+            config = definition.execution_config
+            if config is None or not config.is_complete():
+                config = project_automation_execution_config(
+                    db,
+                    rule,
+                    issue_creator_user_id=int(rule.created_by_user_id or user_id),
+                )
+            require_coordinator_execution_config(config)
         run = self._create_run(db, rule, "manual", utcnow())
         await project_automation_execution.dispatch(db, rule, run)
         return self._run_view(

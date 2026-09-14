@@ -515,10 +515,7 @@ export function ProjectAgentConfiguration({
                             "todo.create_agent_description",
                             "使用标准智能体创建表单",
                           ),
-                          label: translate(
-                            "todo.create_agent",
-                            "新建智能体",
-                          ),
+                          label: translate("todo.create_agent", "新建智能体"),
                           testId: "project-agent-mode-create",
                           value: "create",
                         },
@@ -536,10 +533,7 @@ export function ProjectAgentConfiguration({
                         onClick={() => setMode("existing")}
                         type="button"
                       >
-                        {translate(
-                          "todo.choose_existing_agent",
-                          "已有智能体",
-                        )}
+                        {translate("todo.choose_existing_agent", "已有智能体")}
                       </button>
                       <button
                         className={`${styles.modeButton} ${
@@ -549,10 +543,7 @@ export function ProjectAgentConfiguration({
                         onClick={() => setMode("create")}
                         type="button"
                       >
-                        {translate(
-                          "todo.create_agent",
-                          "新建智能体",
-                        )}
+                        {translate("todo.create_agent", "新建智能体")}
                       </button>
                     </div>
                   )}
@@ -561,10 +552,7 @@ export function ProjectAgentConfiguration({
                     workspaceAgents.length ? (
                       <div className={styles.form}>
                         <label className={styles.field}>
-                          {translate(
-                            "todo.workspace_wegent_agent",
-                            "智能体",
-                          )}
+                          {translate("todo.workspace_wegent_agent", "智能体")}
                           {renderSelectControl({
                             ariaLabel: translate(
                               "todo.workspace_wegent_agent",
@@ -630,10 +618,7 @@ export function ProjectAgentConfiguration({
                         })}
                       </label>
                       <label className={styles.field}>
-                        {translate(
-                          "todo.capability_description",
-                          "能力说明",
-                        )}
+                        {translate("todo.capability_description", "能力说明")}
                         {renderTextControl({
                           ariaLabel: translate(
                             "todo.capability_description",
@@ -710,12 +695,21 @@ export function ProjectAgentConfiguration({
                       </div>
                     </div>
                   )}
+                  {error ? (
+                    <p
+                      role="alert"
+                      className={styles.error}
+                      data-testid="project-agent-dialog-error"
+                    >
+                      {error}
+                    </p>
+                  ) : null}
                 </div>,
               )
             : null}
         </>
       )}
-      {error && (
+      {error && !composerOpen && (
         <p className={styles.error} data-testid="project-agent-config-error">
           {error}
         </p>

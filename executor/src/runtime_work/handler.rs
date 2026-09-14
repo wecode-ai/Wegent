@@ -48,6 +48,8 @@ const WORKTREE_RECONCILIATION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_RESTORE_STARTUP_CONCURRENCY: usize = 2;
 const RESTORE_STARTUP_CONCURRENCY_ENV: &str = "WEGENT_RUNTIME_RESTORE_CONCURRENCY";
 const RESTORED_TURN_MARKER: &str = "wegent_restore_after_restart";
+const RESUME_GOAL_ONLY_MARKER: &str = "wegent_resume_goal_only";
+const GOAL_NEEDS_ATTENTION_MARKER: &str = "wegent_goal_needs_attention";
 const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
 enum RestoreStartupState {
@@ -177,8 +179,8 @@ use super::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
         item_type, normalize_device_id, normalize_runtime_goal_timestamps,
-        normalize_workspace_path, now_ms, prompt_text, restore_cloud_project_id, restore_origin,
-        runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
+        normalize_workspace_path, now_ms, prompt_text, raw_string_field, restore_cloud_project_id,
+        restore_origin, runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
         timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
@@ -557,6 +559,7 @@ pub struct RuntimeWorkRpcHandler {
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
+    active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
     restore_startup_semaphore: Arc<Semaphore>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
@@ -728,11 +731,32 @@ impl RuntimeWorkRpcHandler {
         let store = RuntimeWorkStore::from_env();
         let worktrees = WorktreeManager::from_env(&device_id);
         let turn_queue_path = turns::runtime_turn_queue_path();
-        let mut queued_turns =
-            turns::read_runtime_turn_queue(&turn_queue_path).unwrap_or_else(|error| {
+        let mut persisted_turns =
+            turns::read_runtime_turn_state(&turn_queue_path).unwrap_or_else(|error| {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
-                VecDeque::new()
+                turns::RuntimeTurnQueueState::default()
             });
+        let active_goal_turns = persisted_turns.active_goal_turns.clone();
+        for turn in persisted_turns.active_goal_turns.values_mut() {
+            turn.initial_thread_goal = None;
+            turn.request.prompt = Value::String(String::new());
+            turn.request
+                .extra
+                .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
+        }
+        let mut queued_turns = persisted_turns.queued_turns;
+        queued_turns.extend(
+            persisted_turns
+                .active_goal_turns
+                .into_values()
+                .filter(|turn| {
+                    turn.request
+                        .extra
+                        .get(GOAL_NEEDS_ATTENTION_MARKER)
+                        .and_then(Value::as_bool)
+                        != Some(true)
+                }),
+        );
         for turn in &mut queued_turns {
             turn.request
                 .extra
@@ -777,6 +801,7 @@ impl RuntimeWorkRpcHandler {
                 runtime_settings.max_concurrent_tasks,
                 queued_turns,
             ))),
+            active_goal_turns: Arc::new(Mutex::new(active_goal_turns)),
             restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
@@ -802,6 +827,27 @@ impl RuntimeWorkRpcHandler {
             hook_service: HookService::from_env(),
             backend_connection: Arc::new(Mutex::new(None)),
         };
+        for (local_task_id, turn) in handler
+            .active_goal_turns
+            .lock()
+            .expect("active Goal turn map lock should not be poisoned")
+            .iter()
+        {
+            handler.set_goal_execution_status(
+                local_task_id,
+                if turn
+                    .request
+                    .extra
+                    .get(GOAL_NEEDS_ATTENTION_MARKER)
+                    .and_then(Value::as_bool)
+                    == Some(true)
+                {
+                    Some("needsAttention")
+                } else {
+                    Some("recovering")
+                },
+            );
+        }
         handler.spawn_archived_delete_worker(archived_delete_rx);
         handler
     }

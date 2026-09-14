@@ -386,7 +386,7 @@ test.describe('Collaboration agent execution', () => {
     expect(completedIssue.ai_state?.project_chat_message_id).toBeTruthy()
 
     await page.reload()
-    await expect(page.getByTestId(`collaboration-run-${execution.id}`)).toContainText('succeeded')
+    await expect(page.getByTestId(`collaboration-run-${execution.id}`)).toContainText('Completed')
     await capture(page, testInfo, `wegent-${agentCase.label.toLowerCase()}-04-completed`)
   }
 

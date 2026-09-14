@@ -28,6 +28,18 @@ from app.services.workspaces.execution_environments import (
 )
 
 
+@pytest.fixture(autouse=True)
+def device_online_infos(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    infos: dict[str, object] = {}
+    monkeypatch.setattr(
+        "app.core.cache.cache_manager.mget_or_raise",
+        AsyncMock(
+            side_effect=lambda keys: {key: infos[key] for key in keys if key in infos}
+        ),
+    )
+    return infos
+
+
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
@@ -453,6 +465,7 @@ def _project_agent(
 
 
 def test_workspace_resources_and_project_scope_are_separate(
+    device_online_infos: dict[str, object],
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -520,6 +533,9 @@ def test_workspace_resources_and_project_scope_are_separate(
     test_db.refresh(unavailable_team)
     test_db.refresh(device)
     test_db.refresh(offline_cloud_device)
+    device_online_infos[f"device:online:{test_user.id}:{device.name}"] = {
+        "status": "online"
+    }
 
     resources = test_client.get(
         "/api/v1/resources",

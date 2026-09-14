@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  buildInstalledPluginProjectCatalog,
+  createAutomationExecutionCatalogApi,
   createSharedWorkspaceHttpApi,
   mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
@@ -20,11 +20,8 @@ import type {
   CollaborationFile,
   CollaborationIssue,
   CollaborationProject,
-  InstalledPluginCatalogItem,
   SharedWorkspaceApi,
   WorkspaceBinaryAccess,
-  WorkspaceAutomationExecutionCatalog,
-  WorkspaceAutomationPlugin,
   WorkspaceDeliveryFile,
 } from '@wegent/collaboration'
 
@@ -525,7 +522,11 @@ function keysToSnakeCase(value: unknown): unknown {
     return value
   }
   return Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [snakeCaseKey(key), keysToSnakeCase(nested)])
+    Object.entries(value).map(([key, nested]) => {
+      const wireKey = snakeCaseKey(key)
+      // Model option names belong to the runtime/provider, not the API schema.
+      return [wireKey, wireKey === 'model_options' ? nested : keysToSnakeCase(nested)]
+    })
   )
 }
 
@@ -534,100 +535,6 @@ function mapBinaryAccess(row: Record<string, unknown>): WorkspaceBinaryAccess {
     url: String(row.url ?? ''),
     expiresInSeconds: Number(row.expires_in_seconds ?? 0),
   }
-}
-
-function recordValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
-}
-
-function stringRecord(value: unknown): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(recordValue(value)).flatMap(([key, item]) =>
-      typeof item === 'string' ? [[key, item]] : []
-    )
-  )
-}
-
-function mapAutomationExecutionCatalog(
-  devicesResponse: unknown,
-  modelsResponse: unknown,
-  runtimeProfilesResponse: unknown
-): WorkspaceAutomationExecutionCatalog {
-  const devices = Array.isArray(recordValue(devicesResponse).items)
-    ? (recordValue(devicesResponse).items as Array<Record<string, unknown>>)
-    : []
-  const models = Array.isArray(recordValue(modelsResponse).data)
-    ? (recordValue(modelsResponse).data as Array<Record<string, unknown>>)
-    : []
-  const runtimeProfiles = Array.isArray(runtimeProfilesResponse)
-    ? (runtimeProfilesResponse as Array<Record<string, unknown>>)
-    : []
-
-  return {
-    environments: devices
-      .filter(device => device.status !== 'offline')
-      .map(device => ({
-        deviceId: String(device.device_key ?? device.deviceKey ?? device.device_id ?? ''),
-        label: String(
-          device.name ?? device.device_key ?? device.deviceKey ?? device.device_id ?? ''
-        ),
-        executionEnvironment:
-          device.device_type === 'local' || device.kind === 'local_device'
-            ? ('local' as const)
-            : ('cloud' as const),
-      }))
-      .filter(environment => environment.deviceId),
-    models: models
-      .filter(model => model.isActive !== false && model.modelCategoryType !== 'image')
-      .map(model => ({
-        name: String(model.name ?? ''),
-        label: String(model.displayName ?? model.name ?? ''),
-        type: ['public', 'user', 'group', 'runtime'].includes(String(model.type))
-          ? (model.type as 'public' | 'user' | 'group' | 'runtime')
-          : null,
-        options: {
-          ...stringRecord(model.config),
-          ...(typeof model.namespace === 'string'
-            ? { weworkCloudModelNamespace: model.namespace }
-            : {}),
-          ...(typeof model.resourceUserId === 'number'
-            ? { weworkCloudModelResourceUserId: String(model.resourceUserId) }
-            : {}),
-        },
-      }))
-      .filter(model => model.name),
-    runtimeProfiles: runtimeProfiles
-      .map(profile => ({
-        ...profile,
-        id: String(profile.id ?? ''),
-        name: String(profile.name ?? ''),
-        executionEnvironment:
-          profile.executionEnvironment === 'local' ? ('local' as const) : ('cloud' as const),
-        executionDeviceId: String(profile.executionDeviceId ?? ''),
-        model: String(profile.model ?? ''),
-        modelType: ['public', 'user', 'group', 'runtime'].includes(String(profile.modelType))
-          ? (profile.modelType as 'public' | 'user' | 'group' | 'runtime')
-          : null,
-        modelOptions: stringRecord(profile.modelOptions),
-        status: profile.status === 'archived' ? ('archived' as const) : ('active' as const),
-        version: Number(profile.version ?? 1),
-      }))
-      .filter(profile => profile.id && profile.status === 'active'),
-    plugins: [],
-  }
-}
-
-function mapAutomationPlugins(response: unknown): WorkspaceAutomationPlugin[] {
-  const items = Array.isArray(recordValue(response).items)
-    ? (recordValue(response).items as InstalledPluginCatalogItem[])
-    : []
-  return buildInstalledPluginProjectCatalog(items).map(reference => ({
-    id: reference.id,
-    label: reference.displayName,
-    reference: { ...reference },
-  }))
 }
 
 async function defaultGetBlob(endpoint: string): Promise<Blob> {
@@ -1164,30 +1071,16 @@ export function createWebSharedWorkspaceApi(
         )
       },
     },
-    automationExecutionCatalog: {
-      async load(projectId) {
-        const [devices, models, runtimeProfiles] = await Promise.all([
-          client.get(`/v1/cloud-projects/${encoded(projectId)}/execution-environments`),
-          client.get('/models/unified?include_config=true&model_category_type=llm'),
-          client.get('/v1/runtime-profiles'),
-        ])
-        return mapAutomationExecutionCatalog(devices, models, runtimeProfiles)
-      },
-      async loadPlugins(_projectId, deviceIds) {
-        const deviceQuery = deviceIds.length === 1 ? `?device_id=${encoded(deviceIds[0])}` : ''
-        const response = await client.get(`/plugins/installed${deviceQuery}`)
-        return mapAutomationPlugins(response)
-      },
-    },
+    automationExecutionCatalog: createAutomationExecutionCatalogApi(client),
     runtimeProfiles: {
       list() {
         return client.get('/v1/runtime-profiles')
       },
       create(input) {
-        return client.post('/v1/runtime-profiles', keysToSnakeCase(input))
+        return client.post('/v1/runtime-profiles', input)
       },
       update(profileId, input) {
-        return client.patch(`/v1/runtime-profiles/${encoded(profileId)}`, keysToSnakeCase(input))
+        return client.patch(`/v1/runtime-profiles/${encoded(profileId)}`, input)
       },
       remove(profileId) {
         return client.delete(`/v1/runtime-profiles/${encoded(profileId)}`)

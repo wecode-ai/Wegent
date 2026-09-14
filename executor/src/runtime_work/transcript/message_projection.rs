@@ -568,12 +568,22 @@ pub(super) fn plan_block(
     fallback_timestamp: i64,
     options: TranscriptBuildOptions,
 ) -> Value {
+    let status = string_field(item, "status")
+        .map(normalized_phase_or_status)
+        .filter(|status| {
+            matches!(
+                status.as_str(),
+                "inprogress" | "pending" | "running" | "streaming"
+            )
+        })
+        .map(|_| "streaming")
+        .unwrap_or("done");
     let mut block = json!({
         "id": format!("plan-{}", item_id(item, "plan")),
         "type": "plan",
         "process_kind": "plan",
         "content": extract_text(item).unwrap_or_default(),
-        "status": "done",
+        "status": status,
         "timestamp": item_timestamp(item).unwrap_or(fallback_timestamp),
     });
     if options.truncate_content {

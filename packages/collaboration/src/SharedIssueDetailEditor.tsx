@@ -73,12 +73,14 @@ import { markdownAttachmentRows } from "./issue-detail/attachmentMarkdown";
 import { TagEditor } from "./issue-detail/TagEditor";
 import "./issue-detail/task-detail-layout.css";
 import { localizeStandardStatuses } from "./i18n";
+import { ExecutionConfigurationNotice } from './runtime-profile/ExecutionConfigurationNotice'
 
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
 }
 
 export interface SharedIssueWorkflow {
+  execution_config?: import('./issue-detail/workflowConfiguration').WorkflowCoordinatorConfiguration['execution_config']
   advancement_policy?: "manual" | "ai";
   orchestration_status?: SharedIssueDetailWorkflowPlan["status"];
   nodes?: SharedWorkflowNode[];
@@ -2764,8 +2766,30 @@ export function TodoEditor(props: TodoEditorProps) {
                     ) : null}
                   </section>
 
+                  <ExecutionConfigurationNotice key={item.id} issue={item} translate={t} />
                   {hasAutomationWorkflow && automationWorkflowNodes ? (
                     <IssueAutomationExecutionSummary
+                      workflow={displayedWorkflow}
+                      plan={workflowPlan}
+                      childIssues={childItems}
+                      onOpenChild={props.onOpenChildTask}
+                      onConfigured={editable && editProps && displayedWorkflow ? async (profile) => {
+                        const updated = await editorPort.issues.update(item.id, {
+                          version: item.version,
+                          workflow: {
+                            ...displayedWorkflow,
+                            execution_config: {
+                              runtime_profile_id: profile.id,
+                              execution_device_id: profile.executionDeviceId,
+                              model: profile.model,
+                              model_type: profile.modelType,
+                              model_options: profile.modelOptions,
+                              workspace_binding: { type: 'standalone' },
+                            },
+                          },
+                        })
+                        editProps.onUpdated(updated)
+                      } : undefined}
                       nodes={automationWorkflowNodes}
                       agents={projectAgents}
                       location={

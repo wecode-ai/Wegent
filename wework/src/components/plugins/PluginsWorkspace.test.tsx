@@ -213,6 +213,7 @@ function mockCodexAppServerInvoke(
     wegentStorePlugins?: Array<{
       name: string
       packageId: string
+      installedPluginId?: number | null
       marketplace: string
       version?: string | null
       enabled: boolean
@@ -4438,6 +4439,64 @@ describe('PluginsWorkspace', () => {
     await waitFor(() =>
       expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_uninstalled', { source: 'local' })
     )
+  })
+
+  test('uninstalls a manifest-backed Wegent package through its cloud account record', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceVisibility: 'workspace',
+      marketplaceSourceProvider: 'wegent',
+      marketplaceName: 'weibo-miniapp-h5-develop-agent',
+      marketplaceDisplayName: '微博小程序H5开发助手',
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [],
+      wegentStorePlugins: [
+        {
+          name: 'weibo-miniapp-h5-develop-agent',
+          packageId: '101-wegent-weibo-miniapp-h5-develop-agent-2.1.0',
+          installedPluginId: 101,
+          marketplace: 'wegent',
+          version: '2.1.0',
+          enabled: true,
+          displayName: '微博小程序H5开发助手',
+          pluginPath:
+            '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins/101-wegent-weibo-miniapp-h5-develop-agent-2.1.0',
+        },
+      ],
+    })
+    const previousInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()
+    vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
+      const cloudUninstallCompleted = vi
+        .mocked(fetch)
+        .mock.calls.some(
+          ([input, init]) =>
+            String(input).includes('/api/plugins/installed/101') && init?.method === 'DELETE'
+        )
+      if (command === 'executor.plugins.store.list' && cloudUninstallCompleted) {
+        return Promise.resolve({
+          storePath: '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins',
+          plugins: [],
+        })
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('微博小程序H5开发助手')).toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-actions-101'))
+    await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-101'))
+    await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/installed/101?device_id=current-device',
+        expect.objectContaining({ method: 'DELETE' })
+      )
+    )
+    expectCodexAppServerRequestNotCalled('plugin/uninstall')
+    expect(await screen.findByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
   })
 
   test('loads grouped connectors when opening a personal installed summary', async () => {

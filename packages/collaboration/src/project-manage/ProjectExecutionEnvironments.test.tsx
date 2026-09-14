@@ -8,6 +8,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  createCollaborationTranslator,
+  type CollaborationLocale,
+} from "../i18n";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationExecutionEnvironment,
@@ -57,12 +61,6 @@ function environment(
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
-function click(element: Element) {
-  element.dispatchEvent(
-    new MouseEvent("click", { bubbles: true, cancelable: true }),
-  );
-}
-
 afterEach(() => {
   act(() => root?.unmount());
   root = null;
@@ -70,156 +68,199 @@ afterEach(() => {
   container = null;
 });
 
+const prefix = "collaboration-project-execution-environment";
+
+function element<T extends HTMLElement>(suffix: string): T {
+  const result = container?.querySelector<T>(
+    `[data-testid="${prefix}${suffix}"]`,
+  );
+  if (!result) throw new Error(`Missing element: ${suffix}`);
+  return result;
+}
+
+async function change(suffix: string, value: string) {
+  await act(async () => {
+    const select = element<HTMLSelectElement>(suffix);
+    select.value = value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+function options() {
+  return [...element<HTMLSelectElement>("-select").options].map(
+    (option) => option.textContent,
+  );
+}
+
+async function render({
+  assigned = [],
+  role = "Owner",
+  locale = "zh-CN",
+  onRegisterDevice,
+}: {
+  assigned?: CollaborationExecutionEnvironment[];
+  role?: CollaborationProject["access_role"];
+  locale?: CollaborationLocale;
+  onRegisterDevice?: () => void;
+} = {}) {
+  const online = environment(21, "Personal online", "online");
+  const offline = environment(22, "Personal offline", "offline");
+  const shared = environment(23, "Shared online", "online");
+  const failed = environment(24, "Shared error", "error");
+  const preparing = environment(25, "Shared preparing", "provisioning");
+  const api = {
+    projects: {
+      listExecutionEnvironments: vi.fn(async () => assigned),
+      addExecutionEnvironment: vi.fn(async () => offline),
+    },
+    resources: {
+      list: vi.fn(async () => ({
+        agents: [],
+        execution_environments: [online, offline, shared],
+      })),
+    },
+    workspaces: {
+      listExecutionEnvironments: vi.fn(async () => [shared, failed, preparing]),
+    },
+  } as unknown as SharedWorkspaceApi;
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => {
+    root?.render(
+      <ProjectExecutionEnvironments
+        api={api}
+        project={{ ...project, access_role: role }}
+        translate={createCollaborationTranslator(locale)}
+        onRegisterDevice={onRegisterDevice}
+      />,
+    );
+  });
+  return api;
+}
+
 describe("ProjectExecutionEnvironments", () => {
-  it("only offers online execution environments for project selection", async () => {
-    const onlinePersonal = environment(21, "Online personal", "online");
-    const offlinePersonal = environment(22, "Offline personal", "offline");
-    const onlineShared = environment(23, "Online shared", "online");
-    const errorShared = environment(24, "Error shared", "error");
-    const api = {
-      projects: {
-        listExecutionEnvironments: vi.fn(async () => []),
-      },
-      resources: {
-        list: vi.fn(async () => ({
-          agents: [],
-          execution_environments: [onlinePersonal, offlinePersonal],
-        })),
-      },
-      workspaces: {
-        listExecutionEnvironments: vi.fn(async () => [
-          onlineShared,
-          errorShared,
-        ]),
-      },
-    } as unknown as SharedWorkspaceApi;
+  it("labels all device statuses and deduplicates personal and shared resources", async () => {
+    await render();
 
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-
-    await act(async () => {
-      root?.render(
-        <ProjectExecutionEnvironments
-          api={api}
-          project={project}
-          translate={(_key, fallback) => fallback}
-        />,
-      );
-    });
-
-    const options = [
-      ...container.querySelectorAll<HTMLButtonElement>(
-        '[data-testid^="collaboration-project-execution-environment-option-"]',
-      ),
-    ].map((option) => option.textContent?.replace(/\s+/g, " ").trim());
-
-    expect(options).toEqual([
-      "Online personal本地设备 · 我的资源",
-      "Online shared本地设备 · 空间共享",
+    expect(options()).toEqual([
+      "选择执行环境",
+      "Personal online · 在线 · 我的资源",
+      "Personal offline · 离线 · 我的资源",
+      "Shared online · 在线 · 空间共享",
+      "Shared error · 异常 · 空间共享",
+      "Shared preparing · 准备中 · 空间共享",
     ]);
-    expect(container.textContent).not.toContain("Offline personal");
-    expect(container.textContent).not.toContain("Error shared");
   });
 
-  it("moves multiple clicked resources into the project pool without waiting", async () => {
-    const first = environment(21, "First device", "online");
-    const second = environment(22, "Second device", "online");
-    const addExecutionEnvironment = vi.fn(
-      () =>
-        new Promise<CollaborationExecutionEnvironment>(() => {
-          // Keep requests pending to verify that the pool updates optimistically.
-        }),
-    );
-    const api = {
-      projects: {
-        listExecutionEnvironments: vi.fn(async () => []),
-        addExecutionEnvironment,
-      },
-      resources: {
-        list: vi.fn(async () => ({
-          agents: [],
-          execution_environments: [first, second],
-        })),
-      },
-      workspaces: {
-        listExecutionEnvironments: vi.fn(async () => []),
-      },
-    } as unknown as SharedWorkspaceApi;
+  it.each([
+    ["online", ["21", "23"]],
+    ["offline", ["22"]],
+    ["error", ["24"]],
+    ["provisioning", ["25"]],
+  ])(
+    "filters candidates by %s and restores all statuses",
+    async (status, deviceIds) => {
+      await render();
+      await change("-status-filter", status);
 
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
+      expect(
+        [...element<HTMLSelectElement>("-select").options]
+          .slice(1)
+          .map((option) => option.value),
+      ).toEqual(deviceIds);
 
-    await act(async () => {
-      root?.render(
-        <ProjectExecutionEnvironments
-          api={api}
-          project={project}
-          translate={(_key, fallback) => fallback}
-        />,
-      );
+      await change("-status-filter", "all");
+      expect(options()).toHaveLength(6);
+    },
+  );
+
+  it("clears hidden selection and keeps the filter usable when no candidates match", async () => {
+    const api = await render({
+      assigned: [environment(22, "Assigned offline", "offline")],
     });
+    await change("-select", "21");
+    expect(element<HTMLButtonElement>("-add").disabled).toBe(false);
 
-    act(() => {
-      click(
-        container!.querySelector(
-          '[data-testid="collaboration-project-execution-environment-option-21"]',
-        )!,
-      );
-      click(
-        container!.querySelector(
-          '[data-testid="collaboration-project-execution-environment-option-22"]',
-        )!,
-      );
-    });
+    await change("-status-filter", "offline");
 
-    const pool = container.querySelector(
-      '[data-testid="collaboration-project-execution-environment-pool"]',
+    expect(element<HTMLSelectElement>("-select").value).toBe("");
+    expect(element<HTMLSelectElement>("-select").disabled).toBe(true);
+    expect(options()).toEqual(["没有符合当前状态的执行环境"]);
+    expect(element<HTMLButtonElement>("-add").disabled).toBe(true);
+    expect(api.projects.addExecutionEnvironment).not.toHaveBeenCalled();
+
+    await change("-status-filter", "online");
+    expect(element<HTMLSelectElement>("-select").disabled).toBe(false);
+    expect(element<HTMLButtonElement>("-add").disabled).toBe(true);
+    expect(container?.querySelector('[role="status"]')?.textContent).toBe(
+      "没有符合当前状态的执行环境",
     );
-    expect(pool?.textContent).toContain("First device");
-    expect(pool?.textContent).toContain("Second device");
-    expect(addExecutionEnvironment).toHaveBeenCalledTimes(2);
   });
 
-  it("opens the existing device registration flow", async () => {
+  it("adds the selected offline device to the project authorization pool", async () => {
+    const api = await render();
+    await change("-status-filter", "offline");
+    await change("-select", "22");
+    await act(async () => element<HTMLButtonElement>("-add").click());
+
+    expect(
+      api.projects.addExecutionEnvironment,
+    ).toHaveBeenCalledExactlyOnceWith("project-1", 22);
+    expect(element("-22").textContent).toContain("Personal offline");
+    expect(element("-22").textContent).toContain("离线");
+    expect(element<HTMLSelectElement>("-select").value).toBe("");
+    expect(element<HTMLButtonElement>("-add").disabled).toBe(true);
+  });
+
+  it("lets read-only members filter assigned devices without management controls", async () => {
+    await render({
+      role: "Reporter",
+      assigned: [
+        environment(21, "Assigned online", "online"),
+        environment(22, "Assigned offline", "offline"),
+        environment(24, "Assigned error", "error"),
+      ],
+      onRegisterDevice: vi.fn(),
+    });
+    expect(element("-24").textContent).toContain("异常");
+    expect(
+      container?.querySelector(`[data-testid="${prefix}-add"]`),
+    ).toBeNull();
+    expect(
+      container?.querySelector(`[data-testid^="${prefix}-remove-"]`),
+    ).toBeNull();
+    expect(
+      container?.querySelector(`[data-testid="${prefix}-register"]`),
+    ).toBeNull();
+
+    await change("-status-filter", "online");
+    expect(element("-21").textContent).toContain("Assigned online");
+    expect(container?.querySelector(`[data-testid="${prefix}-22"]`)).toBeNull();
+
+    await change("-status-filter", "all");
+    expect(element("-22").textContent).toContain("Assigned offline");
+  });
+
+  it("opens device registration from the project execution environment page", async () => {
     const onRegisterDevice = vi.fn();
-    const api = {
-      projects: {
-        listExecutionEnvironments: vi.fn(async () => []),
-      },
-      resources: {
-        list: vi.fn(async () => ({
-          agents: [],
-          execution_environments: [],
-        })),
-      },
-      workspaces: {
-        listExecutionEnvironments: vi.fn(async () => []),
-      },
-    } as unknown as SharedWorkspaceApi;
+    await render({ onRegisterDevice });
 
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-
-    await act(async () => {
-      root?.render(
-        <ProjectExecutionEnvironments
-          api={api}
-          project={project}
-          translate={(_key, fallback) => fallback}
-          onRegisterDevice={onRegisterDevice}
-        />,
-      );
-    });
-
-    click(
-      container.querySelector(
-        '[data-testid="collaboration-project-execution-environment-register"]',
-      )!,
-    );
+    element<HTMLButtonElement>("-register").click();
 
     expect(onRegisterDevice).toHaveBeenCalledOnce();
+  });
+
+  it("localizes status labels and filters in English", async () => {
+    await render({ locale: "en" });
+    expect(options()).toContain("Personal offline · Offline · My resources");
+    expect(options()).toContain(
+      "Shared preparing · Preparing · Shared by workspace",
+    );
+    expect(
+      [...element<HTMLSelectElement>("-status-filter").options].map(
+        (option) => option.textContent,
+      ),
+    ).toEqual(["All statuses", "Online", "Offline", "Preparing", "Error"]);
   });
 });
