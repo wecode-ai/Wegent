@@ -55,6 +55,10 @@ export interface AutomationCloudApi {
 }
 
 export interface AutomationProjectApi<P extends AutomationProject> {
+  saveWorkflow(
+    project: P,
+    workflowDefinition: ProjectWorkflowDefinition,
+  ): Promise<P>;
   clearLegacyWorkflow(
     project: P,
     workflowDefinition: ProjectWorkflowDefinition,
@@ -77,7 +81,6 @@ export interface UseAutomationCloudStateOptions<P extends AutomationProject> {
   serviceUnavailableMessage: string;
   managePermissionMessage: string;
   runtimeUserRequiredMessage: string;
-  duplicateName: (name: string) => string;
   onProjectUpdated?: (project: P) => void;
   onRunRefreshError?: (error: unknown) => void;
 }
@@ -226,7 +229,6 @@ export function useAutomationCloudState<P extends AutomationProject>({
   serviceUnavailableMessage,
   managePermissionMessage,
   runtimeUserRequiredMessage,
-  duplicateName,
   onProjectUpdated,
   onRunRefreshError,
 }: UseAutomationCloudStateOptions<P>) {
@@ -295,13 +297,21 @@ export function useAutomationCloudState<P extends AutomationProject>({
       force = false,
     }: { force?: boolean } = {}): Promise<AutomationRuleSnapshot> => {
       if (!api) {
+        const legacyRule = automationRuleFromLegacyWorkflow(
+          projectRef.current,
+          [],
+        );
+        const snapshot = {
+          rules: legacyRule ? [{ ...legacyRule, persisted: true }] : [],
+          runSources: [],
+        };
         if (scopeRef.current === scope) {
-          setRules([]);
+          setRules(snapshot.rules);
           setRunSources([]);
-          setError(serviceUnavailableMessage);
+          setError("");
           setLoading(false);
         }
-        return { rules: [], runSources: [] };
+        return snapshot;
       }
       const cached = readRuleCache(cacheKey, cacheSource);
       if (
@@ -390,7 +400,6 @@ export function useAutomationCloudState<P extends AutomationProject>({
       projectId,
       publishProject,
       scope,
-      serviceUnavailableMessage,
     ],
   );
 
@@ -498,9 +507,32 @@ export function useAutomationCloudState<P extends AutomationProject>({
 
   const persistRule = useCallback(
     async (rule: AutomationUiRule) => {
+      const currentProject = projectRef.current;
+      if (!api) {
+        if (!canManage) throw new Error(managePermissionMessage);
+        const workflowDefinition = legacyWorkflowFromAutomationRule(rule);
+        const updatedProject = await projectApi.saveWorkflow(
+          currentProject,
+          workflowDefinition,
+        );
+        const saved = {
+          ...rule,
+          id: `legacy-workflow-${projectId}`,
+          persisted: true,
+          origin: "legacy_workflow" as const,
+          version: updatedProject.version,
+          updatedAt: updatedProject.updated_at,
+          legacyDefinition: workflowDefinition,
+        };
+        if (scopeRef.current !== scope) return null;
+        publishProject(updatedProject);
+        setRules([saved]);
+        setRunSources([]);
+        setError("");
+        return saved;
+      }
       const cloudApi = requireManageApi();
       if (currentUserId == null) throw new Error(runtimeUserRequiredMessage);
-      const currentProject = projectRef.current;
       if (rule.origin === "legacy_workflow") {
         const workflowDefinition = legacyWorkflowFromAutomationRule(rule);
         const result = await cloudApi.migrateWorkflow(projectId, {
@@ -515,7 +547,7 @@ export function useAutomationCloudState<P extends AutomationProject>({
           version: result.projectVersion,
         };
         const mapped = automationRuleFromBackend(result.automation);
-        if (scopeRef.current !== scope) return mapped;
+        if (scopeRef.current !== scope) return null;
         publishProject(updatedProject);
         setRules((current) =>
           current.map((candidate) =>
@@ -540,7 +572,7 @@ export function useAutomationCloudState<P extends AutomationProject>({
           })
         : await cloudApi.create(projectId, input);
       const mapped = automationRuleFromBackend(saved);
-      if (scopeRef.current !== scope) return mapped;
+      if (scopeRef.current !== scope) return null;
       setRules((current) => {
         const exists = current.some((candidate) => candidate.id === mapped.id);
         return exists
@@ -558,7 +590,11 @@ export function useAutomationCloudState<P extends AutomationProject>({
       return mapped;
     },
     [
+      api,
+      canManage,
       currentUserId,
+      managePermissionMessage,
+      projectApi,
       projectId,
       publishProject,
       requireManageApi,
@@ -569,6 +605,7 @@ export function useAutomationCloudState<P extends AutomationProject>({
 
   const toggleRule = useCallback(
     async (rule: AutomationUiRule, enabled: boolean) => {
+      if (!api) return persistRule({ ...rule, enabled });
       const cloudApi = requireManageApi();
       if (rule.origin === "legacy_workflow")
         return persistRule({ ...rule, enabled });
@@ -578,7 +615,7 @@ export function useAutomationCloudState<P extends AutomationProject>({
           enabled,
         }),
       );
-      if (scopeRef.current !== scope) return mapped;
+      if (scopeRef.current !== scope) return null;
       setRules((current) =>
         current.map((candidate) =>
           candidate.id === mapped.id ? mapped : candidate,
@@ -586,24 +623,27 @@ export function useAutomationCloudState<P extends AutomationProject>({
       );
       return mapped;
     },
-    [persistRule, projectId, requireManageApi, scope],
+    [api, persistRule, projectId, requireManageApi, scope],
   );
 
   const deleteRule = useCallback(
     async (rule: AutomationUiRule) => {
-      const cloudApi = requireManageApi();
       const currentProject = projectRef.current;
       if (rule.origin === "legacy_workflow") {
+        if (!canManage) throw new Error(managePermissionMessage);
         const updatedProject = await projectApi.clearLegacyWorkflow(
           currentProject,
-          currentProject.workflow_definition ?? {
-            version: 1,
-            nodes: [],
-          },
+          clearedLegacyWorkflow(
+            currentProject.workflow_definition ?? {
+              version: 1,
+              nodes: [],
+            },
+          ),
         );
         if (scopeRef.current !== scope) return;
         publishProject(updatedProject);
       } else {
+        const cloudApi = requireManageApi();
         const result = await cloudApi.remove(projectId, rule.id);
         if (scopeRef.current !== scope) return;
         if (currentProject.workflow_automation_id === rule.id) {
@@ -622,22 +662,15 @@ export function useAutomationCloudState<P extends AutomationProject>({
         current.filter((source) => source.ruleId !== rule.id),
       );
     },
-    [projectApi, projectId, publishProject, requireManageApi, scope],
-  );
-
-  const duplicateRule = useCallback(
-    (rule: AutomationUiRule) =>
-      persistRule({
-        ...rule,
-        id: `draft-${crypto.randomUUID()}`,
-        persisted: false,
-        origin: "automation",
-        legacyDefinition: null,
-        version: 1,
-        name: duplicateName(rule.name),
-        enabled: false,
-      }),
-    [duplicateName, persistRule],
+    [
+      canManage,
+      managePermissionMessage,
+      projectApi,
+      projectId,
+      publishProject,
+      requireManageApi,
+      scope,
+    ],
   );
 
   const runRule = useCallback(
@@ -665,7 +698,6 @@ export function useAutomationCloudState<P extends AutomationProject>({
     refreshRuns,
     persistRule,
     toggleRule,
-    duplicateRule,
     deleteRule,
     runRule: api ? runRule : undefined,
   };

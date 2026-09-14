@@ -124,12 +124,19 @@ export interface CollaborationWorkspaceControllerCommands {
     defaultStatuses: CollaborationStatus[];
   }): Promise<void>;
   refreshSelectedIssue(): Promise<void>;
+  refreshProjectAgents(projectId: string): Promise<void>;
   replaceProject(project: CollaborationProject): void;
   appendIssue(issue: CollaborationIssue): void;
   replaceIssue(issue: CollaborationIssue): void;
-  replaceAttachments(attachments: CollaborationAttachment[]): void;
-  replaceComments(comments: CollaborationComment[]): void;
-  replaceAssignments(assignments: CollaborationAssignment[]): void;
+  replaceAttachments(
+    issueId: string,
+    attachments: CollaborationAttachment[],
+  ): void;
+  replaceComments(issueId: string, comments: CollaborationComment[]): void;
+  replaceAssignments(
+    issueId: string,
+    assignments: CollaborationAssignment[],
+  ): void;
   reportError(message: string): void;
 }
 
@@ -160,6 +167,7 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     reorderIssue: async () => undefined,
     changeProjectGroup: async () => undefined,
     refreshSelectedIssue: async () => undefined,
+    refreshProjectAgents: async () => undefined,
     replaceProject: () => undefined,
     appendIssue: () => undefined,
     replaceIssue: () => undefined,
@@ -224,10 +232,19 @@ export type CollaborationWorkspaceControllerAction =
       comments: CollaborationComment[];
       assignments: CollaborationAssignment[];
       executions: CollaborationExecution[];
+      preserveAttachments?: boolean;
+      preserveComments?: boolean;
+      preserveAssignments?: boolean;
     }
+  | { type: "issue-selected"; issue: CollaborationIssue }
   | { type: "clear-project" }
   | { type: "clear-selected-issue" }
   | { type: "replace-project"; project: CollaborationProject }
+  | {
+      type: "replace-project-agents";
+      projectId: string;
+      agents: CollaborationAgent[];
+    }
   | { type: "remove-project"; projectId: string }
   | { type: "replace-issues"; issues: CollaborationIssue[] }
   | { type: "append-issue"; issue: CollaborationIssue }
@@ -302,6 +319,12 @@ export function collaborationWorkspaceControllerReducer(
     case "project-snapshot-loaded":
       return {
         ...state,
+        selectedIssue:
+          state.selectedIssue && state.project?.id === action.projectId
+            ? (action.snapshot.items.find(
+                (item) => item.id === state.selectedIssue?.id,
+              ) ?? null)
+            : state.selectedIssue,
         issues:
           state.project?.id === action.projectId
             ? action.snapshot.items
@@ -370,6 +393,11 @@ export function collaborationWorkspaceControllerReducer(
         },
         project: action.project,
         issues: action.snapshot.items,
+        selectedIssue: state.selectedIssue
+          ? (action.snapshot.items.find(
+              (item) => item.id === state.selectedIssue?.id,
+            ) ?? null)
+          : null,
         members: action.snapshot.members,
         agents: action.snapshot.agents,
         taskBindings: action.snapshot.taskBindings,
@@ -379,6 +407,16 @@ export function collaborationWorkspaceControllerReducer(
         boardLoadRevision: state.boardLoadRevision + 1,
         error: null,
         errorSource: null,
+      };
+    case "replace-project-agents":
+      return {
+        ...state,
+        agents:
+          state.project?.id === action.projectId ? action.agents : state.agents,
+        projectAgents: {
+          ...state.projectAgents,
+          [action.projectId]: action.agents,
+        },
       };
     case "external-column-loading":
       return {
@@ -425,10 +463,30 @@ export function collaborationWorkspaceControllerReducer(
       return {
         ...state,
         selectedIssue: action.issue,
-        attachments: action.attachments,
-        comments: action.comments,
-        assignments: action.assignments,
+        attachments:
+          action.preserveAttachments &&
+          state.selectedIssue?.id === action.issue.id
+            ? state.attachments
+            : action.attachments,
+        comments:
+          action.preserveComments && state.selectedIssue?.id === action.issue.id
+            ? state.comments
+            : action.comments,
+        assignments:
+          action.preserveAssignments &&
+          state.selectedIssue?.id === action.issue.id
+            ? state.assignments
+            : action.assignments,
         executions: action.executions,
+      };
+    case "issue-selected":
+      return {
+        ...state,
+        selectedIssue: action.issue,
+        attachments: [],
+        comments: [],
+        assignments: [],
+        executions: [],
       };
     case "clear-project":
       return {
@@ -570,6 +628,12 @@ function errorStatus(error: unknown): number | null {
   return typeof error.status === "number" ? error.status : null;
 }
 
+function isVersionConflict(error: unknown): boolean {
+  if (errorStatus(error) === 409) return true;
+  if (!error || typeof error !== "object" || !("code" in error)) return false;
+  return error.code === "version_conflict";
+}
+
 const externalGitBoardStatuses = [
   "inbox",
   "pending",
@@ -694,7 +758,11 @@ export function createCollaborationWorkspaceControllerCommands({
   let catalogProjects = getProjects();
   let projectLoadRevision = 0;
   let selectedIssueLoadRevision = 0;
+  const selectedIssueAttachmentsRevisions = new Map<string, number>();
+  const selectedIssueCommentsRevisions = new Map<string, number>();
+  const selectedIssueAssignmentsRevisions = new Map<string, number>();
   const projectMutationGenerations = new Map<string, number>();
+  const projectGroupChangeRevisions = new Map<string, number>();
   const externalColumnLoads = new Set<string>();
   const standardSnapshotLoads = new Map<
     string,
@@ -743,6 +811,16 @@ export function createCollaborationWorkspaceControllerCommands({
   };
   const projectMutationGeneration = (projectId: string) =>
     projectMutationGenerations.get(projectId) ?? 0;
+  const collectionRevision = (
+    revisions: ReadonlyMap<string, number>,
+    issueId: string,
+  ) => revisions.get(issueId) ?? 0;
+  const incrementCollectionRevision = (
+    revisions: Map<string, number>,
+    issueId: string,
+  ) => {
+    revisions.set(issueId, collectionRevision(revisions, issueId) + 1);
+  };
   const markProjectMutated = (projectId: string) => {
     projectMutationGenerations.set(
       projectId,
@@ -1009,6 +1087,28 @@ export function createCollaborationWorkspaceControllerCommands({
     },
     async loadSelectedIssue(issueId) {
       const revision = ++selectedIssueLoadRevision;
+      const attachmentsRevision = collectionRevision(
+        selectedIssueAttachmentsRevisions,
+        issueId,
+      );
+      const commentsRevision = collectionRevision(
+        selectedIssueCommentsRevisions,
+        issueId,
+      );
+      const assignmentsRevision = collectionRevision(
+        selectedIssueAssignmentsRevisions,
+        issueId,
+      );
+      const cachedIssue = getExternalBoardState().issues.find(
+        (issue) => issue.id === issueId,
+      );
+      if (cachedIssue) {
+        if (getSelectedIssue()?.id !== issueId) {
+          dispatch({ type: "issue-selected", issue: cachedIssue });
+        }
+      } else {
+        dispatch({ type: "clear-selected-issue" });
+      }
       try {
         const [issue, attachments, comments] = await Promise.all([
           api.issues.get(issueId),
@@ -1035,6 +1135,15 @@ export function createCollaborationWorkspaceControllerCommands({
           comments,
           assignments: loadedAssignments,
           executions,
+          preserveAttachments:
+            attachmentsRevision !==
+            collectionRevision(selectedIssueAttachmentsRevisions, issueId),
+          preserveComments:
+            commentsRevision !==
+            collectionRevision(selectedIssueCommentsRevisions, issueId),
+          preserveAssignments:
+            assignmentsRevision !==
+            collectionRevision(selectedIssueAssignmentsRevisions, issueId),
         });
         return issue;
       } catch {
@@ -1045,6 +1154,7 @@ export function createCollaborationWorkspaceControllerCommands({
     },
     clearProject: () => {
       projectLoadRevision += 1;
+      selectedIssueLoadRevision += 1;
       dispatch({ type: "clear-project" });
     },
     clearSelectedIssue: () => {
@@ -1169,7 +1279,7 @@ export function createCollaborationWorkspaceControllerCommands({
           }),
         });
       } catch (error) {
-        if (errorStatus(error) === 409) {
+        if (isVersionConflict(error)) {
           await loadProject(issue.cloud_project_id, false);
           reportError(messages.conflict, "conflict");
         } else {
@@ -1178,6 +1288,10 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     async changeProjectGroup({ project, groupBy, defaultStatuses }) {
+      const revision = (projectGroupChangeRevisions.get(project.id) ?? 0) + 1;
+      projectGroupChangeRevisions.set(project.id, revision);
+      const isCurrent = () =>
+        projectGroupChangeRevisions.get(project.id) === revision;
       const config = project.board_config ?? {
         group_by: "status" as const,
         processing_start_status_id: defaultStatuses[1]?.id ?? null,
@@ -1193,14 +1307,37 @@ export function createCollaborationWorkspaceControllerCommands({
           boardConfig: { ...config, group_by: groupBy },
         });
         markProjectMutated(project.id);
+        if (!isCurrent()) return;
         catalogProjects = catalogProjects.map((item) =>
           item.id === updated.id ? updated : item,
         );
         dispatch({ type: "replace-project", project: updated });
       } catch (error) {
-        if (errorStatus(error) === 409) await loadProject(project.id, false);
-        else dispatch({ type: "replace-project", project });
-        reportError(messages.saveFailed);
+        if (!isCurrent()) return;
+        if (!isVersionConflict(error)) {
+          dispatch({ type: "replace-project", project });
+          reportError(messages.saveFailed);
+          return;
+        }
+        try {
+          const latest = await api.projects.get(project.id);
+          if (!isCurrent()) return;
+          const latestConfig = latest.board_config ?? config;
+          const updated = await api.projects.update(project.id, {
+            version: latest.version,
+            boardConfig: { ...latestConfig, group_by: groupBy },
+          });
+          markProjectMutated(project.id);
+          if (!isCurrent()) return;
+          catalogProjects = catalogProjects.map((item) =>
+            item.id === updated.id ? updated : item,
+          );
+          dispatch({ type: "replace-project", project: updated });
+        } catch {
+          if (!isCurrent()) return;
+          await loadProject(project.id, false);
+          reportError(messages.conflict, "conflict");
+        }
       }
     },
     async refreshSelectedIssue() {
@@ -1212,6 +1349,17 @@ export function createCollaborationWorkspaceControllerCommands({
           issue: await api.issues.get(issue.id),
         });
         reportError(messages.conflict, "conflict");
+      } catch {
+        reportError(messages.loadFailed, "load");
+      }
+    },
+    async refreshProjectAgents(projectId) {
+      try {
+        dispatch({
+          type: "replace-project-agents",
+          projectId,
+          agents: await api.agents.list(projectId),
+        });
       } catch {
         reportError(messages.loadFailed, "load");
       }
@@ -1231,12 +1379,21 @@ export function createCollaborationWorkspaceControllerCommands({
       markProjectMutated(issue.cloud_project_id);
       dispatch({ type: "replace-issue", issue });
     },
-    replaceAttachments: (attachments) =>
-      dispatch({ type: "replace-attachments", attachments }),
-    replaceComments: (comments) =>
-      dispatch({ type: "replace-comments", comments }),
-    replaceAssignments: (assignments) =>
-      dispatch({ type: "replace-assignments", assignments }),
+    replaceAttachments: (issueId, attachments) => {
+      if (getSelectedIssue()?.id !== issueId) return;
+      incrementCollectionRevision(selectedIssueAttachmentsRevisions, issueId);
+      dispatch({ type: "replace-attachments", attachments });
+    },
+    replaceComments: (issueId, comments) => {
+      if (getSelectedIssue()?.id !== issueId) return;
+      incrementCollectionRevision(selectedIssueCommentsRevisions, issueId);
+      dispatch({ type: "replace-comments", comments });
+    },
+    replaceAssignments: (issueId, assignments) => {
+      if (getSelectedIssue()?.id !== issueId) return;
+      incrementCollectionRevision(selectedIssueAssignmentsRevisions, issueId);
+      dispatch({ type: "replace-assignments", assignments });
+    },
     reportError,
   };
 }
@@ -1346,21 +1503,35 @@ export function useCollaborationWorkspaceController({
 
   useEffect(() => {
     if (!commands) return;
-    commands.clearSelectedIssue();
-    if (location.issueId) void commands.loadSelectedIssue(location.issueId);
+    if (location.issueId) {
+      void commands.loadSelectedIssue(location.issueId);
+    } else {
+      commands.clearSelectedIssue();
+    }
   }, [commands, location.issueId]);
 
-  const locationState =
+  const selectedIssue =
     state.selectedIssue?.id === location.issueId
-      ? state
-      : {
-          ...state,
-          selectedIssue: null,
-          attachments: [],
-          comments: [],
-          assignments: [],
-          executions: [],
-        };
+      ? state.selectedIssue
+      : (state.issues.find((issue) => issue.id === location.issueId) ?? null);
+  const hasLoadedSelectedIssue = state.selectedIssue?.id === location.issueId;
+  const locationState = selectedIssue
+    ? {
+        ...state,
+        selectedIssue,
+        attachments: hasLoadedSelectedIssue ? state.attachments : [],
+        comments: hasLoadedSelectedIssue ? state.comments : [],
+        assignments: hasLoadedSelectedIssue ? state.assignments : [],
+        executions: hasLoadedSelectedIssue ? state.executions : [],
+      }
+    : {
+        ...state,
+        selectedIssue: null,
+        attachments: [],
+        comments: [],
+        assignments: [],
+        executions: [],
+      };
 
   return {
     state: locationState,

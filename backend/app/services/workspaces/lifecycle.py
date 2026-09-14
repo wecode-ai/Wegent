@@ -15,7 +15,11 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceCreate, WorkspaceUpdate
-from app.services.workspaces.access import WorkspaceAccess, require_workspace_role
+from app.services.workspaces.access import (
+    WorkspaceAccess,
+    require_workspace_navigation_context,
+    require_workspace_role,
+)
 from app.services.workspaces.members import ensure_human_member
 from app.services.workspaces.storage import (
     COLLABORATION_WORKSPACE_KIND,
@@ -121,6 +125,11 @@ class WorkspaceLifecycleService:
         self, db: Session, workspace_id: int, user_id: int
     ) -> CollaborationWorkspace:
         return require_workspace_role(db, workspace_id, user_id).workspace
+
+    def navigation_context(
+        self, db: Session, workspace_id: int, user_id: int
+    ) -> CollaborationWorkspace:
+        return require_workspace_navigation_context(db, workspace_id, user_id)
 
     def access(self, db: Session, workspace_id: int, user_id: int) -> WorkspaceAccess:
         return require_workspace_role(db, workspace_id, user_id)

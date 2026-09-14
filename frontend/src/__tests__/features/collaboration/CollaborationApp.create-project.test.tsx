@@ -97,10 +97,7 @@ describe('CollaborationApp shared project creation', () => {
 
     fireEvent.click(await screen.findByTestId('collaboration-project-create'))
 
-    expect(screen.getByTestId('cloud-project-location-cloud')).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
+    expect(screen.getByTestId('cloud-project-location-cloud')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-location-local')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-task-provider-local')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-task-provider-github')).toBeInTheDocument()

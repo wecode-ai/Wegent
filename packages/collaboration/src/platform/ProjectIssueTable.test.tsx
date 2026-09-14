@@ -48,6 +48,22 @@ const assignment = {
   created_at: "2026-09-11T00:00:00Z",
   updated_at: "2026-09-11T00:00:00Z",
 } satisfies CollaborationAssignment;
+const secondIssue = {
+  ...issue,
+  id: "issue-2",
+  sequence_number: 2,
+  title: "Second issue",
+  status: "in_progress",
+  tags: ["backend"],
+} satisfies CollaborationIssue;
+const secondAssignment = {
+  ...assignment,
+  id: "assignment-2",
+  issue_id: secondIssue.id,
+  target_type: "human",
+  target_id: "8",
+  target_name: "王芳",
+} satisfies CollaborationAssignment;
 
 describe("ProjectIssueTable", () => {
   let container: HTMLDivElement;
@@ -68,17 +84,20 @@ describe("ProjectIssueTable", () => {
   function render(
     assignmentsByIssueId: Record<string, CollaborationAssignment[]>,
     onOpen = vi.fn(),
+    issues: CollaborationIssue[] = [issue],
+    projectKey?: string,
   ) {
     act(() => {
       root.render(
         <ProjectIssueTable
-          issues={[issue]}
+          issues={issues}
           assignmentsByIssueId={assignmentsByIssueId}
           emptyLabel="Empty"
           issueLabel="Issue"
           statusLabel="Status"
           assignmentsLabel="Assignments"
           updatedLabel="Updated"
+          projectKey={projectKey}
           onOpen={onOpen}
         />,
       );
@@ -86,14 +105,17 @@ describe("ProjectIssueTable", () => {
     return onOpen;
   }
 
-  it.each(["Enter", " "])("opens the focused issue with %j", (key) => {
+  it("opens an issue through a native keyboard-accessible button", () => {
     const onOpen = render({ [issue.id]: [assignment] });
-    const row = container.querySelector("tbody tr") as HTMLTableRowElement;
-    row.focus();
-    expect(document.activeElement).toBe(row);
+    const trigger = container.querySelector(
+      "tbody tr button",
+    ) as HTMLButtonElement;
+    expect(trigger.tagName).toBe("BUTTON");
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
 
     act(() => {
-      row.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      trigger.click();
     });
 
     expect(onOpen).toHaveBeenCalledWith(issue);
@@ -106,8 +128,76 @@ describe("ProjectIssueTable", () => {
 
     render({ [issue.id]: [] });
     expect(container.textContent).toContain("—");
+    expect(container.textContent).not.toContain("Issue 内分配");
     expect(container.textContent).not.toContain("旧负责人");
     expect(visibleIssueAssignments(issue, [])).toEqual([]);
     expect(visibleIssueAssignments(issue, undefined)).toEqual([]);
+  });
+
+  it("filters the Issue table by status, assignee, and tag", () => {
+    render(
+      {
+        [issue.id]: [assignment],
+        [secondIssue.id]: [secondAssignment],
+      },
+      vi.fn(),
+      [issue, secondIssue],
+    );
+
+    const rows = () =>
+      container.querySelectorAll(
+        '[data-testid^="collaboration-issue-table-row-"]',
+      );
+    const change = (testId: string, value: string) => {
+      const select = container.querySelector(
+        `[data-testid="${testId}"]`,
+      ) as HTMLSelectElement;
+      act(() => {
+        select.value = value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    change("collaboration-issue-table-status-filter", "in_progress");
+    expect(rows()).toHaveLength(1);
+    expect(container.textContent).toContain(secondIssue.title);
+
+    change("collaboration-issue-table-status-filter", "");
+    change("collaboration-issue-table-assignee-filter", "agent:agent-1");
+    expect(rows()).toHaveLength(1);
+    expect(container.textContent).toContain(issue.title);
+
+    change("collaboration-issue-table-assignee-filter", "");
+    change("collaboration-issue-table-tag-filter", "backend");
+    expect(rows()).toHaveLength(1);
+    expect(container.textContent).toContain(secondIssue.title);
+  });
+
+  it("clears unavailable filters when the project issue set changes", () => {
+    render(
+      {
+        [issue.id]: [assignment],
+        [secondIssue.id]: [secondAssignment],
+      },
+      vi.fn(),
+      [issue, secondIssue],
+      "PROJ",
+    );
+    const status = container.querySelector(
+      '[data-testid="collaboration-issue-table-status-filter"]',
+    ) as HTMLSelectElement;
+    act(() => {
+      status.value = "in_progress";
+      status.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    render({ [issue.id]: [assignment] }, vi.fn(), [issue], "PROJ");
+
+    expect(status.value).toBe("");
+    expect(
+      container.querySelectorAll(
+        '[data-testid^="collaboration-issue-table-row-"]',
+      ),
+    ).toHaveLength(1);
   });
 });

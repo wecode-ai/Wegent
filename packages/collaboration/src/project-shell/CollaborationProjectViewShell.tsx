@@ -16,8 +16,6 @@ import { ProjectShell, type ProjectShellProps } from "./ProjectShell";
 export const collaborationProjectViewIds = [
   "board",
   "table",
-  "files",
-  "automation",
   "manage",
 ] as const;
 
@@ -73,8 +71,16 @@ export function resolveCollaborationProjectView({
   slots: CollaborationProjectViewSlots;
   view: CollaborationProjectView;
 }): ResolvedCollaborationProjectView {
-  const accessibleView = options.some((option) => option.id === view)
+  const exactExtension = extensions.find(
+    (extension) => extension.id === view && extension.available !== false,
+  );
+  const requestedView = exactExtension
     ? view
+    : view === "automation" || view === "files"
+      ? "manage"
+      : view;
+  const accessibleView = options.some((option) => option.id === requestedView)
+    ? requestedView
     : "board";
   const extensionContent = extensions.find(
     (extension) => extension.id === accessibleView,
@@ -128,7 +134,9 @@ export function buildCollaborationProjectViewOptions({
       label: labels[view],
       testId: testIds[view],
     }));
-  const standardIds = new Set(standardOptions.map((option) => option.id));
+  const standardIds = new Set<CollaborationProjectView>(
+    standardOptions.map((option) => option.id),
+  );
   const extensionOptions = extensions
     .filter(
       (extension) =>

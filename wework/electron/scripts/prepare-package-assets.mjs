@@ -88,7 +88,7 @@ await extractWeworkAppStaticResources(corePluginsRoot, weworkAppStaticRoot)
 const codexTarget = packageTargets.codexTarget
 const codexSource = join(sharedResourcesRoot, 'binaries', 'codex', codexTarget)
 const codexResources = join(resourcesRoot, 'codex')
-await cp(codexSource, codexResources, { recursive: true })
+await cp(codexSource, codexResources, { recursive: true, dereference: true })
 await cp(join(sharedResourcesRoot, 'binaries', 'codex', 'legal'), join(codexResources, 'legal'), {
   recursive: true,
 })

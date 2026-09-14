@@ -112,8 +112,23 @@ def make_code_project(db: Session, user: User, name: str = "Code project") -> Pr
 def test_cloud_robot_persists_exact_workspace_binding_in_metadata(
     test_db: Session, test_user: User
 ) -> None:
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+    from app.schemas.base_role import BaseRole
+
     project = create_project(test_db, test_user)
-    make_device(test_db, test_user, "cloud-dev-binding", "cloud")
+    device = make_device(test_db, test_user, "cloud-dev-binding", "cloud")
+    test_db.add(
+        ResourceMember(
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
     code_project = make_code_project(test_db, test_user)
     workspace = upsert_device_workspace(
         db=test_db,

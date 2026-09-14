@@ -17,7 +17,7 @@ import type {
 import type {
   AutomationIncomingHook,
   AutomationIncomingHookUiApi,
-} from "./AutomationRulesView.jsx";
+} from "./AutomationRulesView.types";
 import { PopupMenu, Tooltip, useTranslation } from "./AutomationUiHost";
 import { automationClass } from "./automationStyles";
 

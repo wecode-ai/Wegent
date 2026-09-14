@@ -34,15 +34,75 @@ export function projectStoreLocation(
   return projectStore === 'local' ? 'local' : 'cloud'
 }
 
-const projectSpaceTaskContextListeners = new Set<(task: RuntimeTaskAddress) => void>()
-const projectSpaceTaskBindingListeners = new Set<(task: RuntimeTaskAddress) => void>()
+export interface ProjectSpaceTaskChange {
+  task: RuntimeTaskAddress
+  project: RuntimeProjectSpaceRef
+}
 
-export function publishProjectSpaceTaskContextChanged(task: RuntimeTaskAddress) {
-  for (const listener of projectSpaceTaskContextListeners) listener(task)
+export interface ProjectSpaceTaskBindingChange extends ProjectSpaceTaskChange {
+  type: 'bound' | 'unbound'
+}
+
+const projectSpaceByRuntimeTask = new Map<string, RuntimeProjectSpaceRef>()
+const projectSpaceTaskContextListeners = new Set<(change: ProjectSpaceTaskChange) => void>()
+const projectSpaceTaskBindingListeners = new Set<(change: ProjectSpaceTaskBindingChange) => void>()
+
+function runtimeTaskKey(task: RuntimeTaskAddress): string {
+  return `${task.deviceId}\0${task.taskId}`
+}
+
+export function rememberProjectSpaceTaskBinding(
+  task: RuntimeTaskAddress,
+  project: RuntimeProjectSpaceRef
+): boolean {
+  const key = runtimeTaskKey(task)
+  if (sameProjectSpace(projectSpaceByRuntimeTask.get(key), project)) return false
+  projectSpaceByRuntimeTask.set(key, project)
+  return true
+}
+
+export function forgetProjectSpaceTaskBinding(
+  task: RuntimeTaskAddress,
+  project: RuntimeProjectSpaceRef
+): boolean {
+  const key = runtimeTaskKey(task)
+  if (!sameProjectSpace(projectSpaceByRuntimeTask.get(key), project)) return false
+  return projectSpaceByRuntimeTask.delete(key)
+}
+
+export function projectSpaceForRuntimeTask(
+  task: RuntimeTaskAddress
+): RuntimeProjectSpaceRef | undefined {
+  return projectSpaceByRuntimeTask.get(runtimeTaskKey(task))
+}
+
+export function reconcileProjectSpaceTaskBindings(
+  project: RuntimeProjectSpaceRef,
+  tasks: readonly RuntimeTaskAddress[]
+): boolean {
+  const snapshotTaskKeys = new Set(tasks.map(runtimeTaskKey))
+  let changed = false
+
+  for (const [key, mappedProject] of projectSpaceByRuntimeTask) {
+    if (!sameProjectSpace(mappedProject, project) || snapshotTaskKeys.has(key)) continue
+    projectSpaceByRuntimeTask.delete(key)
+    changed = true
+  }
+
+  for (const task of tasks) {
+    changed = rememberProjectSpaceTaskBinding(task, project) || changed
+  }
+
+  return changed
+}
+
+export function publishProjectSpaceTaskContextChanged(change: ProjectSpaceTaskChange) {
+  rememberProjectSpaceTaskBinding(change.task, change.project)
+  for (const listener of projectSpaceTaskContextListeners) listener(change)
 }
 
 export function subscribeProjectSpaceTaskContextChanged(
-  listener: (task: RuntimeTaskAddress) => void
+  listener: (change: ProjectSpaceTaskChange) => void
 ) {
   projectSpaceTaskContextListeners.add(listener)
   return () => {
@@ -50,12 +110,17 @@ export function subscribeProjectSpaceTaskContextChanged(
   }
 }
 
-export function publishProjectSpaceTaskBindingChanged(task: RuntimeTaskAddress) {
-  for (const listener of projectSpaceTaskBindingListeners) listener(task)
+export function publishProjectSpaceTaskBindingChanged(change: ProjectSpaceTaskBindingChange) {
+  if (change.type === 'unbound') {
+    forgetProjectSpaceTaskBinding(change.task, change.project)
+  } else {
+    rememberProjectSpaceTaskBinding(change.task, change.project)
+  }
+  for (const listener of projectSpaceTaskBindingListeners) listener(change)
 }
 
 export function subscribeProjectSpaceTaskBindingChanged(
-  listener: (task: RuntimeTaskAddress) => void
+  listener: (change: ProjectSpaceTaskBindingChange) => void
 ) {
   projectSpaceTaskBindingListeners.add(listener)
   return () => {

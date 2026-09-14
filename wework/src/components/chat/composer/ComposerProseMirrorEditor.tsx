@@ -40,6 +40,7 @@ import {
   serializeComposerLinkNode,
   serializeComposerSlice,
 } from './composerProseMirrorModel'
+import { parseComposerMentions } from './composerMentions'
 
 export interface ComposerEditorSnapshot {
   value: string
@@ -412,8 +413,15 @@ export const ComposerProseMirrorEditor = forwardRef<
         event,
         readComposerSnapshot(view.state)
       )
+      const handledStructuredText =
+        !handledByComposer &&
+        event.inputType === 'insertText' &&
+        !event.isComposing &&
+        !view.composing &&
+        Boolean(event.data) &&
+        insertStructuredComposerText(view, event.data ?? '')
       const containsReplacementCharacter = event.data?.includes(OBJECT_REPLACEMENT_CHARACTER)
-      if (!handledByComposer && !containsReplacementCharacter) return
+      if (!handledByComposer && !handledStructuredText && !containsReplacementCharacter) return
       event.preventDefault()
       event.stopImmediatePropagation()
     }
@@ -509,6 +517,18 @@ function keepTrailingComposerCaretVisible(view: EditorView): void {
     // ProseMirror cannot scroll the actual caret into view on its own.
     view.dom.scrollTop = view.dom.scrollHeight - view.dom.clientHeight
   })
+}
+
+function insertStructuredComposerText(view: EditorView, text: string): boolean {
+  if (parseComposerMentions(text).length === 0) return false
+  const document = createComposerDocument(text)
+  view.dispatch(
+    view.state.tr
+      .replaceSelection(new Slice(document.content, 1, 1))
+      .setMeta('uiEvent', 'input')
+      .scrollIntoView()
+  )
+  return true
 }
 
 function defineComposerValueProperty(view: EditorView): void {

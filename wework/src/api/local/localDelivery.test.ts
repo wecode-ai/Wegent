@@ -425,6 +425,37 @@ describe('local delivery API', () => {
     })
   })
 
+  test('preserves a local project version conflict for field-aware resolution', async () => {
+    const conflict = Object.assign(new Error('task changed'), {
+      code: 'version_conflict',
+    })
+    const request = vi.fn().mockRejectedValue(conflict)
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.updateCloudProject('project-1', {
+        version: 1,
+        board_config: {
+          group_by: 'priority',
+          processing_start_status_id: 'pending',
+          statuses: [],
+        },
+      })
+    ).rejects.toBe(conflict)
+    expect(request).toHaveBeenCalledOnce()
+    expect(request).toHaveBeenCalledWith('projects.update', {
+      project_id: 'project-1',
+      project: {
+        version: 1,
+        board_config: {
+          group_by: 'priority',
+          processing_start_status_id: 'pending',
+          statuses: [],
+        },
+      },
+    })
+  })
+
   test('persists the local coding project without exposing its system tag', async () => {
     const associatedRecord = {
       ...taskRecord,

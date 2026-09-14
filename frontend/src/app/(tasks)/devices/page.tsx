@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -58,6 +58,7 @@ function sortDevices(devices: DeviceInfo[]): DeviceInfo[] {
 export default function DevicesPage() {
   const { t } = useTranslation('devices')
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { selectTask } = useTaskSession()
   const isMobile = useIsMobile()
 
@@ -84,6 +85,28 @@ export default function DevicesPage() {
     [showAdvancedDevices, sortedDevices]
   )
   const hasAdvancedDevices = useMemo(() => sortedDevices.some(isOpenClawDevice), [sortedDevices])
+  const requestedDeviceId = searchParams.get('deviceId')
+  const requestedDevice = useMemo(() => {
+    if (!requestedDeviceId) return null
+    return (
+      sortedDevices.find(device =>
+        [
+          String(device.id),
+          device.device_id,
+          device.registered_device_id,
+          device.execution_target_id,
+          device.socket_device_id,
+        ].includes(requestedDeviceId)
+      ) ?? null
+    )
+  }, [requestedDeviceId, sortedDevices])
+  const displayedDevices = useMemo(() => {
+    if (!requestedDevice || visibleDevices.some(device => device.id === requestedDevice.id)) {
+      return visibleDevices
+    }
+    return sortDevices([...visibleDevices, requestedDevice])
+  }, [requestedDevice, visibleDevices])
+  const highlightedDeviceId = requestedDevice?.id ?? null
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -115,6 +138,13 @@ export default function DevicesPage() {
   useEffect(() => {
     saveLastTab('devices')
   }, [])
+
+  useEffect(() => {
+    if (highlightedDeviceId === null) return
+    document
+      .querySelector(`[data-testid="device-record-${highlightedDeviceId}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [highlightedDeviceId])
 
   const handleToggleCollapsed = useCallback(() => {
     setIsCollapsed(prev => {
@@ -207,13 +237,14 @@ export default function DevicesPage() {
                 <DeviceSection
                   title={t('local_devices_section')}
                   icon={Monitor}
-                  devices={visibleDevices}
+                  devices={displayedDevices}
                   type={['local', 'app']}
                   emptyMessage={t('no_local_devices')}
                 >
                   {device => (
                     <DeviceCard
                       device={device}
+                      highlighted={device.id === highlightedDeviceId}
                       onStartTask={handlers.handleStartTask}
                       onSetDefault={handlers.handleSetDefault}
                       onDelete={handlers.handleDeleteDevice}
@@ -229,13 +260,14 @@ export default function DevicesPage() {
                 <DeviceSection
                   title={t('remote_devices_section')}
                   icon={Server}
-                  devices={visibleDevices}
+                  devices={displayedDevices}
                   type="remote"
                   emptyMessage={t('no_remote_devices')}
                 >
                   {device => (
                     <DeviceCard
                       device={device}
+                      highlighted={device.id === highlightedDeviceId}
                       onStartTask={handlers.handleStartTask}
                       onSetDefault={handlers.handleSetDefault}
                       onDelete={handlers.handleDeleteDevice}
@@ -252,13 +284,14 @@ export default function DevicesPage() {
                 <DeviceSection
                   title={t('cloud_devices_section')}
                   icon={Cloud}
-                  devices={visibleDevices}
+                  devices={displayedDevices}
                   type="cloud"
                   emptyMessage={t('cloud_devices_coming_soon')}
                 >
                   {device => (
                     <DeviceCard
                       device={device}
+                      highlighted={device.id === highlightedDeviceId}
                       onStartTask={handlers.handleStartTask}
                       onSetDefault={handlers.handleSetDefault}
                       onDelete={handlers.handleDeleteDevice}
