@@ -13183,7 +13183,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('reconciles a completed Claude goal from the executor snapshot after the turn settles', async () => {
+  test('clears a missing Claude goal from the executor snapshot after the turn settles', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -13197,7 +13197,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
       .mockResolvedValue({
         accepted: true,
-        goal: createRuntimeGoal({ objective: '完成 Claude 目标', status: 'complete' }),
+        goal: null,
       })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(

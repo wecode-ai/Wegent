@@ -21,6 +21,7 @@ export interface RuntimeTaskLifecycleState {
   turnOutcome: RuntimeTaskTurnOutcome
   activeTurnId: string | null
   goalStatus: RuntimeGoalStatus | null
+  hasAuthoritativeGoalStatus: boolean
   continuable: boolean
   unread: boolean
   expectedExecutorRunning: boolean | null
