@@ -1076,7 +1076,6 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-project-board-view')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-table-view')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-files-view')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-manage-view')).not.toBeInTheDocument()
     expect(
       screen.queryByTestId('cloud-sidebar-project-more-default-work-items')
@@ -2169,8 +2168,11 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('project-agent-config')).toBeInTheDocument()
     await userEvent.click(await screen.findByTestId('project-agent-add'))
     expect(screen.getByTestId('project-agent-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('project-agent-mode-existing')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('project-agent-mode-create'))
+    expect(screen.getByTestId('project-agent-mode-existing')).toBeDisabled()
+    expect(screen.getByTestId('project-agent-mode-existing-card')).toHaveTextContent(
+      '登录并连接云端后可选择已有智能体'
+    )
+    expect(screen.getByTestId('project-agent-mode-create')).toBeChecked()
     await userEvent.type(screen.getByTestId('project-agent-local-name'), '本地评审智能体')
     await userEvent.type(
       screen.getByTestId('project-agent-local-capability'),
@@ -2186,8 +2188,13 @@ describe('CloudTodoWorkspace', () => {
     expect(createLocalAgent).toHaveBeenCalledWith(localProject.id, {
       name: '本地评审智能体',
       runtime: 'codex',
+      model: 'gpt-5-codex',
+      modelOptions: {},
+      modelType: 'runtime',
       capabilityDescription: '评审当前项目的代码变更',
       systemPrompt: '检查代码、测试和风险',
+      additionalSkills: [],
+      mcpServers: {},
     })
     await userEvent.click(screen.getByTestId('cloud-project-settings-automatic-processing'))
     expect(await screen.findByTestId('automatic-processing')).toBeInTheDocument()
@@ -3903,7 +3910,6 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
     await userEvent.click(screen.getByTestId('cloud-project-settings-participants'))
     await userEvent.click(screen.getByTestId('collaboration-participants-tab-groups'))
@@ -3919,7 +3925,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('project-automation-policy')).not.toBeInTheDocument()
   })
 
-  it('hides the automation tab for DingTalk AI Table project spaces', async () => {
+  it('hides automatic processing settings for DingTalk AI Table project spaces', async () => {
     const workbenchServices = services()
     const listCloudProjects = workbenchServices.deliveryApi!.listCloudProjects as ReturnType<
       typeof vi.fn
@@ -3937,7 +3943,6 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
     expect(screen.queryByText('自动化')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
     expect(screen.getByTestId('cloud-project-settings-participants')).toBeInTheDocument()
@@ -3966,7 +3971,6 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     expect(screen.getByTestId('cloud-project-board-view')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-files-view')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-manage-view')).not.toBeInTheDocument()
   })
 
@@ -3992,7 +3996,6 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-project-table-view')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-files-view')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-manage-view')).toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
     expect(screen.getByTestId('cloud-project-settings-project')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-settings-participants')).toBeInTheDocument()
@@ -4018,7 +4021,6 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     expect(screen.queryByTestId('cloud-project-files-view')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-manage-view')).not.toBeInTheDocument()
   })
 

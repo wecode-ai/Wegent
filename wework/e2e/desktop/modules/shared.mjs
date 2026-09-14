@@ -468,6 +468,11 @@ const TELEMETRY_FORBIDDEN_PROPERTY_PATTERN =
   /(authorization|code|content|credential|email|file|message|path|prompt|repository|response|task_id|token|url|user_id|workspace)/i
 const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
 const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
+const CLOUD_PUBLIC_MODEL_OPTIONS = {
+  weworkCloudModelNamespace: 'default',
+  weworkCloudModelResourceUserId: '0',
+  weworkCloudModelUpstreamApiFormat: 'openai-responses',
+}
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const REMOTE_DOCKER_DEVICE_ID = 'wework-e2e-remote-docker-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
@@ -1730,6 +1735,7 @@ export {
   TELEMETRY_FORBIDDEN_PROPERTY_PATTERN,
   CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_PUBLIC_MODEL_LABEL,
+  CLOUD_PUBLIC_MODEL_OPTIONS,
   CLOUD_DEVICE_ID,
   REMOTE_DOCKER_DEVICE_ID,
   FRESH_CHAT_PROMPT,

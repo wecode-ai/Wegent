@@ -28,7 +28,7 @@
     rgb(var(--color-text-primary))
   );
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .addButton:disabled {
@@ -38,8 +38,9 @@
 
 .title {
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--text-heading-sm);
+  font-weight: 500;
+  line-height: 1.33;
   color: rgb(var(--color-text-primary));
 }
 
@@ -73,7 +74,7 @@
   margin: 0;
   color: rgb(var(--color-text-primary));
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .sectionHeading > span {
@@ -131,7 +132,7 @@
   overflow: hidden;
   color: rgb(var(--color-text-primary));
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -162,6 +163,13 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capabilitySummary {
+  flex: none;
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -302,6 +310,16 @@
   margin-top: 14px;
 }
 
+.standardCreateForm {
+  display: grid;
+  gap: 24px;
+  margin-top: 20px;
+}
+
+.required {
+  color: rgb(var(--color-destructive, 220 38 38));
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -351,6 +369,39 @@
 
 .hint {
   margin: 0;
+}
+
+.platformCapability {
+  align-items: flex-start;
+  background: rgb(var(--color-primary) / 0.06);
+  border: 1px solid rgb(var(--color-primary) / 0.22);
+  border-radius: 12px;
+  color: rgb(var(--color-text-secondary));
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.platformCapability > svg {
+  color: rgb(var(--color-primary));
+  flex: none;
+  height: 16px;
+  margin-top: 2px;
+  width: 16px;
+}
+
+.platformCapability strong {
+  color: rgb(var(--color-text-primary));
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.platformCapability p {
+  font-size: 12px;
+  line-height: 20px;
+  margin: 2px 0 0;
 }
 
 .primaryButton {

@@ -260,17 +260,14 @@ export function CollaborationApp({
               board: messages.board,
               table: messages.table,
               files: messages.files,
-              automation: messages.automation,
               manage: messages.settings,
             }}
             testIds={{
               board: "collaboration-tab-board",
               table: "collaboration-tab-table",
               files: "collaboration-tab-files",
-              automation: "collaboration-tab-automation",
               manage: "collaboration-tab-manage",
             }}
-            automationSupported={host.capabilities.automation}
             switcherAriaLabel={messages.title}
             compactSwitcherIcon={<span aria-hidden="true">▾</span>}
             onViewChange={(view) => navigateView(view as CollaborationView)}
@@ -534,7 +531,6 @@ export function CollaborationApp({
                   />
                 </div>
               ),
-              automation: null,
               manage: (
                 <ProjectSettingsShell
                   ariaLabel={messages.settings}
@@ -593,11 +589,6 @@ export function CollaborationApp({
                               }
                               onAgentsChange={() =>
                                 void commands.refreshProjectAgents(project.id)
-                              }
-                              onCreateAgent={
-                                host.manageResource
-                                  ? () => host.manageResource?.("agents")
-                                  : undefined
                               }
                               translate={translate}
                               section="agents"

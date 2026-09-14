@@ -9,7 +9,7 @@ from typing import Any, Literal, Mapping
 from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.plugin_config import validate_non_secret_plugin_configs
-from app.schemas.project_chat import ProjectChatWorkspaceBinding
+from app.schemas.project_chat import BotRuntime, ProjectChatWorkspaceBinding
 from app.schemas.runtime_work import (
     RuntimeGoalCreateInput,
     RuntimeSupervisorCreateInput,
@@ -73,11 +73,13 @@ class WorkflowExecutionConfig(BaseModel):
     """Execution choices snapshotted with a workflow or one Issue."""
 
     agent_id: str | None = Field(default=None, max_length=64)
+    runtime: BotRuntime | None = None
     runtime_profile_id: str | None = Field(default=None, max_length=64)
     execution_device_id: str | None = Field(default=None, max_length=100)
     model: str | None = Field(default=None, max_length=255)
     model_type: Literal["public", "user", "group", "runtime"] | None = None
     model_options: dict[str, str] = Field(default_factory=dict)
+    system_prompt: str | None = None
     workspace_binding: ProjectChatWorkspaceBinding | None = None
     runtime_permission_mode: (
         Literal[
@@ -93,6 +95,7 @@ class WorkflowExecutionConfig(BaseModel):
     initial_goal: RuntimeGoalCreateInput | None = None
     initial_supervisor: RuntimeSupervisorCreateInput | None = None
     additional_skills: list[Any] | None = None
+    mcp_servers: dict[str, Any] | None = None
     attachment_ids: list[int] | None = None
     attachments: list[dict[str, Any]] | None = None
     project_plugins: list[dict[str, Any]] | None = None
@@ -128,6 +131,7 @@ class WorkflowExecutionConfig(BaseModel):
         model_overridden = bool(override.model)
         return WorkflowExecutionConfig(
             agent_id=override.agent_id or self.agent_id,
+            runtime=override.runtime or self.runtime,
             runtime_profile_id=(override.runtime_profile_id or self.runtime_profile_id),
             execution_device_id=(
                 override.execution_device_id or self.execution_device_id
@@ -136,6 +140,11 @@ class WorkflowExecutionConfig(BaseModel):
             model_type=(override.model_type if model_overridden else self.model_type),
             model_options=(
                 override.model_options if model_overridden else self.model_options
+            ),
+            system_prompt=(
+                override.system_prompt
+                if override.system_prompt is not None
+                else self.system_prompt
             ),
             workspace_binding=override.workspace_binding or self.workspace_binding,
             runtime_permission_mode=(
@@ -148,6 +157,11 @@ class WorkflowExecutionConfig(BaseModel):
                 override.additional_skills
                 if override.additional_skills is not None
                 else self.additional_skills
+            ),
+            mcp_servers=(
+                override.mcp_servers
+                if override.mcp_servers is not None
+                else self.mcp_servers
             ),
             attachment_ids=(
                 override.attachment_ids
@@ -178,6 +192,8 @@ class WorkflowExecutionConfig(BaseModel):
         """Return only producer-facing RuntimeTaskCreateRequest capabilities."""
 
         return {
+            "runtime": self.runtime,
+            "system_prompt": self.system_prompt,
             "runtime_permission_mode": self.runtime_permission_mode,
             "execution": self.execution,
             "initial_goal": (
@@ -191,6 +207,7 @@ class WorkflowExecutionConfig(BaseModel):
                 else None
             ),
             "additional_skills": self.additional_skills,
+            "mcp_servers": self.mcp_servers,
             "attachment_ids": self.attachment_ids,
             "attachments": self.attachments,
             "project_plugins": self.project_plugins,
@@ -464,17 +481,6 @@ class ProjectWorkflowDefinition(BaseModel):
                     "AI stage constraints cannot define execution configuration: "
                     + ", ".join(configured_nodes)
                 )
-        else:
-            constrained_nodes = [
-                node.id
-                for node in self.nodes
-                if node.required_assignee_type is not None
-            ]
-            if constrained_nodes:
-                raise ValueError(
-                    "manual workflow stages cannot constrain AI plan assignees: "
-                    + ", ".join(constrained_nodes)
-                )
         node_ids = [node.id for node in self.nodes]
         if len(node_ids) != len(set(node_ids)):
             raise ValueError("workflow node ids must be unique")
@@ -733,12 +739,7 @@ class IssueWorkflowInstance(BaseModel):
         if node.execution_mode != "robot":
             return False
         config = self.execution_config_for(node)
-        if config is None or not config.is_complete(require_model=False):
-            return True
-        if node.workspace_policy == "composer":
-            binding = config.workspace_binding
-            return binding is None or binding.type == "standalone"
-        return False
+        return config is None or not config.is_complete(require_model=False)
 
 
 def instantiate_workflow(

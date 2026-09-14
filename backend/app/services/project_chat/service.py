@@ -8,6 +8,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import or_
@@ -147,12 +148,24 @@ BOT_RUNTIME_KEY = "runtime"
 BOT_WEGENT_TEAM_ID_KEY = "wegent_team_id"
 BOT_RUNTIME_PROFILE_ID_KEY = "default_runtime_profile_id"
 BOT_PLUGINS_KEY = "plugins"
+BOT_ADDITIONAL_SKILLS_KEY = "additional_skills"
+BOT_MCP_SERVERS_KEY = "mcp_servers"
 BOT_DEFAULT_VISIBILITY = "creator_admin"
 BOT_DEFAULT_EXECUTION_ENVIRONMENT = "local"
 BOT_DEFAULT_EXECUTION_MODE = "auto"
 BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS = 1
 BOT_DEFAULT_WORKSPACE_POLICY = "project"
 BOT_ADMIN_ROLES = {BaseRole.Owner, BaseRole.Maintainer}
+
+
+def bot_runtime(row: ProjectChatAgent) -> str:
+    """Read one explicitly persisted project-agent runtime."""
+
+    metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+    runtime = metadata.get(BOT_RUNTIME_KEY)
+    if runtime not in {"codex", "claude_code", "wegent"}:
+        raise ValueError(f"Project chat agent '{row.id}' has no valid runtime")
+    return runtime
 
 
 def bot_max_concurrent_executions(row: ProjectChatAgent) -> int:
@@ -176,7 +189,7 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
 
     metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
     return {
-        "runtime": metadata.get(BOT_RUNTIME_KEY, "codex"),
+        "runtime": bot_runtime(row),
         "wegent_team_id": metadata.get(BOT_WEGENT_TEAM_ID_KEY),
         "visibility": metadata.get(BOT_VISIBILITY_KEY, BOT_DEFAULT_VISIBILITY),
         "execution_environment": metadata.get(
@@ -188,10 +201,12 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
         "execution_device_id": row.device_id,
         "default_runtime_profile_id": metadata.get(BOT_RUNTIME_PROFILE_ID_KEY),
         "plugins": metadata.get(BOT_PLUGINS_KEY, []),
+        "additional_skills": metadata.get(BOT_ADDITIONAL_SKILLS_KEY, []),
+        "mcp_servers": metadata.get(BOT_MCP_SERVERS_KEY, {}),
         "model": metadata.get("model"),
         "model_type": metadata.get("model_type"),
         "model_options": metadata.get("model_options", {}),
-        "execution_prompt": metadata.get("system_prompt", ""),
+        "system_prompt": metadata.get("system_prompt", ""),
         "max_concurrent_executions": bot_max_concurrent_executions(row),
         "workspace_policy": bot_workspace_policy(row),
     }
@@ -239,7 +254,7 @@ class ProjectChatService:
             .all()
         )
         return [
-            self.agent_to_view(row, db=db)
+            self.agent_to_view(row, db=db, viewer_user_id=user_id)
             for row in rows
             if self._agent_visible_to_user(row, user_id, access.role)
         ]
@@ -257,7 +272,7 @@ class ProjectChatService:
             user_id=user_id,
             project_id=project_id,
             task_id=None,
-            required_role=BaseRole.Reporter,
+            required_role=BaseRole.Maintainer,
         )
         if request.runtime == "wegent":
             from app.services.project_automation_domain import runnable_wegent_team
@@ -273,7 +288,7 @@ class ProjectChatService:
             type="standalone",
             status="ready",
         )
-        if request.runtime == "codex":
+        if request.runtime != "wegent":
             if request.execution_device_id:
                 require_project_execution_environment(
                     db,
@@ -318,8 +333,12 @@ class ProjectChatService:
             BOT_PLUGINS_KEY: [
                 plugin.model_dump(by_alias=True) for plugin in request.plugins
             ],
+            BOT_ADDITIONAL_SKILLS_KEY: [
+                skill.model_dump(by_alias=True) for skill in request.additional_skills
+            ],
+            BOT_MCP_SERVERS_KEY: request.mcp_servers,
         }
-        if request.runtime == "codex":
+        if request.runtime != "wegent":
             metadata = write_workspace_binding(metadata, workspace_binding)
         row = ProjectChatAgent(
             cloud_project_id=project_id,
@@ -330,17 +349,17 @@ class ProjectChatService:
             status="active",
             description=request.capability_description.strip(),
             device_id=(
-                request.execution_device_id if request.runtime == "codex" else None
+                request.execution_device_id if request.runtime != "wegent" else None
             ),
             local_project_id=(
-                workspace_binding.project_id if request.runtime == "codex" else None
+                workspace_binding.project_id if request.runtime != "wegent" else None
             ),
             metadata_json=metadata,
         )
         db.add(row)
         self._commit(db)
         db.refresh(row)
-        return self.agent_to_view(row, db=db)
+        return self.agent_to_view(row, db=db, viewer_user_id=user_id)
 
     def update_agent(
         self,
@@ -351,22 +370,23 @@ class ProjectChatService:
         agent_id: str,
         request: ProjectChatAgentUpdate,
     ) -> ProjectChatAgentView:
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Reporter)
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
         row = self._agent_row(db, project_id=project_id, agent_id=agent_id)
-        is_creator = row.created_by_user_id == user_id
-        is_admin = access.role in BOT_ADMIN_ROLES
-        if not is_creator and not is_admin:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                "Only the robot creator or a project admin can change it",
-            )
         if row.version != request.version:
             raise HTTPException(status.HTTP_409_CONFLICT, "Project chat AI changed")
+        if (
+            row.created_by_user_id != user_id
+            and self._changes_executable_agent_configuration(request)
+        ):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Only the Agent creator can change executable configuration",
+            )
         if request.name is not None:
             row.name = request.name
             row.title = request.name
         metadata = dict(row.metadata_json or {})
-        runtime = request.runtime or str(metadata.get(BOT_RUNTIME_KEY) or "codex")
+        runtime = request.runtime or bot_runtime(row)
         team_id = (
             request.wegent_team_id
             if "wegent_team_id" in request.model_fields_set
@@ -397,6 +417,12 @@ class ProjectChatService:
             metadata[BOT_PLUGINS_KEY] = [
                 plugin.model_dump(by_alias=True) for plugin in request.plugins
             ]
+        if request.additional_skills is not None:
+            metadata[BOT_ADDITIONAL_SKILLS_KEY] = [
+                skill.model_dump(by_alias=True) for skill in request.additional_skills
+            ]
+        if request.mcp_servers is not None:
+            metadata[BOT_MCP_SERVERS_KEY] = request.mcp_servers
         if request.capability_description is not None:
             row.description = request.capability_description.strip()
         if request.visibility is not None:
@@ -409,7 +435,7 @@ class ProjectChatService:
             )
         if request.workspace_policy is not None:
             metadata[BOT_WORKSPACE_POLICY_KEY] = request.workspace_policy
-        if runtime == "codex":
+        if runtime != "wegent":
             if "execution_device_id" in request.model_fields_set:
                 row.device_id = request.execution_device_id
             if "model" in request.model_fields_set:
@@ -488,7 +514,7 @@ class ProjectChatService:
         row.version += 1
         self._commit(db)
         db.refresh(row)
-        return self.agent_to_view(row, db=db)
+        return self.agent_to_view(row, db=db, viewer_user_id=user_id)
 
     def subscribe(
         self,
@@ -1985,8 +2011,47 @@ class ProjectChatService:
         )
 
     @staticmethod
+    def _changes_executable_agent_configuration(
+        request: ProjectChatAgentUpdate,
+    ) -> bool:
+        executable_fields = {
+            "runtime",
+            "wegent_team_id",
+            "model",
+            "model_type",
+            "model_options",
+            "system_prompt",
+            "execution_environment",
+            "execution_mode",
+            "execution_device_id",
+            "workspace_binding",
+            "local_project_id",
+            "max_concurrent_executions",
+            "workspace_policy",
+            "default_runtime_profile_id",
+            "plugins",
+            "additional_skills",
+            "mcp_servers",
+        }
+        return bool(request.model_fields_set & executable_fields)
+
+    @staticmethod
+    def _visible_mcp_servers(
+        config: dict[str, Any], *, expose_configuration: bool
+    ) -> dict[str, Any]:
+        servers = config.get("mcp_servers")
+        if not isinstance(servers, dict):
+            return {}
+        if expose_configuration:
+            return dict(servers)
+        return {str(name): {} for name in servers}
+
+    @staticmethod
     def agent_to_view(
-        row: ProjectChatAgent, db: Session | None = None
+        row: ProjectChatAgent,
+        db: Session | None = None,
+        *,
+        viewer_user_id: int | None = None,
     ) -> ProjectChatAgentView:
         config = bot_config(row)
         created_by_user_name = None
@@ -2015,7 +2080,7 @@ class ProjectChatService:
             id=row.id,
             project_id=row.cloud_project_id,
             name=row.title or row.name or "AI",
-            runtime=str(config.get("runtime") or "codex"),
+            runtime=str(config["runtime"]),
             wegent_team_id=(
                 int(config["wegent_team_id"])
                 if config.get("wegent_team_id") is not None
@@ -2033,8 +2098,8 @@ class ProjectChatService:
                 else {}
             ),
             system_prompt=(
-                config.get("execution_prompt")
-                if isinstance(config.get("execution_prompt"), str)
+                config.get("system_prompt")
+                if isinstance(config.get("system_prompt"), str)
                 else ""
             ),
             capability_description=row.description or "",
@@ -2061,6 +2126,17 @@ class ProjectChatService:
             ),
             plugins=(
                 config["plugins"] if isinstance(config.get("plugins"), list) else []
+            ),
+            additional_skills=(
+                config["additional_skills"]
+                if isinstance(config.get("additional_skills"), list)
+                else []
+            ),
+            mcp_servers=ProjectChatService._visible_mcp_servers(
+                config,
+                expose_configuration=(
+                    viewer_user_id is None or viewer_user_id == row.created_by_user_id
+                ),
             ),
             created_by_user_id=row.created_by_user_id,
             created_by_user_name=created_by_user_name,

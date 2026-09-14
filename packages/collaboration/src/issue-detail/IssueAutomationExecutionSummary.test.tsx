@@ -145,6 +145,23 @@ describe('IssueAutomationExecutionSummary', () => {
     )
   })
 
+  it('shows the agent selected by a direct stage execution config', () => {
+    render([
+      {
+        ...nodes[0],
+        required_assignee_type: null,
+        required_assignee_id: null,
+        execution_config: { agent_id: 'agent-claude' },
+      },
+    ])
+
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-automation-stage-0"]',
+      )?.textContent,
+    ).toContain('执行中 · Claude · 云端空间')
+  })
+
   it('shows the next agent running only after Claude completes', () => {
     render([
       { ...nodes[0], status: 'completed' },
@@ -187,7 +204,7 @@ describe('IssueAutomationExecutionSummary', () => {
     })
     expect(container.textContent).toContain('等待配置')
     expect(container.textContent).toContain(
-      '项目设置 → 分配与调度 → 我的默认执行配置',
+      '项目设置 → 自动处理 → 我的默认执行配置',
     )
     expect(container.textContent).not.toContain('准备执行')
   })

@@ -3,12 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  Bot,
   CalendarClock,
+  Check,
+  ChevronDown,
   Pencil,
   Plus,
+  Search,
   Sparkles,
   Tag,
   Trash2,
+  UserRound,
+  UsersRound,
   Webhook,
   X,
 } from "lucide-react";
@@ -30,6 +36,23 @@ import { ProjectSettingsPage } from "./ProjectSettingsPage";
 
 type TriggerKind = "created" | "tag_added" | "external" | "schedule";
 type TargetKind = "human" | "agent" | "collaboration_group";
+type ScheduleFrequency = "daily" | "weekdays" | "weekly" | "custom";
+
+interface ScheduleValue {
+  frequency: ScheduleFrequency;
+  time: string;
+  weekday: string;
+}
+
+const WEEKDAY_OPTIONS = [
+  ["1", "周一", "Monday"],
+  ["2", "周二", "Tuesday"],
+  ["3", "周三", "Wednesday"],
+  ["4", "周四", "Thursday"],
+  ["5", "周五", "Friday"],
+  ["6", "周六", "Saturday"],
+  ["0", "周日", "Sunday"],
+] as const;
 
 const TRIGGER_OPTIONS = [
   {
@@ -185,6 +208,71 @@ function eventLabel(value: string, locale: "zh-CN" | "en") {
   return label ? label[locale === "zh-CN" ? 0 : 1] : value;
 }
 
+function parseSchedule(cronExpression: string): ScheduleValue {
+  const [minute, hour, dayOfMonth, month, dayOfWeek, ...rest] = cronExpression
+    .trim()
+    .split(/\s+/);
+  const minuteNumber = Number(minute);
+  const hourNumber = Number(hour);
+  const validTime =
+    Number.isInteger(minuteNumber) &&
+    minuteNumber >= 0 &&
+    minuteNumber <= 59 &&
+    Number.isInteger(hourNumber) &&
+    hourNumber >= 0 &&
+    hourNumber <= 23;
+  const time = validTime
+    ? `${String(hourNumber).padStart(2, "0")}:${String(minuteNumber).padStart(2, "0")}`
+    : "09:00";
+
+  if (rest.length || !validTime || dayOfMonth !== "*" || month !== "*") {
+    return { frequency: "custom", time, weekday: "1" };
+  }
+  if (dayOfWeek === "*") {
+    return { frequency: "daily", time, weekday: "1" };
+  }
+  if (dayOfWeek === "1-5") {
+    return { frequency: "weekdays", time, weekday: "1" };
+  }
+  if (WEEKDAY_OPTIONS.some(([value]) => value === dayOfWeek)) {
+    return { frequency: "weekly", time, weekday: dayOfWeek };
+  }
+  return { frequency: "custom", time, weekday: "1" };
+}
+
+function buildScheduleCron({
+  frequency,
+  time,
+  weekday,
+}: ScheduleValue): string {
+  const [hour = "09", minute = "00"] = time.split(":");
+  const dayOfWeek =
+    frequency === "daily" ? "*" : frequency === "weekdays" ? "1-5" : weekday;
+  return `${Number(minute)} ${Number(hour)} * * ${dayOfWeek}`;
+}
+
+function scheduleLabel(cronExpression: string, locale: "zh-CN" | "en"): string {
+  const schedule = parseSchedule(cronExpression);
+  if (schedule.frequency === "custom") {
+    return locale === "zh-CN"
+      ? `自定义时间 · ${cronExpression.trim()}`
+      : `Custom schedule · ${cronExpression.trim()}`;
+  }
+  const time = schedule.time;
+  if (schedule.frequency === "daily") {
+    return locale === "zh-CN" ? `每天 ${time}` : `Every day at ${time}`;
+  }
+  if (schedule.frequency === "weekdays") {
+    return locale === "zh-CN" ? `工作日 ${time}` : `Weekdays at ${time}`;
+  }
+  const weekday =
+    WEEKDAY_OPTIONS.find(([value]) => value === schedule.weekday) ??
+    WEEKDAY_OPTIONS[0];
+  return locale === "zh-CN"
+    ? `每${weekday[1]} ${time}`
+    : `Every ${weekday[2]} at ${time}`;
+}
+
 function draftFromRule(
   rule: WorkspaceAutomationRule,
 ): AutomaticProcessingDraft {
@@ -236,9 +324,13 @@ export function ProjectAutomaticProcessing({
 }) {
   const [rules, setRules] = useState<WorkspaceAutomationRule[]>([]);
   const [groups, setGroups] = useState<CollaborationGroup[]>([]);
+  const [availableAgents, setAvailableAgents] =
+    useState<CollaborationAgent[]>(agents);
   const [hooks, setHooks] = useState<WorkspaceIncomingHook[]>([]);
   const [draft, setDraft] = useState<AutomaticProcessingDraft>(EMPTY_DRAFT);
   const [editing, setEditing] = useState(false);
+  const [targetPickerOpen, setTargetPickerOpen] = useState(false);
+  const [targetQuery, setTargetQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -259,13 +351,15 @@ export function ProjectAutomaticProcessing({
     setLoading(true);
     setError("");
     try {
-      const [nextRules, nextGroups, nextHooks] = await Promise.all([
+      const [nextRules, nextGroups, nextAgents, nextHooks] = await Promise.all([
         api.automations.list(project.id),
         api.projects.listCollaborationGroups?.(project.id) ?? [],
+        api.agents.list(project.id),
         api.incomingHooks?.list(project.id).catch(() => []) ?? [],
       ]);
       setRules(nextRules);
       setGroups(nextGroups);
+      setAvailableAgents(nextAgents);
       setHooks(nextHooks);
     } catch (loadError) {
       setError(
@@ -285,19 +379,26 @@ export function ProjectAutomaticProcessing({
     void load();
   }, [load]);
 
+  useEffect(() => {
+    setAvailableAgents(agents);
+  }, [agents]);
+
   const targetOptions = useMemo(
     () => ({
       human: members.map((member) => ({
         id: String(member.user_id),
         name: member.user_name,
       })),
-      agent: agents.map((agent) => ({ id: agent.id, name: agent.name })),
+      agent: availableAgents.map((agent) => ({
+        id: agent.id,
+        name: agent.name,
+      })),
       collaboration_group: groups.map((group) => ({
         id: group.id,
         name: group.name,
       })),
     }),
-    [agents, groups, members],
+    [availableAgents, groups, members],
   );
   const selectedHook = hooks.find((hook) => hook.id === draft.hookId) ?? null;
   const externalEventTypes = selectedHook
@@ -306,6 +407,63 @@ export function ProjectAutomaticProcessing({
   const targetAvailable = targetOptions[draft.targetKind].some(
     (option) => option.id === draft.targetId,
   );
+  const targetKindLabel = {
+    agent: translate("todo.target_agent", "智能体"),
+    human: translate("todo.project_members", "项目成员"),
+    collaboration_group: translate(
+      "todo.target_collaboration_group",
+      "协作小组",
+    ),
+  } satisfies Record<TargetKind, string>;
+  const selectedTargetName =
+    targetOptions[draft.targetKind].find(
+      (option) => option.id === draft.targetId,
+    )?.name ?? translate("common.select", "请选择");
+  const normalizedTargetQuery = targetQuery.trim().toLocaleLowerCase();
+  const filteredTargets = targetOptions[draft.targetKind].filter((option) =>
+    option.name.toLocaleLowerCase().includes(normalizedTargetQuery),
+  );
+  const targetKinds = [
+    {
+      kind: "human",
+      label: targetKindLabel.human,
+      icon: UserRound,
+      options: targetOptions.human,
+    },
+    {
+      kind: "agent",
+      label: targetKindLabel.agent,
+      icon: Bot,
+      options: targetOptions.agent,
+    },
+    {
+      kind: "collaboration_group",
+      label: targetKindLabel.collaboration_group,
+      icon: UsersRound,
+      options: targetOptions.collaboration_group,
+    },
+  ] as const;
+  const SelectedTargetIcon =
+    draft.targetKind === "agent"
+      ? Bot
+      : draft.targetKind === "human"
+        ? UserRound
+        : UsersRound;
+  const schedule = parseSchedule(draft.cronExpression);
+  const triggerPreview =
+    draft.trigger === "created"
+      ? translate("todo.trigger_issue_created", "Issue 创建后")
+      : draft.trigger === "tag_added"
+        ? draft.tag.trim()
+          ? `${translate("todo.trigger_tag_added", "添加 Tag 后")} · ${draft.tag.trim()}`
+          : translate("todo.trigger_tag_added", "添加指定 Tag 后")
+        : draft.trigger === "schedule"
+          ? draft.cronExpression.trim()
+            ? `${translate("todo.trigger_schedule", "按时间定期处理")} · ${scheduleLabel(draft.cronExpression, locale)}`
+            : translate("todo.trigger_schedule", "按时间定期处理")
+          : draft.eventType
+            ? eventLabel(draft.eventType, locale)
+            : translate("todo.trigger_external_event", "外部事件发生后");
   const valid = Boolean(
     targetAvailable &&
     (draft.trigger !== "tag_added" || draft.tag.trim()) &&
@@ -334,6 +492,8 @@ export function ProjectAutomaticProcessing({
       targetKind,
       targetId: target.id,
     });
+    setTargetPickerOpen(false);
+    setTargetQuery("");
     setEditing(true);
     setError("");
   }
@@ -542,7 +702,7 @@ export function ProjectAutomaticProcessing({
                       : ruleDraft.trigger === "tag_added"
                         ? `${translate("todo.trigger_tag_added", "添加 Tag 后")} · ${ruleDraft.tag}`
                         : ruleDraft.trigger === "schedule"
-                          ? `${translate("todo.trigger_schedule", "按时间定期处理")} · ${ruleDraft.cronExpression}`
+                          ? `${translate("todo.trigger_schedule", "按时间定期处理")} · ${scheduleLabel(ruleDraft.cronExpression, locale)}`
                           : eventLabel(ruleDraft.eventType, locale);
                   const targetName =
                     text(
@@ -628,10 +788,16 @@ export function ProjectAutomaticProcessing({
           <form
             aria-labelledby="automatic-processing-dialog-title"
             aria-modal="true"
-            className="collaboration-dialog flex max-h-[calc(100vh-48px)] w-full max-w-[680px] flex-col overflow-hidden !rounded-2xl !p-0 !shadow-lg"
+            className="collaboration-dialog flex max-h-[calc(100vh-48px)] w-full max-w-[600px] flex-col overflow-hidden !rounded-2xl !p-0 !shadow-lg"
             data-testid="automatic-processing-form"
             onKeyDown={(event) => {
               if (event.key === "Escape" && !saving) {
+                if (targetPickerOpen) {
+                  event.stopPropagation();
+                  setTargetPickerOpen(false);
+                  setTargetQuery("");
+                  return;
+                }
                 setEditing(false);
                 setDraft(EMPTY_DRAFT);
               }
@@ -659,6 +825,8 @@ export function ProjectAutomaticProcessing({
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted"
                 disabled={saving}
                 onClick={() => {
+                  setTargetPickerOpen(false);
+                  setTargetQuery("");
                   setEditing(false);
                   setDraft(EMPTY_DRAFT);
                 }}
@@ -668,20 +836,30 @@ export function ProjectAutomaticProcessing({
               </button>
             </header>
 
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
-              <p className="text-sm text-text-secondary">
-                {translate(
-                  "todo.automatic_processing_editor_description",
-                  "选择触发条件和处理对象，规则名称会自动生成。",
-                )}
-              </p>
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
+              <div
+                className="rounded-xl border border-border bg-muted/40 px-4 py-3"
+                data-testid="automatic-processing-preview"
+              >
+                <p className="text-xs font-medium text-text-secondary">
+                  {translate("todo.rule_preview", "规则预览")}
+                </p>
+                <p className="mt-1 text-sm font-medium text-text-primary">
+                  {triggerPreview}
+                  <span className="mx-2 text-text-muted">→</span>
+                  {selectedTargetName}
+                  <span className="ml-1 font-normal text-text-secondary">
+                    · {targetKindLabel[draft.targetKind]}
+                  </span>
+                </p>
+              </div>
 
               <fieldset
                 className="grid grid-cols-2 gap-2"
                 data-testid="automatic-processing-trigger"
               >
                 <legend className="mb-2 text-sm font-medium text-text-primary">
-                  {translate("todo.when", "触发条件")}
+                  {translate("todo.when", "当发生")}
                 </legend>
                 {TRIGGER_OPTIONS.map((option, index) => {
                   const selected = draft.trigger === option.kind;
@@ -689,9 +867,9 @@ export function ProjectAutomaticProcessing({
                   const localeIndex = locale === "zh-CN" ? 0 : 1;
                   return (
                     <label
-                      className={`flex min-h-[68px] cursor-pointer items-start gap-3 rounded-xl border px-3 py-3 transition-colors ${
+                      className={`!flex min-h-[68px] cursor-pointer items-start gap-3 rounded-xl border px-3 py-3 transition-colors ${
                         selected
-                          ? "border-focus bg-focus/5"
+                          ? "automatic-processing-selected"
                           : "border-border hover:bg-muted/60"
                       }`}
                       key={option.kind}
@@ -709,7 +887,9 @@ export function ProjectAutomaticProcessing({
                       <Icon
                         aria-hidden="true"
                         className={`mt-0.5 h-4 w-4 shrink-0 ${
-                          selected ? "text-focus" : "text-text-secondary"
+                          selected
+                            ? "automatic-processing-selected-icon"
+                            : "text-text-secondary"
                         }`}
                       />
                       <span className="min-w-0">
@@ -725,204 +905,459 @@ export function ProjectAutomaticProcessing({
                 })}
               </fieldset>
 
-              <div className="divide-y divide-border overflow-hidden rounded-xl border border-border px-4">
-                {draft.trigger === "tag_added" ? (
-                  <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
-                    <label
-                      className="w-14 shrink-0 font-medium text-text-primary"
-                      htmlFor="automatic-processing-tag"
-                    >
-                      {translate("todo.matching_tag", "Tag")}
-                    </label>
-                    <input
-                      className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 outline-none focus:border-focus"
-                      data-testid="automatic-processing-tag"
-                      id="automatic-processing-tag"
-                      value={draft.tag}
-                      onChange={(event) =>
-                        updateDraft({ tag: event.target.value })
-                      }
-                    />
-                  </div>
-                ) : null}
-
-                {draft.trigger === "schedule" ? (
-                  <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
-                    <label
-                      className="w-14 shrink-0 font-medium text-text-primary"
-                      htmlFor="automatic-processing-cron"
-                    >
-                      {translate("todo.schedule_expression", "时间")}
-                    </label>
-                    <input
-                      className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 font-mono outline-none focus:border-focus"
-                      data-testid="automatic-processing-cron"
-                      id="automatic-processing-cron"
-                      value={draft.cronExpression}
-                      onChange={(event) =>
-                        updateDraft({ cronExpression: event.target.value })
-                      }
-                    />
-                  </div>
-                ) : null}
-
-                {draft.trigger === "external" ? (
-                  <>
+              {draft.trigger !== "created" ? (
+                <div className="divide-y divide-border overflow-hidden rounded-xl border border-border px-4">
+                  {draft.trigger === "tag_added" ? (
                     <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
                       <label
                         className="w-14 shrink-0 font-medium text-text-primary"
-                        htmlFor="automatic-processing-hook"
+                        htmlFor="automatic-processing-tag"
                       >
-                        {translate("todo.event_source", "来源")}
+                        {translate("todo.matching_tag", "Tag")}
                       </label>
-                      <select
-                        className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
-                        data-testid="automatic-processing-hook"
-                        id="automatic-processing-hook"
-                        value={draft.hookId}
-                        onChange={(event) => {
-                          const hook = hooks.find(
-                            (candidate) => candidate.id === event.target.value,
-                          );
-                          updateDraft({
-                            hookId: event.target.value,
-                            eventType: hook
-                              ? (eventTypesForHook(hook)[0] ?? "")
-                              : "",
-                          });
-                        }}
-                      >
-                        <option value="">
-                          {translate("common.select", "请选择")}
-                        </option>
-                        {hooks.map((hook) => (
-                          <option key={hook.id} value={hook.id}>
-                            {hook.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
-                      <label
-                        className="w-14 shrink-0 font-medium text-text-primary"
-                        htmlFor="automatic-processing-event"
-                      >
-                        {translate("todo.event_type", "事件")}
-                      </label>
-                      <select
-                        className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
-                        data-testid="automatic-processing-event"
-                        id="automatic-processing-event"
-                        value={draft.eventType}
+                      <input
+                        className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 outline-none focus:border-focus"
+                        data-testid="automatic-processing-tag"
+                        id="automatic-processing-tag"
+                        placeholder={translate(
+                          "todo.matching_tag_placeholder",
+                          "输入需要匹配的 Tag",
+                        )}
+                        value={draft.tag}
                         onChange={(event) =>
-                          updateDraft({ eventType: event.target.value })
+                          updateDraft({ tag: event.target.value })
                         }
-                      >
-                        <option value="">
-                          {translate("common.select", "请选择")}
-                        </option>
-                        {externalEventTypes.map((eventType) => (
-                          <option key={eventType} value={eventType}>
-                            {eventLabel(eventType, locale)}
-                          </option>
-                        ))}
-                      </select>
+                      />
                     </div>
-                  </>
-                ) : null}
+                  ) : null}
 
-                <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
-                  <label
-                    className="w-14 shrink-0 font-medium text-text-primary"
-                    htmlFor="automatic-processing-target"
-                  >
-                    {translate("todo.assign_to", "交给")}
-                  </label>
-                  <select
-                    className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
+                  {draft.trigger === "schedule" ? (
+                    <div className="space-y-4 py-4">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="space-y-1.5 text-sm">
+                          <span className="block font-medium text-text-primary">
+                            {translate("todo.schedule_frequency", "重复")}
+                          </span>
+                          <select
+                            className="h-10 w-full rounded-lg border border-border bg-background px-3 outline-none focus:border-focus"
+                            data-testid="automatic-processing-schedule-frequency"
+                            value={schedule.frequency}
+                            onChange={(event) => {
+                              const frequency = event.target
+                                .value as ScheduleFrequency;
+                              if (frequency === "custom") {
+                                return;
+                              }
+                              updateDraft({
+                                cronExpression: buildScheduleCron({
+                                  ...schedule,
+                                  frequency,
+                                }),
+                              });
+                            }}
+                          >
+                            <option value="daily">
+                              {translate("todo.schedule_daily", "每天")}
+                            </option>
+                            <option value="weekdays">
+                              {translate(
+                                "todo.schedule_weekdays",
+                                "每个工作日",
+                              )}
+                            </option>
+                            <option value="weekly">
+                              {translate("todo.schedule_weekly", "每周")}
+                            </option>
+                            {schedule.frequency === "custom" ? (
+                              <option value="custom">
+                                {translate(
+                                  "todo.schedule_custom",
+                                  "自定义 Cron",
+                                )}
+                              </option>
+                            ) : null}
+                          </select>
+                        </label>
+
+                        <label className="space-y-1.5 text-sm">
+                          <span className="block font-medium text-text-primary">
+                            {translate("todo.schedule_time", "执行时间")}
+                          </span>
+                          <input
+                            className="h-10 w-full rounded-lg border border-border bg-background px-3 tabular-nums outline-none focus:border-focus"
+                            data-testid="automatic-processing-schedule-time"
+                            onChange={(event) =>
+                              updateDraft({
+                                cronExpression: buildScheduleCron({
+                                  ...schedule,
+                                  frequency:
+                                    schedule.frequency === "custom"
+                                      ? "weekdays"
+                                      : schedule.frequency,
+                                  time: event.target.value,
+                                }),
+                              })
+                            }
+                            type="time"
+                            value={schedule.time}
+                          />
+                        </label>
+                      </div>
+
+                      {schedule.frequency === "weekly" ? (
+                        <label className="block space-y-1.5 text-sm">
+                          <span className="block font-medium text-text-primary">
+                            {translate("todo.schedule_weekday", "星期")}
+                          </span>
+                          <select
+                            className="h-10 w-full rounded-lg border border-border bg-background px-3 outline-none focus:border-focus"
+                            data-testid="automatic-processing-schedule-weekday"
+                            value={schedule.weekday}
+                            onChange={(event) =>
+                              updateDraft({
+                                cronExpression: buildScheduleCron({
+                                  ...schedule,
+                                  weekday: event.target.value,
+                                }),
+                              })
+                            }
+                          >
+                            {WEEKDAY_OPTIONS.map(
+                              ([value, zhLabel, enLabel]) => (
+                                <option key={value} value={value}>
+                                  {locale === "zh-CN" ? zhLabel : enLabel}
+                                </option>
+                              ),
+                            )}
+                          </select>
+                        </label>
+                      ) : null}
+
+                      <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2.5 text-sm text-text-secondary">
+                        <CalendarClock
+                          aria-hidden="true"
+                          className="h-4 w-4 shrink-0"
+                        />
+                        <span>
+                          {scheduleLabel(draft.cronExpression, locale)}
+                        </span>
+                        <span className="ml-auto text-xs text-text-muted">
+                          Asia/Shanghai
+                        </span>
+                      </div>
+
+                      <details
+                        className="group rounded-lg border border-border bg-background"
+                        data-testid="automatic-processing-cron-advanced"
+                      >
+                        <summary
+                          className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-sm font-medium text-text-secondary"
+                          data-testid="automatic-processing-cron-advanced-toggle"
+                        >
+                          {translate(
+                            "todo.schedule_advanced",
+                            "高级设置（Cron）",
+                          )}
+                          <ChevronDown
+                            aria-hidden="true"
+                            className="h-4 w-4 transition-transform group-open:rotate-180"
+                          />
+                        </summary>
+                        <div className="space-y-2 border-t border-border px-3 py-3">
+                          <label
+                            className="sr-only"
+                            htmlFor="automatic-processing-cron"
+                          >
+                            {translate(
+                              "todo.schedule_expression",
+                              "Cron 表达式",
+                            )}
+                          </label>
+                          <input
+                            className="h-9 w-full rounded-lg border border-border bg-surface px-3 font-mono text-sm outline-none focus:border-focus"
+                            data-testid="automatic-processing-cron"
+                            id="automatic-processing-cron"
+                            placeholder="0 9 * * 1-5"
+                            value={draft.cronExpression}
+                            onChange={(event) =>
+                              updateDraft({
+                                cronExpression: event.target.value,
+                              })
+                            }
+                          />
+                          <p className="text-xs text-text-muted">
+                            {translate(
+                              "todo.schedule_cron_help",
+                              "格式：分钟 小时 日 月 星期，例如 0 9 * * 1-5。",
+                            )}
+                          </p>
+                        </div>
+                      </details>
+                    </div>
+                  ) : null}
+
+                  {draft.trigger === "external" ? (
+                    <>
+                      <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
+                        <label
+                          className="w-14 shrink-0 font-medium text-text-primary"
+                          htmlFor="automatic-processing-hook"
+                        >
+                          {translate("todo.event_source", "来源")}
+                        </label>
+                        <select
+                          className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
+                          data-testid="automatic-processing-hook"
+                          id="automatic-processing-hook"
+                          value={draft.hookId}
+                          onChange={(event) => {
+                            const hook = hooks.find(
+                              (candidate) =>
+                                candidate.id === event.target.value,
+                            );
+                            updateDraft({
+                              hookId: event.target.value,
+                              eventType: hook
+                                ? (eventTypesForHook(hook)[0] ?? "")
+                                : "",
+                            });
+                          }}
+                        >
+                          <option value="">
+                            {translate("common.select", "请选择")}
+                          </option>
+                          {hooks.map((hook) => (
+                            <option key={hook.id} value={hook.id}>
+                              {hook.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
+                        <label
+                          className="w-14 shrink-0 font-medium text-text-primary"
+                          htmlFor="automatic-processing-event"
+                        >
+                          {translate("todo.event_type", "事件")}
+                        </label>
+                        <select
+                          className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
+                          data-testid="automatic-processing-event"
+                          id="automatic-processing-event"
+                          value={draft.eventType}
+                          onChange={(event) =>
+                            updateDraft({ eventType: event.target.value })
+                          }
+                        >
+                          <option value="">
+                            {translate("common.select", "请选择")}
+                          </option>
+                          {externalEventTypes.map((eventType) => (
+                            <option key={eventType} value={eventType}>
+                              {eventLabel(eventType, locale)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <section className="space-y-2">
+                <h3 className="text-sm font-medium text-text-primary">
+                  {translate("todo.assign_to", "交给")}
+                </h3>
+                <div
+                  className="grid grid-cols-3 gap-2"
+                  data-testid="automatic-processing-target-kinds"
+                >
+                  {targetKinds.map((targetKind) => {
+                    const selected = draft.targetKind === targetKind.kind;
+                    const available = targetKind.options.length > 0;
+                    const Icon = targetKind.icon;
+                    return (
+                      <button
+                        aria-pressed={selected}
+                        className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          selected
+                            ? "automatic-processing-selected-soft"
+                            : available
+                              ? "border-border hover:bg-muted/60"
+                              : "cursor-not-allowed border-border/60"
+                        }`}
+                        data-testid={`automatic-processing-target-kind-${targetKind.kind}`}
+                        disabled={!available}
+                        key={targetKind.kind}
+                        onClick={() => {
+                          const firstTarget = targetKind.options[0];
+                          updateDraft({
+                            targetKind: targetKind.kind,
+                            targetId: firstTarget?.id ?? "",
+                          });
+                          setTargetPickerOpen(false);
+                          setTargetQuery("");
+                        }}
+                        type="button"
+                      >
+                        <Icon
+                          aria-hidden="true"
+                          className={`h-4 w-4 shrink-0 ${
+                            selected
+                              ? "automatic-processing-selected-icon"
+                              : "text-text-secondary"
+                          }`}
+                        />
+                        <span className="min-w-0">
+                          <strong
+                            className={`block truncate text-sm font-medium ${
+                              available
+                                ? "text-text-primary"
+                                : "text-text-muted"
+                            }`}
+                          >
+                            {targetKind.label}
+                          </strong>
+                          <span
+                            className={`block text-xs ${
+                              available
+                                ? "text-text-secondary"
+                                : "text-text-muted"
+                            }`}
+                          >
+                            {available
+                              ? locale === "zh-CN"
+                                ? `${targetKind.options.length} 个可用`
+                                : `${targetKind.options.length} available`
+                              : translate("common.not_configured", "未配置")}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="relative">
+                  <button
+                    aria-expanded={targetPickerOpen}
+                    aria-haspopup="listbox"
+                    className={`automatic-processing-selected flex min-h-[68px] w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-shadow ${
+                      targetPickerOpen ? "automatic-processing-picker-open" : ""
+                    }`}
                     data-testid="automatic-processing-target"
-                    id="automatic-processing-target"
-                    value={
-                      draft.targetId
-                        ? `${draft.targetKind}:${draft.targetId}`
-                        : ""
-                    }
-                    onChange={(event) => {
-                      const separator = event.target.value.indexOf(":");
-                      if (separator < 0) {
-                        updateDraft({ targetId: "" });
-                        return;
-                      }
-                      updateDraft({
-                        targetKind: event.target.value.slice(
-                          0,
-                          separator,
-                        ) as TargetKind,
-                        targetId: event.target.value.slice(separator + 1),
-                      });
+                    onClick={() => {
+                      setTargetPickerOpen((open) => !open);
+                      setTargetQuery("");
                     }}
+                    type="button"
                   >
-                    <option value="">
-                      {translate("common.select", "请选择")}
-                    </option>
-                    <optgroup label={translate("todo.target_agent", "智能体")}>
-                      {targetOptions.agent.map((option) => (
-                        <option
-                          key={`agent:${option.id}`}
-                          value={`agent:${option.id}`}
-                        >
-                          {option.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                    <optgroup
-                      label={translate("todo.project_members", "项目成员")}
-                    >
-                      {targetOptions.human.map((option) => (
-                        <option
-                          key={`human:${option.id}`}
-                          value={`human:${option.id}`}
-                        >
-                          {option.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                    <optgroup
-                      label={translate(
-                        "todo.target_collaboration_group",
-                        "协作小组",
-                      )}
-                    >
-                      {targetOptions.collaboration_group.map((option) => (
-                        <option
-                          key={`collaboration_group:${option.id}`}
-                          value={`collaboration_group:${option.id}`}
-                        >
-                          {option.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  </select>
-                </div>
+                    <span className="automatic-processing-selected-avatar flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+                      <SelectedTargetIcon
+                        aria-hidden="true"
+                        className="h-4 w-4"
+                      />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <strong className="block truncate text-sm font-medium text-text-primary">
+                        {selectedTargetName}
+                      </strong>
+                      <span className="mt-0.5 block text-xs text-text-secondary">
+                        {targetKindLabel[draft.targetKind]}
+                      </span>
+                    </span>
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={`h-4 w-4 shrink-0 text-text-muted transition-transform ${
+                        targetPickerOpen ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
 
-                <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
-                  <span className="w-14 shrink-0 font-medium text-text-primary">
-                    {translate("todo.rule_status", "启用")}
-                  </span>
-                  <span className="min-w-0 flex-1 text-xs text-text-secondary">
-                    {translate(
-                      "todo.automatic_processing_runner_hint",
-                      "运行时自动选择项目中的可用设备",
-                    )}
-                  </span>
-                  <AutomaticProcessingSwitch
-                    checked={draft.enabled}
-                    label={translate("todo.enable_rule", "启用规则")}
-                    onChange={(enabled) => updateDraft({ enabled })}
-                    testId="automatic-processing-enabled"
-                  />
+                  {targetPickerOpen ? (
+                    <div
+                      className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl border border-border bg-surface shadow-lg"
+                      data-testid="automatic-processing-target-picker"
+                    >
+                      <div className="border-b border-border p-2">
+                        <label className="!flex h-8 items-center gap-2 rounded-lg border border-border bg-background px-3 focus-within:border-focus">
+                          <Search
+                            aria-hidden="true"
+                            className="h-4 w-4 shrink-0 text-text-muted"
+                          />
+                          <input
+                            autoFocus
+                            className="!h-auto !min-h-0 min-w-0 flex-1 !border-0 !bg-transparent !p-0 text-sm text-text-primary outline-none placeholder:text-text-muted"
+                            data-testid="automatic-processing-target-search"
+                            onChange={(event) =>
+                              setTargetQuery(event.target.value)
+                            }
+                            placeholder={translate(
+                              "todo.search_processing_target",
+                              `搜索${targetKindLabel[draft.targetKind]}`,
+                            )}
+                            value={targetQuery}
+                          />
+                        </label>
+                      </div>
+                      <div
+                        aria-label={translate(
+                          "todo.processing_target",
+                          "处理对象",
+                        )}
+                        className="max-h-52 overflow-y-auto p-2"
+                        role="listbox"
+                      >
+                        {filteredTargets.map((option) => {
+                          const selected = draft.targetId === option.id;
+                          return (
+                            <button
+                              aria-selected={selected}
+                              className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-muted"
+                              data-testid={`automatic-processing-target-option-${draft.targetKind}-${option.id}`}
+                              key={option.id}
+                              onClick={() => {
+                                updateDraft({ targetId: option.id });
+                                setTargetPickerOpen(false);
+                                setTargetQuery("");
+                              }}
+                              role="option"
+                              type="button"
+                            >
+                              <SelectedTargetIcon
+                                aria-hidden="true"
+                                className="h-4 w-4 shrink-0 text-text-secondary"
+                              />
+                              <span className="min-w-0 flex-1 truncate text-sm text-text-primary">
+                                {option.name}
+                              </span>
+                              {selected ? (
+                                <Check
+                                  aria-hidden="true"
+                                  className="automatic-processing-selected-icon h-4 w-4 shrink-0"
+                                />
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                        {!filteredTargets.length ? (
+                          <p className="px-3 py-6 text-center text-sm text-text-secondary">
+                            {translate(
+                              "todo.no_matching_processing_target",
+                              "没有匹配的处理对象",
+                            )}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-              </div>
+              </section>
+
+              <p className="text-xs leading-5 text-text-secondary">
+                {translate(
+                  "todo.automatic_processing_runner_hint",
+                  "执行时从项目的可用设备池中自动选择设备；同一 Issue 后续执行会优先继续使用原设备。",
+                )}
+              </p>
 
               {error ? (
                 <div className="collaboration-alert" role="alert">
@@ -931,31 +1366,49 @@ export function ProjectAutomaticProcessing({
               ) : null}
             </div>
 
-            <footer className="flex h-14 shrink-0 items-center justify-end gap-2 border-t border-border px-5">
-              <button
-                className="h-8 rounded-lg border border-border px-3 text-sm text-text-secondary hover:bg-muted"
-                data-testid="automatic-processing-cancel"
-                disabled={saving}
-                onClick={() => {
-                  setEditing(false);
-                  setDraft(EMPTY_DRAFT);
-                }}
-                type="button"
-              >
-                {translate("common.cancel", "取消")}
-              </button>
-              <button
-                className="collaboration-primary-button"
-                data-testid="automatic-processing-save"
-                disabled={!valid || saving}
-                type="submit"
-              >
-                {saving
-                  ? translate("common.saving", "保存中…")
-                  : draft.id
-                    ? translate("common.save", "保存")
-                    : translate("todo.create_rule", "创建规则")}
-              </button>
+            <footer className="flex min-h-14 shrink-0 items-center !justify-between gap-4 border-t border-border px-5 py-3">
+              <label className="!flex cursor-pointer items-center gap-2 whitespace-nowrap text-sm text-text-secondary">
+                <input
+                  checked={draft.enabled}
+                  className="automatic-processing-checkbox !h-4 !min-h-0 !w-4 shrink-0 rounded border-border !p-0"
+                  data-testid="automatic-processing-enabled"
+                  disabled={saving}
+                  onChange={(event) =>
+                    updateDraft({ enabled: event.target.checked })
+                  }
+                  type="checkbox"
+                />
+                {translate("todo.enable_after_creation", "创建后立即启用")}
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  className="h-8 rounded-lg border border-border px-3 text-sm text-text-secondary hover:bg-muted"
+                  data-testid="automatic-processing-cancel"
+                  disabled={saving}
+                  onClick={() => {
+                    setEditing(false);
+                    setDraft(EMPTY_DRAFT);
+                  }}
+                  type="button"
+                >
+                  {translate("common.cancel", "取消")}
+                </button>
+                <button
+                  className="collaboration-primary-button"
+                  data-testid="automatic-processing-save"
+                  disabled={!valid || saving}
+                  type="submit"
+                >
+                  {saving
+                    ? translate("common.saving", "保存中…")
+                    : draft.id
+                      ? translate("common.save", "保存")
+                      : translate(
+                          "todo.create_automatic_processing",
+                          "创建自动处理",
+                        )}
+                </button>
+              </div>
             </footer>
           </form>
         </div>

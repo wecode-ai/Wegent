@@ -18,7 +18,7 @@ def _to_camel(value: str) -> str:
 BotVisibility = Literal["private", "creator_admin", "public"]
 BotExecutionEnvironment = Literal["local", "cloud"]
 BotExecutionMode = Literal["auto", "manual_approval"]
-BotRuntime = Literal["codex", "wegent"]
+BotRuntime = Literal["codex", "claude_code", "wegent"]
 BotWorkspacePolicy = Literal["project", "git_worktree"]
 WorkspaceBindingType = Literal["backend_project", "device_project", "standalone"]
 
@@ -92,6 +92,20 @@ class ProjectChatAgentPlugin(ProjectChatSchema):
     display_name: str = Field(min_length=1, max_length=255)
 
 
+class ProjectChatAgentSkill(ProjectChatSchema):
+    name: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    namespace: str = Field(
+        default="default",
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+
+
 class ProjectChatAgentCreate(ProjectChatSchema):
     name: str = Field(min_length=1, max_length=100)
     runtime: BotRuntime = "codex"
@@ -112,6 +126,11 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     workspace_policy: BotWorkspacePolicy = "project"
     default_runtime_profile_id: str | None = Field(default=None, max_length=64)
     plugins: list[ProjectChatAgentPlugin] = Field(default_factory=list, max_length=50)
+    additional_skills: list[ProjectChatAgentSkill] = Field(
+        default_factory=list,
+        max_length=100,
+    )
+    mcp_servers: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProjectChatAgentUpdate(ProjectChatSchema):
@@ -136,6 +155,11 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     workspace_policy: BotWorkspacePolicy | None = None
     default_runtime_profile_id: str | None = Field(default=None, max_length=64)
     plugins: list[ProjectChatAgentPlugin] | None = Field(default=None, max_length=50)
+    additional_skills: list[ProjectChatAgentSkill] | None = Field(
+        default=None,
+        max_length=100,
+    )
+    mcp_servers: dict[str, Any] | None = None
 
 
 class ProjectChatAgentView(ProjectChatSchema):
@@ -160,6 +184,8 @@ class ProjectChatAgentView(ProjectChatSchema):
     workspace_policy: BotWorkspacePolicy
     default_runtime_profile_id: str | None
     plugins: list[ProjectChatAgentPlugin]
+    additional_skills: list[Any]
+    mcp_servers: dict[str, Any]
     created_by_user_id: int | None
     created_by_user_name: str | None = None
     version: int

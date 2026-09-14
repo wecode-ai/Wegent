@@ -28,12 +28,11 @@ from app.schemas.issue_workflow import (
 )
 from app.services.loop_item_status_history import later_project_status
 from app.services.loop_item_unread import advance_content_revision
-from app.services.project_automation_domain import utcnow
+from app.services.project_automation_domain import TERMINAL_RUN_STATUSES, utcnow
 
 COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
 SUCCESS_TASK_STATUSES = {"succeeded", "archived"}
 FAILED_TASK_STATUSES = {"failed", "cancelled"}
-TERMINAL_AUTOMATION_RUN_STATUSES = {"succeeded", "failed", "skipped", "cancelled"}
 logger = logging.getLogger(__name__)
 
 
@@ -554,8 +553,7 @@ def workflow_automation_run_state(
     active_statuses = {
         state.child_status
         for state in states
-        if state.child_status
-        and state.child_status not in TERMINAL_AUTOMATION_RUN_STATUSES
+        if state.child_status and state.child_status not in TERMINAL_RUN_STATUSES
     }
     if "running" in active_statuses:
         return "running", ""
@@ -613,6 +611,9 @@ def sync_workflow_automation_status(
     run = db.get(ProjectAutomationRun, run_id)
     if run is None or str(run.task_id or "") != str(item.id):
         return
+    run_metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
+    if run.status == "cancelled" or run_metadata.get("workflow_cancellation_requested"):
+        return
     next_status = (
         run_status
         if run_status
@@ -648,7 +649,7 @@ def reconcile_workflow_automation_run(
 ) -> bool:
     """Repair an active root run from its bound workflow snapshot."""
 
-    if run.status in TERMINAL_AUTOMATION_RUN_STATUSES or not run.task_id:
+    if run.status in TERMINAL_RUN_STATUSES or not run.task_id:
         return False
     item = db.get(LoopItem, str(run.task_id))
     if item is None:

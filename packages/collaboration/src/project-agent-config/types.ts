@@ -8,6 +8,7 @@ export type ProjectAgentMode = "existing" | "create";
 
 export interface ProjectAgentModeOption {
   description: string;
+  disabled?: boolean;
   label: string;
   testId: string;
   value: ProjectAgentMode;
@@ -19,6 +20,10 @@ export interface ProjectAgentSelectOption {
 }
 
 export interface ProjectAgentConfigurationHost {
+  existingAgentSelection?: {
+    description?: string;
+    disabled: boolean;
+  };
   renderDialog(props: {
     busy: boolean;
     children: ReactNode;

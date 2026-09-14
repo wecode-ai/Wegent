@@ -6,6 +6,7 @@ core_segments=(
   remote-device-onboarding
   workspace-tabs
   collaboration-shared-core
+  collaboration-agent-automation-chain
   cloud-space-mention
   priority-filter
   external-content-import
@@ -142,7 +143,7 @@ core_shards=(
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,local-project-automation-chain
+  project-automation,local-project-automation-chain,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
@@ -498,6 +499,10 @@ classify_wework_path() {
       select_target "core:collaboration-shared-core"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-agent-automation-chain.scenario.mjs)
+      select_target "core:collaboration-agent-automation-chain"
+      return
+      ;;
     wework/e2e/desktop/scenarios/board-focus-view.scenario.mjs)
       select_target "core:board-focus-view"
       return
@@ -795,6 +800,37 @@ classify_path() {
       select_target "plugins:plugin-marketplace-lifecycle"
       select_target "cloud:plugin-workspace-publication"
       ;;
+    backend/app/schemas/issue_workflow.py | \
+      backend/app/schemas/project_chat.py | \
+      backend/app/schemas/runtime_work.py | \
+      backend/app/services/cloud_projects/service.py | \
+      backend/app/services/issue_execution_configuration.py | \
+      backend/app/services/loop_item_executions/* | \
+      backend/app/services/project_automation_* | \
+      backend/app/services/project_automations.py | \
+      backend/app/services/project_chat/* | \
+      backend/app/services/project_workflow_projection.py | \
+      backend/app/services/runtime_work_service.py | \
+      backend/tests/api/test_cloud_projects_api.py | \
+      backend/tests/schemas/test_issue_workflow.py | \
+      backend/tests/services/test_coordinator_configuration.py | \
+      backend/tests/services/test_loop_item_executions.py | \
+      backend/tests/services/test_project_automations.py | \
+      backend/tests/services/test_project_chat_service.py | \
+      backend/tests/services/test_project_workflow_projection.py | \
+      backend/tests/services/test_runtime_work_service.py | \
+      executor/src/agents/claude_code.rs | \
+      executor/src/agents/mod.rs | \
+      executor/src/agents/runtime_capabilities.rs | \
+      executor/src/runtime_work/events.rs | \
+      executor/src/runtime_work/handler.rs | \
+      executor/src/runtime_work/handler/claude_turns.rs | \
+      executor/src/runtime_work/util.rs | \
+      executor/src/services/skill_deployer.rs | \
+      executor/src/task_runtime/model.rs | \
+      executor/src/task_runtime/store.rs)
+      select_target "core:collaboration-agent-automation-chain"
+      ;;
   esac
 
   case "$path" in
@@ -857,10 +893,12 @@ classify_path() {
       packages/collaboration/src/dto-mappers/workspaceDtoMappers*)
       select_target "core:remote-device-onboarding"
       select_target "core:collaboration-shared-core"
+      select_target "core:collaboration-agent-automation-chain"
       select_target "cloud:cloud-device-lifecycle"
       ;;
     packages/collaboration/*)
       select_target "core:collaboration-shared-core"
+      select_target "core:collaboration-agent-automation-chain"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites

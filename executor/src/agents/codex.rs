@@ -3335,15 +3335,19 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     launch_config
         .config_overrides
         .extend(global_mcp_config_overrides());
+    let (browser_overrides, browser_env) = cdp_browser_mcp_config_overrides(request)?;
+    launch_config.config_overrides.extend(browser_overrides);
+    launch_config.env.extend(browser_env);
+    let (computer_use_overrides, computer_use_env) = computer_use_mcp_config_overrides();
     launch_config
         .config_overrides
-        .extend(cdp_browser_mcp_config_overrides(request)?);
+        .extend(computer_use_overrides);
+    launch_config.env.extend(computer_use_env);
+    let (project_space_overrides, project_space_env) = project_space_mcp_config_overrides(request)?;
     launch_config
         .config_overrides
-        .extend(computer_use_mcp_config_overrides());
-    launch_config
-        .config_overrides
-        .extend(project_space_mcp_config_overrides(request)?);
+        .extend(project_space_overrides);
+    launch_config.env.extend(project_space_env);
     launch_config
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
@@ -4136,7 +4140,9 @@ fn global_mcp_config_overrides() -> Vec<String> {
     overrides
 }
 
-fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
+fn cdp_browser_mcp_config_overrides(
+    request: &ExecutionRequest,
+) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
     let server_name = crate::browser_mcp::WEWORK_BROWSER_MCP_SERVER_NAME;
     let key = toml_key_path(&["mcp_servers", server_name]);
     let mut overrides = vec![
@@ -4156,17 +4162,27 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<St
         "features.non_prefixed_mcp_tool_names=true".to_owned(),
     ];
     if !crate::browser_mcp::bridge_is_available() {
-        return Ok(overrides);
+        return Ok((overrides, BTreeMap::new()));
     }
     let endpoint = crate::browser_mcp::http::browser_mcp_http_endpoint()
         .ok_or_else(|| "browser MCP endpoint is not ready".to_owned())?;
+    let auth_env_name = "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION";
+    let mut env = BTreeMap::from([(
+        auth_env_name.to_owned(),
+        format!("Bearer {}", endpoint.token),
+    )]);
     overrides.extend([
         format!("{key}.enabled=true"),
         format!("{key}.url={}", toml_value(&endpoint.url)),
         format!(
             "{}={}",
-            toml_key_path(&["mcp_servers", server_name, "http_headers", "Authorization"]),
-            toml_value(&format!("Bearer {}", endpoint.token))
+            toml_key_path(&[
+                "mcp_servers",
+                server_name,
+                "env_http_headers",
+                "Authorization"
+            ]),
+            toml_value(auth_env_name)
         ),
         format!("{key}.tool_timeout_sec=60"),
         format!(
@@ -4176,177 +4192,143 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<St
     ]);
 
     if let Some(label) = embedded_browser_label(request) {
+        let label_env_name = "WEGENT_CODEX_BROWSER_MCP_LABEL";
+        env.insert(label_env_name.to_owned(), label);
         overrides.push(format!(
             "{}={}",
             toml_key_path(&[
                 "mcp_servers",
                 server_name,
-                "http_headers",
+                "env_http_headers",
                 "X-Wework-Browser-Label"
             ]),
-            toml_value(&label)
+            toml_value(label_env_name)
         ));
     }
-    Ok(overrides)
+    Ok((overrides, env))
 }
 
-fn computer_use_mcp_config_overrides() -> Vec<String> {
+fn computer_use_mcp_config_overrides() -> (Vec<String>, BTreeMap<String, String>) {
     let path = executor_home().join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
     let Ok(contents) = fs::read_to_string(path) else {
-        return Vec::new();
+        return (Vec::new(), BTreeMap::new());
     };
     let Ok(record) = serde_json::from_str::<Value>(&contents) else {
-        return Vec::new();
+        return (Vec::new(), BTreeMap::new());
     };
     let Some(address) = record.get("address").and_then(Value::as_str) else {
-        return Vec::new();
+        return (Vec::new(), BTreeMap::new());
     };
     let Some(token) = record.get("token").and_then(Value::as_str) else {
-        return Vec::new();
+        return (Vec::new(), BTreeMap::new());
     };
     if address.trim().is_empty() || token.trim().is_empty() {
-        return Vec::new();
+        return (Vec::new(), BTreeMap::new());
     }
     let command =
         env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
-    vec![
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                "command"
-            ]),
-            toml_value(&command.display().to_string())
+    let env = BTreeMap::from([
+        (
+            "WEWORK_COMPUTER_USE_BRIDGE_URL".to_owned(),
+            format!("http://{}", address.trim()),
         ),
-        format!(
-            "{}={}",
-            toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
-            toml_json_value(&json!(["computer-use-mcp-server"]))
+        (
+            "WEWORK_COMPUTER_USE_BRIDGE_TOKEN".to_owned(),
+            token.trim().to_owned(),
         ),
-        format!(
-            "{}=15",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                "startup_timeout_sec"
-            ])
-        ),
-        format!(
-            "{}=120",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                "tool_timeout_sec"
-            ])
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                "default_tools_approval_mode"
-            ]),
-            toml_value("writes")
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                "env",
-                "WEWORK_COMPUTER_USE_BRIDGE_URL"
-            ]),
-            toml_value(&format!("http://{}", address.trim()))
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                "env",
-                "WEWORK_COMPUTER_USE_BRIDGE_TOKEN"
-            ]),
-            toml_value(token.trim())
-        ),
-    ]
-}
-
-fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
-    let server_name = crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME;
-    let key = toml_key_path(&["mcp_servers", server_name]);
-    let grant = crate::task_runtime::mcp::encoded_space_context_grant(request);
-    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint()
-        .ok_or_else(|| "project-space MCP endpoint is not ready".to_owned())?;
-    let mut overrides = vec![
-        format!("{key}.enabled=true"),
-        format!("{key}.url={}", toml_value(&endpoint.url)),
-        format!(
-            "{}={}",
-            toml_key_path(&["mcp_servers", server_name, "http_headers", "Authorization",]),
-            toml_value(&format!("Bearer {}", endpoint.token))
-        ),
-        format!("{key}.tool_timeout_sec=60"),
-    ];
-    if let Some(grant) = grant {
-        overrides.extend([
+    ]);
+    (
+        vec![
             format!(
-                "{key}.default_tools_approval_mode={}",
-                toml_value("approve")
+                "{}={}",
+                toml_key_path(&[
+                    "mcp_servers",
+                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                    "command"
+                ]),
+                toml_value(&command.display().to_string())
+            ),
+            format!(
+                "{}={}",
+                toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
+                toml_json_value(&json!(["computer-use-mcp-server"]))
+            ),
+            format!(
+                "{}=15",
+                toml_key_path(&[
+                    "mcp_servers",
+                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                    "startup_timeout_sec"
+                ])
+            ),
+            format!(
+                "{}=120",
+                toml_key_path(&[
+                    "mcp_servers",
+                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                    "tool_timeout_sec"
+                ])
             ),
             format!(
                 "{}={}",
                 toml_key_path(&[
                     "mcp_servers",
-                    server_name,
-                    "http_headers",
-                    "X-Wework-Space-Context-Grant",
+                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                    "default_tools_approval_mode"
                 ]),
-                toml_value(&grant)
+                toml_value("writes")
             ),
-        ]);
+            format!(
+                "{}={}",
+                toml_key_path(&[
+                    "mcp_servers",
+                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                    "env_vars"
+                ]),
+                toml_json_value(&json!([
+                    "WEWORK_COMPUTER_USE_BRIDGE_URL",
+                    "WEWORK_COMPUTER_USE_BRIDGE_TOKEN"
+                ]))
+            ),
+        ],
+        env,
+    )
+}
+
+fn project_space_mcp_config_overrides(
+    request: &ExecutionRequest,
+) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
+    if crate::task_runtime::mcp::encoded_space_context_grant(request).is_none() {
+        return Ok((Vec::new(), BTreeMap::new()));
     }
-    let backend_url = request
-        .backend_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| env::var("WEGENT_BACKEND_URL").ok())
-        .filter(|value| !value.trim().is_empty());
-    if let Some(backend_url) = backend_url {
+    let server_name = crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME;
+    let key = toml_key_path(&["mcp_servers", server_name]);
+    let config = crate::task_runtime::mcp::space_mcp_client_config(request)?;
+    let mut overrides = vec![
+        format!("{key}.enabled=true"),
+        format!("{key}.url={}", toml_value(&config.url)),
+        format!(
+            "{key}.tool_timeout_sec={}",
+            crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS
+        ),
+    ];
+    let mut env = BTreeMap::new();
+    for (index, (header_name, header_value)) in config.headers.into_iter().enumerate() {
+        let env_name = format!("WEGENT_CODEX_SPACE_MCP_HEADER_{index}");
+        env.insert(env_name.clone(), header_value);
         overrides.push(format!(
             "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                server_name,
-                "http_headers",
-                "X-Wework-Space-Backend-Url",
-            ]),
-            toml_value(backend_url.trim())
+            toml_key_path(&["mcp_servers", server_name, "env_http_headers", &header_name]),
+            toml_value(&env_name)
         ));
     }
-    let auth_token = request
-        .auth_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| env::var("WEGENT_AUTH_TOKEN").ok())
-        .filter(|value| !value.trim().is_empty());
-    if let Some(auth_token) = auth_token {
+    if config.context_bound {
         overrides.push(format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                server_name,
-                "http_headers",
-                "X-Wework-Space-Backend-Token",
-            ]),
-            toml_value(auth_token.trim())
+            "{key}.default_tools_approval_mode={}",
+            toml_value("approve")
         ));
     }
-    Ok(overrides)
+    Ok((overrides, env))
 }
 
 fn embedded_browser_label(request: &ExecutionRequest) -> Option<String> {

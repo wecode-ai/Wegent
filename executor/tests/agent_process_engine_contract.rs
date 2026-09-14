@@ -729,7 +729,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=
 
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_process_engine_refreshes_existing_bot_skills_for_regular_claude_tasks() {
+async fn agent_process_engine_isolates_bot_skills_for_regular_claude_tasks() {
     let _lock = env_lock().lock().await;
     let home = unique_dir("claude-refresh-bot-skill-home");
     let workspace_root = unique_dir("claude-refresh-bot-skill-workspace");
@@ -785,6 +785,10 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     );
     assert_eq!(
         fs::read_to_string(existing_skill.join("SKILL.md")).unwrap(),
+        "# Old Agent Skill\n"
+    );
+    assert_eq!(
+        fs::read_to_string(workspace_root.join("88/.claude/skills/agent-skill/SKILL.md")).unwrap(),
         "# Task Skill"
     );
     assert_eq!(requests.lock().unwrap().len(), 1);

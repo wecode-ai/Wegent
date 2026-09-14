@@ -39,6 +39,7 @@ vi.mock("./workspace-controller", () => ({
 import { CollaborationApp } from "./CollaborationApp";
 import { CollaborationSettings } from "./CollaborationSettings";
 import {
+  CollaborationParticipantsTabs,
   ProjectCollaborationGroups,
   ProjectCollaborationParticipants,
   ProjectAutomaticProcessing,
@@ -308,7 +309,7 @@ describe("CollaborationApp API boundary", () => {
       sections: [
         {
           id: "dispatch",
-          label: "分配与调度",
+          label: "自动处理",
           testId: "project-settings-dispatch",
           content: <div>dispatch</div>,
         },
@@ -383,11 +384,14 @@ describe("CollaborationApp API boundary", () => {
   });
 
   it("orders collaboration participants as agents, project members and groups", () => {
-    const participants = ProjectCollaborationParticipants({
+    const participants = CollaborationParticipantsTabs({
       agentsContent: <div data-testid="agents-content" />,
+      agentsLabel: "智能体",
+      ariaLabel: "协作成员",
       membersContent: <div data-testid="members-content" />,
+      membersLabel: "项目成员",
       groupsContent: <div data-testid="groups-content" />,
-      translate: (_key, fallback) => fallback,
+      groupsLabel: "协作小组",
     });
     const tabs = descendants(participants).filter(
       (element) => element.props.role === "tab",
@@ -581,17 +585,16 @@ describe("CollaborationApp API boundary", () => {
       project: { access_role: "RestrictedAnalyst" },
       labels: {
         board: "Board",
+        table: "Table",
         files: "Files",
-        automation: "Automation",
         manage: "Manage",
       },
       testIds: {
         board: "board",
+        table: "table",
         files: "files",
-        automation: "automation",
         manage: "manage",
       },
-      automationSupported: true,
       extensions: [
         {
           id: "table",

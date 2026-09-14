@@ -21,10 +21,20 @@ import {
   createCollaborationTranslator,
   type CollaborationLocale,
 } from "../i18n";
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
-import { createWegentProjectAgentInput } from "../project-agent-config";
+import type {
+  SharedWorkspaceApi,
+  WorkspaceProjectAgent,
+} from "../ports/SharedWorkspaceApi";
+import {
+  createWegentProjectAgentInput,
+  ProjectAgentConfiguration,
+} from "../project-agent-config";
 import { ProjectCreateDialog, projectCreateLabels } from "../project-create";
-import { ProjectSettingsShell } from "../project-manage";
+import {
+  CollaborationParticipantsTabs,
+  ProjectExecutionEnvironments,
+  ProjectSettingsShell,
+} from "../project-manage";
 import type {
   CollaborationExecutionEnvironment,
   CollaborationIssue,
@@ -50,9 +60,7 @@ import {
   type WorkspaceProjectIssuesSnapshot,
 } from "./workspaceOperations";
 import {
-  WorkspaceAgentsConfiguration,
   WorkspaceCollaborationGroupsConfiguration,
-  WorkspaceExecutionEnvironmentsConfiguration,
   WorkspaceMembersConfiguration,
 } from "./WorkspaceResourceConfiguration";
 
@@ -77,6 +85,9 @@ const platformMessages = {
     allProjects: "全部项目",
     members: "成员",
     agents: "智能体",
+    collaborationParticipants: "协作成员",
+    collaborationParticipantsHint:
+      "统一管理空间中的智能体、成员和协作小组，供空间内项目复用。",
     collaborationGroups: "协作小组",
     environments: "执行环境",
     settings: "空间设置",
@@ -149,6 +160,9 @@ const platformMessages = {
     allProjects: "All projects",
     members: "Members",
     agents: "Agents",
+    collaborationParticipants: "Collaboration members",
+    collaborationParticipantsHint:
+      "Manage workspace agents, members, and collaboration groups together for reuse across projects.",
     collaborationGroups: "Collaboration groups",
     environments: "Execution environments",
     settings: "Space settings",
@@ -221,6 +235,65 @@ function navigateWithin(
   patch: Partial<CollaborationPlatformLocation>,
 ) {
   host.navigate({ ...host.location, ...patch });
+}
+
+function workspaceAgentRecord(
+  agent: CollaborationOwnedAgent,
+): WorkspaceProjectAgent {
+  const teamId = agent.team_id;
+  if (teamId == null) {
+    throw new Error("Workspace Agent is missing team_id");
+  }
+  return {
+    ...agent,
+    id: String(teamId),
+    runtime: "wegent",
+    status: "active",
+    version: 1,
+    wegentTeamId: teamId,
+  };
+}
+
+function createWorkspaceAgentConfigurationApi(
+  api: SharedWorkspaceApi,
+  workspaceId: string,
+): SharedWorkspaceApi {
+  const workspaces = api.workspaces;
+  if (!workspaces) return api;
+  return {
+    ...api,
+    agents: {
+      async list() {
+        return (await workspaces.listAgents(workspaceId)).map(
+          workspaceAgentRecord,
+        );
+      },
+      async create(_scopeId, input) {
+        const teamId = Number(input.wegentTeamId);
+        if (!Number.isFinite(teamId)) {
+          throw new Error("Workspace Agent is missing wegentTeamId");
+        }
+        return workspaceAgentRecord(
+          await workspaces.addAgent(workspaceId, { teamId }),
+        );
+      },
+      async update(_scopeId, agentId) {
+        const teamId = Number(agentId);
+        if (!Number.isFinite(teamId)) {
+          throw new Error("Workspace Agent id must be a team id");
+        }
+        const current = (await workspaces.listAgents(workspaceId)).find(
+          (agent) => agent.team_id === teamId,
+        );
+        if (!current) throw new Error("Workspace Agent was not found");
+        await workspaces.removeAgent(workspaceId, teamId);
+        return {
+          ...workspaceAgentRecord(current),
+          status: "archived",
+        };
+      },
+    },
+  };
 }
 
 function CollaborationPlatformNavigation({
@@ -469,20 +542,6 @@ function CollaborationPlatformNavigation({
                       </span>
                     </div>
                   )}
-                  <button
-                    type="button"
-                    className="collaboration-workspace-toggle"
-                    aria-expanded={expanded}
-                    aria-label={
-                      expanded
-                        ? messages.collapseWorkspace
-                        : messages.expandWorkspace
-                    }
-                    data-testid={`collaboration-workspace-toggle-${candidate.id}`}
-                    onClick={() => toggleWorkspace(candidate.id)}
-                  >
-                    <ChevronRight aria-hidden="true" />
-                  </button>
                   {canManageWorkspace ? (
                     <div
                       className="collaboration-workspace-actions"
@@ -531,6 +590,20 @@ function CollaborationPlatformNavigation({
                       ) : null}
                     </div>
                   ) : null}
+                  <button
+                    type="button"
+                    className="collaboration-workspace-toggle"
+                    aria-expanded={expanded}
+                    aria-label={
+                      expanded
+                        ? messages.collapseWorkspace
+                        : messages.expandWorkspace
+                    }
+                    data-testid={`collaboration-workspace-toggle-${candidate.id}`}
+                    onClick={() => toggleWorkspace(candidate.id)}
+                  >
+                    <ChevronRight aria-hidden="true" />
+                  </button>
                 </div>
                 {expanded ? (
                   <nav
@@ -1161,6 +1234,13 @@ export function CollaborationPlatformApp({
     host.location.workspaceId,
     state.workspace,
   ]);
+  const workspaceAgentConfigurationApi = useMemo(
+    () =>
+      host.location.workspaceId
+        ? createWorkspaceAgentConfigurationApi(api, host.location.workspaceId)
+        : api,
+    [api, host.location.workspaceId],
+  );
   const projectResourceAgents = useMemo(() => {
     const agents = new Map<number, CollaborationOwnedAgent>();
     for (const agent of [...state.resources.agents, ...state.agents]) {
@@ -1355,14 +1435,27 @@ export function CollaborationPlatformApp({
     const canManageWorkspace =
       workspace.access_role === "Owner" ||
       workspace.access_role === "Maintainer";
-    const workspaceSettingsView =
+    const requestedWorkspaceSettingsView =
       host.location.workspaceView === "settings" ||
       host.location.workspaceView === "members" ||
       host.location.workspaceView === "agents" ||
+      host.location.workspaceView === "collaboration-participants" ||
       host.location.workspaceView === "collaboration-groups" ||
       host.location.workspaceView === "execution-environments"
         ? host.location.workspaceView
         : null;
+    const workspaceSettingsView =
+      requestedWorkspaceSettingsView === "members" ||
+      requestedWorkspaceSettingsView === "agents" ||
+      requestedWorkspaceSettingsView === "collaboration-groups"
+        ? "collaboration-participants"
+        : requestedWorkspaceSettingsView;
+    const initialWorkspaceParticipantTab =
+      requestedWorkspaceSettingsView === "members"
+        ? "members"
+        : requestedWorkspaceSettingsView === "collaboration-groups"
+          ? "groups"
+          : "agents";
     const createProjectAction = (
       <button
         type="button"
@@ -1401,61 +1494,60 @@ export function CollaborationPlatformApp({
             ]
           : []),
         {
-          id: "members",
-          label: messages.members,
-          testId: "collaboration-workspace-nav-members",
+          id: "collaboration-participants",
+          label: messages.collaborationParticipants,
+          testId: "collaboration-workspace-nav-participants",
           content: (
             <div className="collaboration-platform-page">
               <PageHeader
-                title={messages.members}
-                subtitle={`${messages.settings} · ${workspace.name}`}
+                title={messages.collaborationParticipants}
+                subtitle={messages.collaborationParticipantsHint}
               />
-              <WorkspaceMembersConfiguration
-                workspace={workspace}
-                members={state.members}
-                locale={locale}
-                commands={commands}
-              />
-            </div>
-          ),
-        },
-        {
-          id: "agents",
-          label: messages.agents,
-          testId: "collaboration-workspace-nav-agents",
-          content: (
-            <div className="collaboration-platform-page">
-              <PageHeader
-                title={messages.agents}
-                subtitle={`${messages.settings} · ${workspace.name}`}
-              />
-              <WorkspaceAgentsConfiguration
-                workspace={workspace}
-                agents={state.agents}
-                resources={state.resources}
-                locale={locale}
-                commands={commands}
-              />
-            </div>
-          ),
-        },
-        {
-          id: "collaboration-groups",
-          label: locale === "zh-CN" ? "协作小组" : "Collaboration groups",
-          testId: "collaboration-workspace-nav-collaboration-groups",
-          content: (
-            <div className="collaboration-platform-page">
-              <PageHeader
-                title={locale === "zh-CN" ? "协作小组" : "Collaboration groups"}
-                subtitle={`${messages.settings} · ${workspace.name}`}
-              />
-              <WorkspaceCollaborationGroupsConfiguration
-                workspace={workspace}
-                groups={state.collaborationGroups}
-                members={state.members}
-                agents={state.agents}
-                locale={locale}
-                commands={commands}
+              <CollaborationParticipantsTabs
+                agentsContent={
+                  <ProjectAgentConfiguration
+                    api={workspaceAgentConfigurationApi}
+                    canManage={
+                      workspace.access_role === "Owner" ||
+                      workspace.access_role === "Maintainer" ||
+                      workspace.access_role === "Developer"
+                    }
+                    host={host.projectAgentConfiguration}
+                    project={{
+                      id: workspace.id,
+                      workspace_id: null,
+                      project_store:
+                        workspace.location === "local" ? "local" : "backend",
+                    }}
+                    onError={() => host.notify?.(messages.loadFailed, "error")}
+                    scope="workspace"
+                    translate={translate}
+                  />
+                }
+                agentsLabel={messages.agents}
+                ariaLabel={messages.collaborationParticipants}
+                groupsContent={
+                  <WorkspaceCollaborationGroupsConfiguration
+                    workspace={workspace}
+                    groups={state.collaborationGroups}
+                    members={state.members}
+                    agents={state.agents}
+                    locale={locale}
+                    commands={commands}
+                  />
+                }
+                groupsLabel={messages.collaborationGroups}
+                initialTab={initialWorkspaceParticipantTab}
+                membersContent={
+                  <WorkspaceMembersConfiguration
+                    workspace={workspace}
+                    members={state.members}
+                    locale={locale}
+                    commands={commands}
+                  />
+                }
+                membersLabel={messages.members}
+                testIdPrefix="collaboration-workspace-participants"
               />
             </div>
           ),
@@ -1465,19 +1557,16 @@ export function CollaborationPlatformApp({
           label: messages.environments,
           testId: "collaboration-workspace-nav-execution-environments",
           content: (
-            <div className="collaboration-platform-page">
-              <PageHeader
-                title={messages.environments}
-                subtitle={`${messages.settings} · ${workspace.name}`}
-              />
-              <WorkspaceExecutionEnvironmentsConfiguration
-                workspace={workspace}
-                environments={state.executionEnvironments}
-                resources={state.resources}
-                locale={locale}
-                commands={commands}
-              />
-            </div>
+            <ProjectExecutionEnvironments
+              api={api}
+              workspace={workspace}
+              translate={translate}
+              onRegisterDevice={
+                host.manageResource
+                  ? () => host.manageResource?.("environments")
+                  : undefined
+              }
+            />
           ),
         },
       ];
@@ -1510,7 +1599,29 @@ export function CollaborationPlatformApp({
                 ? messages.noProjectsHint
                 : messages.operationsHint
             }
-            action={createProjectAction}
+            action={
+              <div className="collaboration-platform-page-actions">
+                {host.location.workspaceView === "home" &&
+                canManageWorkspace ? (
+                  <button
+                    type="button"
+                    className="collaboration-platform-secondary-button"
+                    data-testid="collaboration-workspace-home-settings"
+                    onClick={() =>
+                      navigateWithin(host, {
+                        workspaceView: "settings",
+                        projectId: null,
+                        issueId: null,
+                      })
+                    }
+                  >
+                    <Settings aria-hidden="true" />
+                    {messages.settings}
+                  </button>
+                ) : null}
+                {createProjectAction}
+              </div>
+            }
           />
           {host.location.workspaceView === "home" ? (
             state.projects.length === 0 ? (
@@ -1535,7 +1646,7 @@ export function CollaborationPlatformApp({
                     data-testid="collaboration-workspace-starter-configure-agents"
                     onClick={() =>
                       navigateWithin(host, {
-                        workspaceView: "agents",
+                        workspaceView: "collaboration-participants",
                         projectId: null,
                         issueId: null,
                       })

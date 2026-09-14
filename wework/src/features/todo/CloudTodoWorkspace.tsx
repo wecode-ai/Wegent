@@ -1,5 +1,7 @@
 import { RuntimeConfigurationProvider } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { weworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import {
   useCallback,
   useContext,
@@ -192,7 +194,6 @@ import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration
 import { createLocalWorkspaceApi } from './WeworkCollaborationPlatform'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { rememberProjectTaskStore } from '@/features/workbench/projectTaskTracking'
-import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import {
@@ -219,10 +220,7 @@ import {
   runtimeMyWorkItems,
   runtimeWorkItemReference,
 } from './runtimeMyWork'
-type ProjectView = Extract<
-  CollaborationProjectView,
-  'board' | 'table' | 'files' | 'automation' | 'manage'
->
+type ProjectView = Extract<CollaborationProjectView, 'board' | 'table' | 'files' | 'manage'>
 type WeworkStandardBoardUpdate = Omit<StandardCloudBoardMutationUpdate, 'priority'> & {
   priority?: CollaborationIssue['priority']
 } & Partial<IssueExecutionConfigResult> & {
@@ -823,8 +821,8 @@ export function CloudTodoWorkspace({
 }: CloudTodoWorkspaceProps) {
   const notificationChoice = useAssignmentNotificationChoice()
   const { t, i18n } = useTranslation('common')
-  const workspaceTabs = useOptionalWorkspaceTabs()
   const workbench = useContext(WorkbenchContext)
+  const cloudConnection = useOptionalCloudConnection()
   const taskStatusExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.taskStatus)
   const preferences = useAppPreferencesState()
   const changeRequestStatusEnabled =
@@ -837,6 +835,21 @@ export function CloudTodoWorkspace({
     [changeRequestStatusEnabled, services.deviceApi]
   )
   const cloudWorkspaceApi = services.sharedWorkspaceApi
+  const existingCloudAgentsAvailable = cloudConnection.isConnected && Boolean(cloudWorkspaceApi)
+  const projectAgentConfigurationHost = useMemo(
+    () => ({
+      ...weworkProjectAgentConfigurationHost,
+      existingAgentSelection: existingCloudAgentsAvailable
+        ? undefined
+        : {
+            disabled: true,
+            description: i18n.language.startsWith('zh')
+              ? '登录并连接云端后可选择已有智能体'
+              : 'Sign in and connect to cloud to select an existing Agent',
+          },
+    }),
+    [existingCloudAgentsAvailable, i18n.language]
+  )
   const [internalSelectedProjectRef, setSelectedProjectRef] =
     useState<RuntimeProjectSpaceRef | null>(null)
   const requestedProjectRef =
@@ -868,14 +881,7 @@ export function CloudTodoWorkspace({
           ? String(requestedProjectRef.projectId)
           : null,
       issueId: selectedItem?.project_store === 'backend' ? selectedItem.id : null,
-      view:
-        projectView === 'files'
-          ? 'files'
-          : projectView === 'automation'
-            ? 'automation'
-            : projectView === 'manage'
-              ? 'manage'
-              : 'board',
+      view: projectView === 'files' ? 'files' : projectView === 'manage' ? 'manage' : 'board',
       rootView: 'home',
     },
     messages: cloudWorkspaceMessages,
@@ -4410,17 +4416,14 @@ export function CloudTodoWorkspace({
                   board: t('todo.board_view', '看板'),
                   table: t('todo.issue_table', '表格'),
                   files: t('todo.files_title', '文件'),
-                  automation: t('todo.assignment_dispatch', '分配与调度'),
                   manage: t('todo.project_settings', '项目设置'),
                 }}
                 testIds={{
                   board: 'cloud-project-board-view',
                   table: 'cloud-project-table-view',
                   files: 'cloud-project-files-view',
-                  automation: 'cloud-project-automation-view',
                   manage: 'cloud-project-manage-view',
                 }}
-                automationSupported={selectedProjectAutomationSupported}
                 enabledStandardViews={isMyTasksBoard ? ['board'] : undefined}
                 compactSwitcherIcon={<ChevronDown className="h-3 w-3" />}
                 onViewChange={view => setProjectView(view as ProjectView)}
@@ -4653,7 +4656,6 @@ export function CloudTodoWorkspace({
                       <LocalFilesView api={selectedProjectApi!} project={selectedProject} />
                     )
                   ) : null,
-                  automation: null,
                   manage: (
                     selectedProject.location === 'cloud' ? cloudWorkspaceApi : selectedProjectApi
                   ) ? (
@@ -4729,6 +4731,7 @@ export function CloudTodoWorkspace({
                               }
                               agentsContent={
                                 <CollaborationSettings
+                                  agentConfigurationHost={projectAgentConfigurationHost}
                                   api={
                                     selectedProject.location === 'cloud'
                                       ? cloudWorkspaceApi!
@@ -4753,23 +4756,6 @@ export function CloudTodoWorkspace({
                                       return
                                     }
                                     setBoardRefreshNonce(value => value + 1)
-                                  }}
-                                  onCreateAgent={() => {
-                                    const contentRoute =
-                                      '/app/wegent/resource-library?tab=mine&type=agent&scope=personal&action=create-agent'
-                                    if (workspaceTabs) {
-                                      const agentTab = workspaceTabs.tabs.find(
-                                        tab => tab.kind === 'agent'
-                                      )
-                                      if (agentTab) {
-                                        workspaceTabs.selectTab(agentTab.id, { contentRoute })
-                                      } else {
-                                        workspaceTabs.openTab('agent', { contentRoute })
-                                      }
-                                      return
-                                    }
-                                    window.history.pushState(null, '', contentRoute)
-                                    window.dispatchEvent(new PopStateEvent('popstate'))
                                   }}
                                   translate={(key, fallback, options) =>
                                     fallback === undefined

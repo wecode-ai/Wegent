@@ -792,7 +792,7 @@ export function ProjectManageView<
         >
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-heading-md font-semibold">
+              <h2 className="heading-subsection text-text-primary">
                 {host.translate("todo.project_members", "项目成员")}
               </h2>
               <p className="mt-1 text-sm text-text-muted">
@@ -806,7 +806,7 @@ export function ProjectManageView<
               type="button"
               data-testid="cloud-project-members-toggle"
               onClick={() => setMembersOpen((open) => !open)}
-              className="h-8 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted"
+              className="h-8 rounded-lg px-2.5 text-sm font-medium text-text-secondary hover:bg-muted"
             >
               {membersOpen
                 ? host.translate("todo.collapse_management", "收起管理")
@@ -818,7 +818,7 @@ export function ProjectManageView<
             <button
               type="button"
               onClick={() => setMembersOpen(true)}
-              className="mt-4 flex h-12 w-full items-center rounded-xl bg-muted px-3 text-left hover:bg-muted/80"
+              className="mt-4 flex h-12 w-full items-center rounded-xl bg-muted px-3 text-left text-sm font-normal hover:bg-muted/80"
             >
               <span>
                 {host.translate("todo.member_count", "{{count}} 位成员", {

@@ -356,12 +356,7 @@ export interface CollaborationCapabilities {
   projectLocation?: "cloud" | "local";
 }
 
-export type CollaborationView =
-  | "board"
-  | "table"
-  | "files"
-  | "automation"
-  | "manage";
+export type CollaborationView = "board" | "table" | "files" | "manage";
 export type CollaborationRootView = "home" | "my-work";
 
 export interface CollaborationLocation {

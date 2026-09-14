@@ -16,6 +16,7 @@ from app.schemas.base_role import BaseRole
 from app.schemas.workspace import (
     CollaborationGroupCreate,
     CollaborationGroupMember,
+    CollaborationGroupStage,
     CollaborationGroupUpdate,
 )
 from app.services.workspaces.access import require_workspace_role
@@ -74,6 +75,7 @@ class WorkspaceCollaborationGroupService:
             owner_id=workspace_id,
             leader=values.leader,
             members=values.members,
+            stages=values.stages,
         )
         group = Kind(
             user_id=user_id,
@@ -198,6 +200,7 @@ class WorkspaceCollaborationGroupService:
             owner_id=project_id,
             leader=values.leader,
             members=values.members,
+            stages=values.stages,
         )
         group = Kind(
             user_id=user_id,
@@ -464,6 +467,14 @@ class WorkspaceCollaborationGroupService:
             CollaborationGroupMember.model_validate(member)
             for member in current["members"]
         ]
+        stages = (
+            values.stages
+            if values.stages is not None
+            else [
+                CollaborationGroupStage.model_validate(stage)
+                for stage in current["stages"]
+            ]
+        )
         self._validate_members(
             db,
             workspace_id=workspace_id,
@@ -471,6 +482,7 @@ class WorkspaceCollaborationGroupService:
             owner_id=owner_id,
             leader=leader,
             members=members,
+            stages=stages,
         )
         group.name = name
         group.json = _group_payload(
@@ -488,12 +500,12 @@ class WorkspaceCollaborationGroupService:
                     if values.coordination_mode is not None
                     else str(current["coordination_mode"])
                 ),
-                stages=(
-                    values.stages if values.stages is not None else current["stages"]
-                ),
+                stages=stages,
             ),
             version=values.version + 1,
         )
+        db.flush()
+        db.refresh(group)
         return _group_values(
             workspace_id,
             owner_type,
@@ -510,6 +522,7 @@ class WorkspaceCollaborationGroupService:
         owner_id: int,
         leader: CollaborationGroupMember,
         members: list[CollaborationGroupMember],
+        stages: list[CollaborationGroupStage],
     ) -> None:
         identities = {(member.kind, member.id) for member in members}
         if len(identities) != len(members):
@@ -521,6 +534,15 @@ class WorkspaceCollaborationGroupService:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Leader must be a member of the collaboration group",
+            )
+        if any(
+            stage.assignee is not None
+            and (stage.assignee.kind, stage.assignee.id) not in identities
+            for stage in stages
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Collaboration group stage assignee must be a group member",
             )
         for member_kind, member_id in identities:
             available = (

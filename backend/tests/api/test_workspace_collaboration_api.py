@@ -438,6 +438,40 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     )
 
 
+def test_collaboration_group_rejects_stage_assignee_outside_members(
+    test_client: TestClient,
+    test_token: str,
+    test_user: User,
+) -> None:
+    workspace = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"阶段成员校验 {uuid.uuid4().hex[:6]}"},
+    ).json()
+
+    response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/collaboration-groups",
+        headers=_auth(test_token),
+        json={
+            "name": "无效阶段成员",
+            "leader": {"kind": "human", "id": str(test_user.id)},
+            "members": [{"kind": "human", "id": str(test_user.id)}],
+            "stages": [
+                {
+                    "id": "review",
+                    "name": "评审",
+                    "assignee": {"kind": "human", "id": str(test_user.id + 1)},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Collaboration group stage assignee must be a group member"
+    )
+
+
 def _project_agent(
     test_db: Session,
     *,

@@ -32,10 +32,11 @@ use crate::{
 };
 
 pub use agno::build_agno_options;
+pub(crate) use backend_url::request_backend_url;
 pub use claude_code::build_claude_command;
 pub(crate) use claude_code::{claude_config_dir, claude_task_dir, model_id, prompt_text};
 use claude_code::{
-    configure_claude_default_settings, configure_claude_file_edit_hooks, deploy_claude_task_skills,
+    configure_claude_default_settings, configure_claude_file_edit_hooks,
     restore_claude_plugin_cache, run_pre_execute_hook,
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
@@ -359,7 +360,6 @@ impl AgentEngine for AgentProcessEngine {
                                     }
                                 };
                                 restore_claude_plugin_cache(&request, &spec);
-                                deploy_claude_task_skills(&request, &spec).await;
                                 configure_claude_default_settings(&request, &spec);
                                 configure_claude_file_edit_hooks(&request, &spec);
                                 spec = match git_auth::apply_task_git_authentication(&request, spec)
@@ -478,7 +478,6 @@ impl AgentEngine for AgentProcessEngine {
                                     }
                                 };
                                 restore_claude_plugin_cache(&request, &spec);
-                                deploy_claude_task_skills(&request, &spec).await;
                                 configure_claude_default_settings(&request, &spec);
                                 configure_claude_file_edit_hooks(&request, &spec);
                                 spec = match git_auth::apply_task_git_authentication(&request, spec)

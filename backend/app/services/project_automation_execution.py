@@ -135,9 +135,10 @@ class ProjectAutomationExecution:
             self._ensure_run_task(db, project=project, owner=owner, rule=rule, run=run)
             dispatch_target = metadata(rule).get("dispatch_target")
             if isinstance(dispatch_target, dict):
-                self._dispatch_configured_target(
+                await self._dispatch_configured_target(
                     db,
                     owner=owner,
+                    project=project,
                     rule=rule,
                     run=run,
                     dispatch_target=dispatch_target,
@@ -515,11 +516,12 @@ class ProjectAutomationExecution:
             execution.execution_device_id,
         )
 
-    def _dispatch_configured_target(
+    async def _dispatch_configured_target(
         self,
         db: Session,
         *,
         owner: User,
+        project: CloudProject,
         rule: ProjectAutomationRule,
         run: ProjectAutomationRun,
         dispatch_target: dict[str, Any],
@@ -577,6 +579,20 @@ class ProjectAutomationExecution:
                 "stages": stages,
             }
             self._bind_group_to_issue(db, run=run, group=context["collaboration_group"])
+            definition = self._collaboration_group_workflow_definition(
+                db,
+                project_id=str(rule.cloud_project_id),
+                group=context["collaboration_group"],
+            )
+            await self._dispatch_workflow(
+                db,
+                owner=owner,
+                project=project,
+                rule=rule,
+                run=run,
+                definition=definition,
+            )
+            return
 
         if target_kind == "human":
             self._assign_human_target(
@@ -619,6 +635,104 @@ class ProjectAutomationExecution:
             team_id=str(team.id),
             workflow_step=workflow_step,
             context=context,
+        )
+
+    def _collaboration_group_workflow_definition(
+        self,
+        db: Session,
+        *,
+        project_id: str,
+        group: dict[str, Any],
+    ) -> ProjectWorkflowDefinition:
+        """Compile the group's ordered stages into the existing Issue workflow."""
+
+        from app.services.issue_execution_configuration import (
+            project_robot_execution_config,
+        )
+
+        stages = [
+            dict(stage) for stage in group.get("stages", []) if isinstance(stage, dict)
+        ]
+        if not stages:
+            stages = [
+                {
+                    "id": "leader",
+                    "name": "负责人处理",
+                    "description": str(group.get("description") or ""),
+                    "assignee": group.get("leader"),
+                }
+            ]
+
+        members = {
+            (str(member.get("kind") or ""), str(member.get("id") or ""))
+            for member in group.get("members", [])
+            if isinstance(member, dict)
+        }
+        nodes: list[dict[str, Any]] = []
+        previous_node_id: str | None = None
+        for index, stage in enumerate(stages):
+            assignee = stage.get("assignee")
+            if not isinstance(assignee, dict):
+                assignee = group.get("leader")
+            if not isinstance(assignee, dict):
+                raise RuntimeError("The collaboration group stage has no assignee")
+
+            node_id = f"group-stage-{index + 1}"
+            assignee_kind = str(assignee.get("kind") or "")
+            assignee_id = str(assignee.get("id") or "")
+            if (assignee_kind, assignee_id) not in members:
+                raise RuntimeError(
+                    "The collaboration-group stage assignee must be a "
+                    "collaboration-group member"
+                )
+            execution_config = None
+            if assignee_kind == "agent":
+                agent = self._project_agent_for_group_member(
+                    db,
+                    project_id=project_id,
+                    member_id=assignee_id,
+                )
+                if agent is None:
+                    raise RuntimeError(
+                        "The collaboration-group Agent is unavailable in this Project"
+                    )
+                execution_config = project_robot_execution_config(db, agent).model_dump(
+                    mode="json", by_alias=True
+                )
+            elif assignee_kind != "human":
+                raise RuntimeError("The collaboration-group stage assignee is invalid")
+
+            nodes.append(
+                {
+                    "id": node_id,
+                    "name": str(stage.get("name") or f"步骤 {index + 1}"),
+                    "prompt": str(stage.get("description") or ""),
+                    "execution_mode": (
+                        "robot" if assignee_kind == "agent" else "human"
+                    ),
+                    "depends_on": [previous_node_id] if previous_node_id else [],
+                    "workspace_policy": (
+                        "composer" if previous_node_id is None else "inherit"
+                    ),
+                    "required_assignee_type": (
+                        "user" if assignee_kind == "human" else None
+                    ),
+                    "required_assignee_id": (
+                        assignee_id if assignee_kind == "human" else None
+                    ),
+                    "execution_config": execution_config,
+                    "execution_config_override": execution_config is not None,
+                }
+            )
+            previous_node_id = node_id
+
+        return ProjectWorkflowDefinition.model_validate(
+            {
+                "stage_mode": "dag",
+                "advancement_policy": "manual",
+                "approval_policy": "automatic",
+                "nodes": nodes,
+            }
         )
 
     @staticmethod

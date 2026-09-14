@@ -84,6 +84,21 @@ function createApi(options?: {
       create,
       update,
     },
+    automationExecutionCatalog: {
+      load: vi.fn(async () => ({
+        environments: [],
+        models: [
+          {
+            name: "desktop-e2e-responses-model",
+            label: "Desktop E2E Responses",
+            type: "runtime",
+            options: { providerProfileId: "desktop-e2e-responses" },
+          },
+        ],
+        plugins: [],
+      })),
+      loadPlugins: vi.fn(async () => []),
+    },
     workspaces: {
       listAgents: vi.fn(
         async () => options?.workspaceAgents ?? [workspaceAgent],
@@ -148,20 +163,9 @@ describe("ProjectAgentConfiguration", () => {
     });
   }
 
-  it("adds an existing Agent and opens the standard Agent creator", async () => {
+  it("adds an existing Agent and opens the inline standard Agent creator", async () => {
     const { api, create } = createApi();
-    const onCreateAgent = vi.fn();
-    await act(async () => {
-      root.render(
-        <ProjectAgentConfiguration
-          api={api}
-          project={project}
-          onError={vi.fn()}
-          onCreateAgent={onCreateAgent}
-          translate={(_key, fallback) => fallback}
-        />,
-      );
-    });
+    await render(api);
 
     await click("project-agent-add");
     await change("project-agent-wegent-team", "12");
@@ -175,21 +179,17 @@ describe("ProjectAgentConfiguration", () => {
 
     await click("project-agent-add");
     await click("project-agent-mode-create");
-    expect(
-      document.querySelector('[data-testid="project-agent-codex-name"]'),
-    ).toBeNull();
-    await click("project-agent-open-create");
-    expect(onCreateAgent).toHaveBeenCalledOnce();
+    expect(element("project-agent-standard-create-form")).toBeTruthy();
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it("creates a local Agent inside a local project without choosing an environment", async () => {
+  it("creates a Claude Code Agent with Skill and MCP without choosing a device", async () => {
     const { api, create } = createApi({ workspaceAgents: [] });
     await act(async () => {
       root.render(
         <ProjectAgentConfiguration
           api={api}
-          project={{ ...project, project_store: "local" }}
+          project={project}
           onError={vi.fn()}
           translate={(_key, fallback) => fallback}
         />,
@@ -198,16 +198,34 @@ describe("ProjectAgentConfiguration", () => {
 
     await click("project-agent-add");
     await click("project-agent-mode-create");
-    await change("project-agent-local-name", "本地代码评审");
+    expect(element("project-agent-standard-create-form")).toBeTruthy();
+    await change("project-agent-local-name", "Claude 代码评审");
+    await change("project-agent-local-runtime", "claude_code");
+    await change("project-agent-local-model", "0");
     await change("project-agent-local-capability", "评审当前项目代码");
     await change("project-agent-local-system-prompt", "先检查测试，再给出结论");
+    await change("project-agent-local-skills", "review, project-space");
+    await change(
+      "project-agent-local-mcp",
+      '{"repository":{"command":"node","args":["server.mjs"]}}',
+    );
     await click("project-agent-local-create");
 
     expect(create).toHaveBeenCalledWith(project.id, {
-      name: "本地代码评审",
-      runtime: "codex",
+      name: "Claude 代码评审",
+      runtime: "claude_code",
       capabilityDescription: "评审当前项目代码",
+      model: "desktop-e2e-responses-model",
+      modelType: "runtime",
+      modelOptions: { providerProfileId: "desktop-e2e-responses" },
       systemPrompt: "先检查测试，再给出结论",
+      additionalSkills: [
+        { name: "review", namespace: "default" },
+        { name: "project-space", namespace: "default" },
+      ],
+      mcpServers: {
+        repository: { command: "node", args: ["server.mjs"] },
+      },
     });
     expect(
       document.querySelector('[data-testid="project-agent-dialog"]'),
@@ -244,10 +262,46 @@ describe("ProjectAgentConfiguration", () => {
     );
 
     await click("project-agent-mode-create");
-    expect(element("project-agent-open-create")).toBeTruthy();
+    expect(element("project-agent-standard-create-form")).toBeTruthy();
 
     await render(api, { ...project, workspace_id: null });
     expect(element("project-agent-config")).toBeTruthy();
+  });
+
+  it("lists existing Agents even when their legacy runtime status is unavailable", async () => {
+    const { api } = createApi({
+      workspaceAgents: [{ ...workspaceAgent, status: "unavailable" }],
+    });
+    await render(api);
+
+    await click("project-agent-add");
+
+    const selector = element("project-agent-wegent-team") as HTMLSelectElement;
+    expect(
+      Array.from(selector.options).map((option) => option.textContent),
+    ).toContain("研发团队");
+    expect(
+      document.querySelector('[data-testid="project-agent-wegent-empty"]'),
+    ).toBeNull();
+  });
+
+  it("shows configured Skill and MCP counts for executable Agents", async () => {
+    const { api } = createApi({
+      agents: [
+        projectAgent({
+          runtime: "claude_code",
+          additionalSkills: [{ name: "review", namespace: "codex" }],
+          mcpServers: {
+            repository: { command: "node", args: ["server.mjs"] },
+          },
+        }),
+      ],
+    });
+    await render(api);
+
+    expect(
+      element("project-agent-capabilities-project-agent-1").textContent,
+    ).toContain("1 Skill · 项目空间 MCP + 1 MCP");
   });
 
   it("keeps creation separate from the configured Agent list", async () => {

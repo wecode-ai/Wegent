@@ -11,15 +11,11 @@ import {
 import type {
   CollaborationAgent,
   CollaborationGroup,
-  CollaborationExecutionEnvironment,
   CollaborationMember,
-  CollaborationOwnedAgent,
-  CollaborationPlatformResources,
   CollaborationRole,
   CollaborationUser,
   CollaborationWorkspace,
 } from "../types";
-import { ResourceAuthorizationForm } from "./ResourceAuthorizationForm";
 
 type MemberRole = Exclude<CollaborationRole, "Owner">;
 
@@ -28,8 +24,6 @@ export interface WorkspaceResourceCommands {
   addMember(userId: number, role: MemberRole): Promise<CollaborationMember>;
   updateMember(userId: number, role: MemberRole): Promise<CollaborationMember>;
   removeMember(userId: number): Promise<void>;
-  addAgent(agent: CollaborationOwnedAgent): Promise<CollaborationOwnedAgent>;
-  removeAgent(agent: CollaborationOwnedAgent): Promise<void>;
   createCollaborationGroup(input: {
     name: string;
     description?: string;
@@ -86,12 +80,6 @@ export interface WorkspaceResourceCommands {
   ): Promise<CollaborationGroup>;
   removeCollaborationGroup(groupId: string): Promise<void>;
   addCollaborationGroup?(groupId: string): Promise<CollaborationGroup>;
-  addExecutionEnvironment(
-    environment: CollaborationExecutionEnvironment,
-  ): Promise<CollaborationExecutionEnvironment>;
-  removeExecutionEnvironment(
-    environment: CollaborationExecutionEnvironment,
-  ): Promise<void>;
 }
 
 const copy = {
@@ -107,14 +95,7 @@ const copy = {
     maintainer: "管理员",
     developer: "开发者",
     reporter: "参与者",
-    authorizeAgent: "智能体管理",
-    authorizeEnvironment: "执行环境管理",
-    chooseAgent: "选择我的智能体",
-    chooseEnvironment: "选择我的执行环境",
-    authorize: "添加到空间",
-    noCandidates: "没有可以添加的资源",
     noMembers: "空间中还没有成员",
-    noAgents: "空间中还没有智能体",
     collaborationGroups: "协作小组",
     collaborationGroupHint:
       "把空间中的人与智能体组织成可复用的协作小组。负责人负责分解、委派、收敛和最终汇报。",
@@ -125,9 +106,10 @@ const copy = {
     membersLabel: "成员",
     memberResponsibility: "职责",
     stages: "工作阶段",
-    stagesHint: "阶段是协作小组接单后的可选推进方式；留空时由负责人动态分解。",
+    stagesHint:
+      "阶段是协作小组接单后的可选推进方式；不添加阶段或未指定阶段负责人时，由协作小组负责人执行。",
     addStage: "添加阶段",
-    dynamicAssignment: "由负责人动态分配",
+    leaderAssignment: "由负责人执行",
     manageGroup: "管理",
     saveGroup: "保存",
     backToGroups: "返回协作小组",
@@ -143,11 +125,7 @@ const copy = {
     projectOwned: "项目资源",
     removeFromProject: "移出项目",
     deleteProjectGroup: "删除",
-    noEnvironments: "空间中还没有执行环境",
     memberHint: "统一管理空间成员，方便空间内项目复用；项目仍可独立管理成员。",
-    agentHint: "统一管理空间共享智能体，项目也可以直接添加自己的智能体。",
-    environmentHint:
-      "统一管理空间共享的本地设备和云端环境，项目也可以直接添加自己的执行环境。",
     operationFailed: "操作失败，请稍后重试",
   },
   en: {
@@ -162,14 +140,7 @@ const copy = {
     maintainer: "Maintainer",
     developer: "Developer",
     reporter: "Reporter",
-    authorizeAgent: "Agent management",
-    authorizeEnvironment: "Execution environment management",
-    chooseAgent: "Choose one of my agents",
-    chooseEnvironment: "Choose one of my execution environments",
-    authorize: "Add to space",
-    noCandidates: "No resources available to add",
     noMembers: "No members in this workspace",
-    noAgents: "No agents in this workspace",
     collaborationGroups: "Collaboration groups",
     collaborationGroupHint:
       "Organize people and agents into reusable execution units. The leader plans, delegates, consolidates, and reports.",
@@ -181,9 +152,9 @@ const copy = {
     memberResponsibility: "Responsibility",
     stages: "Work stages",
     stagesHint:
-      "Stages optionally guide work after assignment. Leave them empty for dynamic planning by the leader.",
+      "Stages optionally guide work after assignment. If no stages or stage assignees are configured, the group leader handles the work.",
     addStage: "Add stage",
-    dynamicAssignment: "Assigned dynamically by leader",
+    leaderAssignment: "Handled by leader",
     manageGroup: "Manage",
     saveGroup: "Save",
     backToGroups: "Back to groups",
@@ -202,13 +173,8 @@ const copy = {
     projectOwned: "Project resource",
     removeFromProject: "Remove from project",
     deleteProjectGroup: "Delete",
-    noEnvironments: "No execution environments in this workspace",
     memberHint:
       "Manage shared space members for reuse. Projects can still manage members independently.",
-    agentHint:
-      "Manage shared space agents. Projects can also add agents directly.",
-    environmentHint:
-      "Manage shared local devices and cloud environments. Projects can also add execution environments directly.",
     operationFailed: "Operation failed. Please try again.",
   },
 } as const;
@@ -463,90 +429,6 @@ export function WorkspaceMembersConfiguration({
   );
 }
 
-export function WorkspaceAgentsConfiguration({
-  workspace,
-  agents,
-  resources,
-  locale,
-  commands,
-}: {
-  workspace: CollaborationWorkspace;
-  agents: CollaborationOwnedAgent[];
-  resources: CollaborationPlatformResources;
-  locale: "zh-CN" | "en";
-  commands: WorkspaceResourceCommands;
-}) {
-  const messages = copy[locale];
-  const [pendingTeamId, setPendingTeamId] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const assignedTeamIds = new Set(
-    agents.flatMap((agent) => (agent.team_id ? [agent.team_id] : [])),
-  );
-  const candidates = resources.agents.filter(
-    (candidate) => candidate.team_id && !assignedTeamIds.has(candidate.team_id),
-  );
-  const canAuthorize =
-    workspace.access_role === "Owner" ||
-    workspace.access_role === "Maintainer" ||
-    workspace.access_role === "Developer";
-  return (
-    <section className="collaboration-platform-panel">
-      <div className="collaboration-resource-heading">
-        <div>
-          <h2>{messages.authorizeAgent}</h2>
-          <p>{messages.agentHint}</p>
-        </div>
-      </div>
-      {canAuthorize ? (
-        <ResourceAuthorizationForm
-          kind="agent"
-          candidates={candidates}
-          messages={messages}
-          getValue={(candidate) => String(candidate.team_id)}
-          onAuthorize={(candidate) => commands.addAgent(candidate)}
-        />
-      ) : null}
-      <ErrorMessage message={error} />
-      {agents.length ? (
-        <div className="collaboration-resource-list">
-          {agents.map((agent) => (
-            <div key={agent.id}>
-              <span className="collaboration-resource-avatar">
-                {agent.name.slice(0, 1).toUpperCase()}
-              </span>
-              <span>
-                <strong>{agent.name}</strong>
-                {agent.owner_name ? <small>{agent.owner_name}</small> : null}
-              </span>
-              <em>{agent.status}</em>
-              {canAuthorize ? (
-                <button
-                  type="button"
-                  className="collaboration-link-button collaboration-resource-remove"
-                  data-testid={`collaboration-workspace-agent-remove-${agent.team_id}`}
-                  disabled={pendingTeamId === agent.team_id}
-                  onClick={() => {
-                    setPendingTeamId(agent.team_id ?? null);
-                    setError(null);
-                    void commands
-                      .removeAgent(agent)
-                      .catch(() => setError(messages.operationFailed))
-                      .finally(() => setPendingTeamId(null));
-                  }}
-                >
-                  {messages.remove}
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="collaboration-resource-empty">{messages.noAgents}</div>
-      )}
-    </section>
-  );
-}
-
 export function WorkspaceCollaborationGroupsConfiguration({
   workspace,
   groups,
@@ -659,6 +541,16 @@ export function WorkspaceCollaborationGroupsConfiguration({
       );
       setDraftLeader(
         replacement ? `${replacement.kind}:${replacement.id}` : "",
+      );
+    }
+    if (!selected) {
+      setDraftStages((current) =>
+        current.map((stage) =>
+          stage.assignee?.kind === candidate.kind &&
+          stage.assignee.id === candidate.id
+            ? { ...stage, assignee: null }
+            : stage,
+        ),
       );
     }
   };
@@ -965,7 +857,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
                           );
                         }}
                       >
-                        <option value="">{messages.dynamicAssignment}</option>
+                        <option value="">{messages.leaderAssignment}</option>
                         {draftMembers.map((member) => (
                           <option
                             key={`${member.kind}:${member.id}`}
@@ -997,8 +889,8 @@ export function WorkspaceCollaborationGroupsConfiguration({
               ) : (
                 <div className="collaboration-resource-empty">
                   {locale === "zh-CN"
-                    ? "当前由负责人动态分解工作。"
-                    : "The leader currently plans work dynamically."}
+                    ? "当前未配置工作阶段，将由协作小组负责人直接处理。"
+                    : "No work stages are configured. The group leader handles the work directly."}
                 </div>
               )}
             </section>
@@ -1205,7 +1097,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
                       <span>
                         {group.stages.length
                           ? `${group.stages.length} ${messages.stages}`
-                          : messages.dynamicAssignment}
+                          : messages.leaderAssignment}
                       </span>
                     </div>
                     <div className="collaboration-resource-actions">
@@ -1287,100 +1179,6 @@ export function WorkspaceCollaborationGroupsConfiguration({
           ) : null}
           <ErrorMessage message={error} />
         </>
-      )}
-    </section>
-  );
-}
-
-export function WorkspaceExecutionEnvironmentsConfiguration({
-  workspace,
-  environments,
-  resources,
-  locale,
-  commands,
-}: {
-  workspace: CollaborationWorkspace;
-  environments: CollaborationExecutionEnvironment[];
-  resources: CollaborationPlatformResources;
-  locale: "zh-CN" | "en";
-  commands: WorkspaceResourceCommands;
-}) {
-  const messages = copy[locale];
-  const [pendingDeviceId, setPendingDeviceId] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const assignedDeviceIds = new Set(
-    environments.flatMap((environment) =>
-      environment.device_id ? [environment.device_id] : [],
-    ),
-  );
-  const candidates = resources.execution_environments.filter(
-    (candidate) =>
-      candidate.device_id && !assignedDeviceIds.has(candidate.device_id),
-  );
-  const canAuthorize =
-    workspace.access_role === "Owner" ||
-    workspace.access_role === "Maintainer" ||
-    workspace.access_role === "Developer";
-  return (
-    <section className="collaboration-platform-panel">
-      <div className="collaboration-resource-heading">
-        <div>
-          <h2>{messages.authorizeEnvironment}</h2>
-          <p>{messages.environmentHint}</p>
-        </div>
-      </div>
-      {canAuthorize ? (
-        <ResourceAuthorizationForm
-          kind="environment"
-          candidates={candidates}
-          messages={messages}
-          getValue={(candidate) => String(candidate.device_id)}
-          onAuthorize={(candidate) =>
-            commands.addExecutionEnvironment(candidate)
-          }
-        />
-      ) : null}
-      <ErrorMessage message={error} />
-      {environments.length ? (
-        <div className="collaboration-resource-list">
-          {environments.map((environment) => (
-            <div key={environment.id}>
-              <span className="collaboration-resource-avatar">
-                {environment.name.slice(0, 1).toUpperCase()}
-              </span>
-              <span>
-                <strong>{environment.name}</strong>
-                <small>
-                  {environment.owner_name ? `${environment.owner_name} · ` : ""}
-                  {environment.kind === "cloud_host" ? "Cloud" : "Local"}
-                </small>
-              </span>
-              <em>{environment.status}</em>
-              {canAuthorize ? (
-                <button
-                  type="button"
-                  className="collaboration-link-button collaboration-resource-remove"
-                  data-testid={`collaboration-workspace-environment-remove-${environment.device_id}`}
-                  disabled={pendingDeviceId === environment.device_id}
-                  onClick={() => {
-                    setPendingDeviceId(environment.device_id ?? null);
-                    setError(null);
-                    void commands
-                      .removeExecutionEnvironment(environment)
-                      .catch(() => setError(messages.operationFailed))
-                      .finally(() => setPendingDeviceId(null));
-                  }}
-                >
-                  {messages.remove}
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="collaboration-resource-empty">
-          {messages.noEnvironments}
-        </div>
       )}
     </section>
   );

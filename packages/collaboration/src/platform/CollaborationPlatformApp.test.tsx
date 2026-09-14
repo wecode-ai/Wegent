@@ -843,6 +843,13 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(workspaceGroup?.children[0]?.classList).toContain(
       "collaboration-workspace-row",
     );
+    const workspaceActions = byTestId("collaboration-workspace-actions");
+    const workspaceRow = workspaceActions.closest(
+      ".collaboration-workspace-row",
+    );
+    expect(workspaceActions.parentElement?.nextElementSibling).toBe(
+      workspaceRow?.querySelector(".collaboration-workspace-toggle"),
+    );
     expect(workspaceGroup?.children[1]?.classList).toContain(
       "collaboration-workspace-project-list",
     );
@@ -860,7 +867,7 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     await click(byTestId("collaboration-workspace-starter-invite-members"));
     expect(container.textContent).toContain(member.user_name);
-    await click(byTestId("collaboration-workspace-nav-agents"));
+    await click(byTestId("collaboration-workspace-participants-tab-agents"));
     expect(container.textContent).toContain(agent.name);
     await click(byTestId("collaboration-workspace-nav-execution-environments"));
     expect(container.textContent).toContain(environment.name);
@@ -923,6 +930,21 @@ describe("CollaborationPlatformApp real component flow", () => {
       projectId: project.id,
       issueId: failedIssue.id,
     });
+  });
+
+  it("opens workspace settings directly from the workspace home", async () => {
+    const { api } = createApi();
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+
+    await click(byTestId("collaboration-workspace-home-settings"));
+
+    expect(byTestId("workspace-settings-shell")).toBeTruthy();
+    expect(byTestId("collaboration-workspace-settings-save")).toBeTruthy();
   });
 
   it("keeps the workspace overview available when one project snapshot fails", async () => {
@@ -1032,7 +1054,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     await click(byTestId("collaboration-workspace-nav-settings"));
 
     expect(byTestId("workspace-settings-shell")).toBeTruthy();
-    expect(byTestId("collaboration-workspace-nav-agents")).toBeTruthy();
+    expect(byTestId("collaboration-workspace-nav-participants")).toBeTruthy();
 
     pendingWorkspaces.resolve([workspace]);
   });
@@ -1319,43 +1341,39 @@ describe("CollaborationPlatformApp real component flow", () => {
     await click(byTestId("collaboration-workspace-member-remove-8"));
     expect(api.workspaces?.removeMember).toHaveBeenCalledWith(workspace.id, 8);
 
-    await click(byTestId("collaboration-workspace-nav-agents"));
+    await click(byTestId("collaboration-workspace-participants-tab-agents"));
+    await click(byTestId("project-agent-add"));
+    expect(
+      container.querySelector('[data-testid="project-agent-mode-create"]'),
+    ).toBeNull();
     await change(
-      byTestId("collaboration-workspace-agent-candidate") as HTMLSelectElement,
+      byTestId("project-agent-wegent-team") as HTMLSelectElement,
       "12",
     );
-    expect(
-      container.querySelector(
-        '[data-testid="collaboration-workspace-agent-owner-type"]',
-      ),
-    ).toBeNull();
-    await click(byTestId("collaboration-workspace-agent-authorize"));
+    await click(byTestId("project-agent-wegent-create"));
     expect(api.workspaces?.addAgent).toHaveBeenCalledWith(workspace.id, {
       teamId: 12,
     });
-    await click(byTestId("collaboration-workspace-agent-remove-12"));
+    await click(byTestId("project-agent-archive-12"));
     expect(api.workspaces?.removeAgent).toHaveBeenCalledWith(workspace.id, 12);
 
     await click(byTestId("collaboration-workspace-nav-execution-environments"));
     await change(
       byTestId(
-        "collaboration-workspace-environment-candidate",
+        "collaboration-workspace-execution-environment-select",
       ) as HTMLSelectElement,
       "22",
     );
-    expect(
-      container.querySelector(
-        '[data-testid="collaboration-workspace-environment-owner-type"]',
-      ),
-    ).toBeNull();
-    await click(byTestId("collaboration-workspace-environment-authorize"));
+    await click(byTestId("collaboration-workspace-execution-environment-add"));
     expect(api.workspaces?.addExecutionEnvironment).toHaveBeenCalledWith(
       workspace.id,
       {
         deviceId: 22,
       },
     );
-    await click(byTestId("collaboration-workspace-environment-remove-22"));
+    await click(
+      byTestId("collaboration-workspace-execution-environment-remove-22"),
+    );
     expect(api.workspaces?.removeExecutionEnvironment).toHaveBeenCalledWith(
       workspace.id,
       22,

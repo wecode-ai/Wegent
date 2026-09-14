@@ -78,11 +78,13 @@ describe('CollaborationApp project collaboration groups', () => {
     projectGroups = [],
     addCollaborationGroup = jest.fn(),
     createCollaborationGroup = jest.fn(),
+    automations = {} as NonNullable<SharedWorkspaceApi['automations']>,
   }: {
     workspaceGroups?: CollaborationGroup[]
     projectGroups?: CollaborationGroup[]
     addCollaborationGroup?: jest.Mock
     createCollaborationGroup?: jest.Mock
+    automations?: NonNullable<SharedWorkspaceApi['automations']>
   } = {}) {
     return {
       workspaces: {
@@ -123,9 +125,17 @@ describe('CollaborationApp project collaboration groups', () => {
         remove: jest.fn(),
       },
       agents: {
-        list: jest.fn().mockResolvedValue([]),
+        list: jest.fn().mockResolvedValue([
+          {
+            id: 'agent-binding-1',
+            name: '代码智能体',
+            runtime: 'codex',
+            status: 'active',
+            version: 1,
+          },
+        ]),
       },
-      automations: {},
+      automations,
       incomingHooks: {
         catalog: jest.fn().mockResolvedValue([]),
       },
@@ -141,7 +151,7 @@ describe('CollaborationApp project collaboration groups', () => {
       location: {
         projectId: project.id,
         issueId: null,
-        view: 'automation',
+        view: 'manage',
       },
       navigate: jest.fn(),
     }
@@ -186,7 +196,7 @@ describe('CollaborationApp project collaboration groups', () => {
       target: { value: '持续检查并处理项目 Issue' },
     })
     fireEvent.change(screen.getByTestId('collaboration-group-leader'), {
-      target: { value: 'agent:12' },
+      target: { value: 'agent:agent-binding-1' },
     })
     fireEvent.click(screen.getByTestId('collaboration-group-create'))
 
@@ -197,8 +207,8 @@ describe('CollaborationApp project collaboration groups', () => {
     expect(savedInput).toMatchObject({
       name: '项目交付组',
       description: '持续检查并处理项目 Issue',
-      leader: { kind: 'agent', id: '12' },
-      members: [{ kind: 'agent', id: '12' }],
+      leader: { kind: 'agent', id: 'agent-binding-1' },
+      members: [{ kind: 'agent', id: 'agent-binding-1' }],
       stages: [],
     })
     expect(savedInput).not.toHaveProperty('policy')
@@ -228,5 +238,59 @@ describe('CollaborationApp project collaboration groups', () => {
       await screen.findByTestId('collaboration-project-automatic-processing-page')
     ).toBeInTheDocument()
     expect(screen.queryByTestId('collaboration-project-participants-page')).not.toBeInTheDocument()
+  })
+
+  it('edits common schedules without exposing Cron as the primary control', async () => {
+    const create = jest.fn().mockResolvedValue({})
+    const api = projectApi({
+      automations: {
+        list: jest.fn().mockResolvedValue([]),
+        create,
+        migrateWorkflow: jest.fn(),
+        update: jest.fn(),
+        remove: jest.fn(),
+        runNow: jest.fn(),
+        runWorkflowNode: jest.fn(),
+        listRuns: jest.fn().mockResolvedValue([]),
+        cancelRun: jest.fn(),
+        retryRun: jest.fn(),
+      },
+    })
+
+    render(<CollaborationApp api={api} host={automationHost()} locale="zh-CN" pollIntervalMs={0} />)
+
+    fireEvent.click(
+      await screen.findByTestId('collaboration-project-settings-automatic-processing')
+    )
+    fireEvent.click(await screen.findByTestId('automatic-processing-create'))
+    fireEvent.click(screen.getByTestId('automatic-processing-trigger-schedule'))
+
+    expect(screen.getByTestId('automatic-processing-schedule-frequency')).toHaveValue('weekdays')
+    expect(screen.getByTestId('automatic-processing-schedule-time')).toHaveValue('09:00')
+    expect(screen.getByTestId('automatic-processing-preview')).toHaveTextContent('工作日 09:00')
+
+    fireEvent.change(screen.getByTestId('automatic-processing-schedule-frequency'), {
+      target: { value: 'weekly' },
+    })
+    fireEvent.change(screen.getByTestId('automatic-processing-schedule-weekday'), {
+      target: { value: '3' },
+    })
+    fireEvent.change(screen.getByTestId('automatic-processing-schedule-time'), {
+      target: { value: '14:30' },
+    })
+
+    expect(screen.getByTestId('automatic-processing-preview')).toHaveTextContent('每周三 14:30')
+    fireEvent.click(screen.getByTestId('automatic-processing-save'))
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({
+          cronExpression: '30 14 * * 3',
+          timezone: 'Asia/Shanghai',
+          triggerType: 'schedule',
+        })
+      )
+    )
   })
 })

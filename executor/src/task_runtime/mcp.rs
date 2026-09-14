@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     env, fs,
     io::Write,
     path::{Path, PathBuf},
@@ -30,6 +30,7 @@ pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 const SPACE_MCP_LOG_FILE: &str = "space-mcp.log";
 pub const SPACE_CONTEXT_GRANT_ENV: &str = "WEWORK_SPACE_CONTEXT_GRANT";
 const SPACE_CONTEXT_GRANT_TTL_SECONDS: i64 = 60 * 60;
+pub(crate) const SPACE_MCP_TOOL_TIMEOUT_SECONDS: u64 = 60;
 static SPACE_MCP_LOG_WRITE_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
 #[cfg(not(test))]
 static ACTIVE_SPACE_CONTEXT_GRANT: OnceLock<Option<SpaceContextGrant>> = OnceLock::new();
@@ -51,6 +52,13 @@ pub(crate) struct SpaceMcpRequestContext {
     grant: Option<SpaceContextGrant>,
     backend_url: Option<String>,
     auth_token: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SpaceMcpClientConfig {
+    pub(crate) url: String,
+    pub(crate) headers: BTreeMap<String, String>,
+    pub(crate) context_bound: bool,
 }
 
 impl SpaceMcpRequestContext {
@@ -77,6 +85,54 @@ impl SpaceMcpRequestContext {
     fn grant(&self) -> Option<&SpaceContextGrant> {
         self.grant.as_ref()
     }
+}
+
+pub(crate) fn space_mcp_client_config(
+    request: &ExecutionRequest,
+) -> Result<SpaceMcpClientConfig, String> {
+    let endpoint = super::mcp_http::space_mcp_http_endpoint()
+        .ok_or_else(|| "project-space MCP endpoint is not ready".to_owned())?;
+    let grant = encoded_space_context_grant(request);
+    let mut headers = BTreeMap::from([(
+        "Authorization".to_owned(),
+        format!("Bearer {}", endpoint.token),
+    )]);
+    if let Some(grant) = grant.as_deref() {
+        headers.insert("X-Wework-Space-Context-Grant".to_owned(), grant.to_owned());
+    }
+    if let Some(backend_url) = request
+        .backend_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| env::var("WEGENT_BACKEND_URL").ok())
+        .filter(|value| !value.trim().is_empty())
+    {
+        headers.insert(
+            "X-Wework-Space-Backend-Url".to_owned(),
+            backend_url.trim().to_owned(),
+        );
+    }
+    if let Some(auth_token) = request
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| env::var("WEGENT_AUTH_TOKEN").ok())
+        .filter(|value| !value.trim().is_empty())
+    {
+        headers.insert(
+            "X-Wework-Space-Backend-Token".to_owned(),
+            auth_token.trim().to_owned(),
+        );
+    }
+    Ok(SpaceMcpClientConfig {
+        url: endpoint.url,
+        headers,
+        context_bound: grant.is_some(),
+    })
 }
 
 pub fn is_space_mcp_command() -> bool {

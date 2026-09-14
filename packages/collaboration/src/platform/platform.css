@@ -11,6 +11,8 @@
   height: 100%;
   min-height: 0;
   font-family: inherit;
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-ui);
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-base));
 }
@@ -318,10 +320,6 @@
   cursor: pointer;
 }
 
-.collaboration-workspace-row.has-actions .collaboration-workspace-toggle {
-  right: 32px;
-}
-
 .collaboration-workspace-toggle:hover {
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-hover));
@@ -342,7 +340,7 @@
   position: absolute;
   z-index: 2;
   top: 1px;
-  right: 4px;
+  right: 32px;
   width: 28px;
   height: 28px;
   flex: 0 0 28px;
@@ -506,6 +504,36 @@
   margin: 6px 0 0;
   color: rgb(var(--color-text-muted));
   font-size: 14px;
+}
+
+.collaboration-platform-page-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.collaboration-platform-secondary-button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 9px;
+  padding: 0 12px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
+  cursor: pointer;
+}
+
+.collaboration-platform-secondary-button:hover {
+  background: rgb(var(--color-bg-hover));
+}
+
+.collaboration-platform-secondary-button > svg {
+  width: 15px;
+  height: 15px;
 }
 
 .collaboration-platform-search {
@@ -1111,6 +1139,9 @@
 
 .collaboration-resource-heading h2 {
   margin-bottom: 4px;
+  font-size: var(--text-heading-sm);
+  font-weight: 500;
+  line-height: 1.33;
 }
 
 .collaboration-resource-heading p,
@@ -1956,6 +1987,11 @@
   }
 
   .collaboration-platform-page-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .collaboration-platform-page-actions {
     align-items: stretch;
     flex-direction: column;
   }

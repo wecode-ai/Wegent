@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    LoopItemTaskBinding,
     ProjectChatAgent,
     loop_datetime_value_is_unset,
 )
@@ -83,7 +84,7 @@ def _make_execution(db: Session, user: User):
     return execution
 
 
-def test_device_pull_claims_and_fences_cloud_execution(
+def test_device_pull_claims_without_recording_unconfirmed_delivery(
     test_db: Session,
     test_user: User,
 ) -> None:
@@ -140,7 +141,183 @@ def test_device_pull_claims_and_fences_cloud_execution(
     assert result["task"]["runtime_task_id"] == f"codex-queue-{execution.id}"
     test_db.refresh(execution)
     assert execution.status == "claimed"
+    assert loop_datetime_value_is_unset(execution.start_requested_at)
+    binding = (
+        test_db.query(LoopItemTaskBinding)
+        .filter(
+            LoopItemTaskBinding.loop_item_id == execution.loop_item_id,
+            LoopItemTaskBinding.task_id == f"codex-queue-{execution.id}",
+        )
+        .one()
+    )
+    assert binding.device_id == "cloud-device"
+
+
+def test_device_pull_records_delivery_only_after_runtime_acceptance(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    from app.services.loop_item_executions.device_pull import (
+        _claim_execution,
+        acknowledge_execution,
+    )
+
+    execution = _make_execution(test_db, test_user)
+
+    @contextmanager
+    def _test_session():
+        yield test_db
+
+    with (
+        patch(
+            "app.services.loop_item_executions.device_pull.get_db_session",
+            _test_session,
+        ),
+        patch(
+            "app.services.loop_item_executions.device_pull."
+            "validate_runtime_capacity_observation_sync",
+            return_value=RuntimeCapacity(
+                runtime_instance_id="runtime-1",
+                limit=1,
+                active=0,
+                active_task_ids=frozenset(),
+                queued=0,
+            ),
+        ),
+        patch(
+            "app.services.loop_item_executions.device_pull."
+            "loop_item_execution_service.build_executor_runtime_payload",
+            return_value={
+                "executionRequest": {
+                    "prompt": "Build the calculator.",
+                }
+            },
+        ),
+    ):
+        pulled = _claim_execution(
+            owner_user_id=test_user.id,
+            execution_target_id="cloud-device",
+            runtime_device_id="cloud-device",
+            runtime_instance_id="runtime-1",
+            environment="cloud",
+            runtime_capacity={
+                "limit": 1,
+                "active": 0,
+                "active_task_ids": [],
+                "queued": 0,
+            },
+        )
+        test_db.refresh(execution)
+        assert loop_datetime_value_is_unset(execution.start_requested_at)
+
+        acknowledged = acknowledge_execution(
+            owner_user_id=test_user.id,
+            runtime_device_id="cloud-device",
+            runtime_instance_id="runtime-1",
+            execution_id=execution.id,
+            runtime_task_id=pulled["task"]["runtime_task_id"],
+            accepted=True,
+            prompt=pulled["task"]["prompt"],
+            error=None,
+        )
+
+    assert acknowledged == {"success": True}
+    test_db.refresh(execution)
     assert not loop_datetime_value_is_unset(execution.start_requested_at)
+    assert execution.observed_state == "accepted"
+
+
+def test_device_pull_redelivers_same_unconfirmed_claim_before_new_work(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    from app.services.loop_item_executions.device_pull import _claim_execution
+
+    first = _make_execution(test_db, test_user)
+    first_item = test_db.get(LoopItem, first.loop_item_id)
+    first_agent = test_db.get(ProjectChatAgent, first.agent_id)
+    assert first_item is not None
+    assert first_agent is not None
+    second_item = LoopItem(
+        id=f"T{uuid.uuid4().hex[:10]}",
+        cloud_project_id=first_item.cloud_project_id,
+        title="Run me second",
+        description="Build the calculator again.",
+        status="inbox",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add(second_item)
+    test_db.commit()
+    second = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=second_item.id,
+        cloud_project_id=second_item.cloud_project_id,
+        agent=first_agent,
+        assigner_user_id=test_user.id,
+        environment="cloud",
+        execution_device_id="cloud-device",
+        priority="medium",
+    )
+    test_db.commit()
+
+    @contextmanager
+    def _test_session():
+        yield test_db
+
+    capacity = RuntimeCapacity(
+        runtime_instance_id="runtime-1",
+        limit=1,
+        active=0,
+        active_task_ids=frozenset(),
+        queued=0,
+    )
+    with (
+        patch(
+            "app.services.loop_item_executions.device_pull.get_db_session",
+            _test_session,
+        ),
+        patch(
+            "app.services.loop_item_executions.device_pull."
+            "validate_runtime_capacity_observation_sync",
+            return_value=capacity,
+        ),
+        patch(
+            "app.services.loop_item_executions.device_pull."
+            "loop_item_execution_service.build_executor_runtime_payload",
+            side_effect=lambda _db, execution, **_kwargs: {
+                "executionRequest": {"prompt": execution.loop_item_id}
+            },
+        ),
+    ):
+        first_pull = _claim_execution(
+            owner_user_id=test_user.id,
+            execution_target_id="cloud-device",
+            runtime_device_id="cloud-device",
+            runtime_instance_id="runtime-1",
+            environment="cloud",
+            runtime_capacity=None,
+        )
+        repeated_pull = _claim_execution(
+            owner_user_id=test_user.id,
+            execution_target_id="cloud-device",
+            runtime_device_id="cloud-device",
+            runtime_instance_id="runtime-1",
+            environment="cloud",
+            runtime_capacity=None,
+        )
+
+    assert first_pull["task"]["execution_id"] == first.id
+    assert repeated_pull["task"]["execution_id"] == first.id
+    assert (
+        repeated_pull["task"]["runtime_task_id"]
+        == first_pull["task"]["runtime_task_id"]
+    )
+    test_db.refresh(first)
+    test_db.refresh(second)
+    assert first.status == "claimed"
+    assert loop_datetime_value_is_unset(first.start_requested_at)
+    assert second.status == "queued"
 
 
 def test_periodic_scan_does_not_dispatch_runtime_work(

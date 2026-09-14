@@ -40,6 +40,10 @@ from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import LoopItemAssign
 from app.schemas.runtime_profile import RuntimeProfileCreate
 from app.services.board_team_execution import dispatch_board_robot_execution
+from app.services.issue_execution_configuration import (
+    execution_context,
+    project_robot_execution_config,
+)
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.loop_item_executions.profile import WeworkExecutionProfile
 from app.services.loop_item_executions.service import (
@@ -2060,6 +2064,61 @@ def test_approve_accepts_complete_issue_runtime_without_profile(
     assert approved.approval_status == "approved"
 
 
+def test_inherited_stage_pins_queue_to_predecessor_runtime_device(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    _ensure_device(test_db, test_user, "predecessor-device")
+    _ensure_device(test_db, test_user, "agent-default-device")
+
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="cloud",
+        execution_device_id="agent-default-device",
+        priority="medium",
+        automation_context={
+            "runtime_source": "issue_snapshot",
+            "execution_device_id": "agent-default-device",
+            "model": "test-model",
+            "model_type": "runtime",
+            "model_options": {},
+            "workspace_binding": {"type": "standalone"},
+            "workflow_stage_input": {
+                "target_stage": {
+                    "id": "review",
+                    "workspace_policy": "inherit",
+                },
+                "dependencies": [
+                    {
+                        "stage_id": "implement",
+                        "runtime_tasks": [
+                            {
+                                "device_id": "predecessor-device",
+                                "task_id": "previous-runtime-task",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+    test_db.commit()
+
+    assert execution.execution_device_id == "predecessor-device"
+    assert execution.runtime_request["deviceId"] == "predecessor-device"
+    assert execution.runtime_request["workspaceSourceTask"] == {
+        "deviceId": "predecessor-device",
+        "taskId": "previous-runtime-task",
+    }
+
+
 def test_claimed_run_builds_runtime_payload_for_executor(
     test_db: Session, test_user: User
 ) -> None:
@@ -2121,7 +2180,7 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     assert execution_request["task_id"]
     assert execution_request["bot"][0]["id"] == bot.id
     assert "system_prompt" not in execution_request["bot"][0]
-    assert "system_prompt" not in execution_request
+    assert execution_request["system_prompt"] == "Verify before reporting completion."
     assert "Build the landing page" not in execution_request["prompt"]
     assert "Create three subtasks for testing." not in execution_request["prompt"]
     visible_prompt = (
@@ -2129,8 +2188,7 @@ def test_claimed_run_builds_runtime_payload_for_executor(
         f"task_id: {item.id}\n"
         f"execution_id: {claimed.id}\n\n"
         f"看板任务数据位于 cloud://projects/{project.id}/todos/{item.id}，"
-        "请通过看板工具自行查看。\n\n"
-        "Verify before reporting completion."
+        "请通过看板工具自行查看。"
     )
     assert execution_request["prompt"].endswith(visible_prompt)
     assert "projectSpaceCapability" in execution_request["prompt"]
@@ -2153,6 +2211,143 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     assert "ephemeral" not in payload
     assert "continuable" not in payload
     assert payload["runtime"] == "codex"
+
+
+@pytest.mark.parametrize(
+    ("runtime", "shell_type"),
+    [
+        ("codex", "Codex"),
+        ("claude_code", "ClaudeCode"),
+    ],
+)
+def test_project_agent_runtime_and_capabilities_reach_runtime_request(
+    test_db: Session,
+    test_user: User,
+    runtime: str,
+    shell_type: str,
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    bot.metadata_json = {
+        **dict(bot.metadata_json or {}),
+        "runtime": runtime,
+        "system_prompt": "Use the configured project capabilities.",
+        "additional_skills": [
+            {"name": "project-review", "namespace": "default"},
+        ],
+        "mcp_servers": {
+            "repo": {
+                "command": "node",
+                "args": ["repo-server.mjs"],
+            }
+        },
+    }
+    test_db.commit()
+    item = _make_item(test_db, project, test_user)
+
+    config = project_robot_execution_config(test_db, bot)
+    assert config.runtime == runtime
+    assert config.system_prompt == "Use the configured project capabilities."
+    assert config.additional_skills == [
+        {"name": "project-review", "namespace": "default"}
+    ]
+    assert config.mcp_servers == {
+        "repo": {
+            "command": "node",
+            "args": ["repo-server.mjs"],
+        }
+    }
+    context = execution_context(
+        config,
+        runtime_subject_user_id=test_user.id,
+    )
+
+    request = WeworkExecutionProfile.for_project_robot(bot).build_runtime_request(
+        test_db,
+        execution_id=321,
+        runtime_task_id=f"{runtime}-runtime-task",
+        task=TaskContext(
+            id=item.id,
+            cloud_project_id=str(project.id),
+            title=item.title,
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context=context,
+        execution_device_id="cloud-device-1",
+    )
+
+    assert request.runtime == runtime
+    assert request.project_instructions == "Use the configured project capabilities."
+    assert request.additional_skills == [
+        {"name": "project-review", "namespace": "default"}
+    ]
+    assert request.bot == [
+        {
+            "id": bot.id,
+            "name": "Execution Bot",
+            "shell_type": shell_type,
+            "mcp_servers": [
+                {
+                    "name": "repo",
+                    "command": "node",
+                    "args": ["repo-server.mjs"],
+                }
+            ],
+        }
+    ]
+
+
+def test_claude_code_project_agent_compiles_executor_payload(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    bot.metadata_json = {
+        **dict(bot.metadata_json or {}),
+        "runtime": "claude_code",
+        "model": "test-model",
+        "additional_skills": [{"name": "project-review"}],
+        "mcp_servers": {
+            "repo": {
+                "command": "node",
+                "args": ["repo-server.mjs"],
+            }
+        },
+    }
+    test_db.commit()
+    item = _make_item(test_db, project, test_user)
+    config = project_robot_execution_config(test_db, bot)
+    execution = _make_execution(
+        test_db,
+        item,
+        bot,
+        test_user,
+        automation_context=execution_context(
+            config,
+            runtime_subject_user_id=test_user.id,
+        ),
+    )
+
+    payload = loop_item_execution_service.build_runtime_payload(
+        test_db,
+        execution=execution,
+    )
+
+    assert payload["runtime"] == "claude_code"
+    execution_request = payload["executionRequest"]
+    assert execution_request["bot"][0]["shell_type"] == "ClaudeCode"
+    assert execution_request["bot"][0]["mcp_servers"] == [
+        {
+            "name": "repo",
+            "command": "node",
+            "args": ["repo-server.mjs"],
+        }
+    ]
+    assert execution_request["preload_skills"] == [{"name": "project-review"}]
 
 
 def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project(
@@ -5354,8 +5549,7 @@ async def test_wegent_runtime_activation_uses_exact_execution_and_is_idempotent(
         f"task_id: {item.id}\n"
         f"execution_id: {execution.id}\n\n"
         f"看板任务数据位于 cloud://projects/{project.id}/todos/{item.id}，"
-        "请通过看板工具自行查看。\n\n"
-        "Robot-defined execution prompt."
+        "请通过看板工具自行查看。"
     )
 
 

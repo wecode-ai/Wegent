@@ -11,6 +11,7 @@ import {
   CollaborationApp,
   CollaborationPlatformApp,
   collaborationTestIds,
+  mapAutomationExecutionCatalog,
   toSharedIssueDetailTaskBinding,
   type CollaborationMember,
   type CollaborationGroup,
@@ -24,7 +25,13 @@ import {
   type WorkspaceAutomationRule,
   type WorkspaceTaskBinding,
 } from '@wegent/collaboration'
-import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
+import {
+  DEFAULT_WORK_ITEM_PROJECT_ID,
+  isDefaultWorkItemProject,
+  type CloudLoopItem,
+  type CloudProject,
+  type LoopItemTaskBinding,
+} from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
@@ -36,6 +43,8 @@ import {
   createWeworkAutomationSharedWorkspaceApi,
   createWeworkDeliverySharedWorkspaceApi,
 } from '@/features/collaboration'
+import { weworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import type {
@@ -159,7 +168,10 @@ export function createLocalWorkspaceApi(
     current_user_id: userId,
     current_user_name: userName,
   })
-  const projects = async () => (await delivery.projects.list()).map(decorateProject)
+  const projects = async () =>
+    (await delivery.projects.list())
+      .filter(project => !isDefaultWorkItemProject(project as CloudProject))
+      .map(decorateProject)
   const executionEnvironments = async () => {
     const devices = await detailServices?.deviceApi.listDevices()
     const now = new Date().toISOString()
@@ -325,6 +337,17 @@ export function createLocalWorkspaceApi(
 
   return {
     ...(delivery as unknown as SharedWorkspaceApi),
+    automationExecutionCatalog: {
+      async load() {
+        const [devices, models, runtimeProfiles] = await Promise.all([
+          detailServices?.deviceApi.listDevices() ?? [],
+          detailServices?.modelApi.listModels() ?? { data: [] },
+          detailServices?.runtimeProfileApi?.list() ?? [],
+        ])
+        return mapAutomationExecutionCatalog({ items: devices }, models, runtimeProfiles)
+      },
+      loadPlugins: async () => [],
+    },
     automations: localAutomations,
     ...(automation.incomingHooks
       ? {
@@ -547,6 +570,20 @@ export function createLocalWorkspaceApi(
   }
 }
 
+function withoutDefaultWorkItemProject(api: SharedWorkspaceApi): SharedWorkspaceApi {
+  return {
+    ...api,
+    projects: {
+      ...api.projects,
+      async list(workspaceId) {
+        return (await api.projects.list(workspaceId)).filter(
+          project => !isDefaultWorkItemProject(project as CloudProject)
+        )
+      },
+    },
+  }
+}
+
 // eslint-disable-next-line react-refresh/only-export-components
 export function createWeworkPlatformApi(
   cloudApi: SharedWorkspaceApi | undefined,
@@ -565,8 +602,8 @@ export function createWeworkPlatformApi(
     localDetailServices,
     locale
   )
-  if (!localApi) return cloudApi ?? null
-  if (!cloudApi?.workspaces) return localApi
+  if (!localApi) return cloudApi ? withoutDefaultWorkItemProject(cloudApi) : null
+  if (!cloudApi?.workspaces) return withoutDefaultWorkItemProject(localApi)
 
   const isLocalWorkspace = (workspaceId: string | undefined) => workspaceId === LOCAL_WORKSPACE_ID
   const localProject = async (projectId: string) => {
@@ -579,7 +616,7 @@ export function createWeworkPlatformApi(
   const projectLocation = async (projectId: string) =>
     (await localProject(projectId)) ? 'local' : 'cloud'
 
-  return {
+  return withoutDefaultWorkItemProject({
     ...cloudApi,
     workspaces: {
       ...cloudApi.workspaces,
@@ -851,7 +888,7 @@ export function createWeworkPlatformApi(
         }
       },
     },
-  }
+  })
 }
 
 export function WeworkSharedProject({
@@ -889,6 +926,9 @@ export function WeworkSharedProject({
   userId: string | number
   workspace: CollaborationProjectRendererWorkspaceContext
 }) {
+  const cloudConnection = useOptionalCloudConnection()
+  const existingCloudAgentsAvailable =
+    cloudConnection.isConnected && Boolean(services.sharedWorkspaceApi)
   const [taskComposer, setTaskComposer] = useState<{
     address?: RuntimeTaskAddress
     issue: CollaborationIssue
@@ -976,13 +1016,28 @@ export function WeworkSharedProject({
         }))
         if (!next.issueId && focusedItemId) onFocusedItemHandled?.()
       },
+      projectAgentConfiguration: {
+        ...weworkProjectAgentConfigurationHost,
+        existingAgentSelection: existingCloudAgentsAvailable
+          ? undefined
+          : {
+              disabled: true,
+              description:
+                locale === 'zh-CN'
+                  ? '登录并连接云端后可选择已有智能体'
+                  : 'Sign in and connect to cloud to select an existing Agent',
+            },
+      },
     }),
     [
+      existingCloudAgentsAvailable,
       focusedItemId,
       location.issueId,
       location.projectView,
+      locale,
       onFocusedItemHandled,
       project.id,
+      project.project_store,
       setLocation,
       workspace.id,
     ]
@@ -1393,7 +1448,10 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       locale,
     ]
   )
-  const activeProject = props.activeProjectRef ?? null
+  const activeProject =
+    String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
+      ? null
+      : (props.activeProjectRef ?? null)
   const [location, setLocation] = useState<CollaborationPlatformLocation>(initialLocation)
   const [navigationSyncRevision, setNavigationSyncRevision] = useState(0)
   const startupReadySent = useRef(false)

@@ -7,9 +7,10 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceProjectAgent } from "../ports/SharedWorkspaceApi";
 import type { CollaborationOwnedAgent } from "../types";
 import {
-  createCodexProjectAgentInput,
+  createLocalProjectAgentInput,
   createWegentProjectAgentInput,
   normalizeProjectAgent,
+  parseProjectAgentSkillRefs,
 } from "./model";
 
 const team: CollaborationOwnedAgent = {
@@ -48,7 +49,21 @@ describe("project agent configuration model", () => {
       executionDeviceId: "cloud-1",
       model: null,
       runtimeProfileId: null,
+      additionalSkills: [],
+      mcpServers: {},
     });
+  });
+
+  it("parses stable Skill namespace references from the standard form", () => {
+    expect(
+      parseProjectAgentSkillRefs(
+        "codex/wework-plugin-creator, project-space, platform/code-review",
+      ),
+    ).toEqual([
+      { name: "wework-plugin-creator", namespace: "codex" },
+      { name: "project-space", namespace: "default" },
+      { name: "code-review", namespace: "platform" },
+    ]);
   });
 
   it("creates the managed Wegent payload without execution environment fields", () => {
@@ -61,16 +76,31 @@ describe("project agent configuration model", () => {
 
   it("creates the Codex payload without an execution environment binding", () => {
     expect(
-      createCodexProjectAgentInput({
+      createLocalProjectAgentInput({
         name: " Codex 产品工程师 ",
+        runtime: "codex",
         capabilityDescription: " 实现产品需求 ",
+        model: "gpt-5.4",
+        modelType: "runtime",
+        modelOptions: { providerProfileId: "local" },
         systemPrompt: " 遵循项目规范 ",
+        additionalSkills: [{ name: "review", namespace: "default" }],
+        mcpServers: {
+          repo: { command: "node", args: ["server.mjs"] },
+        },
       }),
     ).toEqual({
       name: "Codex 产品工程师",
       runtime: "codex",
       capabilityDescription: "实现产品需求",
+      model: "gpt-5.4",
+      modelType: "runtime",
+      modelOptions: { providerProfileId: "local" },
       systemPrompt: "遵循项目规范",
+      additionalSkills: [{ name: "review", namespace: "default" }],
+      mcpServers: {
+        repo: { command: "node", args: ["server.mjs"] },
+      },
     });
   });
 });

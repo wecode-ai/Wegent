@@ -30,11 +30,14 @@ def publish_loop_item_changed(
 ) -> None:
     """Notify every known project viewer without coupling persistence to sockets."""
 
+    project_id = str(item.cloud_project_id)
+    item_id = str(item.id)
+    item_version = int(item.version)
     recipient_ids = {actor_user_id, int(item.created_by_user_id or 0)}
     recipient_ids.update(
         int(value)
         for (value,) in db.query(LoopItemCollaborator.user_id)
-        .filter(LoopItemCollaborator.loop_item_id == item.id)
+        .filter(LoopItemCollaborator.loop_item_id == item_id)
         .all()
         if value
     )
@@ -45,7 +48,7 @@ def publish_loop_item_changed(
             ResourceMember.resource_type.in_(
                 (ResourceType.CLOUD_PROJECT.value, ResourceType.CLOUD_PROJECT.name)
             ),
-            ResourceMember.resource_id == item.cloud_project_id,
+            ResourceMember.resource_id == project_id,
             ResourceMember.entity_type == "user",
             ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
         )
@@ -66,9 +69,9 @@ def publish_loop_item_changed(
         from app.core.socketio import get_sio
 
         payload = {
-            "projectId": str(item.cloud_project_id),
-            "itemId": item.id,
-            "version": item.version,
+            "projectId": project_id,
+            "itemId": item_id,
+            "version": item_version,
             "reason": reason,
         }
         for user_id in recipient_ids:
@@ -84,7 +87,7 @@ def publish_loop_item_changed(
         future.add_done_callback(_log_emit_failure)
     except Exception:
         logger.warning(
-            "Failed to schedule loop-item invalidation item=%s", item.id, exc_info=True
+            "Failed to schedule loop-item invalidation item=%s", item_id, exc_info=True
         )
 
 

@@ -58,15 +58,7 @@ describe("createSharedWorkspaceHttpApi", () => {
       created_at: "2026-09-14T00:00:00Z",
       updated_at: "2026-09-14T00:00:00Z",
     };
-    get.mockResolvedValueOnce({ items: [group] }).mockResolvedValueOnce([
-      {
-        id: "run-1",
-        project_id: "project/1",
-        automation_id: "automation-1",
-        status: "running",
-        created_at: "2026-09-14T00:00:00Z",
-      },
-    ]);
+    get.mockResolvedValueOnce({ items: [group] });
     post.mockResolvedValue(group);
     const api = createSharedWorkspaceHttpApi(transport);
 
@@ -79,28 +71,7 @@ describe("createSharedWorkspaceHttpApi", () => {
       leader: { kind: "human", id: "8" },
       members: [{ kind: "human", id: "8" }],
       coordinationMode: "manager",
-      policy: {
-        prompt: "",
-        triggerType: "manual",
-        eventType: null,
-        eventConfig: {},
-        cronExpression: null,
-        timezone: "Asia/Shanghai",
-        issueSelector: {},
-        outputPolicy: {},
-        enabled: true,
-      },
     });
-    await expect(
-      api.projects.listCollaborationGroupRuns?.("project/1", "group/1"),
-    ).resolves.toMatchObject([
-      {
-        id: "run-1",
-        projectId: "project/1",
-        automationId: "automation-1",
-        createdAt: "2026-09-14T00:00:00Z",
-      },
-    ]);
     await api.projects.removeCollaborationGroup?.("project/1", "group/1");
 
     expect(post).toHaveBeenNthCalledWith(
@@ -116,10 +87,6 @@ describe("createSharedWorkspaceHttpApi", () => {
     );
     expect(remove).toHaveBeenCalledWith(
       "/v1/cloud-projects/project%2F1/collaboration-groups/group%2F1",
-    );
-    expect(get).toHaveBeenNthCalledWith(
-      2,
-      "/v1/cloud-projects/project%2F1/collaboration-groups/group%2F1/runs",
     );
   });
 

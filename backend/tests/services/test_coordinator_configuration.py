@@ -74,6 +74,33 @@ def test_managed_coordinator_accepts_no_custom_configuration():
     issue_execution_configuration.require_coordinator_execution_config(None)
 
 
+def test_workflow_execution_config_merges_runtime_capabilities():
+    base = WorkflowExecutionConfig(
+        runtime="codex",
+        system_prompt="Base instructions",
+        additional_skills=[{"name": "base"}],
+        mcp_servers={"base": {"command": "base"}},
+    )
+    override = WorkflowExecutionConfig(
+        runtime="claude_code",
+        system_prompt="Review instructions",
+        additional_skills=[],
+        mcp_servers={"review": {"command": "review"}},
+    )
+
+    merged = base.merged_with(override)
+
+    assert merged.runtime == "claude_code"
+    assert merged.system_prompt == "Review instructions"
+    assert merged.additional_skills == []
+    assert merged.mcp_servers == {"review": {"command": "review"}}
+    assert merged.runtime_request_options()["runtime"] == "claude_code"
+    assert merged.runtime_request_options()["system_prompt"] == "Review instructions"
+    assert merged.runtime_request_options()["mcp_servers"] == {
+        "review": {"command": "review"}
+    }
+
+
 def test_project_default_rejects_profile_without_model(monkeypatch):
     service = runtime_profiles.runtime_profile_service
     monkeypatch.setattr(runtime_profiles, "require_cloud_project_role", MagicMock())

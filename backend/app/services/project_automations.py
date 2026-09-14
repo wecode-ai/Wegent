@@ -33,8 +33,12 @@ from app.schemas.project_automation import (
 )
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
-from app.services.loop_item_executions.service import loop_item_execution_service
+from app.services.loop_item_executions.service import (
+    ACTIVE_STATUSES,
+    loop_item_execution_service,
+)
 from app.services.project_automation_domain import (
+    ACTIVE_RUN_STATUSES,
     ProjectAutomationEvent,
     assignment_mode,
     integer,
@@ -732,7 +736,9 @@ class ProjectAutomationService:
         run = self._create_run(db, rule, "manual", utcnow())
         await project_automation_execution.dispatch(db, rule, run)
         return self._run_view(
-            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+            run,
+            str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
+            _metadata(rule),
         )
 
     async def run_for_workflow_node(
@@ -751,6 +757,7 @@ class ProjectAutomationService:
         )
         if item is None or str(item.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+        self._require_active_workflow_root(db, item)
         workflow = (
             item.metadata_json.get("workflow")
             if isinstance(item.metadata_json, dict)
@@ -824,7 +831,9 @@ class ProjectAutomationService:
         db.refresh(run)
         await project_automation_execution.dispatch(db, rule, run)
         return self._run_view(
-            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+            run,
+            str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
+            _metadata(rule),
         )
 
     async def run_ai_workflow_manager(
@@ -876,6 +885,7 @@ class ProjectAutomationService:
         return self._run_view(
             run,
             str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
+            _metadata(rule),
         )
 
     @staticmethod
@@ -887,6 +897,22 @@ class ProjectAutomationService:
         if not isinstance(binding, dict):
             return None
         return text(binding.get("run_id")) or None
+
+    @classmethod
+    def _require_active_workflow_root(cls, db: Session, item: LoopItem) -> None:
+        parent_run_id = cls._workflow_parent_run_id(item)
+        if not parent_run_id:
+            return
+        parent_run = db.get(ProjectAutomationRun, parent_run_id)
+        if parent_run is None:
+            return
+        if parent_run.status == "cancelled" or _metadata(parent_run).get(
+            "workflow_cancellation_requested"
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Workflow automation run is cancelled",
+            )
 
     async def run_direct_workflow_node(
         self,
@@ -904,6 +930,7 @@ class ProjectAutomationService:
         )
         if item is None or str(item.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+        self._require_active_workflow_root(db, item)
         workflow = (
             item.metadata_json.get("workflow")
             if isinstance(item.metadata_json, dict)
@@ -1012,20 +1039,39 @@ class ProjectAutomationService:
             "workflow_stage_input": run_metadata.get("workflow_stage_input"),
             **execution_config.runtime_request_options(),
         }
-        execution = loop_item_execution_service.enqueue_generic_robot(
-            db,
-            loop_item_id=str(item.id),
-            cloud_project_id=str(project_id),
-            runtime_subject_user_id=runtime_subject_user_id,
-            runtime_profile=runtime_profile,
-            execution_device_id=execution_config.execution_device_id,
-            model=execution_config.model,
-            model_type=execution_config.model_type,
-            model_options=execution_config.model_options,
-            assigner_user_id=user_id,
-            priority=item.priority or "medium",
-            automation_context=context,
-        )
+        if execution_config.agent_id:
+            agent = project_agent(
+                db,
+                str(project_id),
+                execution_config.agent_id,
+            )
+            execution = loop_item_execution_service.create_for_assignment(
+                db,
+                loop_item_id=str(item.id),
+                cloud_project_id=str(project_id),
+                agent=agent,
+                assigner_user_id=user_id,
+                environment="local",
+                execution_device_id=execution_config.execution_device_id,
+                priority=item.priority or "medium",
+                automation_context=context,
+                instruction=str(node.get("prompt") or ""),
+            )
+        else:
+            execution = loop_item_execution_service.enqueue_generic_robot(
+                db,
+                loop_item_id=str(item.id),
+                cloud_project_id=str(project_id),
+                runtime_subject_user_id=runtime_subject_user_id,
+                runtime_profile=runtime_profile,
+                execution_device_id=execution_config.execution_device_id,
+                model=execution_config.model,
+                model_type=execution_config.model_type,
+                model_options=execution_config.model_options,
+                assigner_user_id=user_id,
+                priority=item.priority or "medium",
+                automation_context=context,
+            )
         run.device_id = execution.execution_device_id
         run.status = (
             "waiting_device" if execution.status == "waiting_runtime" else "queued"
@@ -1086,7 +1132,9 @@ class ProjectAutomationService:
         except AutomationRunNotRetryable as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         return self._run_view(
-            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+            run,
+            str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
+            _metadata(rule),
         )
 
     def list_runs(
@@ -1147,7 +1195,10 @@ class ProjectAutomationService:
                 .all()
             )
             visible_rows = [row for row in rows if self._is_visible_run(row)][:100]
-        return [self._run_view(row, timezone_name) for row in visible_rows]
+        rule_metadata = _metadata(rule)
+        return [
+            self._run_view(row, timezone_name, rule_metadata) for row in visible_rows
+        ]
 
     async def cancel_run(
         self, db: Session, project_id: str, run_id: str, user_id: int
@@ -1156,6 +1207,53 @@ class ProjectAutomationService:
         run = db.get(ProjectAutomationRun, run_id)
         if run is None or str(run.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation run not found")
+        if self._is_workflow_root_run(db, run):
+            run_metadata = _metadata(run)
+            if not run_metadata.get("workflow_cancellation_requested"):
+                run.metadata_json = {
+                    **run_metadata,
+                    "workflow_cancellation_requested": True,
+                }
+                run.version += 1
+                db.commit()
+            processed_child_ids: set[str] = set()
+            while True:
+                children = [
+                    child
+                    for child in self._workflow_child_runs(db, run)
+                    if str(child.id) not in processed_child_ids
+                ]
+                if not children:
+                    break
+                for child in children:
+                    processed_child_ids.add(str(child.id))
+                    if child.status in ACTIVE_RUN_STATUSES:
+                        await self._cancel_single_run(db, child)
+            db.expire_all()
+            run = db.get(ProjectAutomationRun, run_id)
+            if run is None:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, "Automation run not found"
+                )
+            if run.status in ACTIVE_RUN_STATUSES:
+                await self._cancel_single_run(db, run)
+                db.expire_all()
+                run = db.get(ProjectAutomationRun, run_id)
+                if run is None:
+                    raise HTTPException(
+                        status.HTTP_404_NOT_FOUND, "Automation run not found"
+                    )
+            if run.status != "cancelled":
+                self._finish_cancelled_run(db, run)
+            return self._run_view_from_db(db, run)
+        return await self._cancel_single_run(db, run)
+
+    async def _cancel_single_run(
+        self,
+        db: Session,
+        run: ProjectAutomationRun,
+    ) -> dict:
+        run_id = str(run.id)
         if loop_item_execution_service.reconcile_automation_run_projection(
             db, run_id=run_id
         ):
@@ -1165,32 +1263,12 @@ class ProjectAutomationService:
                 raise HTTPException(
                     status.HTTP_404_NOT_FOUND, "Automation run not found"
                 )
-            rule = (
-                db.get(ProjectAutomationRule, run.parent_id)
-                if run.parent_id is not None
-                else None
-            )
-            timezone_name = (
-                str(_metadata(rule).get("timezone") or "Asia/Shanghai")
-                if rule is not None
-                else "Asia/Shanghai"
-            )
-            return self._run_view(run, timezone_name)
-        if run.status not in {"pending", "queued", "waiting_device", "running"}:
+            return self._run_view_from_db(db, run)
+        if run.status not in ACTIVE_RUN_STATUSES:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Automation run cannot be cancelled"
             )
 
-        rule = (
-            db.get(ProjectAutomationRule, run.parent_id)
-            if run.parent_id is not None
-            else None
-        )
-        timezone_name = (
-            str(_metadata(rule).get("timezone") or "Asia/Shanghai")
-            if rule is not None
-            else "Asia/Shanghai"
-        )
         # An AI-managed run may retain the manager's Backend Task id after the
         # manager has selected a project robot. The selected robot is then the
         # only active executor, so always stop the active Wework execution
@@ -1199,15 +1277,7 @@ class ProjectAutomationService:
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.automation_run_id == str(run.id),
-                LoopItemExecution.status.in_(
-                    [
-                        "pending_approval",
-                        "queued",
-                        "claimed",
-                        "running",
-                        "cancel_requested",
-                    ]
-                ),
+                LoopItemExecution.status.in_(ACTIVE_STATUSES),
             )
             .order_by(LoopItemExecution.id.desc())
             .first()
@@ -1234,7 +1304,7 @@ class ProjectAutomationService:
                         "Runtime did not confirm cancellation",
                     )
             db.refresh(run)
-            return self._run_view(run, timezone_name)
+            return self._run_view_from_db(db, run)
 
         if run.backend_task_id:
             from app.services.project_automation_managed_execution import (
@@ -1263,8 +1333,28 @@ class ProjectAutomationService:
                 raise HTTPException(
                     status.HTTP_404_NOT_FOUND, "Automation run not found"
                 )
-            return self._run_view(run, timezone_name)
+            return self._run_view_from_db(db, run)
 
+        self._finish_cancelled_run(db, run)
+        return self._run_view_from_db(db, run)
+
+    @staticmethod
+    def _run_timezone(db: Session, run: ProjectAutomationRun) -> str:
+        rule = (
+            db.get(ProjectAutomationRule, run.parent_id)
+            if run.parent_id is not None
+            else None
+        )
+        return (
+            str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+            if rule is not None
+            else "Asia/Shanghai"
+        )
+
+    @staticmethod
+    def _finish_cancelled_run(db: Session, run: ProjectAutomationRun) -> None:
+        if run.status == "cancelled":
+            return
         run.status = "cancelled"
         run.version += 1
         from app.services.project_workflow_projection import (
@@ -1280,7 +1370,53 @@ class ProjectAutomationService:
         )
         db.commit()
         db.refresh(run)
-        return self._run_view(run, timezone_name)
+
+    @staticmethod
+    def _is_workflow_root_run(db: Session, run: ProjectAutomationRun) -> bool:
+        if not run.task_id or _metadata(run).get("workflow_parent_run_id"):
+            return False
+        item = db.get(LoopItem, str(run.task_id))
+        if item is None:
+            return False
+        item_metadata = (
+            item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        )
+        binding = item_metadata.get("workflow_automation")
+        return isinstance(binding, dict) and str(binding.get("run_id") or "") == str(
+            run.id
+        )
+
+    @staticmethod
+    def _workflow_child_runs(
+        db: Session,
+        root: ProjectAutomationRun,
+    ) -> list[ProjectAutomationRun]:
+        rows = (
+            db.query(ProjectAutomationRun)
+            .filter(
+                ProjectAutomationRun.cloud_project_id == root.cloud_project_id,
+                ProjectAutomationRun.task_id == root.task_id,
+                loop_datetime_is_unset(ProjectAutomationRun.deleted_at),
+            )
+            .order_by(ProjectAutomationRun.created_at, ProjectAutomationRun.id)
+            .all()
+        )
+        descendants: list[ProjectAutomationRun] = []
+        parent_ids = {str(root.id)}
+        remaining = [row for row in rows if str(row.id) != str(root.id)]
+        while remaining:
+            matched = [
+                row
+                for row in remaining
+                if str(_metadata(row).get("workflow_parent_run_id") or "") in parent_ids
+            ]
+            if not matched:
+                break
+            descendants.extend(matched)
+            parent_ids.update(str(row.id) for row in matched)
+            matched_ids = {str(row.id) for row in matched}
+            remaining = [row for row in remaining if str(row.id) not in matched_ids]
+        return descendants
 
     async def check_due(self, db: Session) -> int:
         now = utcnow()
@@ -1686,8 +1822,17 @@ class ProjectAutomationService:
     def _run_view(
         row: ProjectAutomationRun,
         fallback_timezone: str = "Asia/Shanghai",
+        rule_metadata: dict | None = None,
     ) -> dict:
         run_metadata = _metadata(row)
+        automation_metadata = rule_metadata or {}
+        trigger_type = text(automation_metadata.get("trigger_type")) or None
+        event = run_metadata.get("event")
+        event_type = (
+            text(event.get("type"))
+            if isinstance(event, dict)
+            else text(automation_metadata.get("event_type"))
+        )
         scheduled = run_metadata.get("scheduled_for")
         return {
             "id": row.id,
@@ -1711,7 +1856,31 @@ class ProjectAutomationService:
             "updated_at": _utc_aware(row.updated_at),
             "completed_at": _utc_aware(row.completed_at),
             "retryable": row.status == "failed",
+            "trigger_type": trigger_type,
+            "event_type": event_type or None,
+            "event_config": (
+                automation_metadata.get("event_config")
+                if trigger_type == "event"
+                else None
+            ),
         }
+
+    @classmethod
+    def _run_view_from_db(
+        cls,
+        db: Session,
+        row: ProjectAutomationRun,
+    ) -> dict:
+        rule = (
+            db.get(ProjectAutomationRule, row.parent_id)
+            if row.parent_id is not None
+            else None
+        )
+        return cls._run_view(
+            row,
+            cls._run_timezone(db, row),
+            _metadata(rule) if rule is not None else None,
+        )
 
     @staticmethod
     def _is_visible_run(row: ProjectAutomationRun) -> bool:

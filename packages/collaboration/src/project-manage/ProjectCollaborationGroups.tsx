@@ -33,24 +33,32 @@ export function ProjectCollaborationGroups({
   const [workspaceGroups, setWorkspaceGroups] = useState<CollaborationGroup[]>(
     [],
   );
+  const [availableAgents, setAvailableAgents] =
+    useState<CollaborationAgent[]>(agents);
 
   const reload = useCallback(async () => {
     if (!api.projects.listCollaborationGroups) {
       return;
     }
-    const [available, projectGroups] = await Promise.all([
+    const [available, projectGroups, projectAgents] = await Promise.all([
       workspaceId && api.workspaces?.listCollaborationGroups
         ? api.workspaces.listCollaborationGroups(workspaceId)
         : Promise.resolve([]),
       api.projects.listCollaborationGroups(projectId),
+      api.agents.list(projectId),
     ]);
     setWorkspaceGroups(available);
     setGroups(projectGroups);
+    setAvailableAgents(projectAgents);
   }, [api, projectId, workspaceId]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    setAvailableAgents(agents);
+  }, [agents]);
 
   const projectGroupIds = new Set(groups.map((group) => group.id));
 
@@ -61,7 +69,7 @@ export function ProjectCollaborationGroups({
         (group) => !projectGroupIds.has(group.id),
       )}
       members={members}
-      agents={agents}
+      agents={availableAgents}
       locale={locale}
       canManage={canManage}
       commands={{
@@ -73,10 +81,6 @@ export function ProjectCollaborationGroups({
           throw new Error("Project collaboration groups cannot update members");
         },
         removeMember: async () => undefined,
-        addAgent: async () => {
-          throw new Error("Project collaboration groups cannot add agents");
-        },
-        removeAgent: async () => undefined,
         async createCollaborationGroup(input) {
           if (!api.projects.createCollaborationGroup) {
             throw new Error("Project collaboration group API is unavailable");
@@ -136,12 +140,6 @@ export function ProjectCollaborationGroups({
           await api.projects.removeCollaborationGroup(projectId, groupId);
           await reload();
         },
-        addExecutionEnvironment: async () => {
-          throw new Error(
-            "Project collaboration groups cannot add execution environments",
-          );
-        },
-        removeExecutionEnvironment: async () => undefined,
       }}
     />
   );

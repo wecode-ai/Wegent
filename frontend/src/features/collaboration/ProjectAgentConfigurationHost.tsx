@@ -2,8 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
-
 import type { ProjectAgentConfigurationHost } from '@wegent/collaboration'
 import { Bot, Plus } from 'lucide-react'
 
@@ -74,7 +72,10 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
     return (
       <RadioGroup
         className="grid grid-cols-2 gap-2"
-        onValueChange={nextValue => onChange(nextValue as typeof value)}
+        onValueChange={nextValue => {
+          const option = options.find(candidate => candidate.value === nextValue)
+          if (!option?.disabled) onChange(nextValue as typeof value)
+        }}
         value={value}
       >
         {options.map(option => {
@@ -82,9 +83,14 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
           const selected = option.value === value
           return (
             <label
+              aria-disabled={option.disabled || undefined}
               className={cn(
                 simpleChoiceCardBaseClass,
-                selected ? simpleChoiceCardSelectedClass : simpleChoiceCardUnselectedClass
+                option.disabled
+                  ? 'cursor-not-allowed opacity-45'
+                  : selected
+                    ? simpleChoiceCardSelectedClass
+                    : simpleChoiceCardUnselectedClass
               )}
               data-testid={`${option.testId}-card`}
               key={option.value}
@@ -92,6 +98,7 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
               <RadioGroupItem
                 aria-label={option.label}
                 data-testid={option.testId}
+                disabled={option.disabled}
                 value={option.value}
               />
               <span className="min-w-0 flex-1">

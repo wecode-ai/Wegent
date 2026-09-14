@@ -225,17 +225,20 @@ where
         let client = self.client.clone();
         let runtime_work_handler = self.runtime_work_handler.clone();
         let runtime_pull_lock = Arc::clone(&self.runtime_pull_lock);
+        let runtime_pull_pending = Arc::clone(&self.runtime_pull_pending);
         Arc::new(move |_| {
             let client = client.clone();
             let runtime_work_handler = runtime_work_handler.clone();
             let runtime_pull_lock = Arc::clone(&runtime_pull_lock);
+            let runtime_pull_pending = Arc::clone(&runtime_pull_pending);
             Box::pin(async move {
                 if let Some(handler) = runtime_work_handler {
-                    tokio::spawn(poll_available_runtime_work(
+                    schedule_runtime_work_poll(
                         client,
                         handler,
                         runtime_pull_lock,
-                    ));
+                        runtime_pull_pending,
+                    );
                 }
                 Some(json!({"success": true}))
             })

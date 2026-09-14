@@ -13,26 +13,45 @@ import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationExecutionEnvironment,
   CollaborationProject,
+  CollaborationWorkspace,
 } from "../types";
+
+type ExecutionEnvironmentScope =
+  | {
+      project: Pick<
+        CollaborationProject,
+        "id" | "workspace_id" | "access_role"
+      >;
+      workspace?: never;
+    }
+  | {
+      project?: never;
+      workspace: Pick<CollaborationWorkspace, "id" | "access_role">;
+    };
 
 export function ProjectExecutionEnvironments({
   api,
   project,
   translate,
   onRegisterDevice,
+  workspace,
 }: {
   api: SharedWorkspaceApi;
-  project: Pick<CollaborationProject, "id" | "workspace_id" | "access_role">;
   translate: CollaborationTranslate;
   onRegisterDevice?: () => void;
-}) {
+} & ExecutionEnvironmentScope) {
+  const isWorkspaceScope = workspace != null;
+  const scopeId = workspace?.id ?? project!.id;
+  const testIdPrefix = isWorkspaceScope
+    ? "collaboration-workspace-execution-environment"
+    : "collaboration-project-execution-environment";
   const [workspaceItems, setWorkspaceItems] = useState<
     CollaborationExecutionEnvironment[]
   >([]);
   const [personalItems, setPersonalItems] = useState<
     CollaborationExecutionEnvironment[]
   >([]);
-  const [projectItems, setProjectItems] = useState<
+  const [assignedItems, setAssignedItems] = useState<
     CollaborationExecutionEnvironment[]
   >([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
@@ -42,27 +61,32 @@ export function ProjectExecutionEnvironments({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const accessRole = workspace?.access_role ?? project!.access_role;
   const canManage =
-    project.access_role === "Owner" || project.access_role === "Maintainer";
+    accessRole === "Owner" ||
+    accessRole === "Maintainer" ||
+    (isWorkspaceScope && accessRole === "Developer");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [projectEnvironments, personalResources, workspaceEnvironments] =
+      const [assignedEnvironments, personalResources, workspaceEnvironments] =
         await Promise.all([
-          api.projects.listExecutionEnvironments(project.id),
+          isWorkspaceScope
+            ? (api.workspaces?.listExecutionEnvironments(scopeId) ?? [])
+            : api.projects.listExecutionEnvironments(scopeId),
           api.resources?.list() ?? {
             agents: [],
             execution_environments: [],
           },
-          project.workspace_id && api.workspaces
+          !isWorkspaceScope && project.workspace_id && api.workspaces
             ? api.workspaces.listExecutionEnvironments(project.workspace_id)
             : [],
         ]);
       setWorkspaceItems(workspaceEnvironments);
       setPersonalItems(personalResources.execution_environments);
-      setProjectItems(projectEnvironments);
+      setAssignedItems(assignedEnvironments);
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -75,7 +99,7 @@ export function ProjectExecutionEnvironments({
     } finally {
       setLoading(false);
     }
-  }, [api, project.id, project.workspace_id, translate]);
+  }, [api, isWorkspaceScope, project?.workspace_id, scopeId, translate]);
 
   useEffect(() => {
     void load();
@@ -84,11 +108,11 @@ export function ProjectExecutionEnvironments({
   const selectedDeviceIds = useMemo(
     () =>
       new Set(
-        projectItems
+        assignedItems
           .map((environment) => environment.device_id)
           .filter((deviceId): deviceId is number => deviceId != null),
       ),
-    [projectItems],
+    [assignedItems],
   );
   const workspaceDeviceIds = useMemo(
     () =>
@@ -116,7 +140,7 @@ export function ProjectExecutionEnvironments({
   const matchesStatus = (environment: CollaborationExecutionEnvironment) =>
     statusFilter === "all" || environment.status === statusFilter;
   const visibleCandidates = candidates.filter(matchesStatus);
-  const visibleProjectItems = projectItems.filter(matchesStatus);
+  const visibleAssignedItems = assignedItems.filter(matchesStatus);
   const selectedCandidate = visibleCandidates.find(
     (environment) => String(environment.device_id) === selectedDeviceId,
   );
@@ -127,11 +151,10 @@ export function ProjectExecutionEnvironments({
     setSaving(true);
     setError("");
     try {
-      const created = await api.projects.addExecutionEnvironment(
-        project.id,
-        deviceId,
-      );
-      setProjectItems((current) => [...current, created]);
+      const created = isWorkspaceScope
+        ? await api.workspaces!.addExecutionEnvironment(scopeId, { deviceId })
+        : await api.projects.addExecutionEnvironment(scopeId, deviceId);
+      setAssignedItems((current) => [...current, created]);
       setSelectedDeviceId("");
     } catch (saveError) {
       setError(
@@ -154,11 +177,18 @@ export function ProjectExecutionEnvironments({
     setSaving(true);
     setError("");
     try {
-      await api.projects.removeExecutionEnvironment(
-        project.id,
-        environment.device_id,
-      );
-      setProjectItems((current) =>
+      if (isWorkspaceScope) {
+        await api.workspaces!.removeExecutionEnvironment(
+          scopeId,
+          environment.device_id,
+        );
+      } else {
+        await api.projects.removeExecutionEnvironment(
+          scopeId,
+          environment.device_id,
+        );
+      }
+      setAssignedItems((current) =>
         current.filter((item) => item.id !== environment.id),
       );
     } catch (saveError) {
@@ -181,12 +211,21 @@ export function ProjectExecutionEnvironments({
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-heading-lg font-semibold">
-              {translate("todo.project_execution_environments", "执行环境")}
+              {translate(
+                isWorkspaceScope
+                  ? "todo.workspace_execution_environments"
+                  : "todo.project_execution_environments",
+                "执行环境",
+              )}
             </h1>
             <p className="mt-1 text-sm text-text-muted">
               {translate(
-                "todo.project_execution_environments_description",
-                "管理项目可使用的设备池；自动处理和人工分配会在运行时从池中选择设备。",
+                isWorkspaceScope
+                  ? "todo.workspace_execution_environments_description"
+                  : "todo.project_execution_environments_description",
+                isWorkspaceScope
+                  ? "管理空间共享设备池；空间内项目可以复用这些设备，也可以直接添加自己的设备。"
+                  : "管理项目可使用的设备池；自动处理和人工分配会在运行时从池中选择设备。",
               )}
             </p>
           </div>
@@ -194,7 +233,7 @@ export function ProjectExecutionEnvironments({
             <button
               type="button"
               className="collaboration-secondary-button shrink-0"
-              data-testid="collaboration-project-execution-environment-register"
+              data-testid={`${testIdPrefix}-register`}
               onClick={onRegisterDevice}
             >
               {translate("todo.register_device", "注册设备")}
@@ -207,7 +246,7 @@ export function ProjectExecutionEnvironments({
             {translate("todo.execution_environment_status_filter", "设备状态")}
             <select
               className="h-9 rounded-lg border border-border bg-background px-3 text-sm"
-              data-testid="collaboration-project-execution-environment-status-filter"
+              data-testid={`${testIdPrefix}-status-filter`}
               value={statusFilter}
               onChange={(event) => {
                 setStatusFilter(event.target.value as typeof statusFilter);
@@ -233,7 +272,7 @@ export function ProjectExecutionEnvironments({
           <div className="mt-3 flex gap-2">
             <select
               className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm"
-              data-testid="collaboration-project-execution-environment-select"
+              data-testid={`${testIdPrefix}-select`}
               aria-label={translate(
                 "todo.select_workspace_execution_environment",
                 "选择执行环境",
@@ -267,7 +306,7 @@ export function ProjectExecutionEnvironments({
             <button
               type="button"
               className="collaboration-primary-button"
-              data-testid="collaboration-project-execution-environment-add"
+              data-testid={`${testIdPrefix}-add`}
               disabled={!selectedCandidate || saving}
               onClick={() => void addEnvironment()}
             >
@@ -284,32 +323,40 @@ export function ProjectExecutionEnvironments({
           ) : error ? (
             <div
               className="rounded-xl border border-red-200 bg-red-50 px-4 py-4 text-sm text-red-700"
-              data-testid="collaboration-project-execution-environments-error"
+              data-testid={`${testIdPrefix}s-error`}
               role="alert"
             >
               {error}
             </div>
-          ) : projectItems.length === 0 ? (
+          ) : assignedItems.length === 0 ? (
             <div className="rounded-xl bg-muted px-4 py-5">
               <p className="text-sm font-medium">
                 {translate(
-                  "todo.no_project_execution_environments",
-                  "项目设备池为空",
+                  isWorkspaceScope
+                    ? "todo.no_workspace_execution_environments"
+                    : "todo.no_project_execution_environments",
+                  isWorkspaceScope ? "空间设备池为空" : "项目设备池为空",
                 )}
               </p>
               <p className="mt-1 text-sm text-text-muted">
                 {availableItems.length === 0
                   ? translate(
-                      "todo.configure_project_environment",
+                      isWorkspaceScope
+                        ? "todo.configure_workspace_environment"
+                        : "todo.configure_project_environment",
                       "当前没有执行环境。请先在资源库添加本地设备或云主机。",
                     )
                   : translate(
-                      "todo.select_project_environment",
-                      "从我的资源或空间共享资源中选择设备，授权给这个项目使用。",
+                      isWorkspaceScope
+                        ? "todo.select_workspace_environment"
+                        : "todo.select_project_environment",
+                      isWorkspaceScope
+                        ? "从我的资源中选择设备，授权给这个空间共享使用。"
+                        : "从我的资源或空间共享资源中选择设备，授权给这个项目使用。",
                     )}
               </p>
             </div>
-          ) : visibleProjectItems.length === 0 ? (
+          ) : visibleAssignedItems.length === 0 ? (
             <p className="text-sm text-text-muted" role="status">
               {translate(
                 "todo.execution_environment_no_matches",
@@ -318,10 +365,10 @@ export function ProjectExecutionEnvironments({
             </p>
           ) : (
             <div className="space-y-2">
-              {visibleProjectItems.map((environment) => (
+              {visibleAssignedItems.map((environment) => (
                 <div
                   className="flex items-center rounded-xl border border-border px-4 py-3"
-                  data-testid={`collaboration-project-execution-environment-${environment.device_id}`}
+                  data-testid={`${testIdPrefix}-${environment.device_id}`}
                   key={environment.id}
                 >
                   <span className="min-w-0 flex-1">
@@ -333,8 +380,9 @@ export function ProjectExecutionEnvironments({
                         ? translate("todo.cloud_host", "云主机")
                         : translate("todo.local_device", "本地设备")}
                       {" · "}
-                      {environment.device_id != null &&
-                      workspaceDeviceIds.has(environment.device_id)
+                      {isWorkspaceScope ||
+                      (environment.device_id != null &&
+                        workspaceDeviceIds.has(environment.device_id))
                         ? translate("todo.workspace_shared", "空间共享")
                         : translate("todo.project_direct", "项目直接添加")}
                     </span>
@@ -349,7 +397,7 @@ export function ProjectExecutionEnvironments({
                     <button
                       type="button"
                       className="text-sm text-text-secondary hover:text-text-primary"
-                      data-testid={`collaboration-project-execution-environment-remove-${environment.device_id}`}
+                      data-testid={`${testIdPrefix}-remove-${environment.device_id}`}
                       disabled={saving}
                       onClick={() => void removeEnvironment(environment)}
                     >

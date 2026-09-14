@@ -23,7 +23,6 @@ interface CollaborationSettingsProps {
   onChange(project: CollaborationProject): void;
   onError(): void;
   onAgentsChange?(): void;
-  onCreateAgent?(): void;
   agentConfigurationHost?: ProjectAgentConfigurationHost;
   embedded?: boolean;
   translate: CollaborationTranslate;
@@ -74,7 +73,6 @@ export function CollaborationSettings({
   onChange,
   onError,
   onAgentsChange,
-  onCreateAgent,
   agentConfigurationHost,
   embedded = false,
   translate,
@@ -143,7 +141,6 @@ export function CollaborationSettings({
           project={project}
           onError={onError}
           onAgentsChange={onAgentsChange}
-          onCreateAgent={onCreateAgent}
           translate={translate}
         />
       )}

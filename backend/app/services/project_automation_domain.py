@@ -24,6 +24,13 @@ from app.services.share import team_share_service
 ASSIGNMENT_MODES = {"manual", "ai_managed"}
 MANAGER_TYPES = {"custom", "wegent"}
 TERMINAL_RUN_STATUSES = {"succeeded", "failed", "cancelled", "skipped"}
+ACTIVE_RUN_STATUSES = {
+    "pending",
+    "queued",
+    "waiting_runtime",
+    "waiting_device",
+    "running",
+}
 
 
 @dataclass(frozen=True)

@@ -685,7 +685,7 @@ class LoopItemExecutionService:
         )
         config = bot_config(agent)
         mode = str(config.get("execution_mode") or "auto")
-        runtime = str(config.get("runtime") or "codex")
+        runtime = str(config["runtime"])
         team_id = int(config["wegent_team_id"]) if runtime == "wegent" else None
         runtime_source = str(effective_context.get("runtime_source") or "agent_default")
         runtime_profile_id = effective_context.get("runtime_profile_id")
@@ -735,12 +735,25 @@ class LoopItemExecutionService:
         owner_user_id = int(
             runtime_profile.user_id if runtime_profile else runtime_subject_user_id
         )
+        from app.services.loop_item_executions.profile import (
+            inherited_workflow_workspace_source,
+        )
+
+        inherited_workspace_source = inherited_workflow_workspace_source(
+            effective_context
+        )
+        inherited_device_id = (
+            inherited_workspace_source["deviceId"]
+            if inherited_workspace_source is not None
+            else None
+        )
         device_id = (
             None
             if runtime == "wegent"
             else (
                 str(
-                    effective_context.get("execution_device_id")
+                    inherited_device_id
+                    or effective_context.get("execution_device_id")
                     or (
                         runtime_profile.device_id
                         if runtime_profile is not None
@@ -1339,9 +1352,11 @@ class LoopItemExecutionService:
         if expected_version is not None and row.version != expected_version:
             return row
         start_was_delivered = not loop_datetime_value_is_unset(row.start_requested_at)
-        if row.status in {STATUS_PENDING_APPROVAL, STATUS_QUEUED} or (
-            row.status == STATUS_CLAIMED and not start_was_delivered
-        ):
+        if row.status in {
+            STATUS_WAITING_RUNTIME,
+            STATUS_PENDING_APPROVAL,
+            STATUS_QUEUED,
+        } or (row.status == STATUS_CLAIMED and not start_was_delivered):
             terminal = self._transition_terminal(
                 db,
                 execution_id=execution_id,

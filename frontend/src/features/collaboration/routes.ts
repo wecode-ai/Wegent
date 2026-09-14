@@ -18,6 +18,7 @@ export function collaborationLocationPath(location: CollaborationPlatformLocatio
       projects: '/projects',
       members: '/members',
       agents: '/agents',
+      'collaboration-participants': '/participants',
       'collaboration-groups': '/collaboration-groups',
       'execution-environments': '/execution-environments',
       settings: '/settings',

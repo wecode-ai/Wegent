@@ -52,10 +52,14 @@ function stageAgentName(
   node: SharedWorkflowNode,
   agents: SharedIssueDetailAgent[],
 ) {
-  if (node.required_assignee_type !== "agent" || !node.required_assignee_id)
-    return null;
+  const agentId =
+    node.execution_config?.agent_id ??
+    (node.required_assignee_type === "agent"
+      ? node.required_assignee_id
+      : null);
+  if (!agentId) return null;
   return (
-    agents.find((agent) => agent.id === node.required_assignee_id)?.name ??
+    agents.find((agent) => agent.id === agentId)?.name ??
     node.required_assignee_name ??
     null
   );
@@ -196,7 +200,7 @@ export function IssueAutomationExecutionSummary({
         <p role="alert" data-testid="collaboration-automation-missing-config">
           {translate(
             "runtimeSettings.workflowMissing",
-            "AI 调度器缺少设备或模型配置，任务尚未启动。请前往「项目设置 → 分配与调度 → 我的默认执行配置」完成配置。",
+            "自动处理缺少设备或模型配置，任务尚未启动。请前往「项目设置 → 自动处理 → 我的默认执行配置」完成配置。",
           )}
           {configureRuntime ? (
             <button
