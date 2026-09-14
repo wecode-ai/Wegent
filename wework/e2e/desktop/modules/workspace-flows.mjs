@@ -1448,14 +1448,15 @@ async function verifyWorkspaceTabIsolation(control) {
     }
   )
   const firstWorkspaceAgents = `${firstBoardContent} [data-testid="collaboration-workspace-nav-agents"]`
+  await control.command('waitFor', firstWorkspaceAgents, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', firstWorkspaceAgents)
-  await waitForAttribute(
-    control,
-    firstWorkspaceAgents,
-    'aria-current',
-    'page',
-    'The first project-space tab did not retain its Agents section'
-  )
+  await control.command('waitFor', `${firstWorkspaceAgents}[aria-current="page"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 
   const { boardContentSelector: secondBoardContent } = await openProjectWorkspaceTab(control, [
     ...initialBoardIds,

@@ -1141,11 +1141,19 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   )
   const activeProject = props.activeProjectRef ?? null
   const [location, setLocation] = useState<CollaborationPlatformLocation>(initialLocation)
+  const [navigationSyncRevision, setNavigationSyncRevision] = useState(0)
   const startupReadySent = useRef(false)
+  const pendingNavigationProjectIdRef = useRef<string | null | undefined>(undefined)
+  const navigationRequestRevisionRef = useRef(0)
 
   useEffect(() => {
+    const activeProjectId = activeProject ? String(activeProject.projectId) : null
+    if (pendingNavigationProjectIdRef.current !== undefined) {
+      if (pendingNavigationProjectIdRef.current !== activeProjectId) return
+      pendingNavigationProjectIdRef.current = undefined
+    }
     if (!platformApi?.projects.get || !activeProject) return
-    if (String(location.projectId) === String(activeProject.projectId)) return
+    if (String(location.projectId) === activeProjectId) return
 
     let cancelled = false
     void platformApi.projects.get(String(activeProject.projectId)).then(project => {
@@ -1162,7 +1170,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
     return () => {
       cancelled = true
     }
-  }, [activeProject, location.projectId, platformApi, props.focusedItemId])
+  }, [activeProject, location.projectId, navigationSyncRevision, platformApi, props.focusedItemId])
 
   const platformRouteReady =
     !activeProject || String(location.projectId) === String(activeProject.projectId)
@@ -1206,17 +1214,32 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
             sidebarPresentation: 'full',
           },
           navigate: nextLocation => {
+            const navigationRevision = ++navigationRequestRevisionRef.current
+            if (props.onActiveProjectChange) {
+              pendingNavigationProjectIdRef.current = nextLocation.projectId
+                ? String(nextLocation.projectId)
+                : null
+            }
             setLocation(nextLocation)
             if (!nextLocation.projectId) {
               props.onActiveProjectChange?.(null)
               return
             }
-            void platformApi.projects.get(nextLocation.projectId).then(project =>
-              props.onActiveProjectChange?.({
-                ...project,
-                location: project.project_store === 'local' ? 'local' : 'cloud',
+            const requestedProjectId = String(nextLocation.projectId)
+            void platformApi.projects
+              .get(requestedProjectId)
+              .then(project => {
+                if (navigationRequestRevisionRef.current !== navigationRevision) return
+                props.onActiveProjectChange?.({
+                  ...project,
+                  location: project.project_store === 'local' ? 'local' : 'cloud',
+                })
               })
-            )
+              .catch(() => {
+                if (navigationRequestRevisionRef.current !== navigationRevision) return
+                pendingNavigationProjectIdRef.current = undefined
+                setNavigationSyncRevision(value => value + 1)
+              })
           },
         }}
         sidebarFooter={
