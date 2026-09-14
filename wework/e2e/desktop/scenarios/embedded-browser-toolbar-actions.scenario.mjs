@@ -44,6 +44,9 @@ const DEVICE_RESIZE_RIGHT_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-resize-right"]'
 const DEVICE_CLOSE_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-close-button"]'
+const BROWSER_PLACEHOLDER_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-electron-webview-placeholder"]'
+const BROWSER_HOST_SELECTOR = '[data-testid="workspace-browser-electron-webview"]'
 const SETTINGS_ITEM_SELECTOR = '[data-testid="workspace-browser-settings-item"]'
 const BROWSER_SETTINGS_PAGE_SELECTOR = '[data-testid="browser-settings-page"]'
 const FIXTURE_PATH = '/embedded-browser-toolbar-actions-fixture'
@@ -195,6 +198,73 @@ function assertFramesEqual(before, after) {
       `Opening the Inspector changed child WebView frame index ${index}: ${value} -> ${after[index]}`
     )
   })
+}
+
+async function getSingleElementMetrics(control, selector, description) {
+  const metrics = JSON.parse(await control.command('getElementMetrics', selector))
+  assert.equal(metrics.length, 1, `${description} rendered ${metrics.length} matching elements`)
+  return metrics[0]
+}
+
+function frameDifference(left, right) {
+  return Math.max(
+    Math.abs(left.left - right.left),
+    Math.abs(left.top - right.top),
+    Math.abs(left.width - right.width),
+    Math.abs(left.height - right.height)
+  )
+}
+
+async function waitForBrowserFramesAligned(control, timeoutMs, message) {
+  const startedAt = Date.now()
+  let placeholder = null
+  let host = null
+  while (Date.now() - startedAt < timeoutMs) {
+    placeholder = await getSingleElementMetrics(
+      control,
+      BROWSER_PLACEHOLDER_SELECTOR,
+      'The embedded browser placeholder'
+    )
+    host = await getSingleElementMetrics(
+      control,
+      BROWSER_HOST_SELECTOR,
+      'The embedded browser host'
+    )
+    if (frameDifference(placeholder, host) <= 1) return placeholder
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(
+    `${message}; placeholder=${JSON.stringify(placeholder)}, host=${JSON.stringify(host)}`
+  )
+}
+
+async function waitForPositionOnlyBrowserFrameSync(control, before, timeoutMs) {
+  const startedAt = Date.now()
+  let placeholder = null
+  let host = null
+  while (Date.now() - startedAt < timeoutMs) {
+    placeholder = await getSingleElementMetrics(
+      control,
+      BROWSER_PLACEHOLDER_SELECTOR,
+      'The moved embedded browser placeholder'
+    )
+    host = await getSingleElementMetrics(
+      control,
+      BROWSER_HOST_SELECTOR,
+      'The moved embedded browser host'
+    )
+    const positionChanged = Math.abs(placeholder.left - before.left) > 100
+    const sizeStayedStable =
+      Math.abs(placeholder.width - before.width) <= 1 &&
+      Math.abs(placeholder.height - before.height) <= 1
+    if (positionChanged && sizeStayedStable && frameDifference(placeholder, host) <= 1) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(
+    'The embedded browser host did not follow a position-only panel layout change; ' +
+      `before=${JSON.stringify(before)}, placeholder=${JSON.stringify(placeholder)}, ` +
+      `host=${JSON.stringify(host)}`
+  )
 }
 
 export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
@@ -437,6 +507,13 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'The responsive preset did not emulate a 390px viewport'
       )
+      const portraitBrowserFrame = await waitForBrowserFramesAligned(
+        control,
+        uiTimeoutMs,
+        'The embedded browser host was not aligned before expanding the panel'
+      )
+      await control.command('click', RIGHT_PANEL_EXPAND_SELECTOR)
+      await waitForPositionOnlyBrowserFrameSync(control, portraitBrowserFrame, uiTimeoutMs)
       await control.command('click', DEVICE_ROTATE_SELECTOR)
       await waitForPageNumber(
         bridgeIdentity,
@@ -446,7 +523,6 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'Rotating the device viewport did not emulate an 844px width'
       )
-      await control.command('click', RIGHT_PANEL_EXPAND_SELECTOR)
       await control.command('fill', DEVICE_WIDTH_SELECTOR, { value: '800' })
       await control.command('fill', DEVICE_HEIGHT_SELECTOR, { value: '600' })
       await waitForValue(
