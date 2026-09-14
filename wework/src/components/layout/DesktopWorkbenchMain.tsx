@@ -3063,9 +3063,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const openRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab, options?: { immediateLayout?: boolean }) => {
       if (options?.immediateLayout) setRightPanelImmediateLayout(true)
-      if (tab !== 'subagents') {
-        restoreEnvironmentInfoAfterSubagentsRef.current = false
-      }
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
       setRightPanelView(tab)
@@ -3611,9 +3608,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ])
   const selectRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
-      if (tab !== 'subagents') {
-        restoreEnvironmentInfoAfterSubagentsRef.current = false
-      }
       setRightPanelOpen(true)
       setRightPanelView(tab)
       if (isRightWorkspaceBrowserTab(tab)) {
@@ -3891,8 +3885,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setRightPanelView('launcher')
       return
     }
-    if (tab === 'subagents') {
+    if (tab === 'subagents' && restoreEnvironmentInfoAfterSubagentsRef.current) {
       restoreEnvironmentInfoAfterSubagentsRef.current = false
+      setEnvironmentInfoOpen(true)
     }
     if (rightPanelView === tab) {
       setRightPanelView(nextTabs[nextTabs.length - 1])

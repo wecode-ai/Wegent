@@ -6691,7 +6691,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
 
-  test('opens subagents in a right workspace tab and restores the environment view', async () => {
+  test('restores the environment after closing subagents while another tab remains', async () => {
     const loadRuntimeTranscriptForPane = vi.fn().mockResolvedValue({
       messages: [
         {
@@ -6798,13 +6798,35 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
 
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    await userEvent.click(
+      within(screen.getByTestId('right-workspace-new-tab-menu')).getByTestId(
+        'right-workspace-review-option'
+      )
+    )
+    expect(await screen.findByTestId('file-changes-review-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-review-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+
+    await userEvent.click(screen.getByTestId('right-workspace-subagents-tab'))
+    expect(screen.getByTestId('subagent-overview-panel')).toBeInTheDocument()
+
     await userEvent.click(screen.getByTestId('right-workspace-subagents-tab-close-button'))
 
     await waitFor(() => {
       expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
     })
     expect(screen.getByTestId('environment-subagents-section')).toBeInTheDocument()
-    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByTestId('right-workspace-review-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
   })
 
   test('expands the right workspace panel without the composer and restores chat', async () => {
