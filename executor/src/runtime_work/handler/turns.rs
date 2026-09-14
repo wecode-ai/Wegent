@@ -669,6 +669,7 @@ impl RuntimeWorkRpcHandler {
         }
         let mut event_request = request.clone();
         if let Some(active_turn) = active_turn {
+            event_mapper.observe_root_thread_id(&active_turn.thread_id);
             self.record_active_codex_transcript_item(local_task_id, &active_turn.turn_id, &message);
             event_request.subtask_id = active_turn.turn_id;
         }

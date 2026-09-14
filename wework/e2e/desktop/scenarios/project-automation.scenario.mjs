@@ -417,6 +417,7 @@ function assertExecutionTruthContract(execution) {
 
 export function createDesktopScenario({
   captureScreenshot,
+  executorHome,
   resultDir,
   uiTimeoutMs,
   workspacePath,
@@ -1328,11 +1329,11 @@ export function createDesktopScenario({
       'The Codex plugin execution did not reach its final completion response'
     )
     try {
-      await control.command('scrollIntoView', moonshotTaskListSelector)
       await control.command('waitFor', moonshotTaskListSelector, {
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
+      await control.command('scrollIntoView', moonshotTaskListSelector)
       await control.command('scrollIntoView', moonshotOverrideCard, { visible: true })
       await control.command('hover', moonshotOverrideCard, { visible: true })
       await control.command('waitFor', moonshotProgressPopup, {
@@ -3984,6 +3985,17 @@ export function createDesktopScenario({
           !snapshot.testIds.includes('pause-response-button'),
         'Project chat remained in the thinking state after the runtime task completed',
         uiTimeoutMs
+      )
+      const runtimeIndex = JSON.parse(
+        await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
+      )
+      const projectChatTasks = Object.values(runtimeIndex.tasks ?? {})
+        .filter(task => String(task.runtime_handle?.cloudProjectId ?? '') === PROJECT_ID)
+        .sort((left, right) => Number(right.created_at ?? 0) - Number(left.created_at ?? 0))
+      assert.equal(
+        projectChatTasks[0]?.workspace_path,
+        workspacePath,
+        'Project sidebar chat inherited worktree mode instead of using the primary workspace'
       )
       await captureScreenshot(control, 'project-chat-model-routing.png')
       await control.command(

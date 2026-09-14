@@ -1097,6 +1097,7 @@ function ProjectSendProbe({
       <span data-testid="current-project-name">
         {workbench.state.currentProject?.name ?? 'none'}
       </span>
+      <span data-testid="project-execution-mode">{workbench.projectExecutionMode}</span>
       <span data-testid="standalone-workspace-path">
         {workbench.state.standaloneWorkspacePath ?? 'none'}
       </span>
@@ -1435,6 +1436,23 @@ function ProjectSendProbe({
         }}
       >
         send with explicit project workspace
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const project =
+            workbench.state.currentProject ??
+            workbench.state.projects.find(candidate => candidate.id === 7)
+          if (!project) return
+          void workbench.createProjectRuntimeTask('项目空间边栏聊天', {
+            project,
+            deviceWorkspaceId: 22,
+            workspaceExecution: null,
+            runtime: 'codex',
+          })
+        }}
+      >
+        send project sidebar chat
       </button>
       <button
         type="button"
@@ -6141,6 +6159,78 @@ describe('WorkbenchProvider runtime tasks', () => {
         taskId: request.taskId,
       }).map(message => `${message.role}:${message.content}`)
     ).toEqual(['user:修复 CI'])
+  })
+
+  test('keeps project sidebar chats in the main workspace when worktree mode is selected', async () => {
+    const prepareWorktree = vi.fn()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'codex',
+      })),
+      prepareWorktree,
+    })
+    const user: User = {
+      id: 1,
+      user_name: 'alice',
+      email: 'a@b.c',
+      preferences: {
+        wework_project_work_preferences: {
+          'project:7': {
+            executionMode: 'git_worktree',
+            worktreeBranch: 'feature/sidebar',
+          },
+        },
+      },
+    }
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbenchForUser(<ProjectSendProbe />, user, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-execution-mode')).toHaveTextContent('git_worktree')
+    )
+    await userEvent.click(screen.getByText('send project sidebar chat'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 7,
+        deviceWorkspaceId: 22,
+        message: '项目空间边栏聊天',
+      })
+    )
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0].execution).toBeUndefined()
+    expect(prepareWorktree).not.toHaveBeenCalled()
   })
 
   test('does not dispatch an embedded Runtime task before its context is prepared', async () => {

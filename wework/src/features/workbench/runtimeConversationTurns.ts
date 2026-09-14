@@ -449,47 +449,213 @@ function mergeRuntimeConversationItems(
   snapshotItems: RuntimeConversationItem[],
   preserveLocalTerminal = false
 ): RuntimeConversationItem[] {
-  const matchedSnapshotIndexes = new Set<number>()
-  const reconciledLocalItems = localItems.filter(localItem => {
-    const snapshotIndex = snapshotItems.findIndex(
-      (snapshotItem, index) =>
-        !matchedSnapshotIndexes.has(index) &&
-        isEquivalentAssistantTextRepresentation(localItem, snapshotItem)
-    )
-    if (snapshotIndex < 0) return true
-    matchedSnapshotIndexes.add(snapshotIndex)
-    return false
-  })
+  const reconciledLocalItems = removeEquivalentAssistantTextItems(localItems, snapshotItems)
   const localById = new Map(reconciledLocalItems.map(item => [item.id, item]))
   const mergedSnapshotItems = snapshotItems.map(item =>
     mergeRuntimeConversationItem(localById.get(item.id), item, preserveLocalTerminal)
   )
   const snapshotById = new Map(mergedSnapshotItems.map(item => [item.id, item]))
   const mergedLocalItems = reconciledLocalItems.map(item => snapshotById.get(item.id) ?? item)
-  for (let snapshotIndex = 0; snapshotIndex < mergedSnapshotItems.length; snapshotIndex += 1) {
-    const snapshotItem = mergedSnapshotItems[snapshotIndex]
-    if (!snapshotItem || mergedLocalItems.some(item => item.id === snapshotItem.id)) {
-      continue
-    }
+  return insertMissingSnapshotItems(mergedLocalItems, mergedSnapshotItems)
+}
 
-    const nextSnapshotItem = mergedSnapshotItems
-      .slice(snapshotIndex + 1)
-      .find(item => mergedLocalItems.some(localItem => localItem.id === item.id))
-    if (nextSnapshotItem) {
-      const insertionIndex = mergedLocalItems.findIndex(item => item.id === nextSnapshotItem.id)
-      mergedLocalItems.splice(insertionIndex, 0, snapshotItem)
-      continue
-    }
+function removeEquivalentAssistantTextItems(
+  localItems: RuntimeConversationItem[],
+  snapshotItems: RuntimeConversationItem[]
+): RuntimeConversationItem[] {
+  const candidateGroups = new Map<string, AssistantTextCandidateGroup>()
+  snapshotItems.forEach((item, index) => {
+    const content = assistantTextRepresentationContent(item)
+    if (content === undefined) return
+    const group = candidateGroups.get(content) ?? createAssistantTextCandidateGroup()
+    const queue = assistantTextCandidateQueue(group, item)
+    queue.candidates.push({
+      item,
+      queueIndex: queue.candidates.length,
+      snapshotIndex: index,
+    })
+    candidateGroups.set(content, group)
+  })
+  return localItems.filter(localItem => {
+    const content = assistantTextRepresentationContent(localItem)
+    if (content === undefined) return true
+    const group = candidateGroups.get(content)
+    if (!group) return true
+    const match = assistantTextCandidateQueues(group, localItem)
+      .map(queue => ({ queue, candidate: peekAssistantTextCandidate(queue, localItem) }))
+      .filter(
+        (
+          entry
+        ): entry is {
+          queue: AssistantTextCandidateQueue
+          candidate: AssistantTextCandidate
+        } => entry.candidate !== undefined
+      )
+      .sort((left, right) => left.candidate.snapshotIndex - right.candidate.snapshotIndex)[0]
+    if (!match) return true
+    consumeAssistantTextCandidate(match.queue, match.candidate)
+    return false
+  })
+}
 
-    const previousSnapshotItem = mergedSnapshotItems
-      .slice(0, snapshotIndex)
-      .findLast(item => mergedLocalItems.some(localItem => localItem.id === item.id))
-    const insertionIndex = previousSnapshotItem
-      ? mergedLocalItems.findIndex(item => item.id === previousSnapshotItem.id) + 1
-      : mergedLocalItems.length
-    mergedLocalItems.splice(insertionIndex, 0, snapshotItem)
+interface AssistantTextCandidate {
+  item: RuntimeConversationItem
+  queueIndex: number
+  snapshotIndex: number
+}
+
+interface AssistantTextCandidateQueue {
+  candidates: AssistantTextCandidate[]
+  cursor: number
+  consumedIndexes: Set<number>
+}
+
+interface AssistantTextCandidateGroup {
+  assistantText: AssistantTextCandidateQueue
+  textBlock: AssistantTextCandidateQueue
+}
+
+function createAssistantTextCandidateGroup(): AssistantTextCandidateGroup {
+  const queue = (): AssistantTextCandidateQueue => ({
+    candidates: [],
+    cursor: 0,
+    consumedIndexes: new Set(),
+  })
+  return { assistantText: queue(), textBlock: queue() }
+}
+
+function assistantTextCandidateQueue(
+  group: AssistantTextCandidateGroup,
+  item: RuntimeConversationItem
+): AssistantTextCandidateQueue {
+  return item.type === 'assistant_text' ? group.assistantText : group.textBlock
+}
+
+function assistantTextCandidateQueues(
+  group: AssistantTextCandidateGroup,
+  localItem: RuntimeConversationItem
+): AssistantTextCandidateQueue[] {
+  return localItem.type === 'assistant_text'
+    ? [group.assistantText, group.textBlock]
+    : [group.assistantText]
+}
+
+function peekAssistantTextCandidate(
+  queue: AssistantTextCandidateQueue,
+  localItem: RuntimeConversationItem
+): AssistantTextCandidate | undefined {
+  while (queue.consumedIndexes.has(queue.cursor)) queue.cursor += 1
+  for (let index = queue.cursor; index < queue.candidates.length; index += 1) {
+    if (queue.consumedIndexes.has(index)) continue
+    const candidate = queue.candidates[index]
+    if (candidate && isEquivalentAssistantTextRepresentation(localItem, candidate.item)) {
+      return candidate
+    }
   }
-  return mergedLocalItems
+  return undefined
+}
+
+function consumeAssistantTextCandidate(
+  queue: AssistantTextCandidateQueue,
+  candidate: AssistantTextCandidate
+): void {
+  queue.consumedIndexes.add(candidate.queueIndex)
+  while (queue.consumedIndexes.has(queue.cursor)) queue.cursor += 1
+}
+
+interface RuntimeConversationItemNode {
+  item: RuntimeConversationItem
+  previous: RuntimeConversationItemNode | null
+  next: RuntimeConversationItemNode | null
+}
+
+function insertMissingSnapshotItems(
+  localItems: RuntimeConversationItem[],
+  snapshotItems: RuntimeConversationItem[]
+): RuntimeConversationItem[] {
+  const list = runtimeConversationItemList(localItems)
+  const initialIds = new Set(list.firstById.keys())
+  const nextInitialId = nextInitialSnapshotItemIds(snapshotItems, initialIds)
+  let previousSnapshotNode: RuntimeConversationItemNode | null = null
+  snapshotItems.forEach((item, index) => {
+    const existing = list.firstById.get(item.id)
+    if (existing) {
+      previousSnapshotNode = existing
+      return
+    }
+    const nextNode = list.firstById.get(nextInitialId[index] ?? '')
+    const node = insertRuntimeConversationItemNode(
+      list,
+      item,
+      nextNode ?? null,
+      nextNode ? null : (previousSnapshotNode ?? list.tail)
+    )
+    list.firstById.set(item.id, node)
+    previousSnapshotNode = node
+  })
+  return runtimeConversationItemsFromList(list.head)
+}
+
+function nextInitialSnapshotItemIds(
+  snapshotItems: RuntimeConversationItem[],
+  initialIds: Set<string>
+): Array<string | null> {
+  const nextIds = Array<string | null>(snapshotItems.length).fill(null)
+  let nextId: string | null = null
+  for (let index = snapshotItems.length - 1; index >= 0; index -= 1) {
+    nextIds[index] = nextId
+    const id = snapshotItems[index]?.id
+    if (id && initialIds.has(id)) nextId = id
+  }
+  return nextIds
+}
+
+function runtimeConversationItemList(items: RuntimeConversationItem[]): {
+  head: RuntimeConversationItemNode | null
+  tail: RuntimeConversationItemNode | null
+  firstById: Map<string, RuntimeConversationItemNode>
+} {
+  const list = {
+    head: null as RuntimeConversationItemNode | null,
+    tail: null as RuntimeConversationItemNode | null,
+    firstById: new Map<string, RuntimeConversationItemNode>(),
+  }
+  items.forEach(item => {
+    const node = insertRuntimeConversationItemNode(list, item, null, list.tail)
+    if (!list.firstById.has(item.id)) list.firstById.set(item.id, node)
+  })
+  return list
+}
+
+function insertRuntimeConversationItemNode(
+  list: {
+    head: RuntimeConversationItemNode | null
+    tail: RuntimeConversationItemNode | null
+  },
+  item: RuntimeConversationItem,
+  before: RuntimeConversationItemNode | null,
+  after: RuntimeConversationItemNode | null
+): RuntimeConversationItemNode {
+  const previous = before?.previous ?? after
+  const next = before ?? after?.next ?? null
+  const node = { item, previous, next }
+  if (previous) previous.next = node
+  else list.head = node
+  if (next) next.previous = node
+  else list.tail = node
+  return node
+}
+
+function runtimeConversationItemsFromList(
+  head: RuntimeConversationItemNode | null
+): RuntimeConversationItem[] {
+  const items: RuntimeConversationItem[] = []
+  let node = head
+  while (node) {
+    items.push(node.item)
+    node = node.next
+  }
+  return items
 }
 
 function isEquivalentAssistantTextRepresentation(
