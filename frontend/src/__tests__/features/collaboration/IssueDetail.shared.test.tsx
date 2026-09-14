@@ -484,6 +484,135 @@ describe('shared IssueDetail', () => {
     expect(screen.getByText(uploaded.display_name)).toBeVisible()
   })
 
+  it('ignores an attachment upload completion after switching to another Issue', async () => {
+    const secondIssue = {
+      ...issue,
+      id: 'issue-2',
+      sequence_number: 8,
+      title: '第二个任务',
+      description: '第二个任务描述',
+    }
+    const uploaded = {
+      id: 'attachment-from-first-issue',
+      loop_item_id: issue.id,
+      display_name: 'first-issue.txt',
+      content_type: 'text/plain',
+      size_bytes: 4,
+      created_by_user_id: 1,
+      created_at: '2026-09-14T00:00:00Z',
+      markdown_url: 'attachment://attachment-from-first-issue',
+    }
+    let resolveUpload: (attachment: typeof uploaded) => void = () => undefined
+    const upload = jest.fn(
+      () =>
+        new Promise<typeof uploaded>(resolve => {
+          resolveUpload = resolve
+        })
+    )
+    const api = createApi({
+      attachments: {
+        list: jest.fn().mockResolvedValue([]),
+        upload,
+        access: jest.fn(),
+        read: jest.fn(),
+        remove: jest.fn(),
+      },
+    })
+    const { rerender } = renderDetail(api)
+
+    fireEvent.click(screen.getByTestId('cloud-todo-edit-content'))
+    fireEvent.change(screen.getByTestId('cloud-todo-attachment-input'), {
+      target: { files: [new File(['race'], uploaded.display_name, { type: 'text/plain' })] },
+    })
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      rerender(
+        detailView(api, {
+          issue: secondIssue,
+          allIssues: [issue, secondIssue],
+        })
+      )
+    })
+    fireEvent.click(screen.getByTestId('cloud-todo-edit-content'))
+    expect(screen.getByTestId('cloud-todo-attachment-input')).not.toBeDisabled()
+
+    await act(async () => {
+      resolveUpload(uploaded)
+    })
+    expect(screen.queryByText(uploaded.display_name)).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-detail-description')).toHaveValue(secondIssue.description)
+  })
+
+  it('ignores an attachment paste completion after switching away and back', async () => {
+    const secondIssue = {
+      ...issue,
+      id: 'issue-2',
+      sequence_number: 8,
+      title: '第二个任务',
+      description: '第二个任务描述',
+    }
+    const uploaded = {
+      id: 'pasted-attachment-from-old-load',
+      loop_item_id: issue.id,
+      display_name: 'old-load.png',
+      content_type: 'image/png',
+      size_bytes: 4,
+      created_by_user_id: 1,
+      created_at: '2026-09-14T00:00:00Z',
+      markdown_url: 'attachment://pasted-attachment-from-old-load',
+      markdown: '![old-load.png](attachment://pasted-attachment-from-old-load)',
+    }
+    let resolveUpload: (attachment: typeof uploaded) => void = () => undefined
+    const upload = jest.fn(
+      () =>
+        new Promise<typeof uploaded>(resolve => {
+          resolveUpload = resolve
+        })
+    )
+    const api = createApi({
+      attachments: {
+        list: jest.fn().mockResolvedValue([]),
+        upload,
+        access: jest.fn(),
+        read: jest.fn(),
+        remove: jest.fn(),
+      },
+    })
+    const { rerender } = renderDetail(api)
+
+    fireEvent.click(screen.getByTestId('cloud-todo-edit-content'))
+    fireEvent.paste(screen.getByTestId('cloud-todo-detail-description'), {
+      clipboardData: {
+        files: [new File(['race'], uploaded.display_name, { type: uploaded.content_type })],
+      },
+    })
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      rerender(
+        detailView(api, {
+          issue: secondIssue,
+          allIssues: [issue, secondIssue],
+        })
+      )
+    })
+    await act(async () => {
+      rerender(
+        detailView(api, {
+          issue,
+          allIssues: [issue, secondIssue],
+        })
+      )
+    })
+
+    await act(async () => {
+      resolveUpload(uploaded)
+    })
+    expect(screen.queryByText(uploaded.display_name)).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-detail-description')).toHaveValue(issue.description)
+  })
+
   it('keeps Issue editing, comments, assignment and starting work as separate permissions', async () => {
     const update = jest.fn()
     const legacyAssign = jest.fn()

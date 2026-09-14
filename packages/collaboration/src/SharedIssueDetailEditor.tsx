@@ -791,6 +791,7 @@ export function TodoEditor(props: TodoEditorProps) {
       ? workflowPlanErrorState.error
       : null;
   const loadedEditItemIdRef = useRef(editItemId);
+  const itemLoadGenerationRef = useRef(0);
   const initialTaskBindingsRef = useRef(props.initialTaskBindings);
   initialTaskBindingsRef.current = props.initialTaskBindings;
   const taskBindingsRequestIdRef = useRef(0);
@@ -945,6 +946,7 @@ export function TodoEditor(props: TodoEditorProps) {
   useLayoutEffect(() => {
     if (loadedEditItemIdRef.current === editItemId) return;
     loadedEditItemIdRef.current = editItemId;
+    itemLoadGenerationRef.current += 1;
     taskBindingsRequestIdRef.current += 1;
     deliveriesRequestIdRef.current += 1;
     selectedDeliveryRequestIdRef.current += 1;
@@ -955,6 +957,7 @@ export function TodoEditor(props: TodoEditorProps) {
     setAttachments([]);
     setCollaborators([]);
     setDownloadingAttachmentId(null);
+    setAttachmentBusy(false);
     setAttachmentError(null);
     setEditingContent(!readFirst);
     setTasksExpanded(false);
@@ -1480,26 +1483,38 @@ export function TodoEditor(props: TodoEditorProps) {
     );
   }
 
+  function isCurrentItemLoad(itemId: string, itemLoadGeneration: number) {
+    return (
+      loadedEditItemIdRef.current === itemId &&
+      itemLoadGenerationRef.current === itemLoadGeneration
+    );
+  }
+
   async function addAttachments(files: FileList | null) {
     if (!editable || !editItemId || !files?.length || attachmentBusy) return;
+    const itemId = editItemId;
+    const itemLoadGeneration = itemLoadGenerationRef.current;
     attachmentsRequestIdRef.current += 1;
     setAttachmentBusy(true);
     setAttachmentError(null);
     try {
-      const result = await uploadAttachments(editItemId, Array.from(files));
+      const result = await uploadAttachments(itemId, Array.from(files));
+      if (!isCurrentItemLoad(itemId, itemLoadGeneration)) return;
       attachmentsRequestIdRef.current += 1;
       setAttachments((current) => [
         ...result.attachments.reverse(),
         ...current,
       ]);
     } catch (cause) {
+      if (!isCurrentItemLoad(itemId, itemLoadGeneration)) return;
       setAttachmentError(
         cause instanceof Error
           ? cause.message
           : t("todo.attachment_upload_failed", "附件上传失败"),
       );
     } finally {
-      setAttachmentBusy(false);
+      if (isCurrentItemLoad(itemId, itemLoadGeneration))
+        setAttachmentBusy(false);
     }
   }
 
@@ -1522,11 +1537,14 @@ export function TodoEditor(props: TodoEditorProps) {
       return;
     }
     if (!editable || !editItemId || attachmentBusy) return;
+    const itemId = editItemId;
+    const itemLoadGeneration = itemLoadGenerationRef.current;
     attachmentsRequestIdRef.current += 1;
     setAttachmentBusy(true);
     setAttachmentError(null);
-    void uploadAttachments(editItemId, files)
+    void uploadAttachments(itemId, files)
       .then((result) => {
+        if (!isCurrentItemLoad(itemId, itemLoadGeneration)) return;
         attachmentsRequestIdRef.current += 1;
         setAttachments((current) => [
           ...result.attachments.reverse(),
@@ -1537,13 +1555,17 @@ export function TodoEditor(props: TodoEditorProps) {
         );
       })
       .catch((cause) => {
+        if (!isCurrentItemLoad(itemId, itemLoadGeneration)) return;
         setAttachmentError(
           cause instanceof Error
             ? cause.message
             : t("todo.attachment_upload_failed", "附件上传失败"),
         );
       })
-      .finally(() => setAttachmentBusy(false));
+      .finally(() => {
+        if (isCurrentItemLoad(itemId, itemLoadGeneration))
+          setAttachmentBusy(false);
+      });
   }
 
   async function openAttachment(attachment: AttachmentRow) {
@@ -1591,24 +1613,29 @@ export function TodoEditor(props: TodoEditorProps) {
   }
 
   async function removeAttachment(attachment: AttachmentRow) {
-    if (!editable) return;
+    if (!editable || !editItemId) return;
+    const itemId = editItemId;
+    const itemLoadGeneration = itemLoadGenerationRef.current;
     attachmentsRequestIdRef.current += 1;
     setAttachmentBusy(true);
     setAttachmentError(null);
     try {
       await editorPort.attachments.remove(attachment.id);
+      if (!isCurrentItemLoad(itemId, itemLoadGeneration)) return;
       attachmentsRequestIdRef.current += 1;
       setAttachments((current) =>
         current.filter((entry) => entry.id !== attachment.id),
       );
     } catch (cause) {
+      if (!isCurrentItemLoad(itemId, itemLoadGeneration)) return;
       setAttachmentError(
         cause instanceof Error
           ? cause.message
           : t("todo.attachment_delete_failed", "附件删除失败"),
       );
     } finally {
-      setAttachmentBusy(false);
+      if (isCurrentItemLoad(itemId, itemLoadGeneration))
+        setAttachmentBusy(false);
     }
   }
 
