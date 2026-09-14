@@ -42,6 +42,28 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test('keeps runtime content truncation invisible while rendering the retained content', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-truncated-content',
+            role: 'assistant',
+            content: '这是截断后保留的最新回复',
+            contentTruncated: true,
+            contentOriginalChars: 200_001,
+            status: 'streaming',
+            createdAt: '2026-09-14T08:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('这是截断后保留的最新回复')).toBeInTheDocument()
+    expect(screen.queryByText(/早期内容.*卸载/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/加载完整输出/)).not.toBeInTheDocument()
+  })
+
   test('lets complete user and assistant message regions inherit the UI weight', () => {
     render(
       <MessageList
