@@ -1329,11 +1329,11 @@ export function createDesktopScenario({
       'The Codex plugin execution did not reach its final completion response'
     )
     try {
-      await control.command('scrollIntoView', moonshotTaskListSelector)
       await control.command('waitFor', moonshotTaskListSelector, {
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
+      await control.command('scrollIntoView', moonshotTaskListSelector)
       await control.command('scrollIntoView', moonshotOverrideCard, { visible: true })
       await control.command('hover', moonshotOverrideCard, { visible: true })
       await control.command('waitFor', moonshotProgressPopup, {
