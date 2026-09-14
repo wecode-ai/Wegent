@@ -5,7 +5,11 @@
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
-import { configureDispatchRuntime, webApi } from '../../utils/collaboration-test-support'
+import {
+  configureDispatchRuntime,
+  stopDispatchRun,
+  webApi,
+} from '../../utils/collaboration-test-support'
 import { REGULAR_USER } from '../../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 
@@ -45,6 +49,7 @@ interface CloudIssue {
 }
 
 interface CloudAutomationRun {
+  taskId: string
   id: string
   automationId: string
 }
@@ -652,6 +657,7 @@ test.describe('Collaboration cloud capabilities', () => {
     let projectId = ''
     let workspaceId = ''
     let cleanupRuntime: (() => Promise<void>) | undefined
+    let automationRun: CloudAutomationRun | undefined
 
     try {
       await page.goto('/collaboration')
@@ -691,6 +697,7 @@ test.describe('Collaboration cloud capabilities', () => {
       const run = await runResponse
       expect(run.ok(), `Automation run failed: ${await run.text()}`).toBe(true)
       const runBody = (await run.json()) as CloudAutomationRun
+      automationRun = runBody
       expect(runBody.automationId).toBeTruthy()
 
       await page.getByTestId('automation-open-runs').click()
@@ -717,6 +724,7 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId(`automation-run-${runBody.id}`)).toBeVisible()
       await captureEvidence(page, 'web-09-automation-history')
     } finally {
+      if (automationRun) await stopDispatchRun(page, projectId, automationRun)
       await cleanupRuntime?.()
       if (projectId) await archiveProject(page, projectId)
       if (workspaceId) await archiveWorkspace(page, workspaceId)

@@ -112,3 +112,27 @@ export async function configureDispatchRuntime(
     throw error
   }
 }
+
+export async function stopDispatchRun(
+  page: Page,
+  projectId: string,
+  run: { id: string; automationId: string; taskId: string }
+): Promise<void> {
+  await webApi(page, `/api/v1/loop-items/${run.taskId}/workflow-plan/pause`, { method: 'POST' })
+  const runs = await webApi<Array<{ id: string; status: string }>>(
+    page,
+    `/api/v1/cloud-projects/${projectId}/automations/${run.automationId}/runs`
+  )
+  let current = runs.find(candidate => candidate.id === run.id)
+  if (!current) throw new Error('Dispatch run disappeared before cleanup')
+  if (['pending', 'queued', 'waiting_device', 'running'].includes(current.status)) {
+    current = await webApi(
+      page,
+      `/api/v1/cloud-projects/${projectId}/automation-runs/${run.id}/cancel`,
+      {
+        method: 'POST',
+      }
+    )
+  }
+  expect(current?.status).toMatch(/^(cancelled|failed|succeeded|skipped)$/)
+}
