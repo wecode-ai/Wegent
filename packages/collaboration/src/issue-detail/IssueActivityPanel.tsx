@@ -186,6 +186,7 @@ export function IssueActivityPanel({
     setSelectedAssignment(null);
     setSending(false);
     return () => {
+      submissionIdRef.current += 1;
       if (mentionFocusFrameRef.current !== null) {
         window.cancelAnimationFrame(mentionFocusFrameRef.current);
         mentionFocusFrameRef.current = null;

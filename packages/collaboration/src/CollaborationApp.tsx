@@ -818,9 +818,11 @@ export function CollaborationApp({
               });
             }}
             onChange={commands.replaceIssue}
-            onCommentsChange={commands.replaceComments}
+            onCommentsChange={(nextComments) =>
+              commands.replaceComments(selectedIssue.id, nextComments)
+            }
             onAssignmentsChange={(nextAssignments) => {
-              commands.replaceAssignments(nextAssignments);
+              commands.replaceAssignments(selectedIssue.id, nextAssignments);
               replaceIssueAssignments(selectedIssue.id, nextAssignments);
             }}
             onCreateTask={

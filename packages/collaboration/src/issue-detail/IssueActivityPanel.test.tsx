@@ -491,6 +491,46 @@ describe("IssueActivityPanel", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("does not publish a stale successful submission after switching issues", async () => {
+    let resolveComment: ((comment: CollaborationComment) => void) | undefined;
+    const pendingComment = new Promise<CollaborationComment>((resolve) => {
+      resolveComment = resolve;
+    });
+    const submittedComment = {
+      id: "comment-old-issue",
+      issue_id: issue.id,
+      author: "李明",
+      body: "旧 Issue 评论",
+      created_at: "2026-09-12T00:00:00Z",
+    } satisfies CollaborationComment;
+    const onCommentsChange = vi.fn();
+    const api = {
+      assignments: { create: vi.fn() },
+      comments: { create: vi.fn().mockReturnValue(pendingComment) },
+    } as unknown as Pick<SharedWorkspaceApi, "assignments" | "comments">;
+    render(issue, { api, onCommentsChange });
+
+    change("collaboration-issue-comment", submittedComment.body);
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="collaboration-issue-comment-submit"]',
+        )
+        ?.click();
+    });
+    render(
+      { ...issue, id: "issue-2", sequence_number: 2 },
+      { api, onCommentsChange },
+    );
+
+    await act(async () => {
+      resolveComment?.(submittedComment);
+      await pendingComment;
+    });
+
+    expect(onCommentsChange).not.toHaveBeenCalled();
+  });
+
   it("submits a recognized mention as one assignment comment event", async () => {
     const assignment = {
       id: "assignment-1",

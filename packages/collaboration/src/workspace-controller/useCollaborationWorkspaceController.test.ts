@@ -340,7 +340,7 @@ describe("collaboration workspace controller", () => {
     expect(state.comments).toEqual([comment]);
   });
 
-  it("does not let a stale detail load overwrite collections changed while it was loading", async () => {
+  it("does not let a stale detail load overwrite a comment changed while it was loading", async () => {
     state = {
       ...state,
       project,
@@ -354,17 +354,12 @@ describe("collaboration workspace controller", () => {
       create: vi.fn(),
     };
     const { commands } = createController(api);
-    const newerAttachment = {
-      ...attachment,
-      id: "attachment-new",
-      display_name: "new-proof.txt",
-    };
     const newerComment = {
       ...comment,
       id: "comment-new",
       body: "submitted while loading",
     };
-    const newerAssignment = {
+    const loadedAssignment = {
       id: "assignment-new",
       loop_item_id: issue.id,
       target_type: "human",
@@ -381,16 +376,65 @@ describe("collaboration workspace controller", () => {
       expect(api.assignments?.list).toHaveBeenCalledWith(issue.id);
     });
 
-    commands.replaceAttachments([newerAttachment]);
-    commands.replaceComments([newerComment]);
-    commands.replaceAssignments([newerAssignment]);
-    assignmentsResponse.resolve([]);
+    commands.replaceComments(issue.id, [newerComment]);
+    assignmentsResponse.resolve([loadedAssignment]);
     await load;
 
     expect(state.selectedIssue).toEqual(issue);
-    expect(state.attachments).toEqual([newerAttachment]);
+    expect(state.attachments).toEqual([attachment]);
     expect(state.comments).toEqual([newerComment]);
-    expect(state.assignments).toEqual([newerAssignment]);
+    expect(state.assignments).toEqual([loadedAssignment]);
+  });
+
+  it("ignores a collection mutation that belongs to another issue", () => {
+    const otherIssue = {
+      ...issue,
+      id: "issue-2",
+      sequence_number: 2,
+      title: "Other issue",
+    };
+    state = {
+      ...state,
+      project,
+      issues: [issue, otherIssue],
+      selectedIssue: otherIssue,
+      comments: [comment],
+    };
+    const { commands } = createController();
+    const staleComment = {
+      ...comment,
+      id: "comment-stale",
+      body: "belongs to issue 1",
+    };
+
+    commands.replaceComments(issue.id, [staleComment]);
+
+    expect(state.selectedIssue).toEqual(otherIssue);
+    expect(state.comments).toEqual([comment]);
+  });
+
+  it("keeps the current detail collections visible while reloading the same issue", async () => {
+    state = {
+      ...state,
+      project,
+      issues: [issue],
+      selectedIssue: issue,
+      attachments: [attachment],
+      comments: [comment],
+    };
+    const issueResponse = deferred<CollaborationIssue>();
+    const api = createApi();
+    api.issues.get = vi.fn().mockReturnValue(issueResponse.promise);
+    const { commands } = createController(api);
+
+    const load = commands.loadSelectedIssue(issue.id);
+
+    expect(state.selectedIssue).toEqual(issue);
+    expect(state.attachments).toEqual([attachment]);
+    expect(state.comments).toEqual([comment]);
+
+    issueResponse.resolve(issue);
+    await load;
   });
 
   it("treats an empty assignments API response as authoritative", async () => {
@@ -882,6 +926,28 @@ describe("collaboration workspace controller", () => {
     resolveIssue?.(issue);
     await load;
 
+    expect(state.selectedIssue).toBeNull();
+    expect(state.attachments).toEqual([]);
+    expect(state.comments).toEqual([]);
+  });
+
+  it("ignores an issue response after the current project is cleared", async () => {
+    let resolveIssue: ((value: CollaborationIssue) => void) | undefined;
+    const api = createApi();
+    api.issues.get = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveIssue = resolve;
+        }),
+    );
+    const { commands } = createController(api);
+
+    const load = commands.loadSelectedIssue(issue.id);
+    commands.clearProject();
+    resolveIssue?.(issue);
+    await load;
+
+    expect(state.project).toBeNull();
     expect(state.selectedIssue).toBeNull();
     expect(state.attachments).toEqual([]);
     expect(state.comments).toEqual([]);
