@@ -4675,16 +4675,22 @@ fn child_notifications_remain_ordered_while_pending_notifications_replay() {
             .thread_event_routing
             .lock()
             .expect("thread event routing lock should not be poisoned");
+        let generation = routing
+            .routes
+            .get("thread-child")
+            .expect("child route should exist")
+            .generation;
         assert!(routing
-            .replaying_thread_ids
-            .insert("thread-child".to_owned()));
-        Some((
-            vec!["thread-child".to_owned()],
-            vec![PendingCodexNotification {
+            .replaying_route_generations
+            .insert("thread-child".to_owned(), generation)
+            .is_none());
+        Some(PendingCodexNotificationReplay {
+            route_generations: HashMap::from([("thread-child".to_owned(), generation)]),
+            notifications: vec![PendingCodexNotification {
                 thread_id: "thread-child".to_owned(),
                 message: child_started,
             }],
-        ))
+        })
     };
 
     handler.route_codex_notification(json!({
@@ -4709,6 +4715,84 @@ fn child_notifications_remain_ordered_while_pending_notifications_replay() {
         "ordered child output"
     );
     assert!(event_rx.try_recv().is_err());
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn pending_notifications_do_not_cross_thread_route_generations() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("replaced-child-thread-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let old_task_id = "runtime-task-old";
+    let new_task_id = "runtime-task-new";
+    for local_task_id in [old_task_id, new_task_id] {
+        let mut link = RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some("thread-child".to_owned());
+        handler.upsert_local_task(link);
+    }
+    handler.register_thread_event_route(
+        "thread-child",
+        old_task_id.to_owned(),
+        ExecutionRequest {
+            task_id: old_task_id.to_owned(),
+            subtask_id: "turn-old".to_owned(),
+            ..ExecutionRequest::default()
+        },
+        false,
+    );
+
+    let old_replay = {
+        let mut routing = handler
+            .thread_event_routing
+            .lock()
+            .expect("thread event routing lock should not be poisoned");
+        let generation = routing
+            .routes
+            .get("thread-child")
+            .expect("old route should exist")
+            .generation;
+        routing
+            .replaying_route_generations
+            .insert("thread-child".to_owned(), generation);
+        Some(PendingCodexNotificationReplay {
+            route_generations: HashMap::from([("thread-child".to_owned(), generation)]),
+            notifications: vec![PendingCodexNotification {
+                thread_id: "thread-child".to_owned(),
+                message: json!({
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": "thread-child",
+                        "turnId": "turn-old",
+                        "itemId": "child-message",
+                        "delta": "stale child output"
+                    }
+                }),
+            }],
+        })
+    };
+
+    handler.register_thread_event_route(
+        "thread-child",
+        new_task_id.to_owned(),
+        ExecutionRequest {
+            task_id: new_task_id.to_owned(),
+            subtask_id: "turn-new".to_owned(),
+            ..ExecutionRequest::default()
+        },
+        false,
+    );
+    handler.replay_codex_notifications(old_replay);
+
+    assert!(
+        event_rx.try_recv().is_err(),
+        "old replay must not reach the replacement route"
+    );
 
     let _ = fs::remove_file(index_path);
 }

@@ -657,18 +657,25 @@ struct RuntimeThreadEventRoute {
     event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,
     active: bool,
     nested: bool,
+    generation: u64,
 }
 
 #[derive(Default)]
 struct RuntimeThreadEventRouting {
     routes: HashMap<String, RuntimeThreadEventRoute>,
     pending_notifications: VecDeque<PendingCodexNotification>,
-    replaying_thread_ids: HashSet<String>,
+    replaying_route_generations: HashMap<String, u64>,
+    next_route_generation: u64,
 }
 
 struct PendingCodexNotification {
     thread_id: String,
     message: Value,
+}
+
+struct PendingCodexNotificationReplay {
+    route_generations: HashMap<String, u64>,
+    notifications: Vec<PendingCodexNotification>,
 }
 
 struct ScheduledTurnGuard {
@@ -723,13 +730,19 @@ struct SideSourceThread {
 }
 
 impl RuntimeThreadEventRoute {
-    fn new(local_task_id: String, request: ExecutionRequest, active: bool) -> Self {
+    fn new(
+        local_task_id: String,
+        request: ExecutionRequest,
+        active: bool,
+        generation: u64,
+    ) -> Self {
         Self {
             local_task_id,
             request,
             event_mapper: Arc::new(Mutex::new(CodexNotificationEventMapper::default())),
             active,
             nested: false,
+            generation,
         }
     }
 }

@@ -62,6 +62,8 @@ export function reduceRuntimeTaskLifecycle(
           event.task.goalStatus === undefined || state.hasAuthoritativeGoalStatus
             ? state.goalStatus
             : event.task.goalStatus,
+        hasAuthoritativeGoalStatus:
+          state.hasAuthoritativeGoalStatus || event.task.goalStatus === null,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
           snapshotRunning !== null && event.task.optimistic !== true ? null : expectedRunning,

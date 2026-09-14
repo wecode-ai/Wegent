@@ -1457,6 +1457,17 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.goalStatus).toBeNull()
   })
 
+  test('preserves an explicit executor Goal clear against an equal-time stale snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const updatedAt = 1_789_387_200_000
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active', updatedAt })))
+
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: null, updatedAt })))
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active', updatedAt })))
+
+    expect(store.getTask(address)?.goalStatus).toBeNull()
+  })
+
   test.each(['paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const)(
     'settles execution when the Goal reports %s',
     goalStatus => {
