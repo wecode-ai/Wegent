@@ -473,6 +473,76 @@ describe("CollaborationApp API boundary", () => {
     expect(board?.props.renderIssueCard).toBe(renderBoardIssueCard);
   });
 
+  it("passes the selected Issue task bindings to a custom detail renderer", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: "issue-1",
+      view: "board",
+    };
+    const project = createProject(1);
+    const issue = {
+      id: "issue-1",
+      cloud_project_id: project.id,
+      sequence_number: 1,
+      parent_id: null,
+      created_by_user_id: 1,
+      assignee_user_id: null,
+      title: "Issue",
+      description: "",
+      status: "inbox",
+      priority: "none",
+      due_at: null,
+      tags: [],
+      sort_order: 0,
+      version: 1,
+      created_at: "2026-09-14T00:00:00Z",
+      updated_at: "2026-09-14T00:00:00Z",
+      completed_at: null,
+    } satisfies CollaborationIssue;
+    const selectedBinding = {
+      id: "binding-1",
+      projectId: project.id,
+      issueId: issue.id,
+      taskUserId: 1,
+      deviceId: "device-1",
+      taskId: "task-1",
+      taskTitle: "Runtime task",
+      backendTaskId: null,
+      linkedAt: "2026-09-14T00:00:00Z",
+    };
+    const otherBinding = {
+      ...selectedBinding,
+      id: "binding-2",
+      issueId: "issue-2",
+      taskId: "task-2",
+    };
+    const controller = controllerWithProject(project);
+    collaborationAppMocks.useController.mockReturnValue({
+      ...controller,
+      state: {
+        ...controller.state,
+        issues: [issue],
+        selectedIssue: issue,
+        taskBindings: [selectedBinding, otherBinding],
+      },
+    });
+    const renderIssueDetail = vi.fn(() => null);
+
+    CollaborationApp({
+      api: {} as SharedWorkspaceApi,
+      host,
+      renderIssueDetail,
+    });
+
+    expect(renderIssueDetail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issue,
+        taskBindings: [selectedBinding],
+      }),
+    );
+  });
+
   it("centralizes permission filtering and host extension placement", () => {
     const options = buildCollaborationProjectViewOptions({
       project: { access_role: "RestrictedAnalyst" },

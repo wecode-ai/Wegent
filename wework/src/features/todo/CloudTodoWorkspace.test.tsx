@@ -5464,34 +5464,23 @@ describe('CloudTodoWorkspace', () => {
     vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
       items: [defaultProject],
     })
-    const taskBinding = {
-      id: 1,
-      loop_item_id: persistedIssue.id,
-      task_user_id: 1,
-      device_id: 'local-device',
-      task_id: 'bound-runtime-task',
-      task_title: persistedIssue.title,
-      backend_task_id: null,
-      linked_at: '2026-09-12T00:00:00Z',
-    }
-    let currentTaskBindings = [taskBinding]
     workbenchServices.deliveryApi!.getBoardSnapshot = vi.fn(async () => ({
       items: [persistedIssue],
-      task_bindings: currentTaskBindings,
+      task_bindings: [
+        {
+          id: 1,
+          loop_item_id: persistedIssue.id,
+          task_user_id: 1,
+          device_id: 'local-device',
+          task_id: 'bound-runtime-task',
+          task_title: persistedIssue.title,
+          backend_task_id: null,
+          linked_at: '2026-09-12T00:00:00Z',
+        },
+      ],
       members: [],
       agents: [],
     }))
-    let resolveDetailBindings!: (
-      bindings: Awaited<
-        ReturnType<NonNullable<WorkbenchServices['deliveryApi']>['listTaskBindings']>
-      >
-    ) => void
-    const pendingDetailBindings = new Promise<
-      Awaited<ReturnType<NonNullable<WorkbenchServices['deliveryApi']>['listTaskBindings']>>
-    >(resolve => {
-      resolveDetailBindings = resolve
-    })
-    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(() => pendingDetailBindings)
     workbenchServices.projectSpaceApis = {
       local: workbenchServices.deliveryApi!,
       defaultLocation: 'local',
@@ -5539,37 +5528,6 @@ describe('CloudTodoWorkspace', () => {
     expect(
       screen.queryByTestId('cloud-todo-card-runtime:local-device:bound-runtime-task')
     ).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId(`cloud-todo-card-${persistedIssue.id}`))
-    expect(screen.getByTestId('cloud-todo-toggle-tasks')).toBeInTheDocument()
-    const boardSnapshotCallCount = vi.mocked(workbenchServices.deliveryApi!.getBoardSnapshot).mock
-      .calls.length
-    currentTaskBindings = []
-    act(() => {
-      publishProjectSpaceTaskBindingChanged({
-        type: 'bound',
-        project: { projectStore: 'local', projectId: defaultProject.id },
-        task: { deviceId: 'local-device', taskId: 'bound-runtime-task' },
-      })
-    })
-    await vi.waitFor(() => {
-      expect(workbenchServices.deliveryApi!.getBoardSnapshot).toHaveBeenCalledTimes(
-        boardSnapshotCallCount + 1
-      )
-    })
-    await vi.waitFor(() => {
-      expect(
-        screen.queryByTestId(`cloud-todo-card-task-summary-${persistedIssue.id}`)
-      ).not.toBeInTheDocument()
-    })
-    await act(async () => {
-      resolveDetailBindings([])
-      await pendingDetailBindings
-    })
-    expect(await screen.findByTestId('cloud-todo-toggle-tasks')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
-    expect(screen.getByTestId('cloud-todo-open-task-conversation-1')).toHaveTextContent(
-      persistedIssue.title
-    )
   })
 
   it('shows only current system Issues in My Tasks and batch archives completed tasks', async () => {

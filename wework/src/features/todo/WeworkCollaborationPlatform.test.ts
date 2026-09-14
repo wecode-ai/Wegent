@@ -16,6 +16,7 @@ import {
   createLocalWorkspaceApi,
   createWeworkPlatformApi,
   projectRuntimeStatusSignature,
+  toWeworkIssueTaskBinding,
   WeworkSharedProject,
 } from './WeworkCollaborationPlatform'
 
@@ -143,6 +144,46 @@ function runtimeWork(tasks: RuntimeTaskSummary[]): RuntimeWorkListResponse {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it('maps shared board task bindings into the Issue drawer initial context', () => {
+    expect(
+      toWeworkIssueTaskBinding({
+        id: 'binding-1',
+        projectId: 'project-1',
+        issueId: 'issue-1',
+        taskUserId: 1,
+        deviceId: 'device-1',
+        taskId: 'task-1',
+        taskTitle: 'Runtime task',
+        backendTaskId: null,
+        modelSelection: {
+          modelName: 'gpt-5.6-luna',
+          modelType: 'codex',
+          options: {},
+        },
+        workflowNodeId: 'node-1',
+        bindingType: 'system',
+        linkedAt: '2026-09-14T00:00:00Z',
+      })
+    ).toEqual({
+      id: 'binding-1',
+      cloud_project_id: 'project-1',
+      loop_item_id: 'issue-1',
+      task_user_id: 1,
+      device_id: 'device-1',
+      task_id: 'task-1',
+      task_title: 'Runtime task',
+      backend_task_id: null,
+      modelSelection: {
+        modelName: 'gpt-5.6-luna',
+        modelType: 'codex',
+        options: {},
+      },
+      workflow_node_id: 'node-1',
+      binding_type: 'system',
+      linked_at: '2026-09-14T00:00:00Z',
+    })
+  })
+
   it('detects running and terminal Runtime transitions for project board refreshes', () => {
     const project = {
       projectStore: 'backend' as const,

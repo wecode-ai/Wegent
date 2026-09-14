@@ -11,6 +11,7 @@ import {
   CollaborationApp,
   CollaborationPlatformApp,
   collaborationTestIds,
+  toSharedIssueDetailTaskBinding,
   type CollaborationMember,
   type CollaborationHostAdapter,
   type CollaborationIssue,
@@ -19,8 +20,9 @@ import {
   type CollaborationProject,
   type CollaborationWorkspace,
   type SharedWorkspaceApi,
+  type WorkspaceTaskBinding,
 } from '@wegent/collaboration'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
@@ -90,6 +92,15 @@ export function projectRuntimeStatusSignature(
     })
     .sort()
     .join('|')
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function toWeworkIssueTaskBinding(binding: WorkspaceTaskBinding): LoopItemTaskBinding {
+  const mapped = toSharedIssueDetailTaskBinding(binding)
+  return {
+    ...mapped,
+    modelSelection: mapped.modelSelection as LoopItemTaskBinding['modelSelection'],
+  }
 }
 
 interface IssueRuntimeBindingPort {
@@ -879,6 +890,7 @@ export function WeworkSharedProject({
             issue,
             allIssues,
             assignments,
+            taskBindings,
             onChange,
             onClose,
             onCreateTask,
@@ -920,6 +932,7 @@ export function WeworkSharedProject({
                       .at(-1) ?? null
                   }
                   localProjects={localProjects}
+                  initialTaskBindings={taskBindings.map(toWeworkIssueTaskBinding)}
                   aitableApi={
                     project.task_provider === 'dingtalk_aitable' ? services.aitableApi : undefined
                   }

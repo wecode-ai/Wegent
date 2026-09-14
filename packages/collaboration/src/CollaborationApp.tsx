@@ -29,7 +29,10 @@ import type {
   CollaborationStatus,
   CollaborationView,
 } from "./types";
-import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
+import type {
+  SharedWorkspaceApi,
+  WorkspaceTaskBinding,
+} from "./ports/SharedWorkspaceApi";
 import {
   ProjectAutomationRulesView,
   createSharedWorkspaceAutomationPorts,
@@ -51,6 +54,7 @@ export interface CollaborationIssueDetailRenderContext {
   issue: CollaborationIssue;
   allIssues: CollaborationIssue[];
   assignments: CollaborationAssignment[];
+  taskBindings: WorkspaceTaskBinding[];
   onClose(): void;
   onChange(issue: CollaborationIssue): void;
   onCreateTask?(workflowStep?: string): void;
@@ -775,6 +779,9 @@ export function CollaborationApp({
             issue: selectedIssue,
             allIssues: issues,
             assignments,
+            taskBindings: taskBindings.filter(
+              (binding) => binding.issueId === selectedIssue.id,
+            ),
             onClose: () => {
               commands.clearSelectedIssue();
               host.navigate({

@@ -822,10 +822,6 @@ export function CloudTodoWorkspace({
   const [projectView, setProjectView] = useState<ProjectView>('board')
   const [projectSettingsSectionId, setProjectSettingsSectionId] = useState('project')
   const [selectedItem, setSelectedItem] = useState<LocatedLoopItem | null>(null)
-  const [selectedItemTaskBindingSnapshot, setSelectedItemTaskBindingSnapshot] = useState<{
-    itemId: string
-    bindings: LoopItemTaskBinding[]
-  } | null>(null)
   const [boardParentId, setBoardParentId] = useState<string | null>(null)
   const cloudWorkspaceMessages = useMemo(
     () => ({
@@ -1483,14 +1479,6 @@ export function CloudTodoWorkspace({
       runtimeTaskRunningByAddress,
     ]
   )
-  const selectedItemTaskBindings = useMemo(() => {
-    if (!selectedItem) return []
-    const currentBindings = activeItemTaskBindings[selectedItem.id]
-    if (currentBindings?.length) return currentBindings
-    return selectedItemTaskBindingSnapshot?.itemId === selectedItem.id
-      ? selectedItemTaskBindingSnapshot.bindings
-      : []
-  }, [activeItemTaskBindings, selectedItem, selectedItemTaskBindingSnapshot])
   const loadBoardTaskRuntimeGoal = useCallback(
     async (address: RuntimeTaskAddress): Promise<void> => {
       const runtimeWorkApi = services.runtimeWorkApi
@@ -2727,7 +2715,7 @@ export function CloudTodoWorkspace({
           },
           projectSpaceRef(selectedProject)
         )
-          ? (visibleItems.find(item => item.id === current.id) ?? current)
+          ? (visibleItems.find(item => item.id === current.id) ?? null)
           : current
       )
     })
@@ -2926,7 +2914,8 @@ export function CloudTodoWorkspace({
               },
               projectSpaceRef(selectedProject)
             )
-              ? (locatedItems.find(item => item.id === current.id) ?? current)
+              ? (locatedItems.find(item => item.id === current.id) ??
+                (isExternalGitBoard ? current : null))
               : current
           )
         })
@@ -4026,7 +4015,6 @@ export function CloudTodoWorkspace({
 
   const closeIssuePanelStack = useCallback(() => {
     setBackgroundTaskItemId(null)
-    setSelectedItemTaskBindingSnapshot(null)
     setSelectedItem(null)
     closeTaskPanel()
   }, [closeTaskPanel])
@@ -4041,13 +4029,9 @@ export function CloudTodoWorkspace({
         void openBoardRuntimeTask(item.runtime_address)
         return
       }
-      setSelectedItemTaskBindingSnapshot({
-        itemId: item.id,
-        bindings: activeItemTaskBindings[item.id] ?? [],
-      })
       setSelectedItem(item)
     },
-    [activeItemTaskBindings, closeTaskPanel, openBoardRuntimeTask]
+    [closeTaskPanel, openBoardRuntimeTask]
   )
 
   function closeTopPanel() {
@@ -5361,10 +5345,10 @@ export function CloudTodoWorkspace({
                   <IssueResourceSection
                     icon={<MessageSquare className="h-3.5 w-3.5" />}
                     title="任务会话"
-                    count={selectedItemTaskBindings.length}
+                    count={(activeItemTaskBindings[selectedItem.id] ?? []).length}
                     empty="暂无任务会话"
                   >
-                    {selectedItemTaskBindings.map(binding => {
+                    {(activeItemTaskBindings[selectedItem.id] ?? []).map(binding => {
                       const selected = selectedTaskBinding?.id === binding.id
                       return (
                         <button
@@ -5471,11 +5455,11 @@ export function CloudTodoWorkspace({
                 allItems={detailAllItems}
                 showChildren={false}
                 showAdditionalTaskAction={
-                  selectedItemTaskBindings.length > 0 &&
+                  (activeItemTaskBindings[selectedItem.id]?.length ?? 0) > 0 &&
                   selectedItem.workflow?.advancement_policy !== 'ai' &&
                   !selectedItem.workflow?.nodes.length
                 }
-                initialTaskBindings={selectedItemTaskBindings}
+                initialTaskBindings={activeItemTaskBindings[selectedItem.id]}
                 taskRefreshKey={boardRefreshNonce}
                 onWorkflowPlanChanged={() => {
                   setBoardRefreshNonce(value => value + 1)
