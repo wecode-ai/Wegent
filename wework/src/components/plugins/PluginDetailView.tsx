@@ -1017,7 +1017,7 @@ export function PluginDetailView({
 
         {autoUpdateSection}
 
-        {isInstalled && onMcpHeadersSave && remoteMcpItems.length > 0 && (
+        {onMcpHeadersSave && remoteMcpItems.length > 0 && (
           <section className="mt-7 space-y-3" data-testid="plugin-mcp-header-settings">
             <div>
               <h2 className="text-base font-medium leading-5 text-text-primary">

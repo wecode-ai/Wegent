@@ -165,6 +165,29 @@ describe('PluginDetailView owner actions', () => {
     })
   })
 
+  test('shows remote MCP header settings when the current device is unavailable', () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.installState = 'update_available'
+    plugin.raw.spec.components.mcps = [
+      { name: 'business', server: { url: 'https://business.example/mcp' } },
+    ]
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        usableOnThisDevice={false}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onMcpHeadersSave={vi.fn()}
+        onUninstall={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('plugin-mcp-header-settings')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-mcp-headers-edit-mcp:business')).toBeInTheDocument()
+  })
+
   test('rejects more than 32 custom MCP headers', async () => {
     const plugin = createDetailPlugin()
     plugin.raw.spec.components.mcps = [
