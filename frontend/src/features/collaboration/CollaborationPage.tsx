@@ -33,13 +33,7 @@ import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 
-const PROJECT_VIEWS = new Set<CollaborationView>([
-  'board',
-  'table',
-  'files',
-  'automation',
-  'manage',
-])
+const PROJECT_VIEWS = new Set<CollaborationView>(['board', 'table', 'files', 'manage'])
 
 function workspaceViewFromPath(pathname: string): CollaborationWorkspaceView {
   if (pathname.endsWith('/projects')) return 'projects'

@@ -3529,7 +3529,11 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         "http://127.0.0.1:2/mcp"
     );
     assert_eq!(
-        config["mcp_servers.wework_browser.http_headers.Authorization"],
+        config["mcp_servers.wework_browser.env_http_headers.Authorization"],
+        "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION"
+    );
+    assert_eq!(
+        launch_config.env["WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION"],
         "Bearer test-browser-mcp-instance-token"
     );
     assert!(!config.contains_key("mcp_servers.wework_browser.command"));
@@ -3541,7 +3545,11 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         "approve"
     );
     assert_eq!(
-        config["mcp_servers.wework_browser.http_headers.X-Wework-Browser-Label"],
+        config["mcp_servers.wework_browser.env_http_headers.X-Wework-Browser-Label"],
+        "WEGENT_CODEX_BROWSER_MCP_LABEL"
+    );
+    assert_eq!(
+        launch_config.env["WEGENT_CODEX_BROWSER_MCP_LABEL"],
         "workspace-browser-task-123"
     );
 
@@ -3636,11 +3644,18 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
         "writes"
     );
     assert_eq!(
-        config["mcp_servers.wework_computer.env.WEWORK_COMPUTER_USE_BRIDGE_URL"],
+        config["mcp_servers.wework_computer.env_vars"],
+        json!([
+            "WEWORK_COMPUTER_USE_BRIDGE_URL",
+            "WEWORK_COMPUTER_USE_BRIDGE_TOKEN"
+        ])
+    );
+    assert_eq!(
+        launch_config.env["WEWORK_COMPUTER_USE_BRIDGE_URL"],
         "http://127.0.0.1:43128"
     );
     assert_eq!(
-        config["mcp_servers.wework_computer.env.WEWORK_COMPUTER_USE_BRIDGE_TOKEN"],
+        launch_config.env["WEWORK_COMPUTER_USE_BRIDGE_TOKEN"],
         "computer-use-test-token"
     );
 
@@ -3676,7 +3691,11 @@ fn codex_thread_binds_project_space_through_context_grant() {
         "http://127.0.0.1:1/mcp"
     );
     assert_eq!(
-        config["mcp_servers.wework_space.http_headers.Authorization"],
+        config["mcp_servers.wework_space.env_http_headers.Authorization"],
+        "WEGENT_CODEX_SPACE_MCP_HEADER_0"
+    );
+    assert_eq!(
+        launch_config.env["WEGENT_CODEX_SPACE_MCP_HEADER_0"],
         "Bearer test-space-mcp-instance-token"
     );
     assert!(!config.contains_key("mcp_servers.wework_space.command"));
@@ -3688,16 +3707,26 @@ fn codex_thread_binds_project_space_through_context_grant() {
         "approve"
     );
     assert_eq!(
-        config["mcp_servers.wework_space.http_headers.X-Wework-Space-Backend-Url"],
+        config["mcp_servers.wework_space.env_http_headers.X-Wework-Space-Backend-Url"],
+        "WEGENT_CODEX_SPACE_MCP_HEADER_2"
+    );
+    assert_eq!(
+        launch_config.env["WEGENT_CODEX_SPACE_MCP_HEADER_2"],
         "https://wework.example.com"
     );
     assert_eq!(
-        config["mcp_servers.wework_space.http_headers.X-Wework-Space-Backend-Token"],
+        config["mcp_servers.wework_space.env_http_headers.X-Wework-Space-Backend-Token"],
+        "WEGENT_CODEX_SPACE_MCP_HEADER_1"
+    );
+    assert_eq!(
+        launch_config.env["WEGENT_CODEX_SPACE_MCP_HEADER_1"],
         "runtime-token"
     );
-    let encoded = config["mcp_servers.wework_space.http_headers.X-Wework-Space-Context-Grant"]
-        .as_str()
-        .expect("encoded context grant");
+    assert_eq!(
+        config["mcp_servers.wework_space.env_http_headers.X-Wework-Space-Context-Grant"],
+        "WEGENT_CODEX_SPACE_MCP_HEADER_3"
+    );
+    let encoded = launch_config.env["WEGENT_CODEX_SPACE_MCP_HEADER_3"].as_str();
     let decoded = STANDARD.decode(encoded).expect("base64 context grant");
     let grant: Value = serde_json::from_slice(&decoded).expect("JSON context grant");
     assert_eq!(grant["task_id"], "runtime-task-1");
@@ -3706,7 +3735,7 @@ fn codex_thread_binds_project_space_through_context_grant() {
 }
 
 #[test]
-fn codex_thread_enables_unbound_project_space_for_generic_tasks() {
+fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
     let request = ExecutionRequest::default();
 
     let launch_config =
@@ -3714,20 +3743,14 @@ fn codex_thread_enables_unbound_project_space_for_generic_tasks() {
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
-    assert_eq!(
-        config["mcp_servers.wework_space.url"],
-        "http://127.0.0.1:1/mcp"
-    );
-    assert_eq!(
-        config["mcp_servers.wework_space.http_headers.Authorization"],
-        "Bearer test-space-mcp-instance-token"
-    );
+    assert!(!config.contains_key("mcp_servers.wework_space.enabled"));
+    assert!(!config.contains_key("mcp_servers.wework_space.url"));
     assert!(!config.contains_key("mcp_servers.wework_space.command"));
     assert!(!config.contains_key("mcp_servers.wework_space.args"));
-    assert!(
-        !config.contains_key("mcp_servers.wework_space.http_headers.X-Wework-Space-Context-Grant")
-    );
+    assert!(launch_config
+        .env
+        .keys()
+        .all(|name| !name.starts_with("WEGENT_CODEX_SPACE_MCP_HEADER_")));
 }
 
 #[test]
