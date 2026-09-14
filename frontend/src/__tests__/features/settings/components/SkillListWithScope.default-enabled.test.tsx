@@ -427,6 +427,30 @@ describe('SkillListWithScope default enabled skills', () => {
     expect(within(privateCard).queryByTestId('published-skill-8-indicator')).toBeNull()
   })
 
+  it('shows a system Skill bound to the selected group while hiding unbound system Skills', async () => {
+    mockedFetchUnifiedSkillsList.mockResolvedValue([
+      buildSkill({
+        id: 9,
+        name: 'bound-system-skill',
+        user_id: 0,
+        namespace: 'default',
+        is_group_shared: true,
+      }),
+      buildSkill({
+        id: 10,
+        name: 'unbound-system-skill',
+        user_id: 0,
+        namespace: 'default',
+        is_public: true,
+      }),
+    ])
+    render(
+      <SkillListWithScope scope="group" selectedGroup="platform" sourceFilter="group" compact />
+    )
+    expect(await screen.findByTestId('skill-library-item-9')).toBeVisible()
+    expect(screen.queryByTestId('skill-library-item-10')).not.toBeInTheDocument()
+  })
+
   it('labels a personal source Skill shared by binding as a team Skill', async () => {
     mockedFetchUnifiedSkillsList.mockResolvedValue([
       buildSkill({
