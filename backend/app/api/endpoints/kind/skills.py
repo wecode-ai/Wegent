@@ -1687,6 +1687,12 @@ def download_skill(
     ):
         skill, binary_data = _get_skill_archive_by_id(db, skill_id)
 
+    # Group bindings grant access to the source archive in its original namespace.
+    if not skill and skill_id in skill_binding_service.list_user_group_skill_ids(
+        db, current_user.id
+    ):
+        skill, binary_data = _get_skill_archive_by_id(db, skill_id)
+
     # 3. Group Skills and group bindings require at least Reporter access.
     if (
         not skill

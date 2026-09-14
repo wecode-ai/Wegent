@@ -69,8 +69,8 @@ interface ChatInputProps {
   availableSkills?: UnifiedSkill[]
   teamSkillNames?: string[]
   preloadedSkillNames?: string[]
-  selectedSkillNames?: string[]
-  onSkillSelect?: (skillName: string) => void
+  selectedSkillIds?: number[]
+  onSkillSelect?: (skill: UnifiedSkill) => void
   isChatShell?: boolean
   /** Whether skill selector is read-only (can view but not modify via / command) */
   skillSelectorReadOnly?: boolean
@@ -108,7 +108,7 @@ export default function ChatInput({
   availableSkills = [],
   teamSkillNames = [],
   preloadedSkillNames = [],
-  selectedSkillNames = [],
+  selectedSkillIds,
   onSkillSelect,
   isChatShell = false,
   skillSelectorReadOnly = false,
@@ -519,7 +519,7 @@ export default function ChatInput({
 
   // Handle skill selection from autocomplete
   const handleSkillSelect = useCallback(
-    (skillName: string) => {
+    (skill: UnifiedSkill) => {
       if (editableRef.current && onSkillSelect) {
         const currentText = getTextWithNewlines(editableRef.current)
         // Remove the /query from the text
@@ -541,7 +541,7 @@ export default function ChatInput({
         }
 
         // Call the skill selection callback
-        onSkillSelect(skillName)
+        onSkillSelect(skill)
 
         // Move cursor to end
         const selection = window.getSelection()
@@ -771,7 +771,7 @@ export default function ChatInput({
           teamSkillNames={teamSkillNames}
           preloadedSkillNames={preloadedSkillNames}
           query={skillQuery}
-          selectedSkillNames={selectedSkillNames}
+          selectedSkillIds={selectedSkillIds}
           onSelect={handleSkillSelect}
           onClose={() => {
             setShowSkillMenu(false)
