@@ -9,7 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IssueDetail } from "../IssueDetail";
-import { collaborationMessages } from "../i18n";
+import { collaborationMessages, type CollaborationLocale } from "../i18n";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import { createWegentProjectAgentInput } from "../project-agent-config";
 import type {
@@ -569,6 +569,7 @@ async function change(
 function PlatformHarness({
   api,
   start = initialLocation,
+  locale = "zh-CN",
   onReady,
   notify,
   manageResource,
@@ -577,6 +578,7 @@ function PlatformHarness({
 }: {
   api: SharedWorkspaceApi;
   start?: CollaborationPlatformLocation;
+  locale?: CollaborationLocale;
   onReady?(): void;
   notify?: CollaborationPlatformHostAdapter["notify"];
   manageResource?: CollaborationPlatformHostAdapter["manageResource"];
@@ -597,6 +599,7 @@ function PlatformHarness({
       <CollaborationPlatformApp
         api={api}
         host={host}
+        locale={locale}
         onReady={onReady}
         renderProject={renderProject}
       />
@@ -816,6 +819,107 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     expect(manageResource).toHaveBeenNthCalledWith(1, "agents");
     expect(manageResource).toHaveBeenNthCalledWith(2, "environments");
+  });
+
+  it("summarizes cross-project operations and opens items that need attention", async () => {
+    const runningIssue = {
+      ...issue,
+      id: "issue-running",
+      status: "in_progress",
+      execution_state: "running",
+    };
+    const failedIssue = {
+      ...issue,
+      id: "issue-failed",
+      title: "发布流水线失败",
+      execution_state: "failed",
+    };
+    const { api } = createApi({
+      initialIssues: [runningIssue, failedIssue],
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+
+    expect(byTestId("collaboration-workspace-home")).toBeTruthy();
+    expect(
+      byTestId(`collaboration-workspace-operation-project-${project.id}`),
+    ).toBeTruthy();
+    expect(container.textContent).toContain("运行中");
+    expect(container.textContent).toContain("发布流水线失败");
+
+    await click(
+      byTestId(`collaboration-workspace-attention-${failedIssue.id}`),
+    );
+    const location = JSON.parse(byTestId("test-location").textContent ?? "{}");
+    expect(location).toMatchObject({
+      workspaceView: "projects",
+      projectId: project.id,
+      issueId: failedIssue.id,
+    });
+  });
+
+  it("keeps the workspace overview available when one project snapshot fails", async () => {
+    const unavailableProject = {
+      ...project,
+      id: "project-2",
+      public_id: "project-public-2",
+      project_key: "OPS",
+      name: "发布运维",
+    };
+    const { api } = createApi({
+      initialProjects: [project, unavailableProject],
+    });
+    api.issues.getBoardSnapshot = vi.fn(async (projectId: string) => {
+      if (projectId === unavailableProject.id) {
+        throw new Error("snapshot unavailable");
+      }
+      return {
+        items: [issue],
+        members: [member],
+        agents: [agent],
+        taskBindings: [],
+      };
+    });
+
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+
+    expect(byTestId("collaboration-workspace-home")).toBeTruthy();
+    expect(
+      byTestId(
+        `collaboration-workspace-operation-project-${unavailableProject.id}`,
+      ),
+    ).toBeTruthy();
+    expect(
+      byTestId(`collaboration-workspace-unavailable-${unavailableProject.id}`),
+    ).toBeTruthy();
+    expect(container.textContent).toContain("状态不可用");
+    expect(
+      container.querySelector(
+        '.collaboration-workspace-operation-metrics [data-tone="failed"] strong',
+      )?.textContent,
+    ).toBe("0");
+  });
+
+  it("formats workspace operation times with the selected locale", async () => {
+    const { api } = createApi();
+    await render(
+      <PlatformHarness
+        api={api}
+        locale="en"
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+
+    expect(container.textContent).toContain("Sep");
   });
 
   it.each(["Owner", "Maintainer"] as const)(
