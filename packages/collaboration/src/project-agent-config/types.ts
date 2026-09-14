@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 export type ProjectAgentMode = "wegent" | "codex";
 
 export interface ProjectAgentModeOption {
+  description: string;
   label: string;
   testId: string;
   value: ProjectAgentMode;

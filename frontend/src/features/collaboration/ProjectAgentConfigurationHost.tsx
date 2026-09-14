@@ -6,7 +6,13 @@
 
 import type { ChangeEvent } from 'react'
 import type { ProjectAgentConfigurationHost } from '@wegent/collaboration'
+import { Bot, Code2 } from 'lucide-react'
 
+import {
+  simpleChoiceCardBaseClass,
+  simpleChoiceCardSelectedClass,
+  simpleChoiceCardUnselectedClass,
+} from '@/components/common/simple-choice-card-styles'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -23,8 +29,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/utils'
+
+const modeIcons = {
+  codex: Code2,
+  wegent: Bot,
+} as const
 
 export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
   renderDialog({ busy, children, closeLabel, description, onClose, testIds, title }) {
@@ -61,20 +73,41 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
   },
   renderModePicker({ onChange, options, value }) {
     return (
-      <Tabs value={value} onValueChange={nextValue => onChange(nextValue as typeof value)}>
-        <TabsList className="grid h-9 w-full grid-cols-2 border border-border bg-surface p-0.5 shadow-none">
-          {options.map(option => (
-            <TabsTrigger
-              className="h-8 rounded-md px-3 py-0 text-sm shadow-none data-[state=active]:shadow-sm"
-              data-testid={option.testId}
+      <RadioGroup
+        className="grid grid-cols-2 gap-2"
+        onValueChange={nextValue => onChange(nextValue as typeof value)}
+        value={value}
+      >
+        {options.map(option => {
+          const Icon = modeIcons[option.value]
+          const selected = option.value === value
+          return (
+            <label
+              className={cn(
+                simpleChoiceCardBaseClass,
+                selected ? simpleChoiceCardSelectedClass : simpleChoiceCardUnselectedClass
+              )}
+              data-testid={`${option.testId}-card`}
               key={option.value}
-              value={option.value}
             >
-              {option.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+              <RadioGroupItem
+                aria-label={option.label}
+                data-testid={option.testId}
+                value={option.value}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
+                  <Icon aria-hidden="true" className="h-4 w-4 text-primary" />
+                  {option.label}
+                </span>
+                <span className="mt-0.5 block text-xs leading-5 text-text-secondary">
+                  {option.description}
+                </span>
+              </span>
+            </label>
+          )
+        })}
+      </RadioGroup>
     )
   },
   renderSelect({ ariaLabel, onChange, options, placeholder, testId, value }) {

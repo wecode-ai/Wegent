@@ -33,8 +33,18 @@ describe('webProjectAgentConfigurationHost', () => {
             {webProjectAgentConfigurationHost.renderModePicker({
               onChange: onModeChange,
               options: [
-                { label: 'Wegent', testId: 'mode-wegent', value: 'wegent' },
-                { label: 'Codex', testId: 'mode-codex', value: 'codex' },
+                {
+                  description: '使用已有智能体',
+                  label: 'Wegent',
+                  testId: 'mode-wegent',
+                  value: 'wegent',
+                },
+                {
+                  description: '创建专用智能体',
+                  label: 'Codex',
+                  testId: 'mode-codex',
+                  value: 'codex',
+                },
               ],
               value: 'wegent',
             })}
@@ -72,18 +82,17 @@ describe('webProjectAgentConfigurationHost', () => {
       'p-0',
       'sm:max-w-[520px]'
     )
-    expect(screen.getByTestId('mode-wegent').parentElement).toHaveClass(
-      'h-9',
+    expect(screen.getByTestId('mode-wegent-card')).toHaveClass(
       'border',
-      'border-border',
-      'bg-surface',
-      'p-0.5'
+      'border-primary',
+      'bg-primary/5',
+      'ring-1'
     )
-    expect(screen.getByTestId('mode-wegent')).toHaveClass('h-8', 'text-sm')
+    expect(screen.getByTestId('mode-codex-card')).toHaveClass('border-border', 'bg-base')
     expect(screen.getByTestId('agent-select')).toHaveClass('border-border', 'rounded-lg')
     expect(screen.getByTestId('agent-submit')).toHaveClass('bg-primary', 'rounded-lg')
 
-    fireEvent.mouseDown(screen.getByTestId('mode-codex'), { button: 0 })
+    fireEvent.click(screen.getByTestId('mode-codex'))
     expect(onModeChange).toHaveBeenCalledWith('codex')
 
     fireEvent.change(screen.getByTestId('agent-name'), {

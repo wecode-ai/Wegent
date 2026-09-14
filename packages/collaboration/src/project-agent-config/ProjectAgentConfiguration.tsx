@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { X } from "lucide-react";
+import { Info, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { CollaborationTranslate } from "../i18n";
@@ -542,6 +542,10 @@ export function ProjectAgentConfiguration({
                       onChange: setMode,
                       options: [
                         {
+                          description: translate(
+                            "todo.choose_wegent_agent_description",
+                            "使用资源库中已有的智能体",
+                          ),
                           label: translate(
                             "todo.choose_wegent_agent",
                             "Wegent 智能体",
@@ -550,6 +554,10 @@ export function ProjectAgentConfiguration({
                           value: "wegent",
                         },
                         {
+                          description: translate(
+                            "todo.create_codex_agent_description",
+                            "配置提示词并绑定执行环境",
+                          ),
                           label: translate(
                             "todo.create_codex_agent",
                             "Codex 智能体",
@@ -640,10 +648,13 @@ export function ProjectAgentConfiguration({
                         className={styles.composerEmpty}
                         data-testid="project-agent-wegent-empty"
                       >
-                        {translate(
-                          "todo.no_workspace_wegent_agents",
-                          "当前没有智能体。请先在资源库创建，或让空间管理员共享智能体。",
-                        )}
+                        <Info aria-hidden="true" />
+                        <span>
+                          {translate(
+                            "todo.no_workspace_wegent_agents",
+                            "当前没有智能体。请先在资源库创建，或让空间管理员共享智能体。",
+                          )}
+                        </span>
                       </p>
                     )
                   ) : environments.length ? (
@@ -741,10 +752,13 @@ export function ProjectAgentConfiguration({
                       className={styles.composerEmpty}
                       data-testid="project-agent-codex-environment-empty"
                     >
-                      {translate(
-                        "todo.no_workspace_execution_environments",
-                        "项目还没有执行环境，请先在项目设置的执行环境页面添加。",
-                      )}
+                      <Info aria-hidden="true" />
+                      <span>
+                        {translate(
+                          "todo.no_workspace_execution_environments",
+                          "项目还没有执行环境，请先在项目设置的执行环境页面添加。",
+                        )}
+                      </span>
                     </p>
                   )}
                 </div>,
