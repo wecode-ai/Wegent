@@ -386,10 +386,10 @@ impl RuntimeWorkRpcHandler {
             .get("workspaceSourceTask")
             .or_else(|| payload.get("workspace_source_task"))
             .and_then(Value::as_object);
-        let mut side_source = side_source_thread(&payload);
+        let mut side_source = side_source_thread(&payload)?;
         let side_source_workspace_path = side_source
             .as_ref()
-            .and_then(|source| source.workspace_path.clone());
+            .map(|source| source.workspace_path.clone());
         if let Some(source_workspace_path) = side_source_workspace_path.as_deref() {
             for requested_workspace_path in [payload_workspace_path.as_deref(), request.cwd()]
                 .into_iter()

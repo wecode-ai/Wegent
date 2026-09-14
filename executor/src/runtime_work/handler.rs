@@ -707,7 +707,7 @@ impl Drop for ScheduledTurnGuard {
 struct SideSourceThread {
     thread_id: String,
     thread_path: Option<String>,
-    workspace_path: Option<String>,
+    workspace_path: String,
 }
 
 impl RuntimeThreadEventRoute {

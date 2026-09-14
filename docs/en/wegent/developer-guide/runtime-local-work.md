@@ -273,7 +273,11 @@ The Executor also treats `sideSource` as the authoritative directory binding:
 even if a malformed request includes `workspace_source=git_worktree`, it uses
 the parent `workspacePath` directly for `thread/fork` and must not create
 another worktree. A side conversation therefore executes in the same directory
-whether its parent thread uses the Project root or an existing worktree.
+whether its parent thread uses the Project root or an existing worktree. If
+`sideSource` lacks a nonblank `threadId` or `workspacePath`, or if the top-level
+requested workspace conflicts with the parent workspace, the Executor rejects
+the create request instead of falling back to the requested workspace, a
+Project workspace, or a standalone conversation directory.
 
 Before calling create, Wework generates a client-side `localTaskId` and sends it to Backend as `localTaskId`. Backend only forwards that value to the target device; it does not write it to the central database. The frontend immediately opens the runtime URL from `deviceId + localTaskId`, renders the user message, and shows the waiting state. If the device returns a different `localTaskId`, the frontend switches to the device-confirmed address. This lets a newly created task appear before the Backend RPC completes or the next list refresh runs, and queued sends wait until the current waiting state becomes a real assistant turn before continuing.
 

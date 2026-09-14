@@ -269,7 +269,9 @@ Backend 根据请求中的项目映射或独立设备工作区解析目标设备
 `sideSource` 视为权威目录绑定：即使请求同时错误携带
 `workspace_source=git_worktree`，仍直接使用父任务的 `workspacePath` 调用
 `thread/fork`，不能再创建一个工作树。这样主线程位于项目主目录或已有工作树时，
-侧边对话都会在同一目录中执行。
+侧边对话都会在同一目录中执行。`sideSource` 缺少非空 `threadId` 或
+`workspacePath`，或者顶层请求目录与父目录冲突时，Executor 必须拒绝创建，
+不能回退到请求目录、项目目录或普通对话目录。
 
 Wework 在调用 create 前先生成客户端侧 `localTaskId`，并在请求体中作为 `localTaskId` 传给 Backend。Backend 只把这个值转发给目标设备，不把它写入中心数据库。前端会立即用 `deviceId + localTaskId` 打开运行时 URL、展示用户消息和等待态；如果设备返回了不同的 `localTaskId`，前端再切换到设备确认的地址。这样新建任务不需要等待 Backend RPC 完成或下一次列表刷新，队列发送也会等当前等待态进入真实 assistant turn 后再继续。
 
