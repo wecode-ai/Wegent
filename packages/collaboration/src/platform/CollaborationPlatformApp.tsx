@@ -697,7 +697,7 @@ function WorkspaceHome({
     {
       id: "failed",
       label: messages.failed,
-      value: snapshot.totals.failed + snapshot.totals.unavailable,
+      value: snapshot.totals.failed,
       icon: AlertTriangle,
       tone: "failed",
     },

@@ -902,6 +902,11 @@ describe("CollaborationPlatformApp real component flow", () => {
       byTestId(`collaboration-workspace-unavailable-${unavailableProject.id}`),
     ).toBeTruthy();
     expect(container.textContent).toContain("状态不可用");
+    expect(
+      container.querySelector(
+        '.collaboration-workspace-operation-metrics [data-tone="failed"] strong',
+      )?.textContent,
+    ).toBe("0");
   });
 
   it("formats workspace operation times with the selected locale", async () => {
