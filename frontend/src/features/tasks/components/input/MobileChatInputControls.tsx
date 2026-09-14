@@ -158,8 +158,9 @@ export interface MobileChatInputControlsProps {
   availableSkills?: UnifiedSkill[]
   teamSkillNames?: string[]
   preloadedSkillNames?: string[]
+  selectedSkillIds?: number[]
   selectedSkillNames?: string[]
-  onToggleSkill?: (skillName: string) => void
+  onToggleSkill?: (skill: UnifiedSkill) => void
 
   /** When true, hide all selectors - only show send button */
   hideSelectors?: boolean
@@ -256,6 +257,7 @@ export function MobileChatInputControls({
   availableSkills = [],
   teamSkillNames = [],
   preloadedSkillNames = [],
+  selectedSkillIds,
   selectedSkillNames = [],
   onToggleSkill,
   hideSelectors,
@@ -815,6 +817,7 @@ export function MobileChatInputControls({
           skills={availableSkills}
           teamSkillNames={teamSkillNames}
           preloadedSkillNames={preloadedSkillNames}
+          selectedSkillIds={selectedSkillIds}
           selectedSkillNames={selectedSkillNames}
           onToggleSkill={onToggleSkill}
           disabled={isStreaming}

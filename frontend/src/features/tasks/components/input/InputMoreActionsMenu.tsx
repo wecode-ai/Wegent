@@ -34,8 +34,9 @@ interface InputMoreActionsMenuProps {
   availableSkills: UnifiedSkill[]
   teamSkillNames: string[]
   preloadedSkillNames: string[]
+  selectedSkillIds?: number[]
   selectedSkillNames: string[]
-  onToggleSkill?: (skillName: string) => void
+  onToggleSkill?: (skill: UnifiedSkill) => void
   skillSelectorRef?: RefObject<SkillSelectorPopoverRef | null>
   showExternalWebContent?: boolean
   attachments?: Attachment[]
@@ -58,6 +59,7 @@ export function InputMoreActionsMenu({
   availableSkills,
   teamSkillNames,
   preloadedSkillNames,
+  selectedSkillIds,
   selectedSkillNames,
   onToggleSkill,
   skillSelectorRef,
@@ -130,6 +132,7 @@ export function InputMoreActionsMenu({
               skills={availableSkills}
               teamSkillNames={teamSkillNames}
               preloadedSkillNames={preloadedSkillNames}
+              selectedSkillIds={selectedSkillIds}
               selectedSkillNames={selectedSkillNames}
               onToggleSkill={onToggleSkill}
               isChatShell={isChatShell(selectedTeam)}

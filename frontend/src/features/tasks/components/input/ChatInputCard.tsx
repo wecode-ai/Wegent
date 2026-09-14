@@ -292,6 +292,7 @@ export function ChatInputCard({
   availableSkills,
   teamSkillNames,
   preloadedSkillNames,
+  selectedSkillIds,
   selectedSkillNames,
   onToggleSkill,
   // Video mode props
@@ -798,7 +799,7 @@ export function ChatInputCard({
               availableSkills={availableSkills}
               teamSkillNames={teamSkillNames}
               preloadedSkillNames={preloadedSkillNames}
-              selectedSkillNames={selectedSkillNames}
+              selectedSkillIds={selectedSkillIds}
               onSkillSelect={onToggleSkill}
               isChatShell={selectedTeam?.agent_type === 'chat'}
               // Skill selection is read-only after task creation (hasMessages)
@@ -896,6 +897,7 @@ export function ChatInputCard({
             availableSkills={availableSkills}
             teamSkillNames={teamSkillNames}
             preloadedSkillNames={preloadedSkillNames}
+            selectedSkillIds={selectedSkillIds}
             selectedSkillNames={selectedSkillNames}
             onToggleSkill={onToggleSkill}
             skillSelectorRef={skillSelectorRef}
