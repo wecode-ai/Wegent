@@ -157,10 +157,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command(
-        'click',
-        `${ACTIVE_BOARD} [data-testid="collaboration-workspace-wework-local-workspace"]`
-      )
+      const localWorkspaceSelector = `${ACTIVE_BOARD} [data-testid="collaboration-workspace-wework-local-workspace"]`
+      await control.command('waitFor', localWorkspaceSelector, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', localWorkspaceSelector)
       await control.command(
         'waitFor',
         `${ACTIVE_BOARD} [data-testid="collaboration-workspace-project-create"]`,

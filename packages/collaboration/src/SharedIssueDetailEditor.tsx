@@ -802,13 +802,15 @@ export function TodoEditor(props: TodoEditorProps) {
     attachments.forEach((attachment) => merged.set(attachment.id, attachment));
     return Array.from(merged.values());
   }, [attachments, description]);
+  const effectiveTasks =
+    tasks.length > 0 ? tasks : (props.initialTaskBindings ?? tasks);
   const displayedWorkflow = useMemo(
     () =>
       workflowDraft
-        ? (extensions?.reconcileWorkflow?.(workflowDraft, tasks) ??
+        ? (extensions?.reconcileWorkflow?.(workflowDraft, effectiveTasks) ??
           workflowDraft)
         : null,
-    [extensions, workflowDraft, tasks],
+    [effectiveTasks, extensions, workflowDraft],
   );
   const refreshTaskBindings = useCallback(async () => {
     if (editItemId == null) return;
@@ -1090,9 +1092,9 @@ export function TodoEditor(props: TodoEditorProps) {
     : false;
   const displayedTasks = props.showCurrentTaskOnly
     ? itemHasActiveTask
-      ? tasks.slice(0, 1)
+      ? effectiveTasks.slice(0, 1)
       : []
-    : tasks;
+    : effectiveTasks;
   const executionChildItems = showChildren ? [] : childItems;
   const executionTaskCount = executionChildItems.length + displayedTasks.length;
   const hasExecutionDetails =
@@ -1173,7 +1175,9 @@ export function TodoEditor(props: TodoEditorProps) {
   const visibleRailChildren = childRailExpanded
     ? childItems
     : childItems.slice(0, 2);
-  const visibleRailTasks = executionRailExpanded ? tasks : tasks.slice(0, 2);
+  const visibleRailTasks = executionRailExpanded
+    ? effectiveTasks
+    : effectiveTasks.slice(0, 2);
   const visibleRailDeliveries = deliveryRailExpanded
     ? deliveries
     : deliveries.slice(0, 2);
@@ -1674,7 +1678,7 @@ export function TodoEditor(props: TodoEditorProps) {
           item,
           project: editProps.project,
           editable,
-          tasks,
+          tasks: effectiveTasks,
           deliveries,
           selectedTaskId: props.selectedTaskId,
           workflowManagerRunId:
@@ -2940,7 +2944,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           nodes={
                             displayedWorkflow.nodes as SharedWorkflowNode[]
                           }
-                          tasks={tasks}
+                          tasks={effectiveTasks}
                           deliveries={deliveries}
                           executionError={item.execution_error}
                           selectedTaskId={props.selectedTaskId}
@@ -2984,7 +2988,7 @@ export function TodoEditor(props: TodoEditorProps) {
                                     await editorPort.workflowNodes.complete(
                                       item.id,
                                       stage,
-                                      tasks,
+                                      effectiveTasks,
                                       action,
                                       reason,
                                       values,
@@ -3461,13 +3465,13 @@ export function TodoEditor(props: TodoEditorProps) {
                         <h3 className="flex h-8 items-center text-sm font-semibold">
                           {t("todo.execution_history", "执行记录")}
                         </h3>
-                        {tasks.length === 0 ? (
+                        {effectiveTasks.length === 0 ? (
                           <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
                             {t("todo.no_local_task", "尚未关联本地任务")}
                           </p>
                         ) : (
                           <div className="mt-1">
-                            {tasks.map((task) => (
+                            {effectiveTasks.map((task) => (
                               <div
                                 key={task.id}
                                 className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs transition-colors hover:bg-muted/60"
@@ -3644,9 +3648,9 @@ export function TodoEditor(props: TodoEditorProps) {
                         <Link2 className="icon" />
                         {t("todo.execution_history", "执行记录")}
                       </h3>
-                      <span className="count">{tasks.length}</span>
+                      <span className="count">{effectiveTasks.length}</span>
                     </div>
-                    {tasks.length === 0 ? (
+                    {effectiveTasks.length === 0 ? (
                       <p className="task-detail-rail-empty">
                         {t("todo.no_local_task", "尚未关联本地任务")}
                       </p>
@@ -3695,7 +3699,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             </button>
                           ))}
                         </div>
-                        {tasks.length > 2 && (
+                        {effectiveTasks.length > 2 && (
                           <button
                             type="button"
                             className="task-detail-rail-more"
@@ -3706,7 +3710,7 @@ export function TodoEditor(props: TodoEditorProps) {
                               : t(
                                   "todo.view_all_count",
                                   "查看全部 {{count}} 个",
-                                  { count: tasks.length },
+                                  { count: effectiveTasks.length },
                                 )}
                           </button>
                         )}
