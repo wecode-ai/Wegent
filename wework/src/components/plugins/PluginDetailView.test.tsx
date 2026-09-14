@@ -169,7 +169,7 @@ describe('PluginDetailView owner actions', () => {
     const plugin = createDetailPlugin()
     plugin.raw.spec.installState = 'update_available'
     plugin.raw.spec.components.mcps = [
-      { name: 'business', server: { url: 'https://business.example/mcp' } },
+      { name: 'business', server: { url: 'https://business.example/mcp', command: null } },
     ]
 
     render(

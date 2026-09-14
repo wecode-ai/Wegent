@@ -99,7 +99,7 @@ interface DetailComponentItem {
 }
 
 function isRemoteMcpServer(server: Record<string, unknown>): boolean {
-  return typeof server.url === 'string' && server.command === undefined
+  return typeof server.url === 'string' && (server.command === undefined || server.command === null)
 }
 
 function formatManifestValue(value: unknown): string {
