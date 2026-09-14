@@ -55,10 +55,11 @@ export function workspaceHttpRequestBody(value: unknown): unknown {
     return value;
   }
   return Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [
-      snakeCaseKey(key),
-      workspaceHttpRequestBody(nested),
-    ]),
+    Object.entries(value).map(([key, nested]) => {
+      const wireKey = snakeCaseKey(key)
+      // Runtime/provider option names are opaque API values.
+      return [wireKey, wireKey === 'model_options' ? nested : workspaceHttpRequestBody(nested)]
+    }),
   );
 }
 
@@ -80,10 +81,10 @@ function keysToCamelCase(value: unknown): unknown {
     return value;
   }
   return Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [
-      camelCaseKey(key),
-      keysToCamelCase(nested),
-    ]),
+    Object.entries(value).map(([key, nested]) => {
+      const viewKey = camelCaseKey(key)
+      return [viewKey, viewKey === 'modelOptions' ? nested : keysToCamelCase(nested)]
+    }),
   );
 }
 

@@ -4842,12 +4842,13 @@ def test_automation_assignment_schedules_wegent_runtime_after_commit(
     schedule.assert_called_once_with(test_db, execution)
 
 
+@pytest.mark.parametrize("mode", ["auto", "manual_approval"])
 def test_waiting_execution_can_select_owned_runtime_once(
-    test_db: Session, test_user: User
+    test_db: Session, test_user: User, mode: str
 ) -> None:
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
-    bot = _make_bot(test_db, project, test_user)
+    bot = _make_bot(test_db, project, test_user, mode=mode)
     _ensure_device(test_db, test_user, "cloud-device-1")
     execution = loop_item_execution_service.create_for_assignment(
         test_db,
@@ -4881,7 +4882,9 @@ def test_waiting_execution_can_select_owned_runtime_once(
         version=initial_version,
     )
 
-    assert selected.status == "queued"
+    assert selected.status == (
+        "pending_approval" if mode == "manual_approval" else "queued"
+    )
     assert selected.runtime_selection == {
         "runtime_source": "selected",
         "runtime_profile_id": profile["id"],

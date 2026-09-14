@@ -33,6 +33,7 @@ from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_item_status_history import write_status_change
 from app.services.workspaces import workspace_service
 from app.services.workspaces.access import require_workspace_role
+from app.services.workspaces.environment_status import execution_environment_statuses
 from app.services.workspaces.resource_mapping import execution_environment_values
 from app.services.workspaces.storage import (
     ensure_resource_grant,
@@ -40,6 +41,7 @@ from app.services.workspaces.storage import (
     resource_grant,
     workspace_id_for_project,
 )
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -558,7 +560,8 @@ class CloudProjectService:
         db.delete(member)
         db.commit()
 
-    def list_execution_environments(
+    @trace_async("project.list_execution_environments", tracer_name="backend")
+    async def list_execution_environments(
         self, db: Session, cloud_project_id: int, user_id: int
     ) -> list[dict[str, object]]:
         require_cloud_project_role(db, cloud_project_id, user_id)
@@ -579,17 +582,22 @@ class CloudProjectService:
             .order_by(ResourceMember.created_at, ResourceMember.id)
             .all()
         )
+        connection_statuses = await execution_environment_statuses(
+            [device for _, device in rows]
+        )
         return [
             execution_environment_values(
                 db,
                 grant,
                 device,
+                connection_status=connection_statuses[device.id],
                 workspace_id=str(workspace_id),
             )
             for grant, device in rows
         ]
 
-    def add_execution_environment(
+    @trace_async("project.add_execution_environment", tracer_name="backend")
+    async def add_execution_environment(
         self,
         db: Session,
         cloud_project_id: int,
@@ -637,6 +645,7 @@ class CloudProjectService:
                 status.HTTP_403_FORBIDDEN,
                 "Execution environment is not available to this Project",
             )
+        connection_statuses = await execution_environment_statuses([device])
         grant = ResourceMember.create(
             resource_type=ResourceType.DEVICE.value,
             resource_id=device_id,
@@ -653,6 +662,7 @@ class CloudProjectService:
             db,
             grant,
             device,
+            connection_status=connection_statuses[device.id],
             workspace_id=str(workspace_id),
         )
 

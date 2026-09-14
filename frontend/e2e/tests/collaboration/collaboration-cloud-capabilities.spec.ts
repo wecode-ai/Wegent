@@ -5,6 +5,11 @@
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
+import {
+  configureDispatchRuntime,
+  stopDispatchRun,
+  webApi,
+} from '../../utils/collaboration-test-support'
 import { REGULAR_USER } from '../../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 
@@ -44,6 +49,7 @@ interface CloudIssue {
 }
 
 interface CloudAutomationRun {
+  taskId: string
   id: string
   automationId: string
 }
@@ -81,30 +87,6 @@ async function captureEvidence(page: Page, name: string): Promise<void> {
     path: path.join(evidenceDir, `${name}.png`),
     fullPage: true,
   })
-}
-
-async function webApi<T>(
-  page: Page,
-  path: string,
-  init: { body?: unknown; method?: string } = {}
-): Promise<T> {
-  return page.evaluate(
-    async ({ requestPath, requestInit }) => {
-      const response = await fetch(requestPath, {
-        method: requestInit.method ?? 'GET',
-        cache: 'no-store',
-        headers:
-          requestInit.body === undefined ? undefined : { 'Content-Type': 'application/json' },
-        body: requestInit.body === undefined ? undefined : JSON.stringify(requestInit.body),
-      })
-      const text = await response.text()
-      if (!response.ok) {
-        throw new Error(`${requestInit.method ?? 'GET'} ${requestPath}: ${response.status} ${text}`)
-      }
-      return text ? JSON.parse(text) : null
-    },
-    { requestPath: path, requestInit: init }
-  )
 }
 
 async function createWorkspaceByApi(page: Page, name: string): Promise<CloudWorkspace> {
@@ -674,6 +656,8 @@ test.describe('Collaboration cloud capabilities', () => {
     const suffix = Date.now()
     let projectId = ''
     let workspaceId = ''
+    let cleanupRuntime: (() => Promise<void>) | undefined
+    let automationRun: CloudAutomationRun | undefined
 
     try {
       await page.goto('/collaboration')
@@ -681,6 +665,7 @@ test.describe('Collaboration cloud capabilities', () => {
       workspaceId = workspace.id
       const project = await createProjectByApi(page, workspace.id, `Automation ${suffix}`)
       projectId = project.id
+      cleanupRuntime = await configureDispatchRuntime(page, project.id, String(suffix))
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
       await page.getByTestId('collaboration-project-settings-dispatch').click()
       await expect(page.getByTestId('project-automation-policy')).toBeVisible()
@@ -712,6 +697,7 @@ test.describe('Collaboration cloud capabilities', () => {
       const run = await runResponse
       expect(run.ok(), `Automation run failed: ${await run.text()}`).toBe(true)
       const runBody = (await run.json()) as CloudAutomationRun
+      automationRun = runBody
       expect(runBody.automationId).toBeTruthy()
 
       await page.getByTestId('automation-open-runs').click()
@@ -738,6 +724,8 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId(`automation-run-${runBody.id}`)).toBeVisible()
       await captureEvidence(page, 'web-09-automation-history')
     } finally {
+      if (automationRun) await stopDispatchRun(page, projectId, automationRun)
+      await cleanupRuntime?.()
       if (projectId) await archiveProject(page, projectId)
       if (workspaceId) await archiveWorkspace(page, workspaceId)
     }
