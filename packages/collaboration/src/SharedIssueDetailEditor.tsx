@@ -626,6 +626,12 @@ export function TodoEditor(props: TodoEditorProps) {
   const canStartWork =
     !isCreate && props.canStartWork !== false && Boolean(props.onCreateTask);
   const editable = isCreate || editProps?.editable === true;
+  const canMutateStatus =
+    isCreate ||
+    editable ||
+    props.canComplete === true ||
+    props.canSubmitReview === true ||
+    props.canReopen === true;
   const workspacePanel = props.presentation === "workspace-panel";
   const readFirst = workspacePanel && props.readFirst === true && !isCreate;
   const showPanelControls = props.showPanelControls !== false;
@@ -1327,12 +1333,27 @@ export function TodoEditor(props: TodoEditorProps) {
   }
 
   async function saveDetails() {
-    if (props.mode !== "edit" || !editable || !dirty || !title.trim() || saving)
+    if (
+      props.mode !== "edit" ||
+      !canMutateStatus ||
+      !dirty ||
+      (editable && !title.trim()) ||
+      saving
+    )
       return;
     const current = props.item;
     setSaving(true);
     setSaveError(null);
     try {
+      if (!editable) {
+        if (status === current.status) return;
+        const updated = await editorPort.issues.update(current.id, {
+          version: current.version,
+          status,
+        });
+        await props.onUpdated(updated);
+        return;
+      }
       const sourceDueDate = (
         extensions?.dueDateFromSource ?? todoDueDateFromSource
       )(current.due_at);
@@ -1711,6 +1732,13 @@ export function TodoEditor(props: TodoEditorProps) {
       ? statusOptions
       : statusOptions.filter((option) => {
           if (option.id === status) return true;
+          if (!editable) {
+            if (status === "completed") return props.canReopen === true;
+            if (option.id === "completed") return props.canComplete === true;
+            if (option.id === "in_review")
+              return props.canSubmitReview === true;
+            return false;
+          }
           if (status === "completed") return props.canReopen !== false;
           if (option.id === "completed") return props.canComplete !== false;
           if (option.id === "in_review") return props.canSubmitReview !== false;
@@ -1724,7 +1752,7 @@ export function TodoEditor(props: TodoEditorProps) {
       accessibleLabel={t("todo.issue_status", "状态")}
       value={status}
       onChange={setStatus}
-      disabled={!editable || availableStatusOptions.length < 2}
+      disabled={!canMutateStatus || availableStatusOptions.length < 2}
       className={overlayControlClass}
       statuses={availableStatusOptions}
       includeUnset={status === ""}
@@ -2372,11 +2400,11 @@ export function TodoEditor(props: TodoEditorProps) {
           ) : null}
           {twoColumn && !isCreate ? (
             <>
-              {editable && (dirty || saving) ? (
+              {canMutateStatus && (dirty || saving) ? (
                 <button
                   type="button"
                   data-testid="cloud-todo-save"
-                  disabled={!title.trim() || saving}
+                  disabled={(editable && !title.trim()) || saving}
                   onClick={() => void saveDetails()}
                   className={cn(
                     "mr-2 bg-text-primary px-3 font-medium text-background transition hover:opacity-90 disabled:opacity-50",
@@ -3844,11 +3872,11 @@ export function TodoEditor(props: TodoEditorProps) {
                 </>
               ) : (
                 <>
-                  {editable && dirty && (
+                  {canMutateStatus && dirty && (
                     <button
                       type="button"
                       data-testid="cloud-todo-save"
-                      disabled={!title.trim() || saving}
+                      disabled={(editable && !title.trim()) || saving}
                       onClick={() => void saveDetails()}
                       className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                     >

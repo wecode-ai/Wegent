@@ -668,8 +668,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
       remove(projectId, userId) {
         return deliveryApi.removeCloudProjectMember(projectId, userId)
       },
-      transferOwnership(projectId, userId) {
-        return deliveryApi.transferCloudProjectOwnership(projectId, userId)
+      async transferOwnership(projectId, userId) {
+        return toProject(await deliveryApi.transferCloudProjectOwnership(projectId, userId))
       },
     },
     files: {

@@ -288,6 +288,9 @@ export function TodoEditor(props: TodoEditorProps) {
           (props.item as CloudLoopItem & { project_store?: 'local' | 'backend' }).project_store ??
           props.project?.project_store,
       })}
+      canSubmitReview={props.item.permissions?.submit_review === true}
+      canComplete={props.item.permissions?.complete === true}
+      canReopen={props.item.permissions?.reopen === true}
       project={props.project as SharedEditorProject | undefined}
       onUpdated={item => props.onUpdated(item as CloudLoopItem)}
       onAddChild={props.onAddChild}

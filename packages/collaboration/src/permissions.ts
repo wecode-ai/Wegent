@@ -8,6 +8,16 @@ import type {
   CollaborationView,
 } from "./types";
 
+type CollaborationIssueMutation =
+  | { kind: "status"; status: string }
+  | { kind: "priority" }
+  | {
+      kind: "assignee";
+      assigneeId: string | null;
+      assigneeType: "user" | "agent" | "team" | null;
+    }
+  | { kind: "tag" };
+
 function isLocalProject(
   project: Pick<CollaborationProject, "project_store">,
 ): boolean {
@@ -62,6 +72,47 @@ export function canStartWorkOnCollaborationIssue(
   issue: Pick<CollaborationIssue, "permissions">,
 ): boolean {
   return isLocalProject(project) || issue.permissions?.execute === true;
+}
+
+export function canApplyCollaborationIssueMutation(
+  project: Pick<CollaborationProject, "current_user_id" | "project_store">,
+  issue: Pick<
+    CollaborationIssue,
+    | "assignee_agent_id"
+    | "assignee_team_id"
+    | "assignee_user_id"
+    | "permissions"
+    | "status"
+  >,
+  mutation: CollaborationIssueMutation,
+): boolean {
+  if (isLocalProject(project)) return true;
+  const permissions = issue.permissions;
+  if (!permissions) return false;
+  if (mutation.kind === "priority" || mutation.kind === "tag") {
+    return permissions.edit_content;
+  }
+  if (mutation.kind === "status") {
+    if (mutation.status === issue.status) return permissions.edit_content;
+    if (issue.status === "completed") return permissions.reopen;
+    if (mutation.status === "completed") return permissions.complete;
+    if (mutation.status === "in_review") return permissions.submit_review;
+    return permissions.edit_content;
+  }
+  const currentUserId = project.current_user_id;
+  const isUnassigned =
+    issue.assignee_user_id == null &&
+    !issue.assignee_agent_id &&
+    issue.assignee_team_id == null;
+  const claimsForCurrentUser =
+    isUnassigned &&
+    mutation.assigneeType === "user" &&
+    Number(mutation.assigneeId) === currentUserId;
+  return (
+    permissions.assign ||
+    permissions.handoff ||
+    (permissions.claim && claimsForCurrentUser)
+  );
 }
 
 export interface CollaborationIssueActionPermissions {

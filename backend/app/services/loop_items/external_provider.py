@@ -36,6 +36,7 @@ from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
+    effective_issue_update_fields,
     issue_permissions,
     require_cloud_project_role,
     require_issue_action,
@@ -656,8 +657,26 @@ class ExternalLoopItemProvider:
         )
         current = self._get_issue(project, number)
         current_response = self._response(db, project, current, access, user_id)
-        for action in required_issue_update_actions(
+        effective_changed_fields = effective_issue_update_fields(
             changed_fields=set(values.model_fields_set),
+            current_assignee_user_id=current_response.get("assignee_user_id"),
+            current_assignee_agent_id=current_response.get("assignee_agent_id"),
+            current_assignee_team_id=current_response.get("assignee_team_id"),
+            current_status=str(current_response["status"]),
+            requested_assignee_user_id=values.assignee_user_id,
+            requested_assignee_agent_id=values.assignee_agent_id,
+            requested_assignee_team_id=values.assignee_team_id,
+            requested_status=values.status,
+        )
+        mutable_changed_fields = effective_changed_fields - {
+            "version",
+            "automation_rule_id",
+            "notify_assignee",
+        }
+        if not mutable_changed_fields:
+            return current_response
+        for action in required_issue_update_actions(
+            changed_fields=effective_changed_fields,
             current_assignee_user_id=current_response.get("assignee_user_id"),
             current_assignee_agent_id=current_response.get("assignee_agent_id"),
             current_assignee_team_id=current_response.get("assignee_team_id"),
@@ -682,7 +701,10 @@ class ExternalLoopItemProvider:
                 user_id=user_id,
             )
         payload: dict[str, object] = {}
-        dumped = values.model_dump(exclude_unset=True)
+        dumped = values.model_dump(
+            include=effective_changed_fields,
+            exclude_unset=True,
+        )
         if "title" in dumped:
             payload["title"] = values.title
         if "description" in dumped or "parent_id" in dumped:

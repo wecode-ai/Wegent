@@ -279,7 +279,7 @@ export function WorkspaceMembersConfiguration({
                 <span className="collaboration-resource-avatar">
                   {member.user_name.slice(0, 1).toUpperCase()}
                 </span>
-                <span>
+                <span className="collaboration-resource-summary">
                   <strong>{member.user_name}</strong>
                   <small>{member.email ?? ""}</small>
                 </span>

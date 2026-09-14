@@ -79,6 +79,46 @@ def test_unassigned_issue_can_only_be_self_claimed_by_developer() -> None:
     assert actions == {IssueAction.CLAIM}
 
 
+def test_blank_internal_agent_id_does_not_block_self_claim() -> None:
+    actions = required_issue_update_actions(
+        changed_fields={"assignee_user_id"},
+        current_assignee_user_id=None,
+        current_assignee_agent_id="",
+        current_assignee_team_id=None,
+        current_status="pending",
+        requested_assignee_user_id=2,
+        requested_assignee_agent_id=None,
+        requested_assignee_team_id=None,
+        requested_status=None,
+        user_id=2,
+    )
+
+    assert actions == {IssueAction.CLAIM}
+
+
+def test_explicit_empty_assignee_fields_do_not_turn_self_claim_into_assignment() -> (
+    None
+):
+    actions = required_issue_update_actions(
+        changed_fields={
+            "assignee_user_id",
+            "assignee_agent_id",
+            "assignee_team_id",
+        },
+        current_assignee_user_id=None,
+        current_assignee_agent_id="",
+        current_assignee_team_id=None,
+        current_status="pending",
+        requested_assignee_user_id=2,
+        requested_assignee_agent_id=None,
+        requested_assignee_team_id=None,
+        requested_status=None,
+        user_id=2,
+    )
+
+    assert actions == {IssueAction.CLAIM}
+
+
 def test_assigning_another_user_requires_project_governance() -> None:
     actions = required_issue_update_actions(
         changed_fields={"assignee_user_id"},

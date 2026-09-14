@@ -57,6 +57,7 @@ from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
+    effective_issue_update_fields,
     issue_permissions,
     require_cloud_project_role,
     require_issue_action,
@@ -1256,17 +1257,33 @@ class LoopItemService:
         values: LoopItemUpdate,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
-        assignee_changed = bool(
-            {
-                "assignee_user_id",
-                "assignee_agent_id",
-                "assignee_team_id",
-            }
-            & values.model_fields_set
+        effective_changed_fields = effective_issue_update_fields(
+            changed_fields=set(values.model_fields_set),
+            current_assignee_user_id=item.assignee_user_id,
+            current_assignee_agent_id=item.assignee_agent_id,
+            current_assignee_team_id=item.assignee_team_id,
+            current_status=item.status,
+            requested_assignee_user_id=values.assignee_user_id,
+            requested_assignee_agent_id=values.assignee_agent_id,
+            requested_assignee_team_id=values.assignee_team_id,
+            requested_status=values.status,
         )
+        mutable_changed_fields = effective_changed_fields - {
+            "version",
+            "automation_rule_id",
+            "notify_assignee",
+        }
+        if not mutable_changed_fields:
+            return item
+        assignee_fields = {
+            "assignee_user_id",
+            "assignee_agent_id",
+            "assignee_team_id",
+        }
+        assignee_changed = bool(assignee_fields & effective_changed_fields)
         access = self._require_item_access(db, item, user_id)
         required_actions = required_issue_update_actions(
-            changed_fields=set(values.model_fields_set),
+            changed_fields=effective_changed_fields,
             current_assignee_user_id=item.assignee_user_id,
             current_assignee_agent_id=item.assignee_agent_id,
             current_assignee_team_id=item.assignee_team_id,
@@ -1293,10 +1310,11 @@ class LoopItemService:
             )
         updates = values.model_dump(
             exclude={"version", "automation_rule_id", "notify_assignee"},
+            include=effective_changed_fields,
             exclude_unset=True,
         )
         meaningful_change = any(
-            field in values.model_fields_set
+            field in effective_changed_fields
             and (
                 field in {"tags", "workflow"}
                 or getattr(item, field, None) != getattr(values, field)
@@ -1315,13 +1333,13 @@ class LoopItemService:
                 "workflow",
             )
         )
-        if "assignee_team_id" in values.model_fields_set:
+        if "assignee_team_id" in effective_changed_fields:
             team_id = values.assignee_team_id
             if team_id:
                 runnable_wegent_team(db, user_id, team_id)
                 updates["assignee_user_id"] = None
                 updates["assignee_agent_id"] = ""
-        elif "assignee_agent_id" in values.model_fields_set:
+        elif "assignee_agent_id" in effective_changed_fields:
             agent_id = values.assignee_agent_id
             updates["assignee_agent_id"] = agent_id or ""
             if agent_id:
@@ -1337,28 +1355,28 @@ class LoopItemService:
                     )
                 updates["assignee_user_id"] = None
                 updates["assignee_team_id"] = None
-        elif "assignee_user_id" in values.model_fields_set and values.assignee_user_id:
+        elif "assignee_user_id" in effective_changed_fields and values.assignee_user_id:
             updates["assignee_agent_id"] = ""
             updates["assignee_team_id"] = None
-        if "parent_id" in values.model_fields_set:
+        if "parent_id" in effective_changed_fields:
             self._validate_parent_change(db, item, values.parent_id)
         if (
-            "tags" in values.model_fields_set
-            or "workflow" in values.model_fields_set
-            or "execution_config" in values.model_fields_set
+            "tags" in effective_changed_fields
+            or "workflow" in effective_changed_fields
+            or "execution_config" in effective_changed_fields
         ):
             # Tags live inside the metadata JSON column; merge so other
             # metadata keys survive the update.
             metadata = dict(item.metadata_json or {})
-            if "tags" in values.model_fields_set:
+            if "tags" in effective_changed_fields:
                 metadata["tags"] = updates.pop("tags") or []
-            if "workflow" in values.model_fields_set:
+            if "workflow" in effective_changed_fields:
                 workflow = values.workflow
                 metadata["workflow"] = (
                     workflow.model_dump(mode="json") if workflow is not None else None
                 )
                 updates.pop("workflow", None)
-            if "execution_config" in values.model_fields_set:
+            if "execution_config" in effective_changed_fields:
                 execution_config = values.execution_config
                 metadata["execution_config"] = (
                     execution_config.model_dump(mode="json")
@@ -1458,14 +1476,17 @@ class LoopItemService:
                     cancel_existing=False,
                 )
         next_status = updates.get("status")
-        if "status" in values.model_fields_set and next_status is not None:
+        if "status" in effective_changed_fields and next_status is not None:
             project = db.get(CloudProject, item.cloud_project_id)
             if project is None or next_status not in self._project_status_ids(project):
                 if next_status != "":
                     raise HTTPException(
                         status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
                     )
-        if "status" in values.model_fields_set and updates.get("status") != item.status:
+        if (
+            "status" in effective_changed_fields
+            and updates.get("status") != item.status
+        ):
             project = db.get(CloudProject, item.cloud_project_id)
             if project is not None:
                 metadata = updates.get("metadata_json")

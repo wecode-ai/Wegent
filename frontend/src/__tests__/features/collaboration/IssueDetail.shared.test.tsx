@@ -523,6 +523,79 @@ describe('shared IssueDetail', () => {
     expect(onCreateTask).not.toHaveBeenCalled()
   })
 
+  it.each([
+    {
+      permission: 'submit_review' as const,
+      currentStatus: 'pending',
+      nextStatus: 'in_review',
+    },
+    {
+      permission: 'complete' as const,
+      currentStatus: 'in_review',
+      nextStatus: 'completed',
+    },
+    {
+      permission: 'reopen' as const,
+      currentStatus: 'completed',
+      nextStatus: 'in_progress',
+    },
+  ])(
+    'allows a status-only $permission transition without content editing permission',
+    async ({ permission, currentStatus, nextStatus }) => {
+      const update = jest.fn().mockResolvedValue({
+        ...issue,
+        status: nextStatus,
+        version: 2,
+      })
+      const statusOnlyIssue = {
+        ...issue,
+        status: currentStatus,
+        can_edit: false,
+        permissions: issuePermissions({
+          edit_content: false,
+          claim: false,
+          handoff: false,
+          assign: false,
+          execute: true,
+          submit_review: permission === 'submit_review',
+          complete: permission === 'complete',
+          reopen: permission === 'reopen',
+        }),
+      }
+      const projectWithReview = {
+        ...project,
+        board_config: {
+          ...project.board_config,
+          statuses: [
+            ...project.board_config.statuses,
+            { id: 'in_review', name: '待确认', color: 'purple' as const },
+            { id: 'completed', name: '已完成', color: 'green' as const },
+          ],
+        },
+      }
+
+      renderDetail(createApi({ issues: { update } }), {
+        project: projectWithReview,
+        issue: statusOnlyIssue,
+        allIssues: [statusOnlyIssue],
+      })
+
+      expect(screen.getByTestId('cloud-todo-detail-title')).toHaveAttribute('readonly')
+      expect(screen.getByTestId('cloud-todo-detail-status')).toBeEnabled()
+      fireEvent.change(screen.getByTestId('cloud-todo-detail-status'), {
+        target: { value: nextStatus },
+      })
+      fireEvent.click(screen.getByTestId('cloud-todo-save'))
+
+      await waitFor(() =>
+        expect(update).toHaveBeenCalledWith(issue.id, {
+          version: issue.version,
+          status: nextStatus,
+        })
+      )
+    }
+  )
+
   it('keeps comments, assignment and execution closed for a restricted viewer', () => {
     const onCreateTask = jest.fn()
     const restrictedIssue = {

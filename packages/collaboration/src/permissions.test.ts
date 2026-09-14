@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   canAccessCollaborationProjectView,
+  canApplyCollaborationIssueMutation,
   canAssignCollaborationIssue,
   canCommentCollaborationIssue,
   canEditCollaborationIssue,
@@ -159,6 +160,81 @@ describe("collaboration permissions", () => {
         { project_store: "backend" },
         { permissions },
       ),
+    ).toBe(false);
+  });
+
+  it("authorizes board status drops with the matching workflow capability", () => {
+    const project = {
+      current_user_id: 7,
+      project_store: "backend" as const,
+    };
+    const developerIssue = {
+      assignee_agent_id: null,
+      assignee_team_id: null,
+      assignee_user_id: 7,
+      permissions: {
+        ...permissions,
+        edit_content: true,
+        handoff: true,
+        submit_review: true,
+      },
+      status: "in_progress",
+    };
+
+    expect(
+      canApplyCollaborationIssueMutation(project, developerIssue, {
+        kind: "status",
+        status: "in_review",
+      }),
+    ).toBe(true);
+    expect(
+      canApplyCollaborationIssueMutation(project, developerIssue, {
+        kind: "status",
+        status: "completed",
+      }),
+    ).toBe(false);
+    expect(
+      canApplyCollaborationIssueMutation(
+        project,
+        { ...developerIssue, status: "completed" },
+        { kind: "status", status: "pending" },
+      ),
+    ).toBe(false);
+  });
+
+  it("only uses claim permission for assigning an unassigned issue to self", () => {
+    const project = {
+      current_user_id: 7,
+      project_store: "backend" as const,
+    };
+    const unassignedIssue = {
+      assignee_agent_id: "",
+      assignee_team_id: null,
+      assignee_user_id: null,
+      permissions: { ...permissions, claim: true, edit_content: true },
+      status: "pending",
+    };
+
+    expect(
+      canApplyCollaborationIssueMutation(project, unassignedIssue, {
+        kind: "assignee",
+        assigneeId: "7",
+        assigneeType: "user",
+      }),
+    ).toBe(true);
+    expect(
+      canApplyCollaborationIssueMutation(project, unassignedIssue, {
+        kind: "assignee",
+        assigneeId: "8",
+        assigneeType: "user",
+      }),
+    ).toBe(false);
+    expect(
+      canApplyCollaborationIssueMutation(project, unassignedIssue, {
+        kind: "assignee",
+        assigneeId: "agent-1",
+        assigneeType: "agent",
+      }),
     ).toBe(false);
   });
 });

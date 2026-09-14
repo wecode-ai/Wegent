@@ -397,7 +397,7 @@ const sharedMessages: Record<
     "todo.project_role_maintainer": "项目管理员",
     "todo.project_role_maintainer_description":
       "管理成员、指派任务、验收完成或重新打开任务。",
-    "todo.project_role_developer": "执行成员",
+    "todo.project_role_developer": "执行者",
     "todo.project_role_developer_description":
       "编辑和执行任务，可自领、转交本人任务并提交验收。",
     "todo.project_role_reporter": "项目观察者",

@@ -5,6 +5,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-device-lifecycle',
   'cloud-space-mention',
   'collaboration-shared-core',
+  'collaboration-authority',
   'priority-filter',
   'telemetry-consent',
   'external-content-import',

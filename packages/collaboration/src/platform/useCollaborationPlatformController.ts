@@ -182,6 +182,34 @@ export function useCollaborationPlatformController({
     };
   }, [load]);
 
+  const workspaceApi = api.workspaces;
+  const workspaceId = location.workspaceId;
+  const transferWorkspaceOwnership = workspaceApi?.transferOwnership;
+  const transferOwnership =
+    transferWorkspaceOwnership && workspaceId
+      ? async (userId: number) => {
+          const workspace = await transferWorkspaceOwnership(
+            workspaceId,
+            userId,
+          );
+          setState((current) => ({
+            ...current,
+            workspace,
+            workspaces: current.workspaces.map((candidate) =>
+              candidate.id === workspace.id ? workspace : candidate,
+            ),
+            members: current.members.map((member) => {
+              if (member.user_id === userId)
+                return { ...member, role: "Owner" as const };
+              if (member.role === "Owner")
+                return { ...member, role: "Maintainer" as const };
+              return member;
+            }),
+          }));
+          return workspace;
+        }
+      : undefined;
+
   return {
     state,
     commands: {
@@ -311,33 +339,7 @@ export function useCollaborationPlatformController({
           })),
         }));
       },
-      async transferOwnership(userId: number) {
-        if (
-          !api.workspaces ||
-          !api.workspaces.transferOwnership ||
-          !location.workspaceId
-        ) {
-          throw new Error("Workspace ownership transfer is unavailable");
-        }
-        const workspace = await api.workspaces.transferOwnership(
-          location.workspaceId,
-          userId,
-        );
-        setState((current) => ({
-          ...current,
-          workspace,
-          workspaces: current.workspaces.map((candidate) =>
-            candidate.id === workspace.id ? workspace : candidate,
-          ),
-          members: current.members.map((member) => {
-            if (member.user_id === userId) return { ...member, role: "Owner" };
-            if (member.role === "Owner")
-              return { ...member, role: "Maintainer" };
-            return member;
-          }),
-        }));
-        return workspace;
-      },
+      transferOwnership,
       async addAgent(agent: CollaborationOwnedAgent) {
         if (!api.workspaces || !location.workspaceId || !agent.team_id) {
           throw new Error("Agent cannot be authorized");

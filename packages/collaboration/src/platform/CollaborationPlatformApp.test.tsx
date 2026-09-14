@@ -1117,6 +1117,11 @@ describe("CollaborationPlatformApp real component flow", () => {
       />,
     );
 
+    expect(
+      container.querySelector(
+        '[data-testid^="collaboration-workspace-member-transfer-owner-"]',
+      ),
+    ).toBeNull();
     await click(byTestId("collaboration-workspace-member-invite"));
     await change(
       byTestId("collaboration-workspace-member-search") as HTMLInputElement,

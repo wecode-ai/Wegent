@@ -74,6 +74,42 @@ ISSUE_CONTENT_FIELDS = frozenset(
 )
 
 
+def effective_issue_update_fields(
+    *,
+    changed_fields: set[str],
+    current_assignee_user_id: int | None,
+    current_assignee_agent_id: str | None,
+    current_assignee_team_id: int | None,
+    current_status: str,
+    requested_assignee_user_id: int | None,
+    requested_assignee_agent_id: str | None,
+    requested_assignee_team_id: int | None,
+    requested_status: str | None,
+) -> set[str]:
+    """Remove unchanged status and assignee fields from an Issue update."""
+
+    effective = set(changed_fields)
+    comparisons = {
+        "assignee_user_id": (
+            current_assignee_user_id,
+            requested_assignee_user_id,
+        ),
+        "assignee_agent_id": (
+            current_assignee_agent_id or None,
+            requested_assignee_agent_id or None,
+        ),
+        "assignee_team_id": (
+            current_assignee_team_id,
+            requested_assignee_team_id,
+        ),
+        "status": (current_status, requested_status),
+    }
+    for field, (current, requested) in comparisons.items():
+        if field in effective and requested == current:
+            effective.remove(field)
+    return effective
+
+
 def required_issue_update_actions(
     *,
     changed_fields: set[str],
@@ -89,30 +125,28 @@ def required_issue_update_actions(
 ) -> set[IssueAction]:
     """Map an Issue update to independently authorized actions."""
 
+    changed_fields = effective_issue_update_fields(
+        changed_fields=changed_fields,
+        current_assignee_user_id=current_assignee_user_id,
+        current_assignee_agent_id=current_assignee_agent_id,
+        current_assignee_team_id=current_assignee_team_id,
+        current_status=current_status,
+        requested_assignee_user_id=requested_assignee_user_id,
+        requested_assignee_agent_id=requested_assignee_agent_id,
+        requested_assignee_team_id=requested_assignee_team_id,
+        requested_status=requested_status,
+    )
     actions: set[IssueAction] = set()
     assignee_fields = {
         "assignee_user_id",
         "assignee_agent_id",
         "assignee_team_id",
     }
-    assignee_changed = (
-        (
-            "assignee_user_id" in changed_fields
-            and requested_assignee_user_id != current_assignee_user_id
-        )
-        or (
-            "assignee_agent_id" in changed_fields
-            and requested_assignee_agent_id != current_assignee_agent_id
-        )
-        or (
-            "assignee_team_id" in changed_fields
-            and requested_assignee_team_id != current_assignee_team_id
-        )
-    )
+    assignee_changed = bool(assignee_fields & changed_fields)
     if assignee_changed:
         if (
             current_assignee_user_id is None
-            and current_assignee_agent_id is None
+            and not current_assignee_agent_id
             and current_assignee_team_id is None
             and requested_assignee_user_id == user_id
             and not {"assignee_agent_id", "assignee_team_id"} & changed_fields

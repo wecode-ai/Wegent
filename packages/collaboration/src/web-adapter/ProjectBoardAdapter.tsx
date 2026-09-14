@@ -26,7 +26,10 @@ import {
   type StandardCloudBoardMutation,
 } from "../project-board";
 import type { WorkspaceTaskBinding } from "../ports/SharedWorkspaceApi";
-import { canEditCollaborationIssue } from "../permissions";
+import {
+  canApplyCollaborationIssueMutation,
+  canEditCollaborationIssue,
+} from "../permissions";
 import { collaborationTestIds } from "../testIds";
 import type {
   CollaborationIssue,
@@ -266,8 +269,10 @@ export function ProjectBoardAdapter({
     focusStorageKey: `collaboration-board-focus:${project.id}`,
     items: issues,
     onGroupByChange,
-    onMove: (issue, _column, _beforeItemId, mutation) =>
-      onMove(issue, mutation),
+    onMove: (issue, _column, _beforeItemId, mutation) => {
+      if (!canApplyCollaborationIssueMutation(project, issue, mutation)) return;
+      return onMove(issue, mutation);
+    },
     personalGroupStorageKey: null,
   });
   const display = project.card_display ?? {
