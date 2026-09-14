@@ -389,6 +389,8 @@ interface CodexPluginDetail {
     description?: string | null
   }>
   mcpServers?: string[]
+  mcpServerConfigs?: Record<string, Record<string, unknown>>
+  componentConfig?: Record<string, unknown>
   connectors?: CodexPluginConnector[]
 }
 
@@ -1575,9 +1577,11 @@ function pluginComponents(detail?: CodexPluginDetail | null): InstalledPluginCom
     name: hook.key,
     path: hook.key,
   }))
-  components.mcps = (detail.mcpServers ?? []).map(name => ({
+  components.mcps = [
+    ...new Set([...(detail.mcpServers ?? []), ...Object.keys(detail.mcpServerConfigs ?? {})]),
+  ].map(name => ({
     name,
-    server: {},
+    server: detail.mcpServerConfigs?.[name] ?? {},
   }))
   components.apps = (detail.apps ?? []).map(app => ({
     name: app.name,
@@ -2029,6 +2033,7 @@ function toInstalledPlugin(
       installState: plugin.installed ? 'installed' : 'not_installed',
       enabled: plugin.enabled !== false,
       componentStates: skillStates,
+      ...(detail?.componentConfig ? { componentConfig: detail.componentConfig } : {}),
       manifest: {
         name: plugin.name,
         id: pluginId,
@@ -2090,21 +2095,15 @@ async function readPluginDetail(
   })
   if (!localMarketplace) return response.plugin
 
+  let manifest: {
+    connectors?: CodexPluginConnector[]
+    mcpServers?: Record<string, Record<string, unknown>>
+  }
   try {
-    const manifest = await requestLocalExecutor<{ connectors?: CodexPluginConnector[] }>(
-      'executor.plugins.manifest.read',
-      {
-        marketplacePath: marketplace.path,
-        pluginName,
-      }
-    )
-    const connectors = manifest?.connectors
-    if (!Array.isArray(connectors)) return response.plugin
-    return {
-      ...response.plugin,
-      // The package owns host-specific fields that plugin/read may not preserve.
-      connectors,
-    }
+    manifest = await requestLocalExecutor('executor.plugins.manifest.read', {
+      marketplacePath: marketplace.path,
+      pluginName,
+    })
   } catch (error) {
     console.warn('[Wework plugins] failed to read local plugin manifest', {
       marketplaceId: marketplace.id,
@@ -2112,6 +2111,20 @@ async function readPluginDetail(
       error: getErrorMessage(error, 'unknown error'),
     })
     return response.plugin
+  }
+  const componentConfig =
+    Object.keys(manifest?.mcpServers ?? {}).length > 0
+      ? await requestLocalExecutor<Record<string, unknown>>('executor.plugins.mcp_config', {
+          marketplaceName: marketplace.id,
+          pluginName,
+        })
+      : undefined
+  return {
+    ...response.plugin,
+    // The package owns host-specific fields that plugin/read may not preserve.
+    ...(Array.isArray(manifest?.connectors) ? { connectors: manifest.connectors } : {}),
+    mcpServerConfigs: manifest?.mcpServers,
+    componentConfig,
   }
 }
 
@@ -3336,6 +3349,18 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         plugin => String(installedPluginId(plugin)) === String(id)
       )
       if (!plugin) throw new Error('Codex plugin is not installed')
+      if (data.componentConfig !== undefined) {
+        const marketplace = marketplaceEntryFromInstalledPlugin(plugin)
+        await requestLocalExecutor('executor.plugins.mcp_config', {
+          marketplaceName: marketplace.name,
+          marketplacePath: marketplace.path,
+          pluginName: pluginNameFromInstalledPlugin(plugin),
+          componentConfig: data.componentConfig,
+        })
+        if (data.enabled === undefined && data.componentStates === undefined) {
+          return readDetailForInstalledPlugin(plugin)
+        }
+      }
       if (data.enabled !== undefined) {
         await codexAppServerRequest('config/value/write', {
           keyPath: pluginEnabledConfigKeyPath(installedPluginConfigId(plugin, id)),
@@ -3364,7 +3389,9 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         plugin => String(installedPluginId(plugin)) === String(id)
       )
       if (!installed) throw new Error('Updated Codex plugin was not returned by app-server')
-      return installed
+      return data.componentConfig !== undefined
+        ? readDetailForInstalledPlugin(installed)
+        : installed
     },
     async uninstallInstalledPlugin(id) {
       const requestedId = String(id)

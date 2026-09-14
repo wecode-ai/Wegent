@@ -17,6 +17,7 @@ pub mod native_git;
 pub mod plugin_catalog;
 pub mod plugin_creator;
 pub mod plugin_import;
+pub mod plugin_mcp_config;
 pub mod pty;
 pub mod session;
 pub mod session_gateway;

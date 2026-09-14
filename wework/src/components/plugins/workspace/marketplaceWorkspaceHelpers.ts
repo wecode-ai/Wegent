@@ -234,7 +234,25 @@ export function withMarketplacePluginDetail(
       ...plugin.raw,
       spec: {
         ...plugin.raw.spec,
-        components: detail.spec.components,
+        componentConfig: plugin.raw.spec.pluginId
+          ? plugin.raw.spec.componentConfig
+          : (detail.spec.componentConfig ?? plugin.raw.spec.componentConfig),
+        components: {
+          ...detail.spec.components,
+          mcps: [
+            ...new Map(
+              [
+                ...plugin.raw.spec.components.mcps,
+                ...detail.spec.components.mcps.map(mcp => {
+                  const installed = plugin.raw.spec.components.mcps.find(
+                    item => item.name === mcp.name
+                  )
+                  return Object.keys(mcp.server).length > 0 || !installed ? mcp : installed
+                }),
+              ].map(mcp => [mcp.name, mcp])
+            ).values(),
+          ],
+        },
         componentStates: detail.spec.componentStates || plugin.raw.spec.componentStates,
         description: detail.spec.description || plugin.raw.spec.description,
         interface: {

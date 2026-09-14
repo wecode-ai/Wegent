@@ -4,7 +4,7 @@ export function buildPluginMcpHeadersUpdate(
 ): { componentConfig: Record<string, unknown> } {
   return {
     componentConfig: {
-      [componentKey]: headers ? { headers } : null,
+      [componentKey]: headers && Object.keys(headers).length > 0 ? { headers } : null,
     },
   }
 }

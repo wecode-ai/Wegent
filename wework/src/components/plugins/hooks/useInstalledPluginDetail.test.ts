@@ -61,3 +61,24 @@ test('ignores a late response after switching plugins', async () => {
   expect(result.current?.id).toBe('second')
   expect(result.current?.raw.spec.components.connectors).toEqual([])
 })
+
+test('keeps a saved header deletion when inventory refreshes with a summary', async () => {
+  const first = summary('first')
+  const componentConfig = { 'mcp:business': { headers: { 'X-Test': 'value' } } }
+  const read = vi
+    .fn()
+    .mockResolvedValue({ ...first.raw, spec: { ...first.raw.spec, componentConfig } })
+  const { result, rerender } = renderHook(
+    ({ plugin }) => useInstalledPluginDetail(plugin, read, vi.fn()),
+    {
+      initialProps: { plugin: first },
+    }
+  )
+  await waitFor(() => expect(result.current?.raw.spec.componentConfig).toEqual(componentConfig))
+  rerender({
+    plugin: { ...first, raw: { ...first.raw, spec: { ...first.raw.spec, componentConfig: {} } } },
+  })
+  expect(result.current?.raw.spec.componentConfig).toEqual({})
+  rerender({ plugin: summary('first') })
+  expect(result.current?.raw.spec.componentConfig).toEqual({})
+})

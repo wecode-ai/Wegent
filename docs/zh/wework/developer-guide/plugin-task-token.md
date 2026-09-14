@@ -20,8 +20,10 @@ Wework 插件可使用现有 Wegent TaskToken 识别当前用户和任务，无�
 ```
 
 安装后，用户也可以在 Wework 插件详情的“MCP 请求 Headers”中覆盖远程 MCP 的请求头。
-配置保存在 `InstalledPlugin.spec.componentConfig`，不修改插件源码包；Executor 加载时按
-Header 名称与作者声明合并，同名 Header 由用户配置覆盖。默认预填：
+云端管理的安装将配置保存在 `InstalledPlugin.spec.componentConfig`；本地原生插件的覆盖配置
+保存在当前 Executor 的 `capabilities/plugin-state/mcp-headers/`，按市场和插件身份隔离，
+仅作用于当前设备。两种方式都不修改插件源码包。Executor 加载时按 Header 名称与作者声明
+合并，同名 Header 由用户配置覆盖。默认预填：
 
 ```json
 {
@@ -29,7 +31,7 @@ Header 名称与作者声明合并，同名 Header 由用户配置覆盖。默�
 }
 ```
 
-清空 JSON 后保存即恢复插件作者声明的 Headers。该配置仅支持远程 HTTP/SSE MCP，本地
+清空输入或保存 `{}` 即恢复插件作者声明的 Headers。该配置仅支持远程 HTTP/SSE MCP，本地
 `command` 型 MCP 不允许注入。
 
 本机和远程 Executor 使用已认证、已注册的设备连接向后端请求 Token。用户和设备身份来自该连接，插件不能通过请求字段覆盖。TaskToken 沿用现有签名、验签及 24 小时有效期，不使用用户登录 Token 或无任务绑定的 runtime Token 替代。

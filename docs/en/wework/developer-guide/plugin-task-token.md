@@ -23,8 +23,10 @@ Forward the received token only over HTTPS to the issuing backend's `GET /api/ex
 ```
 
 After installation, users can also override headers for remote MCP servers from **MCP request
-headers** in the Wework plugin detail view. The configuration is stored in
-`InstalledPlugin.spec.componentConfig` and never modifies the plugin package. The Executor merges
+headers** in the Wework plugin detail view. Cloud-managed installations store the configuration in
+`InstalledPlugin.spec.componentConfig`. Native local plugins store device-specific overrides under
+the current Executor's `capabilities/plugin-state/mcp-headers/`, isolated by marketplace and plugin
+identity. Neither option modifies the plugin package. The Executor merges
 headers by name, with the user's header overriding the plugin author's declaration. The default
 value is:
 
@@ -34,7 +36,7 @@ value is:
 }
 ```
 
-Clearing the JSON and saving restores the author-declared headers. The setting is available only
+Clearing the input or saving `{}` restores the author-declared headers. The setting is available only
 for remote HTTP/SSE MCP servers; local `command` servers cannot receive injected headers.
 
 Authorize using the full tuple `(id, task.kind, task.device_id, task.id)`. Never trust an unverified decoded JWT or a local task ID alone. Continuing a task, restarting its executor, or renewing its token preserves the identity on the same device. New and forked tasks have different identities. Moving to another device produces a different device-local task address.

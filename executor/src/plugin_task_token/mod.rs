@@ -1,7 +1,7 @@
 //! Task-owned remote MCP routes. Real TaskTokens exist only in native memory.
 
 pub(crate) mod issuer;
-mod package;
+pub(crate) mod package;
 mod sse;
 
 pub(crate) use package::{

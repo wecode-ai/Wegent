@@ -11,6 +11,7 @@ export function useInstalledPluginDetail(
   const [detail, setDetail] = useState<{
     key: string
     components: InstalledPlugin['spec']['components']
+    componentConfig?: InstalledPlugin['spec']['componentConfig']
   } | null>(null)
   const refs = useRef({ summary, onError })
   useEffect(() => {
@@ -18,13 +19,28 @@ export function useInstalledPluginDetail(
   }, [summary, onError])
   const local = summary && (summary.origin === 'created' || !summary.raw.spec.pluginId)
   const key = local ? JSON.stringify([summary.id, summary.version]) : null
+  const savedConfig = summary?.raw.spec.componentConfig
+  if (
+    key &&
+    savedConfig !== undefined &&
+    detail?.key === key &&
+    detail.componentConfig !== savedConfig
+  ) {
+    setDetail({ ...detail, componentConfig: savedConfig })
+  }
   useEffect(() => {
     const plugin = refs.current.summary
     if (!key || !plugin) return
     let disposed = false
     void read(plugin.raw)
       .then(result => {
-        if (!disposed) setDetail({ key, components: result.spec.components })
+        if (!disposed)
+          setDetail({
+            key,
+            components: result.spec.components,
+            componentConfig:
+              refs.current.summary?.raw.spec.componentConfig ?? result.spec.componentConfig,
+          })
       })
       .catch(error => {
         if (!disposed) refs.current.onError(plugin.id, error)
@@ -37,7 +53,14 @@ export function useInstalledPluginDetail(
     if (!summary || !detail || detail.key !== key) return summary
     return {
       ...summary,
-      raw: { ...summary.raw, spec: { ...summary.raw.spec, components: detail.components } },
+      raw: {
+        ...summary.raw,
+        spec: {
+          ...summary.raw.spec,
+          components: detail.components,
+          componentConfig: summary.raw.spec.componentConfig ?? detail.componentConfig,
+        },
+      },
     }
   }, [summary, detail, key])
 }

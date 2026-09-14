@@ -1319,6 +1319,21 @@ export function PluginsWorkspace({
     setInstalledPlugins(previous =>
       previous.map(item => (String(item.id) === String(id) ? nextItem : item))
     )
+    setSelectedMarketplacePluginDetail(previous =>
+      previous?.raw.spec.source.pluginKey === nextItem.raw.spec.source.pluginKey &&
+      previous.raw.spec.source.marketplace === nextItem.raw.spec.source.marketplace
+        ? {
+            ...previous,
+            raw: {
+              ...previous.raw,
+              spec: {
+                ...previous.raw.spec,
+                componentConfig: updated.spec.componentConfig,
+              },
+            },
+          }
+        : previous
+    )
     notifyLocalPluginSkillsChanged()
   }
 
@@ -4543,7 +4558,21 @@ export function PluginsWorkspace({
     const baseDetailPlugin = installedDetail
       ? withMarketplaceListingInterface(installedDetail, selectedMarketplacePlugin)
       : toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
-    const detailPlugin = selectedMarketplacePluginDetail ?? baseDetailPlugin
+    const resolvedDetailPlugin = selectedMarketplacePluginDetail ?? baseDetailPlugin
+    const detailPlugin = installedDetail
+      ? {
+          ...resolvedDetailPlugin,
+          raw: {
+            ...resolvedDetailPlugin.raw,
+            spec: {
+              ...resolvedDetailPlugin.raw.spec,
+              componentConfig:
+                installedDetail.raw.spec.componentConfig ??
+                resolvedDetailPlugin.raw.spec.componentConfig,
+            },
+          },
+        }
+      : resolvedDetailPlugin
     const detailedMarketplacePlugin = withMarketplaceDetailComponents(
       selectedMarketplacePlugin,
       detailPlugin

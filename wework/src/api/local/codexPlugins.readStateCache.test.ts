@@ -84,6 +84,72 @@ const createdPlugin: InstalledPlugin = {
 }
 
 describe('local codex plugin readState cache', () => {
+  test('reads, saves, reloads and clears MCP headers through the local detail adapter', async () => {
+    const original = mocks.requestLocalExecutor.getMockImplementation()!
+    const componentConfig: Record<string, unknown> = {}
+    const summary = {
+      id: 'dev-tools@wework-personal',
+      name: 'dev-tools',
+      installed: true,
+      enabled: true,
+    }
+    const server = { url: 'https://business.example/mcp', headers: { 'X-Author': 'default' } }
+    mocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+      if (method === 'executor.plugins.manifest.read')
+        return { connectors: [], mcpServers: { business: server } }
+      if (method === 'executor.plugins.mcp_config') {
+        if (params.componentConfig) {
+          for (const [key, value] of Object.entries(params.componentConfig)) {
+            if (value === null) delete componentConfig[key]
+            else componentConfig[key] = value
+          }
+        }
+        return structuredClone(componentConfig)
+      }
+      if (method === 'codex.app_server_request') {
+        if (params.method === 'plugin/read')
+          return { plugin: { summary, mcpServers: ['business'] } }
+        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          return { marketplaces: [{ ...personalMarketplace, plugins: [summary] }] }
+        }
+      }
+      return original(method, params)
+    })
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    const detail = await api.readInstalledPluginDetail(createdPlugin)
+    expect(detail.spec.components.mcps).toEqual([{ name: 'business', server }])
+    const override = { 'mcp:business': { headers: { Authorization: 'Bearer ${{task_token}}' } } }
+    const saved = await api.updateInstalledPlugin('dev-tools@wework-personal', {
+      componentConfig: override,
+    })
+    expect(saved.spec.componentConfig).toEqual(override)
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.mcp_config', {
+      marketplaceName: 'wework-personal',
+      marketplacePath: '/tmp/wework-personal',
+      pluginName: 'dev-tools',
+      componentConfig: override,
+    })
+    clearLocalCodexPluginsReadStateCache()
+    expect((await api.readInstalledPluginDetail(createdPlugin)).spec.componentConfig).toEqual(
+      override
+    )
+    await api.readState({ mergeAllMarketplaces: true })
+    expect(
+      (
+        await api.updateInstalledPlugin('dev-tools@wework-personal', {
+          componentConfig: { 'mcp:business': null },
+        })
+      ).spec.componentConfig
+    ).toEqual({})
+    mocks.requestLocalExecutor.mockImplementationOnce(async () => {
+      throw new Error('Cannot save plugin MCP settings')
+    })
+    await expect(
+      api.updateInstalledPlugin('dev-tools@wework-personal', { componentConfig: override })
+    ).rejects.toThrow('Cannot save plugin MCP settings')
+  })
+
   beforeEach(() => {
     clearLocalCodexPluginsReadStateCache()
     mocks.runtime.desktop = true

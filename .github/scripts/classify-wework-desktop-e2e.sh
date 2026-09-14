@@ -3,6 +3,7 @@
 set -euo pipefail
 
 core_segments=(
+  plugin-mcp-headers
   remote-device-onboarding
   workspace-tabs
   collaboration-shared-core
@@ -149,7 +150,7 @@ core_shards=(
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
+  codex-notification-isolation,core-dsh-plugin-management,plugin-development,plugin-mcp-headers,workbench-mode,executor-stream-recovery,transcript-sync
   model-routing,computer-use,codex-account-login
 )
 
@@ -296,6 +297,11 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/scenarios/plugin-mcp-headers.scenario.mjs | \
+      executor/src/local/plugin_mcp_config.rs)
+      select_target "core:plugin-mcp-headers"
+      return
+      ;;
     wework/e2e/desktop/scenarios/plugin-task-token.scenario.mjs)
       select_target "cloud:plugin-task-token"
       return

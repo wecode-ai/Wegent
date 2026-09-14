@@ -77,11 +77,14 @@ describe('PluginManagementWorkspace cache', () => {
     window.localStorage.clear()
   })
 
-  test('uses an explicit deletion when custom MCP headers are cleared', () => {
-    expect(buildPluginMcpHeadersUpdate('mcp:business', null)).toEqual({
-      componentConfig: { 'mcp:business': null },
-    })
-  })
+  test.each([null, {}])(
+    'uses an explicit deletion when custom MCP headers are cleared (%j)',
+    headers => {
+      expect(buildPluginMcpHeadersUpdate('mcp:business', headers)).toEqual({
+        componentConfig: { 'mcp:business': null },
+      })
+    }
+  )
 
   test('renders cached installed plugins immediately without the loading state', async () => {
     const key = pluginMarketplaceCacheKey('/api', 'cloud-token')

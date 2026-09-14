@@ -152,6 +152,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.plugins.personal.rollback_copy",
     "executor.plugins.store.list",
     "executor.plugins.manifest.read",
+    "executor.plugins.mcp_config",
     "executor.plugins.example.save",
     "external_attachments.*",
     "external_projects.*",
@@ -755,6 +756,25 @@ impl AppIpcServer {
                 .map_err(|error| AppIpcError::new("plugin_store_list_failed", error))?;
             return serde_json::to_value(listed)
                 .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.plugins.mcp_config" {
+            let request = serde_json::from_value::<
+                crate::local::plugin_mcp_config::PluginMcpConfigRequest,
+            >(params)
+            .map_err(|_| AppIpcError::new("bad_request", "Invalid plugin MCP settings request"))?;
+            let config = tokio::task::spawn_blocking(move || {
+                crate::local::plugin_mcp_config::configure(request)
+            })
+            .await
+            .map_err(|_| {
+                AppIpcError::new(
+                    "plugin_mcp_config_failed",
+                    "Plugin MCP settings task failed",
+                )
+            })?
+            .map_err(|error| AppIpcError::new("plugin_mcp_config_failed", error))?;
+            return Ok(Value::Object(config));
         }
 
         if method == "executor.plugins.manifest.read" {

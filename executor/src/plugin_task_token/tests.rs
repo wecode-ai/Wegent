@@ -494,6 +494,53 @@ fn custom_component_headers_merge_and_validate_remote_mcp_servers() {
 }
 
 #[test]
+fn clearing_custom_headers_restores_author_declarations_after_materialization() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join(".codex-plugin")).unwrap();
+    std::fs::write(
+        root.path().join(".codex-plugin/plugin.json"),
+        r#"{"mcpServers":"./.mcp.json"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join(".mcp.json"),
+        json!({"business": {
+            "url":"https://example.test/mcp", "headers":{"Authorization":"author"}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let config = serde_json::Map::from_iter([(
+        "mcp:business".into(),
+        json!({
+            "headers":{"Authorization":"Bearer ${{task_token}}"}
+        }),
+    )]);
+    let configured =
+        package::materialize_native_plugin_with_config(root.path(), false, &config).unwrap();
+    assert_eq!(
+        configured["business"]["headers"]["Authorization"],
+        "Bearer ${{task_token}}"
+    );
+    let cleared =
+        package::materialize_native_plugin_with_config(root.path(), false, &serde_json::Map::new())
+            .unwrap();
+    assert!(cleared.is_empty());
+    assert_eq!(
+        package::declarations(root.path(), false).unwrap()["business"]["headers"]["Authorization"],
+        "author"
+    );
+    let native: Value = serde_json::from_slice(
+        &std::fs::read(root.path().join(".wegent-native-mcp-codex.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        native["mcpServers"]["business"]["headers"]["Authorization"],
+        "author"
+    );
+}
+
+#[test]
 fn claude_default_mcp_autoload_is_filtered_without_losing_task_declarations() {
     let root = tempfile::tempdir().unwrap();
     for runtime in ["codex", "claude"] {

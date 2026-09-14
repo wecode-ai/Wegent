@@ -14,7 +14,7 @@ use std::{
 const DEFAULT_SOURCE: &str = ".wegent-default-mcp-source.json";
 
 pub(super) fn declared(server: &Value) -> bool {
-    server.get("command").is_none()
+    server.get("command").is_none_or(Value::is_null)
         && server
             .get("headers")
             .and_then(Value::as_object)
@@ -80,7 +80,7 @@ fn servers(root: &Path, declaration: &Value) -> Result<Map<String, Value>, Strin
         .ok_or_else(|| "Invalid plugin MCP server map".into())
 }
 
-fn declarations(root: &Path, claude: bool) -> Result<Map<String, Value>, String> {
+pub(crate) fn declarations(root: &Path, claude: bool) -> Result<Map<String, Value>, String> {
     let runtime = if claude { "claude" } else { "codex" };
     let path = root.join(format!(".{runtime}-plugin/plugin.json"));
     if !path.is_file() {
@@ -153,7 +153,10 @@ fn configured_declarations(
     component_config: &Map<String, Value>,
 ) -> Result<ConfiguredDeclarations, String> {
     let mut servers = BTreeMap::new();
-    let mut requires_materialization = false;
+    let runtime = if claude { "claude" } else { "codex" };
+    let mut requires_materialization = root
+        .join(format!(".wegent-task-mcp-source-{runtime}.json"))
+        .is_file();
     for (name, source_server) in declarations(root, claude)? {
         let source_uses_task_token = declared(&source_server);
         let configured = apply_component_config(&name, source_server.clone(), component_config)?;
@@ -210,7 +213,12 @@ pub(super) fn materialize_with_config(
     if root.is_symlink() || path.is_symlink() || path.parent().is_some_and(Path::is_symlink) {
         return Err("Configured plugins require a copied native cache, not a source link".into());
     }
-    write(&source_path, &json!({"mcpServers": all}))?;
+    // Keep author declarations separate from overrides so clearing a setting
+    // restores the package defaults on the next execution.
+    write(
+        &source_path,
+        &json!({"mcpServers": declarations(root, claude)?}),
+    )?;
     if claude && root.join(".mcp.json").is_file() {
         if root.join(".mcp.json").is_symlink() {
             return Err("Configured MCP settings must be copied into the native cache".into());
@@ -243,6 +251,15 @@ pub(super) fn load(
     home: &Path,
     claude: bool,
     request: &ExecutionRequest,
+) -> Result<BTreeMap<String, Value>, String> {
+    load_from_executor_home(home, claude, request, &super::executor_home())
+}
+
+pub(crate) fn load_from_executor_home(
+    home: &Path,
+    claude: bool,
+    request: &ExecutionRequest,
+    executor_home: &Path,
 ) -> Result<BTreeMap<String, Value>, String> {
     let mut enabled = BTreeMap::<String, bool>::new();
     let config = if claude {
@@ -292,7 +309,7 @@ pub(super) fn load(
     } else {
         json!({})
     };
-    let capability_path = super::executor_home().join("capabilities/manifest.json");
+    let capability_path = executor_home.join("capabilities/manifest.json");
     let capabilities = if capability_path.is_file() {
         read(&capability_path)?
     } else {
@@ -366,10 +383,15 @@ pub(super) fn load(
             }
             path
         };
-        let component_config = record["component_config"]
+        let mut component_config = record["component_config"]
             .as_object()
             .cloned()
             .unwrap_or_default();
+        component_config.extend(crate::local::plugin_mcp_config::read_config(
+            executor_home,
+            market,
+            name,
+        )?);
         for (server_name, server) in materialize_with_config(&path, claude, &component_config)? {
             if record["component_states"][format!("mcp:{server_name}")] == false {
                 continue;
@@ -387,7 +409,7 @@ pub(super) fn load(
     Ok(result)
 }
 
-fn apply_component_config(
+pub(crate) fn apply_component_config(
     server_name: &str,
     mut server: Value,
     component_config: &Map<String, Value>,
@@ -399,7 +421,9 @@ fn apply_component_config(
     else {
         return Ok(server);
     };
-    if server.get("command").is_some() {
+    if server.get("command").is_some_and(|value| !value.is_null())
+        || !server.get("url").is_some_and(Value::is_string)
+    {
         return Err("Custom plugin MCP headers are only supported for remote servers".into());
     }
     let Some(headers) = config.get("headers").and_then(Value::as_object) else {
