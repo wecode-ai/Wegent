@@ -35,8 +35,36 @@ use crate::{
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
-const DOWNLOAD_ATTEMPTS: usize = 3;
+const REQUIRED_SKILL_DOWNLOAD_POLICY: SkillDownloadPolicy = SkillDownloadPolicy {
+    timeout: DOWNLOAD_TIMEOUT,
+    attempts: 3,
+};
+/// Optional Skills share the per-attempt timeout — slow networks can still
+/// deliver a usable archive — but take fewer attempts: their failure degrades
+/// to on-demand loading instead of ending the turn, so a stalled download must
+/// not walk the full required retry policy.
+const OPTIONAL_SKILL_DOWNLOAD_POLICY: SkillDownloadPolicy = SkillDownloadPolicy {
+    timeout: DOWNLOAD_TIMEOUT,
+    attempts: 2,
+};
 const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
+
+/// Download budget for a single Skill archive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SkillDownloadPolicy {
+    timeout: Duration,
+    attempts: usize,
+}
+
+impl SkillDownloadPolicy {
+    fn for_skill(skill: &str, required_skills: &[String]) -> Self {
+        if required_skills.iter().any(|required| required == skill) {
+            REQUIRED_SKILL_DOWNLOAD_POLICY
+        } else {
+            OPTIONAL_SKILL_DOWNLOAD_POLICY
+        }
+    }
+}
 
 pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> ExecutionRequest {
     if request.extra.get("interactive_form_answer").is_some() {
@@ -465,7 +493,7 @@ async fn deploy_request_skills(
     request: &ExecutionRequest,
     skills_dir: &Path,
 ) -> Result<(), String> {
-    let required_skills = required_skill_names(request);
+    let required_skills = hard_required_skill_names(request);
     let Some(primary_bot) = primary_bot(request) else {
         return required_skills
             .is_empty()
@@ -490,7 +518,9 @@ async fn deploy_request_skills(
     };
 
     let api_base_url = request_api_base_url(request);
-    let report = deploy_skills(&plan, &api_base_url).await?;
+    ensure_required_skills_in_plan(request, &required_skills, &plan)?;
+    let report = deploy_skills(&plan, &api_base_url, &required_skills).await?;
+    log_degraded_preload_skills(request, &required_skills, &report);
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
     if !missing_required.is_empty() {
         return Err(required_skill_failure_message(&missing_required, &report));
@@ -499,7 +529,7 @@ async fn deploy_request_skills(
 }
 
 pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value, String> {
-    let required_skills = required_skill_names(&request);
+    let required_skills = hard_required_skill_names(&request);
     let Some(primary_bot) = primary_bot(&request) else {
         return required_skills
             .is_empty()
@@ -530,7 +560,9 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
     };
 
     let api_base_url = request_api_base_url(&request);
-    let report = deploy_skills(&plan, &api_base_url).await?;
+    ensure_required_skills_in_plan(&request, &required_skills, &plan)?;
+    let report = deploy_skills(&plan, &api_base_url, &required_skills).await?;
+    log_degraded_preload_skills(&request, &required_skills, &report);
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
     if !missing_required.is_empty() {
         return Err(required_skill_failure_message(&missing_required, &report));
@@ -548,21 +580,70 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
     }))
 }
 
-fn required_skill_names(request: &ExecutionRequest) -> Vec<String> {
+/// Names declared under `required_skills` only. Preloaded Skills are a
+/// performance optimization: when their download fails we degrade to
+/// on-demand loading instead of failing the whole turn.
+fn hard_required_skill_names(request: &ExecutionRequest) -> Vec<String> {
+    extra_skill_names(request, "required_skills")
+}
+
+fn extra_skill_names(request: &ExecutionRequest, key: &str) -> Vec<String> {
     let mut names = BTreeSet::new();
-    for key in ["required_skills", "preload_skills"] {
-        if let Some(values) = request.extra.get(key).and_then(Value::as_array) {
-            names.extend(
-                values
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToOwned::to_owned),
-            );
-        }
+    if let Some(values) = request.extra.get(key).and_then(Value::as_array) {
+        names.extend(
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+        );
     }
     names.into_iter().collect()
+}
+
+/// Failed preloaded Skills that degrade to on-demand loading. Skills also
+/// declared under `required_skills` are excluded: they fail the turn instead
+/// of degrading, so reporting them as degraded would be misleading.
+fn degraded_preload_skill_names(
+    request: &ExecutionRequest,
+    required_skills: &[String],
+    report: &SkillDeploymentReport,
+) -> Vec<String> {
+    extra_skill_names(request, "preload_skills")
+        .into_iter()
+        .filter(|skill| !required_skills.contains(skill) && report.failed_skills.contains(skill))
+        .collect()
+}
+
+fn log_degraded_preload_skills(
+    request: &ExecutionRequest,
+    required_skills: &[String],
+    report: &SkillDeploymentReport,
+) {
+    let degraded = degraded_preload_skill_names(request, required_skills, report);
+    if degraded.is_empty() {
+        return;
+    }
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    fields.push((
+        "skills",
+        degraded
+            .iter()
+            .map(|skill| {
+                report
+                    .failed_skill_reasons
+                    .get(skill)
+                    .map(|reason| format!("{} ({})", skill, safe_skill_deployment_reason(reason)))
+                    .unwrap_or_else(|| skill.clone())
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+    ));
+    log_executor_event(
+        "preload Skill deployment degraded to on-demand loading",
+        &fields,
+    );
 }
 
 fn missing_required_skills(
@@ -581,6 +662,35 @@ fn missing_required_skills(
         .collect()
 }
 
+/// Rejects `required_skills` names the deployment plan never covers.
+///
+/// The plan is built from `bot.skills`, `skill_names` and `preload_skills`, so
+/// a required Skill outside those sets can never be downloaded. Reporting that
+/// disagreement explicitly keeps it distinct from a failed download, which
+/// otherwise surfaces with no reason at all.
+fn ensure_required_skills_in_plan(
+    request: &ExecutionRequest,
+    required_skills: &[String],
+    plan: &SkillDeploymentPlan,
+) -> Result<(), String> {
+    let outside_plan: Vec<String> = required_skills
+        .iter()
+        .filter(|skill| !plan.skills.contains(skill))
+        .cloned()
+        .collect();
+    if outside_plan.is_empty() {
+        return Ok(());
+    }
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    fields.push(("skills", outside_plan.join(", ")));
+    log_executor_event("required Skills are outside the deployment plan", &fields);
+    Err(format!(
+        "required Skills are outside the deployment plan: {} \
+         (required_skills must also be listed in bot.skills, skill_names or preload_skills)",
+        outside_plan.join(", ")
+    ))
+}
+
 fn required_skill_failure_message(
     missing_required: &[String],
     report: &SkillDeploymentReport,
@@ -592,7 +702,7 @@ fn required_skill_failure_message(
                 .failed_skill_reasons
                 .get(skill)
                 .map(|reason| format!("{skill} ({reason})"))
-                .unwrap_or_else(|| skill.clone())
+                .unwrap_or_else(|| format!("{skill} (deployed Skill is missing SKILL.md)"))
         })
         .collect::<Vec<_>>();
     format!("required Skill deployment failed: {}", details.join(", "))
@@ -894,6 +1004,7 @@ fn attachment_ids(attachments: &[AttachmentRecord]) -> String {
 async fn deploy_skills(
     plan: &SkillDeploymentPlan,
     api_base_url: &str,
+    required_skills: &[String],
 ) -> Result<SkillDeploymentReport, String> {
     fs::create_dir_all(&plan.skills_dir).map_err(|error| {
         format!(
@@ -909,6 +1020,7 @@ async fn deploy_skills(
             async move {
                 let target = plan.skills_dir.join(&skill);
                 let skill_ref = plan.resolved_skill_map.get(&skill);
+                let policy = SkillDownloadPolicy::for_skill(&skill, required_skills);
                 let cache_miss_reason =
                     match skill_cache_miss_reason(&plan.skills_dir, &skill, skill_ref) {
                         Ok(reason) => reason,
@@ -954,7 +1066,7 @@ async fn deploy_skills(
                 if plan.clear_cache && target.exists() {
                     let _ = fs::remove_dir_all(&target);
                 }
-                match download_skill(client, plan, &skill, skill_ref, api_base_url).await {
+                match download_skill(client, plan, &skill, skill_ref, api_base_url, policy).await {
                     Ok(result) => result,
                     Err(error) => {
                         let reason = safe_skill_deployment_reason(&error);
@@ -1156,6 +1268,7 @@ async fn download_skill(
     skill_name: &str,
     skill_ref: Option<&SkillRef>,
     api_base_url: &str,
+    policy: SkillDownloadPolicy,
 ) -> Result<SkillDeploymentResult, String> {
     let Some((skill_id, namespace)) =
         resolve_skill(client, plan, skill_name, skill_ref, api_base_url).await?
@@ -1178,6 +1291,7 @@ async fn download_skill(
         api_base_url,
         &path,
         local_hash.as_deref(),
+        policy,
     )
     .await?;
     match download {
@@ -1255,29 +1369,31 @@ enum SkillArchiveResponse {
 /// Download a skill archive with bounded retries for transient failures.
 ///
 /// Transient errors (timeouts, connection failures, aborted body reads) are
-/// retried up to [`DOWNLOAD_ATTEMPTS`] times; each retry is logged with a
-/// sanitized reason. Non-retryable errors fail immediately.
+/// retried up to [`SkillDownloadPolicy::attempts`] times, each within
+/// [`SkillDownloadPolicy::timeout`]; every retry is logged with a sanitized
+/// reason. Non-retryable errors fail immediately.
 async fn download_skill_archive_with_retry(
     client: &reqwest::Client,
     auth_token: &str,
     api_base_url: &str,
     path: &str,
     local_hash: Option<&str>,
+    policy: SkillDownloadPolicy,
 ) -> Result<SkillArchiveResponse, String> {
     let mut last_error = String::new();
-    for attempt in 1..=DOWNLOAD_ATTEMPTS {
+    for attempt in 1..=policy.attempts {
         match get_skill_archive(
             client,
             auth_token,
             api_base_url,
             path,
             local_hash,
-            DOWNLOAD_TIMEOUT,
+            policy.timeout,
         )
         .await
         {
             Ok(response) => return Ok(response),
-            Err(error) if attempt < DOWNLOAD_ATTEMPTS => {
+            Err(error) if attempt < policy.attempts => {
                 if is_retryable_download_error(&error) {
                     log_executor_event(
                         "skill archive download retry",
@@ -2789,7 +2905,9 @@ mod tests {
             )]),
         };
 
-        deploy_skills(&plan, "http://127.0.0.1:1").await.unwrap();
+        deploy_skills(&plan, "http://127.0.0.1:1", &[])
+            .await
+            .unwrap();
 
         assert_eq!(
             fs::read_to_string(skill_dir.join("SKILL.md")).unwrap(),
@@ -2839,7 +2957,7 @@ mod tests {
             ]),
         };
 
-        deploy_skills(&plan, &api_base_url).await.unwrap();
+        deploy_skills(&plan, &api_base_url, &[]).await.unwrap();
 
         let manifest = read_skill_manifest(&skills_dir).unwrap();
         assert_eq!(manifest.len(), 2);
