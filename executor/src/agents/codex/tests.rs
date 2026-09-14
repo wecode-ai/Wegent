@@ -3462,6 +3462,15 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
             },
         ])
     );
+    let skills_override = launch_config
+        .config_overrides
+        .iter()
+        .find(|value| value.starts_with("skills.config="))
+        .expect("skills config override should be present");
+    assert_eq!(
+        skills_override,
+        "skills.config=[{enabled=false,name=\"browser:control-in-app-browser\"},{enabled=false,name=\"chrome:control-chrome\"}]"
+    );
     assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
     assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(

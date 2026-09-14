@@ -1263,7 +1263,7 @@ describe('Wework collaboration workspace API', () => {
     expect(listCloudMembers).not.toHaveBeenCalled()
   })
 
-  it('loads local workspace project snapshots through the local API', async () => {
+  it('routes local workspace overview snapshots to the local project API', async () => {
     const localDeliveryApi = createLocalDeliveryApi()
     const getCloudBoardSnapshot = vi.fn()
     const cloudApi = {
@@ -1282,8 +1282,9 @@ describe('Wework collaboration workspace API', () => {
       createLocalDetailServices()
     )
 
-    await api?.issues.getBoardSnapshot('local-project')
-
+    await expect(api?.issues.getBoardSnapshot('local-project')).resolves.toEqual(
+      expect.objectContaining({ items: [] })
+    )
     expect(localDeliveryApi.getBoardSnapshot).toHaveBeenCalledWith('local-project')
     expect(getCloudBoardSnapshot).not.toHaveBeenCalled()
   })

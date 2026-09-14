@@ -6,6 +6,7 @@ import type { Team } from '@/types/api'
 
 const CLAUDE_CODE_AGENT_TYPES = new Set(['claude', 'claudecode'])
 const CLAUDE_CODE_SHELL_TYPE = 'claudecode'
+const CODEX_SHELL_TYPE = 'codex'
 const CLAUDE_COMPATIBLE_PROTOCOLS = ['claude', 'anthropic']
 
 function normalizeString(value: unknown): string | null {
@@ -59,18 +60,27 @@ function getModelProtocol(config: Record<string, unknown>): string | null {
   return normalizeString(env.model) ?? normalizeString(env.provider)
 }
 
-function isClaudeCodeTeam(team: Team): boolean {
+function getCodingRuntime(team: Team): 'codex' | 'claude_code' | null {
   const agentType = normalizeString(team.agent_type)
+  if (agentType === CODEX_SHELL_TYPE) {
+    return 'codex'
+  }
   if (agentType && CLAUDE_CODE_AGENT_TYPES.has(agentType)) {
-    return true
+    return 'claude_code'
   }
 
   const bots = team.bots ?? []
   if (bots.length === 0) {
-    return false
+    return null
   }
 
-  return bots.some(bot => normalizeString(bot.bot?.shell_type) === CLAUDE_CODE_SHELL_TYPE)
+  if (bots.some(bot => normalizeString(bot.bot?.shell_type) === CODEX_SHELL_TYPE)) {
+    return 'codex'
+  }
+  if (bots.some(bot => normalizeString(bot.bot?.shell_type) === CLAUDE_CODE_SHELL_TYPE)) {
+    return 'claude_code'
+  }
+  return null
 }
 
 function hasNonClaudeProtocolModel(team: Team): boolean {
@@ -90,8 +100,13 @@ function hasNonClaudeProtocolModel(team: Team): boolean {
 }
 
 export function shouldClearDeviceSelectionForQuickLauncher(team: Team): boolean {
-  if (!isClaudeCodeTeam(team)) {
+  const runtime = getCodingRuntime(team)
+  if (!runtime) {
     return true
+  }
+
+  if (runtime === 'codex') {
+    return false
   }
 
   return hasNonClaudeProtocolModel(team)
