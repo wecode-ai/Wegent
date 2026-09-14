@@ -289,8 +289,9 @@ export async function createDesktopScenario({
       timeoutMs: workbenchReadyTimeoutMs,
       visible: true,
     })
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: `TASK_TOKEN_CASE:${caseId}` })
-    await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+    await control.command('submit', ACTIVE_COMPOSER_SELECTOR, {
+      value: `TASK_TOKEN_CASE:${caseId}`,
+    })
     const result = await wait(
       () => results.get(caseId),
       Boolean,
