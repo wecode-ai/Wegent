@@ -18,6 +18,8 @@ import type {
   CollaborationProject,
 } from "../types";
 import { ProjectAgentConfiguration } from "./ProjectAgentConfiguration";
+import { RuntimeProfilePickerContext } from '../runtime-profile/context'
+import { createCollaborationTranslator } from '../i18n'
 
 const project: CollaborationProject = {
   id: "8869148083931743937",
@@ -91,6 +93,9 @@ function createApi(options?: {
     projectAgent({ id: agentId, status: "archived", version: 2 }),
   );
   const api = {
+    automationExecutionCatalog: {
+      load: vi.fn(async () => ({ environments: [], runtimeProfiles: [], plugins: [], models: [{ name: 'deepseek', label: 'DeepSeek', type: 'public', options: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '0' } }] })),
+    },
     projects: {
       listExecutionEnvironments: vi.fn(
         async () => options?.environments ?? [environment],
@@ -158,6 +163,24 @@ describe("ProjectAgentConfiguration", () => {
     container.remove();
   });
 
+  it('exposes missing model configuration and saves the selected agent defaults', async () => {
+    const { api, update } = createApi({ agents: [projectAgent({ runtime: 'codex' })] })
+    const picker = vi.fn()
+    await act(async () => root.render(
+      <RuntimeProfilePickerContext.Provider value={picker}>
+        <ProjectAgentConfiguration api={api} project={project} onError={vi.fn()} translate={createCollaborationTranslator('zh-CN')} />
+      </RuntimeProfilePickerContext.Provider>,
+    ))
+    expect(container.textContent).toContain('缺少模型配置')
+    await click('project-agent-configure-project-agent-1')
+    const target = picker.mock.calls[0]![0]
+    const modelOptions = { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '0' }
+    await act(async () => target.apply({ id: 'profile', executionDeviceId: 'cloud-device', executionEnvironment: 'cloud', model: 'model', modelType: 'public', modelOptions }))
+    expect(update).toHaveBeenCalledWith(project.id, 'project-agent-1', {
+      version: 1, defaultRuntimeProfileId: 'profile', executionDeviceId: 'cloud-device', executionEnvironment: 'cloud', model: 'model', modelType: 'public', modelOptions,
+    })
+  })
+
   async function render(api: SharedWorkspaceApi, target = project) {
     await act(async () => {
       root.render(
@@ -171,42 +194,79 @@ describe("ProjectAgentConfiguration", () => {
     });
   }
 
-  it("creates managed Wegent and custom Codex agents through the shared API", async () => {
-    const { api, create } = createApi();
-    await render(api);
+  it('shows model loading failure in the dialog and supports retry', async () => {
+    const { api } = createApi()
+    vi.mocked(api.automationExecutionCatalog!.load).mockRejectedValueOnce(new Error('Model catalog unavailable'))
+    await render(api)
+    await click('project-agent-add')
+    await click('project-agent-mode-codex')
+    expect(element('project-agent-dialog').textContent).toContain('Model catalog unavailable')
+    await click('project-agent-model-retry')
+    await change('project-agent-codex-name', 'Codex')
+    await change('project-agent-codex-environment', environment.id)
+    await change('project-agent-codex-model', '0')
+    expect((element('project-agent-codex-create') as HTMLButtonElement).disabled).toBe(false)
+    await change('project-agent-codex-environment', '')
+    expect((element('project-agent-codex-model') as HTMLSelectElement).value).toBe('')
+    expect((element('project-agent-codex-create') as HTMLButtonElement).disabled).toBe(true)
+  })
 
-    await click("project-agent-add");
-    await change("project-agent-wegent-team", "12");
-    await click("project-agent-wegent-create");
-    expect(create).toHaveBeenNthCalledWith(1, project.id, {
-      name: "研发团队",
-      runtime: "wegent",
-      wegentTeamId: 12,
-    });
-    expect(element("project-agent-row-created-wegent")).toBeTruthy();
+  it('blocks cloud execution from using a device runtime model', async () => {
+    const { api } = createApi({ environments: [{ ...environment, kind: 'cloud_host' }] })
+    vi.mocked(api.automationExecutionCatalog!.load).mockResolvedValue({ environments: [], plugins: [], runtimeProfiles: [], models: [{ name: 'runtime-model', label: 'Runtime only', type: 'runtime', options: {} }] })
+    await render(api)
+    await click('project-agent-add')
+    await click('project-agent-mode-codex')
+    await change('project-agent-codex-name', 'Codex')
+    await change('project-agent-codex-environment', environment.id)
+    expect(element('project-agent-codex-model').textContent).not.toContain('Runtime only')
+    expect(element('project-agent-dialog').textContent).toContain('没有可用模型')
+    expect((element('project-agent-codex-create') as HTMLButtonElement).disabled).toBe(true)
+  })
 
-    await click("project-agent-add");
-    await click("project-agent-mode-codex");
-    await change("project-agent-codex-name", "Codex 产品工程师");
-    await change("project-agent-codex-capability", "实现产品需求");
-    await change("project-agent-codex-prompt", "遵循项目规范");
-    await change("project-agent-codex-environment", environment.id);
-    await click("project-agent-codex-create");
+  it.each(['local_device', 'cloud_host'] as const)(
+    'creates managed Wegent and %s Codex agents through the shared API',
+    async kind => {
+      const { api, create } = createApi({ environments: [{ ...environment, kind }] });
+      await render(api);
 
-    expect(create).toHaveBeenNthCalledWith(2, project.id, {
-      name: "Codex 产品工程师",
-      runtime: "codex",
-      capabilityDescription: "实现产品需求",
-      systemPrompt: "遵循项目规范",
-      executionDeviceId: "device-macbook",
-      executionEnvironment: "local",
-      workspaceBinding: {
-        type: "backend_project",
-        projectId: project.id,
-      },
-    });
-    expect(element("project-agent-row-created-codex")).toBeTruthy();
-  });
+      await click("project-agent-add");
+      await change("project-agent-wegent-team", "12");
+      await click("project-agent-wegent-create");
+      expect(create).toHaveBeenNthCalledWith(1, project.id, {
+        name: "研发团队",
+        runtime: "wegent",
+        wegentTeamId: 12,
+      });
+      expect(element("project-agent-row-created-wegent")).toBeTruthy();
+
+      await click("project-agent-add");
+      await click("project-agent-mode-codex");
+      await change("project-agent-codex-name", "Codex 产品工程师");
+      await change("project-agent-codex-capability", "实现产品需求");
+      await change("project-agent-codex-prompt", "遵循项目规范");
+      await change("project-agent-codex-environment", environment.id);
+      expect((element('project-agent-codex-create') as HTMLButtonElement).disabled).toBe(true)
+      await change('project-agent-codex-model', '0')
+      await click("project-agent-codex-create");
+
+      expect(create).toHaveBeenNthCalledWith(2, project.id, {
+        name: "Codex 产品工程师",
+        runtime: "codex",
+        capabilityDescription: "实现产品需求",
+        systemPrompt: "遵循项目规范",
+        executionDeviceId: "device-macbook",
+        executionEnvironment: kind === 'cloud_host' ? 'cloud' : 'local',
+        model: 'deepseek',
+        modelType: 'public',
+        modelOptions: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '0' },
+        workspaceBinding: {
+          type: 'standalone',
+        },
+      });
+      expect(element("project-agent-row-created-codex")).toBeTruthy();
+    }
+  )
 
   it("archives an existing project agent with optimistic concurrency", async () => {
     const { api, update } = createApi();

@@ -6,7 +6,8 @@ import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { CollaborationTranslate } from "../i18n";
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+import { executionEnvironmentStatusLabel } from '../execution-environment/status'
+import type { SharedWorkspaceApi, WorkspaceAutomationModel } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationExecutionEnvironment,
   CollaborationOwnedAgent,
@@ -19,6 +20,7 @@ import {
   type ProjectAgentConfigurationRecord,
 } from "./model";
 import styles from "./ProjectAgentConfiguration.module.css";
+import { useRuntimeProfilePicker } from '../runtime-profile/context'
 
 type AgentMode = "wegent" | "codex";
 
@@ -34,14 +36,7 @@ function environmentLabel(
     environment.kind === "cloud_host"
       ? translate("todo.cloud_execution_environment", "云端执行环境")
       : translate("todo.local_execution_environment", "本地执行环境");
-  const status =
-    environment.status === "online"
-      ? translate("todo.execution_environment_online", "在线")
-      : environment.status === "offline"
-        ? translate("todo.execution_environment_offline", "离线")
-        : environment.status === "provisioning"
-          ? translate("todo.execution_environment_provisioning", "准备中")
-          : translate("todo.execution_environment_error", "异常");
+  const status = executionEnvironmentStatusLabel(environment.status, translate)
   return `${environment.name} · ${kind} · ${status}`;
 }
 
@@ -59,6 +54,13 @@ export function ProjectAgentConfiguration({
   translate: CollaborationTranslate;
 }) {
   const workspaceId = project.workspace_id;
+  const configureProfile = useRuntimeProfilePicker()
+  const requiresModel = project.project_store !== 'local'
+  const [models, setModels] = useState<WorkspaceAutomationModel[]>([])
+  const [selectedModelIndex, setSelectedModelIndex] = useState('')
+  const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelsError, setModelsError] = useState('')
+  const [modelsRevision, setModelsRevision] = useState(0)
   const [mode, setMode] = useState<AgentMode>("wegent");
   const [agents, setAgents] = useState<ProjectAgentConfigurationRecord[]>([]);
   const [workspaceAgents, setWorkspaceAgents] = useState<
@@ -86,6 +88,8 @@ export function ProjectAgentConfiguration({
     setAgents([]);
     setWorkspaceAgents([]);
     setEnvironments([]);
+    setModels([])
+    setSelectedModelIndex('')
     setSelectedTeamId("");
     setSelectedEnvironmentId("");
     setComposerOpen(false);
@@ -152,6 +156,28 @@ export function ProjectAgentConfiguration({
   }, [api, project.id, workspaceId]);
 
   useEffect(() => {
+    if (!composerOpen || mode !== 'codex' || !requiresModel) return
+    let active = true
+    setModelsLoading(true)
+    setModelsError('')
+    setModels([])
+    setSelectedModelIndex('')
+    const load = async () => {
+      try {
+        if (!api.automationExecutionCatalog) throw new Error(translateRef.current('runtimeSettings.unavailable'))
+        const catalog = await api.automationExecutionCatalog.load(project.id)
+        if (active) setModels(catalog.models)
+      } catch (cause) {
+        if (active) setModelsError(errorMessage(cause, translateRef.current('runtimeSettings.loadFailed')))
+      } finally {
+        if (active) setModelsLoading(false)
+      }
+    }
+    void load()
+    return () => { active = false }
+  }, [api, project.id, composerOpen, mode, requiresModel, modelsRevision])
+
+  useEffect(() => {
     if (!composerOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !busy) setComposerOpen(false);
@@ -174,6 +200,34 @@ export function ProjectAgentConfiguration({
       ) ?? null,
     [environments, selectedEnvironmentId],
   );
+
+  const selectedModel = !requiresModel || selectedModelIndex === '' ? undefined : models[Number(selectedModelIndex)]
+  const availableModels = models.flatMap((model, index) =>
+    selectedEnvironment?.kind === 'cloud_host' && model.type === 'runtime' ? [] : [{ ...model, index }],
+  )
+  const modelReady = !requiresModel || (!modelsLoading && Boolean(selectedModel) && availableModels.some((model) => String(model.index) === selectedModelIndex))
+
+  function configureAgent(agent: ProjectAgentConfigurationRecord) {
+    configureProfile?.({
+      title: `${agent.name} · ${translate('runtimeSettings.agentTitle')}`,
+      description: translate('runtimeSettings.agentDescription'),
+      saveLabel: translate('runtimeSettings.agentSave'),
+      savedLabel: translate('runtimeSettings.agentSaved'),
+      apply: async (profile) => {
+        const updated = await api.agents.update(project.id, agent.id, {
+          version: agent.version,
+          defaultRuntimeProfileId: profile.id,
+          executionDeviceId: profile.executionDeviceId,
+          executionEnvironment: profile.executionEnvironment,
+          model: profile.model,
+          modelType: profile.modelType,
+          modelOptions: profile.modelOptions,
+        })
+        setAgents((current) => current.map((candidate) => candidate.id === agent.id ? normalizeProjectAgent(updated) : candidate))
+        onAgentsChange?.()
+      },
+    })
+  }
 
   async function createAgent(input: Record<string, unknown>) {
     setBusy(true);
@@ -206,20 +260,21 @@ export function ProjectAgentConfiguration({
   }
 
   async function createCodexAgent() {
-    if (!selectedEnvironment || !codexName.trim()) return;
+    if (!selectedEnvironment || !codexName.trim() || !modelReady) return;
     const created = await createAgent(
       createCodexProjectAgentInput({
-        project,
         environment: selectedEnvironment,
         name: codexName,
         capabilityDescription,
         systemPrompt,
+        model: selectedModel,
       }),
     );
     if (!created) return;
     setCodexName("");
     setCapabilityDescription("");
     setSystemPrompt("");
+    setSelectedModelIndex('')
     setSelectedEnvironmentId("");
     setComposerOpen(false);
   }
@@ -316,6 +371,14 @@ export function ProjectAgentConfiguration({
                       </span>
                     </span>
                   </div>
+                  {agent.runtime === 'codex' && configureProfile ? (
+                    <div>
+                      {!agent.model && !agent.runtimeProfileId ? <p role="alert">{translate('runtimeSettings.agentMissing')}</p> : null}
+                      <button type="button" className="collaboration-secondary-button min-h-11" data-testid={`project-agent-configure-${agent.id}`} onClick={() => configureAgent(agent)}>
+                        {translate('runtimeSettings.agentConfigure')}
+                      </button>
+                    </div>
+                  ) : null}
                   <button
                     className={styles.archiveButton}
                     data-testid={`project-agent-archive-${agent.id}`}
@@ -523,9 +586,10 @@ export function ProjectAgentConfiguration({
                         <select
                           className={styles.select}
                           data-testid="project-agent-codex-environment"
-                          onChange={(event) =>
+                          onChange={(event) => {
                             setSelectedEnvironmentId(event.target.value)
-                          }
+                            setSelectedModelIndex('')
+                          }}
                           value={selectedEnvironmentId}
                         >
                           <option value="">
@@ -541,18 +605,29 @@ export function ProjectAgentConfiguration({
                           ))}
                         </select>
                       </label>
+                      {requiresModel ? (
+                        <label className={styles.field}>
+                          {translate('runtimeSettings.model', '模型')}
+                          <select className={styles.select} data-testid="project-agent-codex-model" value={selectedModelIndex} disabled={busy || modelsLoading || !selectedEnvironment} onChange={(event) => setSelectedModelIndex(event.target.value)}>
+                            <option value="">{modelsLoading ? translate('common.loading', '加载中…') : translate('runtimeSettings.selectModel', '选择模型')}</option>
+                            {availableModels.map((model) => <option key={model.index} value={model.index}>{model.label}</option>)}
+                          </select>
+                          {!modelsLoading && !modelsError && !availableModels.length ? <span>{translate('runtimeSettings.noModels', '没有可用模型，请先在模型管理中添加模型。')}</span> : null}
+                          {modelsError ? <span role="alert">{modelsError}<button type="button" className="collaboration-secondary-button min-h-11" data-testid="project-agent-model-retry" onClick={() => setModelsRevision((value) => value + 1)}>{translate('common.retry', '重试')}</button></span> : null}
+                        </label>
+                      ) : null}
                       <div className={styles.formFooter}>
                         <p className={styles.hint}>
                           {translate(
                             "todo.codex_environment_hint",
-                            "任务会在所选执行环境中运行，并绑定当前项目工作区。",
+                            '任务会在所选执行环境的独立工作目录中运行，并关联当前协作项目。',
                           )}
                         </p>
                         <button
                           className={styles.primaryButton}
                           data-testid="project-agent-codex-create"
                           disabled={
-                            !codexName.trim() || !selectedEnvironment || busy
+                            !codexName.trim() || !selectedEnvironment || !modelReady || busy
                           }
                           onClick={() => void createCodexAgent()}
                           type="button"
@@ -577,13 +652,14 @@ export function ProjectAgentConfiguration({
                       )}
                     </p>
                   )}
+                  {error ? <p role="alert" className={styles.error} data-testid="project-agent-dialog-error">{error}</p> : null}
                 </div>
               </section>
             </div>
           ) : null}
         </>
       )}
-      {error && (
+      {error && !composerOpen && (
         <p className={styles.error} data-testid="project-agent-config-error">
           {error}
         </p>

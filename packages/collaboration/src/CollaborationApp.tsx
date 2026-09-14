@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { RuntimeConfigurationProvider } from './runtime-profile/RuntimeConfigurationProvider'
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
@@ -42,6 +43,7 @@ import type { AutomationProject } from "./automation";
 import { useCollaborationWorkspaceController } from "./workspace-controller";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
 import { ProjectIssueTable, useIssueAssignmentsByIssueId } from "./platform";
+import { ProjectRuntimeSettings } from './project-manage/ProjectRuntimeSettings'
 import {
   ProjectDispatchSettings,
   ProjectExecutionEnvironments,
@@ -197,6 +199,7 @@ export function CollaborationApp({
   }
 
   return (
+    <RuntimeConfigurationProvider api={api} project={project} locale={locale}>
     <section
       className={`collaboration-app${project ? " collaboration-app-project" : ""}`}
       data-testid={collaborationTestIds.root}
@@ -626,6 +629,17 @@ export function CollaborationApp({
                     testId: "collaboration-project-settings-dispatch",
                     content: (
                       <ProjectDispatchSettings
+                        runtimeContent={
+                          api.automationExecutionCatalog ? (
+                          <ProjectRuntimeSettings
+                            key={project.id}
+                            api={api}
+                            projectId={project.id}
+                            translate={translate}
+                            onConfigureEnvironments={() => setSettingsSectionId('environments')}
+                          />
+                          ) : undefined
+                        }
                         canManage={
                           project.access_role === "Owner" ||
                           project.access_role === "Maintainer"
@@ -837,5 +851,6 @@ export function CollaborationApp({
         )
       ) : null}
     </section>
+    </RuntimeConfigurationProvider>
   );
 }

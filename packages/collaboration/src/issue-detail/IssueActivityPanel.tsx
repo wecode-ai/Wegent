@@ -4,6 +4,7 @@
 
 import { ArrowUp, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { executionStatusLabel } from './executionStatusLabel'
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
@@ -440,10 +441,17 @@ export function IssueActivityPanel({
               data-testid={`collaboration-run-${entry.run.id}`}
               key={`run:${entry.run.id}`}
             >
-              <strong>{translate("todo.execution_run", "执行任务")}</strong>
+              <strong>
+                {entry.run.executor_type === 'automation_manager'
+                  ? translate('todo.execution_manager_run', 'AI 调度')
+                  : translate('todo.execution_run', '执行任务')}
+              </strong>
               <p>
-                {entry.run.task_title} · {entry.run.display_state}
+                {entry.run.task_title} · {executionStatusLabel(entry.run.display_state, translate)}
               </p>
+              {entry.run.executor_type === 'automation_manager' && entry.run.display_state === 'succeeded' ? (
+                <p>{translate('todo.execution_manager_completed', '调度已完成；步骤执行与整个 Issue 的完成状态请查看上方进度。')}</p>
+              ) : null}
               <time>{entry.run.created_at.slice(0, 16).replace("T", " ")}</time>
             </article>
           );

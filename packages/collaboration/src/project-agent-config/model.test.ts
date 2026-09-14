@@ -8,17 +8,12 @@ import type { WorkspaceProjectAgent } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationExecutionEnvironment,
   CollaborationOwnedAgent,
-  CollaborationProject,
 } from "../types";
 import {
   createCodexProjectAgentInput,
   createWegentProjectAgentInput,
   normalizeProjectAgent,
 } from "./model";
-
-const project = {
-  id: "8869148083931743937",
-} as CollaborationProject;
 
 const team: CollaborationOwnedAgent = {
   id: "workspace-agent-1",
@@ -68,6 +63,8 @@ describe("project agent configuration model", () => {
       capabilityDescription: "实现需求",
       executionEnvironment: "cloud",
       executionDeviceId: "cloud-1",
+      model: null,
+      runtimeProfileId: null,
     });
   });
 
@@ -79,33 +76,33 @@ describe("project agent configuration model", () => {
     });
   });
 
-  it("creates the Codex payload with a real device key and backend project binding", () => {
-    expect(
-      createCodexProjectAgentInput({
-        project,
-        environment,
-        name: " Codex 产品工程师 ",
-        capabilityDescription: " 实现产品需求 ",
-        systemPrompt: " 遵循项目规范 ",
-      }),
-    ).toEqual({
-      name: "Codex 产品工程师",
-      runtime: "codex",
-      capabilityDescription: "实现产品需求",
-      systemPrompt: "遵循项目规范",
-      executionDeviceId: "device-macbook",
-      executionEnvironment: "local",
-      workspaceBinding: {
-        type: "backend_project",
-        projectId: "8869148083931743937",
-      },
-    });
-  });
+  it.each(['local_device', 'cloud_host'] as const)(
+    'creates a %s Codex agent with its own task workspace',
+    kind => {
+      expect(
+        createCodexProjectAgentInput({
+          environment: { ...environment, kind },
+          name: " Codex 产品工程师 ",
+          capabilityDescription: " 实现产品需求 ",
+          systemPrompt: " 遵循项目规范 ",
+        }),
+      ).toEqual({
+        name: "Codex 产品工程师",
+        runtime: "codex",
+        capabilityDescription: "实现产品需求",
+        systemPrompt: "遵循项目规范",
+        executionDeviceId: "device-macbook",
+        executionEnvironment: kind === 'cloud_host' ? 'cloud' : 'local',
+        workspaceBinding: {
+          type: 'standalone',
+        },
+      });
+    }
+  )
 
   it("rejects execution environments that cannot address an executor", () => {
     expect(() =>
       createCodexProjectAgentInput({
-        project,
         environment: { ...environment, device_key: undefined },
         name: "Codex",
         capabilityDescription: "",
