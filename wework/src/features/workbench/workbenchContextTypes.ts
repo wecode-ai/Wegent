@@ -134,6 +134,9 @@ export interface CreateProjectRuntimeTaskOptions {
    * selection, for embedded project-space composers. */
   deviceWorkspaceId?: number | null
   taskRequest?: RuntimeTaskCreateRequest | null
+  /** Override the globally selected project execution strategy. Pass null to
+   * bind the task to the selected project's main workspace. */
+  workspaceExecution?: RuntimeTaskCreateRequest['execution'] | null
   /** Reuse the exact workspace or worktree from a previous runtime task
    * without inheriting its conversation. */
   workspaceSource?: RuntimeTaskAddress | null
