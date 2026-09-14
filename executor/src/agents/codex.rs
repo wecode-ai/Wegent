@@ -366,13 +366,13 @@ impl CodexAppServerClient {
         let runtime_proxy_env = proxy_environment(proxy_url);
         let process = {
             let mut state = self.state.lock().await;
-            if state.runtime_proxy_env == runtime_proxy_env {
+            if runtime_proxy_endpoint_matches(&state.runtime_proxy_env, &runtime_proxy_env) {
                 return Ok(false);
             }
             if !allow_active_turns && !state.active_threads.is_empty() {
                 return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
             }
-            state.runtime_proxy_env = runtime_proxy_env;
+            replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
             state.process.take()
         };
         if let Some(process) = process {
@@ -929,7 +929,9 @@ impl CodexAppServerClient {
         {
             state.process = None;
         }
-        if !launch_config.env.is_empty() && state.runtime_proxy_env != launch_config.env {
+        if !launch_config.env.is_empty()
+            && !persistent_process_environment_matches(&state.runtime_proxy_env, &launch_config.env)
+        {
             if !state.active_threads.is_empty() {
                 return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
             }
@@ -3343,7 +3345,8 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
         .config_overrides
         .extend(computer_use_overrides);
     launch_config.env.extend(computer_use_env);
-    let (project_space_overrides, project_space_env) = project_space_mcp_config_overrides(request)?;
+    let (project_space_overrides, project_space_env) =
+        managed_wework_mcp_config_overrides(request)?;
     launch_config
         .config_overrides
         .extend(project_space_overrides);
@@ -3817,6 +3820,41 @@ fn proxy_environment(proxy_url: Option<&str>) -> BTreeMap<String, String> {
     .into_iter()
     .map(|(key, value)| (key.to_owned(), value.to_owned()))
     .collect()
+}
+
+fn runtime_proxy_endpoint_matches(
+    current: &BTreeMap<String, String>,
+    requested: &BTreeMap<String, String>,
+) -> bool {
+    current.get("ALL_PROXY") == requested.get("ALL_PROXY")
+}
+
+fn persistent_process_environment_matches(
+    current: &BTreeMap<String, String>,
+    requested: &BTreeMap<String, String>,
+) -> bool {
+    runtime_proxy_endpoint_matches(current, requested)
+        && current.get("WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION")
+            == requested.get("WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION")
+}
+
+fn replace_proxy_environment(
+    current: &mut BTreeMap<String, String>,
+    requested: BTreeMap<String, String>,
+) {
+    for key in [
+        "ALL_PROXY",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "all_proxy",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+    ] {
+        current.remove(key);
+    }
+    current.extend(requested);
 }
 
 fn merge_required_no_proxy(configured: Option<&str>) -> String {
@@ -4295,32 +4333,71 @@ fn computer_use_mcp_config_overrides() -> (Vec<String>, BTreeMap<String, String>
     )
 }
 
-fn project_space_mcp_config_overrides(
+fn managed_wework_mcp_config_overrides(
     request: &ExecutionRequest,
 ) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
-    if crate::task_runtime::mcp::encoded_space_context_grant(request).is_none() {
-        return Ok((Vec::new(), BTreeMap::new()));
+    let mut overrides = Vec::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint()
+        .ok_or_else(|| "Wework MCP endpoint is not ready".to_owned())?;
+    let env = BTreeMap::from([(
+        "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
+        format!("Bearer {}", endpoint.token),
+    )]);
+    if let Some(config) = crate::task_runtime::mcp::notifications_mcp_client_config(request)? {
+        append_managed_mcp_config(
+            crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
+            config,
+            &mut overrides,
+        );
     }
-    let server_name = crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME;
+    if crate::task_runtime::mcp::encoded_space_context_grant(request).is_none() {
+        return Ok((overrides, env));
+    }
+    append_managed_mcp_config(
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::space_mcp_client_config(request)?,
+        &mut overrides,
+    );
+    Ok((overrides, env))
+}
+
+fn append_managed_mcp_config(
+    server_name: &str,
+    config: crate::task_runtime::mcp::SpaceMcpClientConfig,
+    overrides: &mut Vec<String>,
+) {
     let key = toml_key_path(&["mcp_servers", server_name]);
-    let config = crate::task_runtime::mcp::space_mcp_client_config(request)?;
-    let mut overrides = vec![
+    overrides.extend([
         format!("{key}.enabled=true"),
         format!("{key}.url={}", toml_value(&config.url)),
         format!(
             "{key}.tool_timeout_sec={}",
             crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS
         ),
-    ];
-    let mut env = BTreeMap::new();
-    for (index, (header_name, header_value)) in config.headers.into_iter().enumerate() {
-        let env_name = format!("WEGENT_CODEX_SPACE_MCP_HEADER_{index}");
-        env.insert(env_name.clone(), header_value);
-        overrides.push(format!(
-            "{}={}",
-            toml_key_path(&["mcp_servers", server_name, "env_http_headers", &header_name]),
-            toml_value(&env_name)
-        ));
+    ]);
+    for (header_name, header_value) in config.headers {
+        if header_name == "Authorization" {
+            debug_assert_eq!(
+                header_value,
+                format!(
+                    "Bearer {}",
+                    crate::task_runtime::mcp_http::space_mcp_http_endpoint()
+                        .expect("Wework MCP endpoint should remain active")
+                        .token
+                )
+            );
+            overrides.push(format!(
+                "{}={}",
+                toml_key_path(&["mcp_servers", server_name, "env_http_headers", &header_name]),
+                toml_value("WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION")
+            ));
+        } else {
+            overrides.push(format!(
+                "{}={}",
+                toml_key_path(&["mcp_servers", server_name, "http_headers", &header_name]),
+                toml_value(&header_value)
+            ));
+        }
     }
     if config.context_bound {
         overrides.push(format!(
@@ -4328,7 +4405,6 @@ fn project_space_mcp_config_overrides(
             toml_value("approve")
         ));
     }
-    Ok((overrides, env))
 }
 
 fn embedded_browser_label(request: &ExecutionRequest) -> Option<String> {

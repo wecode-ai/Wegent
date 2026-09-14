@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 
 use super::*;
@@ -1754,6 +1753,59 @@ fn required_loopback_hosts_are_merged_into_no_proxy() {
         "LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL"
     );
     assert_eq!(merge_required_no_proxy(None), DEFAULT_NO_PROXY);
+}
+
+#[test]
+fn runtime_proxy_identity_ignores_no_proxy_drift() {
+    let mut current = proxy_environment(Some("http://127.0.0.1:7890"));
+    let mut requested = current.clone();
+    current.insert("NO_PROXY".to_owned(), "localhost".to_owned());
+    current.insert("no_proxy".to_owned(), "localhost".to_owned());
+    requested.insert("NO_PROXY".to_owned(), "localhost,127.0.0.1,::1".to_owned());
+    requested.insert("no_proxy".to_owned(), "localhost,127.0.0.1,::1".to_owned());
+
+    assert!(runtime_proxy_endpoint_matches(&current, &requested));
+    assert!(!runtime_proxy_endpoint_matches(
+        &current,
+        &proxy_environment(Some("http://127.0.0.1:7891"))
+    ));
+}
+
+#[test]
+fn persistent_process_environment_requires_stable_local_mcp_auth() {
+    let mut current = proxy_environment(Some("http://127.0.0.1:7890"));
+    let mut requested = current.clone();
+    requested.insert(
+        "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
+        "Bearer stable-token".to_owned(),
+    );
+
+    assert!(!persistent_process_environment_matches(
+        &current, &requested
+    ));
+    current.insert(
+        "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
+        "Bearer stable-token".to_owned(),
+    );
+    assert!(persistent_process_environment_matches(&current, &requested));
+}
+
+#[test]
+fn replacing_proxy_environment_preserves_local_mcp_auth() {
+    let mut current = BTreeMap::from([(
+        "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
+        "Bearer stable-token".to_owned(),
+    )]);
+    replace_proxy_environment(
+        &mut current,
+        proxy_environment(Some("http://127.0.0.1:7890")),
+    );
+
+    assert_eq!(
+        current["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
+        "Bearer stable-token"
+    );
+    assert_eq!(current["ALL_PROXY"], "http://127.0.0.1:7890");
 }
 
 #[test]
@@ -3692,10 +3744,10 @@ fn codex_thread_binds_project_space_through_context_grant() {
     );
     assert_eq!(
         config["mcp_servers.wework_space.env_http_headers.Authorization"],
-        "WEGENT_CODEX_SPACE_MCP_HEADER_0"
+        "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"
     );
     assert_eq!(
-        launch_config.env["WEGENT_CODEX_SPACE_MCP_HEADER_0"],
+        launch_config.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
         "Bearer test-space-mcp-instance-token"
     );
     assert!(!config.contains_key("mcp_servers.wework_space.command"));
@@ -3707,31 +3759,19 @@ fn codex_thread_binds_project_space_through_context_grant() {
         "approve"
     );
     assert_eq!(
-        config["mcp_servers.wework_space.env_http_headers.X-Wework-Space-Backend-Url"],
-        "WEGENT_CODEX_SPACE_MCP_HEADER_2"
+        config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"],
+        "test-space-mcp-context-handle"
     );
-    assert_eq!(
-        launch_config.env["WEGENT_CODEX_SPACE_MCP_HEADER_2"],
-        "https://wework.example.com"
-    );
-    assert_eq!(
-        config["mcp_servers.wework_space.env_http_headers.X-Wework-Space-Backend-Token"],
-        "WEGENT_CODEX_SPACE_MCP_HEADER_1"
-    );
-    assert_eq!(
-        launch_config.env["WEGENT_CODEX_SPACE_MCP_HEADER_1"],
-        "runtime-token"
-    );
-    assert_eq!(
-        config["mcp_servers.wework_space.env_http_headers.X-Wework-Space-Context-Grant"],
-        "WEGENT_CODEX_SPACE_MCP_HEADER_3"
-    );
-    let encoded = launch_config.env["WEGENT_CODEX_SPACE_MCP_HEADER_3"].as_str();
-    let decoded = STANDARD.decode(encoded).expect("base64 context grant");
-    let grant: Value = serde_json::from_slice(&decoded).expect("JSON context grant");
-    assert_eq!(grant["task_id"], "runtime-task-1");
-    assert_eq!(grant["space_id"], "space-1");
-    assert_eq!(grant["item_id"], "issue-1");
+    let mcp_config = config
+        .iter()
+        .filter(|(key, _)| key.starts_with("mcp_servers.wework_space."))
+        .collect::<BTreeMap<_, _>>();
+    let serialized = serde_json::to_string(&mcp_config).expect("serialized MCP config");
+    assert!(!serialized.contains("https://wework.example.com"));
+    assert!(!serialized.contains("runtime-token"));
+    assert!(!serialized.contains("runtime-task-1"));
+    assert!(!serialized.contains("space-1"));
+    assert!(!serialized.contains("issue-1"));
 }
 
 #[test]
@@ -3751,6 +3791,47 @@ fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
         .env
         .keys()
         .all(|name| !name.starts_with("WEGENT_CODEX_SPACE_MCP_HEADER_")));
+    assert_eq!(
+        launch_config.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
+        "Bearer test-space-mcp-instance-token"
+    );
+}
+
+#[test]
+fn codex_thread_exposes_notifications_without_project_context() {
+    let request = ExecutionRequest {
+        task_id: "runtime-task-notification".to_owned(),
+        backend_url: Some("https://wework.example.com".to_owned()),
+        auth_token: Some("runtime-token".to_owned()),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params["config"].as_object().expect("thread config");
+
+    assert!(!config.contains_key("mcp_servers.wework_space.enabled"));
+    assert_eq!(config["mcp_servers.wework_notifications.enabled"], true);
+    assert_eq!(
+        config["mcp_servers.wework_notifications.url"],
+        "http://127.0.0.1:1/notifications/mcp"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_notifications.http_headers.X-Wework-Mcp-Context"],
+        "test-space-mcp-context-handle"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_notifications.env_http_headers.Authorization"],
+        "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"
+    );
+    let mcp_config = config
+        .iter()
+        .filter(|(key, _)| key.starts_with("mcp_servers.wework_notifications."))
+        .collect::<BTreeMap<_, _>>();
+    let serialized = serde_json::to_string(&mcp_config).expect("serialized MCP config");
+    assert!(!serialized.contains("https://wework.example.com"));
+    assert!(!serialized.contains("runtime-token"));
 }
 
 #[test]

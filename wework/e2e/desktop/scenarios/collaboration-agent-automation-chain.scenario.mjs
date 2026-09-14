@@ -378,6 +378,10 @@ export async function createDesktopScenario({
     await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('waitFor', scoped('[data-testid="collaboration-workspace-create"]'), {
+      visible: true,
+      timeoutMs: uiTimeoutMs,
+    })
     await capture(control, 'collaboration-agent-chain-01-workspaces.png')
 
     const workspaceName = `${WORKSPACE_NAME}-${process.pid}`

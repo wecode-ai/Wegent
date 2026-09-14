@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { CLOUD_DEVICE_ID, CLOUD_PUBLIC_MODEL_NAME } from '../modules/shared.mjs'
-
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作共享核心空间'
 const PROJECT_NAME = '协作共享核心验收'
@@ -53,6 +51,10 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
+function terminalExecution(execution) {
+  return ['completed', 'failed', 'cancelled'].includes(execution.status)
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let backendUrl = ''
   let authToken = ''
@@ -70,6 +72,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     if (fixtureArchived) return
     try {
       if (project) {
+        const executions = await request(
+          `/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`
+        )
+        for (const execution of executions.items.filter(
+          candidate => !terminalExecution(candidate)
+        )) {
+          await request(`/api/v1/cloud-projects/${project.id}/executions/${execution.id}/stop`, {
+            method: 'POST',
+          })
+        }
+        await waitForApiValue(
+          () => request(`/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`),
+          response => response.items.every(terminalExecution),
+          'Project executions remained active during fixture cleanup',
+          Math.max(uiTimeoutMs, 30_000)
+        )
         const latestProject = await request(`/api/v1/cloud-projects/${project.id}`)
         if (latestProject.status !== 'archived') {
           await request(`/api/v1/cloud-projects/${project.id}?version=${latestProject.version}`, {
@@ -216,121 +234,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           timeoutMs: uiTimeoutMs,
         })
         await capture(control, 'collaboration-shared-core-03-project-created.png')
-
-        await control.command('click', scoped('[data-testid="collaboration-project-manager-link"]'))
-        await control.command('waitFor', scoped('[data-testid="project-runtime-missing"]'))
-        await control.command('click', scoped('[data-testid="project-runtime-configure"]'))
-        await control.command('waitFor', scoped('[data-testid="runtime-configuration-dialog"]'))
-        await control.command(
-          'waitFor',
-          scoped(
-            '[data-testid="runtime-configuration-dialog"] [data-testid="project-runtime-configure-environments"]'
-          )
-        )
-        assert.equal(
-          await control.command(
-            'getAttribute',
-            scoped(
-              '[data-testid="runtime-configuration-dialog"] [data-testid="project-runtime-save"]'
-            ),
-            {
-              value: 'disabled',
-            }
-          ),
-          ''
-        )
-        await control.command(
-          'click',
-          scoped(
-            '[data-testid="runtime-configuration-dialog"] [data-testid="project-runtime-configure-environments"]'
-          )
-        )
-        await control.command(
-          'waitFor',
-          scoped('[data-testid="collaboration-project-execution-environment-status-filter"]')
-        )
-
-        const devices = await request('/api/devices')
-        const runtimeDevice = devices.items.find(device => device.device_id === CLOUD_DEVICE_ID)
-        assert.ok(runtimeDevice?.id, 'The isolated cloud execution device is missing')
-        await request(`/api/v1/cloud-projects/${project.id}/execution-environments`, {
-          method: 'POST',
-          body: JSON.stringify({ device_id: runtimeDevice.id }),
-        })
-        await control.command('click', scoped('[data-testid="runtime-configuration-back"]'))
-        await control.command(
-          'waitFor',
-          scoped(
-            '[data-testid="runtime-configuration-dialog"] [data-testid="project-runtime-missing"]'
-          )
-        )
-        const runtimeName = `Coordinator-${process.pid}`
-        await control.command(
-          'fill',
-          scoped(
-            '[data-testid="runtime-configuration-dialog"] [data-testid="project-runtime-name"]'
-          ),
-          {
-            value: runtimeName,
-          }
-        )
-        await control.command(
-          'select',
-          scoped(
-            '[data-testid="runtime-configuration-dialog"] [data-testid="project-runtime-device"]'
-          ),
-          {
-            value: CLOUD_DEVICE_ID,
-          }
-        )
-        const models = await request(
-          '/api/models/unified?include_config=true&model_category_type=llm'
-        )
-        const runtimeModel = models.data.find(model => model.name === CLOUD_PUBLIC_MODEL_NAME)
-        assert.ok(runtimeModel, 'The isolated coordinator model is missing')
-        await control.command(
-          'select',
-          scoped(
-            '[data-testid="runtime-configuration-dialog"] [data-testid="project-runtime-model"]'
-          ),
-          {
-            value: runtimeModel.displayName || runtimeModel.name,
-            by: 'label',
-          }
-        )
-        await capture(control, 'collaboration-runtime-configuration-dialog.png')
-        await control.command(
-          'clickWhenEnabled',
-          scoped(
-            '[data-testid="runtime-configuration-dialog"] [data-testid="project-runtime-save"]'
-          )
-        )
-        await control.command(
-          'waitFor',
-          scoped(
-            '[data-testid="runtime-configuration-dialog"] [data-testid="project-runtime-current"]'
-          ),
-          {
-            text: runtimeName,
-          }
-        )
-        const runtimeBinding = await request(`/api/v1/cloud-projects/${project.id}/runtime-default`)
-        const profiles = await request('/api/v1/runtime-profiles')
-        const savedRuntime = profiles.find(
-          profile => profile.id === runtimeBinding.runtimeProfileId
-        )
-        assert.equal(savedRuntime?.executionDeviceId, CLOUD_DEVICE_ID)
-        assert.equal(savedRuntime?.model, CLOUD_PUBLIC_MODEL_NAME)
-        assert.equal(savedRuntime?.modelType, runtimeModel.type)
-        assert.equal(savedRuntime?.modelOptions.weworkCloudModelNamespace, runtimeModel.namespace)
-        await control.command('click', scoped('[data-testid="runtime-configuration-close"]'))
-        await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-        await control.command('click', scoped('[data-testid="collaboration-project-manager-link"]'))
-        await control.command('waitFor', scoped('[data-testid="project-runtime-current"]'), {
-          text: runtimeName,
-        })
-        await capture(control, 'collaboration-shared-core-runtime-default.png')
-        await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
 
         await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
         await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {

@@ -1447,13 +1447,13 @@ async function verifyWorkspaceTabIsolation(control) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const firstWorkspaceAgents = `${firstBoardContent} [data-testid="collaboration-workspace-nav-agents"]`
-  await control.command('waitFor', firstWorkspaceAgents, {
+  const firstWorkspaceParticipants = `${firstBoardContent} [data-testid="collaboration-workspace-nav-participants"]`
+  await control.command('waitFor', firstWorkspaceParticipants, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', firstWorkspaceAgents)
-  await control.command('waitFor', `${firstWorkspaceAgents}[aria-current="page"]`, {
+  await control.command('click', firstWorkspaceParticipants)
+  await control.command('waitFor', `${firstWorkspaceParticipants}[aria-current="page"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -1478,7 +1478,7 @@ async function verifyWorkspaceTabIsolation(control) {
     'A new project-space tab inherited the first tab workspace settings view'
   )
   assert.equal(
-    await control.command('getAttribute', firstWorkspaceAgents, {
+    await control.command('getAttribute', firstWorkspaceParticipants, {
       value: 'aria-current',
     }),
     'page',
@@ -1494,13 +1494,13 @@ async function verifyWorkspaceTabIsolation(control) {
     'The second project-space tab did not enter the local workspace home independently'
   )
   await control.command('click', `[data-testid="workspace-tab-select-${firstBoardId}"]`)
-  await control.command('waitFor', firstWorkspaceAgents, {
+  await control.command('waitFor', firstWorkspaceParticipants, {
     visible: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await waitForAttribute(
     control,
-    firstWorkspaceAgents,
+    firstWorkspaceParticipants,
     'aria-current',
     'page',
     'Switching back did not restore the first project-space tab workspace section'

@@ -302,13 +302,17 @@ test.describe('Collaboration agent execution', () => {
     )
     await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
     await capture(page, testInfo, `wegent-${agentCase.label.toLowerCase()}-02-issue-created`)
-    const assignmentComment = `Assign ${agentCase.label} through the collaboration execution path.`
-    await page.getByTestId('collaboration-issue-comment').click()
-    await page.getByTestId('collaboration-issue-mention-trigger').click()
-    await page.getByTestId(`collaboration-issue-mention-agent-${agentCase.agent.id}`).click()
-    await page.getByTestId('collaboration-issue-comment').pressSequentially(assignmentComment)
-    await page.getByTestId('collaboration-issue-comment-submit').click()
-    await expect(page.getByTestId('collaboration-comments')).toContainText(assignmentComment)
+    await page.getByTestId('collaboration-issue-assignment-trigger').click()
+    await expect(page.getByTestId('collaboration-issue-assignment-popup')).toBeVisible()
+    await page.getByTestId(`collaboration-issue-assign-agent-${agentCase.agent.id}`).click()
+    await expect(page.getByTestId('collaboration-current-assignment')).toContainText(
+      agentCase.agent.name
+    )
+    const assignedIssue = await apiRequest<CollaborationIssue>(
+      request,
+      `/api/v1/loop-items/${issue.id}`
+    )
+    expect(assignedIssue.assignee_agent_id).toBe(agentCase.agent.id)
     await capture(page, testInfo, `wegent-${agentCase.label.toLowerCase()}-03-assigned`)
 
     const execution = await waitForCompletedExecution(request, projectId, issue.id)

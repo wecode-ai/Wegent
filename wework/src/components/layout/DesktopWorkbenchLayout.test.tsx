@@ -1857,6 +1857,71 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('collaboration-platform-root')).toBeInTheDocument()
   })
 
+  test('routes a retained My Tasks board to the dedicated work-items surface', () => {
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          public_id: 'default-work-items',
+          project_key: 'WORK',
+          name: '我的任务',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-09-14T00:00:00Z',
+          updated_at: '2026-09-14T00:00:00Z',
+          metadata: { system_kind: 'default_work_items' },
+        },
+      ],
+    })
+    const boardTab = {
+      id: 'board-my-tasks',
+      kind: 'board' as const,
+      title: '我的任务',
+      contentRoute: '/todo?projectStore=local&projectId=default-work-items',
+      fixed: false,
+    }
+    const workspaceTabs = {
+      tabs: [boardTab],
+      activeTabId: boardTab.id,
+      activeTab: boardTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } as unknown as WorkspaceTabsContextValue
+
+    render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          surfaceKind="board"
+          workspaceTabId={boardTab.id}
+          state={{
+            ...baseProps.state,
+            user: {
+              id: 1,
+              user_name: 'local',
+              email: 'local@example.com',
+            },
+          }}
+        />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.getByTestId('cloud-todo-workspace')).toHaveAttribute('data-embedded', 'true')
+    expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
+  })
+
   test('keeps a retained board bound to its own workspace tab route', async () => {
     deliveryApiMock.available = true
     const project = {

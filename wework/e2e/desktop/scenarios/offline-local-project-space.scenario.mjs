@@ -229,11 +229,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       const settingsSnapshot = await snapshot(control)
       assert.equal(
-        settingsSnapshot.testIds.includes('collaboration-tab-files'),
-        false,
-        'Files must not remain a top-level project view'
-      )
-      assert.equal(
         settingsSnapshot.testIds.includes('collaboration-tab-automation'),
         false,
         'Automation must not remain a top-level project view'
@@ -241,20 +236,25 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
 
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-settings-agents"]')
+        scoped('[data-testid="collaboration-project-settings-participants"]')
       )
       await control.command('click', scoped('[data-testid="project-agent-add"]'))
-      await control.command('click', scoped('[data-testid="project-agent-mode-codex"]'))
-      await control.command('fill', scoped('[data-testid="project-agent-codex-name"]'), {
+      await control.command('click', '[data-testid="project-agent-mode-create"]')
+      await control.command('waitFor', '[data-testid="project-agent-standard-create-form"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', '[data-testid="project-agent-local-name"]', {
         value: AGENT_NAME,
       })
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="project-agent-codex-create"]'),
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
+      await control.command('select', '[data-testid="project-agent-local-runtime"]', {
+        value: 'codex',
+      })
+      await control.command('select', '[data-testid="project-agent-local-model"]', {
+        value: '0',
+      })
+      await control.command('clickWhenEnabled', '[data-testid="project-agent-local-create"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', scoped('[data-testid="project-agent-list"]'), {
         text: AGENT_NAME,
         timeoutMs: uiTimeoutMs,
@@ -262,11 +262,15 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
 
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-settings-dispatch"]')
+        scoped('[data-testid="collaboration-project-settings-automatic-processing"]')
       )
-      await control.command('waitFor', scoped('[data-testid="project-automation-policy"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="collaboration-project-automatic-processing-page"]'),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       assert.equal(
         Number(
           await control.command(
@@ -303,8 +307,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         ACTIVE_WORKBENCH_SELECTOR
       )
       assertLocalIsolation()
-      await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
-      await control.command('click', scoped('[data-testid="collaboration-project-settings-files"]'))
+      await control.command('click', scoped('[data-testid="collaboration-tab-files"]'))
       await control.command('waitFor', scoped('[data-testid="cloud-files-view"]'), {
         timeoutMs: uiTimeoutMs,
       })

@@ -238,18 +238,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         }
       )
 
-      await control.command('click', `${activeBoard} [data-testid="collaboration-tab-manage"]`)
-      await control.command(
-        'waitFor',
-        `${activeBoard} [data-testid="collaboration-project-settings-files"]`,
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      await control.command(
-        'click',
-        `${activeBoard} [data-testid="collaboration-project-settings-files"]`
-      )
+      await control.command('click', `${activeBoard} [data-testid="collaboration-tab-files"]`)
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-files-view"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
       await captureScreenshot(control, 'task-attachments-after-files-click.png')
       const filesView = `${activeBoard} [data-testid="cloud-files-view"]`
       await control.command('waitFor', filesView, {

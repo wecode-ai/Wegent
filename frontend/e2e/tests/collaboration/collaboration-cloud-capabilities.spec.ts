@@ -569,8 +569,8 @@ test.describe('Collaboration cloud capabilities', () => {
         taskAttachmentName,
         'cloud task attachment evidence'
       )
-      await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
-      await page.getByTestId('collaboration-project-settings-files').click()
+      await page.goto(collaborationProjectPath(workspace.id, project.id))
+      await page.getByTestId('collaboration-tab-files').click()
       await expect(page.getByTestId('cloud-files-view')).toBeVisible()
       await expect(page.getByTestId(`task-attachment-${taskAttachment.id}`)).toContainText(
         taskAttachmentName
@@ -667,8 +667,10 @@ test.describe('Collaboration cloud capabilities', () => {
       projectId = project.id
       cleanupRuntime = await configureDispatchRuntime(page, project.id, String(suffix))
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
-      await page.getByTestId('collaboration-project-settings-dispatch').click()
-      await expect(page.getByTestId('project-automation-policy')).toBeVisible()
+      await page.getByTestId('collaboration-project-settings-automatic-processing').click()
+      await expect(
+        page.getByTestId('collaboration-project-automatic-processing-page')
+      ).toBeVisible()
       await page.getByTestId('automation-welcome-create-policy').click()
 
       const createResponse = page.waitForResponse(
@@ -703,8 +705,10 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.getByTestId('automation-open-runs').click()
       await expect(page.getByTestId(`automation-run-${runBody.id}`)).toBeVisible()
       await page.reload()
-      await page.getByTestId('collaboration-project-settings-dispatch').click()
-      await expect(page.getByTestId('project-automation-policy')).toBeVisible()
+      await page.getByTestId('collaboration-project-settings-automatic-processing').click()
+      await expect(
+        page.getByTestId('collaboration-project-automatic-processing-page')
+      ).toBeVisible()
       const persistedRunsResponse = page.waitForResponse(response => {
         const pathname = new URL(response.url()).pathname
         return (
@@ -776,7 +780,7 @@ test.describe('Collaboration cloud capabilities', () => {
 
       await page.goto(collaborationProjectPath(workspace.id, project.id, { issueId: created.id }))
       await page.getByTestId('cloud-todo-toggle-tasks').click()
-      await expect(page.getByTestId('cloud-todo-workflow-dag')).toBeVisible()
+      await expect(page.getByTestId('cloud-todo-workflow-stages')).toBeVisible()
       await page.getByTestId(`cloud-todo-workflow-node-${stageId}`).click()
       await expect(page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`)).toBeVisible()
       await captureEvidence(page, 'web-11-workflow-awaiting-approval')
@@ -804,7 +808,7 @@ test.describe('Collaboration cloud capabilities', () => {
 
       await page.reload()
       await page.getByTestId('cloud-todo-toggle-tasks').click()
-      await expect(page.getByTestId('cloud-todo-workflow-dag')).toBeVisible()
+      await expect(page.getByTestId('cloud-todo-workflow-stages')).toBeVisible()
       await page.getByTestId(`cloud-todo-workflow-node-${stageId}`).click()
       await expect(page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`)).toHaveCount(0)
       await expect(page.getByTestId(`cloud-todo-workflow-node-${stageId}`)).toContainText(
@@ -836,7 +840,8 @@ test.describe('Collaboration cloud capabilities', () => {
       const member = await regularUser(page)
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
 
-      await page.getByTestId('collaboration-project-settings-members').click()
+      await page.getByTestId('collaboration-project-settings-participants').click()
+      await page.getByTestId('collaboration-participants-tab-members').click()
       await page.getByTestId('cloud-project-members-toggle').click()
       await page.getByTestId('cloud-member-search').fill(REGULAR_USER.username)
       await page.getByTestId('cloud-member-role').selectOption('Reporter')
