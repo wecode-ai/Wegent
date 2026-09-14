@@ -7,8 +7,10 @@ import {
   applyRuntimeConversationAction,
   cacheRuntimeConversationQueuedMessages,
   clearRuntimeConversationCacheForTests,
+  getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
+  setRuntimeConversationGoal,
 } from '../runtimeConversationCache'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
@@ -303,6 +305,55 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     })
     expect(store.getTask(address)?.turn.phase).toBe('idle')
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
+  test('clears a stale Goal from the authoritative snapshot after event lag', async () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const address = runtimeTaskAddress()
+    const activeWork = runtimeWork(false)
+    const activeTask = activeWork.chats[0]?.tasks[0]
+    if (activeTask) activeTask.goalStatus = 'active'
+    store.syncRuntimeWork(activeWork)
+    store.setCurrentTask(address)
+    setRuntimeConversationGoal(address, {
+      objective: 'Finish the task',
+      status: 'active',
+      tokenBudget: null,
+      tokensUsed: 100,
+    })
+    let streamHandlers: ChatStreamHandlers = {}
+    const settledWork = runtimeWork(false)
+    const settledTask = settledWork.chats[0]?.tasks[0]
+    if (settledTask) settledTask.goalStatus = null
+    const getRuntimeGoal = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: address.taskId,
+      goal: null,
+    })
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: {
+          listRuntimeWork: vi.fn().mockResolvedValue(settledWork),
+          getRuntimeTranscript: vi.fn().mockResolvedValue(runtimeTranscript(false)),
+          getRuntimeGoal,
+        },
+      },
+    } as unknown as WorkbenchServices
+
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      streamHandlers.onRuntimeEventLagged?.({ skipped: 1 })
+    })
+
+    await waitFor(() => expect(getRuntimeGoal).toHaveBeenCalledWith({ address }))
+    await waitFor(() => expect(getRuntimeConversationMetadata(address).goal).toBeNull())
+    expect(store.getTask(address)?.goalStatus).toBeNull()
   })
 
   test('recovers both the current task and every running task after event lag', async () => {

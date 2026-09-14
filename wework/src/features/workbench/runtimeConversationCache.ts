@@ -66,6 +66,7 @@ const terminalConversationEvictionTimers = new Map<
   string,
   ReturnType<typeof globalThis.setTimeout>
 >()
+const goalSnapshotVersionsByConversation = new Map<string, number>()
 
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
@@ -99,6 +100,7 @@ export function setRuntimeConversationGoal(
   address: RuntimeTaskAddress,
   goal: RuntimeGoal | null
 ): void {
+  invalidateRuntimeGoalSnapshots(address)
   updateRuntimeConversationMetadata(address, current => {
     const resolvedGoal = reconcileRuntimeGoal(current.goal, goal)
     return {
@@ -110,6 +112,28 @@ export function setRuntimeConversationGoal(
           : updateRuntimeGoalContinuation(current.goalContinuation, { type: 'goal_inactive' }),
     }
   })
+}
+
+export function beginRuntimeGoalSnapshot(address: RuntimeTaskAddress): number {
+  const key = runtimeConversationKey(address)
+  const version = (goalSnapshotVersionsByConversation.get(key) ?? 0) + 1
+  goalSnapshotVersionsByConversation.set(key, version)
+  return version
+}
+
+export function isRuntimeGoalSnapshotCurrent(
+  address: RuntimeTaskAddress,
+  version: number
+): boolean {
+  return goalSnapshotVersionsByConversation.get(runtimeConversationKey(address)) === version
+}
+
+function invalidateRuntimeGoalSnapshots(address: RuntimeTaskAddress): void {
+  const key = runtimeConversationKey(address)
+  goalSnapshotVersionsByConversation.set(
+    key,
+    (goalSnapshotVersionsByConversation.get(key) ?? 0) + 1
+  )
 }
 
 function reconcileRuntimeGoal(
@@ -899,6 +923,7 @@ function evictRuntimeConversationKey(key: string) {
   turnsByConversation.delete(key)
   projectedMessagesByConversation.delete(key)
   metadataByConversation.delete(key)
+  goalSnapshotVersionsByConversation.delete(key)
   hydrationByConversation.delete(key)
   queuedMessagesByConversation.delete(key)
   queuedMessagesPausedByConversation.delete(key)
@@ -923,6 +948,7 @@ export function clearRuntimeConversationCacheForTests() {
   turnsByConversation.clear()
   projectedMessagesByConversation.clear()
   metadataByConversation.clear()
+  goalSnapshotVersionsByConversation.clear()
   listenersByConversation.clear()
   retainingListenersByConversation.clear()
   runtimeTransportReplacedListeners.clear()

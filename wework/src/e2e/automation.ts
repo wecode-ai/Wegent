@@ -1617,6 +1617,37 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'dropNextRuntimeEvent': {
+      const root = globalThis as typeof globalThis & {
+        __WEWORK_E2E_DROPPED_RUNTIME_EVENTS__?: string[]
+      }
+      root.__WEWORK_E2E_DROPPED_RUNTIME_EVENTS__ ??= []
+      root.__WEWORK_E2E_DROPPED_RUNTIME_EVENTS__.push(command.value ?? '')
+      return ''
+    }
+    case 'clearRuntimeGoalDirectly':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.tasks.goal.clear', JSON.parse(command.value ?? '{}'))
+      )
+    case 'dispatchRuntimeEventLagged': {
+      const root = globalThis as typeof globalThis & {
+        __WEWORK_E2E_RUNTIME_EVENT_DISPATCHERS__?: Set<
+          (event: { event: string; payload: Record<string, unknown> }) => void
+        >
+      }
+      const dispatchers = root.__WEWORK_E2E_RUNTIME_EVENT_DISPATCHERS__
+      if (!dispatchers?.size) {
+        throw new Error('No runtime event dispatcher is registered')
+      }
+      for (const dispatch of dispatchers) {
+        dispatch({
+          event: 'executor.event_lagged',
+          payload: { skipped: 1 },
+        })
+      }
+      await waitForDesktopControlTick()
+      return ''
+    }
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''

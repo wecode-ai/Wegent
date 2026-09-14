@@ -123,6 +123,8 @@ import {
   GOAL_IDLE_FOLLOW_UP_TEXT,
   GOAL_IDLE_INITIAL_TEXT,
   GOAL_IDLE_PROMPT,
+  GOAL_SNAPSHOT_RECONCILIATION_PROMPT,
+  GOAL_SNAPSHOT_RECONCILIATION_TEXT,
   GOAL_RESTART_COMPLETION_TEXT,
   GOAL_RESTART_INITIAL_TEXT,
   GOAL_RESTART_PROMPT,
@@ -555,6 +557,9 @@ class DesktopE2EServer {
     this.goalIdleFollowUpRelease = new Promise(resolvePromise => {
       this.releaseGoalIdleFollowUp = resolvePromise
     })
+    this.goalSnapshotReconciliationRelease = new Promise(resolvePromise => {
+      this.releaseGoalSnapshotReconciliation = resolvePromise
+    })
     this.goalBusyPlanRelease = new Promise(resolvePromise => {
       this.releaseGoalBusyPlan = resolvePromise
     })
@@ -777,6 +782,7 @@ class DesktopE2EServer {
         'background_completion_restore',
         'background_follow_up_restore',
         'goal_idle',
+        'goal_snapshot_reconciliation',
         'goal_busy_handoff',
         'goal_restart',
         'cloud_goal_restart',
@@ -1003,6 +1009,10 @@ class DesktopE2EServer {
 
   releaseGoalIdleFollowUpResponse() {
     this.releaseGoalIdleFollowUp()
+  }
+
+  releaseGoalSnapshotReconciliationResponse() {
+    this.releaseGoalSnapshotReconciliation()
   }
 
   releaseGoalBusyPlanResponse() {
@@ -3185,6 +3195,25 @@ class DesktopE2EServer {
       })
       response.write(createSse(stream.start))
       await this.goalIdleFollowUpRelease
+      response.end(createSse(stream.finish))
+      return
+    }
+
+    if (this.scenario === 'goal_snapshot_reconciliation') {
+      this.recordScenarioRequest('goal_snapshot_reconciliation', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(GOAL_SNAPSHOT_RECONCILIATION_PROMPT),
+        'The real Codex request did not contain the Goal snapshot reconciliation prompt'
+      )
+      const stream = streamingTextEvents(responseId, GOAL_SNAPSHOT_RECONCILIATION_TEXT)
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse(stream.start))
+      await this.goalSnapshotReconciliationRelease
       response.end(createSse(stream.finish))
       return
     }

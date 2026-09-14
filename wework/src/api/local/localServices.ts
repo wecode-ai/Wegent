@@ -800,7 +800,11 @@ function normalizeRuntimeTaskSummary(
   const modelSelection =
     modelSelectionValue(taskRecord.modelSelection ?? taskRecord.model_selection) ??
     modelSelectionValue(runtimeHandle.modelSelection ?? runtimeHandle.model_selection)
-  const goalStatus = runtimeGoalStatusValue(taskRecord.goalStatus ?? taskRecord.goal_status)
+  const rawGoalStatus = Object.hasOwn(taskRecord, 'goalStatus')
+    ? taskRecord.goalStatus
+    : taskRecord.goal_status
+  const goalStatus = rawGoalStatus === null ? null : runtimeGoalStatusValue(rawGoalStatus)
+  const hasGoalStatus = rawGoalStatus === null || goalStatus !== undefined
   const goalExecutionStatus = runtimeGoalExecutionStatusValue(
     taskRecord.goalExecutionStatus ?? taskRecord.goal_execution_status
   )
@@ -831,7 +835,7 @@ function normalizeRuntimeTaskSummary(
     ...(gitInfo !== undefined ? { gitInfo } : {}),
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
     ...(modelSelection ? { modelSelection } : {}),
-    ...(goalStatus ? { goalStatus } : {}),
+    ...(hasGoalStatus ? { goalStatus } : {}),
     ...(goalExecutionStatus ? { goalExecutionStatus } : {}),
     ...(threadStatus ? { threadStatus } : {}),
     ...(turnStatus ? { turnStatus } : {}),
