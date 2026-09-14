@@ -205,9 +205,16 @@ function resolveResponsesTool(
       function?: { name?: string }
       name?: string
       namespace?: string
+      tools?: Array<{ function?: { name?: string }; name?: string }>
     }
-    const name = candidate.function?.name || candidate.name
-    return name ? [{ name, namespace: candidate.namespace }] : []
+    const nestedTools = Array.isArray(candidate.tools)
+      ? candidate.tools.flatMap(nestedTool => {
+          const name = nestedTool.function?.name || nestedTool.name
+          return name && candidate.name ? [{ name, namespace: candidate.name }] : []
+        })
+      : []
+    const name = candidate.function?.name || (nestedTools.length === 0 ? candidate.name : undefined)
+    return name ? [{ name, namespace: candidate.namespace }, ...nestedTools] : nestedTools
   })
   return (
     candidates.find(tool => tool.name === requestedName) ??
