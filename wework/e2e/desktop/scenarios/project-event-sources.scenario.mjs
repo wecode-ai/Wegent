@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { createHmac } from 'node:crypto'
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -860,13 +859,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     if (sourceType === 'github') {
       headers['X-GitHub-Event'] = generated.event
       headers['X-GitHub-Delivery'] = `${sourceType}-webhook-${sequence}`
-      headers['X-Hub-Signature-256'] = `sha256=${createHmac('sha256', hook.webhookSecret)
-        .update(body)
-        .digest('hex')}`
     } else {
       headers['X-Gitlab-Event'] = generated.event
       headers['X-Gitlab-Event-UUID'] = `${sourceType}-webhook-${sequence}`
-      headers['X-Gitlab-Token'] = hook.webhookSecret
     }
     const response = await fetch(hook.webhookUrl, { method: 'POST', headers, body })
     const text = await response.text()
