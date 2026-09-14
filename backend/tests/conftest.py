@@ -88,6 +88,19 @@ class FakeIMSessionRedisClient:
     async def aclose(self) -> None:
         return None
 
+    async def set(
+        self,
+        key: str,
+        value: Any,
+        nx: bool = False,
+        ex: int | None = None,
+    ) -> bool:
+        if nx and key in self._cache.values:
+            return False
+        self._cache.values[key] = value
+        self._cache.expires[key] = ex
+        return True
+
 
 class FakeIMSessionCache:
     def __init__(self) -> None:
@@ -99,6 +112,18 @@ class FakeIMSessionCache:
         return self.values.get(key)
 
     async def set(self, key: str, value: Any, expire: int | None = None) -> bool:
+        self.values[key] = value
+        self.expires[key] = expire
+        return True
+
+    async def setnx(
+        self,
+        key: str,
+        value: Any,
+        expire: int | None = None,
+    ) -> bool:
+        if key in self.values:
+            return False
         self.values[key] = value
         self.expires[key] = expire
         return True
@@ -122,6 +147,13 @@ class FakeIMSessionCache:
 def fake_im_session_cache(monkeypatch: pytest.MonkeyPatch) -> FakeIMSessionCache:
     cache = FakeIMSessionCache()
     monkeypatch.setattr("app.services.im.session_service.cache_manager", cache)
+    return cache
+
+
+@pytest.fixture
+def fake_notification_cache(monkeypatch: pytest.MonkeyPatch) -> FakeIMSessionCache:
+    cache = FakeIMSessionCache()
+    monkeypatch.setattr("app.services.im.notification_dispatcher.cache_manager", cache)
     return cache
 
 
