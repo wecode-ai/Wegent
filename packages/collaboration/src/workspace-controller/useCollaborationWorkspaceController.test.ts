@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
+  CollaborationAssignment,
   CollaborationAttachment,
   CollaborationComment,
   CollaborationIssue,
@@ -337,6 +338,59 @@ describe("collaboration workspace controller", () => {
     await load;
     expect(state.attachments).toEqual([attachment]);
     expect(state.comments).toEqual([comment]);
+  });
+
+  it("does not let a stale detail load overwrite collections changed while it was loading", async () => {
+    state = {
+      ...state,
+      project,
+      issues: [issue],
+    };
+    const assignmentsResponse = deferred<CollaborationAssignment[]>();
+    const api = createApi();
+    api.comments.list = vi.fn().mockResolvedValue([]);
+    api.assignments = {
+      list: vi.fn().mockReturnValue(assignmentsResponse.promise),
+      create: vi.fn(),
+    };
+    const { commands } = createController(api);
+    const newerAttachment = {
+      ...attachment,
+      id: "attachment-new",
+      display_name: "new-proof.txt",
+    };
+    const newerComment = {
+      ...comment,
+      id: "comment-new",
+      body: "submitted while loading",
+    };
+    const newerAssignment = {
+      id: "assignment-new",
+      loop_item_id: issue.id,
+      target_type: "human",
+      target_id: "1",
+      target_name: "owner",
+      status: "active",
+      workflow_step: null,
+      created_at: "2026-09-10T00:00:01Z",
+      updated_at: "2026-09-10T00:00:01Z",
+    } satisfies CollaborationAssignment;
+
+    const load = commands.loadSelectedIssue(issue.id);
+    await vi.waitFor(() => {
+      expect(api.assignments?.list).toHaveBeenCalledWith(issue.id);
+    });
+
+    commands.replaceAttachments([newerAttachment]);
+    commands.replaceComments([newerComment]);
+    commands.replaceAssignments([newerAssignment]);
+    assignmentsResponse.resolve([]);
+    await load;
+
+    expect(state.selectedIssue).toEqual(issue);
+    expect(state.attachments).toEqual([newerAttachment]);
+    expect(state.comments).toEqual([newerComment]);
+    expect(state.assignments).toEqual([newerAssignment]);
   });
 
   it("treats an empty assignments API response as authoritative", async () => {

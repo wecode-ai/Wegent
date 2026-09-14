@@ -226,6 +226,9 @@ export type CollaborationWorkspaceControllerAction =
       comments: CollaborationComment[];
       assignments: CollaborationAssignment[];
       executions: CollaborationExecution[];
+      preserveAttachments?: boolean;
+      preserveComments?: boolean;
+      preserveAssignments?: boolean;
     }
   | { type: "issue-selected"; issue: CollaborationIssue }
   | { type: "clear-project" }
@@ -454,9 +457,20 @@ export function collaborationWorkspaceControllerReducer(
       return {
         ...state,
         selectedIssue: action.issue,
-        attachments: action.attachments,
-        comments: action.comments,
-        assignments: action.assignments,
+        attachments:
+          action.preserveAttachments &&
+          state.selectedIssue?.id === action.issue.id
+            ? state.attachments
+            : action.attachments,
+        comments:
+          action.preserveComments && state.selectedIssue?.id === action.issue.id
+            ? state.comments
+            : action.comments,
+        assignments:
+          action.preserveAssignments &&
+          state.selectedIssue?.id === action.issue.id
+            ? state.assignments
+            : action.assignments,
         executions: action.executions,
       };
     case "issue-selected":
@@ -738,6 +752,9 @@ export function createCollaborationWorkspaceControllerCommands({
   let catalogProjects = getProjects();
   let projectLoadRevision = 0;
   let selectedIssueLoadRevision = 0;
+  let selectedIssueAttachmentsRevision = 0;
+  let selectedIssueCommentsRevision = 0;
+  let selectedIssueAssignmentsRevision = 0;
   const projectMutationGenerations = new Map<string, number>();
   const projectGroupChangeRevisions = new Map<string, number>();
   const externalColumnLoads = new Set<string>();
@@ -1054,6 +1071,9 @@ export function createCollaborationWorkspaceControllerCommands({
     },
     async loadSelectedIssue(issueId) {
       const revision = ++selectedIssueLoadRevision;
+      const attachmentsRevision = selectedIssueAttachmentsRevision;
+      const commentsRevision = selectedIssueCommentsRevision;
+      const assignmentsRevision = selectedIssueAssignmentsRevision;
       const cachedIssue = getExternalBoardState().issues.find(
         (issue) => issue.id === issueId,
       );
@@ -1088,6 +1108,11 @@ export function createCollaborationWorkspaceControllerCommands({
           comments,
           assignments: loadedAssignments,
           executions,
+          preserveAttachments:
+            attachmentsRevision !== selectedIssueAttachmentsRevision,
+          preserveComments: commentsRevision !== selectedIssueCommentsRevision,
+          preserveAssignments:
+            assignmentsRevision !== selectedIssueAssignmentsRevision,
         });
         return issue;
       } catch {
@@ -1322,12 +1347,18 @@ export function createCollaborationWorkspaceControllerCommands({
       markProjectMutated(issue.cloud_project_id);
       dispatch({ type: "replace-issue", issue });
     },
-    replaceAttachments: (attachments) =>
-      dispatch({ type: "replace-attachments", attachments }),
-    replaceComments: (comments) =>
-      dispatch({ type: "replace-comments", comments }),
-    replaceAssignments: (assignments) =>
-      dispatch({ type: "replace-assignments", assignments }),
+    replaceAttachments: (attachments) => {
+      selectedIssueAttachmentsRevision += 1;
+      dispatch({ type: "replace-attachments", attachments });
+    },
+    replaceComments: (comments) => {
+      selectedIssueCommentsRevision += 1;
+      dispatch({ type: "replace-comments", comments });
+    },
+    replaceAssignments: (assignments) => {
+      selectedIssueAssignmentsRevision += 1;
+      dispatch({ type: "replace-assignments", assignments });
+    },
     reportError,
   };
 }
