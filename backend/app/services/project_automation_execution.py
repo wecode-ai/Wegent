@@ -1796,6 +1796,9 @@ class ProjectAutomationProcessor:
                 item=loop_item,
                 user_id=event.actor_user_id or 0,
             )
+            from app.tasks.robot_queue_tasks import consume_queues_background
+
+            await consume_queues_background()
             return []
         matching_rules = self.matching_rules(db, event, automation_id=automation_id)
         logger.info(

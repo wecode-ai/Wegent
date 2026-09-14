@@ -4,6 +4,7 @@
 """Loop + branch event-wait state machine behavior."""
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -837,21 +838,26 @@ async def test_process_with_runs_routes_event_to_loop_without_new_run(test_db):
     test_db.flush()
 
     processor = ProjectAutomationProcessor()
-    runs = await processor.process_with_runs(
-        test_db,
-        ProjectAutomationEvent(
-            event_type="task.status_changed",
-            project_id=str(project.id),
-            subject_id=str(item.id),
-            source="wework",
-            actor_user_id=1,
-            payload={"title": "processing", "status": "in_progress"},
-            event_id="loop-event-1",
-            subscription_id="subscription-1",
-        ),
-    )
+    with patch(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        new=AsyncMock(),
+    ) as wake:
+        runs = await processor.process_with_runs(
+            test_db,
+            ProjectAutomationEvent(
+                event_type="task.status_changed",
+                project_id=str(project.id),
+                subject_id=str(item.id),
+                source="wework",
+                actor_user_id=1,
+                payload={"title": "processing", "status": "in_progress"},
+                event_id="loop-event-1",
+                subscription_id="subscription-1",
+            ),
+        )
 
     assert runs == []
+    wake.assert_awaited_once_with()
     assert test_db.query(ProjectAutomationRun).count() == 0
     test_db.refresh(item)
     by_id = {node["id"]: node for node in item.metadata_json["workflow"]["nodes"]}
