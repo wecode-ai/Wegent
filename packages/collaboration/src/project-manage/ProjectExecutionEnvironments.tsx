@@ -93,7 +93,7 @@ export function ProjectExecutionEnvironments({
   const availableItems = useMemo(() => {
     const environments = new Map<number, CollaborationExecutionEnvironment>();
     for (const environment of [...personalItems, ...workspaceItems]) {
-      if (environment.device_id != null) {
+      if (environment.device_id != null && environment.status === "online") {
         environments.set(environment.device_id, environment);
       }
     }
