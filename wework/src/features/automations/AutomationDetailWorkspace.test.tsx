@@ -232,7 +232,8 @@ describe('AutomationDetailWorkspace', () => {
     ).toHaveTextContent('离线')
   })
 
-  test('locks the execution target after an automation is saved', () => {
+  test('keeps a saved automation target editable within its source', async () => {
+    const user = userEvent.setup()
     render(
       <AutomationDetailHarness
         automation={savedAutomation}
@@ -245,8 +246,13 @@ describe('AutomationDetailWorkspace', () => {
       />
     )
 
-    expect(screen.getByTestId('automation-conversation-mode')).toBeDisabled()
+    expect(screen.getByTestId('automation-conversation-mode')).toBeEnabled()
     expect(screen.getByTestId('automation-source-select')).toBeDisabled()
-    expect(screen.getByTestId('automation-device-select')).toBeDisabled()
+    expect(screen.getByTestId('automation-device-select')).toBeEnabled()
+
+    await user.click(screen.getByTestId('automation-conversation-mode'))
+    await user.click(screen.getByTestId('automation-conversation-mode-option-continue_thread'))
+
+    expect(screen.getByTestId('automation-target-task-select')).toBeEnabled()
   })
 })

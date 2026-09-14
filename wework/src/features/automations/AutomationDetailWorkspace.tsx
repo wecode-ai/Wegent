@@ -271,7 +271,6 @@ export function AutomationDetailWorkspace({
             <InlineSelect
               dataTestId="automation-conversation-mode"
               value={draft.conversationMode}
-              disabled={Boolean(automation)}
               onChange={value => {
                 const mode = value as AutomationConversationMode
                 onChange('conversationMode', mode)
@@ -308,7 +307,6 @@ export function AutomationDetailWorkspace({
             <SettingsRow label={t('workbench.task', '任务')}>
               <AutomationTaskSelect
                 value={automationTaskKey(draft.continuationAddress)}
-                disabled={Boolean(automation)}
                 onChange={value => {
                   const target = taskOptions.find(
                     option => option.key === value && !option.disabled
@@ -348,7 +346,6 @@ export function AutomationDetailWorkspace({
                 <InlineSelect
                   dataTestId="automation-device-select"
                   value={draft.deviceId}
-                  disabled={Boolean(automation)}
                   onChange={value => {
                     onChange('deviceId', value)
                     onChange(
@@ -675,12 +672,10 @@ function InlineSelect({
 
 function AutomationTaskSelect({
   value,
-  disabled,
   onChange,
   options,
 }: {
   value: string
-  disabled?: boolean
   onChange: (value: string) => void
   options: AutomationTaskMenuOption[]
 }) {
@@ -690,7 +685,6 @@ function AutomationTaskSelect({
     <PopupMenu
       testId="automation-target-task-select"
       menuWidth={352}
-      disabled={disabled}
       trigger={
         <span className="inline-flex h-8 max-w-72 items-center justify-end gap-1.5 rounded-full bg-surface px-2 text-sm font-medium">
           <span className="truncate">
