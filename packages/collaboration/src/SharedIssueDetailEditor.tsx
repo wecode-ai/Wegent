@@ -73,14 +73,14 @@ import { markdownAttachmentRows } from "./issue-detail/attachmentMarkdown";
 import { TagEditor } from "./issue-detail/TagEditor";
 import "./issue-detail/task-detail-layout.css";
 import { localizeStandardStatuses } from "./i18n";
-import { ExecutionConfigurationNotice } from './runtime-profile/ExecutionConfigurationNotice'
+import { ExecutionConfigurationNotice } from "./runtime-profile/ExecutionConfigurationNotice";
 
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
 }
 
 export interface SharedIssueWorkflow {
-  execution_config?: import('./issue-detail/workflowConfiguration').WorkflowCoordinatorConfiguration['execution_config']
+  execution_config?: import("./issue-detail/workflowConfiguration").WorkflowCoordinatorConfiguration["execution_config"];
   advancement_policy?: "manual" | "ai";
   orchestration_status?: SharedIssueDetailWorkflowPlan["status"];
   nodes?: SharedWorkflowNode[];
@@ -796,6 +796,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const taskBindingsRequestIdRef = useRef(0);
   const deliveriesRequestIdRef = useRef(0);
   const selectedDeliveryRequestIdRef = useRef(0);
+  const attachmentsRequestIdRef = useRef(0);
   const visibleAttachments = useMemo(() => {
     const merged = new Map<string, AttachmentRow>();
     markdownAttachmentRows(description).forEach((attachment) =>
@@ -836,6 +837,21 @@ export function TodoEditor(props: TodoEditorProps) {
       // Independent detail sources fail closed without hiding available data.
     }
   }, [editItemId, editProjectId, editorPort]);
+  const refreshAttachments = useCallback(async () => {
+    if (editItemId == null) return;
+    const requestId = ++attachmentsRequestIdRef.current;
+    try {
+      const nextAttachments = await editorPort.attachments.list(editItemId);
+      if (
+        requestId !== attachmentsRequestIdRef.current ||
+        loadedEditItemIdRef.current !== editItemId
+      )
+        return;
+      setAttachments(nextAttachments);
+    } catch {
+      // Independent detail sources fail closed without hiding available data.
+    }
+  }, [editItemId, editorPort]);
   const refreshDeliveries = useCallback(async () => {
     if (editItemId == null) return;
     const requestId = ++deliveriesRequestIdRef.current;
@@ -932,6 +948,7 @@ export function TodoEditor(props: TodoEditorProps) {
     taskBindingsRequestIdRef.current += 1;
     deliveriesRequestIdRef.current += 1;
     selectedDeliveryRequestIdRef.current += 1;
+    attachmentsRequestIdRef.current += 1;
     setDeliveries([]);
     setSelectedDelivery(null);
     setTasks(initialTaskBindingsRef.current ?? []);
@@ -969,7 +986,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
     void refreshDeliveries();
     void refreshTaskBindings();
-    applyResult(editorPort.attachments.list(editItemId), setAttachments);
+    void refreshAttachments();
     applyResult(editorPort.collaborators.list(editItemId), setCollaborators);
     applyResult(editorPort.members.list(editProjectId), setProjectMembers);
     applyResult(editorPort.agents.list(String(editProjectId)), (agents) =>
@@ -988,6 +1005,7 @@ export function TodoEditor(props: TodoEditorProps) {
     editProjectId,
     props.loadTeams,
     props.taskRefreshKey,
+    refreshAttachments,
     refreshDeliveries,
     refreshTaskBindings,
   ]);
@@ -1464,6 +1482,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
   async function addAttachments(files: FileList | null) {
     if (!editable || !editItemId || !files?.length || attachmentBusy) return;
+    attachmentsRequestIdRef.current += 1;
     setAttachmentBusy(true);
     setAttachmentError(null);
     try {
@@ -1502,6 +1521,7 @@ export function TodoEditor(props: TodoEditorProps) {
       return;
     }
     if (!editable || !editItemId || attachmentBusy) return;
+    attachmentsRequestIdRef.current += 1;
     setAttachmentBusy(true);
     setAttachmentError(null);
     void uploadAttachments(editItemId, files)
@@ -1570,6 +1590,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
   async function removeAttachment(attachment: AttachmentRow) {
     if (!editable) return;
+    attachmentsRequestIdRef.current += 1;
     setAttachmentBusy(true);
     setAttachmentError(null);
     try {
@@ -2766,30 +2787,42 @@ export function TodoEditor(props: TodoEditorProps) {
                     ) : null}
                   </section>
 
-                  <ExecutionConfigurationNotice key={item.id} issue={item} translate={t} />
+                  <ExecutionConfigurationNotice
+                    key={item.id}
+                    issue={item}
+                    translate={t}
+                  />
                   {hasAutomationWorkflow && automationWorkflowNodes ? (
                     <IssueAutomationExecutionSummary
                       workflow={displayedWorkflow}
                       plan={workflowPlan}
                       childIssues={childItems}
                       onOpenChild={props.onOpenChildTask}
-                      onConfigured={editable && editProps && displayedWorkflow ? async (profile) => {
-                        const updated = await editorPort.issues.update(item.id, {
-                          version: item.version,
-                          workflow: {
-                            ...displayedWorkflow,
-                            execution_config: {
-                              runtime_profile_id: profile.id,
-                              execution_device_id: profile.executionDeviceId,
-                              model: profile.model,
-                              model_type: profile.modelType,
-                              model_options: profile.modelOptions,
-                              workspace_binding: { type: 'standalone' },
-                            },
-                          },
-                        })
-                        editProps.onUpdated(updated)
-                      } : undefined}
+                      onConfigured={
+                        editable && editProps && displayedWorkflow
+                          ? async (profile) => {
+                              const updated = await editorPort.issues.update(
+                                item.id,
+                                {
+                                  version: item.version,
+                                  workflow: {
+                                    ...displayedWorkflow,
+                                    execution_config: {
+                                      runtime_profile_id: profile.id,
+                                      execution_device_id:
+                                        profile.executionDeviceId,
+                                      model: profile.model,
+                                      model_type: profile.modelType,
+                                      model_options: profile.modelOptions,
+                                      workspace_binding: { type: "standalone" },
+                                    },
+                                  },
+                                },
+                              );
+                              editProps.onUpdated(updated);
+                            }
+                          : undefined
+                      }
                       nodes={automationWorkflowNodes}
                       agents={projectAgents}
                       location={

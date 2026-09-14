@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 
 if (typeof globalThis.structuredClone !== 'function') {
@@ -374,6 +374,48 @@ describe('shared IssueDetail', () => {
     expect(onCommentsChange).toHaveBeenCalledWith([assignmentComment])
     expect(onChange).toHaveBeenCalledWith(updated)
     expect(api.issues.assign).not.toHaveBeenCalled()
+  })
+
+  it('keeps an uploaded attachment when an older list request resolves afterward', async () => {
+    let resolveAttachments: (attachments: []) => void = () => undefined
+    const list = jest.fn(
+      () =>
+        new Promise<[]>(resolve => {
+          resolveAttachments = resolve
+        })
+    )
+    const uploaded = {
+      id: 'attachment-race',
+      loop_item_id: issue.id,
+      display_name: 'race.txt',
+      content_type: 'text/plain',
+      size_bytes: 4,
+      created_by_user_id: 1,
+      created_at: '2026-09-15T00:00:00Z',
+      markdown_url: 'attachment://attachment-race',
+    }
+    const upload = jest.fn().mockResolvedValue(uploaded)
+    const api = createApi({
+      attachments: {
+        list,
+        upload,
+        access: jest.fn(),
+        read: jest.fn(),
+        remove: jest.fn(),
+      },
+    })
+
+    renderDetail(api)
+    fireEvent.click(screen.getByTestId('cloud-todo-edit-content'))
+    fireEvent.change(screen.getByTestId('cloud-todo-attachment-input'), {
+      target: { files: [new File(['race'], uploaded.display_name, { type: 'text/plain' })] },
+    })
+
+    expect(await screen.findByText(uploaded.display_name)).toBeVisible()
+    await act(async () => {
+      resolveAttachments([])
+    })
+    expect(screen.getByText(uploaded.display_name)).toBeVisible()
   })
 
   it('keeps Issue editing, comments, assignment and starting work as separate permissions', async () => {
