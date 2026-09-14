@@ -241,6 +241,7 @@ class RealCloudEnvironment {
       CHAT_SHELL_MODE: 'package',
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
       WEGENT_SOCKET_URL: this.socketUrl,
+      FLOW_SCHEDULER_INTERVAL_SECONDS: '5',
       ...remoteDeviceE2EExtension.backendEnv,
       TERMINAL_PROTOCOL_V2_ENABLED: 'true',
       PYTHONIOENCODING: 'utf-8',

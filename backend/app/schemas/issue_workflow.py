@@ -303,8 +303,6 @@ class WorkflowEventWaitConfig(BaseModel):
             self.subscription_id = None
         else:
             self.poll_interval_seconds = None
-            if not self.subscription_id:
-                raise ValueError("webhook branch wait requires subscription_id")
         return self
 
 
