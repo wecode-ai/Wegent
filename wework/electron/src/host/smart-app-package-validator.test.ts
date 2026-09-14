@@ -43,6 +43,13 @@ describe('Smart App package validator', () => {
     expect(() =>
       validateSmartAppManifest({
         ...validManifest(),
+        entry: { installPackage: 'app', profile: '../escape' },
+      })
+    ).toThrowError(expect.objectContaining({ code: 'SA-MANIFEST-ENTRY' }))
+
+    expect(() =>
+      validateSmartAppManifest({
+        ...validManifest(),
         packages: [
           { name: 'fixture-plugin', role: 'profile-bundle', path: 'app' },
           { name: 'fixture-plugin', role: 'extension', path: 'other' },

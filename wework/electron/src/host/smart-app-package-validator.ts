@@ -228,6 +228,7 @@ function validateManifestIdentity(manifest: WorkbenchAppManifest): void {
     !manifest.name?.trim() ||
     !/^[0-9A-Za-z_-]+$/.test(manifest.name) ||
     !manifest.entry?.profile?.trim() ||
+    !/^[0-9A-Za-z_-]+$/.test(manifest.entry.profile) ||
     !isSafeSmartAppRelativePath(manifest.entry.installPackage)
   ) {
     throw validationError(
