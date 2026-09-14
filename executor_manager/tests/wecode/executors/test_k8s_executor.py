@@ -1501,6 +1501,33 @@ def test_cleanup_stale_warmpools_deletes_old_mismatched_template(mocker):
     assert {item["reason"] for item in result["skipped"]} == {"current_template"}
 
 
+def test_cleanup_stale_warmpools_records_failed_count(mocker):
+    mocker.patch(
+        "executor_manager.wecode.executors.k8s.k8s_executor.WARMPOOL_TEMPLATE_NAME",
+        "wegent-sandbox-1.0.247",
+    )
+    executor = object.__new__(K8sExecutor)
+    warm_pool_client = _mock_warmpool_client(
+        mocker,
+        [
+            _warmpool_cr("pool-forbidden", "wegent-sandbox-1.0.234", age_days=12),
+            _warmpool_cr("pool-old", "wegent-sandbox-1.0.233", age_days=20),
+        ],
+    )
+    warm_pool_client.delete_sandbox_warmpool.side_effect = [
+        ApiException(status=403, reason="Forbidden"),
+        None,
+    ]
+
+    result = executor.cleanup_stale_warmpools(grace_period_days=7)
+
+    assert result["failed_count"] == 1
+    assert [item["name"] for item in result["failed"]] == ["pool-forbidden"]
+    assert result["deleted"] == [
+        {"name": "pool-old", "template": "wegent-sandbox-1.0.233"}
+    ]
+
+
 def test_cleanup_stale_warmpools_keeps_cr_within_grace_period(mocker):
     mocker.patch(
         "executor_manager.wecode.executors.k8s.k8s_executor.WARMPOOL_TEMPLATE_NAME",

@@ -324,7 +324,17 @@ async def _cleanup_stale_warmpool_crs(ek_service, *, dry_run: bool) -> Dict[str,
             grace_period_days=ORPHAN_WARMPOOL_CR_GRACE_PERIOD_DAYS,
             dry_run=dry_run,
         )
-        logger.info(f"+++ [executor_job] Stale warmpool CR cleanup result={result}")
+        failed = result.get("failed") or []
+        logger.info(
+            f"+++ [executor_job] Stale warmpool CR cleanup result "
+            f"status={result.get('status')} deleted={len(result.get('deleted') or [])} "
+            f"skipped={len(result.get('skipped') or [])} failed_count={len(failed)}"
+        )
+        if failed:
+            logger.warning(
+                f"+++ [executor_job] Stale warmpool CR cleanup delete failures "
+                f"failed_count={len(failed)} details={failed}"
+            )
         return result
     except Exception as exc:
         logger.warning(f"+++ [executor_job] Stale warmpool CR cleanup failed: {exc}")

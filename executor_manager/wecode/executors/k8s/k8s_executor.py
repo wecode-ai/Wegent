@@ -2056,7 +2056,7 @@ class K8sExecutor(Executor):
             label_selector: Optional selector restricting which CRs are managed.
 
         Returns:
-            Dict with status, deleted/skipped/failed CR lists.
+            Dict with status, deleted/skipped/failed CR lists and failed_count.
         """
         result: Dict[str, Any] = {
             "status": "success",
@@ -2066,6 +2066,7 @@ class K8sExecutor(Executor):
             "deleted": [],
             "skipped": [],
             "failed": [],
+            "failed_count": 0,
         }
         if not WARMPOOL_TEMPLATE_NAME:
             result["status"] = "skipped"
@@ -2104,9 +2105,7 @@ class K8sExecutor(Executor):
                 result["skipped"].append({"name": name, "reason": "no_name"})
                 continue
             if template_name == WARMPOOL_TEMPLATE_NAME:
-                result["skipped"].append(
-                    {"name": name, "reason": "current_template"}
-                )
+                result["skipped"].append({"name": name, "reason": "current_template"})
                 continue
             if not self._is_resource_older_than(metadata, cutoff):
                 result["skipped"].append(
@@ -2148,13 +2147,20 @@ class K8sExecutor(Executor):
                     {"name": name, "reason": "delete_failed", "error": str(e)}
                 )
 
+        result["failed_count"] = len(result["failed"])
+        if result["failed_count"]:
+            logger.warning(
+                "+++ Stale SandboxWarmPool cleanup failed to delete %d CR(s): %s",
+                result["failed_count"],
+                [item.get("name") for item in result["failed"]],
+            )
         logger.info(
             "+++ Stale SandboxWarmPool cleanup complete scanned=%d deleted=%d "
-            "skipped=%d failed=%d",
+            "skipped=%d failed_count=%d",
             len(warmpools),
             len(result["deleted"]),
             len(result["skipped"]),
-            len(result["failed"]),
+            result["failed_count"],
         )
         return result
 
