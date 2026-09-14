@@ -58,6 +58,7 @@ export interface CollaborationProject {
     show_date: boolean;
   };
   collaboration_groups?: CollaborationGroup[];
+  automatic_processing_rules?: import("./ports/SharedWorkspaceApi").WorkspaceAutomationRule[];
   created_by_user_id: number;
   current_user_id?: number;
   current_user_name?: string;

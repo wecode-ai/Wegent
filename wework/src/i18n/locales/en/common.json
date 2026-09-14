@@ -3800,6 +3800,7 @@
     "new_task_in_column": "New task in {{column}}",
     "boards": "Boards",
     "search_issues": "Search issues",
+    "startup_loading": "Preparing your project space…",
     "work_item_detail_load_failed": "Failed to load issue details",
     "loading_work_item_detail": "Loading issue details…",
     "load_more_issues": "Load more",

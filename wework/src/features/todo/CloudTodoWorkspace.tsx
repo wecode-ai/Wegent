@@ -36,6 +36,7 @@ import {
   Grid3X3,
   HardDrive,
   ListTodo,
+  LoaderCircle,
   Maximize2,
   MessageSquare,
   Minimize2,
@@ -723,6 +724,26 @@ function CloudTodoBoardSkeleton() {
           </div>
         </section>
       ))}
+    </div>
+  )
+}
+
+function CloudTodoStartupAnimation({ label }: { label: string }) {
+  return (
+    <div
+      data-testid="cloud-todo-startup-animation"
+      aria-busy="true"
+      aria-label={label}
+      className="flex h-full min-h-0 items-center justify-center"
+    >
+      <div className="flex flex-col items-center gap-3 text-text-secondary">
+        <div className="relative flex h-12 w-12 items-center justify-center">
+          <div className="absolute inset-0 rounded-full border border-border" />
+          <LoaderCircle className="h-12 w-12 animate-spin text-text-primary" strokeWidth={1.25} />
+          <Bot className="absolute h-5 w-5 text-text-primary" />
+        </div>
+        <span className="text-sm">{label}</span>
+      </div>
     </div>
   )
 }
@@ -1965,9 +1986,8 @@ export function CloudTodoWorkspace({
     !boardItemsLoading &&
     startupFocusedItemReady
   useEffect(() => {
-    if (!startupBoardReady || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
-      return
-    }
+    if (!startupBoardReady) return
+    if (!isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
     void invokeDesktopHost<void>('renderer.startupReady').catch(error => {
       console.error('[Wework] Failed to reveal the ready project space', error)
     })
@@ -5262,7 +5282,15 @@ export function CloudTodoWorkspace({
                         ) : null
                       }
                       renderSearchIcon={() => <Search className="h-3.5 w-3.5" />}
-                      renderSkeleton={() => <CloudTodoBoardSkeleton />}
+                      renderSkeleton={() =>
+                        startupActive ? (
+                          <CloudTodoStartupAnimation
+                            label={t('todo.startup_loading', '正在准备项目空间…')}
+                          />
+                        ) : (
+                          <CloudTodoBoardSkeleton />
+                        )
+                      }
                       renderStatus={() =>
                         isAITableProject && dingtalkAuthPrompt ? (
                           <div className="mx-6 mb-2 flex items-center gap-3 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-text-secondary">

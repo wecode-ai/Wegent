@@ -4606,6 +4606,7 @@ mod tests {
                 ChatAgentCreate {
                     name: "Local Bot".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: Some("Be careful.".to_owned()),
                     visibility: Some("creator_admin".to_owned()),
                     execution_environment: Some("local".to_owned()),
@@ -5374,6 +5375,7 @@ mod tests {
                 ChatAgentCreate {
                     name: "Creator Bot".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5409,6 +5411,7 @@ mod tests {
                 ChatAgentCreate {
                     name: "Bound Bot".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5434,6 +5437,7 @@ mod tests {
                     version: agent.version,
                     name: None,
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     status: None,
                     visibility: None,
@@ -5457,6 +5461,7 @@ mod tests {
                     version: updated.version,
                     name: None,
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     status: None,
                     visibility: None,
@@ -5483,6 +5488,7 @@ mod tests {
                 ChatAgentCreate {
                     name: "Bot A".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5502,6 +5508,7 @@ mod tests {
                 ChatAgentCreate {
                     name: "Bot B".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5597,6 +5604,7 @@ mod tests {
                 ChatAgentCreate {
                     name: "Parallel Bot".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5668,6 +5676,7 @@ mod tests {
                 ChatAgentCreate {
                     name: "Unbound Bot".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5797,6 +5806,7 @@ mod tests {
                 ChatAgentCreate {
                     name: "Manual Bot".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5858,6 +5868,7 @@ mod tests {
                 ChatAgentCreate {
                     name: "Status Filter Bot".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6413,6 +6424,7 @@ mod tests {
                 ChatAgentCreate {
                     name: "Migrated Bot".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),

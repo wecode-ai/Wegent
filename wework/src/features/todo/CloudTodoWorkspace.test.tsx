@@ -2918,7 +2918,7 @@ describe('CloudTodoWorkspace', () => {
     )
   })
 
-  it('clears the previous project items and shows a skeleton while switching projects', async () => {
+  it('clears previous project items and keeps the active workspace on its loading animation', async () => {
     const otherProject = {
       ...project,
       id: '12',
@@ -2953,25 +2953,32 @@ describe('CloudTodoWorkspace', () => {
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[]}
         services={workbenchServices}
+        startupActive
       />
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await waitFor(() => expect(screen.getByTestId('cloud-todo-board-loading')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-todo-startup-animation')).toBeInTheDocument()
+    )
+    expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-card-WEG-1')).not.toBeInTheDocument()
     resolveBoardFetches.get(project.id)?.()
     expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-startup-animation')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getAllByText('Other Project')[0])
 
-    // The previous project's cards disappear immediately and the skeleton
-    // stays until the new project's items resolve.
+    // The previous project's cards disappear immediately and the loading
+    // animation stays until the new project's items resolve.
     expect(screen.queryByTestId('cloud-todo-card-WEG-1')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-board-loading')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-startup-animation')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
 
     resolveBoardFetches.get(otherProject.id)?.()
     expect(await screen.findByTestId('cloud-todo-card-OTHER-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-startup-animation')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
   })
 
