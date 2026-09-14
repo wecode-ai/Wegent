@@ -130,8 +130,8 @@ export const teamService = {
       } finally {
         if (retryAbortRef.current === abortController) {
           retryAbortRef.current = null
+          setIsTeamsLoading(false)
         }
-        setIsTeamsLoading(false)
       }
     }, [])
 
