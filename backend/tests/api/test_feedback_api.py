@@ -404,12 +404,10 @@ def test_submit_feedback_retries_after_provider_failure(
 def test_gitlab_feedback_bundle_uses_project_upload_and_updates_issue(
     test_db: Session,
     test_user: User,
-    test_admin_user: User,
     feedback_project: CloudProject,
     feedback_storage: FeedbackStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    feedback_project.created_by_user_id = test_admin_user.id
     feedback_project.metadata_json = {
         "visibility": "public",
         "task_provider": "gitlab",
