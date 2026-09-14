@@ -214,6 +214,10 @@ async def test_dingtalk_agent_change_starts_new_task_with_selected_team(
     fake_im_session_cache,
 ) -> None:
     monkeypatch.setattr(
+        "app.services.channels.team_selection.team_uses_only_shell_type",
+        lambda _db, _team, shell_type: shell_type == "ClaudeCode",
+    )
+    monkeypatch.setattr(
         "app.services.channels.team_selection.cache_manager",
         fake_im_session_cache,
     )
@@ -435,20 +439,33 @@ async def test_private_new_choice_chat_is_consumed_and_clears_cached_task(
     async def fake_delete_conversation_task_id(
         conversation_id: str,
         user_id: int,
+        *,
+        scope: str | None = None,
     ) -> None:
         calls["delete_cache"] = {
             "conversation_id": conversation_id,
             "user_id": user_id,
+            "scope": scope,
         }
 
-    async def fake_set_chat_mode(user_id: int) -> bool:
+    async def fake_set_chat_mode(
+        user_id: int,
+        *,
+        scope: str | None = None,
+    ) -> bool:
         nonlocal current_selection
         calls["chat_mode_user_id"] = user_id
+        calls["chat_mode_scope"] = scope
         current_selection = DeviceSelection(device_type=DeviceType.CHAT)
         return True
 
-    async def fake_get_selection(user_id: int) -> DeviceSelection:
+    async def fake_get_selection(
+        user_id: int,
+        *,
+        scope: str | None = None,
+    ) -> DeviceSelection:
         assert user_id == test_user.id
+        assert scope is None
         return current_selection
 
     async def fake_process_chat_mode(
@@ -475,7 +492,7 @@ async def test_private_new_choice_chat_is_consumed_and_clears_cached_task(
         fake_delete_conversation_task_id,
     )
     monkeypatch.setattr(
-        "app.services.im.interaction_service.device_selection_manager.set_chat_mode",
+        "app.services.channels.handler.device_selection_manager.set_chat_mode",
         fake_set_chat_mode,
     )
     monkeypatch.setattr(
@@ -500,9 +517,11 @@ async def test_private_new_choice_chat_is_consumed_and_clears_cached_task(
     assert session.pending_payload == {}
     assert calls == {
         "chat_mode_user_id": test_user.id,
+        "chat_mode_scope": None,
         "delete_cache": {
             "conversation_id": "conv-private",
             "user_id": test_user.id,
+            "scope": None,
         },
         "chat": {
             "user_id": test_user.id,
@@ -545,13 +564,23 @@ async def test_private_use_cloud_clears_bound_runtime_task(
     )
     calls: dict[str, Any] = {}
 
-    async def fake_get_selection(user_id: int) -> DeviceSelection:
+    async def fake_get_selection(
+        user_id: int,
+        *,
+        scope: str | None = None,
+    ) -> DeviceSelection:
         assert user_id == test_user.id
+        assert scope is None
         return selection
 
-    async def fake_set_cloud_executor(user_id: int) -> bool:
+    async def fake_set_cloud_executor(
+        user_id: int,
+        *,
+        scope: str | None = None,
+    ) -> bool:
         nonlocal selection
         assert user_id == test_user.id
+        assert scope is None
         selection = DeviceSelection(device_type=DeviceType.CLOUD)
         return True
 

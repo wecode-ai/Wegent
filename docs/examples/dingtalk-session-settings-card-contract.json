@@ -19,7 +19,13 @@
     { "name": "currentDevice", "type": "string" },
     { "name": "currentTask", "type": "string" },
     { "name": "currentTaskAgent", "type": "string" },
+    { "name": "chatAgent", "type": "string" },
     { "name": "nextTaskAgent", "type": "string" },
+    {
+      "name": "agentProfile",
+      "type": "string",
+      "description": "Chat or Task; identifies which Agent and model selection the actions update"
+    },
     { "name": "showAgent", "type": "boolean" },
     { "name": "showTask", "type": "boolean" },
     { "name": "kind", "type": "string" },
@@ -44,7 +50,8 @@
       "name": "console",
       "visibleWhen": "view == console",
       "content": [
-        "Show currentModel, currentDevice, currentTask, currentTaskAgent, and nextTaskAgent.",
+        "Show currentModel, currentDevice, currentTask, chatAgent, nextTaskAgent, and currentTaskAgent.",
+        "Show agentProfile so users know whether Agent and model actions update the Chat or Task profile.",
         "Show the agent action only when showAgent is true.",
         "Show the task action only when showTask is true."
       ]

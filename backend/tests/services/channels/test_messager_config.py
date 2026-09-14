@@ -35,6 +35,7 @@ def test_channel_config_helpers_read_messager_spec(monkeypatch):
         json={
             "spec": {
                 "defaultTeamId": 42,
+                "defaultTaskTeamId": 84,
                 "defaultModelName": "gpt-test",
                 "config": {
                     "user_mapping_mode": "staff_id",
@@ -47,6 +48,7 @@ def test_channel_config_helpers_read_messager_spec(monkeypatch):
     monkeypatch.setattr(messager_config, "SessionLocal", lambda: session)
 
     assert messager_config.get_channel_default_team_id(7) == 42
+    assert messager_config.get_channel_default_task_team_id(7) == 84
     assert messager_config.get_channel_default_model_name(7) == "gpt-test"
     assert messager_config.get_channel_user_mapping_config(7) == {
         "mode": "staff_id",
@@ -60,6 +62,7 @@ def test_channel_config_helpers_return_defaults_for_missing_channel(monkeypatch)
     monkeypatch.setattr(messager_config, "SessionLocal", lambda: session)
 
     assert messager_config.get_channel_default_team_id(7) is None
+    assert messager_config.get_channel_default_task_team_id(7) is None
     assert messager_config.get_channel_default_model_name(7) is None
     assert messager_config.get_channel_user_mapping_config(7) == {
         "mode": "select_user",

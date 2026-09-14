@@ -24,6 +24,7 @@ class FakeInteractionPort:
 
     def __init__(self) -> None:
         self.replies: list[str] = []
+        self.chat_mode_contexts: list[MessageContext] = []
         self.deleted_conversations: list[tuple[str, int]] = []
         self.bound_tasks: list[int | None] = []
         self.continued_tasks: list[tuple[int | None, str]] = []
@@ -42,8 +43,18 @@ class FakeInteractionPort:
         self,
         conversation_id: str,
         user_id: int,
+        message_context: MessageContext | None = None,
     ) -> None:
+        del message_context
         self.deleted_conversations.append((conversation_id, user_id))
+
+    async def set_private_im_chat_mode(
+        self,
+        user_id: int,
+        message_context: MessageContext,
+    ) -> None:
+        del user_id
+        self.chat_mode_contexts.append(message_context)
 
     async def execute_private_im_bind_task(
         self,
@@ -165,6 +176,7 @@ async def test_new_chat_choice_deletes_cached_chat_and_replies(
 
     assert first is True
     assert second is True
+    assert len(port.chat_mode_contexts) == 1
     assert port.deleted_conversations == [("telegram-chat", test_user.id)]
     assert port.replies[-1] == "已开始新 Chat，请发送消息。"
 

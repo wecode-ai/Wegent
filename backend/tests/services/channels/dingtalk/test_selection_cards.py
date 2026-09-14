@@ -53,6 +53,7 @@ def _service() -> DingTalkSelectionCardService:
         channel_id=77,
         interaction_template_id="interaction.schema",
         get_default_team_id=lambda: None,
+        get_default_task_team_id=lambda: None,
         get_default_model_name=lambda: None,
         get_user_mapping_config=lambda: {"mode": "select_user", "config": {}},
     )
@@ -70,6 +71,7 @@ def _state(**updates) -> DingTalkSelectionCardState:
         "space_type": "IM_ROBOT",
         "space_id": "staff-a",
         "session_key": "session-1",
+        "selection_scope": "dingtalk:77:7:conversation-scope",
     }
     values.update(updates)
     return DingTalkSelectionCardState(**values)
@@ -115,7 +117,7 @@ def test_render_options_exposes_only_opaque_tokens():
 @pytest.mark.asyncio
 async def test_agent_selection_unbinds_task_after_persisting(monkeypatch):
     service = _service()
-    state = _state(kind="agent")
+    state = _state(kind="agent", agent_profile="task")
     session = SimpleNamespace(mode="task", active_task_id=41)
     db = object()
     selected = SelectionApplyResult(
@@ -126,7 +128,7 @@ async def test_agent_selection_unbinds_task_after_persisting(monkeypatch):
     )
     apply_agent = AsyncMock(return_value=selected)
     clear_active_task = AsyncMock()
-    service._next_task_team = MagicMock(return_value=SimpleNamespace(id=9))
+    service._default_team_for_profile = MagicMock(return_value=SimpleNamespace(id=9))
     service._clear_conversation_task = AsyncMock()
     monkeypatch.setattr(
         card_module.channel_selection_service,
@@ -157,15 +159,93 @@ async def test_agent_selection_unbinds_task_after_persisting(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_chat_agent_selection_does_not_unbind_task(monkeypatch):
+    service = _service()
+    state = _state(kind="agent", agent_profile="chat")
+    session = SimpleNamespace(mode="task", active_task_id=41)
+    service._default_team_for_profile = MagicMock(return_value=None)
+    service._clear_conversation_task = AsyncMock()
+    monkeypatch.setattr(
+        card_module.channel_selection_service,
+        "apply_agent",
+        AsyncMock(
+            return_value=SelectionApplyResult(
+                SelectionKind.AGENT,
+                "Chat Agent",
+                True,
+            )
+        ),
+    )
+    clear_active_task = AsyncMock()
+    monkeypatch.setattr(
+        card_module.im_session_service,
+        "clear_active_task",
+        clear_active_task,
+    )
+
+    result = await service._apply_kind(
+        object(),
+        SimpleNamespace(id=7),
+        session,
+        state,
+        SelectionKind.AGENT,
+        "team:8",
+    )
+
+    clear_active_task.assert_not_awaited()
+    assert result.task_unbound is False
+
+
+@pytest.mark.asyncio
+async def test_device_selection_leaves_bound_task_mode(monkeypatch):
+    service = _service()
+    state = _state(kind="device", agent_profile="task")
+    session = SimpleNamespace(mode="task", active_task_id=41)
+    db = object()
+    service._clear_conversation_task = AsyncMock()
+    monkeypatch.setattr(
+        card_module.channel_selection_service,
+        "apply_device",
+        AsyncMock(
+            return_value=SelectionApplyResult(
+                SelectionKind.DEVICE,
+                "MacBook",
+                True,
+            )
+        ),
+    )
+    set_mode = AsyncMock()
+    monkeypatch.setattr(card_module.im_session_service, "set_mode", set_mode)
+
+    result = await service._apply_kind(
+        db,
+        SimpleNamespace(id=7),
+        session,
+        state,
+        SelectionKind.DEVICE,
+        "app-record-42",
+    )
+
+    set_mode.assert_awaited_once_with(
+        db,
+        session=session,
+        mode="chat",
+    )
+    assert result.selected_label == "MacBook"
+    assert state.agent_profile == "task"
+
+
+@pytest.mark.asyncio
 async def test_console_renders_current_and_next_task_agents(monkeypatch):
     service = _service()
     user = SimpleNamespace(id=7)
     session = SimpleNamespace(mode="task", active_task_id=41)
-    state = _state()
-    default_team = SimpleNamespace(id=9)
-    service._next_task_team = MagicMock(return_value=default_team)
+    state = _state(agent_profile="task")
+    service._default_team_for_profile = MagicMock(return_value=None)
     service._current_task_agent_label = MagicMock(return_value="Old Agent")
-    service._next_task_agent_label = AsyncMock(return_value="New Agent（用户选择）")
+    service._profile_agent_label = AsyncMock(
+        side_effect=["Chat Agent", "New Agent（用户选择）"]
+    )
     monkeypatch.setattr(
         card_module.channel_selection_service,
         "list_models",
@@ -190,7 +270,9 @@ async def test_console_renders_current_and_next_task_agents(monkeypatch):
     card_data = await service._render(object(), user, session, state)
 
     assert card_data["currentTaskAgent"] == "Old Agent"
+    assert card_data["chatAgent"] == "Chat Agent"
     assert card_data["nextTaskAgent"] == "New Agent（用户选择）"
+    assert card_data["agentProfile"] == "Task"
     assert card_data["showAgent"] is True
 
 

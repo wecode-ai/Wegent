@@ -103,21 +103,44 @@ class ChannelSelectionService:
         user: User,
         *,
         default_model_name: str | None = None,
+        selection_scope: str | None = None,
+        device_scope: str | None = None,
+        claude_only: bool = False,
+        include_inherit: bool = False,
+        inherit_label: str = "跟随智能体",
     ) -> list[SelectionOption]:
         models = self._available_models(db, user)
-        current = await model_selection_manager.get_selection(user.id)
-        device = await device_selection_manager.get_selection(user.id)
-        is_device_mode = device.device_type == DeviceType.LOCAL
+        current = await model_selection_manager.get_selection(
+            user.id, scope=selection_scope
+        )
+        device = await device_selection_manager.get_selection(
+            user.id, scope=device_scope
+        )
+        requires_claude = claude_only or device.device_type != DeviceType.CHAT
 
-        return [
+        options = [
             self._model_option(
                 model,
                 current=current,
                 default_model_name=default_model_name,
-                is_device_mode=is_device_mode,
+                requires_claude=requires_claude,
             )
             for model in models
         ]
+        if claude_only:
+            options = [option for option in options if not option.is_disabled]
+        if include_inherit:
+            options.insert(
+                0,
+                SelectionOption(
+                    value="inherit",
+                    label=inherit_label,
+                    description="使用当前智能体中各机器人的模型",
+                    is_current=current is None,
+                    aliases=("default", "inherit"),
+                ),
+            )
+        return options
 
     async def apply_model(
         self,
@@ -126,11 +149,32 @@ class ChannelSelectionService:
         value: str,
         *,
         default_model_name: str | None = None,
+        selection_scope: str | None = None,
+        device_scope: str | None = None,
+        claude_only: bool = False,
+        inherit_label: str = "跟随智能体",
     ) -> SelectionApplyResult:
+        if value == "inherit":
+            current = await model_selection_manager.get_selection(
+                user.id, scope=selection_scope
+            )
+            await model_selection_manager.clear_selection(
+                user.id, scope=selection_scope
+            )
+            return SelectionApplyResult(
+                SelectionKind.MODEL,
+                inherit_label,
+                current is not None,
+                restored_default=True,
+            )
         options = await self.list_models(
             db,
             user,
             default_model_name=default_model_name,
+            selection_scope=selection_scope,
+            device_scope=device_scope,
+            claude_only=claude_only,
+            inherit_label=inherit_label,
         )
         option = self._option_by_value(options, value, SelectionKind.MODEL)
         if option.is_disabled:
@@ -149,7 +193,9 @@ class ChannelSelectionService:
         if model is None:
             raise SelectionError("模型已不可用，请刷新后重新选择。")
 
-        current = await model_selection_manager.get_selection(user.id)
+        current = await model_selection_manager.get_selection(
+            user.id, scope=selection_scope
+        )
         changed = not current or (
             current.model_name != model_name or current.model_type != model_type
         )
@@ -161,6 +207,7 @@ class ChannelSelectionService:
                 display_name=model.get("displayName"),
                 provider=model.get("provider"),
             ),
+            scope=selection_scope,
         )
         return SelectionApplyResult(SelectionKind.MODEL, option.label, changed)
 
@@ -168,11 +215,15 @@ class ChannelSelectionService:
         self,
         db: Session,
         user: User,
+        *,
+        selection_scope: str | None = None,
     ) -> list[SelectionOption]:
         from app.services.device_service import device_service
 
         devices = await device_service.get_all_devices(db, user.id)
-        current = await device_selection_manager.get_selection(user.id)
+        current = await device_selection_manager.get_selection(
+            user.id, scope=selection_scope
+        )
         current_id = (
             current.device_id if current.device_type == DeviceType.LOCAL else None
         )
@@ -185,18 +236,27 @@ class ChannelSelectionService:
         value: str,
         *,
         default_model_name: str | None = None,
+        selection_scope: str | None = None,
+        task_model_scope: str | None = None,
     ) -> SelectionApplyResult:
-        options = await self.list_devices(db, user)
+        options = await self.list_devices(db, user, selection_scope=selection_scope)
         option = self._option_by_value(options, value, SelectionKind.DEVICE)
         if option.is_disabled:
             raise SelectionError("设备已离线，请刷新后选择其他设备。")
 
         model_label = await self._device_model_label(
-            db, user, default_model_name=default_model_name
+            db,
+            user,
+            default_model_name=default_model_name,
+            selection_scope=task_model_scope,
         )
-        current = await device_selection_manager.get_selection(user.id)
+        current = await device_selection_manager.get_selection(
+            user.id, scope=selection_scope
+        )
         changed = current.device_type != DeviceType.LOCAL or current.device_id != value
-        await device_selection_manager.set_local_device(user.id, value, option.label)
+        await device_selection_manager.set_local_device(
+            user.id, value, option.label, scope=selection_scope
+        )
         return SelectionApplyResult(
             SelectionKind.DEVICE,
             option.label,
@@ -211,17 +271,34 @@ class ChannelSelectionService:
         *,
         include_default: bool = False,
         default_team: Kind | None = None,
+        selection_scope: str | None = None,
+        required_shell_type: str | None = None,
     ) -> list[SelectionOption]:
         """List Teams the user can currently access."""
 
         from app.services.adapters.team_kinds import team_kinds_service
 
-        current = await resolve_selected_team(db, user.id)
+        current = await resolve_selected_team(db, user.id, scope=selection_scope)
         teams = team_kinds_service.get_user_teams(
             db=db,
             user_id=user.id,
             scope="all",
         )
+        if required_shell_type:
+            from app.services.channels.team_selection import team_uses_only_shell_type
+            from app.services.share.team_share_service import team_share_service
+
+            teams = [
+                team
+                for team in teams
+                if (
+                    resolved := team_share_service.get_resource(
+                        db, int(team["id"]), user.id
+                    )
+                )
+                is not None
+                and team_uses_only_shell_type(db, resolved, required_shell_type)
+            ]
         options = [self._agent_option(team, current) for team in teams]
         if not include_default:
             return options
@@ -250,13 +327,22 @@ class ChannelSelectionService:
         value: str,
         *,
         default_team: Kind | None = None,
+        selection_scope: str | None = None,
+        model_selection_scope: str | None = None,
+        required_shell_type: str | None = None,
     ) -> SelectionApplyResult:
         """Revalidate and persist one Team selection."""
 
-        current = await resolve_selected_team(db, user.id)
+        current = await resolve_selected_team(db, user.id, scope=selection_scope)
         if value == "default":
             try:
-                await team_selection_manager.clear_selection(user.id)
+                await team_selection_manager.clear_selection(
+                    user.id, scope=selection_scope
+                )
+                if model_selection_scope is not None:
+                    await model_selection_manager.clear_selection(
+                        user.id, scope=model_selection_scope
+                    )
             except Exception as exc:
                 raise SelectionError("智能体选择保存失败，请稍后重试。") from exc
             return SelectionApplyResult(
@@ -272,6 +358,13 @@ class ChannelSelectionService:
         team = team_share_service.get_resource(db, team_id, user.id)
         if team is None:
             raise SelectionError("智能体已不可用，请刷新后重新选择。")
+        if required_shell_type:
+            from app.services.channels.team_selection import team_uses_only_shell_type
+
+            if not team_uses_only_shell_type(db, team, required_shell_type):
+                raise SelectionError(
+                    f"Task 智能体的所有机器人必须使用 {required_shell_type}。"
+                )
 
         saved = await team_selection_manager.set_selection(
             user.id,
@@ -281,9 +374,14 @@ class ChannelSelectionService:
                 team_namespace=team.namespace,
                 display_name=get_team_display_name(team),
             ),
+            scope=selection_scope,
         )
         if not saved:
             raise SelectionError("智能体选择保存失败，请稍后重试。")
+        if model_selection_scope is not None:
+            await model_selection_manager.clear_selection(
+                user.id, scope=model_selection_scope
+            )
 
         return SelectionApplyResult(
             SelectionKind.AGENT,
@@ -353,7 +451,7 @@ class ChannelSelectionService:
         *,
         current: ModelSelection | None,
         default_model_name: str | None,
-        is_device_mode: bool,
+        requires_claude: bool,
     ) -> SelectionOption:
         name = str(model.get("name") or "")
         model_type = str(model.get("type") or "public")
@@ -369,7 +467,7 @@ class ChannelSelectionService:
             label=display_name,
             description=provider,
             is_current=is_current,
-            is_disabled=is_device_mode and not is_claude_provider(provider),
+            is_disabled=requires_claude and not is_claude_provider(provider),
             aliases=(name, display_name),
         )
 
@@ -416,9 +514,12 @@ class ChannelSelectionService:
         user: User,
         *,
         default_model_name: str | None,
+        selection_scope: str | None = None,
     ) -> str:
         models = self._available_models(db, user)
-        current = await model_selection_manager.get_selection(user.id)
+        current = await model_selection_manager.get_selection(
+            user.id, scope=selection_scope
+        )
         selected = self._find_selected_model(models, current)
         if selected and is_claude_provider(selected.get("provider")):
             return str(selected.get("displayName") or selected.get("name"))

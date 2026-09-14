@@ -19,7 +19,8 @@ from app.core.cache import cache_manager
 
 logger = logging.getLogger(__name__)
 
-# Redis key prefix for user model selection (per user, not per conversation)
+# Redis key prefix for model selection. Legacy callers remain user-scoped while
+# DingTalk supplies a conversation/profile scope.
 CHANNEL_USER_MODEL_PREFIX = "channel:user_model:"
 # TTL for user model selection (30 days)
 CHANNEL_USER_MODEL_TTL = 30 * 24 * 60 * 60
@@ -66,12 +67,15 @@ class ModelSelectionManager:
     """Manages user model selection for IM channels."""
 
     @staticmethod
-    def _generate_key(user_id: int) -> str:
+    def _generate_key(user_id: int, scope: str | None = None) -> str:
         """Generate Redis key for user model selection."""
-        return f"{CHANNEL_USER_MODEL_PREFIX}{user_id}"
+        suffix = f":{scope}" if scope else ""
+        return f"{CHANNEL_USER_MODEL_PREFIX}{user_id}{suffix}"
 
     @staticmethod
-    async def get_selection(user_id: int) -> Optional[ModelSelection]:
+    async def get_selection(
+        user_id: int, *, scope: str | None = None
+    ) -> Optional[ModelSelection]:
         """
         Get user's current model selection.
 
@@ -81,7 +85,7 @@ class ModelSelectionManager:
         Returns:
             ModelSelection object or None if not set
         """
-        key = ModelSelectionManager._generate_key(user_id)
+        key = ModelSelectionManager._generate_key(user_id, scope)
         data = await cache_manager.get(key)
 
         if data:
@@ -97,7 +101,12 @@ class ModelSelectionManager:
         return None
 
     @staticmethod
-    async def set_selection(user_id: int, selection: ModelSelection) -> bool:
+    async def set_selection(
+        user_id: int,
+        selection: ModelSelection,
+        *,
+        scope: str | None = None,
+    ) -> bool:
         """
         Set user's model selection.
 
@@ -108,20 +117,21 @@ class ModelSelectionManager:
         Returns:
             True if set successfully
         """
-        key = ModelSelectionManager._generate_key(user_id)
+        key = ModelSelectionManager._generate_key(user_id, scope)
         result = await cache_manager.set(
             key, selection.to_dict(), expire=CHANNEL_USER_MODEL_TTL
         )
         logger.info(
-            "[ModelSelection] Set selection for user %d: name=%s, type=%s",
+            "[ModelSelection] Set selection for user %d scope=%s: name=%s, type=%s",
             user_id,
+            scope or "legacy",
             selection.model_name,
             selection.model_type,
         )
         return result
 
     @staticmethod
-    async def clear_selection(user_id: int) -> bool:
+    async def clear_selection(user_id: int, *, scope: str | None = None) -> bool:
         """
         Clear user's model selection (reset to default).
 
@@ -131,9 +141,13 @@ class ModelSelectionManager:
         Returns:
             True if cleared successfully
         """
-        key = ModelSelectionManager._generate_key(user_id)
+        key = ModelSelectionManager._generate_key(user_id, scope)
         result = await cache_manager.delete(key)
-        logger.info("[ModelSelection] Cleared selection for user %d", user_id)
+        logger.info(
+            "[ModelSelection] Cleared selection for user %d scope=%s",
+            user_id,
+            scope or "legacy",
+        )
         return result
 
 

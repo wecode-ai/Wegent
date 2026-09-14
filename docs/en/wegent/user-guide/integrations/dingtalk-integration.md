@@ -102,8 +102,9 @@ Enable the following permissions for your application:
 | **Channel Type**                      | Select platform                                               | DingTalk                           |
 | **Client ID**                         | From Step 3                                                   | `dingxxxxxxxx`                     |
 | **Client Secret**                     | From Step 3                                                   | `xxxxxxxxxxxxxxxx`                 |
-| **Default Agent**                     | Agent to handle messages                                      | Select from list                   |
-| **Default Model**                     | Override model (optional)                                     | Leave empty to use agent's default |
+| **Chat Agent**                        | Handles `/chat` and `/use chat`                               | Select from list                   |
+| **Task Agent**                        | Handles `/task`, cloud execution, and device execution        | Select a ClaudeCode agent          |
+| **Default Chat Model**                | Optional Chat model override                                  | Leave empty to follow Chat Agent   |
 | **Enable AI Card**                    | Use streaming AI Card                                         | ✅ Recommended                     |
 | **Conversation Card Template ID**     | Show a Session Settings action after an answer (optional)     | `xxxxxxxx.schema`                  |
 | **Session Settings Card Template ID** | Clickable model, device, agent, and task selection (optional) | `xxxxxxxx.schema`                  |
@@ -163,11 +164,13 @@ DingTalk AI Cards provide a rich streaming response experience:
 
 After configuring the **Session Settings Card Template ID**, users can send `设置` to open the console, `切模型`, `切设备`, or `切智能体` to open a selector, and `切任务` in a direct message to select a task. The existing `/status`, `/models`, `/devices`, `/agents`, and `/switch` commands remain available. Commands with arguments still use their text flow, and a card creation failure falls back to the original text response.
 
-The console displays the current model, device, direct-message task, current Task agent, and next-new-Task agent:
+The console displays the current model, device, direct-message task, Chat Agent, next-new-Task Agent, and the Agent bound to the current Task:
 
 - Selecting an option applies it immediately and returns the same card to the console.
 - Each page contains up to eight options, with previous, next, refresh, back, and close actions.
-- Offline devices, current options, and non-Claude models that are incompatible with device mode are disabled.
+- Chat and Task keep separate Agent and model selections. Task lists only Claude models and also offers “Follow Task Agent”.
+- `/task`, `/use cloud`, and `/use device` always use the Task Agent, whose Bots must all use ClaudeCode. `/chat` and `/use chat` use the Chat Agent.
+- Offline devices and current options are disabled.
 - Tasks are available only in direct messages and include the user's five most recent Wework tasks.
 - Selecting an agent never mutates an existing Task. In Task mode it detaches the current binding, so the next message enters the new-Task flow; `/switch` can bind the old Task again.
 - In a group, only the user who opened the card can act on it. The server also revalidates identity, ownership, and current availability.
@@ -229,14 +232,14 @@ After publishing both templates, enter their `.schema` template IDs in Wegent Ad
 
 **Possible causes:**
 
-1. Default Agent not configured
+1. Chat Agent or Task Agent not configured
 2. Agent has no model assigned
 3. Rate limiting
 
 **Solutions:**
 
-1. Verify a default Agent is selected for the channel
-2. Ensure the Agent has a working model configuration
+1. Verify that the channel has both a Chat Agent and a ClaudeCode Task Agent
+2. Ensure the corresponding Agent has a working model configuration
 3. Check for rate limit errors in channel status
 
 #### Slow or incomplete responses

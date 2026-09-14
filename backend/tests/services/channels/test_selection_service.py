@@ -79,6 +79,52 @@ async def test_model_options_disable_non_claude_in_device_mode(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_task_model_options_are_scoped_and_exclude_openai(monkeypatch):
+    service = ChannelSelectionService()
+    service._available_models = lambda _db, _user: [
+        {
+            "name": "claude-sonnet",
+            "displayName": "Claude Sonnet",
+            "type": "public",
+            "provider": "anthropic",
+        },
+        {
+            "name": "gpt-5",
+            "displayName": "GPT-5",
+            "type": "public",
+            "provider": "openai",
+        },
+    ]
+    get_model = AsyncMock(return_value=None)
+    get_device = AsyncMock(return_value=DeviceSelection.default())
+    monkeypatch.setattr(
+        "app.services.channels.selection_service.model_selection_manager.get_selection",
+        get_model,
+    )
+    monkeypatch.setattr(
+        "app.services.channels.selection_service.device_selection_manager.get_selection",
+        get_device,
+    )
+
+    options = await service.list_models(
+        object(),
+        SimpleNamespace(id=7),
+        selection_scope="conversation:task",
+        device_scope="conversation",
+        claude_only=True,
+        include_inherit=True,
+    )
+
+    assert [option.value for option in options] == [
+        "inherit",
+        "public\0claude-sonnet",
+    ]
+    assert options[1].is_disabled is False
+    get_model.assert_awaited_once_with(7, scope="conversation:task")
+    get_device.assert_awaited_once_with(7, scope="conversation")
+
+
+@pytest.mark.asyncio
 async def test_apply_model_revalidates_and_saves_selection(monkeypatch):
     service = ChannelSelectionService()
     models = [
@@ -313,4 +359,4 @@ async def test_apply_agent_default_clears_selection(monkeypatch):
         True,
         restored_default=True,
     )
-    clear_selection.assert_awaited_once_with(7)
+    clear_selection.assert_awaited_once_with(7, scope=None)

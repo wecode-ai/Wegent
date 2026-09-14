@@ -28,9 +28,13 @@ class MessagerSpec(BaseModel):
     config: Dict[str, Any] = Field(
         ..., description="Channel configuration (varies by type)"
     )
-    defaultTeamId: int = Field(0, description="Default team ID for messages")
+    defaultTeamId: int = Field(0, description="Default Chat team ID for messages")
+    defaultTaskTeamId: int = Field(
+        0,
+        description="Default ClaudeCode team ID for DingTalk Task execution",
+    )
     defaultModelName: str = Field(
-        "", description="Default model name to override bot's model"
+        "", description="Default Chat model name to override bot's model"
     )
 
 
@@ -49,10 +53,16 @@ class IMChannelCreate(BaseModel):
         ..., description="Channel configuration (varies by type)"
     )
     default_team_id: Optional[int] = Field(
-        None, description="Default team ID for messages"
+        None, description="Default Chat team ID for messages"
+    )
+    default_task_team_id: Optional[int] = Field(
+        None,
+        description="Default ClaudeCode team ID for DingTalk Task execution",
     )
     default_model_name: Optional[str] = Field(
-        None, max_length=100, description="Default model name to override bot's model"
+        None,
+        max_length=100,
+        description="Default Chat model name to override bot's model",
     )
     is_enabled: bool = Field(default=True, description="Whether channel is enabled")
 
@@ -72,10 +82,16 @@ class IMChannelUpdate(BaseModel):
     is_enabled: Optional[bool] = Field(None, description="Whether channel is enabled")
     config: Optional[Dict[str, Any]] = Field(None, description="Channel configuration")
     default_team_id: Optional[int] = Field(
-        None, description="Default team ID for messages"
+        None, description="Default Chat team ID for messages"
+    )
+    default_task_team_id: Optional[int] = Field(
+        None,
+        description="Default ClaudeCode team ID for DingTalk Task execution",
     )
     default_model_name: Optional[str] = Field(
-        None, max_length=100, description="Default model name to override bot's model"
+        None,
+        max_length=100,
+        description="Default Chat model name to override bot's model",
     )
 
 
@@ -90,10 +106,14 @@ class IMChannelResponse(BaseModel):
     config: Dict[str, Any] = Field(
         ..., description="Channel configuration (sensitive fields masked with ***)"
     )
-    default_team_id: int = Field(0, description="Default team ID, 0 means none")
+    default_team_id: int = Field(0, description="Default Chat team ID, 0 means none")
+    default_task_team_id: int = Field(
+        0,
+        description="Default DingTalk Task team ID, 0 means global fallback",
+    )
     default_model_name: str = Field(
         "",
-        description="Default model name to override bot's model, empty means use bot's default",
+        description="Default Chat model override, empty means use bot's default",
     )
     created_at: datetime
     updated_at: datetime

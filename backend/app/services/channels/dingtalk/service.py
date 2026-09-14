@@ -25,6 +25,7 @@ from app.services.channels.dingtalk.selection_cards import (
 )
 from app.services.channels.messager_config import (
     get_channel_default_model_name,
+    get_channel_default_task_team_id,
     get_channel_default_team_id,
     get_channel_user_mapping_config,
 )
@@ -128,6 +129,9 @@ class DingTalkChannelProvider(BaseChannelProvider):
                 channel_id=channel_id,
                 interaction_template_id=self.interaction_card_template_id,
                 get_default_team_id=lambda: get_channel_default_team_id(channel_id),
+                get_default_task_team_id=lambda: get_channel_default_task_team_id(
+                    channel_id
+                ),
                 get_default_model_name=lambda: get_channel_default_model_name(
                     channel_id
                 ),
@@ -142,6 +146,9 @@ class DingTalkChannelProvider(BaseChannelProvider):
                 interaction_card_template_id=self.interaction_card_template_id,
                 selection_card_service=selection_card_service,
                 get_default_team_id=lambda: get_channel_default_team_id(channel_id),
+                get_default_task_team_id=lambda: get_channel_default_task_team_id(
+                    channel_id
+                ),
                 get_default_model_name=lambda: get_channel_default_model_name(
                     channel_id
                 ),
@@ -294,5 +301,6 @@ class DingTalkChannelProvider(BaseChannelProvider):
             "conversation_card_configured": bool(self.conversation_card_template_id),
             "interaction_card_configured": bool(self.interaction_card_template_id),
             "default_team_id": self.default_team_id,
+            "default_task_team_id": self.default_task_team_id,
         }
         return status

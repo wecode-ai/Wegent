@@ -27,7 +27,8 @@ from app.services.readers.kinds import KindType, kindReader
 
 logger = logging.getLogger(__name__)
 
-# Redis key prefix for user team selection
+# Redis key prefix for Team selection. Legacy callers remain user-scoped while
+# DingTalk supplies a conversation/profile scope.
 TEAM_SELECTION_KEY_PREFIX = "channel:user_team_selection:"
 # TTL for team selection (7 days)
 TEAM_SELECTION_TTL = 7 * 24 * 60 * 60
@@ -68,7 +69,14 @@ class TeamSelection:
 class TeamSelectionManager:
     """Manager for user team selection in IM channels."""
 
-    async def get_selection(self, user_id: int) -> Optional[TeamSelection]:
+    @staticmethod
+    def _key(user_id: int, scope: str | None = None) -> str:
+        suffix = f":{scope}" if scope else ""
+        return f"{TEAM_SELECTION_KEY_PREFIX}{user_id}{suffix}"
+
+    async def get_selection(
+        self, user_id: int, *, scope: str | None = None
+    ) -> Optional[TeamSelection]:
         """Get user's current team selection from Redis.
 
         Args:
@@ -77,7 +85,7 @@ class TeamSelectionManager:
         Returns:
             TeamSelection if found, None otherwise
         """
-        key = f"{TEAM_SELECTION_KEY_PREFIX}{user_id}"
+        key = self._key(user_id, scope)
         data = await cache_manager.get(key)
 
         if data:
@@ -93,14 +101,20 @@ class TeamSelectionManager:
 
         return None
 
-    async def set_selection(self, user_id: int, selection: TeamSelection) -> bool:
+    async def set_selection(
+        self,
+        user_id: int,
+        selection: TeamSelection,
+        *,
+        scope: str | None = None,
+    ) -> bool:
         """Set user's team selection in Redis.
 
         Args:
             user_id: Wegent user ID
             selection: Team selection to save
         """
-        key = f"{TEAM_SELECTION_KEY_PREFIX}{user_id}"
+        key = self._key(user_id, scope)
         try:
             saved = await cache_manager.set(
                 key, json.dumps(selection.to_dict()), expire=TEAM_SELECTION_TTL
@@ -113,7 +127,8 @@ class TeamSelectionManager:
                 )
                 return False
             logger.info(
-                f"[TeamSelectionManager] Saved team selection for user {user_id}: "
+                f"[TeamSelectionManager] Saved team selection for user {user_id} "
+                f"scope={scope or 'legacy'}: "
                 f"{selection.team_name} (id={selection.team_id})"
             )
             return True
@@ -123,15 +138,19 @@ class TeamSelectionManager:
             )
             return False
 
-    async def clear_selection(self, user_id: int) -> None:
+    async def clear_selection(self, user_id: int, *, scope: str | None = None) -> None:
         """Clear user's team selection (revert to default).
 
         Args:
             user_id: Wegent user ID
         """
-        key = f"{TEAM_SELECTION_KEY_PREFIX}{user_id}"
+        key = self._key(user_id, scope)
         await cache_manager.delete(key)
-        logger.info(f"[TeamSelectionManager] Cleared team selection for user {user_id}")
+        logger.info(
+            "[TeamSelectionManager] Cleared team selection for user %s scope=%s",
+            user_id,
+            scope or "legacy",
+        )
 
 
 # Global instance
@@ -151,10 +170,62 @@ def get_team_display_name(team: Kind | None) -> str:
     return str(metadata.get("displayName") or spec.get("displayName") or team.name)
 
 
-async def resolve_selected_team(db: Session, user_id: int) -> Optional[Kind]:
+def team_uses_only_shell_type(
+    db: Session,
+    team: Kind,
+    required_shell_type: str,
+) -> bool:
+    """Return whether every Team member resolves to the required Shell type."""
+
+    from pydantic import ValidationError
+
+    from app.schemas.kind import Team
+    from app.services.chat.config.shell_checker import get_shell_type
+
+    try:
+        team_crd = Team.model_validate(team.json)
+    except ValidationError:
+        logger.warning(
+            "[TeamSelectionManager] Invalid Team CRD: team_id=%s",
+            team.id,
+            exc_info=True,
+        )
+        return False
+    if not team_crd.spec.members:
+        return False
+
+    for member in team_crd.spec.members:
+        bot = kindReader.get_by_name_and_namespace(
+            db,
+            team.user_id,
+            KindType.BOT,
+            member.botRef.namespace,
+            member.botRef.name,
+        )
+        if bot is None:
+            return False
+        try:
+            shell_type = get_shell_type(db, bot, team.user_id)
+        except ValidationError:
+            logger.warning(
+                "[TeamSelectionManager] Invalid Bot or Shell CRD: "
+                "team_id=%s bot_id=%s",
+                team.id,
+                bot.id,
+                exc_info=True,
+            )
+            return False
+        if shell_type != required_shell_type:
+            return False
+    return True
+
+
+async def resolve_selected_team(
+    db: Session, user_id: int, *, scope: str | None = None
+) -> Optional[Kind]:
     """Resolve the saved Team selection and revalidate current access."""
 
-    selection = await team_selection_manager.get_selection(user_id)
+    selection = await team_selection_manager.get_selection(user_id, scope=scope)
     if selection is None:
         return None
 
@@ -175,7 +246,7 @@ async def resolve_selected_team(db: Session, user_id: int) -> Optional[Kind]:
         user_id,
         selection.team_id,
     )
-    await team_selection_manager.clear_selection(user_id)
+    await team_selection_manager.clear_selection(user_id, scope=scope)
     return None
 
 
@@ -184,8 +255,27 @@ def resolve_task_mode_team(
     user_id: int,
     *,
     default_team_id: Optional[int] = None,
+    prefer_default_team_id: bool = False,
 ) -> Optional[Kind]:
     """Resolve the configured Task-mode Team with channel fallback."""
+
+    def resolve_default_id() -> Optional[Kind]:
+        if not default_team_id:
+            return None
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.id == default_team_id,
+                Kind.kind == KindType.TEAM.value,
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+
+    if prefer_default_team_id:
+        team = resolve_default_id()
+        if team is not None:
+            return team
 
     config_value = settings.DEFAULT_TEAM_TASK
     if config_value and config_value.strip():
@@ -210,14 +300,4 @@ def resolve_task_mode_team(
                 namespace,
             )
 
-    if not default_team_id:
-        return None
-    return (
-        db.query(Kind)
-        .filter(
-            Kind.id == default_team_id,
-            Kind.kind == KindType.TEAM.value,
-            Kind.is_active.is_(True),
-        )
-        .first()
-    )
+    return None if prefer_default_team_id else resolve_default_id()

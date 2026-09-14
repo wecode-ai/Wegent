@@ -43,6 +43,14 @@ def get_channel_default_team_id(channel_id: int) -> Optional[int]:
     return spec.get("defaultTeamId", 0)
 
 
+def get_channel_default_task_team_id(channel_id: int) -> Optional[int]:
+    """Get the current default Task team ID for a channel."""
+    spec = _get_channel_spec(channel_id)
+    if spec is None:
+        return None
+    return spec.get("defaultTaskTeamId", 0)
+
+
 def get_channel_default_model_name(channel_id: int) -> Optional[str]:
     """Get the current default model name for a channel."""
     spec = _get_channel_spec(channel_id)

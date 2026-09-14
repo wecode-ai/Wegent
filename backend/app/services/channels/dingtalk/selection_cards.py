@@ -60,6 +60,8 @@ class DingTalkSelectionCardState:
     space_type: str
     space_id: str
     session_key: str = ""
+    selection_scope: str = ""
+    agent_profile: str = "chat"
     kind: str = ""
     page: int = 0
     option_values: dict[str, str] = field(default_factory=dict)
@@ -84,6 +86,8 @@ class DingTalkSelectionCardState:
                 space_type=str(value["space_type"]),
                 space_id=str(value["space_id"]),
                 session_key=str(value.get("session_key") or ""),
+                selection_scope=str(value.get("selection_scope") or ""),
+                agent_profile=str(value.get("agent_profile") or "chat"),
                 kind=str(value.get("kind") or ""),
                 page=max(0, int(value.get("page") or 0)),
                 option_values=dict(value.get("option_values") or {}),
@@ -120,6 +124,31 @@ async def save_conversation_card_state(
             channel_id=channel_id,
             conversation_id=str(getattr(incoming_message, "conversation_id", "") or ""),
         )
+    from app.services.channels.selection_scope import (
+        CHAT_PROFILE,
+        TASK_PROFILE,
+        build_conversation_selection_scope,
+    )
+
+    selection_scope = build_conversation_selection_scope(
+        channel_type="dingtalk",
+        channel_id=channel_id,
+        conversation_id=str(getattr(incoming_message, "conversation_id", "") or ""),
+        actor_id=actor_staff_id,
+        user_id=user_id,
+    )
+    session = await im_session_service.get_session(session_key) if session_key else None
+    device = await device_selection_manager.get_selection(
+        user_id, scope=selection_scope
+    )
+    agent_profile = (
+        TASK_PROFILE
+        if (
+            (session is not None and session.mode == IMSessionMode.TASK)
+            or device.device_type != DeviceType.CHAT
+        )
+        else CHAT_PROFILE
+    )
     state = DingTalkSelectionCardState(
         card_type="conversation",
         channel_id=channel_id,
@@ -131,6 +160,8 @@ async def save_conversation_card_state(
         space_type=space.space_type,
         space_id=space.space_id,
         session_key=session_key,
+        selection_scope=selection_scope,
+        agent_profile=agent_profile,
     )
     await _save_state(out_track_id, state, CONVERSATION_CARD_TTL_SECONDS)
 
@@ -145,6 +176,7 @@ class DingTalkSelectionCardService:
         channel_id: int,
         interaction_template_id: str,
         get_default_team_id: Callable[[], int | None],
+        get_default_task_team_id: Callable[[], int | None],
         get_default_model_name: Callable[[], str | None],
         get_user_mapping_config: Callable[[], Any],
     ) -> None:
@@ -152,6 +184,7 @@ class DingTalkSelectionCardService:
         self._channel_id = channel_id
         self._interaction_template_id = interaction_template_id
         self._get_default_team_id = get_default_team_id
+        self._get_default_task_team_id = get_default_task_team_id
         self._get_default_model_name = get_default_model_name
         self._get_user_mapping_config = get_user_mapping_config
 
@@ -166,18 +199,45 @@ class DingTalkSelectionCardService:
     ) -> bool:
         if not self._interaction_template_id:
             return False
+        from app.services.channels.selection_scope import (
+            CHAT_PROFILE,
+            TASK_PROFILE,
+            build_conversation_selection_scope,
+        )
+
         space = DingTalkCardSpace.from_message(incoming_message)
+        actor_staff_id = str(getattr(incoming_message, "sender_staff_id", "") or "")
+        selection_scope = build_conversation_selection_scope(
+            channel_type="dingtalk",
+            channel_id=self._channel_id,
+            conversation_id=str(getattr(incoming_message, "conversation_id", "") or ""),
+            actor_id=actor_staff_id,
+            user_id=user.id,
+        )
+        device = await device_selection_manager.get_selection(
+            user.id, scope=selection_scope
+        )
+        agent_profile = (
+            TASK_PROFILE
+            if (
+                (session is not None and session.mode == IMSessionMode.TASK)
+                or device.device_type != DeviceType.CHAT
+            )
+            else CHAT_PROFILE
+        )
         state = DingTalkSelectionCardState(
             card_type="interaction",
             channel_id=self._channel_id,
             interaction_template_id=self._interaction_template_id,
-            actor_staff_id=str(getattr(incoming_message, "sender_staff_id", "") or ""),
+            actor_staff_id=actor_staff_id,
             user_id=user.id,
             conversation_id=str(getattr(incoming_message, "conversation_id", "") or ""),
             conversation_type="group" if space.space_type == "IM_GROUP" else "private",
             space_type=space.space_type,
             space_id=space.space_id,
             session_key=session.session_key if session else "",
+            selection_scope=selection_scope,
+            agent_profile=agent_profile,
             kind=kind.value if kind else "",
         )
         created = await self._create_interaction_card(db, user, state)
@@ -372,34 +432,68 @@ class DingTalkSelectionCardService:
         kind: SelectionKind,
         value: str,
     ) -> Any:
+        from app.services.channels.selection_scope import (
+            CHAT_PROFILE,
+            TASK_PROFILE,
+            profile_selection_scope,
+        )
+
+        profile_scope = profile_selection_scope(
+            state.selection_scope, state.agent_profile
+        )
         if kind == SelectionKind.MODEL:
             return await channel_selection_service.apply_model(
                 db,
                 user,
                 value,
-                default_model_name=self._get_default_model_name(),
+                default_model_name=(
+                    self._get_default_model_name()
+                    if state.agent_profile == CHAT_PROFILE
+                    else None
+                ),
+                selection_scope=profile_scope,
+                device_scope=state.selection_scope,
+                claude_only=state.agent_profile == TASK_PROFILE,
+                inherit_label=f"跟随 {state.agent_profile.title()} 智能体",
             )
         if kind == SelectionKind.DEVICE:
             result = await channel_selection_service.apply_device(
                 db,
                 user,
                 value,
-                default_model_name=self._get_default_model_name(),
+                selection_scope=state.selection_scope,
+                task_model_scope=profile_selection_scope(
+                    state.selection_scope, TASK_PROFILE
+                ),
             )
             if result.changed:
                 await self._clear_conversation_task(state, user.id)
+            if session is not None and session.mode == IMSessionMode.TASK:
+                await im_session_service.set_mode(
+                    db,
+                    session=session,
+                    mode=IMSessionMode.CHAT,
+                )
+            state.agent_profile = TASK_PROFILE
             return result
         if kind == SelectionKind.AGENT:
+            task_profile = state.agent_profile == TASK_PROFILE
             result = await channel_selection_service.apply_agent(
                 db,
                 user,
                 value,
-                default_team=self._next_task_team(db, user.id),
+                default_team=self._default_team_for_profile(
+                    db, user.id, state.agent_profile
+                ),
+                selection_scope=profile_scope,
+                model_selection_scope=profile_scope,
+                required_shell_type="ClaudeCode" if task_profile else None,
             )
             await self._clear_conversation_task(state, user.id)
             task_unbound = False
             if (
-                session is not None
+                task_profile
+                and session is not None
                 and session.mode == IMSessionMode.TASK
                 and session.active_task_id is not None
             ):
@@ -415,6 +509,7 @@ class DingTalkSelectionCardService:
             )
         if session is None:
             raise SelectionError("任务只能在私聊会话中切换。")
+        state.agent_profile = TASK_PROFILE
         return await channel_selection_service.apply_task(db, user, session, value)
 
     async def _create_interaction_card(
@@ -448,18 +543,41 @@ class DingTalkSelectionCardService:
         session: IMPrivateSession | None,
         state: DingTalkSelectionCardState,
     ) -> dict[str, Any]:
+        from app.services.channels.selection_scope import (
+            CHAT_PROFILE,
+            TASK_PROFILE,
+            profile_selection_scope,
+        )
+
+        profile_scope = profile_selection_scope(
+            state.selection_scope, state.agent_profile
+        )
+        task_profile = state.agent_profile == TASK_PROFILE
         model_options = await channel_selection_service.list_models(
             db,
             user,
-            default_model_name=self._get_default_model_name(),
+            default_model_name=(
+                self._get_default_model_name()
+                if state.agent_profile == CHAT_PROFILE
+                else None
+            ),
+            selection_scope=profile_scope,
+            device_scope=state.selection_scope,
+            claude_only=task_profile,
+            include_inherit=True,
+            inherit_label=f"跟随 {state.agent_profile.title()} 智能体",
         )
-        device_options = await channel_selection_service.list_devices(db, user)
-        default_team = self._next_task_team(db, user.id)
+        device_options = await channel_selection_service.list_devices(
+            db, user, selection_scope=state.selection_scope
+        )
+        default_team = self._default_team_for_profile(db, user.id, state.agent_profile)
         agent_options = await channel_selection_service.list_agents(
             db,
             user,
             include_default=True,
             default_team=default_team,
+            selection_scope=profile_scope,
+            required_shell_type="ClaudeCode" if task_profile else None,
         )
         task_options = (
             await channel_selection_service.list_tasks(db, user, session)
@@ -472,16 +590,24 @@ class DingTalkSelectionCardService:
             "status": state.status,
             "currentModel": self._current_label(
                 model_options,
-                self._get_default_model_name() or "默认模型",
+                (
+                    self._get_default_model_name() or "跟随 Chat 智能体"
+                    if state.agent_profile == CHAT_PROFILE
+                    else "跟随 Task 智能体"
+                ),
             ),
-            "currentDevice": await self._current_device_label(user.id, device_options),
+            "currentDevice": await self._current_device_label(
+                user.id, device_options, state.selection_scope
+            ),
             "currentTask": self._current_task_label(session, task_options),
             "currentTaskAgent": self._current_task_agent_label(db, user, session),
-            "nextTaskAgent": await self._next_task_agent_label(
-                db,
-                user,
-                default_team,
+            "chatAgent": await self._profile_agent_label(
+                db, user, state.selection_scope, CHAT_PROFILE
             ),
+            "nextTaskAgent": await self._profile_agent_label(
+                db, user, state.selection_scope, TASK_PROFILE
+            ),
+            "agentProfile": state.agent_profile.title(),
             "showAgent": True,
             "showTask": state.conversation_type == "private",
             "kind": state.kind,
@@ -576,11 +702,14 @@ class DingTalkSelectionCardService:
         self,
         user_id: int,
         options: list[SelectionOption],
+        selection_scope: str,
     ) -> str:
         current = self._current_label(options, "")
         if current:
             return current
-        selection = await device_selection_manager.get_selection(user_id)
+        selection = await device_selection_manager.get_selection(
+            user_id, scope=selection_scope
+        )
         if selection.device_type == DeviceType.CLOUD:
             return "云端执行"
         if selection.device_type == DeviceType.LOCAL:
@@ -615,27 +744,56 @@ class DingTalkSelectionCardService:
             return agents
         return tasks
 
-    def _next_task_team(self, db: Session, user_id: int) -> Kind | None:
+    def _default_team_for_profile(
+        self,
+        db: Session,
+        user_id: int,
+        profile: str,
+    ) -> Kind | None:
+        from app.services.channels.selection_scope import TASK_PROFILE
+
+        if profile != TASK_PROFILE:
+            team_id = self._get_default_team_id()
+            if not team_id:
+                return None
+            return (
+                db.query(Kind)
+                .filter(
+                    Kind.id == team_id,
+                    Kind.kind == "Team",
+                    Kind.is_active.is_(True),
+                )
+                .first()
+            )
+
         from app.services.channels.team_selection import resolve_task_mode_team
 
         return resolve_task_mode_team(
             db,
             user_id,
-            default_team_id=self._get_default_team_id(),
+            default_team_id=self._get_default_task_team_id(),
+            prefer_default_team_id=True,
         )
 
-    async def _next_task_agent_label(
+    async def _profile_agent_label(
         self,
         db: Session,
         user: User,
-        default_team: Kind | None,
+        selection_scope: str,
+        profile: str,
     ) -> str:
+        from app.services.channels.selection_scope import profile_selection_scope
         from app.services.channels.team_selection import (
             get_team_display_name,
             resolve_selected_team,
         )
 
-        selected = await resolve_selected_team(db, user.id)
+        selected = await resolve_selected_team(
+            db,
+            user.id,
+            scope=profile_selection_scope(selection_scope, profile),
+        )
+        default_team = self._default_team_for_profile(db, user.id, profile)
         label = get_team_display_name(selected or default_team)
         return f"{label}（用户选择）" if selected is not None else label
 
@@ -679,7 +837,10 @@ class DingTalkSelectionCardService:
         state: DingTalkSelectionCardState,
         user_id: int,
     ) -> None:
-        key = f"channel:conv_task:dingtalk:{state.conversation_id}:{user_id}"
+        suffix = f":{state.selection_scope}" if state.selection_scope else ""
+        key = (
+            f"channel:conv_task:dingtalk:{state.conversation_id}:" f"{user_id}{suffix}"
+        )
         await cache_manager.delete(key)
 
     async def _mark_active_card(
@@ -694,11 +855,7 @@ class DingTalkSelectionCardService:
         )
 
     def _active_card_key(self, state: DingTalkSelectionCardState) -> str:
-        scope = (
-            state.session_key
-            if state.kind == SelectionKind.TASK.value
-            else state.user_id
-        )
+        scope = state.selection_scope or state.session_key or str(state.user_id)
         return f"{ACTIVE_CARD_PREFIX}{scope}:{state.kind}"
 
     def _callback_params(self, message: CardCallbackMessage) -> dict[str, Any]:

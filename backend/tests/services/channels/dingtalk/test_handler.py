@@ -188,17 +188,19 @@ async def test_devices_command_selects_app_execution_target(
         ],
     )
 
+    message_context = _message_context()
     await handler._handle_devices_command(
         test_db,
         test_user,
         "1",
-        _message_context(),
+        message_context,
     )
 
     set_local_device.assert_awaited_once_with(
         test_user.id,
         "app-record-1819",
         "APB22015038",
+        scope=handler._selection_scope(test_user.id, message_context),
     )
 
 
@@ -246,6 +248,58 @@ async def test_devices_command_marks_app_execution_target_current(
 
 
 @pytest.mark.asyncio
+async def test_use_chat_detaches_bound_private_task(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db,
+    test_user,
+) -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    handler.send_text_reply = AsyncMock(return_value=True)
+    session = SimpleNamespace(mode=IMSessionMode.TASK, active_task_id=41)
+    get_session = AsyncMock(return_value=session)
+    set_mode = AsyncMock()
+    set_chat_mode = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "app.services.channels.handler.device_selection_manager.get_selection",
+        AsyncMock(return_value=DeviceSelection(device_type=DeviceType.CLOUD)),
+    )
+    monkeypatch.setattr(
+        "app.services.channels.handler.device_selection_manager.set_chat_mode",
+        set_chat_mode,
+    )
+    monkeypatch.setattr(
+        "app.services.channels.handler.model_selection_manager.get_selection",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "app.services.channels.handler.im_session_service.get_session",
+        get_session,
+    )
+    monkeypatch.setattr(
+        "app.services.channels.handler.im_session_service.set_mode",
+        set_mode,
+    )
+
+    message_context = _message_context()
+    await handler._handle_use_command(
+        test_db,
+        test_user,
+        "chat",
+        message_context,
+    )
+
+    set_chat_mode.assert_awaited_once_with(
+        test_user.id,
+        scope=handler._selection_scope(test_user.id, message_context),
+    )
+    set_mode.assert_awaited_once_with(
+        test_db,
+        session=session,
+        mode=IMSessionMode.CHAT,
+    )
+
+
+@pytest.mark.asyncio
 async def test_device_mode_migrates_legacy_app_selection_before_routing(
     monkeypatch: pytest.MonkeyPatch,
     test_user,
@@ -272,6 +326,7 @@ async def test_device_mode_migrates_legacy_app_selection_before_routing(
         set_local_device,
     )
 
+    message_context = _message_context()
     await handler._process_device_mode(
         test_user,
         DeviceSelection(
@@ -279,7 +334,7 @@ async def test_device_mode_migrates_legacy_app_selection_before_routing(
             device_id="local-device",
             device_name="APB22015038",
         ),
-        _message_context(),
+        message_context,
     )
 
     resolve.assert_awaited_once_with(
@@ -290,6 +345,7 @@ async def test_device_mode_migrates_legacy_app_selection_before_routing(
         test_user.id,
         "app-record-1819",
         "APB22015038",
+        scope=handler._selection_scope(test_user.id, message_context),
     )
     assert handler._create_and_process_device_task.await_args.kwargs["device_id"] == (
         "app-record-1819"
@@ -301,19 +357,153 @@ async def test_new_dingtalk_task_prefers_selected_agent(monkeypatch) -> None:
     handler = DingTalkChannelHandler(channel_id=77)
     selected = SimpleNamespace(id=22)
     db = object()
+    message_context = _message_context()
     resolve_selected = AsyncMock(return_value=selected)
     fallback = MagicMock(return_value=SimpleNamespace(id=10))
     monkeypatch.setattr(
         "app.services.channels.team_selection.resolve_selected_team",
         resolve_selected,
     )
+    monkeypatch.setattr(
+        "app.services.channels.team_selection.team_uses_only_shell_type",
+        MagicMock(return_value=True),
+    )
     handler._get_task_mode_team = fallback
 
-    team = await handler._resolve_new_task_team(db, 7)
+    team = await handler._resolve_new_task_team(db, 7, message_context)
 
     assert team is selected
-    resolve_selected.assert_awaited_once_with(db, 7)
+    from app.services.channels.selection_scope import (
+        TASK_PROFILE,
+        profile_selection_scope,
+    )
+
+    expected_scope = profile_selection_scope(
+        handler._selection_scope(7, message_context), TASK_PROFILE
+    )
+    resolve_selected.assert_awaited_once_with(db, 7, scope=expected_scope)
     fallback.assert_not_called()
+
+
+def test_dingtalk_selection_scope_isolated_by_conversation_and_actor() -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    first = _message_context()
+    second = _message_context()
+    second.conversation_id = "conv-other"
+    third = _message_context()
+    third.sender_id = "staff-b"
+
+    first_scope = handler._selection_scope(7, first)
+
+    assert first_scope == handler._selection_scope(7, first)
+    assert first_scope != handler._selection_scope(7, second)
+    assert first_scope != handler._selection_scope(7, third)
+
+
+@pytest.mark.asyncio
+async def test_conversation_task_cache_isolated_by_actor_scope(monkeypatch) -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    cache_get = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.services.channels.handler.cache_manager.get",
+        cache_get,
+    )
+    first = _message_context()
+    second = _message_context()
+    second.sender_id = "staff-b"
+
+    await handler._get_conversation_task_id(
+        first.conversation_id,
+        7,
+        scope=handler._selection_scope(7, first),
+    )
+    await handler._get_conversation_task_id(
+        second.conversation_id,
+        7,
+        scope=handler._selection_scope(7, second),
+    )
+
+    first_key = cache_get.await_args_list[0].args[0]
+    second_key = cache_get.await_args_list[1].args[0]
+    assert first_key != second_key
+
+
+@pytest.mark.asyncio
+async def test_device_mode_uses_task_selection_profile(monkeypatch) -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    monkeypatch.setattr(
+        "app.services.channels.handler.device_selection_manager.get_selection",
+        AsyncMock(return_value=DeviceSelection(device_type=DeviceType.CLOUD)),
+    )
+
+    profile = await handler._selection_profile(
+        SimpleNamespace(id=7),
+        _message_context(),
+        SimpleNamespace(mode=IMSessionMode.CHAT),
+    )
+
+    assert profile == "task"
+
+
+@pytest.mark.asyncio
+async def test_private_task_applies_task_profile_model_override(monkeypatch) -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    team = SimpleNamespace(id=22)
+    params = SimpleNamespace(
+        device_id=None,
+        model_id=None,
+        force_override_bot_model=False,
+        force_override_bot_model_type=None,
+    )
+    result = SimpleNamespace(
+        task=SimpleNamespace(id=41),
+        user_subtask=SimpleNamespace(id=42),
+        assistant_subtask=SimpleNamespace(id=43),
+    )
+    handler._resolve_new_task_team = AsyncMock(return_value=team)
+    handler._get_user_model_override = AsyncMock(
+        return_value=("claude-sonnet", "public")
+    )
+    handler._is_claude_compatible_override = AsyncMock(return_value=True)
+    handler._build_private_im_message_source = MagicMock(return_value={})
+    handler._persist_private_im_task_media = AsyncMock()
+    handler._trigger_private_im_task_response = AsyncMock()
+    handler.should_merge_task_created_running_notice_with_stream = MagicMock(
+        return_value=True
+    )
+    monkeypatch.setattr(
+        "app.services.im.task_continuation_service.build_new_task_params",
+        AsyncMock(return_value=params),
+    )
+    monkeypatch.setattr(
+        "app.services.chat.storage.task_manager.create_chat_task",
+        AsyncMock(return_value=result),
+    )
+    bind_active_task = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.im.session_service.im_session_service.bind_active_task",
+        bind_active_task,
+    )
+    message_context = _message_context()
+    user = SimpleNamespace(id=7)
+    session = SimpleNamespace()
+    db = object()
+
+    await handler._execute_private_im_create_task(
+        db=db,
+        user=user,
+        im_session=session,
+        project_id=None,
+        message="implement it",
+        message_context=message_context,
+    )
+
+    assert params.model_id == "claude-sonnet"
+    assert params.force_override_bot_model is True
+    assert params.force_override_bot_model_type == "public"
+    model_scope = handler._get_user_model_override.await_args.kwargs["scope"]
+    assert model_scope.endswith(":task")
+    bind_active_task.assert_awaited_once_with(db, session=session, task_id=41)
 
 
 @pytest.mark.asyncio
@@ -369,8 +559,8 @@ async def test_task_status_distinguishes_current_and_next_agent(monkeypatch) -> 
 
     team_info = await handler._get_status_team_info(db, user, session)
 
-    assert "当前 Task 智能体**: Old Agent" in team_info
-    assert "下一新任务智能体**: New Agent (用户选择)" in team_info
+    assert "Task 智能体**: New Agent (用户选择)" in team_info
+    assert "当前绑定 Task 智能体**: Old Agent" in team_info
 
 
 @pytest.mark.asyncio

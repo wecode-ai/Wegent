@@ -28,6 +28,7 @@ class ChannelLike(Protocol):
     is_enabled: bool
     config: Dict[str, Any]
     default_team_id: int
+    default_task_team_id: int
     default_model_name: str
 
 
@@ -73,8 +74,13 @@ class BaseChannelProvider(ABC):
 
     @property
     def default_team_id(self) -> int:
-        """Get the default team ID for this channel."""
+        """Get the default Chat team ID for this channel."""
         return self._channel.default_team_id
+
+    @property
+    def default_task_team_id(self) -> int:
+        """Get the default Task team ID for this channel."""
+        return getattr(self._channel, "default_task_team_id", 0)
 
     @property
     def is_running(self) -> bool:

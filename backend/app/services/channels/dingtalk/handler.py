@@ -106,6 +106,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         interaction_card_template_id: str = "",
         selection_card_service: Optional["DingTalkSelectionCardService"] = None,
         get_default_team_id: Optional[Callable[[], Optional[int]]] = None,
+        get_default_task_team_id: Optional[Callable[[], Optional[int]]] = None,
         get_default_model_name: Optional[Callable[[], Optional[str]]] = None,
         get_user_mapping_config: Optional[Callable[[], Dict[str, Any]]] = None,
     ):
@@ -115,7 +116,8 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             channel_id: The IM channel ID for callback purposes
             dingtalk_client: DingTalk stream client for sending responses
             use_ai_card: Whether to use AI Card for streaming responses
-            get_default_team_id: Callback to get current default_team_id dynamically
+            get_default_team_id: Callback to get current Chat Team dynamically
+            get_default_task_team_id: Callback to get current Task Team dynamically
             get_default_model_name: Callback to get current default_model_name dynamically
             get_user_mapping_config: Callback to get user mapping configuration dynamically
         """
@@ -123,6 +125,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             channel_type=ChannelType.DINGTALK,
             channel_id=channel_id,
             get_default_team_id=get_default_team_id,
+            get_default_task_team_id=get_default_task_team_id,
             get_default_model_name=get_default_model_name,
             get_user_mapping_config=get_user_mapping_config,
         )
@@ -133,6 +136,47 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         self._selection_card_service = selection_card_service
         # Store incoming_message for reply operations
         self._current_incoming_message: Optional[ChatbotMessage] = None
+
+    def _selection_scope(
+        self,
+        user_id: int,
+        message_context: MessageContext,
+    ) -> str:
+        from app.services.channels.selection_scope import (
+            build_conversation_selection_scope,
+        )
+
+        actor_id = str(
+            message_context.extra_data.get("sender_staff_id")
+            or message_context.sender_id
+            or ""
+        )
+        return build_conversation_selection_scope(
+            channel_type="dingtalk",
+            channel_id=self._channel_id,
+            conversation_id=message_context.conversation_id,
+            actor_id=actor_id,
+            user_id=user_id,
+        )
+
+    def _get_task_mode_team(self, db: Session, user_id: int) -> Optional[Kind]:
+        """Prefer this DingTalk channel's Task Team, then the global fallback."""
+
+        from app.services.channels.team_selection import resolve_task_mode_team
+
+        if not self.default_task_team_id:
+            self.logger.warning(
+                "[DingTalkTaskRouting] defaultTaskTeamId missing; "
+                "using DEFAULT_TEAM_TASK fallback: channel_id=%s user_id=%s",
+                self._channel_id,
+                user_id,
+            )
+        return resolve_task_mode_team(
+            db,
+            user_id,
+            default_team_id=self.default_task_team_id,
+            prefer_default_team_id=True,
+        )
 
     def set_dingtalk_client(self, client: "DingTalkStreamClient") -> None:
         """Set the DingTalk client (can be set after initialization)."""
@@ -342,13 +386,47 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         self,
         db: Session,
         user_id: int,
+        message_context: Optional[MessageContext] = None,
     ) -> Optional[Kind]:
         """Use the DingTalk agent selection for newly created Tasks."""
 
-        from app.services.channels.team_selection import resolve_selected_team
+        from app.services.channels.selection_scope import TASK_PROFILE
+        from app.services.channels.team_selection import (
+            resolve_selected_team,
+            team_selection_manager,
+            team_uses_only_shell_type,
+        )
 
-        selected = await resolve_selected_team(db, user_id)
-        return selected or self._get_task_mode_team(db, user_id)
+        selection_scope = (
+            self._profile_scope(user_id, message_context, TASK_PROFILE)
+            if message_context is not None
+            else None
+        )
+        selected = await resolve_selected_team(db, user_id, scope=selection_scope)
+        if selected is not None and not team_uses_only_shell_type(
+            db, selected, "ClaudeCode"
+        ):
+            self.logger.warning(
+                "[DingTalkTaskRouting] Clearing incompatible Task Team selection: "
+                "channel_id=%s user_id=%s team_id=%s",
+                self._channel_id,
+                user_id,
+                selected.id,
+            )
+            await team_selection_manager.clear_selection(user_id, scope=selection_scope)
+            selected = None
+
+        team = selected or self._get_task_mode_team(db, user_id)
+        if team is not None and not team_uses_only_shell_type(db, team, "ClaudeCode"):
+            self.logger.error(
+                "[DingTalkTaskRouting] Task Team is not ClaudeCode-compatible: "
+                "channel_id=%s user_id=%s team_id=%s",
+                self._channel_id,
+                user_id,
+                team.id,
+            )
+            return None
+        return team
 
     async def _after_agent_selection_changed(
         self,
@@ -374,17 +452,46 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         db: Session,
         user: User,
         im_session: Optional[IMPrivateSession],
+        message_context: Optional[MessageContext] = None,
     ) -> str:
         """Distinguish the bound Task Team from the next new Task Team."""
 
-        if im_session is None or im_session.mode != IMSessionMode.TASK:
-            return await super()._get_status_team_info(db, user, im_session)
-
+        from app.services.channels.selection_scope import CHAT_PROFILE, TASK_PROFILE
         from app.services.channels.team_selection import (
             get_team_display_name,
             resolve_selected_team,
         )
         from app.services.im import task_continuation_service as task_service
+
+        chat_scope = (
+            self._profile_scope(user.id, message_context, CHAT_PROFILE)
+            if message_context is not None
+            else None
+        )
+        task_scope = (
+            self._profile_scope(user.id, message_context, TASK_PROFILE)
+            if message_context is not None
+            else None
+        )
+        selected_chat = await resolve_selected_team(db, user.id, scope=chat_scope)
+        selected_task = await resolve_selected_team(db, user.id, scope=task_scope)
+        chat_label = get_team_display_name(
+            selected_chat or self._get_default_team(db, user.id)
+        )
+        task_label = get_team_display_name(
+            selected_task or self._get_task_mode_team(db, user.id)
+        )
+        if selected_chat is not None:
+            chat_label += " (用户选择)"
+        if selected_task is not None:
+            task_label += " (用户选择)"
+
+        lines = [
+            f"**Chat 智能体**: {chat_label}",
+            f"**Task 智能体**: {task_label}",
+        ]
+        if im_session is None or im_session.mode != IMSessionMode.TASK:
+            return "\n".join(lines)
 
         current_label = "未绑定"
         if im_session.active_task_id is not None:
@@ -409,15 +516,8 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         elif im_session.active_runtime_task:
             current_label = "本地运行任务"
 
-        selected = await resolve_selected_team(db, user.id)
-        next_team = selected or self._get_task_mode_team(db, user.id)
-        next_label = get_team_display_name(next_team)
-        if selected is not None:
-            next_label += " (用户选择)"
-        return (
-            f"**当前 Task 智能体**: {current_label}\n"
-            f"**下一新任务智能体**: {next_label}"
-        )
+        lines.append(f"**当前绑定 Task 智能体**: {current_label}")
+        return "\n".join(lines)
 
     async def try_handle_interactive_control(
         self,
@@ -477,6 +577,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         selection_card_service: Optional["DingTalkSelectionCardService"] = None,
         on_message: Optional[Callable[[Dict[str, Any]], asyncio.Future]] = None,
         get_default_team_id: Optional[Callable[[], Optional[int]]] = None,
+        get_default_task_team_id: Optional[Callable[[], Optional[int]]] = None,
         get_default_model_name: Optional[Callable[[], Optional[str]]] = None,
         get_user_mapping_config: Optional[Callable[[], Dict[str, Any]]] = None,
         channel_id: Optional[int] = None,
@@ -490,7 +591,8 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             use_ai_card: Whether to use AI Card for streaming responses
             on_message: Optional callback for message processing.
                         If not provided, uses default Wegent chat processing.
-            get_default_team_id: Callback to get current default_team_id dynamically.
+            get_default_team_id: Callback to get current Chat Team dynamically.
+            get_default_task_team_id: Callback to get current Task Team dynamically.
             get_default_model_name: Callback to get current default_model_name dynamically.
                                    Used to override bot's model configuration.
             get_user_mapping_config: Callback to get user mapping configuration.
@@ -515,6 +617,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             interaction_card_template_id=interaction_card_template_id,
             selection_card_service=selection_card_service,
             get_default_team_id=get_default_team_id,
+            get_default_task_team_id=get_default_task_team_id,
             get_default_model_name=get_default_model_name,
             get_user_mapping_config=get_user_mapping_config,
         )
@@ -530,8 +633,13 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
 
     @property
     def default_team_id(self) -> Optional[int]:
-        """Get the current default team ID."""
+        """Get the current default Chat Team ID."""
         return self._channel_handler.default_team_id
+
+    @property
+    def default_task_team_id(self) -> Optional[int]:
+        """Get the current default Task Team ID."""
+        return self._channel_handler.default_task_team_id
 
     @property
     def default_model_name(self) -> Optional[str]:

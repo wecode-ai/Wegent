@@ -59,6 +59,12 @@ from app.services.channels.model_selection import (
     ModelSelection,
     model_selection_manager,
 )
+from app.services.channels.selection_scope import (
+    CHAT_PROFILE,
+    TASK_PROFILE,
+    build_conversation_selection_scope,
+    profile_selection_scope,
+)
 from app.services.channels.selection_service import channel_selection_service
 from app.services.channels.team_selection import (
     TEAM_SELECTION_KEY_PREFIX,
@@ -220,7 +226,10 @@ class DingTalkConversationHarness(DingTalkChannelHandler):
         user: User,
         message_context: MessageContext,
     ) -> None:
-        selection = await device_selection_manager.get_selection(user.id)
+        selection = await device_selection_manager.get_selection(
+            user.id,
+            scope=self._selection_scope(user.id, message_context),
+        )
         assert selection.device_type == DeviceType.CHAT
         assert self._turns, "Received an unexpected DingTalk chat turn"
         turn = self._turns.pop(0)
@@ -415,6 +424,28 @@ def _create_selection_agent(
     name: str,
     display_name: str,
 ) -> Kind:
+    bot_name = f"{name}-bot"
+    bot = Kind(
+        user_id=user_id,
+        kind="Bot",
+        name=bot_name,
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": bot_name, "namespace": "default"},
+            "spec": {
+                "ghostRef": {
+                    "name": f"{bot_name}-ghost",
+                    "namespace": "default",
+                },
+                "shellRef": {"name": "ClaudeCode", "namespace": "default"},
+            },
+        },
+    )
+    db.add(bot)
+    db.commit()
     team = Kind(
         user_id=user_id,
         kind="Team",
@@ -429,7 +460,16 @@ def _create_selection_agent(
                 "namespace": "default",
                 "displayName": display_name,
             },
-            "spec": {"collaborationModel": "pipeline", "members": []},
+            "spec": {
+                "collaborationModel": "pipeline",
+                "members": [
+                    {
+                        "botRef": {"name": bot_name, "namespace": "default"},
+                        "prompt": "",
+                        "role": "leader",
+                    }
+                ],
+            },
             "status": {"state": "Available"},
         },
     )
@@ -593,9 +633,20 @@ async def _run_selection_card_flow(user_id: int) -> None:
         channel_id=CHANNEL_ID,
         conversation_id=conversation_id,
     )
-    model_key = f"{CHANNEL_USER_MODEL_PREFIX}{user_id}"
-    device_key = f"{CHANNEL_USER_DEVICE_PREFIX}{user_id}"
-    team_key = f"{TEAM_SELECTION_KEY_PREFIX}{user_id}"
+    selection_scope = build_conversation_selection_scope(
+        channel_type="dingtalk",
+        channel_id=CHANNEL_ID,
+        conversation_id=conversation_id,
+        actor_id=sender_id,
+        user_id=user_id,
+    )
+    chat_scope = profile_selection_scope(selection_scope, CHAT_PROFILE)
+    task_scope = profile_selection_scope(selection_scope, TASK_PROFILE)
+    assert chat_scope is not None
+    assert task_scope is not None
+    model_key = f"{CHANNEL_USER_MODEL_PREFIX}{user_id}:{chat_scope}"
+    device_key = f"{CHANNEL_USER_DEVICE_PREFIX}{user_id}:{selection_scope}"
+    team_key = f"{TEAM_SELECTION_KEY_PREFIX}{user_id}:{task_scope}"
     model_snapshot = await _cache_snapshot(model_key)
     device_snapshot = await _cache_snapshot(device_key)
     team_snapshot = await _cache_snapshot(team_key)
@@ -623,7 +674,9 @@ async def _run_selection_card_flow(user_id: int) -> None:
         )
         task_id = task.id
         old_agent_id = old_agent.id
+        old_agent_name = old_agent.name
         selected_agent_id = selected_agent.id
+        selected_agent_name = selected_agent.name
     finally:
         db.close()
 
@@ -671,6 +724,7 @@ async def _run_selection_card_flow(user_id: int) -> None:
         channel_id=CHANNEL_ID,
         interaction_template_id=INTERACTION_TEMPLATE_ID,
         get_default_team_id=lambda: old_agent_id,
+        get_default_task_team_id=lambda: old_agent_id,
         get_default_model_name=lambda: None,
         get_user_mapping_config=lambda: {
             "mode": "select_user",
@@ -692,8 +746,11 @@ async def _run_selection_card_flow(user_id: int) -> None:
                 display_name="GPT E2E",
                 provider="openai",
             ),
+            scope=chat_scope,
         )
-        await device_selection_manager.set_cloud_executor(user_id)
+        await device_selection_manager.set_cloud_executor(
+            user_id, scope=selection_scope
+        )
 
         incoming_message = _message("设置", conversation_id, sender_id)
         assert await handler.handle_message(incoming_message)
@@ -754,7 +811,9 @@ async def _run_selection_card_flow(user_id: int) -> None:
         assert response["cardData"]["cardParamMap"]["status"] == (
             "已切换到模型：Claude E2E"
         )
-        model_selection = await model_selection_manager.get_selection(user_id)
+        model_selection = await model_selection_manager.get_selection(
+            user_id, scope=chat_scope
+        )
         assert model_selection is not None
         assert model_selection.model_name == CLAUDE_MODEL_NAME
 
@@ -775,7 +834,9 @@ async def _run_selection_card_flow(user_id: int) -> None:
         assert response["cardData"]["cardParamMap"]["status"] == (
             "已切换到设备：DingTalk CI Mac"
         )
-        device_selection = await device_selection_manager.get_selection(user_id)
+        device_selection = await device_selection_manager.get_selection(
+            user_id, scope=selection_scope
+        )
         assert device_selection.device_type == DeviceType.LOCAL
         assert device_selection.device_id == DEVICE_EXECUTION_TARGET_ID
 
@@ -826,7 +887,9 @@ async def _run_selection_card_flow(user_id: int) -> None:
             "DingTalk CI Selected Agent（用户选择）"
         )
 
-        team_selection = await team_selection_manager.get_selection(user_id)
+        team_selection = await team_selection_manager.get_selection(
+            user_id, scope=task_scope
+        )
         assert team_selection is not None
         assert team_selection.team_id == selected_agent_id
         session = await im_session_service.get_session(session_key)
@@ -838,10 +901,11 @@ async def _run_selection_card_flow(user_id: int) -> None:
         try:
             persisted_task = verification_db.get(TaskResource, task_id)
             assert persisted_task is not None
-            assert persisted_task.json["spec"]["teamRef"]["name"] == old_agent.name
+            assert persisted_task.json["spec"]["teamRef"]["name"] == old_agent_name
             resolved_team = await handler._resolve_new_task_team(
                 verification_db,
                 user_id,
+                handler.parse_message(incoming_message),
             )
             assert resolved_team is not None
             assert resolved_team.id == selected_agent_id
@@ -898,7 +962,10 @@ async def _run_selection_card_flow(user_id: int) -> None:
         ), card_params["status"]
         assert card_params["currentTaskAgent"] == "未绑定"
         assert card_params["nextTaskAgent"] == default_agent_label
-        assert await team_selection_manager.get_selection(user_id) is None
+        assert (
+            await team_selection_manager.get_selection(user_id, scope=task_scope)
+            is None
+        )
 
         await save_conversation_card_state(
             out_track_id=answer_card_id,
@@ -940,6 +1007,22 @@ async def _run_selection_card_flow(user_id: int) -> None:
                 cleanup_team = cleanup_db.get(Kind, team_id)
                 if cleanup_team is not None:
                     cleanup_db.delete(cleanup_team)
+            for bot_name in (
+                f"{old_agent_name}-bot",
+                f"{selected_agent_name}-bot",
+            ):
+                cleanup_bot = (
+                    cleanup_db.query(Kind)
+                    .filter(
+                        Kind.user_id == user_id,
+                        Kind.kind == "Bot",
+                        Kind.namespace == "default",
+                        Kind.name == bot_name,
+                    )
+                    .first()
+                )
+                if cleanup_bot is not None:
+                    cleanup_db.delete(cleanup_bot)
             cleanup_db.commit()
         finally:
             cleanup_db.close()
@@ -949,13 +1032,14 @@ async def _run_selection_card_flow(user_id: int) -> None:
         await cache_manager.delete(f"{CARD_STATE_PREFIX}{answer_card_id}")
         for out_track_id, token in action_tokens:
             await cache_manager.delete(f"{CARD_ACTION_PREFIX}{out_track_id}:{token}")
-        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{user_id}:model")
-        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{user_id}:device")
-        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{user_id}:agent")
-        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{session_key}:task")
+        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{selection_scope}:model")
+        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{selection_scope}:device")
+        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{selection_scope}:agent")
+        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{selection_scope}:task")
         await cache_manager.delete(f"{PRIVATE_SESSION_KEY_PREFIX}{session_key}")
         await cache_manager.delete(
-            f"{CHANNEL_CONV_TASK_PREFIX}dingtalk:{conversation_id}:{user_id}"
+            f"{CHANNEL_CONV_TASK_PREFIX}dingtalk:{conversation_id}:"
+            f"{user_id}:{selection_scope}"
         )
         cache_client = await cache_manager._get_client()
         try:
@@ -986,9 +1070,6 @@ async def run() -> None:
         channel_id=CHANNEL_ID,
         conversation_id=conversation_id,
     )
-    conversation_cache_key = (
-        f"{CHANNEL_CONV_TASK_PREFIX}dingtalk:{conversation_id}:{user_id}"
-    )
     turns = [
         TurnSpec(
             prompt="检查配置并给出最终答案",
@@ -1017,7 +1098,18 @@ async def run() -> None:
         ),
     ]
     handler = DingTalkConversationHarness(user_id, turns)
-    device_selection_key = f"{CHANNEL_USER_DEVICE_PREFIX}{user_id}"
+    selection_scope = build_conversation_selection_scope(
+        channel_type="dingtalk",
+        channel_id=CHANNEL_ID,
+        conversation_id=conversation_id,
+        actor_id=sender_id,
+        user_id=user_id,
+    )
+    conversation_cache_key = (
+        f"{CHANNEL_CONV_TASK_PREFIX}dingtalk:{conversation_id}:"
+        f"{user_id}:{selection_scope}"
+    )
+    device_selection_key = f"{CHANNEL_USER_DEVICE_PREFIX}{user_id}:{selection_scope}"
     global_notification_key = f"{USER_GLOBAL_NOTIFICATION_PREFIX}{user_id}"
     runtime_subscriptions_key = f"{USER_RUNTIME_TASK_SUBSCRIPTIONS_PREFIX}{user_id}"
     cache_snapshots = {
@@ -1052,9 +1144,11 @@ async def run() -> None:
     runtime_work_service.send_runtime_message = fake_send_runtime_message
 
     try:
-        await device_selection_manager.set_cloud_executor(user_id)
+        await device_selection_manager.set_cloud_executor(
+            user_id, scope=selection_scope
+        )
         assert (
-            await device_selection_manager.get_selection(user_id)
+            await device_selection_manager.get_selection(user_id, scope=selection_scope)
         ).device_type == DeviceType.CLOUD
         await cache_manager.set(conversation_cache_key, 999999, expire=60)
         assert await handler.handle_message(
@@ -1063,7 +1157,7 @@ async def run() -> None:
         assert await handler.handle_message(_message("1", conversation_id, sender_id))
         assert await cache_manager.get(conversation_cache_key) is None
         assert (
-            await device_selection_manager.get_selection(user_id)
+            await device_selection_manager.get_selection(user_id, scope=selection_scope)
         ).device_type == DeviceType.CHAT
 
         session = await im_session_service.get_session(session_key)
