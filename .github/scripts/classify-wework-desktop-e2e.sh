@@ -37,6 +37,7 @@ core_segments=(
   runtime-task-queue
   runtime-terminal-convergence
   running-conversation-history
+  running-plan-history
   codex-notification-isolation
   executor-stream-recovery
   transcript-sync
@@ -149,7 +150,7 @@ core_shards=(
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
-  local-harness,running-conversation-history,native-window-chrome
+  local-harness,running-conversation-history,running-plan-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,plugin-mcp-headers,workbench-mode,executor-stream-recovery,transcript-sync
   model-routing,computer-use,codex-account-login
 )

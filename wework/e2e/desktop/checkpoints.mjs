@@ -46,6 +46,7 @@ export const DESKTOP_CHECKPOINTS = [
   'executor-stream-recovery',
   'transcript-sync',
   'running-conversation-history',
+  'running-plan-history',
   'codex-notification-isolation',
   'split-workbench',
   'release-package-startup',

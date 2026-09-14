@@ -3803,6 +3803,37 @@ fn thread_goal_set_params_maps_initial_goal() {
 }
 
 #[test]
+fn latest_in_progress_turn_id_uses_the_newest_running_turn() {
+    let response = json!({
+        "thread": {
+            "turns": [
+                {"id": "turn-complete", "status": "completed"},
+                {"id": "turn-running", "status": "inProgress"}
+            ]
+        }
+    });
+
+    assert_eq!(
+        latest_in_progress_turn_id(&response).as_deref(),
+        Some("turn-running")
+    );
+}
+
+#[test]
+fn latest_in_progress_turn_id_ignores_settled_turns() {
+    let response = json!({
+        "thread": {
+            "turns": [
+                {"id": "turn-complete", "status": "completed"},
+                {"id": "turn-failed", "status": "failed"}
+            ]
+        }
+    });
+
+    assert!(latest_in_progress_turn_id(&response).is_none());
+}
+
+#[test]
 fn thread_goal_set_params_rejects_empty_objective() {
     let error = thread_goal_set_params("thread-1", &json!({"objective": "   "}))
         .expect_err("empty objective should be rejected");
