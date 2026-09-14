@@ -24,6 +24,7 @@ def normalize_requested_skill_refs(
             name = getattr(skill, "name", None)
             namespace = getattr(skill, "namespace", "default")
             is_public = bool(getattr(skill, "is_public", False))
+            skill_id = getattr(skill, "skill_id", None)
         else:
             name = skill.get("name") if isinstance(skill, dict) else None
             namespace = (
@@ -36,6 +37,7 @@ def normalize_requested_skill_refs(
                 if isinstance(skill, dict)
                 else False
             )
+            skill_id = skill.get("skill_id") if isinstance(skill, dict) else None
 
         if not isinstance(name, str) or not name:
             continue
@@ -45,6 +47,8 @@ def normalize_requested_skill_refs(
             "namespace": namespace or "default",
             "is_public": is_public,
         }
+        if type(skill_id) is int and skill_id > 0:
+            normalized_skill["skill_id"] = skill_id
         if name in normalized_by_name:
             del normalized_by_name[name]
         normalized_by_name[name] = normalized_skill
