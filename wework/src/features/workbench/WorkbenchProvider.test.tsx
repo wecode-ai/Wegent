@@ -1459,6 +1459,26 @@ function ProjectSendProbe({
       <button
         type="button"
         onClick={() => {
+          const project =
+            workbench.state.currentProject ??
+            workbench.state.projects.find(candidate => candidate.id === 7)
+          if (!project) return
+          void workbench.createTemporaryRuntimeTask('临时侧边对话', {
+            project,
+            source: {
+              deviceId: 'device-1',
+              taskId: 'main-thread-task',
+              threadId: 'main-thread',
+              workspacePath: '/workspace/worktrees/main-thread',
+            },
+          })
+        }}
+      >
+        send temporary side chat
+      </button>
+      <button
+        type="button"
+        onClick={() => {
           const address = {
             deviceId: 'device-1',
             taskId: 'runtime-b',
@@ -6191,7 +6211,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     ).toEqual(['user:修复 CI'])
   })
 
-  test('keeps project sidebar chats in the main workspace when worktree mode is selected', async () => {
+  test('keeps sidebar chats out of new worktrees when worktree mode is selected', async () => {
     const prepareWorktree = vi.fn()
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
@@ -6260,6 +6280,25 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     )
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0].execution).toBeUndefined()
+    await userEvent.click(screen.getByText('send temporary side chat'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(2))
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[1][0]
+    expect(request).toEqual(
+      expect.objectContaining({
+        deviceId: 'device-1',
+        workspacePath: '/workspace/worktrees/main-thread',
+        message: '临时侧边对话',
+        ephemeral: true,
+        sideSource: expect.objectContaining({
+          deviceId: 'device-1',
+          taskId: 'main-thread-task',
+          threadId: 'main-thread',
+          workspacePath: '/workspace/worktrees/main-thread',
+        }),
+      })
+    )
+    expect(request.execution).toBeUndefined()
     expect(prepareWorktree).not.toHaveBeenCalled()
   })
 

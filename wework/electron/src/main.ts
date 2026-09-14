@@ -1558,6 +1558,9 @@ async function configureDesktopRuntime(): Promise<void> {
             visible: Boolean(
               popoutWindow && !popoutWindow.isDestroyed() && popoutWindow.isVisible()
             ),
+            windowId: popoutWindow && !popoutWindow.isDestroyed() ? popoutWindow.id : null,
+            webContentsId:
+              popoutWindow && !popoutWindow.isDestroyed() ? popoutWindow.webContents.id : null,
           }),
           capturePopout: async () => {
             const target = await ensureAuxiliaryWindow('popout-window')
