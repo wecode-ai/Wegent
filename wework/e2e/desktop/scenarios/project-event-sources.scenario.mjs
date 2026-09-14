@@ -340,7 +340,11 @@ function gitlabMergeRequest(eventType, sequence) {
     sha: `gitlab-head-${sequence}`,
   }
   if (eventType === 'change_request.merge_conflict') {
-    return { ...mergeRequest, detailed_merge_status: 'cannot_be_merged' }
+    return {
+      ...mergeRequest,
+      state: 'opened',
+      detailed_merge_status: 'cannot_be_merged',
+    }
   }
   if (eventType === 'change_request.merged') {
     return {
