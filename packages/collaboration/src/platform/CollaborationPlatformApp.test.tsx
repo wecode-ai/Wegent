@@ -806,6 +806,39 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("collaboration-workspace-settings-save")).toBeTruthy();
   });
 
+  it("keeps workspace settings mounted while switching sections in the same workspace", async () => {
+    const { api } = createApi();
+    const pendingWorkspaceList = deferred<CollaborationWorkspace[]>();
+    vi.mocked(api.workspaces!.list)
+      .mockResolvedValueOnce([workspace])
+      .mockReturnValueOnce(pendingWorkspaceList.promise);
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          workspaceView: "settings",
+        }}
+      />,
+    );
+
+    await click(byTestId("collaboration-workspace-nav-agents"));
+
+    expect(byTestId("workspace-settings-shell")).toBeTruthy();
+    expect(
+      byTestId("collaboration-workspace-nav-agents").getAttribute(
+        "aria-current",
+      ),
+    ).toBe("page");
+
+    await act(async () => {
+      pendingWorkspaceList.resolve([workspace]);
+      await pendingWorkspaceList.promise;
+    });
+    await flush();
+  });
+
   it("keeps workspace creation and collaboration resources as separate header actions", async () => {
     const { api } = createApi();
     const manageResource = vi.fn();
