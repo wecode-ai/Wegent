@@ -388,7 +388,7 @@ class ShellSpec(BaseModel):
 
     shellType: str = Field(
         ..., validation_alias=AliasChoices("shellType", "runtime")
-    )  # Agent type: 'ClaudeCode', 'Agno', 'Dify', etc. Accepts 'runtime' for backward compatibility
+    )  # Agent type: 'Codex', 'ClaudeCode', 'Agno', 'Dify', etc.
     supportModel: Optional[List[str]] = None
     baseImage: Optional[str] = None  # Custom base image address for user-defined shells
     baseShellRef: Optional[str] = (
@@ -396,7 +396,7 @@ class ShellSpec(BaseModel):
     )
     requiresWorkspace: Optional[bool] = Field(
         default=None,
-        description="Whether this shell requires a workspace/repository. Defaults to True for local_engine types (ClaudeCode, Agno), False for external_api types (Dify, Chat).",
+        description="Whether this shell requires a workspace/repository. Defaults to True for local_engine types (Codex, ClaudeCode, Agno), False for external_api types (Dify, Chat).",
     )
 
 
@@ -913,7 +913,7 @@ class SkillSpec(BaseModel):
     bindShells: Optional[List[str]] = Field(
         None,
         description="List of shell types this skill is compatible with. "
-        "Valid values: 'ClaudeCode', 'Agno', 'Dify', 'Chat'. "
+        "Valid values: 'Codex', 'ClaudeCode', 'Agno', 'Dify', 'Chat'. "
         "REQUIRED: Skills must explicitly specify bindShells to be available. "
         "If not specified or empty, the skill will NOT be available for any shell type.",
     )

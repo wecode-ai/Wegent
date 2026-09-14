@@ -25,6 +25,12 @@ const shells: UnifiedShell[] = [
     shellType: 'Chat',
   },
   {
+    name: 'Codex',
+    type: 'public',
+    displayName: 'Codex',
+    shellType: 'Codex',
+  },
+  {
     name: 'ClaudeCode',
     type: 'public',
     displayName: 'Claude Code',
@@ -88,7 +94,7 @@ describe('simple team edit utils', () => {
     expect(getModelCategoryTypeForBindMode(['image', 'video'])).toBe('llm')
   })
 
-  it('exposes simple, complex, and custom executor presets', () => {
+  it('exposes user-facing executor presets', () => {
     expect(getSimpleExecutorOptions().map(option => option.value)).toEqual([
       'simple',
       'complex',
@@ -100,8 +106,11 @@ describe('simple team edit utils', () => {
     expect(resolveShellForExecutor(shells, 'simple')?.name).toBe('Chat')
   })
 
-  it('resolves complex executor to ClaudeCode shell', () => {
-    expect(resolveShellForExecutor(shells, 'complex')?.name).toBe('ClaudeCode')
+  it('resolves the coding executor to the selected runtime', () => {
+    expect(resolveShellForExecutor(shells, 'complex')?.name).toBe('Codex')
+    expect(resolveShellForExecutor(shells, 'complex', undefined, 'claude_code')?.name).toBe(
+      'ClaudeCode'
+    )
   })
 
   it('resolves custom executor by selected custom shell name', () => {
@@ -113,6 +122,7 @@ describe('simple team edit utils', () => {
       resolveSimpleExecutorFromBot({ ...bot, shell_name: 'Chat', shell_type: 'Chat' })
     ).toEqual({
       mode: 'simple',
+      codingRuntime: 'codex',
       customShellName: '',
     })
     expect(
@@ -123,6 +133,18 @@ describe('simple team edit utils', () => {
       })
     ).toEqual({
       mode: 'complex',
+      codingRuntime: 'claude_code',
+      customShellName: '',
+    })
+    expect(
+      resolveSimpleExecutorFromBot({
+        ...bot,
+        shell_name: 'Codex',
+        shell_type: 'Codex',
+      })
+    ).toEqual({
+      mode: 'complex',
+      codingRuntime: 'codex',
       customShellName: '',
     })
   })
@@ -136,6 +158,7 @@ describe('simple team edit utils', () => {
       })
     ).toEqual({
       mode: 'custom',
+      codingRuntime: 'codex',
       customShellName: 'custom-code',
     })
   })
@@ -153,7 +176,8 @@ describe('simple team edit utils', () => {
 
     expect(normalizeExecutorForBindMode('simple', bindMode, shells)).toEqual({
       mode: 'complex',
-      reason: 'requires_claude_code',
+      codingRuntime: 'codex',
+      reason: 'requires_coding_agent',
     })
   })
 
@@ -162,6 +186,7 @@ describe('simple team edit utils', () => {
 
     expect(normalizeExecutorForBindMode('custom', bindMode, shells, 'custom-code')).toEqual({
       mode: 'custom',
+      codingRuntime: 'codex',
       reason: null,
     })
   })
@@ -171,6 +196,7 @@ describe('simple team edit utils', () => {
 
     expect(normalizeExecutorForBindMode('custom', bindMode, shells, 'custom-chat')).toEqual({
       mode: 'custom',
+      codingRuntime: 'codex',
       reason: null,
     })
   })
@@ -180,6 +206,7 @@ describe('simple team edit utils', () => {
 
     expect(normalizeExecutorForBindMode('custom', bindMode, shells, '')).toEqual({
       mode: 'custom',
+      codingRuntime: 'codex',
       reason: null,
     })
   })
@@ -190,6 +217,7 @@ describe('simple team edit utils', () => {
 
     expect(normalizeExecutorForBindMode(mode, bindMode, shells)).toEqual({
       mode: 'simple',
+      codingRuntime: 'codex',
       reason: null,
     })
   })
