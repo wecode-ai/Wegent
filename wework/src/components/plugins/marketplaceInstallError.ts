@@ -41,7 +41,7 @@ export function humanizeMarketplacePluginError(
   if (/still installed after uninstall/i.test(trimmed)) {
     return t(
       'workbench.plugins_uninstall_still_installed',
-      '卸载未完成，插件仍显示为已安装。OpenAI 官方远程插件需要已登录的 ChatGPT / Codex 账号，并确认网络可访问。'
+      '卸载未完成，插件仍显示为已安装。请刷新插件列表后重试；如果问题持续，请提交反馈。'
     )
   }
   return trimmed
