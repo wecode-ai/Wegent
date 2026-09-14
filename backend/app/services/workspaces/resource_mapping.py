@@ -50,6 +50,8 @@ def execution_environment_values(
     db: Session,
     grant: ResourceMember,
     device: Kind,
+    *,
+    workspace_id: str | None = None,
 ) -> dict[str, object]:
     spec = _kind_spec(device)
     device_type = str(spec.get("deviceType") or "local")
@@ -59,7 +61,7 @@ def execution_environment_values(
     capabilities = spec.get("capabilities")
     return {
         "id": device.id,
-        "workspace_id": grant.entity_id,
+        "workspace_id": workspace_id or grant.entity_id,
         "device_id": device.id,
         "device_key": str(spec.get("deviceId") or device.name),
         "name": str(spec.get("displayName") or device.name),
@@ -76,6 +78,7 @@ def execution_environment_values(
             if isinstance(capabilities, list)
             else []
         ),
+        "coding_tools": coding_tools(spec),
         "owner_type": owner_type,
         "owner_id": owner_id,
         "owner_name": owner_name,
@@ -98,8 +101,10 @@ def personal_environment_values(
     return {
         "id": str(device.id),
         "device_id": device.id,
+        "device_key": str(spec.get("deviceId") or device.name),
         "name": str(spec.get("displayName") or device.name),
         "kind": execution_environment_kind(device_type),
+        "coding_tools": coding_tools(spec),
         "owner_type": "user",
         "owner_id": str(owner.id),
         "owner_name": owner.user_name,
@@ -107,6 +112,16 @@ def personal_environment_values(
         "workspace_ids": workspace_ids,
         "updated_at": device.updated_at,
     }
+
+
+def coding_tools(spec: dict[str, object]) -> list[str]:
+    """Return product-facing coding tools implemented by the device Runtime."""
+    configured = spec.get("codingTools")
+    if isinstance(configured, list):
+        return [str(value) for value in configured if str(value).strip()]
+    if str(spec.get("bindShell") or "claudecode").lower() == "openclaw":
+        return ["openclaw"]
+    return ["claude_code", "codex"]
 
 
 def owner_values(

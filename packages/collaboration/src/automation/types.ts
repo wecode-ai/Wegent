@@ -200,6 +200,8 @@ export interface WorkflowNodeDefinition {
   required_deliverables?: WorkflowDeliverableRequirement[];
   workspace_policy: "none" | "composer" | "inherit";
   automation_rule_id?: string | null;
+  required_assignee_type?: "user" | "agent" | "team" | null;
+  required_assignee_id?: string | null;
   execution_config?: WorkflowExecutionConfig | null;
   execution_config_override?: boolean;
 }

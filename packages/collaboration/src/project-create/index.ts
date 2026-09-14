@@ -10,5 +10,7 @@ export type {
   ProjectCreateLocation,
   ProjectCreateModalProps,
   ProjectCreateProvider,
+  ProjectCreateResourceSelection,
+  ProjectCreateResourceSetup,
   ProjectCreateTarget,
 } from "./types";

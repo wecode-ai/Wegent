@@ -38,7 +38,13 @@ vi.mock("./workspace-controller", () => ({
 
 import { CollaborationApp } from "./CollaborationApp";
 import { CollaborationSettings } from "./CollaborationSettings";
+import {
+  ProjectDispatchSettings,
+  ProjectSettingsShell,
+} from "./project-manage";
+import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapter";
 import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
+import { ProjectBoardAdapter } from "./web-adapter/ProjectBoardAdapter";
 import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import {
   CollaborationProjectViewShell,
@@ -49,6 +55,7 @@ import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
 import type {
   CollaborationCapabilities,
   CollaborationHostAdapter,
+  CollaborationIssue,
   CollaborationLocation,
   CollaborationProject,
 } from "./types";
@@ -98,10 +105,16 @@ function createHost(
   };
 }
 
-function renderApp(host: CollaborationHostAdapter) {
+function renderApp(
+  host: CollaborationHostAdapter,
+  automationUiHost?: ComponentProps<
+    typeof CollaborationApp
+  >["automationUiHost"],
+) {
   return CollaborationApp({
     api: {} as SharedWorkspaceApi,
     host,
+    automationUiHost,
   });
 }
 
@@ -136,6 +149,9 @@ function controllerWithProject(project: CollaborationProject) {
       agents: [],
       selectedIssue: null,
       comments: [],
+      assignments: [],
+      executions: [],
+      taskBindings: [],
       loading: false,
       error: null,
     },
@@ -223,13 +239,7 @@ describe("CollaborationApp API boundary", () => {
   });
 
   it("keeps the shared project view set free of host-only pages", () => {
-    expect(collaborationProjectViewIds).toEqual([
-      "board",
-      "table",
-      "files",
-      "automation",
-      "manage",
-    ]);
+    expect(collaborationProjectViewIds).toEqual(["board", "table", "manage"]);
     expect(collaborationProjectViewIds).not.toContain("members");
     expect(collaborationProjectViewIds).not.toContain("runs");
   });
@@ -248,10 +258,13 @@ describe("CollaborationApp API boundary", () => {
       renderApp(host),
       CollaborationProjectViewShell,
     );
-    const firstSettings = findByType(
+    const firstSettingsShell = findByType(
       firstShell?.props.slots.manage,
-      CollaborationSettings,
+      ProjectSettingsShell,
     );
+    const firstSettings = firstSettingsShell?.props.sections.find(
+      (section: { id: string }) => section.id === "project",
+    )?.content;
 
     collaborationAppMocks.useController.mockReturnValue(
       controllerWithProject(createProject(2)),
@@ -260,14 +273,274 @@ describe("CollaborationApp API boundary", () => {
       renderApp(host),
       CollaborationProjectViewShell,
     );
-    const refreshedSettings = findByType(
+    const refreshedSettingsShell = findByType(
       refreshedShell?.props.slots.manage,
-      CollaborationSettings,
+      ProjectSettingsShell,
     );
+    const refreshedSettings = refreshedSettingsShell?.props.sections.find(
+      (section: { id: string }) => section.id === "project",
+    )?.content;
 
+    expect(firstSettings?.type).toBe(CollaborationSettings);
     expect(firstSettings?.key).toContain("project-1");
     expect(refreshedSettings?.key).toBe(firstSettings?.key);
     expect(refreshedSettings?.props.project.version).toBe(2);
+  });
+
+  it("uses the shared project settings content as the vertical scroller", () => {
+    const shell = ProjectSettingsShell({
+      ariaLabel: "项目设置",
+      sections: [
+        {
+          id: "dispatch",
+          label: "分配与调度",
+          testId: "project-settings-dispatch",
+          content: <div>dispatch</div>,
+        },
+      ],
+    });
+    const content = findByTestId(shell, "project-settings-shell-content");
+
+    expect(shell.props.className).toContain("overflow-hidden");
+    expect(content?.type).toBe("main");
+    expect(content?.props.className).toContain("h-full");
+    expect(content?.props.className.split(" ")).not.toContain("h-0");
+    expect(content?.props.className).toContain("min-h-0");
+    expect(content?.props.className).toContain("overflow-y-auto");
+    expect(content?.props.className).toContain("overscroll-y-contain");
+    expect(content?.props.className).toContain("[scrollbar-gutter:stable]");
+    expect(content?.props.className).not.toContain("overflow-hidden");
+  });
+
+  it("always exposes project ownership and assignment semantics in settings", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "manage",
+    };
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject({
+        ...createProject(1),
+        access_role: "Owner",
+        current_user_id: 1,
+        current_user_name: "Project owner",
+      }),
+    );
+
+    const shell = findByType(
+      renderApp(host, {} as never),
+      CollaborationProjectViewShell,
+    );
+    const settingsShell = findByType(
+      shell?.props.slots.manage,
+      ProjectSettingsShell,
+    );
+    const dispatchSection = settingsShell?.props.sections.find(
+      (section: { id: string }) => section.id === "dispatch",
+    );
+
+    expect(dispatchSection).toBeDefined();
+    expect(dispatchSection?.content.type).toBe(ProjectDispatchSettings);
+    expect(dispatchSection?.content.props.managerName).toBe("Project owner");
+    expect(dispatchSection?.content.props.canManage).toBe(true);
+    expect(dispatchSection?.content.props.automationContent).toBeDefined();
+
+    const configureAgents = vi.fn();
+    const continueManualAssignment = vi.fn();
+    const unavailableState = ProjectDispatchSettings({
+      canManage: true,
+      managerName: "Project owner",
+      onConfigureAgents: configureAgents,
+      onContinueManualAssignment: continueManualAssignment,
+      translate: (_key, fallback) => fallback,
+    });
+    findByTestId(
+      unavailableState,
+      "collaboration-dispatch-configure-agents",
+    )?.props.onClick();
+    findByTestId(
+      unavailableState,
+      "collaboration-dispatch-continue-manual",
+    )?.props.onClick();
+    expect(configureAgents).toHaveBeenCalledOnce();
+    expect(continueManualAssignment).toHaveBeenCalledOnce();
+
+    dispatchSection?.content.props.onContinueManualAssignment();
+    expect(host.navigate).toHaveBeenLastCalledWith({
+      projectId: "project-1",
+      issueId: null,
+      view: "board",
+    });
+
+    const memberState = ProjectDispatchSettings({
+      canManage: false,
+      managerName: "Project owner",
+      onConfigureAgents: vi.fn(),
+      onContinueManualAssignment: vi.fn(),
+      translate: (_key, fallback) => fallback,
+    });
+    expect(
+      findByTestId(memberState, "collaboration-dispatch-configure-agents"),
+    ).toBeUndefined();
+    expect(
+      findByTestId(memberState, "collaboration-dispatch-continue-manual"),
+    ).toBeDefined();
+  });
+
+  it("keeps project files inside the shared settings module", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "manage",
+    };
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject(createProject(1)),
+    );
+
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+    const settingsShell = findByType(
+      shell?.props.slots.manage,
+      ProjectSettingsShell,
+    );
+    const filesSection = settingsShell?.props.sections.find(
+      (section: { id: string }) => section.id === "files",
+    );
+
+    expect(filesSection?.testId).toBe("collaboration-project-settings-files");
+    expect(filesSection?.content.type).toBe(CollaborationFilesAdapter);
+  });
+
+  it("passes runtime bindings and the host card renderer through the shared board", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "board",
+    };
+    const project = createProject(1);
+    const binding = {
+      id: "binding-1",
+      projectId: project.id,
+      issueId: "issue-1",
+      taskUserId: 1,
+      deviceId: "device-1",
+      taskId: "task-1",
+      taskTitle: "Runtime task",
+      backendTaskId: null,
+      linkedAt: "2026-09-13T00:00:00Z",
+    };
+    const renderBoardIssueCard = vi.fn();
+    const controller = controllerWithProject(project);
+    const issue: CollaborationIssue = {
+      id: "issue-1",
+      cloud_project_id: project.id,
+      sequence_number: 1,
+      parent_id: null,
+      created_by_user_id: 1,
+      assignee_user_id: null,
+      title: "Issue",
+      description: "",
+      status: "inbox",
+      priority: "none",
+      due_at: null,
+      tags: [],
+      sort_order: 0,
+      version: 1,
+      created_at: "2026-09-13T00:00:00Z",
+      updated_at: "2026-09-13T00:00:00Z",
+      completed_at: null,
+    };
+    collaborationAppMocks.useController.mockReturnValue({
+      ...controller,
+      state: {
+        ...controller.state,
+        issues: [issue],
+        taskBindings: [binding],
+      },
+    });
+
+    const app = CollaborationApp({
+      api: {} as SharedWorkspaceApi,
+      host,
+      renderBoardIssueCard,
+    });
+    const shell = findByType(app, CollaborationProjectViewShell);
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
+
+    expect(board?.props.taskBindings).toEqual([binding]);
+    expect(board?.props.renderIssueCard).toBe(renderBoardIssueCard);
+  });
+
+  it("passes the selected Issue task bindings to a custom detail renderer", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: "issue-1",
+      view: "board",
+    };
+    const project = createProject(1);
+    const issue = {
+      id: "issue-1",
+      cloud_project_id: project.id,
+      sequence_number: 1,
+      parent_id: null,
+      created_by_user_id: 1,
+      assignee_user_id: null,
+      title: "Issue",
+      description: "",
+      status: "inbox",
+      priority: "none",
+      due_at: null,
+      tags: [],
+      sort_order: 0,
+      version: 1,
+      created_at: "2026-09-14T00:00:00Z",
+      updated_at: "2026-09-14T00:00:00Z",
+      completed_at: null,
+    } satisfies CollaborationIssue;
+    const selectedBinding = {
+      id: "binding-1",
+      projectId: project.id,
+      issueId: issue.id,
+      taskUserId: 1,
+      deviceId: "device-1",
+      taskId: "task-1",
+      taskTitle: "Runtime task",
+      backendTaskId: null,
+      linkedAt: "2026-09-14T00:00:00Z",
+    };
+    const otherBinding = {
+      ...selectedBinding,
+      id: "binding-2",
+      issueId: "issue-2",
+      taskId: "task-2",
+    };
+    const controller = controllerWithProject(project);
+    collaborationAppMocks.useController.mockReturnValue({
+      ...controller,
+      state: {
+        ...controller.state,
+        issues: [issue],
+        selectedIssue: issue,
+        taskBindings: [selectedBinding, otherBinding],
+      },
+    });
+    const renderIssueDetail = vi.fn(() => null);
+
+    CollaborationApp({
+      api: {} as SharedWorkspaceApi,
+      host,
+      renderIssueDetail,
+    });
+
+    expect(renderIssueDetail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issue,
+        taskBindings: [selectedBinding],
+      }),
+    );
   });
 
   it("centralizes permission filtering and host extension placement", () => {

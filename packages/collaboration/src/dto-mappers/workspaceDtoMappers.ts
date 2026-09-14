@@ -16,6 +16,7 @@ import type {
   CollaborationOwnedAgent,
   CollaborationPlatformResources,
   CollaborationWorkspace,
+  CollaborationWorkspaceNavigationContext,
 } from "../types";
 
 type WorkspaceDto = object | Record<string, unknown>;
@@ -254,6 +255,7 @@ export function mapCollaborationWorkspaceDto(
   const row = asRecord(input);
   return {
     id: String(row.id),
+    location: "cloud",
     name: String(row.name ?? ""),
     description: String(row.description ?? ""),
     access_role: (row.access_role ??
@@ -271,6 +273,18 @@ export function mapCollaborationWorkspaceDto(
     version: Number(row.version ?? 0),
     created_at: String(row.created_at ?? row.createdAt ?? ""),
     updated_at: String(row.updated_at ?? row.updatedAt ?? ""),
+  };
+}
+
+export function mapCollaborationWorkspaceNavigationContextDto(
+  input: WorkspaceDto,
+): CollaborationWorkspaceNavigationContext {
+  const row = asRecord(input);
+  return {
+    id: String(row.id),
+    public_id: String(row.public_id ?? row.publicId ?? ""),
+    location: "cloud",
+    name: String(row.name ?? ""),
   };
 }
 
@@ -294,6 +308,9 @@ export function mapCollaborationExecutionEnvironmentDto(
       (row.kind ?? row.environment_type ?? row.environmentType) === "cloud_host"
         ? "cloud_host"
         : "local_device",
+    coding_tools: Array.isArray(row.coding_tools ?? row.codingTools)
+      ? ((row.coding_tools ?? row.codingTools) as unknown[]).map(String)
+      : [],
     owner_type: ownerType,
     owner_id: String(row.owner_id ?? row.ownerId ?? ""),
     owner_name: String(row.owner_name ?? row.ownerName ?? ""),

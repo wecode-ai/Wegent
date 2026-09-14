@@ -302,7 +302,15 @@ describe('useWorkbenchCloudProjectContext', () => {
 
     await waitFor(() => expect(result.current.boundCloudItem?.status).toBe('in_progress'))
 
-    act(() => publishProjectSpaceTaskContextChanged(runtimeTask))
+    act(() =>
+      publishProjectSpaceTaskContextChanged({
+        task: runtimeTask,
+        project: {
+          projectStore: cloudProject.project_store,
+          projectId: String(cloudProject.id),
+        },
+      })
+    )
 
     await waitFor(() => expect(result.current.boundCloudItem?.status).toBe('completed'))
     expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
@@ -707,7 +715,15 @@ describe('useWorkbenchCloudProjectContext', () => {
     })
     const { publishProjectSpaceTaskContextChanged } =
       await import('@/features/todo/projectSpaceSelection')
-    act(() => publishProjectSpaceTaskContextChanged(runtimeTask))
+    act(() =>
+      publishProjectSpaceTaskContextChanged({
+        task: runtimeTask,
+        project: {
+          projectStore: defaultBoard.project_store,
+          projectId: String(defaultBoard.id),
+        },
+      })
+    )
     await waitFor(() => expect(result.current.boundCloudItem).toEqual(enrichedItem))
 
     const enrichedFollowup = await result.current.prepareSubmission('按补充标准继续')

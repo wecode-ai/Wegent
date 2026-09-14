@@ -275,7 +275,7 @@ export function sharedIssueDetailWorkflowPlanView(
   };
 }
 
-function toTaskBinding(
+export function toSharedIssueDetailTaskBinding(
   binding: Awaited<
     ReturnType<SharedWorkspaceApi["taskBindings"]["list"]>
   >[number],
@@ -564,7 +564,7 @@ export function createSharedIssueDetailPort(
       list: (issueId, projectId) =>
         api.taskBindings
           .list(issueId, projectId == null ? undefined : String(projectId))
-          .then((items) => items.map(toTaskBinding)),
+          .then((items) => items.map(toSharedIssueDetailTaskBinding)),
     },
     workflowPlans: {
       get: api.workflowPlans.get

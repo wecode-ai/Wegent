@@ -274,6 +274,8 @@ def test_workspace_resources_and_project_scope_are_separate(
         if row["id"] == str(device.id)
     )
     assert personal_environment["device_id"] == device.id
+    assert personal_environment["device_key"]
+    assert personal_environment["coding_tools"] == ["claude_code", "codex"]
     assert personal_environment["kind"] == "local_device"
     assert personal_environment["owner_type"] == "user"
     assert personal_environment["owner_id"] == str(test_user.id)
@@ -325,6 +327,7 @@ def test_workspace_resources_and_project_scope_are_separate(
     workspace_environment = workspace_environments[0]
     assert workspace_environment["id"] == str(device.id)
     assert workspace_environment["device_id"] == device.id
+    assert workspace_environment["coding_tools"] == ["claude_code", "codex"]
     assert workspace_environment["kind"] == "local_device"
     assert workspace_environment["owner_type"] == "user"
     assert workspace_environment["owner_id"] == str(test_user.id)
@@ -342,6 +345,45 @@ def test_workspace_resources_and_project_scope_are_separate(
         assert response.status_code == 201
         assert response.json()["workspace_id"] == workspace["id"]
         project_ids.append(response.json()["id"])
+
+    project_environment = test_client.post(
+        f"/api/v1/cloud-projects/{project_ids[0]}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": device.id},
+    )
+    assert project_environment.status_code == 201
+    assert project_environment.json()["workspace_id"] == workspace["id"]
+    assert project_environment.json()["device_id"] == device.id
+
+    first_project_environments = test_client.get(
+        f"/api/v1/cloud-projects/{project_ids[0]}/execution-environments",
+        headers=_auth(test_token),
+    )
+    assert first_project_environments.status_code == 200
+    assert [
+        item["device_id"] for item in first_project_environments.json()["items"]
+    ] == [device.id]
+
+    second_project_environments = test_client.get(
+        f"/api/v1/cloud-projects/{project_ids[1]}/execution-environments",
+        headers=_auth(test_token),
+    )
+    assert second_project_environments.status_code == 200
+    assert second_project_environments.json()["items"] == []
+
+    direct_project_environment = test_client.post(
+        f"/api/v1/cloud-projects/{project_ids[1]}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": offline_cloud_device.id},
+    )
+    assert direct_project_environment.status_code == 201
+    assert direct_project_environment.json()["device_id"] == offline_cloud_device.id
+
+    removed_environment = test_client.delete(
+        f"/api/v1/cloud-projects/{project_ids[0]}/execution-environments/{device.id}",
+        headers=_auth(test_token),
+    )
+    assert removed_environment.status_code == 204
 
     for project_id in project_ids:
         test_db.add(
@@ -488,7 +530,7 @@ def test_issue_actions_are_authorized_independently(
     assert str(test_user.id) in {row["target_id"] for row in remaining}
 
 
-def test_project_maintainer_cannot_expand_workspace_membership(
+def test_project_maintainer_can_add_project_member_without_workspace_membership(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
@@ -503,10 +545,10 @@ def test_project_maintainer_cannot_expand_workspace_membership(
     response = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(maintainer_token),
-        json={"user_id": target.id, "role": "Reporter"},
+        json={"user_id": target.id, "role": "RestrictedAnalyst"},
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 201
     workspace_members = test_client.get(
         f"/api/v1/workspaces/{workspace['id']}/members",
         headers=_auth(test_token),
@@ -515,6 +557,253 @@ def test_project_maintainer_cannot_expand_workspace_membership(
     assert target.id not in {
         member["user_id"] for member in workspace_members.json()["items"]
     }
+
+
+def test_project_member_can_read_minimal_parent_workspace_navigation_context(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    workspace, project, _, maintainer_token = _workspace_project_with_maintainer(
+        test_client,
+        test_db,
+        test_token,
+    )
+    target, target_token = _user(
+        test_db, f"project-workspace-viewer-{uuid.uuid4().hex[:8]}"
+    )
+    member_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/members",
+        headers=_auth(maintainer_token),
+        json={"user_id": target.id, "role": "Reporter"},
+    )
+    assert member_response.status_code == 201
+
+    workspace_response = test_client.get(
+        f"/api/v1/workspaces/{workspace['id']}",
+        headers=_auth(target_token),
+    )
+    assert workspace_response.status_code == 404
+
+    navigation_response = test_client.get(
+        f"/api/v1/workspaces/{workspace['id']}/navigation-context",
+        headers=_auth(target_token),
+    )
+    assert navigation_response.status_code == 200
+    assert navigation_response.json() == {
+        "id": workspace["id"],
+        "public_id": workspace["public_id"],
+        "name": workspace["name"],
+    }
+    listed_workspace_ids = {
+        item["id"]
+        for item in test_client.get(
+            "/api/v1/workspaces",
+            headers=_auth(target_token),
+        ).json()["items"]
+    }
+    assert workspace["id"] not in listed_workspace_ids
+
+    for resource in ("members", "agents", "execution-environments"):
+        response = test_client.get(
+            f"/api/v1/workspaces/{workspace['id']}/{resource}",
+            headers=_auth(target_token),
+        )
+        assert response.status_code == 404
+
+
+def test_invalid_project_member_role_cannot_read_project_or_navigation_context(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    workspace, project, _, maintainer_token = _workspace_project_with_maintainer(
+        test_client,
+        test_db,
+        test_token,
+    )
+    target, target_token = _user(
+        test_db, f"invalid-project-role-{uuid.uuid4().hex[:8]}"
+    )
+    member_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/members",
+        headers=_auth(maintainer_token),
+        json={"user_id": target.id, "role": "Reporter"},
+    )
+    assert member_response.status_code == 201
+    membership = test_db.get(ResourceMember, member_response.json()["id"])
+    assert membership is not None
+    membership.role = "CorruptedRole"
+    test_db.commit()
+
+    project_response = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(target_token),
+    )
+    navigation_response = test_client.get(
+        f"/api/v1/workspaces/{workspace['id']}/navigation-context",
+        headers=_auth(target_token),
+    )
+
+    assert project_response.status_code == 404
+    assert navigation_response.status_code == 404
+
+
+def test_invalid_workspace_member_role_cannot_read_navigation_context(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"Invalid role space {uuid.uuid4().hex[:6]}"},
+    )
+    assert workspace_response.status_code == 201
+    workspace = workspace_response.json()
+    target, target_token = _user(
+        test_db, f"invalid-workspace-role-{uuid.uuid4().hex[:8]}"
+    )
+    member_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/members",
+        headers=_auth(test_token),
+        json={"user_id": target.id, "role": "Reporter"},
+    )
+    assert member_response.status_code == 201
+    membership = test_db.get(ResourceMember, member_response.json()["id"])
+    assert membership is not None
+    membership.role = "CorruptedRole"
+    test_db.commit()
+
+    workspace_read_response = test_client.get(
+        f"/api/v1/workspaces/{workspace['id']}",
+        headers=_auth(target_token),
+    )
+    navigation_response = test_client.get(
+        f"/api/v1/workspaces/{workspace['id']}/navigation-context",
+        headers=_auth(target_token),
+    )
+
+    assert workspace_read_response.status_code == 403
+    assert navigation_response.status_code == 404
+
+
+def test_public_project_visitor_can_read_parent_workspace_navigation_context(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"Public project space {uuid.uuid4().hex[:6]}"},
+    )
+    assert workspace_response.status_code == 201
+    workspace = workspace_response.json()
+    project_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/projects",
+        headers=_auth(test_token),
+        json={
+            "name": f"Public project {uuid.uuid4().hex[:6]}",
+            "visibility": "public",
+        },
+    )
+    assert project_response.status_code == 201
+    _, visitor_token = _user(test_db, f"public-project-visitor-{uuid.uuid4().hex[:8]}")
+
+    navigation_response = test_client.get(
+        f"/api/v1/workspaces/{workspace['id']}/navigation-context",
+        headers=_auth(visitor_token),
+    )
+    assert navigation_response.status_code == 200
+    assert navigation_response.json() == {
+        "id": workspace["id"],
+        "public_id": workspace["public_id"],
+        "name": workspace["name"],
+    }
+    assert (
+        test_client.get(
+            f"/api/v1/workspaces/{workspace['id']}",
+            headers=_auth(visitor_token),
+        ).status_code
+        == 404
+    )
+    for resource in ("members", "agents", "execution-environments"):
+        response = test_client.get(
+            f"/api/v1/workspaces/{workspace['id']}/{resource}",
+            headers=_auth(visitor_token),
+        )
+        assert response.status_code == 404
+
+
+def test_private_project_does_not_grant_parent_workspace_navigation_context(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"Private project space {uuid.uuid4().hex[:6]}"},
+    )
+    assert workspace_response.status_code == 201
+    workspace = workspace_response.json()
+    project_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/projects",
+        headers=_auth(test_token),
+        json={
+            "name": f"Private project {uuid.uuid4().hex[:6]}",
+            "visibility": "private",
+        },
+    )
+    assert project_response.status_code == 201
+    _, visitor_token = _user(test_db, f"private-project-visitor-{uuid.uuid4().hex[:8]}")
+
+    navigation_response = test_client.get(
+        f"/api/v1/workspaces/{workspace['id']}/navigation-context",
+        headers=_auth(visitor_token),
+    )
+
+    assert navigation_response.status_code == 404
+
+
+def test_archived_project_does_not_grant_parent_workspace_navigation_context(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"Archived project space {uuid.uuid4().hex[:6]}"},
+    )
+    assert workspace_response.status_code == 201
+    workspace = workspace_response.json()
+    project_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/projects",
+        headers=_auth(test_token),
+        json={
+            "name": f"Archived public project {uuid.uuid4().hex[:6]}",
+            "visibility": "public",
+        },
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+    _, visitor_token = _user(
+        test_db, f"archived-project-visitor-{uuid.uuid4().hex[:8]}"
+    )
+    archive_response = test_client.delete(
+        f"/api/v1/cloud-projects/{project['id']}?version={project['version']}",
+        headers=_auth(test_token),
+    )
+    assert archive_response.status_code == 204
+
+    navigation_response = test_client.get(
+        f"/api/v1/workspaces/{workspace['id']}/navigation-context",
+        headers=_auth(visitor_token),
+    )
+
+    assert navigation_response.status_code == 404
 
 
 def test_personal_execution_environment_uses_owned_device_identity(
@@ -840,7 +1129,7 @@ def test_internal_assignment_failure_rolls_back_comment_assignment_and_notificat
     )
 
 
-def test_agent_assignment_rejects_team_not_authorized_in_workspace(
+def test_agent_assignment_uses_project_agent_without_workspace_authorization(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -884,18 +1173,17 @@ def test_agent_assignment_rejects_team_not_authorized_in_workspace(
         },
     )
 
-    assert response.status_code == 422
-    assert response.json()["detail"] == "Agent is not authorized in this Workspace"
+    assert response.status_code == 201
     assert {
         comment.id for comment in _assignment_comments(test_db, issue["id"])
-    } == original_assignment_ids
+    } != original_assignment_ids
     assert (
         test_db.query(LoopItemExecution)
         .filter(LoopItemExecution.loop_item_id == issue["id"])
         .count()
-        == 0
+        == 1
     )
-    dispatch.assert_not_awaited()
+    dispatch.assert_awaited_once()
 
 
 def test_agent_assignment_rejects_agent_from_another_project(

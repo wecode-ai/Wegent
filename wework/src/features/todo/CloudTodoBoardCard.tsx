@@ -457,10 +457,14 @@ export function CloudTodoBoardCard({
               })}
               data-hover-card-pin-trigger
               data-testid={`cloud-todo-card-tasks-${item.id}`}
-              onClick={() => onPreviewPinnedChange?.(true)}
+              onClick={event => {
+                event.stopPropagation()
+                onPreviewPinnedChange?.(true)
+              }}
               onKeyDown={event => {
                 if (!onPreviewPinnedChange || (event.key !== 'Enter' && event.key !== ' ')) return
                 event.preventDefault()
+                event.stopPropagation()
                 onPreviewPinnedChange(true)
               }}
               className="w-full px-3.5 pb-3"

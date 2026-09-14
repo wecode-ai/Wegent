@@ -58,8 +58,12 @@ const devices: DeviceInfo[] = [
   },
 ]
 
+let requestedDeviceId: string | null = null
+
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ replace: jest.fn(), push: jest.fn() }),
+  useSearchParams: () =>
+    new URLSearchParams(requestedDeviceId ? { deviceId: requestedDeviceId } : {}),
 }))
 
 jest.mock('@/features/layout/TopNavigation', () => ({
@@ -108,8 +112,13 @@ jest.mock('@/features/devices/components', () => {
   const actual = jest.requireActual('@/features/devices/components')
   return {
     ...actual,
-    DeviceCard: ({ device }: { device: DeviceInfo }) => (
-      <div data-testid={`page-device-${device.device_id}`}>{device.name}</div>
+    DeviceCard: ({ device, highlighted }: { device: DeviceInfo; highlighted?: boolean }) => (
+      <div
+        data-testid={`page-device-${device.device_id}`}
+        data-highlighted={highlighted ? 'true' : undefined}
+      >
+        {device.name}
+      </div>
     ),
     DeviceSetupGuide: () => null,
     EditDeviceAliasDialog: () => null,
@@ -119,6 +128,7 @@ jest.mock('@/features/devices/components', () => {
 describe('DevicesPage advanced mode', () => {
   beforeEach(() => {
     localStorage.clear()
+    requestedDeviceId = null
   })
 
   it('hides OpenClaw by default and persists the advanced-mode opt in', async () => {
@@ -141,5 +151,28 @@ describe('DevicesPage advanced mode', () => {
       expect(screen.getByTestId('page-device-openclaw-device')).toBeInTheDocument()
     )
     expect(screen.getByTestId('page-device-wework-openclaw-device')).toBeInTheDocument()
+  })
+
+  it('highlights the device selected from collaboration resources', () => {
+    requestedDeviceId = 'executor-device'
+
+    render(<DevicesPage />)
+
+    expect(screen.getByTestId('page-device-executor-device')).toHaveAttribute(
+      'data-highlighted',
+      'true'
+    )
+  })
+
+  it('shows a directly selected advanced device without changing the saved preference', () => {
+    requestedDeviceId = 'openclaw-device'
+
+    render(<DevicesPage />)
+
+    expect(screen.getByTestId('page-device-openclaw-device')).toHaveAttribute(
+      'data-highlighted',
+      'true'
+    )
+    expect(localStorage.getItem('wegent_show_advanced_devices')).toBeNull()
   })
 })
