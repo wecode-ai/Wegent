@@ -31,6 +31,27 @@ describe('conversation mentions', () => {
     ])
   })
 
+  test('keeps runtime metadata parentheses inside the atomic reference', () => {
+    const address: RuntimeTaskAddress = {
+      ...SOURCE_ADDRESS,
+      runtimeHandle: {
+        modelSelection: {
+          modelName: 'Kimi K3 (OpenAI)',
+        },
+      },
+    }
+    const reference = createConversationMentionReference('Source chat', address)
+
+    expect(reference).toContain('Kimi%20K3%20%28OpenAI%29')
+    expect(parseConversationMentions(reference)).toEqual([
+      {
+        title: 'Source chat',
+        address,
+        reference,
+      },
+    ])
+  })
+
   test('builds candidates from project and standalone conversations', () => {
     const runtimeWork: RuntimeWorkListResponse = {
       projects: [
