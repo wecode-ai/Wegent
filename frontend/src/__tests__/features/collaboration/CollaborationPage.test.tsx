@@ -191,7 +191,7 @@ describe('CollaborationPage platform routing', () => {
     pushState.mockRestore()
   })
 
-  it.each(['automation', 'manage', 'files'] as const)(
+  it.each(['manage', 'files'] as const)(
     'redirects a legacy Project %s URL into the canonical shared Workspace route',
     async view => {
       mockPathname = '/collaboration/project%201'
@@ -208,6 +208,20 @@ describe('CollaborationPage platform routing', () => {
       )
     }
   )
+
+  it('removes the legacy Project automation view from canonical routing', async () => {
+    mockPathname = '/collaboration/project%201'
+    mockSearchParams = new URLSearchParams('view=automation')
+
+    render(<CollaborationPage />)
+
+    expect(capturedHost).toBeNull()
+    await waitFor(() =>
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/collaboration/workspaces/workspace%201/projects/project%201'
+      )
+    )
+  })
 
   it('falls back unknown legacy Project views to the canonical board', async () => {
     mockPathname = '/collaboration/project%201'
