@@ -746,22 +746,23 @@ export function DocumentList({
     }
   }
 
-  const handleWikiImport = async (
-    paths: string[],
-    options: { connectionId?: string; sync: boolean }
-  ) => {
+  const handleWikiImport = async (paths: string[], options: { connectionId: string }) => {
     const { wikiApis } = await import('@/apis/wiki')
 
     const result = await wikiApis.bindKbWikiDocuments(knowledgeBase.id, paths, {
       connectionId: options.connectionId,
-      sync: options.sync,
       folderId: selectedUploadFolderId || 0,
     })
 
     await refresh()
     onDocumentsChanged?.()
 
-    return { createdCount: result.documents.length, notes: result.notes }
+    return {
+      createdCount: result.created_count,
+      updatedCount: result.updated_count,
+      processingCount: result.processing_count,
+      duplicateCount: result.duplicate_documents.length,
+    }
   }
 
   const handleDelete = async () => {

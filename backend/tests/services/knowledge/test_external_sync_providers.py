@@ -16,7 +16,7 @@ from app.services.knowledge.external_sync_providers import (
     encode_external_sync_resource_id,
     wiki_external_sync_provider,
 )
-from app.services.wiki.connector import WikiApiError, WikiSiteConfig
+from app.services.wiki.connector import WikiApiError, WikiPageProbe, WikiSiteConfig
 
 
 def test_external_sync_identity_round_trip() -> None:
@@ -33,7 +33,7 @@ async def test_wiki_selection_is_resolved_with_server_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     connector = SimpleNamespace(
-        get_page=AsyncMock(
+        get_page_metadata_by_path=AsyncMock(
             return_value=SimpleNamespace(
                 id="42",
                 path="ops/runbook",
@@ -58,10 +58,13 @@ async def test_wiki_selection_is_resolved_with_server_metadata(
         lambda *args, **kwargs: connection,
     )
 
+    db = MagicMock()
     resolved = await wiki_external_sync_provider.resolve_selections(
-        MagicMock(), SimpleNamespace(id=7), "conn-primary", ["/ops/runbook/"]
+        db, SimpleNamespace(id=7), "conn-primary", ["/ops/runbook/"]
     )
 
+    db.commit.assert_called_once_with()
+    db.close.assert_not_called()
     assert len(resolved) == 1
     assert resolved[0].encoded_resource_id == "v1:conn-primary:42"
     assert resolved[0].external_metadata()["sync"] == {
@@ -73,6 +76,7 @@ async def test_wiki_selection_is_resolved_with_server_metadata(
         "indexed_version": None,
         "path": "ops/runbook",
         "locale": "zh",
+        "site_url": "https://wiki.example.com",
     }
 
 
@@ -81,23 +85,24 @@ async def test_wiki_remote_inspection_batches_by_connection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     connector = SimpleNamespace(
-        list_pages=AsyncMock(
-            return_value=(
-                [
-                    SimpleNamespace(
+        inspect_page_metadata_by_ids=AsyncMock(
+            return_value={
+                "42": WikiPageProbe(
+                    page=SimpleNamespace(
                         id="42",
                         path="ops/runbook",
                         title="Runbook v2",
                         locale="zh",
                         updated_at="2026-09-06T02:00:00Z",
                     )
-                ],
-                None,
-            )
-        ),
-        get_page_metadata_by_id=AsyncMock(return_value=None),
+                ),
+                "missing": WikiPageProbe(confirmed_missing=True),
+                "forbidden": WikiPageProbe(error_code="wiki_page_forbidden"),
+            }
+        )
     )
     connection = SimpleNamespace(
+        display_name="Primary Wiki",
         config=WikiSiteConfig(site_url="https://wiki.example.com", api_key="secret"),
         connector=connector,
     )
@@ -111,19 +116,24 @@ async def test_wiki_remote_inspection_batches_by_connection(
     candidates = [
         SyncCandidate(10, 7, ExternalSyncLocator("wiki", "conn-primary", "42")),
         SyncCandidate(11, 7, ExternalSyncLocator("wiki", "conn-primary", "missing")),
+        SyncCandidate(12, 7, ExternalSyncLocator("wiki", "conn-primary", "forbidden")),
     ]
 
-    states = await wiki_external_sync_provider.inspect_remote_states(db, candidates)
+    prepared = wiki_external_sync_provider.prepare_remote_inspection(db, candidates)
+    states = await wiki_external_sync_provider.inspect_remote_states(prepared)
 
-    connector.list_pages.assert_awaited_once()
+    assert prepared.connection_names[(7, "conn-primary")] == "Primary Wiki"
+    connector.inspect_page_metadata_by_ids.assert_awaited_once()
     assert states[10].remote_version == "2026-09-06T02:00:00Z"
     assert states[10].metadata["path"] == "ops/runbook"
     assert states[11].exists is False
     assert states[11].error_code == "external_source_missing"
+    assert states[12].error_code == "wiki_page_forbidden"
+    assert states[12].error_message == "无权访问 Wiki 源文档"
 
 
 @pytest.mark.asyncio
-async def test_wiki_remote_inspection_verifies_pages_outside_list_window(
+async def test_wiki_remote_inspection_queries_bound_id_without_listing_site(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     outside_window = SimpleNamespace(
@@ -134,10 +144,12 @@ async def test_wiki_remote_inspection_verifies_pages_outside_list_window(
         updated_at="2026-09-08T02:00:00Z",
     )
     connector = SimpleNamespace(
-        list_pages=AsyncMock(return_value=([], None)),
-        get_page_metadata_by_id=AsyncMock(return_value=outside_window),
+        inspect_page_metadata_by_ids=AsyncMock(
+            return_value={"5001": WikiPageProbe(page=outside_window)}
+        ),
     )
     connection = SimpleNamespace(
+        display_name="Primary Wiki",
         config=WikiSiteConfig(site_url="https://wiki.example.com", api_key="secret"),
         connector=connector,
     )
@@ -152,11 +164,10 @@ async def test_wiki_remote_inspection_verifies_pages_outside_list_window(
         12, 7, ExternalSyncLocator("wiki", "conn-primary", "5001")
     )
 
-    states = await wiki_external_sync_provider.inspect_remote_states(db, [candidate])
+    prepared = wiki_external_sync_provider.prepare_remote_inspection(db, [candidate])
+    states = await wiki_external_sync_provider.inspect_remote_states(prepared)
 
-    connector.get_page_metadata_by_id.assert_awaited_once_with(
-        connection.config, "5001"
-    )
+    connector.inspect_page_metadata_by_ids.assert_awaited_once()
     assert states[12].exists is True
     assert states[12].remote_version == "2026-09-08T02:00:00Z"
     assert states[12].metadata["path"] == "ops/recent-runbook"
@@ -167,12 +178,12 @@ async def test_wiki_remote_inspection_does_not_treat_lookup_error_as_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     connector = SimpleNamespace(
-        list_pages=AsyncMock(return_value=([], None)),
-        get_page_metadata_by_id=AsyncMock(
+        inspect_page_metadata_by_ids=AsyncMock(
             side_effect=WikiApiError("wiki_auth_failed", "bad key")
         ),
     )
     connection = SimpleNamespace(
+        display_name="Primary Wiki",
         config=WikiSiteConfig(site_url="https://wiki.example.com", api_key="secret"),
         connector=connector,
     )
@@ -187,10 +198,28 @@ async def test_wiki_remote_inspection_does_not_treat_lookup_error_as_missing(
         13, 7, ExternalSyncLocator("wiki", "conn-primary", "5002")
     )
 
-    states = await wiki_external_sync_provider.inspect_remote_states(db, [candidate])
+    prepared = wiki_external_sync_provider.prepare_remote_inspection(db, [candidate])
+    states = await wiki_external_sync_provider.inspect_remote_states(prepared)
 
     assert states[13].exists is True
     assert states[13].error_code == "wiki_auth_failed"
+    assert states[13].error_message == "bad key"
+
+
+def test_wiki_remote_inspection_skips_inactive_owner() -> None:
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    candidate = SyncCandidate(
+        14, 7, ExternalSyncLocator("wiki", "conn-primary", "5003")
+    )
+
+    prepared = wiki_external_sync_provider.prepare_remote_inspection(db, [candidate])
+
+    assert prepared.payload == ()
+    assert prepared.immediate_states[14].error_code == (
+        "external_connection_unavailable"
+    )
+    assert prepared.immediate_states[14].error_message == "Wiki 连接不可用"
 
 
 @pytest.mark.asyncio
@@ -212,10 +241,7 @@ async def test_wiki_fetch_content_resolves_current_path_by_id(
         updated_at=meta.updated_at,
         content="# Renamed",
     )
-    connector = SimpleNamespace(
-        get_page_metadata_by_id=AsyncMock(return_value=meta),
-        get_page=AsyncMock(return_value=page),
-    )
+    connector = SimpleNamespace(get_page_by_id=AsyncMock(return_value=page))
     connection = SimpleNamespace(
         config=WikiSiteConfig(site_url="https://wiki.example.com", api_key="secret"),
         connector=connector,
@@ -226,13 +252,27 @@ async def test_wiki_fetch_content_resolves_current_path_by_id(
         lambda *args, **kwargs: connection,
     )
 
-    content = await wiki_external_sync_provider.fetch_content(
+    prepared = wiki_external_sync_provider.prepare_content_fetch(
         MagicMock(), SimpleNamespace(id=7), "v1:conn-primary:42"
     )
+    content = await wiki_external_sync_provider.fetch_prepared_content(prepared)
 
-    connector.get_page_metadata_by_id.assert_awaited_once_with(connection.config, "42")
-    connector.get_page.assert_awaited_once_with(
-        connection.config, "ops/renamed-runbook", "zh"
-    )
+    connector.get_page_by_id.assert_awaited_once_with(connection.config, "42")
     assert content.content == b"# Renamed"
     assert content.metadata["sync"]["path"] == "ops/renamed-runbook"
+
+
+def test_wiki_remote_state_requires_updated_timestamp() -> None:
+    state = wiki_external_sync_provider._state_from_page(
+        "https://wiki.example.com",
+        SimpleNamespace(
+            path="ops/runbook",
+            title="Runbook",
+            locale="zh",
+            updated_at="",
+        ),
+    )
+
+    assert state.exists is True
+    assert state.remote_version is None
+    assert state.error_code == "external_version_unavailable"

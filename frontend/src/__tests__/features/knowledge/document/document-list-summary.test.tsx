@@ -368,14 +368,15 @@ describe('DocumentList summary header', () => {
     expect(screen.queryByTestId('expand-all-toggle')).not.toBeInTheDocument()
   })
 
-  it('opens live wiki documents in the standard document preview', () => {
+  it('opens synchronized wiki documents in the standard document preview', () => {
     mockDocuments = [
       createDocument({
-        source_type: 'external_wiki',
+        source_type: 'external',
         source_config: {
-          wiki: {
-            path: 'operations/handbook',
-            resource_url: 'https://wiki.example.com/operations/handbook',
+          external: {
+            provider: 'wiki',
+            url: 'https://wiki.example.com/operations/handbook',
+            sync: { enabled: true },
           },
         },
       }),
@@ -385,7 +386,7 @@ describe('DocumentList summary header', () => {
 
     fireEvent.click(screen.getByTestId('open-document-10'))
 
-    expect(screen.getByTestId('document-detail-preview')).toHaveTextContent('external_wiki:10')
+    expect(screen.getByTestId('document-detail-preview')).toHaveTextContent('external:10')
   })
 
   it('shows expand-all when the knowledge base has folders and fewer than 200 documents', () => {

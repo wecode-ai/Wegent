@@ -7,7 +7,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import type { WikiBoundDocument, WikiPageSummary } from '@/apis/wiki'
 
-const mockGetConnection = jest.fn()
 const mockListConnections = jest.fn()
 const mockListKbWikiDocuments = jest.fn()
 const mockListPages = jest.fn()
@@ -42,7 +41,6 @@ const mockTranslate = (key: string, params?: Record<string, string | number>) =>
 
 jest.mock('@/apis/wiki', () => ({
   wikiApis: {
-    getConnection: () => mockGetConnection(),
     listConnections: () => mockListConnections(),
     listKbWikiDocuments: (...args: unknown[]) => mockListKbWikiDocuments(...(args as [])),
     unbindKbWikiDocument: (...args: unknown[]) => mockUnbind(...args),
@@ -66,9 +64,8 @@ const bound: WikiBoundDocument = {
   locale: 'zh',
   page_updated_at: '',
   resource_url: 'https://wiki.example.com/tech-wiki/elasticsearch',
-  bound_by: 'alice',
-  bound_at: null,
   status: 'live',
+  connection_id: 'conn-primary',
 }
 
 const pages: WikiPageSummary[] = [
@@ -122,10 +119,20 @@ describe('WikiDocumentImport', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockMissingTranslationKeys.clear()
-    mockListConnections.mockRejectedValue(new Error('legacy backend'))
-    mockGetConnection.mockResolvedValue({
-      enabled: true,
-      site_url: 'https://wiki.example.com',
+    mockListConnections.mockResolvedValue({
+      connections: [
+        {
+          id: 'conn-primary',
+          display_name: 'Primary Wiki',
+          enabled: true,
+          connector_type: 'wikijs',
+          site_url: 'https://wiki.example.com',
+          default_locale: 'zh',
+          api_key_masked: '****',
+          available_connectors: [{ type: 'wikijs', display_name: 'Wiki.js' }],
+        },
+      ],
+      available_connectors: [{ type: 'wikijs', display_name: 'Wiki.js' }],
     })
     mockListKbWikiDocuments.mockResolvedValue([bound])
     mockListPages.mockResolvedValue({ pages, next_offset: null, warnings: [] })
@@ -197,7 +204,7 @@ describe('WikiDocumentImport', () => {
     expect(await screen.findByText('新发布页面')).toBeInTheDocument()
     expect(mockListPages).toHaveBeenLastCalledWith({
       limit: 200,
-      connection_id: 'legacy-default',
+      connection_id: 'conn-primary',
       refresh: true,
     })
   })
@@ -345,7 +352,7 @@ describe('WikiDocumentImport', () => {
     )
     expect(mockListPages).toHaveBeenNthCalledWith(2, {
       limit: 200,
-      connection_id: 'legacy-default',
+      connection_id: 'conn-primary',
       offset: 200,
     })
   })
@@ -365,7 +372,7 @@ describe('WikiDocumentImport', () => {
   })
 
   it('renders connection guidance when not configured', async () => {
-    mockGetConnection.mockResolvedValue({ enabled: false, site_url: '' })
+    mockListConnections.mockResolvedValue({ connections: [], available_connectors: [] })
     renderTab()
     expect(await screen.findByTestId('wiki-import-need-connection')).toBeInTheDocument()
   })
@@ -397,7 +404,7 @@ describe('WikiDocumentImport', () => {
       ],
       available_connectors: [],
     })
-    const onImport = jest.fn().mockResolvedValue({ createdCount: 1, notes: [] })
+    const onImport = jest.fn().mockResolvedValue({ createdCount: 1 })
     renderTab(onImport)
 
     const selector = await screen.findByTestId('wiki-import-connection-select')
@@ -405,7 +412,6 @@ describe('WikiDocumentImport', () => {
     await waitFor(() =>
       expect(screen.getByTestId('wiki-import-site')).toHaveTextContent('ops.example.com')
     )
-    expect(screen.getByTestId('wiki-import-sync-switch')).toBeChecked()
     fireEvent.click(await screen.findByTestId('wiki-import-check-tech-wiki/etcd'))
     await waitFor(() => expect(screen.getByTestId('wiki-import-submit-button')).not.toBeDisabled())
     fireEvent.click(screen.getByTestId('wiki-import-submit-button'))
@@ -413,16 +419,13 @@ describe('WikiDocumentImport', () => {
     await waitFor(() =>
       expect(onImport).toHaveBeenCalledWith(['tech-wiki/etcd'], {
         connectionId: 'conn-b',
-        sync: true,
       })
     )
   })
 
   it('unbinds synchronized wiki documents from the bound list', async () => {
     mockUnbind.mockResolvedValue(undefined)
-    mockListKbWikiDocuments
-      .mockResolvedValueOnce([{ ...bound, id: 32, sync: true }])
-      .mockResolvedValue([])
+    mockListKbWikiDocuments.mockResolvedValueOnce([{ ...bound, id: 32 }]).mockResolvedValue([])
     renderTab()
 
     fireEvent.click(await screen.findByTestId('wiki-import-unbind-32'))

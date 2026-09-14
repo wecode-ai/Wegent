@@ -4,9 +4,14 @@
 
 """Tests for the wiki page-list cache helpers (design §5.6 P1)."""
 
+from types import SimpleNamespace
+
 import pytest
+from sqlalchemy import inspect
+from sqlalchemy.orm import sessionmaker
 
 from app.api.endpoints import external_wiki
+from app.models.user import User
 
 
 class FakeCache:
@@ -64,7 +69,26 @@ async def test_cached_page_list_refresh_bypasses_cache(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_locale_buckets_share_one_key(monkeypatch):
+async def test_cached_page_list_caches_empty_results(monkeypatch):
+    fake = FakeCache()
+    monkeypatch.setattr(external_wiki, "cache_manager", fake)
+    calls = []
+
+    async def fetch_all():
+        calls.append(1)
+        return ([], [])
+
+    first, _ = await external_wiki._cached_page_list("kb:empty", None, False, fetch_all)
+    second, _ = await external_wiki._cached_page_list(
+        "kb:empty", None, False, fetch_all
+    )
+
+    assert first == second == []
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_locale_buckets_share_one_connection_key(monkeypatch):
     fake = FakeCache()
     monkeypatch.setattr(external_wiki, "cache_manager", fake)
 
@@ -78,9 +102,6 @@ async def test_locale_buckets_share_one_key(monkeypatch):
     await external_wiki._cached_page_list("kb:1", "zh", False, fetch_zh)
     bucket = fake.store["wiki:pages:kb:1"]
     assert set(bucket.keys()) == {"", "zh"}
-    # One delete invalidates every locale variant at once.
-    await external_wiki._invalidate_kb_pages_cache(1)
-    assert "wiki:pages:kb:1" not in fake.store
 
 
 def test_filter_and_slice_prefix_and_pagination():
@@ -98,3 +119,46 @@ def test_filter_and_slice_prefix_and_pagination():
         items + [{"path": "docs-arch/x"}], "docs", 10, 0
     )
     assert [item["path"] for item in batch] == ["docs/a", "docs/sub/b"]
+
+
+@pytest.mark.asyncio
+async def test_list_pages_keeps_current_user_attached_across_remote_io(
+    monkeypatch, test_db, test_user
+):
+    """Production sessions expire ORM attributes on commit."""
+    production_session = sessionmaker(bind=test_db.get_bind(), expire_on_commit=True)()
+    current_user = production_session.get(User, test_user.id)
+    assert current_user is not None
+
+    class Connector:
+        async def list_pages(self, *_args, **_kwargs):
+            assert not production_session.in_transaction()
+            return [], None
+
+    connection = SimpleNamespace(
+        connection_id="conn-primary",
+        connector=Connector(),
+        config=SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        external_wiki.WikiConnectionService,
+        "get_user_wiki_connection",
+        lambda *_args, **_kwargs: connection,
+    )
+    monkeypatch.setattr(external_wiki, "cache_manager", FakeCache())
+
+    try:
+        response = await external_wiki.list_wiki_pages(
+            path=None,
+            locale=None,
+            limit=50,
+            offset=0,
+            refresh=False,
+            connection_id="conn-primary",
+            db=production_session,
+            current_user=current_user,
+        )
+        assert response.pages == []
+        assert inspect(current_user).detached is False
+    finally:
+        production_session.close()

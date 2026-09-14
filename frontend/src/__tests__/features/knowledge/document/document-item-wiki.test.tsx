@@ -22,96 +22,37 @@ jest.mock('@/features/knowledge/multimodal/hooks/useMultimodalDocActions', () =>
   }),
 }))
 
-const wikiDocument: KnowledgeDocument = {
+const syncedWikiDocument: KnowledgeDocument = {
   id: 42,
   kind_id: 1,
   user_id: 1,
   name: '远程 Wiki 页面',
   file_extension: 'md',
-  file_size: 0,
+  file_size: 15,
   status: 'enabled',
   is_active: true,
-  index_status: 'not_indexed',
+  index_status: 'success',
   index_generation: 0,
   created_at: '2026-09-04T00:00:00Z',
   updated_at: '2026-09-04T00:00:00Z',
   folder_id: 0,
-  source_type: 'external_wiki',
-  source_config: {
-    wiki: {
-      path: 'operations/handbook',
-      resource_url: 'https://wiki.example.com/operations/handbook',
-    },
-  },
-  attachment_id: null,
-  created_by: 'alice',
-}
-
-// A legacy row created before the metadata backfill: created_at equals
-// updated_at (the bind instant) but the wiki page time survives in the
-// nested source_config. The list must still show the source page time.
-const legacyWikiDocument: KnowledgeDocument = {
-  ...wikiDocument,
-  source_config: {
-    wiki: {
-      path: 'operations/handbook',
-      resource_url: 'https://wiki.example.com/operations/handbook',
-      page_updated_at: '2026-09-03T12:34:56Z',
-    },
-  },
-}
-
-// A row bound after the fix: file_size is the real Markdown byte length
-// and updated_at carries the wiki page time.
-const backfilledWikiDocument: KnowledgeDocument = {
-  ...wikiDocument,
-  file_size: 15,
-  updated_at: '2026-09-03T12:34:56Z',
-  source_config: {
-    wiki: {
-      path: 'operations/handbook',
-      resource_url: 'https://wiki.example.com/operations/handbook',
-      page_updated_at: '2026-09-03T12:34:56Z',
-    },
-  },
-}
-
-const syncedWikiDocument: KnowledgeDocument = {
-  ...backfilledWikiDocument,
-  id: 43,
   source_type: 'external',
-  index_status: 'success',
-  attachment_id: 430,
   source_config: {
     external: {
       provider: 'wiki',
       title: 'Synchronized Wiki',
-      sync: { enabled: true },
+      url: 'https://wiki.example.com/operations/handbook',
+      sync: {
+        enabled: true,
+        observed_version: '2026-09-03T12:34:56Z',
+      },
     },
   },
+  attachment_id: 430,
+  created_by: 'alice',
 }
 
 describe('DocumentItem external wiki actions', () => {
-  it('does not offer local edit or indexing actions for a live remote page', async () => {
-    const user = userEvent.setup()
-    render(
-      <DocumentItem
-        document={wikiDocument}
-        compact
-        onEdit={jest.fn()}
-        onMove={jest.fn()}
-        onDelete={jest.fn()}
-        onReindex={jest.fn()}
-      />
-    )
-
-    await user.click(screen.getByTestId('document-actions-42'))
-
-    expect(screen.queryByText('common:actions.edit')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('reindex-document-42')).not.toBeInTheDocument()
-    expect(await screen.findByText('knowledge:document.folder.moveDocument')).toBeInTheDocument()
-  })
-
   it('shows reindex for synchronized wiki documents only after indexing fails', () => {
     const { rerender } = render(
       <DocumentItem
@@ -122,8 +63,8 @@ describe('DocumentItem external wiki actions', () => {
       />
     )
 
-    expect(screen.getByTestId('sync-document-43')).toBeInTheDocument()
-    expect(screen.queryByTestId('reindex-document-43')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sync-document-42')).toBeInTheDocument()
+    expect(screen.queryByTestId('reindex-document-42')).not.toBeInTheDocument()
 
     rerender(
       <DocumentItem
@@ -134,8 +75,8 @@ describe('DocumentItem external wiki actions', () => {
       />
     )
 
-    expect(screen.getByTestId('sync-document-43')).toBeInTheDocument()
-    expect(screen.getByTestId('reindex-document-43')).toBeInTheDocument()
+    expect(screen.getByTestId('sync-document-42')).toBeInTheDocument()
+    expect(screen.getByTestId('reindex-document-42')).toBeInTheDocument()
   })
 
   it('shows the backend failure reason when a synchronized wiki document fails', async () => {
@@ -158,7 +99,7 @@ describe('DocumentItem external wiki actions', () => {
       />
     )
 
-    const failedStatus = screen.getByTestId('document-processing-error-43')
+    const failedStatus = screen.getByTestId('document-processing-error-42')
     expect(failedStatus).toHaveTextContent('knowledge:document.document.indexStatus.failed')
     await user.hover(failedStatus)
     expect((await screen.findAllByText('无法连接 Wiki 站点')).length).toBeGreaterThan(0)
@@ -185,7 +126,7 @@ describe('DocumentItem external wiki actions', () => {
       />
     )
 
-    expect(screen.getByTestId('document-wiki-status-43')).toHaveTextContent(
+    expect(screen.getByTestId('document-wiki-status-42')).toHaveTextContent(
       'knowledge:document.document.indexStatus.available'
     )
     const sourceStatus = screen.getByTestId('external-source-inaccessible')
@@ -220,6 +161,33 @@ describe('DocumentItem external wiki actions', () => {
       'knowledge:document.document.wikiSourceMissing'
     )
   })
+
+  it('shows a synchronization error while keeping the existing index available', async () => {
+    const user = userEvent.setup()
+    render(
+      <DocumentItem
+        document={{
+          ...syncedWikiDocument,
+          source_config: {
+            external: {
+              provider: 'wiki',
+              title: 'Synchronized Wiki',
+              status: 'sync_error',
+              last_error: '无法连接 Wiki 站点',
+              sync: { enabled: true, last_error_code: 'wiki_connection_failed' },
+            },
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('document-wiki-status-42')).toHaveTextContent(
+      'knowledge:document.document.indexStatus.available'
+    )
+    const sourceStatus = screen.getByTestId('external-source-inaccessible')
+    await user.hover(sourceStatus)
+    expect((await screen.findAllByText('无法连接 Wiki 站点')).length).toBeGreaterThan(0)
+  })
 })
 
 describe('DocumentItem external wiki metadata display', () => {
@@ -228,44 +196,42 @@ describe('DocumentItem external wiki metadata display', () => {
   const formatLocal = (iso: string) =>
     new Date(iso).toLocaleString('sv-SE', { hour12: false }).replace(/-/g, '/')
 
-  it('shows the source page time for a legacy row awaiting backfill (compact)', () => {
-    render(<DocumentItem document={legacyWikiDocument} compact />)
-    // Compact mode shows date only; the legacy row's created_at (09-04)
-    // must not win over the source page date (09-03).
+  it.each([true, false])('shows MD with a Wiki icon when compact=%s', compact => {
+    render(<DocumentItem document={syncedWikiDocument} compact={compact} />)
+    const type = screen.getByTestId('synced-wiki-document-type')
+    expect(type).toHaveTextContent('MD')
+    expect(type.querySelector('svg')).toHaveClass('lucide-book-open')
+  })
+
+  it('shows the observed source page time in compact mode', () => {
+    render(<DocumentItem document={syncedWikiDocument} compact />)
     expect(screen.getByText('2026/09/03')).toBeInTheDocument()
   })
 
-  it('shows the source page time for a legacy row awaiting backfill (table)', () => {
-    render(<DocumentItem document={legacyWikiDocument} />)
+  it('shows the observed source page time in table mode', () => {
+    render(<DocumentItem document={syncedWikiDocument} />)
     expect(screen.getByTestId('updated-at-cell')).toHaveTextContent(
       formatLocal('2026-09-03T12:34:56Z')
     )
   })
 
   it('shows the real markdown size instead of a placeholder (table)', () => {
-    render(<DocumentItem document={backfilledWikiDocument} />)
+    render(<DocumentItem document={syncedWikiDocument} />)
     expect(screen.getByText('15 B')).toBeInTheDocument()
   })
 
   it('shows the real markdown size in compact mode too', () => {
-    render(<DocumentItem document={backfilledWikiDocument} compact />)
+    render(<DocumentItem document={syncedWikiDocument} compact />)
     expect(screen.getByText('15 B')).toBeInTheDocument()
   })
 
-  it('shows the source page time for a backfilled row (table)', () => {
-    render(<DocumentItem document={backfilledWikiDocument} />)
-    expect(screen.getByTestId('updated-at-cell')).toHaveTextContent(
-      formatLocal('2026-09-03T12:34:56Z')
-    )
-  })
-
-  it('does not render an invalid page_updated_at', () => {
+  it('does not render an invalid observed version', () => {
     const document: KnowledgeDocument = {
-      ...legacyWikiDocument,
+      ...syncedWikiDocument,
       source_config: {
-        wiki: {
-          path: 'operations/handbook',
-          page_updated_at: 'not-a-date',
+        external: {
+          provider: 'wiki',
+          sync: { enabled: true, observed_version: 'not-a-date' },
         },
       },
     }

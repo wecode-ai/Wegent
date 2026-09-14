@@ -308,9 +308,7 @@
         "pendingConversion": "待转换",
         "pendingConversionHint": "文档正在等待转换为可检索的格式。",
         "failed": "失败",
-        "failedHint": "文档处理失败，请重新索引；若持续失败，请联系管理员。",
-        "live": "实时",
-        "liveHint": "外部 Wiki 文档：内容实时读取，不参与向量索引"
+        "failedHint": "文档处理失败，请重新索引；若持续失败，请联系管理员。"
       },
       "processingError": {
         "stage": {
@@ -662,7 +660,8 @@
       "discard": "放弃并关闭",
       "wiki": {
         "entry": "外部 Wiki",
-        "noPermission": "没有绑定外部 Wiki 文档的权限"
+        "noPermission": "没有绑定外部 Wiki 文档的权限",
+        "busy": "正在处理其他资料，请稍候"
       }
     },
     "permission": {
@@ -1310,17 +1309,13 @@
     }
   },
   "wikiSection": {
-    "badge": "实时",
     "synced_badge": "同步 Wiki",
     "connection": "Wiki 连接",
-    "sync_label": "同步到知识库",
-    "sync_hint": "保存页面快照并向量索引，每天自动检查更新",
     "loading": "正在加载 Wiki 绑定…",
     "load_failed": "加载 Wiki 绑定失败",
     "add_failed": "绑定失败",
     "remove_failed": "解绑失败",
     "unbind": "解除绑定",
-    "bound_by": "由 {{name}} 添加",
     "tree_empty": "绑定范围内没有已发布页面",
     "load_tree_failed": "加载 Wiki 页面失败",
     "connection_failed_tooltip": "连接失败：{{message}}",
@@ -1337,6 +1332,9 @@
     "expand_directory": "展开目录“{{name}}”",
     "collapse_directory": "收起目录“{{name}}”",
     "already_bound": "已绑定",
+    "already_bound_n": "{{count}} 个 Wiki 文档已绑定，本次跳过",
+    "resynced_n": "已重新同步 {{count}} 个 Wiki 文档",
+    "processing_n": "{{count}} 个 Wiki 文档正在处理中，本次跳过",
     "bind_selected": "绑定选中（{{count}}）",
     "bind_scope_success_n": "已绑定 {{count}} 个 Wiki 文档"
   }

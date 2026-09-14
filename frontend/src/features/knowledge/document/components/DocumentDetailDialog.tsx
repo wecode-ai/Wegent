@@ -64,11 +64,7 @@ import {
 } from '@/utils/languageDetection'
 import { formatDateTime } from '@/utils/dateTime'
 import { parseUTCDate } from '@/lib/utils'
-import {
-  getExternalSourceInfo,
-  getWikiDocumentSourceInfo,
-  isDocumentEditable,
-} from '../utils/documentUtils'
+import { getExternalSourceInfo, isDocumentEditable } from '../utils/documentUtils'
 import { isKnowledgeSourcePreviewSupported } from '../utils/sourcePreview'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
@@ -180,17 +176,7 @@ export function DocumentDetailDialog({
     () => (document ? getExternalSourceInfo(document) : null),
     [document]
   )
-  const sourceInfo = useMemo(() => {
-    if (externalSourceInfo) return externalSourceInfo
-    if (!document) return null
-    const wiki = getWikiDocumentSourceInfo(document)
-    if (!wiki) return null
-    return {
-      provider: 'wiki',
-      title: document.name,
-      url: wiki.resourceUrl,
-    }
-  }, [document, externalSourceInfo])
+  const sourceInfo = externalSourceInfo
   const externalLastImportedAt = useMemo(() => {
     if (!externalSourceInfo?.last_success_at) return null
     const date = parseUTCDate(externalSourceInfo.last_success_at)
@@ -444,7 +430,7 @@ export function DocumentDetailDialog({
                             </span>
                           </>
                         )}
-                        {sourceInfo.status === 'inaccessible' ? (
+                        {['inaccessible', 'sync_error'].includes(sourceInfo.status || '') ? (
                           <Badge
                             variant="default"
                             size="sm"

@@ -1,4 +1,4 @@
----
+docs---
 sidebar_position: 8
 ---
 
@@ -18,6 +18,7 @@ Document management is a core feature of Knowledge Base, supporting multiple doc
 | **Text Paste** | Paste text content directly |
 | **External Table** | Import from DingTalk/Feishu tables |
 | **Web Scraping** | Scrape content from URL |
+| **External Wiki** | Bind Wiki.js pages with daily automatic sync |
 
 ### File Upload
 
@@ -58,6 +59,10 @@ Supports importing data from online table services.
 4. Click **Import**
 
 Web documents support re-scraping for updates. When webpage content changes, use the refresh feature to get the latest content.
+
+### External Wiki
+
+Bind Wiki.js pages as synchronized documents with daily automatic sync. See [External Wiki Sync](./external-wiki.md).
 
 ---
 

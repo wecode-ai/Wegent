@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * "External Wiki" tab of the add-material dialog: add selected pages either
- * as live bindings or synchronized, indexed knowledge documents.
+ * "External Wiki" tab of the add-material dialog for synchronized documents.
  */
 
 'use client'
@@ -23,19 +22,19 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Pagination } from '@/components/ui/pagination'
-import { Switch } from '@/components/ui/switch'
 import { Tag } from '@/components/ui/tag'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export interface WikiBindImportSummary {
   createdCount: number
-  notes: string[]
+  updatedCount: number
+  processingCount: number
+  duplicateCount: number
 }
 
 export interface WikiImportOptions {
-  connectionId?: string
-  sync: boolean
+  connectionId: string
 }
 
 interface WikiDocumentImportProps {
@@ -94,7 +93,6 @@ export function WikiDocumentImport({
   const [siteUrl, setSiteUrl] = useState('')
   const [connections, setConnections] = useState<WikiConnectionSummary[]>([])
   const [connectionId, setConnectionId] = useState('')
-  const [syncEnabled, setSyncEnabled] = useState(true)
   const [bound, setBound] = useState<WikiBoundDocument[]>([])
   const [boundLoading, setBoundLoading] = useState(true)
   const [pages, setPages] = useState<WikiPageSummary[] | null>(null)
@@ -126,26 +124,12 @@ export function WikiDocumentImport({
   useEffect(() => {
     const load = async () => {
       try {
-        try {
-          const response = await wikiApis.listConnections()
-          const available = response.connections.filter(item => item.enabled && item.site_url)
-          setConnections(available)
-          setConnectionId(available[0]?.id || '')
-          setSiteUrl(available[0]?.site_url || '')
-          setConnected(available.length > 0)
-        } catch {
-          const connection = await wikiApis.getConnection()
-          const legacy: WikiConnectionSummary = {
-            ...connection,
-            id: 'legacy-default',
-            display_name: 'Wiki',
-            legacy: true,
-          }
-          setConnections(connection.enabled && connection.site_url ? [legacy] : [])
-          setConnectionId(connection.enabled ? legacy.id : '')
-          setConnected(connection.enabled && !!connection.site_url)
-          setSiteUrl(connection.site_url)
-        }
+        const response = await wikiApis.listConnections()
+        const available = response.connections.filter(item => item.enabled && item.site_url)
+        setConnections(available)
+        setConnectionId(available[0]?.id || '')
+        setSiteUrl(available[0]?.site_url || '')
+        setConnected(available.length > 0)
       } catch {
         setConnected(false)
       }
@@ -223,12 +207,7 @@ export function WikiDocumentImport({
   }, [selected, onDraftChange])
 
   const boundPaths = useMemo(
-    () =>
-      new Set(
-        bound
-          .filter(item => (item.connection_id || 'legacy-default') === connectionId)
-          .map(item => item.path)
-      ),
+    () => new Set(bound.filter(item => item.connection_id === connectionId).map(item => item.path)),
     [bound, connectionId]
   )
 
@@ -325,17 +304,37 @@ export function WikiDocumentImport({
     if (!paths.length) return
     try {
       setSubmitting(true)
-      const summary = await onImport(paths, { connectionId, sync: syncEnabled })
+      const summary = await onImport(paths, { connectionId })
       setSelected(new Set())
       await loadBound()
       onDone?.()
-      toast({
-        title: t('wikiSection.bind_scope_success_n', {
-          count: summary.createdCount,
-        }),
-      })
-      for (const note of summary.notes) {
-        toast({ title: note })
+      if (summary.createdCount > 0) {
+        toast({
+          title: t('wikiSection.bind_scope_success_n', {
+            count: summary.createdCount,
+          }),
+        })
+      }
+      if (summary.duplicateCount > 0) {
+        toast({
+          title: t('wikiSection.already_bound_n', {
+            count: summary.duplicateCount,
+          }),
+        })
+      }
+      if (summary.updatedCount > 0) {
+        toast({
+          title: t('wikiSection.resynced_n', {
+            count: summary.updatedCount,
+          }),
+        })
+      }
+      if (summary.processingCount > 0) {
+        toast({
+          title: t('wikiSection.processing_n', {
+            count: summary.processingCount,
+          }),
+        })
       }
     } catch (error) {
       toast({
@@ -419,17 +418,6 @@ export function WikiDocumentImport({
             </select>
           </label>
         )}
-        <div className="flex items-center justify-between rounded-md border border-border bg-surface px-3 py-2">
-          <div>
-            <p className="text-sm font-medium text-text-primary">{t('wikiSection.sync_label')}</p>
-            <p className="text-xs text-text-muted">{t('wikiSection.sync_hint')}</p>
-          </div>
-          <Switch
-            checked={syncEnabled}
-            onCheckedChange={setSyncEnabled}
-            data-testid="wiki-import-sync-switch"
-          />
-        </div>
         <div className="flex items-center gap-2 text-xs text-text-muted">
           <BookExternalLink className="h-3.5 w-3.5" />
           <span className="min-w-0 truncate" data-testid="wiki-import-site">
@@ -453,7 +441,7 @@ export function WikiDocumentImport({
             data-status={connectionStatus}
             data-testid="wiki-import-connection-status"
           >
-            {syncEnabled ? t('wikiSection.synced_badge') : t('wikiSection.badge')}
+            {t('wikiSection.synced_badge')}
           </Tag>
         </div>
 
@@ -497,13 +485,8 @@ export function WikiDocumentImport({
                   <span className="flex min-w-0 items-center gap-1.5 text-sm">
                     <Link2 className="h-3.5 w-3.5 shrink-0 text-text-muted" />
                     <span className="truncate">{item.name}</span>
-                    {item.sync && (
-                      <span className="shrink-0 text-xs text-text-muted">
-                        {t('wikiSection.synced_badge')}
-                      </span>
-                    )}
                     <span className="shrink-0 text-xs text-text-muted">
-                      {item.bound_by ? t('wikiSection.bound_by', { name: item.bound_by }) : ''}
+                      {t('wikiSection.synced_badge')}
                     </span>
                   </span>
                   {canManageDocuments && (

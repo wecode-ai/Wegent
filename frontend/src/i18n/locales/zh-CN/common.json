@@ -1781,7 +1781,7 @@
     "deleting": "删除中…",
     "delete_confirm_title": "删除 Wiki 连接",
     "delete_confirm_message": "确定要删除连接“{{name}}”吗？删除后无法继续通过此连接访问 Wiki。",
-    "delete_reference_hint": "如果连接仍被 Live Wiki 或同步 Wiki 知识库文档引用，系统将拒绝删除，请先删除关联文档。",
+    "delete_reference_hint": "如果连接仍被同步 Wiki 知识库文档引用，系统将拒绝删除，请先删除关联文档。",
     "delete_success": "Wiki 连接已删除",
     "delete_failed": "删除 Wiki 连接失败"
   }

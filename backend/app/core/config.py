@@ -311,16 +311,17 @@ class Settings(BaseSettings):
     EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_REQUESTS: int = 20
     EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_WINDOW_SECONDS: int = 60
 
-    # External wiki bridge configuration (design: tmp/2026-09-03-wikijs-mcp-knowledge-design.md)
-    WIKI_MCP_ENABLED: bool = True  # Wiki bridge MCP and /api/wiki/* REST switch
+    # External Wiki synchronized import and page-picker configuration.
     WIKIJS_GRAPHQL_TIMEOUT_SECONDS: int = 30  # Wiki.js connector per-request timeout
     WIKI_TREE_MAX_PAGES: int = 5000  # Tree browse page-list upper bound
-    WIKI_PAGE_CONTENT_MAX_CHARS: int = 48000  # Per page/section returned char budget
     # Intranet wiki sites resolve to private addresses; opt in per deployment.
     WIKI_ALLOW_PRIVATE_NETWORK: bool = False
     EXTERNAL_DOC_SYNC_ENABLED: bool = True
     EXTERNAL_DOC_SYNC_CRON: str = "0 19 * * *"
-    EXTERNAL_DOC_SYNC_SCAN_LIMIT: int = 1000
+    EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE: int = 500
+    EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS: int = 10000
+    EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS: int = 2700
+    WIKI_SYNC_REMOTE_BATCH_SIZE: int = 500
     EXTERNAL_DOC_SYNC_LOCK_TTL_SECONDS: int = 3600
 
     # Celery configuration

@@ -160,6 +160,14 @@ class ExternalDocumentContent:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class PreparedExternalDocumentFetch:
+    """Provider-owned payload detached from the database Session."""
+
+    external_resource_id: str
+    payload: Any = field(repr=False)
+
+
 class ExternalDocumentProvider(ABC):
     """Contract every external document provider adapter must fulfil."""
 
@@ -179,13 +187,19 @@ class ExternalDocumentProvider(ABC):
         """
 
     @abstractmethod
-    async def fetch_content(
+    def prepare_content_fetch(
         self,
         db: Session,
         user: User,
         external_resource_id: str,
+    ) -> PreparedExternalDocumentFetch:
+        """Resolve database-backed metadata into a detached provider payload."""
+
+    @abstractmethod
+    async def fetch_prepared_content(
+        self, prepared: PreparedExternalDocumentFetch
     ) -> ExternalDocumentContent:
-        """Fetch the document body as attachment-ready content.
+        """Fetch a prepared document body without a database Session.
 
         Raises ExternalSourceUnavailableError when the provider can tell the
         resource is gone or access was revoked, ExternalDocumentFetchError
@@ -250,13 +264,12 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             "url": node.doc_url,
         }
 
-    @trace_async(tracer_name="knowledge.external_import")
-    async def fetch_content(
+    def prepare_content_fetch(
         self,
         db: Session,
         user: User,
         external_resource_id: str,
-    ) -> ExternalDocumentContent:
+    ) -> PreparedExternalDocumentFetch:
         from app.services.dingtalk_doc_service import DingTalkDocService
 
         try:
@@ -272,10 +285,31 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             raise ExternalDocumentFetchError(
                 "DingTalk Docs MCP URL is not configured or not enabled"
             )
+        spreadsheet_urls = {
+            extension: DingTalkDocService.get_user_dingtalk_mcp_url(user, service)
+            for extension, (service, _label) in _SPREADSHEET_MCP_SERVICES.items()
+        }
+        return PreparedExternalDocumentFetch(
+            external_resource_id=external_resource_id,
+            payload={
+                "metadata": metadata,
+                "mcp_url": mcp_url,
+                "spreadsheet_urls": spreadsheet_urls,
+            },
+        )
+
+    @trace_async(tracer_name="knowledge.external_import")
+    async def fetch_prepared_content(
+        self, prepared: PreparedExternalDocumentFetch
+    ) -> ExternalDocumentContent:
+        payload = prepared.payload
+        metadata = payload["metadata"]
         try:
             async with asyncio.timeout(EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS):
                 extension, content = await self._fetch_document_content(
-                    mcp_url, external_resource_id, user
+                    payload["mcp_url"],
+                    prepared.external_resource_id,
+                    payload["spreadsheet_urls"],
                 )
         except TimeoutError:
             raise ExternalDocumentFetchError("DingTalk import timed out") from None
@@ -291,7 +325,10 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         )
 
     async def _fetch_document_content(
-        self, mcp_url: str, node_id: str, user: User
+        self,
+        mcp_url: str,
+        node_id: str,
+        spreadsheet_urls: dict[str, str | None],
     ) -> tuple[str, bytes]:
         """Verify live metadata before selecting the source reader."""
         from app.services.dingtalk_doc_service import DingTalkDocService
@@ -323,7 +360,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             if str(info.get("contentType")).strip().upper() == "ALIDOC":
                 source_extension = str(info.get("extension")).strip().lower()
                 service, label = _SPREADSHEET_MCP_SERVICES[source_extension]
-                export_url = DingTalkDocService.get_user_dingtalk_mcp_url(user, service)
+                export_url = spreadsheet_urls.get(source_extension)
                 if not export_url:
                     raise ExternalDocumentFetchError(
                         f"DingTalk {label} MCP is not configured or not enabled. Configure it in Settings > Integrations."

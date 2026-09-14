@@ -13,7 +13,36 @@ from sqlalchemy.orm import Session
 import app.tasks.knowledge_tasks as knowledge_tasks_module
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.schemas.knowledge import KnowledgeBaseCreate
+from app.services.knowledge.external_document_providers import (
+    PreparedExternalDocumentFetch,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
+
+
+def prepared_provider(fetch):
+    """Build a provider fake whose remote phase receives no database Session."""
+
+    def prepare(_db, user, external_resource_id):
+        return PreparedExternalDocumentFetch(
+            external_resource_id=external_resource_id,
+            payload=user,
+        )
+
+    async def fetch_prepared(prepared):
+        return await fetch(prepared.payload, prepared.external_resource_id)
+
+    return SimpleNamespace(
+        prepare_content_fetch=prepare,
+        fetch_prepared_content=fetch_prepared,
+        fetch_mock=fetch,
+    )
+
+
+def patch_provider_fetch(monkeypatch, provider, fetch):
+    fake = prepared_provider(fetch)
+    monkeypatch.setattr(provider, "prepare_content_fetch", fake.prepare_content_fetch)
+    monkeypatch.setattr(provider, "fetch_prepared_content", fake.fetch_prepared_content)
+    return fake
 
 
 def create_external_import_kb(

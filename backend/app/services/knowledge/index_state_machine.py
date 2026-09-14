@@ -299,6 +299,7 @@ def mark_document_index_enqueue_failed(
     generation: int,
     *,
     error: Optional[DocumentProcessingError] = None,
+    preserve_active_sync_index: bool = False,
 ) -> bool:
     """Mark a queued generation as failed when broker dispatch fails."""
     return mark_document_index_failed(
@@ -310,6 +311,7 @@ def mark_document_index_enqueue_failed(
             generation=generation,
             stage=DocumentProcessingStage.DISPATCH,
         ),
+        preserve_active_sync_index=preserve_active_sync_index,
     )
 
 
@@ -446,6 +448,25 @@ def _finalize_external_source_on_success(
     document.update_external_source_config(**updates)
 
 
+def _synchronized_wiki_updated_at(document: KnowledgeDocument) -> datetime | None:
+    """Return the Wiki source timestamp used by the document management UI."""
+    if document.external_provider != "wiki":
+        return None
+    sync = document.external_source_config.get("sync")
+    if not isinstance(sync, dict):
+        return None
+    raw = str(sync.get("content_version") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
 @trace_sync(
     span_name="knowledge.mark_document_index_succeeded",
     tracer_name="knowledge.state_machine",
@@ -503,9 +524,8 @@ def mark_document_index_succeeded(
     document.status = DocumentStatus.ENABLED
     if chunk_storage_enabled:
         document.chunks = chunks
-    document.updated_at = _utcnow()
-
     _finalize_external_source_on_success(document)
+    document.updated_at = _synchronized_wiki_updated_at(document) or _utcnow()
 
     db.commit()
     _record_transition(
@@ -584,6 +604,7 @@ def mark_document_index_failed(
         and document.attachment_id
         and isinstance(sync, dict)
         and sync.get("enabled")
+        and sync.get("indexed_version")
     )
     if has_active_sync_index:
         document.clear_processing_error_payload()
@@ -591,13 +612,20 @@ def mark_document_index_failed(
     else:
         document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
         document.index_status = DocumentIndexStatus.FAILED
-    document.updated_at = _utcnow()
-    if document.has_external_identity and persisted_error.code in {
-        "external_source_unavailable",
-        "external_source_missing",
-    }:
+    if not has_active_sync_index:
+        document.updated_at = _utcnow()
+    if document.has_external_identity and (
+        has_active_sync_index
+        or persisted_error.code
+        in {"external_source_unavailable", "external_source_missing"}
+    ):
         updates: dict[str, object] = {
-            "status": "inaccessible",
+            "status": (
+                "inaccessible"
+                if persisted_error.code
+                in {"external_source_unavailable", "external_source_missing"}
+                else "sync_error"
+            ),
             "last_error": persisted_error.message,
         }
         if isinstance(sync, dict) and sync.get("enabled"):

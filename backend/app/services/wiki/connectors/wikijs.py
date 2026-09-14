@@ -31,6 +31,7 @@ from app.services.wiki.connector import (
     WikiConnector,
     WikiPage,
     WikiPageMeta,
+    WikiPageProbe,
     WikiSiteConfig,
 )
 from shared.telemetry.decorators import trace_async
@@ -63,6 +64,28 @@ query ($id: Int!) {
 }
 """
 
+_PAGE_BY_ID_QUERY = """
+query ($id: Int!) {
+  pages {
+    single(id: $id) {
+      id path title description updatedAt locale content render
+      tags { id tag title }
+    }
+  }
+}
+"""
+
+_PAGE_META_BY_PATH_QUERY = """
+query ($path: String!, $locale: String!) {
+  pages {
+    singleByPath(path: $path, locale: $locale) {
+      id path title description updatedAt locale
+      tags { id tag title }
+    }
+  }
+}
+"""
+
 # Field notes from the Wiki.js schema (server/graph/schemas/page.graphql):
 # - Page.tags is [PageTag]! and needs a subfield selection (tags { id tag title })
 # - Page.content requires the read:source scope; isPublished requires
@@ -74,19 +97,6 @@ query ($path: String!, $locale: String!) {
     singleByPath(path: $path, locale: $locale) {
       id path title description updatedAt locale content render
       tags { id tag title }
-    }
-  }
-}
-"""
-
-# pages.search returns PageSearchResponse { results: [PageSearchResult]! ... }
-_SEARCH_QUERY = """
-query ($query: String!, $path: String, $locale: String) {
-  pages {
-    search(query: $query, path: $path, locale: $locale) {
-      results {
-        id title description path locale
-      }
     }
   }
 }
@@ -131,7 +141,11 @@ def validate_wiki_site_url(url: str) -> str:
                 "站点地址不允许指向本机/内网地址；内网 Wiki 需部署开启 "
                 "WIKI_ALLOW_PRIVATE_NETWORK",
             ) from exc
-    return cleaned.rstrip("/")
+    return (
+        parsed._replace(scheme=parsed.scheme.lower(), netloc=parsed.netloc.lower())
+        .geturl()
+        .rstrip("/")
+    )
 
 
 def _meta_from_node(node: dict[str, Any]) -> WikiPageMeta:
@@ -163,13 +177,23 @@ def _is_missing_page_error(exc: WikiApiError) -> bool:
     )
 
 
+def _is_missing_page_message(message: str) -> bool:
+    lowered = message.lower()
+    return any(marker in lowered for marker in ("does not exist", "page not found"))
+
+
+def _is_forbidden_message(message: str) -> bool:
+    lowered = message.lower()
+    return "forbidden" in lowered or "not authenticated" in lowered
+
+
 class WikijsConnector(WikiConnector):
     """Wiki.js 2.x adapter over the GraphQL endpoint."""
 
     connector_type = "wikijs"
     display_name = "Wiki.js"
 
-    async def _post_graphql(
+    async def _request_graphql(
         self,
         config: WikiSiteConfig,
         query: str,
@@ -246,6 +270,19 @@ class WikijsConnector(WikiConnector):
                 await asyncio.sleep(0.5 * (attempt + 1))
         _ = last_error  # every non-break path raises; keeps intent explicit
 
+        if not isinstance(payload, dict):
+            raise WikiApiError(
+                "upstream_error", "Wiki 站点返回了无法解析的响应", retryable=False
+            )
+        return payload
+
+    async def _post_graphql(
+        self,
+        config: WikiSiteConfig,
+        query: str,
+        variables: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = await self._request_graphql(config, query, variables)
         errors = payload.get("errors")
         if errors:
             first = str(errors[0].get("message", "unknown GraphQL error"))
@@ -272,8 +309,20 @@ class WikijsConnector(WikiConnector):
         page_list = ((data.get("pages") or {}).get("list")) or []
         if not isinstance(page_list, list):
             return WikiConnectionTest(ok=False, message="Wiki 站点响应格式不符合预期")
+        if page_list:
+            try:
+                page = await self.get_page_metadata_by_id(
+                    config, str(page_list[0].get("id") or "")
+                )
+            except WikiApiError as exc:
+                return WikiConnectionTest(ok=False, message=exc.message)
+            if page is None:
+                return WikiConnectionTest(
+                    ok=False, message="Wiki API Key 无法按页面 ID 查询"
+                )
         version = await self._probe_version(config)
-        return WikiConnectionTest(ok=True, message="连接成功", version=version)
+        message = "连接成功" if page_list else "连接成功，但无法验证单页查询权限"
+        return WikiConnectionTest(ok=True, message=message, version=version)
 
     async def _probe_version(self, config: WikiSiteConfig) -> str | None:
         try:
@@ -360,6 +409,151 @@ class WikijsConnector(WikiConnector):
         node = (data.get("pages") or {}).get("single")
         return _meta_from_node(node) if isinstance(node, dict) else None
 
+    @trace_async(
+        span_name="wikijs_get_page_metadata_by_path",
+        tracer_name="wiki.connector.wikijs",
+    )
+    async def get_page_metadata_by_path(
+        self,
+        config: WikiSiteConfig,
+        path: str,
+        locale: str | None = None,
+    ) -> WikiPageMeta | None:
+        attempts = (
+            [locale]
+            if locale
+            else list(
+                dict.fromkeys(
+                    [
+                        *([config.default_locale] if config.default_locale else []),
+                        *await self._installed_locales(config),
+                    ]
+                )
+            )
+        )
+        for attempt_locale in attempts:
+            try:
+                data = await self._post_graphql(
+                    config,
+                    _PAGE_META_BY_PATH_QUERY,
+                    {"path": path.strip("/"), "locale": attempt_locale},
+                )
+            except WikiApiError as exc:
+                if _is_missing_page_error(exc):
+                    continue
+                raise
+            node = (data.get("pages") or {}).get("singleByPath")
+            if isinstance(node, dict):
+                return _meta_from_node(node)
+        return None
+
+    @trace_async(
+        span_name="wikijs_inspect_page_metadata_by_ids",
+        tracer_name="wiki.connector.wikijs",
+    )
+    async def inspect_page_metadata_by_ids(
+        self,
+        config: WikiSiteConfig,
+        resource_ids: list[str],
+        *,
+        batch_size: int,
+    ) -> dict[str, WikiPageProbe]:
+        unique_ids = list(dict.fromkeys(resource_ids))
+        results: dict[str, WikiPageProbe] = {}
+        size = max(1, batch_size)
+        for start in range(0, len(unique_ids), size):
+            batch = unique_ids[start : start + size]
+            aliases: dict[str, str] = {}
+            variables: dict[str, int] = {}
+            fields: list[str] = []
+            for index, resource_id in enumerate(batch):
+                alias = f"p{index}"
+                try:
+                    page_id = int(resource_id)
+                except (TypeError, ValueError):
+                    results[resource_id] = WikiPageProbe(
+                        error_code="bad_request",
+                        error_message="Wiki 页面 ID 无效",
+                    )
+                    continue
+                aliases[alias] = resource_id
+                variables[f"id{index}"] = page_id
+                fields.append(
+                    f"{alias}: single(id: $id{index}) {{ "
+                    "id path title description updatedAt locale "
+                    "tags { id tag title } }"
+                )
+            if not fields:
+                continue
+            declarations = ", ".join(
+                f"$id{index}: Int!"
+                for index, resource_id in enumerate(batch)
+                if resource_id not in results
+            )
+            query = f"query ({declarations}) {{ pages {{ {' '.join(fields)} }} }}"
+            try:
+                payload = await self._request_graphql(config, query, variables)
+            except WikiApiError as exc:
+                for resource_id in aliases.values():
+                    results[resource_id] = WikiPageProbe(
+                        error_code=exc.error_code,
+                        error_message=exc.message,
+                    )
+                continue
+
+            data = payload.get("data")
+            pages = data.get("pages") if isinstance(data, dict) else None
+            pages = pages if isinstance(pages, dict) else {}
+            errors_by_alias: dict[str, str] = {}
+            global_error_code: str | None = None
+            for raw_error in payload.get("errors") or []:
+                if not isinstance(raw_error, dict):
+                    continue
+                path = raw_error.get("path")
+                alias = next(
+                    (
+                        str(item)
+                        for item in path or []
+                        if isinstance(item, str) and item in aliases
+                    ),
+                    None,
+                )
+                if alias:
+                    errors_by_alias[alias] = str(raw_error.get("message") or "")
+                else:
+                    message = str(raw_error.get("message") or "")
+                    global_error_code = (
+                        "wiki_auth_failed"
+                        if _is_forbidden_message(message)
+                        else "upstream_error"
+                    )
+
+            for alias, resource_id in aliases.items():
+                node = pages.get(alias)
+                if isinstance(node, dict):
+                    results[resource_id] = WikiPageProbe(page=_meta_from_node(node))
+                    continue
+                message = errors_by_alias.get(alias)
+                if message and _is_missing_page_message(message):
+                    results[resource_id] = WikiPageProbe(confirmed_missing=True)
+                elif message and _is_forbidden_message(message):
+                    results[resource_id] = WikiPageProbe(
+                        error_code="wiki_page_forbidden",
+                        error_message="无权访问 Wiki 源文档",
+                    )
+                elif (
+                    alias in pages
+                    and node is None
+                    and not message
+                    and not global_error_code
+                ):
+                    results[resource_id] = WikiPageProbe(confirmed_missing=True)
+                else:
+                    results[resource_id] = WikiPageProbe(
+                        error_code=global_error_code or "wiki_batch_result_missing"
+                    )
+        return results
+
     async def _installed_locales(self, config: WikiSiteConfig) -> list[str]:
         """Resolve the site's installed locales (short process-local cache).
 
@@ -385,8 +579,45 @@ class WikijsConnector(WikiConnector):
             codes = []
         if not codes:
             codes = ["en"]
+        if (
+            config.site_url not in _SITE_LOCALES_CACHE
+            and len(_SITE_LOCALES_CACHE) >= 64
+        ):
+            oldest_key = min(
+                _SITE_LOCALES_CACHE,
+                key=lambda key: _SITE_LOCALES_CACHE[key][0],
+            )
+            _SITE_LOCALES_CACHE.pop(oldest_key, None)
         _SITE_LOCALES_CACHE[config.site_url] = (now, codes)
         return codes
+
+    @trace_async(span_name="wikijs_get_page_by_id", tracer_name="wiki.connector.wikijs")
+    async def get_page_by_id(
+        self,
+        config: WikiSiteConfig,
+        resource_id: str,
+    ) -> WikiPage | None:
+        try:
+            page_id = int(resource_id)
+        except (TypeError, ValueError) as exc:
+            raise WikiApiError(
+                "bad_request", "Wiki page id must be an integer", retryable=False
+            ) from exc
+        try:
+            data = await self._post_graphql(config, _PAGE_BY_ID_QUERY, {"id": page_id})
+        except WikiApiError as exc:
+            if _is_missing_page_error(exc):
+                return None
+            raise
+        node = (data.get("pages") or {}).get("single")
+        if not isinstance(node, dict):
+            return None
+        return WikiPage(
+            **{
+                **_meta_from_node(node).__dict__,
+                "content": str(node.get("content") or ""),
+            }
+        )
 
     @trace_async(span_name="wikijs_get_page", tracer_name="wiki.connector.wikijs")
     async def get_page(
@@ -429,32 +660,3 @@ class WikijsConnector(WikiConnector):
                 }
             )
         return None
-
-    @trace_async(span_name="wikijs_search_pages", tracer_name="wiki.connector.wikijs")
-    async def search_pages(
-        self,
-        config: WikiSiteConfig,
-        query: str,
-        *,
-        path: str | None = None,
-        locale: str | None = None,
-        limit: int,
-    ) -> list[WikiPageMeta]:
-        effective_locale = locale or config.default_locale
-        data = await self._post_graphql(
-            config,
-            _SEARCH_QUERY,
-            {
-                "query": query,
-                "path": path.strip("/") if path else None,
-                "locale": effective_locale,
-            },
-        )
-        # pages.search wraps results: PageSearchResponse { results: [...] }
-        response = (data.get("pages") or {}).get("search") or {}
-        nodes = response.get("results") if isinstance(response, dict) else None
-        if not isinstance(nodes, list):
-            raise WikiApiError(
-                "upstream_error", "Wiki 站点响应格式不符合预期", retryable=False
-            )
-        return [_meta_from_node(node) for node in nodes[:limit]]

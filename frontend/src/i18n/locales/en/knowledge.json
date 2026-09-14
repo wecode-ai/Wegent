@@ -308,9 +308,7 @@
         "pendingConversion": "Pending Conversion",
         "pendingConversionHint": "Document is waiting to be converted to a searchable format.",
         "failed": "Failed",
-        "failedHint": "Document processing failed. Reindex the document, or contact an administrator if the problem continues.",
-        "live": "Live",
-        "liveHint": "External wiki document: content is read live and never indexed"
+        "failedHint": "Document processing failed. Reindex the document, or contact an administrator if the problem continues."
       },
       "processingError": {
         "stage": {
@@ -662,7 +660,8 @@
       "discard": "Discard and close",
       "wiki": {
         "entry": "External Wiki",
-        "noPermission": "No permission to bind external wiki documents"
+        "noPermission": "No permission to bind external wiki documents",
+        "busy": "Another material is being processed. Please wait"
       }
     },
     "permission": {
@@ -1310,17 +1309,13 @@
     }
   },
   "wikiSection": {
-    "badge": "Live",
     "synced_badge": "Synced Wiki",
     "connection": "Wiki connection",
-    "sync_label": "Sync to knowledge base",
-    "sync_hint": "Store and index a page snapshot, then check for updates daily",
     "loading": "Loading wiki bindings…",
     "load_failed": "Failed to load wiki bindings",
     "add_failed": "Failed to bind",
     "remove_failed": "Failed to unbind",
     "unbind": "Unbind",
-    "bound_by": "Added by {{name}}",
     "tree_empty": "No published pages inside the bound scopes",
     "load_tree_failed": "Failed to load wiki pages",
     "connection_failed_tooltip": "Connection failed: {{message}}",
@@ -1337,6 +1332,9 @@
     "expand_directory": "Expand directory \"{{name}}\"",
     "collapse_directory": "Collapse directory \"{{name}}\"",
     "already_bound": "Bound",
+    "already_bound_n": "{{count}} wiki documents are already bound and were skipped",
+    "resynced_n": "Resynchronized {{count}} wiki documents",
+    "processing_n": "{{count}} wiki documents are already processing and were skipped",
     "bind_selected": "Bind selected ({{count}})",
     "bind_scope_success_n": "Bound {{count}} wiki documents"
   }

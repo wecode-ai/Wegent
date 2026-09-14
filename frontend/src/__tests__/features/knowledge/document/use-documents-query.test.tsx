@@ -317,25 +317,27 @@ describe('useDocuments query parameters', () => {
     })
   })
 
-  it('sorts legacy wiki rows by the source page time while awaiting backfill', async () => {
-    // updated_at is the bind instant: doc 1 (older) was bound LATER than
-    // doc 2, so sorting by updated_at would put older-wiki first. The wiki
-    // source times say the opposite; local sort must follow the displayed
-    // source time, matching what the rows show.
+  it('sorts synchronized wiki rows by the observed source page time', async () => {
     const olderWiki = createDocument(1, 'older-wiki.md', {
-      source_type: 'external_wiki',
+      source_type: 'external',
       created_at: '2026-09-05T00:00:00Z',
       updated_at: '2026-09-05T00:00:00Z',
       source_config: {
-        wiki: { path: 'docs/a', page_updated_at: '2026-09-01T00:00:00Z' },
+        external: {
+          provider: 'wiki',
+          sync: { enabled: true, observed_version: '2026-09-01T00:00:00Z' },
+        },
       },
     })
     const newerWiki = createDocument(2, 'newer-wiki.md', {
-      source_type: 'external_wiki',
+      source_type: 'external',
       created_at: '2026-09-04T00:00:00Z',
       updated_at: '2026-09-04T00:00:00Z',
       source_config: {
-        wiki: { path: 'docs/b', page_updated_at: '2026-09-03T12:34:56Z' },
+        external: {
+          provider: 'wiki',
+          sync: { enabled: true, observed_version: '2026-09-03T12:34:56Z' },
+        },
       },
     })
     mockListDocuments.mockResolvedValue(createListResponseFromItems([olderWiki, newerWiki]))

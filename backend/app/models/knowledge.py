@@ -50,7 +50,6 @@ class DocumentSourceType(str, PyEnum):
     WEB = "web"  # Web page (scraped URL)
     CODE = "code"  # Source file indexed for retrieval, not a browsable document
     EXTERNAL = "external"  # Document imported from an external provider
-    EXTERNAL_WIKI = "external_wiki"  # Live-bound external wiki page (no copy)
 
 
 class ContentOrigin(str, PyEnum):

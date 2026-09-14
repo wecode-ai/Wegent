@@ -6,7 +6,6 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 const mockDeleteConnection = jest.fn()
-const mockGetConnection = jest.fn()
 const mockListConnections = jest.fn()
 const mockToast = jest.fn()
 const mockCommonTranslations = jest.requireActual('@/i18n/locales/zh-CN/common.json')
@@ -32,10 +31,8 @@ jest.mock('@/apis/wiki', () => ({
   wikiApis: {
     createConnection: jest.fn(),
     deleteConnection: (...args: unknown[]) => mockDeleteConnection(...args),
-    getConnection: () => mockGetConnection(),
     listConnections: () => mockListConnections(),
     testConnection: jest.fn(),
-    updateConnection: jest.fn(),
     updateNamedConnection: jest.fn(),
   },
 }))
@@ -51,16 +48,14 @@ jest.mock('@/hooks/useTranslation', () => ({
 const ExternalWikiConnectionCard = jest.requireActual(
   '@/features/settings/components/ExternalWikiConnectionCard'
 ).default
-
-const legacyConnection = {
-  id: 'legacy-default',
+const namedConnection = {
+  id: 'conn-primary',
   display_name: '默认 Wiki',
   enabled: true,
   connector_type: 'wikijs',
   site_url: 'https://wiki.example.com',
   default_locale: 'zh',
   api_key_masked: 'eyJh****',
-  legacy: true,
   available_connectors: [{ type: 'wikijs', display_name: 'Wiki.js' }],
 }
 
@@ -68,18 +63,17 @@ describe('ExternalWikiConnectionCard deletion', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockListConnections.mockResolvedValue({
-      connections: [legacyConnection],
-      available_connectors: legacyConnection.available_connectors,
+      connections: [namedConnection],
+      available_connectors: namedConnection.available_connectors,
     })
-    mockGetConnection.mockResolvedValue(legacyConnection)
   })
 
-  it('confirms and deletes the legacy connection', async () => {
+  it('confirms and deletes a named connection', async () => {
     mockDeleteConnection.mockResolvedValue(undefined)
     mockListConnections
       .mockResolvedValueOnce({
-        connections: [legacyConnection],
-        available_connectors: legacyConnection.available_connectors,
+        connections: [namedConnection],
+        available_connectors: namedConnection.available_connectors,
       })
       .mockResolvedValueOnce({ connections: [], available_connectors: [] })
 
@@ -88,13 +82,13 @@ describe('ExternalWikiConnectionCard deletion', () => {
     fireEvent.click(await screen.findByTestId('wiki-delete-connection-button'))
     expect(screen.getByText('删除 Wiki 连接')).toBeInTheDocument()
     expect(screen.getByText(/确定要删除连接“默认 Wiki”吗/)).toBeInTheDocument()
-    expect(screen.getByText(/如果连接仍被 Live Wiki 或同步 Wiki/)).toBeInTheDocument()
+    expect(screen.getByText(/如果连接仍被同步 Wiki/)).toBeInTheDocument()
     expect(screen.queryByText('wiki.delete_confirm_title')).not.toBeInTheDocument()
     expect(mockDeleteConnection).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByTestId('wiki-confirm-delete-connection-button'))
 
-    await waitFor(() => expect(mockDeleteConnection).toHaveBeenCalledWith('legacy-default'))
+    await waitFor(() => expect(mockDeleteConnection).toHaveBeenCalledWith('conn-primary'))
     expect(mockToast).toHaveBeenCalledWith({ title: 'Wiki 连接已删除' })
   })
 

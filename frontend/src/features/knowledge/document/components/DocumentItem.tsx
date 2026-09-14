@@ -243,19 +243,14 @@ export function DocumentItem({
     isConverting ||
     isPendingConversion
   const showIndexingState = isReindexing || isSyncing || isBackendIndexing
-  const wikiConfig = (document.source_config as Record<string, unknown> | undefined)?.wiki as
-    | { resource_url?: string }
-    | undefined
   const isExternal = document.source_type === 'external'
-  const isLiveWiki = document.source_type === 'external_wiki' || Boolean(wikiConfig)
-  const isWiki = isLiveWiki || isSyncedWiki
+  const isWiki = isSyncedWiki
   // External documents retry through the dedicated import-retry entry, which
   // fetches the provider's latest body before replacing the attachment and
   // reindexing. Regular documents reindex from failed or not-indexed states.
   const canReindex =
     !!onReindex &&
     !showIndexingState &&
-    !isLiveWiki &&
     (isSyncedWiki
       ? ragConfigured && !!document.attachment_id && isIndexFailed
       : isExternal
@@ -282,11 +277,8 @@ export function DocumentItem({
   const isExcelExceedingSizeLimit = isExcel && document.file_size > EXCEL_FILE_SIZE_LIMIT
   // URL for table, web and imported external documents
   const externalSource = getExternalSourceInfo(document)
-  const sourceUrl = isLiveWiki
-    ? typeof wikiConfig?.resource_url === 'string'
-      ? wikiConfig.resource_url
-      : null
-    : isTable || isWeb
+  const sourceUrl =
+    isTable || isWeb
       ? document.source_config?.url && typeof document.source_config.url === 'string'
         ? document.source_config.url
         : null
@@ -295,7 +287,8 @@ export function DocumentItem({
         : null
   // Source health is independent from index health: a synchronized document
   // may keep serving its last successful index after the remote page disappears.
-  const isExternalSourceInaccessible = isExternal && externalSource?.status === 'inaccessible'
+  const hasExternalSourceWarning =
+    isExternal && ['inaccessible', 'sync_error'].includes(externalSource?.status || '')
   const isWikiSourceMissing =
     isSyncedWiki && externalSource?.sync?.last_error_code === 'external_source_missing'
   const sourceInaccessibleLabel = isWikiSourceMissing
@@ -433,22 +426,17 @@ export function DocumentItem({
                   {t('knowledge:document.document.type.web')}
                 </Badge>
               ) : isExternal ? (
-                <ExternalDocumentBadge syncedWiki={isSyncedWiki} className="text-[9px] px-1 py-0" />
-              ) : isWiki ? (
-                <Badge
-                  variant="default"
-                  size="sm"
-                  className="bg-violet-500/10 text-violet-600 border-violet-500/20 text-[9px] px-1 py-0"
-                  data-testid={`document-wiki-badge-${document.id}`}
-                >
-                  {t('knowledge:document.document.type.wiki')}
-                </Badge>
+                <ExternalDocumentBadge
+                  extension={document.file_extension}
+                  syncedWiki={isSyncedWiki}
+                  className="text-[9px] px-1 py-0"
+                />
               ) : (
                 <span className="text-[9px] text-text-muted uppercase">
                   {document.file_extension}
                 </span>
               )}
-              {isExternalSourceInaccessible && (
+              {hasExternalSourceWarning && (
                 <Badge
                   variant="default"
                   size="sm"
@@ -715,19 +703,11 @@ export function DocumentItem({
             {t('knowledge:document.document.type.web')}
           </Badge>
         ) : isExternal ? (
-          <ExternalDocumentBadge syncedWiki={isSyncedWiki} />
-        ) : isLiveWiki ? (
-          <Badge
-            variant="default"
-            size="sm"
-            className="bg-violet-500/10 text-violet-600 border-violet-500/20"
-          >
-            {t('knowledge:document.document.type.wiki')}
-          </Badge>
+          <ExternalDocumentBadge extension={document.file_extension} syncedWiki={isSyncedWiki} />
         ) : (
           <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
         )}
-        {isExternalSourceInaccessible && (
+        {hasExternalSourceWarning && (
           <TooltipProvider>
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
@@ -833,26 +813,6 @@ export function DocumentItem({
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-xs">
                 <p className="text-xs">{unavailableHint}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ) : isLiveWiki ? (
-          <TooltipProvider>
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <span>
-                  <Badge
-                    variant="success"
-                    size="sm"
-                    className="whitespace-nowrap cursor-help"
-                    data-testid={`document-wiki-status-${document.id}`}
-                  >
-                    {t('knowledge:document.document.indexStatus.live')}
-                  </Badge>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-xs">
-                <p className="text-xs">{t('knowledge:document.document.indexStatus.liveHint')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>

@@ -1830,26 +1830,15 @@ class TaskRequestBuilder:
         if runtime_service:
             provider, service = runtime_service
             if provider["configuration_mode"] == "user":
-                # Backend-hosted bridge skills (wiki) point at a fixed bridge
-                # URL and consume delegated KB bindings, not the acting
-                # user's own MCP URL: skip the sender-config gate, otherwise
-                # valid queriers without a personal connection would be
-                # degraded. Availability is enforced by the wiki binding
-                # pre-check in selected_knowledge.apply_selected_knowledge_context.
-                from app.services.user_mcp_service import (
-                    BACKEND_HOSTED_MCP_PROVIDERS,
-                )
-
-                backend_hosted = provider["provider_id"] in BACKEND_HOSTED_MCP_PROVIDERS
                 configured_server = None
-                if not backend_hosted and user:
+                if user:
                     configured_server = user_mcp_service.get_enabled_mcp_server(
                         getattr(user, "preferences", None),
                         provider["provider_id"],
                         service["service_id"],
                     )
 
-                if not configured_server and not backend_hosted:
+                if not configured_server:
                     skill_data.pop("mcpServers", None)
                     skill_data["prompt"] = (
                         self._build_unconfigured_provider_skill_prompt(

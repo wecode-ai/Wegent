@@ -21,7 +21,29 @@ from app.models.user import User
 from app.services.knowledge.external_document_sync import (
     ExternalDocumentSyncModule,
 )
-from app.services.knowledge.external_sync_providers import RemoteDocumentState
+from app.services.knowledge.external_sync_providers import (
+    PreparedExternalSyncBatch,
+    RemoteDocumentState,
+)
+
+
+def _provider(states: dict[int, RemoteDocumentState]) -> SimpleNamespace:
+    def prepare(_db, candidates):
+        return PreparedExternalSyncBatch(
+            payload=tuple(candidates),
+            connection_names={
+                (
+                    candidate.owner_user_id,
+                    candidate.locator.connection_id,
+                ): "Primary Wiki"
+                for candidate in candidates
+            },
+        )
+
+    return SimpleNamespace(
+        prepare_remote_inspection=prepare,
+        inspect_remote_states=AsyncMock(return_value=states),
+    )
 
 
 def _create_synced_document(
@@ -89,20 +111,18 @@ async def test_daily_sync_skips_unchanged_indexed_document(
     sync["last_error_code"] = "external_source_missing"
     document.update_external_source_config(
         status="inaccessible",
-        last_error="Wiki source document no longer exists",
+        last_error="Wiki 源文档不存在",
         sync=sync,
     )
     test_db.commit()
-    provider = SimpleNamespace(
-        inspect_remote_states=AsyncMock(
-            return_value={
-                document.id: RemoteDocumentState(
-                    True,
-                    "2026-09-06T01:00:00Z",
-                    metadata={"title": "Wiki Runbook"},
-                )
-            }
-        )
+    provider = _provider(
+        {
+            document.id: RemoteDocumentState(
+                True,
+                "2026-09-06T01:00:00Z",
+                metadata={"title": "Wiki Runbook"},
+            )
+        }
     )
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync.get_external_sync_provider",
@@ -129,8 +149,9 @@ async def test_daily_sync_skips_unchanged_indexed_document(
     assert report.unchanged == 1
     assert report.refreshed == 0
     queue_refresh.assert_not_called()
-    cache_set.assert_awaited_once()
-    test_db.refresh(document)
+    assert cache_set.await_count == 2
+    document = test_db.get(KnowledgeDocument, document.id)
+    assert document is not None
     external = document.external_source_config
     assert external["status"] == "accessible"
     assert "last_error" not in external
@@ -146,16 +167,14 @@ async def test_daily_sync_queues_changed_remote_document(
     document = _create_synced_document(
         test_db, test_user, remote_version="2026-09-06T01:00:00Z"
     )
-    provider = SimpleNamespace(
-        inspect_remote_states=AsyncMock(
-            return_value={
-                document.id: RemoteDocumentState(
-                    True,
-                    "2026-09-06T02:00:00Z",
-                    metadata={"title": "Wiki Runbook v2", "path": "ops/runbook"},
-                )
-            }
-        )
+    provider = _provider(
+        {
+            document.id: RemoteDocumentState(
+                True,
+                "2026-09-06T02:00:00Z",
+                metadata={"title": "Wiki Runbook v2", "path": "ops/runbook"},
+            )
+        }
     )
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync.get_external_sync_provider",
@@ -177,13 +196,56 @@ async def test_daily_sync_queues_changed_remote_document(
 
     report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
 
-    test_db.refresh(document)
+    document = test_db.get(KnowledgeDocument, document.id)
+    assert document is not None
     assert report.refreshed == 1
+    assert report.updates_detected == 1
+    summary = next(iter(report.connection_summaries.values()))
+    assert summary.connection_name == "Primary Wiki"
+    assert summary.scanned == 1
+    assert summary.eligible == 1
+    assert summary.updates_detected == 1
+    assert summary.refresh_queued == 1
     assert document.name == "Wiki Runbook v2"
     assert document.source_config["external"]["sync"]["observed_version"] == (
         "2026-09-06T02:00:00Z"
     )
     queue_refresh.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_daily_sync_does_not_count_a_rejected_refresh_as_queued(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _create_synced_document(test_db, test_user, remote_version="v1")
+    provider = _provider({document.id: RemoteDocumentState(True, "v2")})
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.get_external_sync_provider",
+        lambda provider_id: provider if provider_id == "wiki" else None,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.get",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.set", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync."
+        "external_document_import_service.queue_source_refresh",
+        MagicMock(return_value=SimpleNamespace(started=False)),
+    )
+
+    report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
+
+    summary = next(iter(report.connection_summaries.values()))
+    assert report.updates_detected == 1
+    assert report.refreshed == 0
+    assert report.skipped == 1
+    assert summary.refresh_queued == 0
+    assert summary.skipped == 1
 
 
 @pytest.mark.asyncio
@@ -195,17 +257,13 @@ async def test_daily_sync_reindexes_local_content_after_failed_index(
     document = _create_synced_document(
         test_db, test_user, remote_version="2026-09-06T02:00:00Z"
     )
-    sync = document.source_config["external"]["sync"]
+    sync = dict(document.source_config["external"]["sync"])
     sync["indexed_version"] = "2026-09-06T01:00:00Z"
-    document.source_config = {**document.source_config}
+    document.update_external_source_config(sync=sync)
     document.attachment_id = 123
     test_db.commit()
-    provider = SimpleNamespace(
-        inspect_remote_states=AsyncMock(
-            return_value={
-                document.id: RemoteDocumentState(True, "2026-09-06T02:00:00Z")
-            }
-        )
+    provider = _provider(
+        {document.id: RemoteDocumentState(True, "2026-09-06T02:00:00Z")}
     )
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync.get_external_sync_provider",
@@ -235,8 +293,14 @@ async def test_daily_sync_reindexes_local_content_after_failed_index(
 
     assert report.reindexed == 1
     assert report.refreshed == 0
+    summary = next(iter(report.connection_summaries.values()))
+    assert summary.updates_detected == 1
+    assert summary.reindex_queued == 1
     queue_refresh.assert_not_called()
-    reindex.assert_called_once_with(db=test_db, user=test_user, document_id=document.id)
+    reindex.assert_called_once()
+    assert reindex.call_args.kwargs["db"] is test_db
+    assert reindex.call_args.kwargs["user"].id == test_user.id
+    assert reindex.call_args.kwargs["document_id"] == document.id
 
 
 @pytest.mark.asyncio
@@ -248,16 +312,14 @@ async def test_daily_sync_marks_missing_wiki_source_without_breaking_index(
     document = _create_synced_document(
         test_db, test_user, remote_version="2026-09-06T02:00:00Z"
     )
-    provider = SimpleNamespace(
-        inspect_remote_states=AsyncMock(
-            return_value={
-                document.id: RemoteDocumentState(
-                    False,
-                    None,
-                    error_code="external_source_missing",
-                )
-            }
-        )
+    provider = _provider(
+        {
+            document.id: RemoteDocumentState(
+                False,
+                None,
+                error_code="external_source_missing",
+            )
+        }
     )
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync.get_external_sync_provider",
@@ -273,10 +335,151 @@ async def test_daily_sync_marks_missing_wiki_source_without_breaking_index(
 
     report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
 
-    test_db.refresh(document)
+    document = test_db.get(KnowledgeDocument, document.id)
+    assert document is not None
     external = document.source_config["external"]
-    assert report.failed == 1
+    assert report.failed == 0
+    assert report.source_missing == 1
+    summary = next(iter(report.connection_summaries.values()))
+    assert summary.source_missing == 1
+    assert summary.failed == 0
     assert document.index_status == DocumentIndexStatus.SUCCESS
     assert document.is_active is True
     assert external["status"] == "inaccessible"
+    assert external["last_error"] == "Wiki 源文档不存在"
     assert external["sync"]["last_error_code"] == "external_source_missing"
+
+
+@pytest.mark.asyncio
+async def test_daily_sync_records_transient_source_error_without_breaking_index(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _create_synced_document(
+        test_db, test_user, remote_version="2026-09-06T02:00:00Z"
+    )
+    provider = _provider(
+        {
+            document.id: RemoteDocumentState(
+                True,
+                None,
+                error_code="wiki_connection_failed",
+                error_message="无法连接 Wiki 站点",
+            )
+        }
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.get_external_sync_provider",
+        lambda provider_id: provider if provider_id == "wiki" else None,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.get",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.set", AsyncMock()
+    )
+
+    await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
+
+    current = test_db.get(KnowledgeDocument, document.id)
+    assert current is not None
+    external = current.external_source_config
+    assert current.index_status == DocumentIndexStatus.SUCCESS
+    assert current.is_active is True
+    assert external["status"] == "sync_error"
+    assert external["last_error"] == "无法连接 Wiki 站点"
+
+
+@pytest.mark.asyncio
+async def test_schedule_failure_does_not_rollback_prior_batch_metadata(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _create_synced_document(test_db, test_user, remote_version="v1")
+    second = _create_synced_document(test_db, test_user, remote_version="v1")
+    provider = _provider(
+        {
+            first.id: RemoteDocumentState(
+                True,
+                None,
+                error_code="wiki_connection_failed",
+            ),
+            second.id: RemoteDocumentState(True, "v2"),
+        }
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.get_external_sync_provider",
+        lambda provider_id: provider if provider_id == "wiki" else None,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.get",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.set", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync."
+        "external_document_import_service.queue_source_refresh",
+        MagicMock(side_effect=RuntimeError("broker unavailable")),
+    )
+
+    report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
+
+    test_db.expire_all()
+    first = test_db.get(KnowledgeDocument, first.id)
+    second = test_db.get(KnowledgeDocument, second.id)
+    assert first is not None
+    assert second is not None
+    assert report.failed == 2
+    assert first.external_source_config["status"] == "sync_error"
+    assert first.external_source_config["sync"]["last_error_code"] == (
+        "wiki_connection_failed"
+    )
+    assert second.external_source_config["sync"]["observed_version"] == "v2"
+
+
+@pytest.mark.asyncio
+async def test_daily_sync_continues_batches_without_session_during_remote_io(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    documents = [
+        _create_synced_document(test_db, test_user, remote_version="v1")
+        for _ in range(3)
+    ]
+
+    async def inspect(prepared):
+        assert test_db.in_transaction() is False
+        return {
+            candidate.document_id: RemoteDocumentState(True, "v1")
+            for candidate in prepared.payload
+        }
+
+    provider = SimpleNamespace(
+        prepare_remote_inspection=lambda _db, candidates: PreparedExternalSyncBatch(
+            payload=tuple(candidates)
+        ),
+        inspect_remote_states=AsyncMock(side_effect=inspect),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.get_external_sync_provider",
+        lambda provider_id: provider if provider_id == "wiki" else None,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.get",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.set", AsyncMock()
+    )
+
+    report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=2)
+
+    assert report.scanned == len(documents)
+    assert report.unchanged == len(documents)
+    assert provider.inspect_remote_states.await_count == 2

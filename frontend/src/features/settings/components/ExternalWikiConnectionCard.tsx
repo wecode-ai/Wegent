@@ -35,7 +35,7 @@ export default function ExternalWikiConnectionCard() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [connection, setConnection] = useState<WikiConnection | null>(null)
   const [connections, setConnections] = useState<WikiConnectionSummary[]>([])
-  const [connectionId, setConnectionId] = useState('legacy-default')
+  const [connectionId, setConnectionId] = useState('')
   const [displayName, setDisplayName] = useState('Wiki')
   const [connectorType, setConnectorType] = useState('wikijs')
   const [siteUrl, setSiteUrl] = useState('')
@@ -47,20 +47,11 @@ export default function ExternalWikiConnectionCard() {
     const load = async () => {
       try {
         setLoading(true)
-        try {
-          const response = await wikiApis.listConnections()
-          setConnections(response.connections)
-          const current = response.connections[0]
-          if (current) applyConnection(current)
-          else resetNewConnection()
-        } catch {
-          const current = await wikiApis.getConnection()
-          setConnection(current)
-          setConnectorType(current.connector_type || 'wikijs')
-          setSiteUrl(current.site_url)
-          setDefaultLocale(current.default_locale || '')
-          setEnabled(current.enabled)
-        }
+        const response = await wikiApis.listConnections()
+        setConnections(response.connections)
+        const current = response.connections[0]
+        if (current) applyConnection(current)
+        else resetNewConnection()
       } catch {
         toast({ variant: 'destructive', title: t('wiki.load_failed') })
       } finally {
@@ -103,31 +94,22 @@ export default function ExternalWikiConnectionCard() {
         default_locale: defaultLocale.trim() || null,
         enabled,
       }
-      const saved =
-        connectionId === 'legacy-default'
-          ? await wikiApis.updateConnection(payload)
-          : connectionId
-            ? await wikiApis.updateNamedConnection(connectionId, {
-                ...payload,
-                display_name: displayName.trim(),
-              })
-            : await wikiApis.createConnection({
-                ...payload,
-                display_name: displayName.trim(),
-              })
-      setConnection(saved)
-      setSiteUrl(saved.site_url)
-      setApiKey('')
-      try {
-        const response = await wikiApis.listConnections()
-        setConnections(response.connections)
-        const selected = response.connections.find(
-          item => item.id === ('id' in saved ? saved.id : connectionId)
-        )
-        if (selected) applyConnection(selected)
-      } catch {
-        // The legacy endpoint remains usable when multi-connection is disabled.
-      }
+      const saved = connectionId
+        ? await wikiApis.updateNamedConnection(connectionId, {
+            ...payload,
+            display_name: displayName.trim(),
+          })
+        : await wikiApis.createConnection({
+            ...payload,
+            display_name: displayName.trim(),
+          })
+      setConnections(current => {
+        const exists = current.some(item => item.id === saved.id)
+        return exists
+          ? current.map(item => (item.id === saved.id ? saved : item))
+          : [...current, saved]
+      })
+      applyConnection(saved)
       toast({ title: t('wiki.save_success') })
     } catch (error) {
       toast({
@@ -197,7 +179,7 @@ export default function ExternalWikiConnectionCard() {
 
   const canSave =
     !!siteUrl.trim() &&
-    (connectionId === 'legacy-default' || !!displayName.trim()) &&
+    !!displayName.trim() &&
     (!enabled || !!apiKey.trim() || !!connection?.api_key_masked)
 
   return (
@@ -241,17 +223,15 @@ export default function ExternalWikiConnectionCard() {
         </Button>
       </div>
 
-      {connectionId !== 'legacy-default' && (
-        <div className="space-y-1.5">
-          <Label htmlFor="wiki-display-name">{t('wiki.name_label')}</Label>
-          <Input
-            id="wiki-display-name"
-            value={displayName}
-            onChange={event => setDisplayName(event.target.value)}
-            data-testid="wiki-display-name-input"
-          />
-        </div>
-      )}
+      <div className="space-y-1.5">
+        <Label htmlFor="wiki-display-name">{t('wiki.name_label')}</Label>
+        <Input
+          id="wiki-display-name"
+          value={displayName}
+          onChange={event => setDisplayName(event.target.value)}
+          data-testid="wiki-display-name-input"
+        />
+      </div>
 
       <div className="flex items-center justify-between rounded-md border border-border/70 bg-surface px-3 py-2.5">
         <div className="space-y-0.5 pr-4">

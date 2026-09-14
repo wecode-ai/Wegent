@@ -13,6 +13,7 @@ from everywhere else at the same time.
 import pytest
 from pydantic import ValidationError
 
+from app.schemas.external_knowledge import ExternalKnowledgeRef
 from app.schemas.knowledge import KnowledgeDocumentCreate, KnowledgeDocumentCreateV1
 from app.schemas.task import TaskCreate
 
@@ -32,6 +33,16 @@ def test_a_client_cannot_ask_for_a_hidden_task():
     # matters is that it does not reach the row: asserting the attribute is absent is
     # asserting exactly that.
     assert not hasattr(task, "namespace")
+
+
+def test_a_client_cannot_set_an_external_connection_credential_owner():
+    reference = ExternalKnowledgeRef(
+        provider="wiki",
+        id="v1:conn-primary:42",
+        bound_by_user_id=7,
+    )
+
+    assert not hasattr(reference, "bound_by_user_id")
 
 
 def test_the_runner_can_still_hide_its_own_task():
@@ -81,18 +92,6 @@ def test_a_client_cannot_create_an_external_import_record(schema, extra):
 @pytest.mark.parametrize(
     "schema, extra",
     [
-        (KnowledgeDocumentCreate, {"name": "x", "file_extension": "md"}),
-        (KnowledgeDocumentCreateV1, {"knowledge_base_id": 1, "name": "x"}),
-    ],
-)
-def test_a_client_cannot_create_a_live_wiki_record(schema, extra):
-    with pytest.raises(ValidationError, match="wiki binding API"):
-        schema(source_type="external_wiki", **extra)
-
-
-@pytest.mark.parametrize(
-    "schema, extra",
-    [
         (KnowledgeDocumentCreate, {"name": "x", "file_extension": "py"}),
         (KnowledgeDocumentCreateV1, {"knowledge_base_id": 1, "name": "x"}),
     ],
@@ -124,7 +123,7 @@ def test_stored_internal_document_types_still_deserialise():
         "updated_at": datetime.now(timezone.utc),
     }
 
-    for source_type in ("code", "external_wiki"):
+    for source_type in ("code",):
         response = KnowledgeDocumentResponse.model_validate(
             {**payload, "source_type": source_type}
         )

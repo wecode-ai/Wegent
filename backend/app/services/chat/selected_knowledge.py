@@ -39,7 +39,6 @@ logger = logging.getLogger(__name__)
 PROVIDER_SKILLS = {
     "wegent": "wegent-knowledge",
     "dingtalk": "dingtalk-docs",
-    "wiki": "external-wiki",
 }
 SUPPORTED_PROVIDER_NATIVE_SHELLS = {"Chat", "ClaudeCode"}
 ROUTING_SUMMARY_MAX_LENGTH = 200
@@ -54,47 +53,6 @@ def register_provider_skill(provider_id: str, skill_name: str) -> None:
     if not provider_id or not skill_name:
         raise ValueError("Provider ID and Skill name must not be empty")
     PROVIDER_SKILLS[provider_id] = skill_name
-
-
-def _filter_unavailable_wiki_refs(
-    db: "Session",
-    task: "TaskResource",
-    context: SelectedKnowledgeContext,
-) -> tuple[SelectedKnowledgeContext, list[str], bool]:
-    """Drop wiki refs when no delegated scope resolves (design §5.7).
-
-    Partial failures keep all refs: the bridge enforces per-path precision,
-    and prompt-level notes would misrepresent per-binding availability.
-    """
-    from app.services.wiki.service import collect_wiki_scope_entries
-
-    try:
-        entries, unavailable = collect_wiki_scope_entries(db, task, None)
-    except Exception:
-        logger.warning(
-            "Failed to resolve wiki scopes for task %s", task.id, exc_info=True
-        )
-        return context, [], False
-    if entries:
-        return context, [], False
-    kept = tuple(ref for ref in context.refs if ref.provider != "wiki")
-    notes = list(unavailable)
-    if not kept and not notes:
-        notes.append("外部 Wiki 绑定的凭据当前不可用")
-    return replace(context, refs=kept), notes, True
-
-
-def _wiki_unavailable_prompt(notes: list[str]) -> str:
-    """Guidance prompt when every wiki binding failed credential resolution."""
-    lines = "\n".join(f"- {note}" for note in notes)
-    return (
-        "<selected_knowledge_warnings>\n"
-        "所选知识库的外部 Wiki 来源当前不可用：\n"
-        f"{lines}\n"
-        "请告知用户对应的外部 Wiki 暂时无法访问，建议联系绑定添加者恢复连接，"
-        "或在知识库页「外部 Wiki」分区重新绑定。\n"
-        "</selected_knowledge_warnings>"
-    )
 
 
 def apply_selected_knowledge_context(
@@ -114,16 +72,6 @@ def apply_selected_knowledge_context(
             task,
             current_contexts=current_contexts,
         )
-    if context.refs and any(ref.provider == "wiki" for ref in context.refs):
-        context, wiki_notes, wiki_dropped = _filter_unavailable_wiki_refs(
-            db, task, context
-        )
-        if not context.refs and wiki_dropped:
-            request.selected_knowledge_prompt = _wiki_unavailable_prompt(wiki_notes)
-            request.provider_native_knowledge = False
-            return []
-    else:
-        wiki_notes = []
     if not context.refs:
         request.selected_knowledge_prompt = ""
         request.provider_native_knowledge = False
@@ -140,13 +88,6 @@ def apply_selected_knowledge_context(
         request.selected_knowledge_prompt = ""
         request.provider_native_knowledge = False
         return []
-    if wiki_notes:
-        prompt = (
-            f"{prompt}\n<wiki_source_warnings>\n"
-            + "\n".join(f"- {note}" for note in wiki_notes)
-            + "\n</wiki_source_warnings>"
-        )
-
     request.selected_knowledge_prompt = prompt
     request.provider_native_knowledge = False
 
@@ -626,10 +567,6 @@ def _build_wegent_refs_for_ids(
     from app.services.knowledge.retrieval_capabilities import (
         derive_retrieval_capabilities,
     )
-    from app.services.wiki.service import (
-        list_kb_wiki_documents,
-        wiki_document_ref_value,
-    )
 
     kinds = {
         kind.id: kind for kind in db.query(Kind).filter(Kind.id.in_(selected_ids)).all()
@@ -640,21 +577,12 @@ def _build_wegent_refs_for_ids(
         )
         for kind in kinds.values()
     }
-    wiki_documents_by_kb: dict[int, dict[int, Any]] = {}
-    for kb_id in selected_ids:
-        documents = list_kb_wiki_documents(db, kb_id)
-        if documents:
-            wiki_documents_by_kb[kb_id] = {
-                document.id: document for document in documents
-            }
-
     task_json: dict[str, Any] = task.json if isinstance(task.json, dict) else {}
     raw_spec = task_json.get("spec")
     spec: dict[str, Any] = raw_spec if isinstance(raw_spec, dict) else {}
     kb_refs = _index_refs_by_integer_id(spec.get("knowledgeBaseRefs"))
     scope_refs = _index_refs_by_integer_id(spec.get("knowledgeBaseScopes"))
     result: list[SelectedKnowledgeRef] = []
-    wiki_values: list[dict[str, Any]] = []
     for kb_id in sorted(selected_ids):
         scope = scope_refs.get(kb_id) or {}
         kb_name = str(scope.get("name") or kb_refs.get(kb_id, {}).get("name") or kb_id)
@@ -677,26 +605,9 @@ def _build_wegent_refs_for_ids(
                     retrieval_capabilities=capabilities_by_kb_id.get(kb_id, {}),
                 )
             )
-            # Whole-KB selection carries every wiki document ("only what is
-            # selected": folder-scoped selections carry none, while an
-            # explicit document selection carries exactly the wiki rows
-            # inside it).
-            for document in wiki_documents_by_kb.get(kb_id, {}).values():
-                value = wiki_document_ref_value(document)
-                if value is not None:
-                    wiki_values.append(value)
             continue
         if not (folder_ids or document_ids):
             continue
-        if not folder_ids:
-            for document_id in document_ids:
-                document = wiki_documents_by_kb.get(kb_id, {}).get(document_id)
-                if document is None:
-                    continue
-                value = wiki_document_ref_value(document)
-                if value is not None:
-                    wiki_values.append(value)
-
         resources = _load_wegent_resources(
             db,
             kb_id,
@@ -712,8 +623,7 @@ def _build_wegent_refs_for_ids(
                 retrieval_capabilities=capabilities_by_kb_id.get(kb_id, {}),
             )
         )
-    # Derived wiki refs reuse the dingtalk external-ref parser unchanged.
-    return [*result, *_build_external_refs_from_values(wiki_values)]
+    return result
 
 
 def _load_wegent_resources(

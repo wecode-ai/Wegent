@@ -304,18 +304,20 @@ describe('DocumentDetailDialog external source info', () => {
     expect(screen.queryByTestId('external-source-info')).not.toBeInTheDocument()
   })
 
-  it('shows the original source link for a live wiki document', () => {
+  it('shows the original source link for a synchronized wiki document', () => {
     render(
       <DocumentDetailDialog
         open={true}
         onOpenChange={jest.fn()}
         document={{
           ...baseDocument,
-          source_type: 'external_wiki',
+          source_type: 'external',
           source_config: {
-            wiki: {
-              path: 'operations/handbook',
-              resource_url: 'https://wiki.example.com/operations/handbook',
+            external: {
+              provider: 'wiki',
+              title: 'Operations handbook',
+              url: 'https://wiki.example.com/operations/handbook',
+              sync: { enabled: true },
             },
           },
         }}

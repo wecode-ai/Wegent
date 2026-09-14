@@ -34,12 +34,25 @@ from app.services.knowledge.external_document_import import (
 )
 from app.services.knowledge.external_document_providers import (
     DingTalkExternalDocumentProvider,
+    ExternalDocumentContent,
     ExternalDocumentFetchError,
     ExternalDocumentImportError,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 
 McpFixture = tuple[dict[str, Any], MagicMock]
+
+
+async def _fetch_content(
+    provider: DingTalkExternalDocumentProvider,
+    db: Session,
+    user: User,
+    resource_id: str,
+) -> ExternalDocumentContent:
+    prepared = provider.prepare_content_fetch(db, user, resource_id)
+    db.commit()
+    db.close()
+    return await provider.fetch_prepared_content(prepared)
 
 
 @pytest.mark.asyncio
@@ -77,8 +90,8 @@ async def test_signed_download_does_not_log_credentials(
     }
     async with server:
         with caplog.at_level(logging.INFO):
-            content = await spreadsheet_source.fetch_content(
-                test_db, test_user, "base-1"
+            content = await _fetch_content(
+                spreadsheet_source, test_db, test_user, "base-1"
             )
     assert content.content == b"data"
     assert "private-download-token" not in caplog.text
@@ -152,7 +165,7 @@ async def test_missing_export_configuration_does_not_block_text_import(
     responses["get_document_info"] = info
     await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
     assert (
-        await online_source.fetch_content(test_db, test_user, "online-doc")
+        await _fetch_content(online_source, test_db, test_user, "online-doc")
     ).file_extension == "md"
 
 
@@ -182,7 +195,7 @@ async def test_invalid_export_results_are_not_downloaded(
     responses, session = docs_mcp
     responses["export_data"] = {"status": "success", "data": data}
     with pytest.raises(ExternalDocumentFetchError):
-        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
+        await _fetch_content(spreadsheet_source, test_db, test_user, "base-1")
     assert signed_download == []
     assert (
         sum(c.args[0] == "export_data" for c in session.call_tool.await_args_list) == 1
@@ -208,7 +221,7 @@ async def test_export_polling_is_bounded_without_restarting_job(
         "app.services.knowledge.external_document_providers.asyncio.sleep", AsyncMock()
     )
     with pytest.raises(ExternalDocumentFetchError, match="timed out"):
-        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
+        await _fetch_content(spreadsheet_source, test_db, test_user, "base-1")
     calls = [
         c.args[1]
         for c in session.call_tool.await_args_list
@@ -244,7 +257,7 @@ async def test_export_rejects_changed_or_missing_task_identity(
     }
 
     with pytest.raises(ExternalDocumentFetchError, match="task identity changed"):
-        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
+        await _fetch_content(spreadsheet_source, test_db, test_user, "base-1")
     assert signed_download == []
 
 
@@ -268,7 +281,7 @@ async def test_ai_export_requires_its_own_success_envelope(
         },
     }
     with pytest.raises(ExternalDocumentFetchError, match="unsuccessful response"):
-        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
+        await _fetch_content(spreadsheet_source, test_db, test_user, "base-1")
     assert signed_download == []
 
 
@@ -313,7 +326,7 @@ async def test_unsafe_or_failed_download_never_returns_content_or_leaks_url(
     )
     monkeypatch.setattr("app.core.config.settings.MAX_UPLOAD_FILE_SIZE_MB", limit)
     with pytest.raises(ExternalDocumentFetchError) as error:
-        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
+        await _fetch_content(spreadsheet_source, test_db, test_user, "base-1")
     assert "signature" not in str(error.value)
     assert "secret" not in str(error.value)
 
@@ -390,8 +403,8 @@ async def test_ai_table_exports_whole_base_and_polls_same_task(
     }
     await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
 
-    content = await DingTalkExternalDocumentProvider().fetch_content(
-        test_db, test_user, "base-1"
+    content = await _fetch_content(
+        DingTalkExternalDocumentProvider(), test_db, test_user, "base-1"
     )
 
     assert content.file_extension == "xlsx"
@@ -515,7 +528,7 @@ async def test_sheet_exports_once_and_queries_the_same_job(
     responses["query_export_job"] = lambda args: next(replies)
     session.call_tool.reset_mock()
 
-    content = await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
+    content = await _fetch_content(spreadsheet_source, test_db, test_user, "base-1")
 
     assert content.file_extension == "xlsx"
     assert content.content == b"exported-workbook"
@@ -555,7 +568,7 @@ async def test_sheet_rejects_invalid_export_without_downloading(
     responses["submit_export_job"] = {"success": True, "jobId": "job-1"}
     responses[tool] = {**response, "downloadUrl": "https://files.example.test/sheet"}
     with pytest.raises(ExternalDocumentFetchError):
-        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
+        await _fetch_content(spreadsheet_source, test_db, test_user, "base-1")
     assert signed_download == []
 
 
@@ -582,7 +595,7 @@ async def test_sheet_waiting_for_download_respects_import_timeout(
         0.01,
     )
     with pytest.raises(ExternalDocumentFetchError, match="timed out"):
-        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
+        await _fetch_content(spreadsheet_source, test_db, test_user, "base-1")
     assert (
         sum(c.args[0] == "submit_export_job" for c in session.call_tool.await_args_list)
         == 1
@@ -622,8 +635,8 @@ async def test_regular_file_download_preserves_bytes_and_extension(
     )
     await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
 
-    content = await DingTalkExternalDocumentProvider().fetch_content(
-        test_db, test_user, "file-pdf"
+    content = await _fetch_content(
+        DingTalkExternalDocumentProvider(), test_db, test_user, "file-pdf"
     )
 
     assert content.file_extension == extension
@@ -777,7 +790,7 @@ async def test_import_reads_metadata_then_returns_only_markdown(
     _, session = docs_mcp
     session.call_tool.reset_mock()
 
-    content = await online_source.fetch_content(test_db, test_user, "online-doc")
+    content = await _fetch_content(online_source, test_db, test_user, "online-doc")
 
     assert content.content.decode("utf-8") == "# 正文\n\n只导入这段内容。"
     assert content.file_extension == "md"
@@ -864,7 +877,7 @@ async def test_live_metadata_blocks_unsupported_content_even_with_stale_cache(
     session.call_tool.reset_mock()
 
     with pytest.raises(ExternalDocumentFetchError, match="cannot be imported"):
-        await online_source.fetch_content(test_db, test_user, "online-doc")
+        await _fetch_content(online_source, test_db, test_user, "online-doc")
 
     assert [call.args[0] for call in session.call_tool.await_args_list] == [
         "get_document_info"
@@ -906,7 +919,7 @@ async def test_mcp_failures_are_never_imported_as_content(
     responses[tool] = payload
 
     with pytest.raises(ExternalDocumentFetchError):
-        await online_source.fetch_content(test_db, test_user, "online-doc")
+        await _fetch_content(online_source, test_db, test_user, "online-doc")
 
 
 @pytest.mark.asyncio
@@ -922,7 +935,7 @@ async def test_empty_or_invalid_markdown_is_not_imported(
     responses["get_document_content"] = {"success": True, "markdown": markdown}
 
     with pytest.raises(ExternalDocumentFetchError, match="empty or unreadable"):
-        await online_source.fetch_content(test_db, test_user, "online-doc")
+        await _fetch_content(online_source, test_db, test_user, "online-doc")
 
 
 @pytest.mark.asyncio

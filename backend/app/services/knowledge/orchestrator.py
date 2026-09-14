@@ -890,26 +890,6 @@ class KnowledgeOrchestrator:
         if not document.attachment_id:
             raise ValueError("Document content is not ready for preview")
 
-    @staticmethod
-    async def _read_live_wiki_content(
-        db: Session,
-        document: KnowledgeDocument,
-        offset: int,
-        limit: int,
-    ) -> tuple[str, int, bool]:
-        """Read a paged slice from the latest live wiki page body."""
-        from app.services.wiki.connector import WikiApiError
-        from app.services.wiki.service import fetch_live_wiki_document_page
-
-        _validate_document_read_paging(offset=offset, limit=limit)
-        try:
-            page = await fetch_live_wiki_document_page(db, document)
-        except WikiApiError as exc:
-            raise ValueError(exc.message) from exc
-        content = page.content or ""
-        end = min(offset + limit, len(content))
-        return content[offset:end], len(content), offset > 0 or end < len(content)
-
     def read_document_content(
         self,
         db: Session,
@@ -998,21 +978,16 @@ class KnowledgeOrchestrator:
         summary = None
 
         if include_content:
-            if document.source_type == DocumentSourceType.EXTERNAL_WIKI.value:
-                content, content_length, truncated = await self._read_live_wiki_content(
-                    db, document, offset, limit
-                )
-            else:
-                paged = self.read_document_content(
-                    db=db,
-                    user=user,
-                    document_id=document_id,
-                    offset=offset,
-                    limit=limit,
-                )
-                content = paged.content
-                content_length = paged.total_length
-                truncated = (paged.offset > 0) or paged.has_more
+            paged = self.read_document_content(
+                db=db,
+                user=user,
+                document_id=document_id,
+                offset=offset,
+                limit=limit,
+            )
+            content = paged.content
+            content_length = paged.total_length
+            truncated = (paged.offset > 0) or paged.has_more
 
         if include_summary:
             from app.services.knowledge.summary_service import get_summary_service

@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -47,6 +48,9 @@ from app.services.knowledge.processing_errors import build_processing_error
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from app.services.knowledge.external_sync_providers import ResolvedExternalDocument
+
 # Maximum external documents a single batch import may create.
 MAX_EXTERNAL_BATCH_IMPORT = 50
 MAX_DOCUMENT_NAME_LENGTH = 255
@@ -73,6 +77,7 @@ class ExternalDocumentBatchImportResult:
     updated: list[KnowledgeDocument]
     processing: list[KnowledgeDocument]
     requested_count: int
+    duplicates: list[KnowledgeDocument] = field(default_factory=list)
 
 
 class ExternalDocumentImportService:
@@ -169,7 +174,7 @@ class ExternalDocumentImportService:
         user: User,
         knowledge_base_id: int,
         provider_id: str,
-        resolved_documents: list[object],
+        resolved_documents: list[ResolvedExternalDocument],
         folder_id: int = 0,
     ) -> ExternalDocumentBatchImportResult:
         """Import metadata already resolved by a trusted async provider adapter.
@@ -194,16 +199,47 @@ class ExternalDocumentImportService:
         created: list[KnowledgeDocument] = []
         updated: list[KnowledgeDocument] = []
         processing: list[KnowledgeDocument] = []
+        duplicates: list[KnowledgeDocument] = []
+        canonical_wiki_documents: dict[tuple[str, str], KnowledgeDocument] = {}
+        if provider.provider_id == "wiki":
+            from app.services.knowledge.external_sync_providers import (
+                get_document_sync_config,
+            )
+
+            existing_wiki_documents = (
+                db.query(KnowledgeDocument)
+                .join(KnowledgeDocument.external_source)
+                .filter(
+                    KnowledgeDocumentExternalSource.kind_id == knowledge_base_id,
+                    KnowledgeDocumentExternalSource.external_provider == "wiki",
+                )
+                .all()
+            )
+            for document in existing_wiki_documents:
+                sync = get_document_sync_config(document)
+                site_url = str(sync.get("site_url") or "").rstrip("/")
+                resource_id = str(sync.get("resource_id") or "")
+                if site_url and resource_id:
+                    canonical_wiki_documents[(site_url, resource_id)] = document
         seen: set[str] = set()
         for resolved in resolved_documents:
-            resource_id = str(getattr(resolved, "encoded_resource_id"))
+            resource_id = resolved.encoded_resource_id
             if resource_id in seen:
                 continue
             seen.add(resource_id)
-            metadata = dict(getattr(resolved, "external_metadata")())
+            metadata = resolved.external_metadata()
             existing = self._find_existing_document(
                 db, knowledge_base_id, provider.provider_id, resource_id
             )
+            resolved_sync = dict(metadata.get("sync") or {})
+            canonical_key = (
+                str(resolved_sync.get("site_url") or "").rstrip("/"),
+                str(resolved_sync.get("resource_id") or ""),
+            )
+            canonical_existing = canonical_wiki_documents.get(canonical_key)
+            if existing is None and canonical_existing is not None:
+                duplicates.append(canonical_existing)
+                continue
             if existing:
                 from app.services.knowledge.external_sync_providers import (
                     is_synchronized_external_document,
@@ -244,11 +280,14 @@ class ExternalDocumentImportService:
                 continue
             self._dispatch_import_task(db, document)
             created.append(document)
+            if canonical_key[0] and canonical_key[1]:
+                canonical_wiki_documents[canonical_key] = document
         return ExternalDocumentBatchImportResult(
             created=created,
             updated=updated,
             processing=processing,
             requested_count=len(seen),
+            duplicates=duplicates,
         )
 
     def request_source_refresh(
@@ -609,6 +648,7 @@ class ExternalDocumentImportService:
                     retryable=True,
                     generation=generation,
                 ),
+                preserve_active_sync_index=True,
             )
             db.refresh(document)
             logger.exception(
@@ -653,9 +693,19 @@ def run_external_document_import(
             raise ExternalDocumentFetchError(
                 f"Owner user {owner_user_id} no longer exists"
             )
+        prepared = provider.prepare_content_fetch(db, user, resource_id)
+        # Release the transaction and checked-out connection before any remote I/O.
+        db.commit()
+        db.close()
         content: ExternalDocumentContent = asyncio.run(
-            provider.fetch_content(db, user, resource_id)
+            provider.fetch_prepared_content(prepared)
         )
+        document = db.get(KnowledgeDocument, document_id)
+        user = db.get(User, owner_user_id)
+        if document is None or user is None:
+            raise ExternalImportLostWriteError(
+                "External document or owner disappeared during content fetch"
+            )
         knowledge_orchestrator.attach_external_document_content(
             db=db,
             document=document,
@@ -679,13 +729,10 @@ def run_external_document_import(
             message=(
                 _external_fetch_error_message(
                     exc,
-                    fallback="Wiki source document no longer exists",
+                    fallback="Wiki 源文档不存在",
                 )
                 if exc.error_code == "external_source_missing"
-                else (
-                    "The external source is no longer accessible. Restore access "
-                    "and retry the import."
-                )
+                else ("外部源当前无法访问，请恢复访问后重试导入")
             ),
             error_code=exc.error_code,
         )
@@ -768,6 +815,7 @@ def _mark_external_import_failed(
             generation=generation,
             provider=provider_id,
         ),
+        preserve_active_sync_index=True,
     )
 
 

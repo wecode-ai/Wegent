@@ -2,14 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Connector abstraction for external wiki systems.
-
-A connector adapts one wiki product (Wiki.js first) to the unified page
-model used by the bridge MCP and the KB mounting layer. Connectors map
-native identities to path-style keys, so the bridge-level policies
-(outline/section splitting, truncation, scope enforcement) never depend
-on the concrete wiki system.
-"""
+"""Connector abstraction for external Wiki synchronization."""
 
 from __future__ import annotations
 
@@ -48,6 +41,16 @@ class WikiPage(WikiPageMeta):
     content: str = ""
 
 
+@dataclass(frozen=True)
+class WikiPageProbe:
+    """Metadata probe result for one stable remote page identity."""
+
+    page: WikiPageMeta | None = None
+    confirmed_missing: bool = False
+    error_code: str | None = None
+    error_message: str | None = None
+
+
 def build_page_url(site_url: str, path: str) -> str:
     """Compose the human-facing page URL from a site root and page path."""
     return f"{site_url.rstrip('/')}/{path.lstrip('/')}"
@@ -60,14 +63,6 @@ class WikiConnectionTest:
     ok: bool
     message: str
     version: str | None = None
-
-
-@dataclass(frozen=True)
-class WikiSearchScope:
-    """Path subtree restriction for search/list calls."""
-
-    path: str | None = None
-    locale: str | None = None
 
 
 class WikiApiError(Exception):
@@ -126,6 +121,45 @@ class WikiConnector(ABC):
             retryable=False,
         )
 
+    async def get_page_metadata_by_path(
+        self,
+        config: WikiSiteConfig,
+        path: str,
+        locale: str | None = None,
+    ) -> WikiPageMeta | None:
+        """Resolve one picker selection without downloading its body."""
+        raise WikiApiError(
+            "wiki_lookup_unsupported",
+            "当前 Wiki 连接器不支持按路径查询页面元数据",
+            retryable=False,
+        )
+
+    async def inspect_page_metadata_by_ids(
+        self,
+        config: WikiSiteConfig,
+        resource_ids: list[str],
+        *,
+        batch_size: int,
+    ) -> dict[str, WikiPageProbe]:
+        """Inspect stable page identities without listing the entire Wiki."""
+        raise WikiApiError(
+            "wiki_lookup_unsupported",
+            "当前 Wiki 连接器不支持批量查询页面元数据",
+            retryable=False,
+        )
+
+    async def get_page_by_id(
+        self,
+        config: WikiSiteConfig,
+        resource_id: str,
+    ) -> WikiPage | None:
+        """Read one page body by the provider's stable resource identity."""
+        raise WikiApiError(
+            "wiki_lookup_unsupported",
+            "当前 Wiki 连接器不支持按资源 ID 查询页面正文",
+            retryable=False,
+        )
+
     @abstractmethod
     async def get_page(
         self,
@@ -134,18 +168,6 @@ class WikiConnector(ABC):
         locale: str | None = None,
     ) -> WikiPage | None:
         """Read one page by its path-style identity."""
-
-    @abstractmethod
-    async def search_pages(
-        self,
-        config: WikiSiteConfig,
-        query: str,
-        *,
-        path: str | None = None,
-        locale: str | None = None,
-        limit: int,
-    ) -> list[WikiPageMeta]:
-        """Search pages by keyword; metadata only (fetch body via get_page)."""
 
 
 @dataclass

@@ -526,11 +526,7 @@ export function KnowledgeDocumentTreeGrid({
                 </button>
               )
             }
-            if (
-              document.source_type === 'external_wiki' ||
-              !onEdit ||
-              !(canManage?.(document) ?? true)
-            ) {
+            if (!onEdit || !(canManage?.(document) ?? true)) {
               return null
             }
             const label = t('common:actions.edit')
@@ -589,17 +585,11 @@ export function KnowledgeDocumentTreeGrid({
           }
           const document = node.document
           if (document.source_type === 'external') {
-            return <ExternalDocumentBadge syncedWiki={isSyncedWikiDocument(document)} />
-          }
-          if (document.source_type === 'external_wiki') {
             return (
-              <Badge
-                variant="default"
-                size="sm"
-                className="bg-violet-500/10 text-violet-600 border-violet-500/20"
-              >
-                {t('document.document.type.wiki')}
-              </Badge>
+              <ExternalDocumentBadge
+                extension={document.file_extension}
+                syncedWiki={isSyncedWikiDocument(document)}
+              />
             )
           }
           if (document.source_type === 'table') {
@@ -834,7 +824,6 @@ export function KnowledgeDocumentTreeGrid({
           const isTable = document.source_type === 'table'
           const isExternal = document.source_type === 'external'
           const isSyncedWiki = isSyncedWikiDocument(document)
-          const isWiki = document.source_type === 'external_wiki'
           const isNotIndexed = document.index_status === 'not_indexed'
           const isIndexFailed = document.index_status === 'failed'
           const isPendingConversion = document.index_status === 'pending_conversion'
@@ -865,7 +854,7 @@ export function KnowledgeDocumentTreeGrid({
                   label: t('document.document.retryImport'),
                 }
               }
-            } else if (!isWiki && ragConfigured && !isTable && (isIndexFailed || isNotIndexed)) {
+            } else if (ragConfigured && !isTable && (isIndexFailed || isNotIndexed)) {
               retryAction = {
                 testId: `reindex-document-${document.id}`,
                 label: t('document.document.reindex'),

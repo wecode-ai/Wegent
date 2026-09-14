@@ -1950,6 +1950,18 @@ class KnowledgeService:
         KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         if data.name is not None:
+            from app.services.knowledge.external_sync_providers import (
+                is_synchronized_external_document,
+            )
+
+            if (
+                doc.external_provider == "wiki"
+                and is_synchronized_external_document(doc)
+                and data.name != doc.name
+            ):
+                raise ValueError(
+                    "Synchronized Wiki document names are managed by the source"
+                )
             doc.name = data.name
 
         if data.status is not None:

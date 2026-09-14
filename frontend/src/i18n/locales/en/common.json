@@ -1787,7 +1787,7 @@
     "deleting": "Deleting…",
     "delete_confirm_title": "Delete Wiki connection",
     "delete_confirm_message": "Delete the connection “{{name}}”? This Wiki will no longer be accessible through it.",
-    "delete_reference_hint": "Deletion is blocked while Live Wiki or synchronized Wiki knowledge documents still reference this connection. Delete those documents first.",
+    "delete_reference_hint": "Deletion is blocked while synchronized Wiki knowledge documents still reference this connection. Delete those documents first.",
     "delete_success": "Wiki connection deleted",
     "delete_failed": "Failed to delete wiki connection"
   }

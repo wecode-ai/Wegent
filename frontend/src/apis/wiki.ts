@@ -2,10 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-/**
- * External wiki API client: connection settings, KB bindings, browse.
- * Design: tmp/2026-09-03-wikijs-mcp-knowledge-design.md (v2.4)
- */
+/** External Wiki API client for connection settings and synchronized imports. */
 
 import { apiClient } from './client'
 
@@ -26,7 +23,6 @@ export interface WikiConnection {
 export interface WikiConnectionSummary extends WikiConnection {
   id: string
   display_name: string
-  legacy: boolean
 }
 
 export interface WikiConnectionsResponse {
@@ -67,16 +63,16 @@ export interface WikiBoundDocument {
   locale: string
   page_updated_at: string
   resource_url: string
-  bound_by: string | null
-  bound_at: string | null
   status: string
   connection_id?: string | null
-  sync?: boolean
 }
 
 export interface WikiBindingCreateResponse {
   documents: WikiBoundDocument[]
-  notes: string[]
+  duplicate_documents: WikiBoundDocument[]
+  created_count: number
+  updated_count: number
+  processing_count: number
 }
 
 export interface WikiPageSummary {
@@ -98,10 +94,6 @@ export interface WikiPagesResponse {
 }
 
 export const wikiApis = {
-  getConnection: async (): Promise<WikiConnection> => {
-    return apiClient.get('/wiki/connection')
-  },
-
   listConnections: async (): Promise<WikiConnectionsResponse> => {
     return apiClient.get('/wiki/connections')
   },
@@ -123,10 +115,6 @@ export const wikiApis = {
     return apiClient.delete(`/wiki/connections/${connectionId}`)
   },
 
-  updateConnection: async (data: WikiConnectionUpdateRequest): Promise<WikiConnection> => {
-    return apiClient.put('/wiki/connection', data)
-  },
-
   testConnection: async (data?: WikiConnectionTestRequest): Promise<WikiConnectionTestResponse> => {
     return apiClient.post('/wiki/connection/test', data ?? {})
   },
@@ -138,12 +126,11 @@ export const wikiApis = {
   bindKbWikiDocuments: async (
     knowledgeBaseId: number,
     paths: string[],
-    options?: { connectionId?: string; sync?: boolean; folderId?: number }
+    options: { connectionId: string; folderId?: number }
   ): Promise<WikiBindingCreateResponse> => {
     return apiClient.post(`/knowledge/${knowledgeBaseId}/wiki-bindings`, {
       paths,
-      connection_id: options?.connectionId,
-      sync: options?.sync ?? false,
+      connection_id: options.connectionId,
       folder_id: options?.folderId ?? 0,
     })
   },
@@ -153,7 +140,6 @@ export const wikiApis = {
   },
 
   listPages: async (params: {
-    kb_id?: number
     path?: string
     locale?: string
     limit?: number
@@ -162,7 +148,6 @@ export const wikiApis = {
     connection_id?: string
   }): Promise<WikiPagesResponse> => {
     const query = new URLSearchParams()
-    if (params.kb_id != null) query.set('kb_id', String(params.kb_id))
     if (params.path) query.set('path', params.path)
     if (params.locale) query.set('locale', params.locale)
     if (params.limit != null) query.set('limit', String(params.limit))

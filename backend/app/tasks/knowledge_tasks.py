@@ -184,7 +184,11 @@ def import_external_document_task(self, document_id: int, expected_generation: i
                 document_id,
             )
             return
-        user = db.query(User).filter(User.id == document.user_id).first()
+        user = (
+            db.query(User)
+            .filter(User.id == document.user_id, User.is_active.is_(True))
+            .first()
+        )
         run_external_document_import(db, document, user, generation=attempt.generation)
 
 

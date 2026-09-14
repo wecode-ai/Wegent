@@ -86,6 +86,8 @@ class ExternalSourceConnectionService:
         config: dict[str, Any],
         credentials: dict[str, str],
         connection_id: str | None = None,
+        commit: bool = True,
+        create_if_missing: bool = False,
     ) -> ExternalSourceConnection:
         existing = None
         if connection_id:
@@ -96,9 +98,10 @@ class ExternalSourceConnectionService:
                 connection_id=connection_id,
                 include_inactive=True,
             )
-            if existing is None:
+            if existing is None and not create_if_missing:
                 raise ValueError("External source connection not found")
-        elif (
+        needs_connection_slot = existing is None or not existing.row.is_active
+        if needs_connection_slot and (
             len(
                 ExternalSourceConnectionService.list_owned(
                     db, owner_user_id=owner_user_id, provider_id=provider_id
@@ -145,8 +148,11 @@ class ExternalSourceConnectionService:
                 is_active=True,
             )
             db.add(row)
-        db.commit()
-        db.refresh(row)
+        if commit:
+            db.commit()
+            db.refresh(row)
+        else:
+            db.flush()
         return ExternalSourceConnectionService._from_row(row)
 
     @staticmethod

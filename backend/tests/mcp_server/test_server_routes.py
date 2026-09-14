@@ -1295,7 +1295,7 @@ def test_mounted_decorator_tool_servers_expose_request_context():
     """Every mounted MCP server whose tools use @mcp_tool must be listed in
     MCP_CONTEXT_SERVER_NAMES, otherwise the middleware never sets the
     request context and every tool call degrades to "Authentication
-    required" even with a valid task token (wiki regression 2026-09-04)."""
+    required" even with a valid task token."""
     from app.mcp_server.server import (
         _SYSTEM_MCP_SPEC,
         MCP_CONTEXT_SERVER_NAMES,
@@ -1304,4 +1304,5 @@ def test_mounted_decorator_tool_servers_expose_request_context():
     mounted = {spec.name for spec in MCP_APP_SPECS}
     # The system server registers its tools inline, not via @mcp_tool.
     assert mounted - MCP_CONTEXT_SERVER_NAMES == {_SYSTEM_MCP_SPEC.name}
-    assert "wiki" in MCP_CONTEXT_SERVER_NAMES
+    assert "wiki" not in mounted
+    assert "wiki" not in MCP_CONTEXT_SERVER_NAMES

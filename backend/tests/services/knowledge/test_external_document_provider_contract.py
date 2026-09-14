@@ -23,9 +23,22 @@ from app.models.user import User
 from app.services.knowledge.external_document_providers import (
     ExternalDocumentContent,
     ExternalDocumentImportError,
+    ExternalDocumentProvider,
     ExternalSourceUnavailableError,
     get_external_document_provider,
 )
+
+
+async def _fetch_prepared_content(
+    provider: ExternalDocumentProvider,
+    db: Session,
+    user: User,
+    resource_id: str,
+) -> ExternalDocumentContent:
+    prepared = provider.prepare_content_fetch(db, user, resource_id)
+    db.commit()
+    db.close()
+    return await provider.fetch_prepared_content(prepared)
 
 
 class ProviderContractSuite:
@@ -126,7 +139,7 @@ class ProviderContractSuite:
         self.mock_fetch_body(monkeypatch, provider, "# Fetch Doc body")
 
         content = asyncio.run(
-            provider.fetch_content(test_db, test_user, "contract-fetch")
+            _fetch_prepared_content(provider, test_db, test_user, "contract-fetch")
         )
 
         assert isinstance(content, ExternalDocumentContent)
@@ -149,7 +162,9 @@ class ProviderContractSuite:
         self.remove_resource(test_db, test_user, "contract-gone")
 
         with pytest.raises(ExternalSourceUnavailableError):
-            asyncio.run(provider.fetch_content(test_db, test_user, "contract-gone"))
+            asyncio.run(
+                _fetch_prepared_content(provider, test_db, test_user, "contract-gone")
+            )
 
 
 class TestDingTalkProviderContract(ProviderContractSuite):
@@ -172,7 +187,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         monkeypatch.setattr(
             "app.services.dingtalk_doc_service.DingTalkDocService"
             ".get_user_dingtalk_mcp_url",
-            lambda user: "https://mcp.example.test/dingtalk",
+            lambda user, service_id="docs": "https://mcp.example.test/dingtalk",
         )
 
     def create_resource(
@@ -224,7 +239,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         markdown: str,
     ) -> None:
         async def fake_fetch(
-            mcp_url: str, node_id: str, user: User
+            mcp_url: str, node_id: str, spreadsheet_urls: dict[str, str | None]
         ) -> tuple[str, bytes]:
             return "md", markdown.encode("utf-8")
 
@@ -286,7 +301,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         extension, content = await provider._fetch_document_content(
             "https://mcp.example.test/dingtalk",
             "node-1",
-            SimpleNamespace(),
+            {},
         )
 
         assert (extension, content) == ("md", b"# Imported")

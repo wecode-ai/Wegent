@@ -404,8 +404,8 @@ function DocumentUploadSession({
   }
 
   const handleWikiImport = async (paths: string[], options: WikiImportOptions) => {
-    if (!onWikiImport || !beginSubmit('wiki'))
-      throw new Error(t('document.upload.wiki.noPermission'))
+    if (!onWikiImport) throw new Error(t('document.upload.wiki.noPermission'))
+    if (!beginSubmit('wiki')) throw new Error(t('document.upload.wiki.busy'))
     try {
       return await onWikiImport(paths, options)
     } finally {

@@ -913,53 +913,6 @@ class TestKnowledgeOrchestrator:
         summary_service.get_document_summary.assert_awaited_once_with(9)
 
     @pytest.mark.asyncio
-    async def test_get_document_detail_reads_live_wiki_content_in_real_time(
-        self, orchestrator, mock_db, mock_user
-    ):
-        document = SimpleNamespace(
-            id=9,
-            name="Runbook",
-            kind_id=77,
-            source_type="external_wiki",
-        )
-        page = SimpleNamespace(content="abcdefghij")
-        stored = SimpleNamespace(
-            content="stored snapshot",
-            total_length=15,
-            offset=0,
-            has_more=False,
-        )
-
-        with patch.object(
-            orchestrator,
-            "_get_document_with_access_or_raise",
-            return_value=document,
-        ):
-            with patch.object(
-                orchestrator, "read_document_content", return_value=stored
-            ) as mock_read_document_content:
-                with patch(
-                    "app.services.wiki.service.fetch_live_wiki_document_page",
-                    new=AsyncMock(return_value=page),
-                    create=True,
-                ) as mock_fetch_page:
-                    result = await orchestrator.get_document_detail(
-                        db=mock_db,
-                        user=mock_user,
-                        document_id=9,
-                        include_content=True,
-                        include_summary=False,
-                        offset=2,
-                        limit=4,
-                    )
-
-        assert result.content == "cdef"
-        assert result.content_length == 10
-        assert result.truncated is True
-        mock_fetch_page.assert_awaited_once_with(mock_db, document)
-        mock_read_document_content.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_get_document_detail_skips_content_when_disabled(
         self, orchestrator, mock_db, mock_user
     ):

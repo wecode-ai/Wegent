@@ -103,3 +103,55 @@ def test_disable_hides_connection_without_deleting_kind_row(
         is None
     )
     assert test_db.get(Kind, existing.row.id) is not None
+
+
+def test_explicit_connection_id_cannot_bypass_connection_limit(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "app.services.external_source_connections.MAX_EXTERNAL_SOURCE_CONNECTIONS", 1
+    )
+    _save(test_db, test_user, "engineering")
+
+    with pytest.raises(ValueError, match="limit reached"):
+        external_source_connection_service.save_owned(
+            test_db,
+            owner_user_id=test_user.id,
+            provider_id="wiki",
+            connection_id="legacy-primary",
+            create_if_missing=True,
+            display_name="legacy",
+            adapter_type="wikijs",
+            enabled=True,
+            config={"site_url": "https://legacy.example.com"},
+            credentials={"api_key": "legacy-key"},
+        )
+
+
+def test_inactive_connection_cannot_be_reactivated_above_connection_limit(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "app.services.external_source_connections.MAX_EXTERNAL_SOURCE_CONNECTIONS", 1
+    )
+    inactive = _save(test_db, test_user, "inactive")
+    external_source_connection_service.disable_owned(
+        test_db,
+        owner_user_id=test_user.id,
+        provider_id="wiki",
+        connection_id=inactive.connection_id,
+    )
+    _save(test_db, test_user, "active")
+
+    with pytest.raises(ValueError, match="limit reached"):
+        external_source_connection_service.save_owned(
+            test_db,
+            owner_user_id=test_user.id,
+            provider_id="wiki",
+            connection_id=inactive.connection_id,
+            display_name="reactivated",
+            adapter_type="wikijs",
+            enabled=True,
+            config={"site_url": "https://reactivated.example.com"},
+            credentials={"api_key": "new-key"},
+        )

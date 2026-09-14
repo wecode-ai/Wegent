@@ -98,15 +98,16 @@ describe('KnowledgeDocumentTreeGrid', () => {
     )
   })
 
-  it('identifies live wiki documents as external wiki rather than markdown', () => {
+  it('keeps the markdown type and adds a Wiki icon for synchronized documents', () => {
     const documents = [
       createDocument({
-        source_type: 'external_wiki',
+        source_type: 'external',
         file_extension: 'md',
         source_config: {
-          wiki: {
-            path: 'operations/handbook',
-            resource_url: 'https://wiki.example.com/operations/handbook',
+          external: {
+            provider: 'wiki',
+            title: 'Operations handbook',
+            sync: { enabled: true },
           },
         },
       }),
@@ -126,8 +127,10 @@ describe('KnowledgeDocumentTreeGrid', () => {
       />
     )
 
-    expect(screen.getByText('document.document.type.wiki')).toBeInTheDocument()
-    expect(screen.queryByText('md')).not.toBeInTheDocument()
+    const type = screen.getByTestId('synced-wiki-document-type')
+    expect(type).toHaveTextContent('MD')
+    expect(type.querySelector('svg')).toHaveClass('lucide-book-open')
+    expect(type).toHaveAttribute('title', 'wikiSection.synced_badge')
   })
 
   it('renders folders and documents through visible TreeGrid rows', () => {
@@ -586,36 +589,29 @@ describe('KnowledgeDocumentTreeGrid', () => {
       new Date(iso).toLocaleString('sv-SE', { hour12: false }).replace(/-/g, '/')
 
     const folders: KnowledgeFolder[] = []
-    const legacyWiki = createDocument({
+    const syncedWiki = createDocument({
       id: 31,
-      name: 'legacy-wiki.md',
-      source_type: 'external_wiki',
-      file_size: 0,
+      name: 'synced-wiki.md',
+      source_type: 'external',
+      file_size: 15,
       created_at: '2026-09-04T00:00:00Z',
       updated_at: '2026-09-04T00:00:00Z',
       source_config: {
-        wiki: { path: 'docs/a', page_updated_at: '2026-09-03T12:34:56Z' },
+        external: {
+          provider: 'wiki',
+          title: 'Synced Wiki',
+          sync: { enabled: true, observed_version: '2026-09-03T12:34:56Z' },
+        },
       },
     })
-    const backfilledWiki = createDocument({
-      id: 32,
-      name: 'backfilled-wiki.md',
-      source_type: 'external_wiki',
-      file_size: 15,
-      created_at: '2026-09-04T00:00:00Z',
-      updated_at: '2026-09-03T12:34:56Z',
-      source_config: {
-        wiki: { path: 'docs/b', page_updated_at: '2026-09-03T12:34:56Z' },
-      },
-    })
-    const { nodes, index } = buildKnowledgeResourceTree(folders, [legacyWiki, backfilledWiki])
+    const { nodes, index } = buildKnowledgeResourceTree(folders, [syncedWiki])
 
     render(
       <KnowledgeDocumentTreeGrid
         nodes={nodes}
         treeIndex={index}
         folders={folders}
-        documents={[legacyWiki, backfilledWiki]}
+        documents={[syncedWiki]}
         {...requiredTreeGridProps}
         showSelectionColumn={false}
         showActionsColumn={false}
@@ -626,8 +622,7 @@ describe('KnowledgeDocumentTreeGrid', () => {
 
     // Real byte sizes, not the 0 B placeholder.
     expect(screen.getByText('15 B')).toBeInTheDocument()
-    // Both rows show the wiki page update time, not the bind instant.
     const expectedTime = formatLocal('2026-09-03T12:34:56Z')
-    expect(screen.getAllByText(expectedTime)).toHaveLength(2)
+    expect(screen.getByText(expectedTime)).toBeInTheDocument()
   })
 })

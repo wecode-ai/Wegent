@@ -391,9 +391,8 @@ api_router.include_router(
 if not settings.STANDALONE_MODE:
     api_router.include_router(rag_router, prefix="/internal", tags=["internal-rag"])
 
-# External wiki bridge (connection settings, KB bindings, browse/preview)
-if settings.WIKI_MCP_ENABLED:
-    api_router.include_router(external_wiki_router, tags=["external-wiki"])
+# External Wiki management and synchronized import are independent of MCP.
+api_router.include_router(external_wiki_router, tags=["external-wiki"])
 
 api_router.include_router(
     knowledge_router, prefix="/internal", tags=["internal-knowledge"]

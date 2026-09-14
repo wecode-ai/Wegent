@@ -27,11 +27,6 @@ MCP_SERVICES_KEY = "services"
 MCP_CREDENTIALS_KEY = "credentials"
 MCP_URL_KEY = "url"
 
-# Providers whose MCP server is hosted by this backend (wiki bridge). Their
-# stored credentials are consumed server-side only: they must not leak into
-# the task_data.user_mcps placeholder view shipped to executors.
-BACKEND_HOSTED_MCP_PROVIDERS = frozenset({"wiki"})
-
 
 class UserMCPService:
     """Helper service for reading and writing user-scoped MCP settings."""
@@ -206,8 +201,6 @@ class UserMCPService:
         enabled_mcps: dict[str, Any] = {}
 
         for provider_id, provider in mcps.items():
-            if provider_id in BACKEND_HOSTED_MCP_PROVIDERS:
-                continue
             provider_definition = get_mcp_provider(provider_id)
             if (
                 not provider_definition

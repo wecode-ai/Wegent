@@ -49,6 +49,7 @@ from app.services.share import knowledge_share_service
 
 from .conftest import create_external_import_kb as _create_kb
 from .conftest import create_synced_node as _create_synced_node
+from .conftest import patch_provider_fetch, prepared_provider
 
 
 def test_importing_copy_cannot_be_transferred(
@@ -253,9 +254,8 @@ def test_moved_copy_refresh_uses_source_owner_and_target_index_owner(
             name="New title", file_extension="md", content=b"new body"
         )
     )
-    monkeypatch.setattr(
-        get_external_document_provider("dingtalk"), "fetch_content", fetch
-    )
+    document_id = document.id
+    patch_provider_fetch(monkeypatch, get_external_document_provider("dingtalk"), fetch)
     monkeypatch.setattr(
         "app.services.context.context_service.upload_attachment",
         MagicMock(return_value=(SimpleNamespace(id=4321), None)),
@@ -274,11 +274,12 @@ def test_moved_copy_refresh_uses_source_owner_and_target_index_owner(
         test_db, document, test_user, generation=attempt.generation
     )
 
-    test_db.refresh(document)
+    document = test_db.get(KnowledgeDocument, document_id)
+    assert document is not None
     assert document.attachment_id == 4321
     assert document.user_id == test_user.id
     assert document.kind_id == target_id
-    fetch.assert_awaited_once_with(test_db, test_user, node.dingtalk_node_id)
+    fetch.assert_awaited_once_with(test_user, node.dingtalk_node_id)
     assert index.call_args.kwargs["knowledge_base_id"] == str(target_id)
     assert index.call_args.kwargs["user_id"] == manager.id
 
@@ -341,8 +342,8 @@ class TestExternalSourceUnavailable:
         engine = create_engine("sqlite:///:memory:")
         KnowledgeDocument.__table__.create(engine)
         KnowledgeDocumentExternalSource.__table__.create(engine)
-        provider = SimpleNamespace(
-            fetch_content=AsyncMock(side_effect=ExternalSourceUnavailableError("gone"))
+        provider = prepared_provider(
+            AsyncMock(side_effect=ExternalSourceUnavailableError("gone"))
         )
         monkeypatch.setattr(
             "app.services.knowledge.external_document_import.get_external_document_provider",
@@ -373,9 +374,16 @@ class TestExternalSourceUnavailable:
                     nonlocal advanced
                     if advanced:
                         return
-                    advanced = True
                     # A retry completes after the old failure becomes visible.
                     with Session(engine) as new_worker:
+                        current = new_worker.get(KnowledgeDocument, document_id)
+                        if (
+                            current is None
+                            or current.external_source_config.get("status")
+                            != "inaccessible"
+                        ):
+                            return
+                        advanced = True
                         decision = prepare_document_index_enqueue(
                             new_worker, document_id
                         )
@@ -440,10 +448,9 @@ class TestExternalSourceUnavailable:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         document = self._create_live_document(test_db, test_user)
-        provider = SimpleNamespace(
-            fetch_content=AsyncMock(
-                side_effect=ExternalSourceUnavailableError("node not found")
-            ),
+        document_id = document.id
+        provider = prepared_provider(
+            AsyncMock(side_effect=ExternalSourceUnavailableError("node not found"))
         )
         monkeypatch.setattr(
             "app.services.knowledge.external_document_import"
@@ -453,17 +460,15 @@ class TestExternalSourceUnavailable:
 
         run_external_document_import(test_db, document, test_user, generation=1)
 
-        test_db.refresh(document)
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
         # The failed placeholder survives so the user can retry it.
         assert document.index_status == DocumentIndexStatus.FAILED
         assert document.attachment_id == 0
         assert document.is_active is False
         external = document.source_config["external"]
         assert external["status"] == "inaccessible"
-        assert external["last_error"] == (
-            "The external source is no longer accessible. Restore access "
-            "and retry the import."
-        )
+        assert external["last_error"] == "外部源当前无法访问，请恢复访问后重试导入"
         error = document.processing_error_payload
         assert error is not None
         assert error["code"] == "external_source_unavailable"
@@ -475,8 +480,9 @@ class TestExternalSourceUnavailable:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         document = self._create_live_document(test_db, test_user)
-        provider = SimpleNamespace(
-            fetch_content=AsyncMock(side_effect=ExternalDocumentFetchError("boom")),
+        document_id = document.id
+        provider = prepared_provider(
+            AsyncMock(side_effect=ExternalDocumentFetchError("boom"))
         )
         monkeypatch.setattr(
             "app.services.knowledge.external_document_import"
@@ -486,7 +492,8 @@ class TestExternalSourceUnavailable:
 
         run_external_document_import(test_db, document, test_user, generation=1)
 
-        test_db.refresh(document)
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
         assert document.index_status == DocumentIndexStatus.FAILED
         assert document.processing_error_payload["code"] == "external_import_failed"
         assert document.source_config["external"].get("status") is None
@@ -502,10 +509,9 @@ class TestExternalSourceUnavailable:
         document.index_generation = 2
         document.index_status = DocumentIndexStatus.INDEXING
         test_db.commit()
-        provider = SimpleNamespace(
-            fetch_content=AsyncMock(
-                side_effect=ExternalSourceUnavailableError("node not found")
-            ),
+        document_id = document.id
+        provider = prepared_provider(
+            AsyncMock(side_effect=ExternalSourceUnavailableError("node not found"))
         )
         monkeypatch.setattr(
             "app.services.knowledge.external_document_import"
@@ -515,7 +521,8 @@ class TestExternalSourceUnavailable:
 
         run_external_document_import(test_db, document, test_user, generation=1)
 
-        test_db.refresh(document)
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
         # The stale attempt must not overwrite the newer attempt's outcome.
         assert document.index_status == DocumentIndexStatus.INDEXING
         assert document.source_config["external"].get("status") is None

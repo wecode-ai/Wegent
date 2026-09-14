@@ -20,6 +20,13 @@ def _config(url: str = "https://wiki.example.com") -> WikiSiteConfig:
     return WikiSiteConfig(site_url=url, api_key="key-123")
 
 
+def _async_returning(value):
+    async def _return(*_args, **_kwargs):
+        return value
+
+    return _return
+
+
 class TestValidateWikiSiteUrl:
     def test_accepts_https(self):
         # DNS-dependent host policy is stubbed: scheme handling under test.
@@ -230,6 +237,39 @@ class TestGetPageMetadataById:
                 await connector.get_page_metadata_by_id(_config(), "5001")
 
 
+class TestGetPageById:
+    @pytest.mark.asyncio
+    async def test_reads_content_by_stable_numeric_id(self):
+        connector = WikijsConnector()
+        captured = {}
+
+        async def fake_post(config, query, variables):
+            captured["query"] = query
+            captured["variables"] = variables
+            return {
+                "pages": {
+                    "single": {
+                        "id": 5001,
+                        "path": "docs/renamed",
+                        "title": "Renamed",
+                        "updatedAt": "2026-09-13T02:00:00Z",
+                        "locale": "zh",
+                        "content": "# Renamed",
+                        "tags": [],
+                    }
+                }
+            }
+
+        with patch.object(connector, "_post_graphql", side_effect=fake_post):
+            page = await connector.get_page_by_id(_config(), "5001")
+
+        assert "single(id: $id)" in captured["query"]
+        assert captured["variables"] == {"id": 5001}
+        assert page is not None
+        assert page.path == "docs/renamed"
+        assert page.content == "# Renamed"
+
+
 class TestPageQuerySchema:
     """Lock the field shapes required by the Wiki.js schema (2.x)."""
 
@@ -370,40 +410,50 @@ class TestGetPageLocaleFallback:
                 await connector.get_page(_config(), "docs/a")
 
 
-def _async_returning(value):
-    async def _inner(*args, **kwargs):
-        return value
+class TestInspectPageMetadataByIds:
+    @pytest.mark.asyncio
+    async def test_maps_partial_success_missing_and_forbidden(self):
+        connector = WikijsConnector()
+        payload = {
+            "data": {
+                "pages": {
+                    "p0": {
+                        "id": 11,
+                        "path": "docs/a",
+                        "title": "A",
+                        "updatedAt": "2026-09-11T01:00:00Z",
+                        "locale": "zh",
+                        "tags": [],
+                    },
+                    "p1": None,
+                    "p2": None,
+                }
+            },
+            "errors": [{"message": "Forbidden", "path": ["pages", "p2"]}],
+        }
 
-    return _inner
+        with patch.object(connector, "_request_graphql", return_value=payload):
+            probes = await connector.inspect_page_metadata_by_ids(
+                _config(), ["11", "12", "13"], batch_size=500
+            )
+
+        assert probes["11"].page.path == "docs/a"
+        assert probes["12"].confirmed_missing is True
+        assert probes["13"].error_code == "wiki_page_forbidden"
+        assert probes["13"].error_message == "无权访问 Wiki 源文档"
 
     @pytest.mark.asyncio
-    async def test_search_unwraps_results_envelope(self):
+    async def test_global_error_prevents_null_page_from_being_confirmed_missing(self):
         connector = WikijsConnector()
-        captured = {}
+        payload = {
+            "data": {"pages": {"p0": None}},
+            "errors": [{"message": "Upstream temporarily unavailable"}],
+        }
 
-        async def fake_post(config, query, variables):
-            captured["query"] = query
-            return {
-                "pages": {
-                    "search": {
-                        "results": [
-                            {
-                                "id": "11",
-                                "title": "Elasticsearch",
-                                "description": "search engine",
-                                "path": "tech-wiki/elasticsearch",
-                                "locale": "zh",
-                            }
-                        ],
-                        "suggestions": [],
-                        "totalHits": 1,
-                    }
-                }
-            }
+        with patch.object(connector, "_request_graphql", return_value=payload):
+            probes = await connector.inspect_page_metadata_by_ids(
+                _config(), ["11"], batch_size=500
+            )
 
-        with patch.object(connector, "_post_graphql", side_effect=fake_post):
-            metas = await connector.search_pages(_config(), "elastic", limit=10)
-
-        assert "results {" in captured["query"]
-        assert [meta.path for meta in metas] == ["tech-wiki/elasticsearch"]
-        assert metas[0].title == "Elasticsearch"
+        assert probes["11"].confirmed_missing is False
+        assert probes["11"].error_code == "upstream_error"
