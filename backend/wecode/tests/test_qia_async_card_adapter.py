@@ -8,6 +8,27 @@ from app.services.execution.agents.video.async_card import (
 from wecode.service import qia_async_card_adapter
 
 
+def test_highlight_editor_survives_real_async_card_normalization() -> None:
+    snapshot = normalize_async_card_payload(
+        {
+            "wb_data": {
+                "status": "completed",
+                "card": {
+                    "title": "高光视频",
+                    "editor_type": "opencut",
+                    "opencut": {"session_id": "133", "artifact_id": "timeline-1"},
+                },
+            },
+        }
+    )
+    assert snapshot.is_completed
+    assert snapshot.card["editor_type"] == "opencut"
+    assert snapshot.card["opencut"] == {
+        "session_id": "133",
+        "artifact_id": "timeline-1",
+    }
+
+
 def test_allows_only_configured_qia_workflow_origin(monkeypatch) -> None:
     monkeypatch.setattr(
         qia_async_card_adapter.video_media_settings,
