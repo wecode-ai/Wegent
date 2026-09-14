@@ -82,7 +82,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-function createLocalDeliveryApi() {
+function createLocalDeliveryApi(overrides: Partial<DeliveryApi> = {}) {
   return {
     listCloudProjects: vi.fn().mockResolvedValue({
       items: [
@@ -93,6 +93,7 @@ function createLocalDeliveryApi() {
         },
       ],
     }),
+    ...overrides,
   } as unknown as DeliveryApi
 }
 
@@ -1099,5 +1100,45 @@ describe('Wework collaboration workspace API', () => {
       }),
     ])
     expect(listCloudProjects).toHaveBeenCalledWith()
+  })
+
+  it('loads local project snapshots through the local API', async () => {
+    const getLocalBoardSnapshot = vi.fn().mockResolvedValue({
+      items: [],
+      members: [],
+      agents: [],
+      task_bindings: [],
+    })
+    const getCloudBoardSnapshot = vi.fn()
+    const cloudApi = {
+      workspaces: {},
+      projects: {},
+      issues: {
+        getBoardSnapshot: getCloudBoardSnapshot,
+      },
+    } as unknown as SharedWorkspaceApi
+    const api = createWeworkPlatformApi(
+      cloudApi,
+      createLocalDeliveryApi({ getBoardSnapshot: getLocalBoardSnapshot }),
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    await expect(api?.issues.getBoardSnapshot('local-project')).resolves.toEqual({
+      items: [],
+      members: [
+        expect.objectContaining({
+          user_id: 1,
+          user_name: 'admin',
+          role: 'Owner',
+        }),
+      ],
+      agents: [],
+      taskBindings: [],
+    })
+    expect(getLocalBoardSnapshot).toHaveBeenCalledWith('local-project')
+    expect(getCloudBoardSnapshot).not.toHaveBeenCalled()
   })
 })

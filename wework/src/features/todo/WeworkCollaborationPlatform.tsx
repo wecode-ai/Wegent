@@ -526,6 +526,14 @@ export function createWeworkPlatformApi(
           : cloudApi.projects.importMessages(projectId, input)
       },
     },
+    issues: {
+      ...cloudApi.issues,
+      async getBoardSnapshot(projectId) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.issues.getBoardSnapshot(projectId)
+          : cloudApi.issues.getBoardSnapshot(projectId)
+      },
+    },
     members: {
       ...cloudApi.members,
       list(projectId) {
