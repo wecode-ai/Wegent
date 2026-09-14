@@ -22,8 +22,11 @@
   min-height: 34px;
   border-radius: 8px;
   padding: 0 12px;
-  color: rgb(var(--color-bg-base));
-  background: rgb(var(--color-text-primary));
+  color: var(--collaboration-primary-foreground, rgb(var(--color-bg-base)));
+  background: var(
+    --collaboration-primary-background,
+    rgb(var(--color-text-primary))
+  );
   font-size: 13px;
   font-weight: 600;
 }
@@ -195,6 +198,10 @@
   padding: 16px 20px 20px;
 }
 
+.hostComposer {
+  padding: 0;
+}
+
 .composerHeader p {
   margin: 4px 0 0;
   color: rgb(var(--color-text-muted));
@@ -348,8 +355,11 @@
 .primaryButton {
   min-height: 38px;
   padding: 0 14px;
-  background: rgb(var(--color-text-primary));
-  color: rgb(var(--color-bg-base));
+  color: var(--collaboration-primary-foreground, rgb(var(--color-bg-base)));
+  background: var(
+    --collaboration-primary-background,
+    rgb(var(--color-text-primary))
+  );
   font-size: 13px;
   font-weight: 600;
 }

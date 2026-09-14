@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CollaborationView } from "../types";
+import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
 
 export type CollaborationPlatformView = "spaces" | "resources";
 
@@ -36,4 +37,5 @@ export interface CollaborationPlatformHostAdapter {
   manageResource?(kind: "agents" | "environments", resourceId?: string): void;
   notify?(message: string, kind: "success" | "error"): void;
   openExternal?(url: string): void;
+  projectAgentConfiguration?: ProjectAgentConfigurationHost;
 }
