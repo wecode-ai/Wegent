@@ -1,62 +1,7 @@
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { RuntimeAdditionalContext } from '@/types/api'
 
-export type ExternalProjectTaskProvider = 'github' | 'gitlab'
-
-export function repositoryProviderConfig(
-  address: string,
-  provider: ExternalProjectTaskProvider
-): {
-  repository: string
-  domain?: string
-  api_base?: string
-} {
-  const value = address.trim()
-  if (!value) throw new Error('请输入仓库地址')
-
-  const shorthand = value.match(/^([^/\s]+)\/([^/\s]+)$/)
-  if (shorthand) {
-    return { repository: `${shorthand[1]}/${shorthand[2].replace(/\.git$/, '')}` }
-  }
-
-  const ssh = value.match(/^git@([^:]+):(.+)$/)
-  let domain: string
-  let pathname: string
-  if (ssh) {
-    domain = ssh[1].toLowerCase()
-    pathname = ssh[2]
-  } else {
-    let parsed: URL
-    try {
-      parsed = new URL(value)
-    } catch {
-      throw new Error('请输入完整仓库地址，或使用 owner/repository 格式')
-    }
-    domain = parsed.hostname.toLowerCase()
-    pathname = parsed.pathname
-  }
-
-  const repositoryPath = pathname.replace(/^\/+|\/+$/g, '')
-  const repositoryWithoutPage =
-    provider === 'gitlab' ? (repositoryPath.split('/-/')[0] ?? repositoryPath) : repositoryPath
-  const repository = repositoryWithoutPage.replace(/\.git$/, '')
-  const segments = repository.split('/').filter(Boolean)
-  if (segments.length < 2 || (provider === 'github' && segments.length !== 2)) {
-    throw new Error(
-      provider === 'github'
-        ? 'GitHub 仓库地址应包含 owner/repository'
-        : 'GitLab 仓库地址应包含 group/project'
-    )
-  }
-
-  const defaultDomain = provider === 'github' ? 'github.com' : 'gitlab.com'
-  if (domain === defaultDomain) return { repository }
-  return {
-    repository,
-    domain,
-    api_base: provider === 'github' ? `https://${domain}/api/v3` : `https://${domain}/api/v4`,
-  }
-}
+export { repositoryProviderConfig } from '@wegent/collaboration/project-create'
 
 export interface DingTalkAITableLink {
   baseId: string

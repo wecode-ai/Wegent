@@ -8,6 +8,7 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.plugin_config import validate_non_secret_plugin_configs
 from app.schemas.project_chat import ProjectChatWorkspaceBinding
 from app.schemas.runtime_work import (
     RuntimeGoalCreateInput,
@@ -108,12 +109,16 @@ class WorkflowExecutionConfig(BaseModel):
             self.execution_device_id.strip() if self.execution_device_id else None
         )
         self.model = self.model.strip() if self.model else None
+        validate_non_secret_plugin_configs(
+            self.project_plugins,
+            field_name="project_plugins",
+        )
         return self
 
-    def is_complete(self) -> bool:
+    def is_complete(self, *, require_model: bool = True) -> bool:
         return bool(
             (self.agent_id or self.execution_device_id)
-            and self.model
+            and (self.model or not require_model)
             and self.workspace_binding
         )
 
@@ -355,6 +360,8 @@ class WorkflowNodeDefinition(BaseModel):
     )
     workspace_policy: Literal["none", "composer", "inherit"] = "composer"
     automation_rule_id: str | None = Field(default=None, max_length=64)
+    required_assignee_type: WorkflowPlanItemAssigneeType | None = None
+    required_assignee_id: str | None = Field(default=None, min_length=1, max_length=128)
     execution_config: WorkflowExecutionConfig | None = None
     execution_config_override: bool = False
 
@@ -404,6 +411,10 @@ class WorkflowNodeDefinition(BaseModel):
                 self.event_wait = WorkflowEventWaitConfig()
         if self.automation_rule_id and self.execution_mode != "robot":
             raise ValueError("workflow automation rule requires robot execution")
+        if bool(self.required_assignee_type) != bool(self.required_assignee_id):
+            raise ValueError(
+                "workflow stage assignee constraint requires both type and id"
+            )
         if unknown := set(self.dependency_context) - set(self.depends_on):
             raise ValueError(
                 "workflow dependency context references non-dependencies: "
@@ -452,6 +463,17 @@ class ProjectWorkflowDefinition(BaseModel):
                 raise ValueError(
                     "AI stage constraints cannot define execution configuration: "
                     + ", ".join(configured_nodes)
+                )
+        else:
+            constrained_nodes = [
+                node.id
+                for node in self.nodes
+                if node.required_assignee_type is not None
+            ]
+            if constrained_nodes:
+                raise ValueError(
+                    "manual workflow stages cannot constrain AI plan assignees: "
+                    + ", ".join(constrained_nodes)
                 )
         node_ids = [node.id for node in self.nodes]
         if len(node_ids) != len(set(node_ids)):
@@ -711,7 +733,7 @@ class IssueWorkflowInstance(BaseModel):
         if node.execution_mode != "robot":
             return False
         config = self.execution_config_for(node)
-        if config is None or not config.is_complete():
+        if config is None or not config.is_complete(require_model=False):
             return True
         if node.workspace_policy == "composer":
             binding = config.workspace_binding

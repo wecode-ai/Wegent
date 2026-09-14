@@ -5,11 +5,13 @@ set -euo pipefail
 core_segments=(
   remote-device-onboarding
   workspace-tabs
+  collaboration-shared-core
   cloud-space-mention
   priority-filter
   external-content-import
   automation-lifecycle
   project-automation
+  local-project-automation-chain
   project-event-sources
   project-assignment-notification
   offline-local-project-space
@@ -83,6 +85,7 @@ cloud_worktree_segments=(
 )
 cloud_segments=(
   cloud-project-creation
+  cloud-device-lifecycle
   core-task-flow
   "${cloud_worktree_segments[@]}"
   model-routing
@@ -121,7 +124,7 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing
-  plugin-account-auth
+  plugin-account-auth,cloud-device-lifecycle
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
 )
@@ -134,11 +137,11 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
+  conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors
-  project-automation
+  project-automation,local-project-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
@@ -292,6 +295,14 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    # Cloud device restart and upgrade actions require the managed Nevis fixture.
+    wework/src/components/settings/ConnectionsSettingsPage* | \
+      wework/src/components/settings/DeviceVersionBadge* | \
+      wework/src/features/cloud-devices/* | \
+      wework/e2e/desktop/modules/cloud-device-lifecycle-flow.mjs)
+      select_target "cloud:cloud-device-lifecycle"
+      return
+      ;;
     wework/src/components/plugins/PluginAccountConnections* | \
       wework/src/api/cloud/pluginAccountConnections* | \
       wework/e2e/desktop/modules/dws-account-auth.mjs | \
@@ -466,12 +477,24 @@ classify_wework_path() {
       select_target "cloud:all"
       return
       ;;
+    wework/e2e/desktop/scenarios/local-project-automation-chain.scenario.mjs)
+      select_target "core:local-project-automation-chain"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/project-assignment-notification.scenario.mjs)
+      select_target "core:project-assignment-notification"
+      return
+      ;;
     wework/e2e/desktop/scenarios/project-event-sources.scenario.mjs)
       select_target "core:project-event-sources"
       return
       ;;
     wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)
       select_target "core:cloud-space-mention"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs)
+      select_target "core:collaboration-shared-core"
       return
       ;;
     wework/e2e/desktop/scenarios/board-focus-view.scenario.mjs)
@@ -825,6 +848,18 @@ classify_path() {
       backend/tests/services/test_runtime_work_service.py | \
       docker/device/Dockerfile)
       select_cloud_worktree_checkpoints
+      ;;
+    packages/collaboration/src/platform/WorkspaceResourceConfiguration* | \
+      packages/collaboration/src/project-agent-config/* | \
+      packages/collaboration/src/http-api/createSharedWorkspaceHttpApi* | \
+      packages/collaboration/src/ports/SharedWorkspaceApi* | \
+      packages/collaboration/src/dto-mappers/workspaceDtoMappers*)
+      select_target "core:remote-device-onboarding"
+      select_target "core:collaboration-shared-core"
+      select_target "cloud:cloud-device-lifecycle"
+      ;;
+    packages/collaboration/*)
+      select_target "core:collaboration-shared-core"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites

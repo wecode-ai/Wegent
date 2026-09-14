@@ -18,11 +18,14 @@ from app.models.delivery import (
     CloudProject,
     LoopItem,
     ProjectChatAgent,
-    adapt_loop_node_values_for_dialect,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
+    loop_unset_datetime_for_connection,
 )
+from app.models.kind import Kind
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import (
     ProjectChatAgentCreate,
@@ -74,6 +77,35 @@ PROJECT_CHAT_FAILED_EVENTS = {
     "runtime_task.failed",
     "runtime.tasks.failed",
 }
+
+
+def require_project_execution_environment(
+    db: Session,
+    *,
+    project_id: int | str,
+    execution_device_id: str,
+) -> None:
+    configured = (
+        db.query(ResourceMember)
+        .join(Kind, Kind.id == ResourceMember.resource_id)
+        .filter(
+            ResourceMember.resource_type == ResourceType.DEVICE.value,
+            ResourceMember.entity_type == "project",
+            ResourceMember.entity_id == str(project_id),
+            ResourceMember.status == MemberStatus.APPROVED.value,
+            Kind.kind == "Device",
+            Kind.name == execution_device_id,
+            Kind.is_active.is_(True),
+        )
+        .first()
+    )
+    if configured is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Execution environment is not configured in this Project",
+        )
+
+
 PROJECT_CHAT_CANCELLED_EVENTS = {
     "cancelled",
     "canceled",
@@ -220,7 +252,7 @@ class ProjectChatService:
         project_id: str,
         request: ProjectChatAgentCreate,
     ) -> ProjectChatAgentView:
-        self._require_scope(
+        project = self._require_scope(
             db,
             user_id=user_id,
             project_id=project_id,
@@ -242,6 +274,12 @@ class ProjectChatService:
             status="ready",
         )
         if request.runtime == "codex":
+            if request.execution_device_id:
+                require_project_execution_environment(
+                    db,
+                    project_id=project.id,
+                    execution_device_id=request.execution_device_id,
+                )
             workspace_binding = (
                 normalize_workspace_binding(
                     db,
@@ -387,6 +425,12 @@ class ProjectChatService:
                 or BOT_DEFAULT_EXECUTION_ENVIRONMENT
             )
             device_id = str(row.device_id or "")
+            if device_id:
+                require_project_execution_environment(
+                    db,
+                    project_id=project_id,
+                    execution_device_id=device_id,
+                )
             if "workspace_binding" in request.model_fields_set:
                 binding_input = (
                     request.workspace_binding
@@ -1671,10 +1715,10 @@ class ProjectChatService:
 
     @staticmethod
     def _loop_unset_datetime(db: Session) -> object:
-        values = adapt_loop_node_values_for_dialect(
-            {"completed_at": None}, db.get_bind().dialect.name
+        return loop_unset_datetime_for_connection(
+            db.connection(),
+            "completed_at",
         )
-        return values["completed_at"]
 
     @staticmethod
     def _advance_task_to_review(db: Session, row: ProjectChatMessage) -> None:

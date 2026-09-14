@@ -143,8 +143,8 @@ use super::{
     codex_notifications::{codex_notification, is_root_codex_turn_event},
     codex_rollout::rollout_context_usage,
     codex_transcript_page::{
-        load_codex_transcript, CodexTranscriptDirection, CodexTranscriptPage,
-        CodexTranscriptRequest,
+        load_codex_transcript, load_codex_transcript_navigation, CodexTranscriptDirection,
+        CodexTranscriptNavigation, CodexTranscriptPage, CodexTranscriptRequest,
     },
     connectors::ConnectorRuntime,
     events::{
@@ -191,6 +191,8 @@ const PENDING_THREAD_EVENT_ROUTE_PREFIX: &str = "pending:";
 const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
 const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const CODEX_TRANSCRIPT_PAGE_SIZE: usize = 40;
+const CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL: Duration = Duration::from_secs(30);
+const CODEX_TRANSCRIPT_NAVIGATION_CACHE_MAX_ENTRIES: usize = 64;
 const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(500);
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
 const CONTEXT_COMPACTION_WAIT_ATTEMPTS: usize = 600;
@@ -561,6 +563,7 @@ pub struct RuntimeWorkRpcHandler {
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
     active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
+    codex_transcript_navigation_cache: Arc<Mutex<HashMap<String, CachedCodexTranscriptNavigation>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
@@ -636,6 +639,12 @@ struct ActiveCodexTranscriptItems {
     thread_id: String,
     turn_id: String,
     items: Vec<Value>,
+}
+
+#[derive(Clone)]
+struct CachedCodexTranscriptNavigation {
+    cached_at: Instant,
+    navigation: CodexTranscriptNavigation,
 }
 
 struct RuntimeThreadEventRoute {
@@ -774,6 +783,7 @@ impl RuntimeWorkRpcHandler {
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
             active_local_executions: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
+            codex_transcript_navigation_cache: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),

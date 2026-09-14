@@ -12,6 +12,8 @@ from app.models.delivery import (
     LoopItem,
     LoopItemTaskBinding,
     ProjectAutomationRun,
+    ProjectWorkflowPlanItem,
+    ProjectWorkflowRun,
 )
 from app.models.kind import Kind
 from app.models.user import User
@@ -19,6 +21,7 @@ from app.services.delivery import delivery_service
 from app.services.loop_item_executions.service import runtime_device_identity_ids
 from app.services.project_workflow_projection import (
     update_workflow_node,
+    update_workflow_plan_task_status,
     update_workflow_task_status,
 )
 
@@ -250,6 +253,104 @@ def test_direct_robot_task_succeeds_without_automation_rule(
     assert node["status"] == "completed"
     assert node["task_statuses"]["local-device:direct-task"] == "succeeded"
     assert updated.status == "in_review"
+
+
+def test_workflow_plan_child_runtime_projects_onto_parent_stage(
+    test_db: Session,
+    workflow_project: CloudProject,
+) -> None:
+    parent = LoopItem(
+        id="workflow-plan-parent",
+        cloud_project_id=workflow_project.id,
+        sequence_number=105,
+        created_by_user_id=workflow_project.created_by_user_id,
+        title="Workflow plan parent",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "nodes": [
+                    {
+                        "id": "claude",
+                        "name": "Claude",
+                        "execution_mode": "robot",
+                        "depends_on": [],
+                        "required": True,
+                        "status": "ready",
+                        "task_ids": [],
+                        "task_statuses": {},
+                    },
+                    {
+                        "id": "codex",
+                        "name": "Codex",
+                        "execution_mode": "robot",
+                        "depends_on": ["claude"],
+                        "required": True,
+                        "status": "blocked",
+                    },
+                ],
+            }
+        },
+    )
+    workflow_run = ProjectWorkflowRun(
+        id="workflow-plan-run",
+        cloud_project_id=workflow_project.id,
+        parent_id=parent.id,
+        status="running",
+        created_by_user_id=workflow_project.created_by_user_id,
+        metadata_json={"stage_id": "claude", "plan_version": 1},
+    )
+    child = LoopItem(
+        id="workflow-plan-child",
+        cloud_project_id=workflow_project.id,
+        parent_id=parent.id,
+        sequence_number=106,
+        created_by_user_id=workflow_project.created_by_user_id,
+        title="Claude child",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        metadata_json={
+            "workflow_plan": {
+                "run_id": workflow_run.id,
+                "plan_item_id": "workflow-plan-item",
+                "stage_id": "claude",
+            }
+        },
+    )
+    plan_item = ProjectWorkflowPlanItem(
+        id="workflow-plan-item",
+        cloud_project_id=workflow_project.id,
+        parent_id=workflow_run.id,
+        loop_item_id=child.id,
+        title=child.title,
+        description="",
+        status="materialized",
+        created_by_user_id=workflow_project.created_by_user_id,
+        metadata_json={"stage_id": "claude"},
+    )
+    test_db.add_all([parent, workflow_run, child, plan_item])
+    test_db.commit()
+
+    running = update_workflow_plan_task_status(
+        test_db,
+        child_id=child.id,
+        device_id="cloud-device",
+        task_id="codex-queue-2",
+        execution_status="running",
+    )
+
+    assert running is not None
+    running_node = running.metadata_json["workflow"]["nodes"][0]
+    assert running_node["status"] == "running"
+    assert running_node["task_ids"] == ["cloud-device:codex-queue-2"]
+    assert running_node["task_statuses"] == {"cloud-device:codex-queue-2": "running"}
+    assert running.metadata_json["workflow"]["nodes"][1]["status"] == "blocked"
 
 
 def test_direct_robot_delivery_does_not_complete_before_runtime_success(

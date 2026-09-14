@@ -17,6 +17,7 @@ import {
 } from './desktop-build-flows.mjs'
 
 import { WORKTREE_CHECKPOINTS, verifyCloudWorktreeCheckpoint } from './cloud-worktree-flows.mjs'
+import { verifyCloudDeviceLifecycleFlow } from './cloud-device-lifecycle-flow.mjs'
 
 import {
   verifyActiveGoalIdleUnreadLifecycle,
@@ -78,6 +79,7 @@ import {
 const CLOUD_CHECKPOINTS = [
   'workspace-tabs',
   'cloud-project-creation',
+  'cloud-device-lifecycle',
   'priority-filter',
   'telemetry-consent',
   'automation-lifecycle',
@@ -640,6 +642,12 @@ async function verifyCloudCheckpoint({
   if (checkpoint === 'cloud-project-creation') {
     setPhase('cloud-project-creation-sources')
     await verifyCloudProjectCreationSources(control, workspacePath)
+    return
+  }
+
+  if (checkpoint === 'cloud-device-lifecycle') {
+    setPhase('cloud-device-lifecycle')
+    await verifyCloudDeviceLifecycleFlow(control, cloudEnvironment)
     return
   }
 

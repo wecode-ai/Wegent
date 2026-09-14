@@ -2092,6 +2092,7 @@ describe('ScrollableMessageArea', () => {
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:00.000Z',
         runtimeMessageIndex: 100,
+        turnId: 'virtual-active-turn-1',
       },
       {
         id: 'virtual-active-assistant-1',
@@ -2108,6 +2109,7 @@ describe('ScrollableMessageArea', () => {
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:02.000Z',
         runtimeMessageIndex: 102,
+        turnId: 'virtual-active-turn-2',
       },
       {
         id: 'virtual-active-assistant-2',
@@ -2124,6 +2126,7 @@ describe('ScrollableMessageArea', () => {
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:04.000Z',
         runtimeMessageIndex: 104,
+        turnId: 'virtual-active-turn-3',
       },
       {
         id: 'virtual-active-unindexed-assistant',
@@ -2143,7 +2146,34 @@ describe('ScrollableMessageArea', () => {
             Transient response without a transcript index
           </div>
         </div>
-        <MessageTurnNavigation messages={messages} scrollRef={scrollRef} contentRef={contentRef} />
+        <MessageTurnNavigation
+          messages={messages}
+          turnNavigation={[
+            {
+              id: 'virtual-active-turn-1',
+              turnId: 'virtual-active-turn-1',
+              turnIndex: 0,
+              messageIndex: 0,
+              promptPreview: '',
+            },
+            {
+              id: 'virtual-active-turn-2',
+              turnId: 'virtual-active-turn-2',
+              turnIndex: 1,
+              messageIndex: 1,
+              promptPreview: '',
+            },
+            {
+              id: 'virtual-active-turn-3',
+              turnId: 'virtual-active-turn-3',
+              turnIndex: 2,
+              messageIndex: 2,
+              promptPreview: '',
+            },
+          ]}
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+        />
       </div>
     )
 
@@ -2552,6 +2582,78 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTop).toBe(624)
   })
 
+  test('falls back to message indexes when navigation turn ids are unavailable locally', () => {
+    const onLoadTurnNavigationItem = vi.fn()
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'fallback-user-1',
+            role: 'user',
+            content: '已加载的第一条需求',
+            status: 'done',
+            createdAt: '2026-09-13T00:00:00.000Z',
+            runtimeMessageIndex: 0,
+          },
+          {
+            id: 'fallback-user-2',
+            role: 'user',
+            content: '已加载的第二条需求',
+            status: 'done',
+            createdAt: '2026-09-13T00:00:01.000Z',
+            runtimeMessageIndex: 2,
+          },
+        ]}
+        turnNavigation={[
+          {
+            id: 'runtime-turn-1',
+            turnId: 'provider-turn-1',
+            turnIndex: 0,
+            messageIndex: 0,
+            cursor: 'cursor:0',
+            promptPreview: '已加载的第一条需求',
+            responsePreview: '',
+          },
+          {
+            id: 'runtime-turn-2',
+            turnId: 'provider-turn-2',
+            turnIndex: 1,
+            messageIndex: 2,
+            cursor: 'cursor:2',
+            promptPreview: '已加载的第二条需求',
+            responsePreview: '',
+          },
+        ]}
+        onLoadTurnNavigationItem={onLoadTurnNavigationItem}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperties(scroller, {
+      clientHeight: { value: 300, configurable: true },
+      scrollHeight: { value: 1_000, configurable: true },
+      scrollTop: { value: 0, writable: true, configurable: true },
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      if (typeof top === 'number') scroller.scrollTop = top
+    })
+    mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('已加载的第一条需求').closest('[data-message-id]')!, 120, 180)
+    mockRect(screen.getByText('已加载的第二条需求').closest('[data-message-id]')!, 620, 680)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+    scroller.scrollTop = 0
+    vi.mocked(scroller.scrollTo).mockClear()
+    fireEvent.click(screen.getAllByTestId('message-turn-navigation-marker')[1])
+
+    expect(onLoadTurnNavigationItem).not.toHaveBeenCalled()
+    expect(scroller.scrollTo).toHaveBeenCalledWith({
+      top: 524,
+      behavior: 'smooth',
+    })
+  })
+
   test('keeps turn navigation in control while a clicked target settles', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver
@@ -2713,6 +2815,7 @@ describe('ScrollableMessageArea', () => {
     )
     const latestMessage = {
       id: 'client-latest-user',
+      turnId: 'turn-latest',
       role: 'user' as const,
       content: '最新需求',
       status: 'done' as const,
@@ -2722,6 +2825,7 @@ describe('ScrollableMessageArea', () => {
     const turnNavigation = [
       {
         id: 'runtime-older-user',
+        turnId: 'turn-older',
         turnIndex: 0,
         messageIndex: 0,
         cursor: 'offset:0',
@@ -2730,6 +2834,7 @@ describe('ScrollableMessageArea', () => {
       },
       {
         id: 'runtime-latest-user',
+        turnId: 'turn-latest',
         turnIndex: 1,
         messageIndex: 2,
         cursor: 'offset:2',

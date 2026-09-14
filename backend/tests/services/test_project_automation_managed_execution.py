@@ -21,6 +21,7 @@ from app.services.execution.router import CommunicationMode, ExecutionRouter
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_automation_managed_execution import (
     ManagedTeamExecutionHandle,
+    _resolve_primary_team_model_id,
     project_automation_managed_execution_service,
 )
 from shared.models import ExecutionRequest
@@ -52,6 +53,48 @@ def _managed_task_json(*, subtask_id: int, status: str = "PENDING") -> dict:
         },
         "status": {"status": status, "progress": 0},
     }
+
+
+def test_primary_team_model_id_uses_first_executable_bot(monkeypatch):
+    db = MagicMock()
+    bot = SimpleNamespace(id=9, name="claude-bot")
+    team = SimpleNamespace(
+        user_id=7,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {"name": "claude-team", "namespace": "default"},
+            "spec": {
+                "members": [
+                    {
+                        "botRef": {
+                            "name": "claude-bot",
+                            "namespace": "default",
+                        }
+                    }
+                ],
+                "collaborationModel": "solo",
+            },
+        },
+    )
+    get_bot = MagicMock(return_value=bot)
+    resolve_model = MagicMock(return_value="claude-model")
+    monkeypatch.setattr(
+        "app.services.project_automation_managed_execution."
+        "kindReader.get_by_name_and_namespace",
+        get_bot,
+    )
+    monkeypatch.setattr(
+        "app.services.project_automation_managed_execution."
+        "resolve_model_name_for_bot",
+        resolve_model,
+    )
+
+    model_id = _resolve_primary_team_model_id(db, team=team, user_id=11)
+
+    assert model_id == "claude-model"
+    get_bot.assert_called_once_with(db, 7, "Bot", "default", "claude-bot")
+    resolve_model.assert_called_once_with(db, bot, 11)
 
 
 @pytest.mark.asyncio
@@ -149,6 +192,12 @@ async def test_board_team_dispatch_uses_native_team_task_and_execution_identity(
         "app.services.project_automation_managed_execution.task_store.update_json",
         update_json,
     )
+    resolve_model_id = MagicMock(return_value="claude-model")
+    monkeypatch.setattr(
+        "app.services.project_automation_managed_execution."
+        "_resolve_primary_team_model_id",
+        resolve_model_id,
+    )
     monkeypatch.setattr(
         "app.tasks.project_automation_tasks."
         "execute_managed_project_automation.delay",
@@ -196,7 +245,10 @@ async def test_board_team_dispatch_uses_native_team_task_and_execution_identity(
         execution_id=61,
     )
     assert execution.backend_task_id == 51
+    resolve_model_id.assert_called_once_with(db, team=team, user_id=owner.id)
     assert create_chat_task.await_args.kwargs["commit"] is False
+    params = create_chat_task.await_args.kwargs["params"]
+    assert params.auto_delete_executor == "false"
     assert task.json["metadata"]["labels"] == {
         "source": "board_team_assignment",
         "boardTeamExecutionId": "61",
@@ -204,6 +256,7 @@ async def test_board_team_dispatch_uses_native_team_task_and_execution_identity(
         "boardTeamTeamId": "8",
         "weworkSpaceProjectId": "project-1",
         "weworkSpaceTaskId": "board-task-1",
+        "modelId": "claude-model",
     }
     activity = db.add.call_args.args[0]
     assert activity.sender_id == "robot-9"

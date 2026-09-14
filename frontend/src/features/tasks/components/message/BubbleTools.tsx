@@ -131,7 +131,7 @@ export const EditButton = ({
   return button
 }
 
-// ForwardButton component for forwarding messages to work queue
+// ForwardButton sends a chat message into a collaboration project.
 export const ForwardButton = ({
   onForward,
   className,
@@ -349,7 +349,7 @@ const BubbleTools = ({
         </TooltipTrigger>
         <TooltipContent>{feedbackLabels?.dislike || 'Dislike'}</TooltipContent>
       </Tooltip>
-      {/* Forward button - for forwarding AI messages to work queue */}
+      {/* Send the message to a collaboration project. */}
       {showForward && onForwardClick && (
         <ForwardButton
           onForward={onForwardClick}

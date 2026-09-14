@@ -8,6 +8,7 @@ import type {
   RuntimeAdditionalContext,
   RuntimeContextUsage,
   RuntimeGoalCreateInput,
+  RuntimeName,
   RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTurnNavigationItem,
@@ -139,6 +140,7 @@ export interface GuidanceWorkbenchMessage {
 }
 
 export interface RuntimePaneTranscript {
+  runtime?: RuntimeName
   messages: WorkbenchMessage[]
   turns: RuntimeConversationTurn[]
   running?: boolean
@@ -157,12 +159,14 @@ export interface RuntimeConversationTurn {
   id: string | null
   clientUserMessageId?: string
   runtimeMessageIndex?: number
+  itemMerge?: 'prepend'
   items: RuntimeConversationItem[]
   status: RuntimeWorkbenchMessageStatus
   completedAt?: string | number | null
   error?: string
   errorType?: string
   stoppedNotice?: boolean | null
+  contentTruncated?: boolean
   streamingThinkingContent?: string
   fileChanges?: TurnFileChangesSummary
   references?: CodexReference[]
@@ -194,6 +198,7 @@ export interface RuntimePaneTranscriptLoadOptions {
   afterCursor?: string | null
   refresh?: boolean
   includeFullContent?: boolean
+  navigationOnly?: boolean
 }
 
 export type RuntimeTranscriptLoader = (

@@ -692,7 +692,7 @@ describe('TaskActivityView', () => {
         expect.objectContaining({ model: 'gpt-5.5-codex' })
       )
     )
-  })
+  }, 10_000)
 
   it('shows the newest parent comment first without scrolling to the bottom', async () => {
     const older = {

@@ -221,6 +221,15 @@ impl RuntimeWorkRpcHandler {
         let include_full_content = bool_field(&payload, "includeFullContent")
             .or_else(|| bool_field(&payload, "include_full_content"))
             .unwrap_or(false);
+        let navigation_only = bool_field(&payload, "navigationOnly")
+            .or_else(|| bool_field(&payload, "navigation_only"))
+            .unwrap_or(false);
+        if navigation_only && include_full_content {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "navigationOnly cannot be combined with includeFullContent",
+            ));
+        }
         let refresh = bool_field(&payload, "refresh")
             .or_else(|| bool_field(&payload, "forceRefresh"))
             .unwrap_or(false);
@@ -234,6 +243,68 @@ impl RuntimeWorkRpcHandler {
         let session_id = requested_session_id.or(linked_session_id);
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
         let local_execution_running = self.is_active_local_task(&local_task_id);
+        if navigation_only {
+            let Some(thread_id) = session_id else {
+                return Ok(transcript_navigation_response(
+                    local_task_id,
+                    workspace_path(&payload).unwrap_or_default(),
+                    Vec::new(),
+                ));
+            };
+            if !refresh {
+                if let Some(navigation) = self.cached_codex_transcript_navigation(&thread_id) {
+                    let workspace_path = local_link
+                        .as_ref()
+                        .map(|link| link.workspace_path.clone())
+                        .filter(|path| !path.trim().is_empty())
+                        .or_else(|| workspace_path(&payload))
+                        .unwrap_or_default();
+                    return Ok(transcript_navigation_response(
+                        local_task_id,
+                        workspace_path,
+                        transcript_navigation_from_codex_turns(navigation),
+                    ));
+                }
+            }
+            let metadata_response = self
+                .codex_app_server
+                .request(
+                    "thread/read",
+                    json!({"threadId": thread_id, "includeTurns": false}),
+                )
+                .await
+                .map_err(|error| AppIpcError::new("codex_error", error))?;
+            let thread = metadata_response
+                .get("thread")
+                .cloned()
+                .filter(Value::is_object)
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "codex_error",
+                        "thread/read returned a response without thread",
+                    )
+                })?;
+            let workspace_path = local_link
+                .as_ref()
+                .map(|link| link.workspace_path.clone())
+                .filter(|path| !path.trim().is_empty())
+                .or_else(|| string_field(&thread, "cwd"))
+                .or_else(|| workspace_path(&payload))
+                .unwrap_or_default();
+            let prefer_rollout_history = local_link.as_ref().is_some_and(|link| {
+                link.runtime_handle
+                    .get("cloudTranscript")
+                    .is_some_and(Value::is_object)
+            });
+            let navigation = self
+                .codex_transcript_navigation(&thread, &thread_id, prefer_rollout_history, refresh)
+                .await?;
+            return Ok(transcript_navigation_response(
+                local_task_id,
+                workspace_path,
+                transcript_navigation_from_codex_turns(navigation),
+            ));
+        }
         if local_execution_running && !refresh && !direct_thread_override {
             if let Some(link) = local_link
                 .as_ref()
@@ -344,6 +415,7 @@ impl RuntimeWorkRpcHandler {
                 pagination,
                 full_content: include_full_content,
                 turn_item_source: TranscriptTurnItemSource::CachedMessages,
+                turn_navigation: Vec::new(),
             }));
         };
 
@@ -367,6 +439,7 @@ impl RuntimeWorkRpcHandler {
             mut thread,
             before_cursor: page_before_cursor,
             after_cursor: page_after_cursor,
+            prepend_item_turn_ids,
         } = load_codex_transcript(
             &self.codex_app_server,
             CodexTranscriptRequest {
@@ -475,6 +548,13 @@ impl RuntimeWorkRpcHandler {
         }
         let running = local_execution_running || codex_thread_has_in_progress_turn(&thread);
         let message_count = messages.len();
+        let turn_navigation = if include_full_content
+            || (before_cursor.is_none() && after_cursor.is_none() && page_before_cursor.is_none())
+        {
+            transcript_turn_navigation(&messages)
+        } else {
+            Vec::new()
+        };
         log_runtime_transcript_finished(RuntimeTranscriptLog {
             started_at,
             local_task_id: &local_task_id,
@@ -489,7 +569,7 @@ impl RuntimeWorkRpcHandler {
             running,
         });
 
-        Ok(transcript_response(TranscriptResponseInput {
+        let mut response = transcript_response(TranscriptResponseInput {
             local_task_id,
             workspace_path,
             runtime: "codex".to_owned(),
@@ -510,6 +590,85 @@ impl RuntimeWorkRpcHandler {
             },
             full_content: include_full_content,
             turn_item_source: TranscriptTurnItemSource::CodexItems,
-        }))
+            turn_navigation,
+        });
+        mark_prepend_item_turns(&mut response, &prepend_item_turn_ids);
+        Ok(response)
+    }
+
+    async fn codex_transcript_navigation(
+        &self,
+        thread: &Value,
+        thread_id: &str,
+        prefer_rollout_history: bool,
+        refresh: bool,
+    ) -> Result<CodexTranscriptNavigation, AppIpcError> {
+        if !refresh {
+            if let Some(navigation) = self.cached_codex_transcript_navigation(thread_id) {
+                return Ok(navigation);
+            }
+        }
+
+        let navigation = load_codex_transcript_navigation(
+            &self.codex_app_server,
+            thread,
+            thread_id,
+            prefer_rollout_history,
+        )
+        .await
+        .map_err(|error| AppIpcError::new("codex_error", error))?;
+        let mut cache = self
+            .codex_transcript_navigation_cache
+            .lock()
+            .expect("Codex transcript navigation cache lock should not be poisoned");
+        cache.retain(|_, entry| entry.cached_at.elapsed() < CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL);
+        if cache.len() >= CODEX_TRANSCRIPT_NAVIGATION_CACHE_MAX_ENTRIES {
+            if let Some(oldest_key) = cache
+                .iter()
+                .max_by_key(|(_, entry)| entry.cached_at.elapsed())
+                .map(|(key, _)| key.clone())
+            {
+                cache.remove(&oldest_key);
+            }
+        }
+        cache.insert(
+            thread_id.to_owned(),
+            CachedCodexTranscriptNavigation {
+                cached_at: Instant::now(),
+                navigation: navigation.clone(),
+            },
+        );
+        Ok(navigation)
+    }
+
+    fn cached_codex_transcript_navigation(
+        &self,
+        thread_id: &str,
+    ) -> Option<CodexTranscriptNavigation> {
+        self.codex_transcript_navigation_cache
+            .lock()
+            .expect("Codex transcript navigation cache lock should not be poisoned")
+            .get(thread_id)
+            .filter(|entry| entry.cached_at.elapsed() < CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL)
+            .map(|entry| entry.navigation.clone())
+    }
+}
+
+fn mark_prepend_item_turns(response: &mut Value, turn_ids: &HashSet<String>) {
+    if turn_ids.is_empty() {
+        return;
+    }
+    for turn in response
+        .get_mut("turns")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        let Some(turn_id) = string_field(turn, "id") else {
+            continue;
+        };
+        if turn_ids.contains(&turn_id) {
+            turn["itemMerge"] = Value::String("prepend".to_owned());
+        }
     }
 }

@@ -4,12 +4,34 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 
+const CLOUD_WORKSPACE = {
+  id: '728116431860928513',
+  public_id: 'e2e-cloud-workspace',
+  name: '官网协作空间',
+  description: '官网与移动端项目的云协作空间',
+  created_by_user_id: 9001,
+  access_role: 'Owner',
+  member_count: 1,
+  project_count: 2,
+  agent_count: 0,
+  execution_environment_count: 0,
+  is_default: false,
+  status: 'active',
+  version: 1,
+  created_at: '2026-07-25T00:00:00',
+  updated_at: '2026-07-25T00:00:00',
+}
 const WEBSITE_PROJECT = {
   id: '896185331840201807',
   public_id: 'e2e-public-website',
   project_key: 'GW',
   name: '官网改版',
   description: '官网改版协作空间',
+  workspace_id: CLOUD_WORKSPACE.id,
+  project_store: 'backend',
+  access_role: 'Owner',
+  current_user_id: 9001,
+  current_user_name: 'E2E Owner',
   created_by_user_id: 9001,
   status: 'active',
   version: 1,
@@ -95,6 +117,36 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   return {
     async handleHttp(request, response, url) {
+      if (request.method === 'GET' && url.pathname === '/api/v1/workspaces') {
+        json(response, 200, { items: [CLOUD_WORKSPACE] })
+        return true
+      }
+      if (request.method === 'GET' && url.pathname === `/api/v1/workspaces/${CLOUD_WORKSPACE.id}`) {
+        json(response, 200, CLOUD_WORKSPACE)
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/workspaces/${CLOUD_WORKSPACE.id}/projects`
+      ) {
+        json(response, 200, { items: projects })
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        [
+          `/api/v1/workspaces/${CLOUD_WORKSPACE.id}/members`,
+          `/api/v1/workspaces/${CLOUD_WORKSPACE.id}/agents`,
+          `/api/v1/workspaces/${CLOUD_WORKSPACE.id}/execution-environments`,
+        ].includes(url.pathname)
+      ) {
+        json(response, 200, { items: [] })
+        return true
+      }
+      if (request.method === 'GET' && url.pathname === '/api/v1/resources') {
+        json(response, 200, { agents: [], execution_environments: [] })
+        return true
+      }
       if (request.method === 'GET' && url.pathname === '/api/v1/cloud-projects') {
         json(response, 200, { items: projects })
         return true
@@ -111,6 +163,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         }
         projects.unshift(created)
         json(response, 200, created)
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/cloud-projects/${WEBSITE_PROJECT.id}`
+      ) {
+        json(response, 200, WEBSITE_PROJECT)
         return true
       }
       if (
@@ -146,34 +205,84 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         })
         return true
       }
+      if (request.method === 'GET' && url.pathname === `/api/v1/loop-items/${WEBSITE_TODO.id}`) {
+        json(response, 200, WEBSITE_TODO)
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/loop-items/${WEBSITE_TODO.id}/attachments`
+      ) {
+        json(response, 200, [])
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/loop-items/${WEBSITE_TODO.id}/comments`
+      ) {
+        json(response, 200, [])
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/loop-items/${WEBSITE_TODO.id}/assignments`
+      ) {
+        json(response, 200, { items: [] })
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/cloud-projects/${WEBSITE_PROJECT.id}/executions`
+      ) {
+        json(response, 200, { items: [] })
+        return true
+      }
       return false
     },
 
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
-      // The Multica-style task activity surface lives inside task
-      // detail. Project-level chat remains an AI conversation button instead
-      // of a top-level group-chat tab, and task comments do not open a separate
-      // side drawer.
-      await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
+      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      await control.command('click', '[data-testid="workspace-tab-add"]')
-      await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command('waitFor', '[data-testid="wework-collaboration-platform"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="workspace-tab-add-board"]')
-      await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
+      await control.command(
+        'waitFor',
+        `[data-testid="collaboration-workspace-${CLOUD_WORKSPACE.id}"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'click',
+        `[data-testid="collaboration-workspace-${CLOUD_WORKSPACE.id}"]`
+      )
+      await control.command(
+        'waitFor',
+        `[data-testid="collaboration-workspace-project-${WEBSITE_PROJECT.id}"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'click',
+        `[data-testid="collaboration-workspace-project-${WEBSITE_PROJECT.id}"]`
+      )
+      await control.command('waitFor', '[data-testid="collaboration-root"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', `[data-testid="cloud-sidebar-project-${WEBSITE_PROJECT.id}"]`)
       await control.command('waitFor', `[data-testid="cloud-todo-card-${WEBSITE_TODO.id}"]`, {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="cloud-project-ask-ai"]', {
-        timeoutMs: uiTimeoutMs,
-      })
       const projectSnapshot = await snapshot(control)
+      assert.equal(
+        projectSnapshot.testIds.includes('cloud-todo-workspace'),
+        false,
+        'The native Collaboration tab still rendered the retired cloud workspace shell'
+      )
       assert.equal(
         projectSnapshot.testIds.includes('cloud-project-chat-view'),
         false,
@@ -185,16 +294,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'The project header still exposes group chat copy'
       )
       await control.command('click', `[data-testid="cloud-todo-card-${WEBSITE_TODO.id}"]`)
-      await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
+      await control.command('waitFor', '[data-testid="collaboration-issue-detail"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', `[data-testid="cloud-task-activity-${WEBSITE_TODO.id}"]`, {
+      await control.command('waitFor', '[data-testid="cloud-task-activity-list"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="model-selector-button"]', {
+      await control.command('waitFor', '[data-testid="cloud-task-activity-composer"]', {
         timeoutMs: uiTimeoutMs,
       })
       const detailSnapshot = await snapshot(control)
+      assert.ok(
+        detailSnapshot.text.includes(WEBSITE_TODO.title),
+        'The shared Issue detail lost the selected cloud Issue context'
+      )
+      assert.ok(
+        detailSnapshot.text.includes(PROJECT_AI.name),
+        'The shared activity mention target did not include the cloud project agent context'
+      )
       assert.equal(
         detailSnapshot.testIds.includes(`task-discussion-${WEBSITE_TODO.id}`),
         false,

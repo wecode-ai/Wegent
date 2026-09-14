@@ -10,7 +10,7 @@ import {
 
 const labels = {
   task: '任务',
-  board: '项目空间',
+  board: '协作',
   agent: '智能体',
   auxiliary: '工作区',
   auxiliaryRoutes: {
@@ -31,8 +31,8 @@ describe('workspaceTabs', () => {
 
     expect(createWorkspaceTab('board', labels)).toMatchObject({
       kind: 'board',
-      title: '项目空间',
-      contentRoute: '/todo?projectId=default-work-items',
+      title: '协作',
+      contentRoute: '/todo',
     })
     expect(
       createWorkspaceTab('board', labels, {

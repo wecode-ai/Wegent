@@ -561,6 +561,27 @@ def test_create_generic_manual_rule_does_not_persist_null_robot_id(
     assert rule.assignee_agent_id == ""
 
 
+def test_generic_manual_rule_accepts_direct_runtime_configuration() -> None:
+    rule = ProjectAutomationCreate(
+        name="Direct Codex workflow",
+        prompt="Run the configured node",
+        triggerType="event",
+        eventType="task.created",
+        eventConfig={},
+        assignmentMode="manual",
+        roleSource="generic",
+        model="gpt-5.6-codex",
+        executionEnvironment="local",
+        executionDeviceId="55",
+        runtimeSource="runtime_user",
+        runtimeUserId=1,
+    )
+
+    assert rule.model == "gpt-5.6-codex"
+    assert rule.execution_environment == "local"
+    assert rule.execution_device_id == "55"
+
+
 def test_create_rejects_invalid_runtime_workflow_definition(
     test_db,
     test_user,

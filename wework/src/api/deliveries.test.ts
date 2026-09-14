@@ -153,9 +153,14 @@ describe('createDeliveryApi queue and assignment routes', () => {
     } as unknown as HttpClient
     const api = createDeliveryApi(client)
 
-    const response = await api.listLoopItemExecutions(123, { agent_id: 'bot-1' })
+    const response = await api.listLoopItemExecutions(123, {
+      agent_id: 'bot-1',
+      include_terminal: true,
+    })
 
-    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/executions?agent_id=bot-1')
+    expect(client.get).toHaveBeenCalledWith(
+      '/v1/cloud-projects/123/executions?agent_id=bot-1&include_terminal=true'
+    )
     expect(response.items[0]).toMatchObject({
       loop_item_id: 'GL-1',
       task_title: 'Bot queued task',

@@ -485,6 +485,35 @@ impl LocalTaskStore {
                 None::<String>,
             ],
         )?;
+        if metadata.get("workflow").is_some_and(Value::is_object) {
+            enqueue_ready_local_workflow_stages(
+                &transaction,
+                &id,
+                project_id,
+                input.priority.as_str(),
+                &mut metadata["workflow"],
+            )?;
+            transaction.execute(
+                "UPDATE loop_items
+                 SET metadata = ?1,
+                     status = CASE
+                         WHEN EXISTS (
+                             SELECT 1 FROM loop_item_executions
+                             WHERE loop_item_id = ?2
+                               AND status IN ('pending_approval', 'queued', 'claimed', 'running')
+                         ) THEN 'in_progress'
+                         ELSE status
+                     END,
+                     assignee_agent_id = (
+                         SELECT agent_id FROM loop_item_executions
+                         WHERE loop_item_id = ?2
+                           AND status IN ('pending_approval', 'queued', 'claimed', 'running')
+                         ORDER BY id DESC LIMIT 1
+                     )
+                 WHERE id = ?2",
+                params![metadata.to_string(), id],
+            )?;
+        }
         if let Some(parent_id) = parent_id.as_deref() {
             refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
@@ -1361,7 +1390,9 @@ impl LocalTaskStore {
         if changed != 1 {
             return Ok(None);
         }
-        execution_row(&connection, candidate_id).map(Some)
+        let mut execution = execution_row(&connection, candidate_id)?;
+        execution.execution_payload = Some(local_execution_runtime_payload(&execution));
+        Ok(Some(execution))
     }
 
     pub fn heartbeat_execution(
@@ -1532,6 +1563,7 @@ impl LocalTaskStore {
             params![runtime_task_id],
             |row| row.get(0),
         )?;
+        mark_local_workflow_stage_running(&connection, execution_id, &timestamp)?;
         execution_row(&connection, execution_id).map(Some)
     }
 
@@ -1660,20 +1692,22 @@ impl LocalTaskStore {
             transaction.rollback()?;
             return execution_row(&connection, execution_id).map(Some);
         }
-        // Mirror the cloud project-chat write-back: when the assigned robot
-        // finishes, move the task to human review so the queue no longer
-        // shows it as an active run.
-        transaction.execute(
-            "UPDATE loop_items
-             SET status = 'in_review', sort_order = 0,
-                 metadata = json_set(metadata, '$.is_unread', json('true')),
-                 version = version + 1, updated_at = ?1
-             WHERE id = (SELECT loop_item_id FROM loop_item_executions WHERE id = ?2)
-               AND assignee_agent_id =
-                   (SELECT agent_id FROM loop_item_executions WHERE id = ?2)
-               AND status != 'completed'",
-            params![timestamp, execution_id],
-        )?;
+        let workflow_advanced =
+            advance_local_workflow_after_execution(&transaction, execution_id, &timestamp)?;
+        if !workflow_advanced {
+            // Non-workflow robot assignments still finish in human review.
+            transaction.execute(
+                "UPDATE loop_items
+                 SET status = 'in_review', sort_order = 0,
+                     metadata = json_set(metadata, '$.is_unread', json('true')),
+                     version = version + 1, updated_at = ?1
+                 WHERE id = (SELECT loop_item_id FROM loop_item_executions WHERE id = ?2)
+                   AND assignee_agent_id =
+                       (SELECT agent_id FROM loop_item_executions WHERE id = ?2)
+                   AND status != 'completed'",
+                params![timestamp, execution_id],
+            )?;
+        }
         update_agent_comment(
             &transaction,
             execution_id,
@@ -3689,20 +3723,28 @@ fn instantiate_local_workflow(definition: &Value) -> Result<Value, TaskRuntimeEr
             ));
         }
         let mut node = definition;
-        node["status"] = json!(if dependencies.is_empty() {
-            "ready"
-        } else {
-            "blocked"
-        });
+        node["status"] = json!(
+            if node.get("node_type").and_then(Value::as_str) == Some("event")
+                && node.get("role").and_then(Value::as_str) == Some("start")
+            {
+                "completed"
+            } else if dependencies.is_empty() {
+                "ready"
+            } else {
+                "blocked"
+            }
+        );
         node["task_binding_id"] = Value::Null;
         node["execution_id"] = Value::Null;
         nodes.push(node);
     }
-    Ok(json!({
+    let mut workflow = json!({
         "version": 1,
         "definition_version": version,
         "nodes": nodes,
-    }))
+    });
+    release_local_workflow_nodes(&mut workflow)?;
+    Ok(workflow)
 }
 
 fn local_database_path() -> PathBuf {
@@ -3944,6 +3986,9 @@ fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
             .get("model")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
+        agent_local_project_id: agent_metadata
+            .get("local_project_id")
+            .and_then(Value::as_i64),
         agent_max_concurrent_executions: agent_metadata
             .get("max_concurrent_executions")
             .and_then(Value::as_u64)
@@ -4133,6 +4178,364 @@ fn create_local_execution(
     Ok(())
 }
 
+fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
+    let stored = execution
+        .execution_payload
+        .as_ref()
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let message = stored
+        .get("message")
+        .or_else(|| stored.get("text"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| execution.task_title.clone());
+    let workflow_node_id = stored.get("workflow_node_id").cloned();
+    let mut additional_context = json!({
+        "task": {
+            "kind": "application",
+            "value": json!({
+                "id": execution.loop_item_id,
+                "title": execution.task_title,
+                "status": execution.task_status,
+                "priority": execution.task_priority,
+            }).to_string(),
+        },
+    });
+    if let Some(workflow_node_id) = workflow_node_id.as_ref() {
+        additional_context["workflowStage"] = json!({
+            "kind": "application",
+            "value": json!({
+                "workflow_node_id": workflow_node_id,
+                "instruction": message,
+            }).to_string(),
+        });
+    }
+    let mut payload = json!({
+        "taskId": execution.runtime_task_id,
+        "teamId": 0,
+        "runtime": "codex",
+        "message": message,
+        "title": execution.task_title,
+        "cloudProjectId": execution.cloud_project_id,
+        "modelId": execution.agent_model,
+        "bot": [{
+            "id": execution.agent_id,
+            "name": execution.agent_name,
+            "shell_type": "Codex",
+            "system_prompt": execution.agent_system_prompt,
+        }],
+        "standaloneChatWorkspace": execution.agent_local_project_id.is_none(),
+        "origin": {
+            "type": "project_automation",
+            "cloudProjectId": execution.cloud_project_id,
+            "loopItemId": execution.loop_item_id,
+            "workflowNodeId": workflow_node_id,
+        },
+        "additionalContext": additional_context,
+    });
+    if let Some(local_project_id) = execution.agent_local_project_id {
+        payload["local_project_id"] = json!(local_project_id);
+    }
+    payload
+}
+
+fn enqueue_ready_local_workflow_stages(
+    connection: &Connection,
+    item_id: &str,
+    project_id: &str,
+    priority: &str,
+    workflow: &mut Value,
+) -> Result<usize, TaskRuntimeError> {
+    let nodes = workflow
+        .get_mut("nodes")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
+    let ready = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| {
+            node.get("status").and_then(Value::as_str) == Some("ready")
+                && node.get("execution_mode").and_then(Value::as_str) == Some("robot")
+        })
+        .map(|(index, node)| {
+            let node_id = node
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let prompt = node
+                .get("prompt")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let assignee_type = node
+                .get("required_assignee_type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let assignee_id = node
+                .get("required_assignee_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            (index, node_id, prompt, assignee_type, assignee_id)
+        })
+        .collect::<Vec<_>>();
+    let mut queued = 0;
+    for (index, node_id, prompt, assignee_type, assignee_id) in ready {
+        if assignee_type != "agent" || assignee_id.is_empty() {
+            return Err(TaskRuntimeError::Invalid(format!(
+                "automated workflow stage '{node_id}' requires an agent assignee"
+            )));
+        }
+        let agent = get_item_from(connection, &assignee_id, "chat_agent")?.ok_or_else(|| {
+            TaskRuntimeError::Invalid(format!(
+                "workflow stage '{node_id}' agent '{assignee_id}' is not active"
+            ))
+        })?;
+        if agent.cloud_project_id.as_deref() != Some(project_id)
+            || agent.status.as_deref() == Some("archived")
+        {
+            return Err(TaskRuntimeError::Invalid(format!(
+                "workflow stage '{node_id}' agent '{assignee_id}' is not active in this project"
+            )));
+        }
+        let message = if prompt.trim().is_empty() {
+            format!("Complete workflow stage {node_id}")
+        } else {
+            prompt
+        };
+        create_local_execution(
+            connection,
+            item_id,
+            project_id,
+            &assignee_id,
+            &agent,
+            priority,
+            json!({
+                "message": message,
+                "workflow_node_id": node_id,
+            }),
+        )?;
+        let execution_id = connection.last_insert_rowid();
+        let execution = execution_row(connection, execution_id)?;
+        nodes[index]["status"] = json!(if execution.status == "pending_approval" {
+            "waiting"
+        } else {
+            "queued"
+        });
+        nodes[index]["execution_id"] = json!(execution_id);
+        insert_comment(
+            connection,
+            &LocalCommentCreate {
+                project_id: project_id.to_owned(),
+                task_id: item_id.to_owned(),
+                client_message_id: None,
+                sender_type: "agent".to_owned(),
+                sender_id: assignee_id,
+                sender_name: execution.agent_name,
+                content: String::new(),
+                metadata: json!({
+                    "execution_id": execution_id,
+                    "workflow_node_id": node_id,
+                }),
+                reply_to_message_id: None,
+            },
+            "streaming",
+        )?;
+        queued += 1;
+    }
+    Ok(queued)
+}
+
+fn release_local_workflow_nodes(workflow: &mut Value) -> Result<(), TaskRuntimeError> {
+    let nodes = workflow
+        .get_mut("nodes")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
+    let completed = nodes
+        .iter()
+        .filter(|node| {
+            matches!(
+                node.get("status").and_then(Value::as_str),
+                Some("completed" | "forced_completed")
+            )
+        })
+        .filter_map(|node| node.get("id").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .collect::<HashSet<_>>();
+    for node in nodes {
+        if node.get("status").and_then(Value::as_str) != Some("blocked") {
+            continue;
+        }
+        let dependencies_complete = node
+            .get("depends_on")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .all(|dependency| completed.contains(dependency));
+        if dependencies_complete {
+            node["status"] = json!("ready");
+        }
+    }
+    Ok(())
+}
+
+fn mark_local_workflow_stage_running(
+    connection: &Connection,
+    execution_id: i64,
+    timestamp: &str,
+) -> Result<(), TaskRuntimeError> {
+    let execution = execution_row(connection, execution_id)?;
+    let Some(workflow_node_id) = execution
+        .execution_payload
+        .as_ref()
+        .and_then(|payload| payload.get("workflow_node_id"))
+        .and_then(Value::as_str)
+    else {
+        return Ok(());
+    };
+    let Some(mut item) = get_item_from(connection, &execution.loop_item_id, "task")? else {
+        return Ok(());
+    };
+    let Some(nodes) = item
+        .metadata
+        .get_mut("workflow")
+        .and_then(|workflow| workflow.get_mut("nodes"))
+        .and_then(Value::as_array_mut)
+    else {
+        return Ok(());
+    };
+    let Some(node) = nodes
+        .iter_mut()
+        .find(|node| node.get("id").and_then(Value::as_str) == Some(workflow_node_id))
+    else {
+        return Ok(());
+    };
+    if !matches!(
+        node.get("status").and_then(Value::as_str),
+        Some("queued" | "waiting")
+    ) {
+        return Ok(());
+    }
+    node["status"] = json!("running");
+    connection.execute(
+        "UPDATE loop_items
+         SET metadata = ?1, version = version + 1, updated_at = ?2
+         WHERE id = ?3",
+        params![item.metadata.to_string(), timestamp, execution.loop_item_id],
+    )?;
+    Ok(())
+}
+
+fn advance_local_workflow_after_execution(
+    connection: &Connection,
+    execution_id: i64,
+    timestamp: &str,
+) -> Result<bool, TaskRuntimeError> {
+    let execution = execution_row(connection, execution_id)?;
+    let workflow_node_id = execution
+        .execution_payload
+        .as_ref()
+        .and_then(|payload| payload.get("workflow_node_id"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let Some(workflow_node_id) = workflow_node_id else {
+        return Ok(false);
+    };
+    let mut item = get_item_from(connection, &execution.loop_item_id, "task")?
+        .ok_or(TaskRuntimeError::TaskNotFound)?;
+    let workflow = item
+        .metadata
+        .get_mut("workflow")
+        .filter(|workflow| workflow.is_object())
+        .ok_or_else(|| {
+            TaskRuntimeError::Invalid("workflow execution has no workflow".to_owned())
+        })?;
+    let nodes = workflow
+        .get_mut("nodes")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
+    let node = nodes
+        .iter_mut()
+        .find(|node| node.get("id").and_then(Value::as_str) == Some(&workflow_node_id))
+        .ok_or_else(|| {
+            TaskRuntimeError::Invalid("workflow execution stage is missing".to_owned())
+        })?;
+    if node.get("required_assignee_type").and_then(Value::as_str) != Some("agent")
+        || node.get("required_assignee_id").and_then(Value::as_str)
+            != Some(execution.agent_id.as_str())
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "workflow execution assignee does not match the stage constraint".to_owned(),
+        ));
+    }
+    node["status"] = json!("completed");
+    node["execution_id"] = json!(execution_id);
+    release_local_workflow_nodes(workflow)?;
+    enqueue_ready_local_workflow_stages(
+        connection,
+        &execution.loop_item_id,
+        &execution.cloud_project_id,
+        execution.task_priority.as_deref().unwrap_or("none"),
+        workflow,
+    )?;
+    let nodes = workflow["nodes"]
+        .as_array()
+        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
+    let all_required_completed = nodes
+        .iter()
+        .filter(|node| {
+            node.get("required")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+                && node.get("role").and_then(Value::as_str) != Some("start")
+        })
+        .all(|node| {
+            matches!(
+                node.get("status").and_then(Value::as_str),
+                Some("completed" | "forced_completed")
+            )
+        });
+    let active_agent_id: Option<String> = connection
+        .query_row(
+            "SELECT agent_id FROM loop_item_executions
+             WHERE loop_item_id = ?1
+               AND status IN ('pending_approval', 'queued', 'claimed', 'running')
+             ORDER BY id DESC LIMIT 1",
+            params![execution.loop_item_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    item.metadata["is_unread"] = json!(true);
+    let status = if all_required_completed {
+        "completed"
+    } else if active_agent_id.is_some() {
+        "in_progress"
+    } else {
+        "pending"
+    };
+    connection.execute(
+        "UPDATE loop_items
+         SET status = ?1, assignee_agent_id = ?2, metadata = ?3,
+             completed_at = CASE WHEN ?1 = 'completed' THEN ?4 ELSE NULL END,
+             sort_order = 0, version = version + 1, updated_at = ?4
+         WHERE id = ?5",
+        params![
+            status,
+            active_agent_id,
+            item.metadata.to_string(),
+            timestamp,
+            execution.loop_item_id
+        ],
+    )?;
+    Ok(true)
+}
+
 fn priority_weight(priority: &str) -> i64 {
     match priority {
         "low" => 10,
@@ -4293,6 +4696,168 @@ mod tests {
         assert_eq!(
             comments[0].metadata["execution_id"],
             json!(executions[0].id)
+        );
+    }
+
+    #[test]
+    fn local_issue_automation_runs_constrained_agents_in_order_and_completes_issue() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let claude = make_local_agent(&store, &project.id, "auto");
+        let codex = make_local_agent(&store, &project.id, "auto");
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    workflow_definition: Some(json!({
+                        "version": 1,
+                        "nodes": [
+                            {
+                                "id": "start",
+                                "name": "Issue created",
+                                "node_type": "event",
+                                "role": "start",
+                                "depends_on": [],
+                                "required": false,
+                                "execution_mode": "human"
+                            },
+                            {
+                                "id": "claude",
+                                "name": "Claude",
+                                "prompt": "Implement the issue",
+                                "kind": "my_task",
+                                "depends_on": ["start"],
+                                "required": true,
+                                "execution_mode": "robot",
+                                "required_assignee_type": "agent",
+                                "required_assignee_id": claude.id
+                            },
+                            {
+                                "id": "codex",
+                                "name": "Codex",
+                                "prompt": "Review and finish the issue",
+                                "kind": "my_task",
+                                "depends_on": ["claude"],
+                                "required": true,
+                                "execution_mode": "robot",
+                                "required_assignee_type": "agent",
+                                "required_assignee_id": codex.id
+                            }
+                        ]
+                    })),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Ship the feature".to_owned(),
+                    description: "Complete one issue through both agents.".to_owned(),
+                    status: "inbox".to_owned(),
+                    priority: "high".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(task.status.as_deref(), Some("in_progress"));
+        assert_eq!(task.assignee_agent_id.as_deref(), Some(claude.id.as_str()));
+        assert_eq!(
+            task.metadata["workflow"]["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|node| node["status"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["completed", "queued", "blocked"]
+        );
+
+        let claim = LocalExecutionClaim {
+            execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-instance".to_owned(),
+            device_capacity: 1,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
+            lease_seconds: 300,
+        };
+        let first = store
+            .claim_next_local_execution(&claim)
+            .unwrap()
+            .expect("Claude stage must be queued");
+        assert_eq!(first.agent_id, claude.id);
+        assert_eq!(
+            first.execution_payload.as_ref().unwrap()["origin"]["workflowNodeId"],
+            "claude"
+        );
+        let serialized_claim = serde_json::to_value(&first).unwrap();
+        assert!(serialized_claim.get("runtime_payload").is_some());
+        assert!(serialized_claim.get("execution_payload").is_none());
+        accept_and_start(&store, &first);
+        let running_claude = store.get_task(&project.id, &task.id).unwrap();
+        assert_eq!(
+            running_claude.metadata["workflow"]["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|node| node["status"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["completed", "running", "blocked"]
+        );
+        store
+            .complete_execution(first.id, Some("Implemented"))
+            .unwrap();
+
+        let after_claude = store.get_task(&project.id, &task.id).unwrap();
+        assert_eq!(after_claude.status.as_deref(), Some("in_progress"));
+        assert_eq!(
+            after_claude.assignee_agent_id.as_deref(),
+            Some(codex.id.as_str())
+        );
+        assert_eq!(
+            after_claude.metadata["workflow"]["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|node| node["status"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["completed", "completed", "queued"]
+        );
+
+        let second = store
+            .claim_next_local_execution(&claim)
+            .unwrap()
+            .expect("Codex stage must be queued after Claude");
+        assert_eq!(second.agent_id, codex.id);
+        assert_eq!(
+            second.execution_payload.as_ref().unwrap()["origin"]["workflowNodeId"],
+            "codex"
+        );
+        accept_and_start(&store, &second);
+        store
+            .complete_execution(second.id, Some("Reviewed"))
+            .unwrap();
+
+        let completed = store.get_task(&project.id, &task.id).unwrap();
+        assert_eq!(completed.status.as_deref(), Some("completed"));
+        assert!(completed.completed_at.is_some());
+        assert_eq!(completed.assignee_agent_id, None);
+        assert_eq!(
+            completed.metadata["workflow"]["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|node| node["status"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["completed", "completed", "completed"]
+        );
+        assert_eq!(
+            store.list_comments(&project.id, &task.id, 0).unwrap().len(),
+            2
         );
     }
 

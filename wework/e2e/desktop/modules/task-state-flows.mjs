@@ -623,25 +623,32 @@ async function verifyBackgroundCompletionRestore({
     'A stale running transcript revived the completed task'
   )
 
-  await control.command('navigate', 'body', { value: '/todo' })
-  await control.command('waitFor', '[data-testid="cloud-my-work"]', {
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="cloud-my-work"]')
-  await control.command('waitFor', `[data-testid="my-work-group-done-${taskId}"]`, {
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+  const myWorkButton = '[data-testid="task-my-work-button"]'
+  await control.command('waitFor', myWorkButton, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', myWorkButton)
+  await control.command('scrollIntoView', '[data-testid="cloud-todo-column-in_review"]')
+  await control.command('waitFor', '[data-testid="cloud-todo-column-in_review"]', {
     text: 'WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE',
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const myWorkSnapshot = JSON.parse(
-    await control.command('snapshot', '[data-testid="cloud-my-work-view"]')
+  const runningColumnText = await control.command(
+    'getText',
+    '[data-testid="cloud-todo-column-in_progress"]'
   )
   assert.equal(
-    myWorkSnapshot.testIds.includes(`my-work-group-running-${taskId}`),
+    runningColumnText.includes('WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE'),
     false,
     'My Work revived a completed task from the stale running transcript'
   )
-  await control.command('navigate', 'body', { value: '/' })
+  await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })

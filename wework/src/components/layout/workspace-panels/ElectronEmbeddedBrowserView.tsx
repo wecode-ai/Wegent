@@ -43,6 +43,20 @@ interface CursorPoint {
   y: number
 }
 
+function positionHostFromPlaceholder(
+  host: HostedElectronWebview,
+  owner: symbol,
+  placeholder: HTMLElement
+) {
+  const rect = placeholder.getBoundingClientRect()
+  positionElectronEmbeddedBrowserView(host, owner, {
+    height: Math.max(0, rect.height),
+    left: rect.left,
+    top: rect.top,
+    width: Math.max(0, rect.width),
+  })
+}
+
 export function ElectronEmbeddedBrowserView({
   active,
   interactionBlocked,
@@ -72,15 +86,7 @@ export function ElectronEmbeddedBrowserView({
     hostRef.current = host
     setCursorOverlayHost(host.cursorHost)
 
-    const syncBounds = () => {
-      const rect = placeholder.getBoundingClientRect()
-      positionElectronEmbeddedBrowserView(host, owner, {
-        height: Math.max(0, rect.height),
-        left: rect.left,
-        top: rect.top,
-        width: Math.max(0, rect.width),
-      })
-    }
+    const syncBounds = () => positionHostFromPlaceholder(host, owner, placeholder)
 
     syncBounds()
     const handleViewportChange = () => syncBounds()
@@ -98,6 +104,13 @@ export function ElectronEmbeddedBrowserView({
       releaseElectronEmbeddedBrowserView(host, owner)
     }
   }, [])
+
+  useLayoutEffect(() => {
+    const host = hostRef.current
+    const placeholder = placeholderRef.current
+    if (!host || !placeholder) return
+    positionHostFromPlaceholder(host, ownerRef.current, placeholder)
+  })
 
   useLayoutEffect(() => {
     labelRef.current = label

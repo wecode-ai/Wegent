@@ -1138,6 +1138,7 @@ async function main() {
         backendUrl: cloudEnvironment.backendUrl,
         databasePath: cloudEnvironment.databasePath,
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
+        setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),
       })
     } else {
       executorBinary = await buildExecutor()
@@ -1768,7 +1769,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         restartDesktopApp,
         TURN_NAVIGATION_ONLY_TURN_COUNT
       )
-      await verifyTurnNavigationTracksVisibleTurnMessages(control, 2)
+      await verifyTurnNavigationTracksVisibleTurnMessages(control)
       console.log(`Wework desktop turn-navigation E2E passed. Evidence: ${resultDir}`)
       return
     }

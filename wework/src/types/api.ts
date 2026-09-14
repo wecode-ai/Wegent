@@ -331,6 +331,7 @@ export interface NormalizedRuntimeMessage {
 
 export interface RuntimeTurnNavigationItem {
   id: string
+  turnId?: string | null
   turnIndex: number
   messageIndex: number
   cursor?: string | null
@@ -646,6 +647,7 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeTranscriptTurn {
   id: string
   items: RuntimeTranscriptTurnItem[]
+  itemMerge?: 'prepend'
   messageIndex?: number | null
   status?: string
   runtimeStatus?: string | null
@@ -682,6 +684,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   afterCursor?: string | null
   refresh?: boolean
   includeFullContent?: boolean
+  navigationOnly?: boolean
 }
 
 export interface RuntimeSendRequest {
