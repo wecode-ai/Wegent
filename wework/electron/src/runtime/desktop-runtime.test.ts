@@ -300,7 +300,7 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(runtime.state().ready).toBe(false)
   })
 
-  test('starts Core DSH in parallel with the executor without blocking on Codex', async () => {
+  test('prepares Core DSH in parallel but waits for the executor before starting it', async () => {
     const executor = new FakeExecutor()
     executor.startHang = deferred()
     nextStartHang = deferred()
@@ -339,13 +339,16 @@ describe('DesktopRuntime lifecycle generation', () => {
 
     deviceIdentityState.resolve?.('test-device-id')
     await vi.waitFor(() => expect(executor.startCalls).toBe(1))
-    await vi.waitFor(() => expect(created).toHaveLength(1))
-    expect(created[0].startCalls).toBe(1)
+    expect(created).toHaveLength(0)
     expect(runtime.state().ready).toBe(false)
-    expect(startupSteps).toContain('core-dsh-process-start:started')
+    expect(startupSteps).not.toContain('core-dsh-process-start:started')
 
     executor.startHang.resolve()
-    await flush()
+    await vi.waitFor(() => expect(created).toHaveLength(1))
+    expect(created[0].startCalls).toBe(1)
+    expect(startupSteps.indexOf('executor-start:completed')).toBeLessThan(
+      startupSteps.indexOf('core-dsh-process-start:started')
+    )
     expect(executor.requests).toEqual([])
 
     nextStartHang.resolve()
