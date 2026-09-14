@@ -12,10 +12,20 @@ from sqlalchemy.orm import Session
 from app.models.task import TaskResource
 from app.schemas.kind import SkillRefMeta
 from app.services.adapters.task_kinds.task_skills_resolver import resolve_task_skills
+from app.stores.tasks import SqlAlchemyTaskStore
 
 
 def _build_kind(user_id: int, payload: dict):
     return SimpleNamespace(user_id=user_id, json=payload, id=100, namespace="default")
+
+
+@pytest.fixture(autouse=True)
+def use_sqlalchemy_task_store(mocker):
+    # These unit tests mock SQLAlchemy queries, independent of app startup plugins.
+    mocker.patch(
+        "app.services.adapters.task_kinds.task_skills_resolver.task_store",
+        SqlAlchemyTaskStore(),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -726,7 +736,10 @@ def test_resolve_task_skills_team_missing_still_uses_requested_skill_refs():
 
 
 @pytest.mark.unit
-def test_resolve_task_skills_uses_team_owner_for_shared_team_skill_resolution():
+@pytest.mark.parametrize("skill_id, expected_user_id", [(None, 7), (55, 99)])
+def test_resolve_task_skills_authorizes_requested_skill_identity(
+    skill_id, expected_user_id
+):
     db = Mock(spec=Session)
 
     mock_task = Mock(spec=TaskResource)
@@ -753,6 +766,7 @@ def test_resolve_task_skills_uses_team_owner_for_shared_team_skill_resolution():
                             "name": "owner-private-skill",
                             "namespace": "default",
                             "is_public": False,
+                            "skill_id": skill_id,
                         }
                     ]
                 )
@@ -788,4 +802,5 @@ def test_resolve_task_skills_uses_team_owner_for_shared_team_skill_resolution():
 
     assert result["skill_refs"]["owner-private-skill"]["skill_id"] == 55
     assert result["preload_skill_refs"]["owner-private-skill"]["skill_id"] == 55
-    assert mock_find_skill_by_ref.call_args.kwargs["user_id"] == 7
+    assert mock_find_skill_by_ref.call_args.kwargs["user_id"] == expected_user_id
+    assert mock_find_skill_by_ref.call_args.kwargs["skill_id"] == skill_id

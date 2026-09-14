@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { InteractiveFormAnswerPayload, TaskType } from './api'
+import type { InteractiveFormAnswerPayload, SkillRef, TaskType } from './api'
 import type { ArtifactNodeContext } from './knowledge-artifact'
 
 /**
@@ -137,12 +137,8 @@ export interface ChatSendPayload {
   preload_skill_names?: string[]
   /** Additional skill names (for other shells - downloaded to executor) */
   additional_skill_names?: string[]
-  /** Additional skills with full info (name, namespace, is_public) - preferred over additional_skill_names */
-  additional_skills?: Array<{
-    name: string
-    namespace: string
-    is_public: boolean
-  }>
+  /** Additional skills with their original resource identity. */
+  additional_skills?: SkillRef[]
   /** Action type. 'pipeline:confirm' for pipeline stage confirmation */
   action?: 'pipeline:confirm' | string
   /** Generation parameters for video/image generation tasks */
