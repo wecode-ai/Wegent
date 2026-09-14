@@ -12,6 +12,7 @@ import {
   Ellipsis,
   FolderPlus,
   FolderOpen,
+  Search,
   Settings,
 } from "lucide-react";
 
@@ -47,6 +48,7 @@ import {
   createWorkspaceOperationsSnapshot,
   workspaceIssueOperationState,
   type WorkspaceOperationState,
+  type WorkspaceProjectIssuesSnapshot,
 } from "./workspaceOperations";
 import {
   WorkspaceAgentsConfiguration,
@@ -111,6 +113,7 @@ const platformMessages = {
     running: "运行中",
     waitingReview: "待确认",
     failed: "异常",
+    unavailable: "状态不可用",
     pending: "待开始",
     stable: "正常",
     idle: "空闲",
@@ -185,6 +188,7 @@ const platformMessages = {
     running: "Running",
     waitingReview: "Awaiting review",
     failed: "Failed",
+    unavailable: "Status unavailable",
     pending: "Ready",
     stable: "Healthy",
     idle: "Idle",
@@ -657,13 +661,15 @@ function ProjectCards({
 function WorkspaceHome({
   projects,
   projectIssues,
+  locale,
   messages,
   onOpenProject,
   onOpenProjects,
   onOpenIssue,
 }: {
   projects: CollaborationProject[];
-  projectIssues: Record<string, CollaborationIssue[]>;
+  projectIssues: Record<string, WorkspaceProjectIssuesSnapshot>;
+  locale: CollaborationLocale;
   messages: PlatformMessages;
   onOpenProject(project: CollaborationProject): void;
   onOpenProjects(): void;
@@ -691,7 +697,7 @@ function WorkspaceHome({
     {
       id: "failed",
       label: messages.failed,
-      value: snapshot.totals.failed,
+      value: snapshot.totals.failed + snapshot.totals.unavailable,
       icon: AlertTriangle,
       tone: "failed",
     },
@@ -739,13 +745,15 @@ function WorkspaceHome({
           <div className="collaboration-workspace-operation-table">
             {snapshot.operations.map((operation) => {
               const projectState: WorkspaceOperationState | "idle" =
-                operation.failedCount > 0
-                  ? "failed"
-                  : operation.reviewCount > 0
-                    ? "review"
-                    : operation.runningCount > 0
-                      ? "running"
-                      : "idle";
+                operation.unavailable
+                  ? "unavailable"
+                  : operation.failedCount > 0
+                    ? "failed"
+                    : operation.reviewCount > 0
+                      ? "review"
+                      : operation.runningCount > 0
+                        ? "running"
+                        : "idle";
               return (
                 <button
                   type="button"
@@ -759,28 +767,36 @@ function WorkspaceHome({
                   <span className="collaboration-workspace-operation-project-copy">
                     <strong>{operation.project.name}</strong>
                     <small>
-                      {operation.issues.length} {messages.issues}
+                      {operation.unavailable
+                        ? messages.unavailable
+                        : `${operation.issues.length} ${messages.issues}`}
                     </small>
                   </span>
                   <OperationStateBadge
                     messages={messages}
                     state={projectState}
                   />
-                  <span className="collaboration-workspace-operation-counts">
-                    <span data-tone="running">
-                      {operation.runningCount} {messages.running}
+                  {operation.unavailable ? (
+                    <span className="collaboration-workspace-operation-counts">
+                      <span data-tone="failed">{messages.unavailable}</span>
                     </span>
-                    <span data-tone="review">
-                      {operation.reviewCount} {messages.waitingReview}
-                    </span>
-                    {operation.failedCount > 0 ? (
-                      <span data-tone="failed">
-                        {operation.failedCount} {messages.failed}
+                  ) : (
+                    <span className="collaboration-workspace-operation-counts">
+                      <span data-tone="running">
+                        {operation.runningCount} {messages.running}
                       </span>
-                    ) : null}
-                  </span>
+                      <span data-tone="review">
+                        {operation.reviewCount} {messages.waitingReview}
+                      </span>
+                      {operation.failedCount > 0 ? (
+                        <span data-tone="failed">
+                          {operation.failedCount} {messages.failed}
+                        </span>
+                      ) : null}
+                    </span>
+                  )}
                   <time dateTime={operation.updatedAt}>
-                    {formatOperationTime(operation.updatedAt)}
+                    {formatOperationTime(locale, operation.updatedAt)}
                   </time>
                   <ChevronRight aria-hidden="true" />
                 </button>
@@ -794,13 +810,34 @@ function WorkspaceHome({
             <div>
               <h2>{messages.needsAttention}</h2>
               <p>
-                {snapshot.totals.failed + snapshot.totals.review}{" "}
+                {snapshot.totals.failed +
+                  snapshot.totals.review +
+                  snapshot.totals.unavailable}{" "}
                 {messages.attentionCount}
               </p>
             </div>
           </div>
-          {snapshot.attentionItems.length > 0 ? (
+          {snapshot.unavailableProjects.length > 0 ||
+          snapshot.attentionItems.length > 0 ? (
             <div className="collaboration-workspace-attention-list">
+              {snapshot.unavailableProjects.map((operation) => (
+                <button
+                  type="button"
+                  data-testid={`collaboration-workspace-unavailable-${operation.project.id}`}
+                  key={`unavailable:${operation.project.id}`}
+                  onClick={() => onOpenProject(operation.project)}
+                >
+                  <OperationStateBadge
+                    messages={messages}
+                    state="unavailable"
+                  />
+                  <strong>{operation.project.name}</strong>
+                  <span>{messages.unavailable}</span>
+                  <time dateTime={operation.updatedAt}>
+                    {formatOperationTime(locale, operation.updatedAt)}
+                  </time>
+                </button>
+              ))}
               {snapshot.attentionItems.map(({ issue, project }) => {
                 const state = workspaceIssueOperationState(issue);
                 return (
@@ -814,7 +851,7 @@ function WorkspaceHome({
                     <strong>{issue.title}</strong>
                     <span>{project.name}</span>
                     <time dateTime={issue.updated_at}>
-                      {formatOperationTime(issue.updated_at)}
+                      {formatOperationTime(locale, issue.updated_at)}
                     </time>
                   </button>
                 );
@@ -843,15 +880,17 @@ function OperationStateBadge({
   const label =
     state === "failed"
       ? messages.failed
-      : state === "review"
-        ? messages.waitingReview
-        : state === "running"
-          ? messages.running
-          : state === "pending"
-            ? messages.pending
-            : state === "completed"
-              ? messages.stable
-              : messages.idle;
+      : state === "unavailable"
+        ? messages.unavailable
+        : state === "review"
+          ? messages.waitingReview
+          : state === "running"
+            ? messages.running
+            : state === "pending"
+              ? messages.pending
+              : state === "completed"
+                ? messages.stable
+                : messages.idle;
   return (
     <span className="collaboration-workspace-operation-state" data-tone={state}>
       <i aria-hidden="true" />
@@ -860,10 +899,13 @@ function OperationStateBadge({
   );
 }
 
-function formatOperationTime(value: string): string {
+function formatOperationTime(
+  locale: CollaborationLocale,
+  value: string,
+): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(locale, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -1255,7 +1297,7 @@ export function CollaborationPlatformApp({
           </div>
         ) : null}
         <label className="collaboration-platform-search">
-          <span>⌕</span>
+          <Search aria-hidden="true" />
           <input
             aria-label={messages.searchSpaces}
             placeholder={messages.searchSpaces}
@@ -1496,6 +1538,7 @@ export function CollaborationPlatformApp({
               <WorkspaceHome
                 projects={state.projects}
                 projectIssues={state.projectIssues}
+                locale={locale}
                 messages={messages}
                 onOpenProject={openProject}
                 onOpenProjects={() =>

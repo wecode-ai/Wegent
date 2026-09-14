@@ -6,14 +6,20 @@ import type { CollaborationIssue, CollaborationProject } from "../types";
 
 export type WorkspaceOperationState =
   | "failed"
+  | "unavailable"
   | "review"
   | "running"
   | "pending"
   | "completed";
 
+export type WorkspaceProjectIssuesSnapshot =
+  | { status: "available"; issues: CollaborationIssue[] }
+  | { status: "unavailable" };
+
 export interface WorkspaceProjectOperation {
   project: CollaborationProject;
   issues: CollaborationIssue[];
+  unavailable: boolean;
   runningCount: number;
   reviewCount: number;
   failedCount: number;
@@ -75,11 +81,16 @@ export function createWorkspaceOperationsSnapshot({
   projectIssues,
 }: {
   projects: CollaborationProject[];
-  projectIssues: Record<string, CollaborationIssue[]>;
+  projectIssues: Record<string, WorkspaceProjectIssuesSnapshot>;
 }) {
   const operations = projects
     .map<WorkspaceProjectOperation>((project) => {
-      const issues = projectIssues[project.id] ?? [];
+      const projectSnapshot = projectIssues[project.id] ?? {
+        status: "unavailable",
+      };
+      const unavailable = projectSnapshot.status === "unavailable";
+      const issues =
+        projectSnapshot.status === "available" ? projectSnapshot.issues : [];
       const states = issues.map(workspaceIssueOperationState);
       const updatedAt =
         [...issues]
@@ -90,6 +101,7 @@ export function createWorkspaceOperationsSnapshot({
       return {
         project,
         issues,
+        unavailable,
         runningCount: states.filter((state) => state === "running").length,
         reviewCount: states.filter((state) => state === "review").length,
         failedCount: states.filter((state) => state === "failed").length,
@@ -98,6 +110,9 @@ export function createWorkspaceOperationsSnapshot({
       };
     })
     .sort((left, right) => {
+      if (left.unavailable !== right.unavailable) {
+        return left.unavailable ? -1 : 1;
+      }
       if (left.failedCount !== right.failedCount) {
         return right.failedCount - left.failedCount;
       }
@@ -125,10 +140,14 @@ export function createWorkspaceOperationsSnapshot({
       return right.issue.updated_at.localeCompare(left.issue.updated_at);
     })
     .slice(0, 6);
+  const unavailableProjects = operations.filter(
+    (operation) => operation.unavailable,
+  );
 
   return {
     operations,
     attentionItems,
+    unavailableProjects,
     totals: {
       projects: projects.length,
       running: issues.filter(
@@ -140,6 +159,7 @@ export function createWorkspaceOperationsSnapshot({
       failed: issues.filter(
         ({ issue }) => workspaceIssueOperationState(issue) === "failed",
       ).length,
+      unavailable: unavailableProjects.length,
       pending: issues.filter(
         ({ issue }) => workspaceIssueOperationState(issue) === "pending",
       ).length,

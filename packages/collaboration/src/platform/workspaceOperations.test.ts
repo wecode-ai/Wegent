@@ -63,11 +63,14 @@ describe("workspace operations", () => {
     const snapshot = createWorkspaceOperationsSnapshot({
       projects: [project],
       projectIssues: {
-        [project.id]: [
-          issue({ id: "running", status: "in_progress" }),
-          issue({ id: "review", status: "in_review" }),
-          issue({ id: "failed", execution_state: "failed" }),
-        ],
+        [project.id]: {
+          status: "available",
+          issues: [
+            issue({ id: "running", status: "in_progress" }),
+            issue({ id: "review", status: "in_review" }),
+            issue({ id: "failed", execution_state: "failed" }),
+          ],
+        },
       },
     });
 
@@ -81,5 +84,28 @@ describe("workspace operations", () => {
       "failed",
       "review",
     ]);
+  });
+
+  it("keeps an unavailable project distinct from an empty project", () => {
+    const unavailable = createWorkspaceOperationsSnapshot({
+      projects: [project],
+      projectIssues: {
+        [project.id]: { status: "unavailable" },
+      },
+    });
+    const empty = createWorkspaceOperationsSnapshot({
+      projects: [project],
+      projectIssues: {
+        [project.id]: { status: "available", issues: [] },
+      },
+    });
+
+    expect(unavailable.operations[0]).toMatchObject({
+      unavailable: true,
+      issues: [],
+    });
+    expect(unavailable.totals.unavailable).toBe(1);
+    expect(empty.operations[0]?.unavailable).toBe(false);
+    expect(empty.totals.unavailable).toBe(0);
   });
 });

@@ -7,7 +7,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationExecutionEnvironment,
-  CollaborationIssue,
   CollaborationMember,
   CollaborationOwnedAgent,
   CollaborationPlatformResources,
@@ -18,6 +17,7 @@ import type {
   CollaborationWorkspaceNavigationContext,
 } from "../types";
 import type { CollaborationPlatformLocation } from "./types";
+import type { WorkspaceProjectIssuesSnapshot } from "./workspaceOperations";
 
 export interface CollaborationPlatformState {
   workspaces: CollaborationWorkspace[];
@@ -25,7 +25,7 @@ export interface CollaborationPlatformState {
   workspaceNavigationContext: CollaborationWorkspaceNavigationContext | null;
   navigationProjects: CollaborationProject[];
   projects: CollaborationProject[];
-  projectIssues: Record<string, CollaborationIssue[]>;
+  projectIssues: Record<string, WorkspaceProjectIssuesSnapshot>;
   members: CollaborationMember[];
   agents: CollaborationOwnedAgent[];
   executionEnvironments: CollaborationExecutionEnvironment[];
@@ -164,10 +164,27 @@ export function useCollaborationPlatformController({
         api.resources ? api.resources.list() : emptyResources,
         location.workspaceView === "home"
           ? Promise.all(
-              workspaceProjects.map(async (project) => ({
-                projectId: project.id,
-                snapshot: await api.issues.getBoardSnapshot(project.id),
-              })),
+              workspaceProjects.map(async (project) => {
+                try {
+                  const snapshot = await api.issues.getBoardSnapshot(
+                    project.id,
+                  );
+                  return {
+                    projectId: project.id,
+                    value: {
+                      status: "available",
+                      issues: snapshot.items,
+                    } satisfies WorkspaceProjectIssuesSnapshot,
+                  };
+                } catch {
+                  return {
+                    projectId: project.id,
+                    value: {
+                      status: "unavailable",
+                    } satisfies WorkspaceProjectIssuesSnapshot,
+                  };
+                }
+              }),
             )
           : Promise.resolve([]),
       ]);
@@ -180,10 +197,7 @@ export function useCollaborationPlatformController({
         navigationProjects,
         projects: workspaceProjects,
         projectIssues: Object.fromEntries(
-          projectSnapshots.map(({ projectId, snapshot }) => [
-            projectId,
-            snapshot.items,
-          ]),
+          projectSnapshots.map(({ projectId, value }) => [projectId, value]),
         ),
         members,
         agents,
@@ -266,7 +280,10 @@ export function useCollaborationPlatformController({
         setState((current) => ({
           ...current,
           projects: [project, ...current.projects],
-          projectIssues: { ...current.projectIssues, [project.id]: [] },
+          projectIssues: {
+            ...current.projectIssues,
+            [project.id]: { status: "available", issues: [] },
+          },
           navigationProjects: [project, ...current.navigationProjects],
           ...updateCurrentWorkspace(current, (workspace) => ({
             ...workspace,

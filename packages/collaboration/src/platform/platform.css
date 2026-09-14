@@ -253,8 +253,8 @@
   height: 28px;
   flex: none;
   border-radius: 9px;
-  color: #4338ca;
-  background: #eef2ff;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-muted));
   font-size: 12px;
   font-weight: 700;
 }
@@ -528,6 +528,14 @@
   background: transparent;
 }
 
+.collaboration-platform-search > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: rgb(var(--color-text-muted));
+  stroke-width: 1.75;
+}
+
 .collaboration-platform-notice {
   max-width: 680px;
   margin: -10px 0 18px;
@@ -559,10 +567,11 @@
 
 .collaboration-project-card {
   position: relative;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
   align-items: flex-start;
-  min-height: 156px;
+  min-height: 118px;
+  column-gap: 12px;
   padding: 16px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 12px;
@@ -570,13 +579,10 @@
   background: rgb(var(--color-bg-base));
   text-align: left;
   cursor: pointer;
-  transition:
-    border-color 120ms ease,
-    background-color 120ms ease;
+  transition: background-color 120ms ease;
 }
 
 .collaboration-project-card:hover {
-  border-color: #a5b4fc;
   background: rgb(var(--color-bg-hover));
 }
 
@@ -596,21 +602,11 @@
 }
 
 .collaboration-project-card em {
+  grid-column: 2;
   margin-top: 8px;
-  color: #4f46e5;
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
   font-style: normal;
-}
-
-.collaboration-project-card {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  min-height: 118px;
-  column-gap: 12px;
-}
-
-.collaboration-project-card em {
-  grid-column: 2;
 }
 
 .collaboration-space-project-list {
@@ -655,15 +651,15 @@
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  color: #4338ca;
-  background: #eef2ff;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-muted));
   font-weight: 700;
 }
 
 .collaboration-space-project-group[data-location="local"]
   .collaboration-space-project-mark {
-  color: #047857;
-  background: #ecfdf5;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-subtle));
 }
 
 .collaboration-space-project-copy {
@@ -1024,7 +1020,15 @@
   color: #dc2626;
 }
 
+.collaboration-workspace-operation-state[data-tone="unavailable"] {
+  color: #dc2626;
+}
+
 .collaboration-workspace-operation-state[data-tone="failed"] > i {
+  background: #dc2626;
+}
+
+.collaboration-workspace-operation-state[data-tone="unavailable"] > i {
   background: #dc2626;
 }
 
