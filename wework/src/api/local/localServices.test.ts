@@ -4334,6 +4334,7 @@ describe('createLocalAppServices', () => {
               workspacePath: '/Users/me/chat',
               title: 'Chat',
               runtime: 'codex',
+              goal_status: null,
               workspaceKind: 'chat',
             },
           ],
@@ -4412,6 +4413,7 @@ describe('createLocalAppServices', () => {
           tasks: [
             expect.objectContaining({
               taskId: 'chat-1',
+              goalStatus: null,
             }),
           ],
         }),

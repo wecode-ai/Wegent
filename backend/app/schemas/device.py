@@ -308,6 +308,8 @@ class DeviceCapabilityItemResult(BaseModel):
 class DeviceCapabilitySyncResult(BaseModel):
     """Per-device capability sync result."""
 
+    scope: Optional[str] = None
+
     device_id: str
     success: bool
     error: Optional[str] = None

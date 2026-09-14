@@ -2398,6 +2398,7 @@ export interface PluginMarketplaceInstallResponse {
 }
 
 export interface PluginDeviceSyncResponse {
+  reconciled?: boolean
   deviceId: string
   pendingCount: number
   sync: DeviceCapabilitySyncResponse

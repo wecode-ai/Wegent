@@ -3748,7 +3748,12 @@
     "plugin_connector_source_hint": "Choose the authentication site you use. One connected account is enough.",
     "plugin_connector_optional": "Optional app connection",
     "plugin_connector_chat_login": "This connection does not provide a login form yet. Follow the plugin chat instructions to sign in locally.",
-    "plugin_connector_required": "Authorization is required to install and use this plugin"
+    "plugin_connector_required": "Authorization is required to install and use this plugin",
+    "plugins_reconciliation_complete": "Plugin installation state verified and synchronized",
+    "plugins_reconciliation_failed": "Installation check did not finish: {{error}}",
+    "plugins_reconciliation_incomplete": "Plugin data could not be fully loaded. No repair was performed; refresh again.",
+    "plugins_reconciliation_checking": "Checking installation state…",
+    "plugins_reconciliation_busy": "Installation state is being checked. Please wait before changing plugins."
   },
   "delivery": {
     "action": "Deliver",
