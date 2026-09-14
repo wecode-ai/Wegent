@@ -70,6 +70,17 @@ class DeviceCapabilitySyncService:
         )
         return {"mode": mode, "skills": skills, "plugins": plugins, "mcps": mcps}
 
+    def build_desired_plugins(
+        self, db: Session, *, user_id: int, device_id: str
+    ) -> dict[str, Any]:
+        return {
+            "mode": "merge",
+            "scope": "plugins",
+            "plugins": self._load_installed_plugins(
+                db, user_id=user_id, device_id=device_id
+            ),
+        }
+
     def resolve_payload(
         self,
         db: Session,
@@ -354,6 +365,7 @@ class DeviceCapabilitySyncService:
         return DeviceCapabilitySyncResult(
             device_id=device_id,
             success=True,
+            scope=response.get("scope"),
             skills=response.get("skills", []),
             plugins=response.get("plugins", []),
             mcps=response.get("mcps", []),
@@ -442,6 +454,7 @@ class DeviceCapabilitySyncService:
             user_id=user_id,
             installed_plugin_ids=installed_ids,
             release_overrides=release_overrides,
+            strict=True,
         )
 
     def _load_enabled_installed_mcps(
