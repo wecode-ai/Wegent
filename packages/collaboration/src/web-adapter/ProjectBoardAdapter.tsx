@@ -294,7 +294,10 @@ export function ProjectBoardAdapter({
   };
 
   return (
-    <div data-testid={collaborationTestIds.board} className="min-h-0 flex-1">
+    <div
+      data-testid={collaborationTestIds.board}
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
+    >
       <ProjectBoardBody<CollaborationIssue>
         state={controller.state}
         activeDragItemId={controller.activeDragItemId}

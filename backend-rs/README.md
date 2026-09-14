@@ -2,8 +2,9 @@
 
 `backend-rs` is the public Wegent integration boundary between the existing
 Python backend and incrementally implemented Rust APIs. It is a library plus a
-small executable for supplying additional `RustApi` routes. Generic routing,
-streaming proxy, and upgrade behavior live in `brz-http-gateway`.
+small executable built from `AppState`, `PublicApi`, and the reusable hybrid
+runtime. Generic routing, streaming proxy, and upgrade behavior live in
+`brz-http-gateway`.
 
 The initial route configuration is empty. Therefore hybrid mode forwards every
 HTTP request, streaming response, upload, and upgraded connection to Python.
@@ -20,6 +21,18 @@ repository-level `start.sh` selects the Backend mode:
 # Hybrid behavior: Rust listens on 0.0.0.0:8000 and Python on 127.0.0.1:8004.
 WEGENT_BACKEND_MODE=hybrid ./start.sh backend
 ```
+
+The repository-level launcher uses `backend-rs` by default. The Rust Backend
+directory can be selected without changing the public startup flow:
+
+```bash
+WEGENT_BACKEND_MODE=hybrid \
+WEGENT_BACKEND_RS_DIR=custom-backend-rs \
+./start.sh backend
+```
+
+The selected directory must contain an executable
+`scripts/start-hybrid-backend.sh` launcher.
 
 In hybrid mode the root script delegates Backend process supervision to
 `backend-rs/scripts/start-hybrid-backend.sh`, which builds and runs the
@@ -38,11 +51,21 @@ Direct gateway configuration uses these environment variables:
 The example [`config/routes.toml`](config/routes.toml) is intentionally empty.
 Setting `WEGENT_RS_ROUTES_FILE` to that file preserves full Python fallback.
 
-## Public extension seam
+## Observability foundation
 
-Implement `RustApi` and construct `Gateway<RouteImplementation>` with a
-validated `RouteTable`. An extension crate can depend on this library, combine
-route configuration, and run its own binary.
+The Rust binary initializes `brz-logs`, writing its `info.log`, `warn.log`, and
+`error.log` files to the Backend `LOG_DIR` supplied by the repository launcher.
+The hybrid launcher defaults to `logs/backend` when that variable is absent;
+`BREEZE_LOG_DIR` can override it. `brz-metrics` is pinned to the
+process-global-registry release for future migrated APIs, but the initial
+all-Python fallback does not register API metrics or start profile reporting.
+
+## Library boundary
+
+`PublicApi` owns an `Arc<AppState>` and currently delegates selected requests to
+`NoRustApi`. Implement public routes behind this type as APIs migrate. Consumers
+can retain the state/API boundary, add routes, and call `run_hybrid` or
+`serve_hybrid` from their own binary.
 
 Rust route implementations run in the gateway process; they do not open a
 second internal Rust listener. With the initial empty configuration every

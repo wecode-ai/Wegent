@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SkillSelectorPopover from '@/features/tasks/components/selector/SkillSelectorPopover'
 import type { UnifiedSkill } from '@/apis/skills'
@@ -28,6 +28,7 @@ function buildSkill(overrides: Partial<UnifiedSkill>): UnifiedSkill {
     is_active: overrides.is_active ?? true,
     is_public: overrides.is_public ?? false,
     user_id: overrides.user_id ?? 1,
+    is_group_shared: overrides.is_group_shared,
     availability: overrides.availability,
     source: overrides.source,
     created_at: overrides.created_at,
@@ -59,6 +60,13 @@ describe('SkillSelectorPopover availability sections', () => {
             name: 'temporary-skill',
             displayName: 'Temporary Skill',
           }),
+          buildSkill({
+            id: 351320,
+            name: 'zhangyu-skill',
+            namespace: 'default',
+            is_group_shared: true,
+            availability: { inMyDefault: true },
+          }),
         ]}
         teamSkillNames={['agent-skill']}
         preloadedSkillNames={[]}
@@ -75,12 +83,24 @@ describe('SkillSelectorPopover availability sections', () => {
     expect(screen.getByText('Agent Skill')).toBeInTheDocument()
     expect(screen.getByText('Default Skill')).toBeInTheDocument()
     expect(screen.getByText('Temporary Skill')).toBeInTheDocument()
+    const sharedRow = within(screen.getByTestId('skill-selector-item-351320'))
+    expect(sharedRow.getByText('common:skillSelector.myDefault')).toBeVisible()
+    expect(sharedRow.getByText('common:skillSelector.group_skills_section')).toBeVisible()
+    expect(screen.getAllByText('zhangyu-skill')).toHaveLength(1)
+    expect(
+      within(screen.getByTestId('skill-selector-item-2')).queryByText(
+        'common:skillSelector.group_skills_section'
+      )
+    ).not.toBeInTheDocument()
 
     await user.click(screen.getByText('Agent Skill'))
     await user.click(screen.getByText('Default Skill'))
+    await user.click(screen.getByText('zhangyu-skill'))
     expect(onToggleSkill).not.toHaveBeenCalled()
 
     await user.click(screen.getByText('Temporary Skill'))
-    expect(onToggleSkill).toHaveBeenCalledWith('temporary-skill')
+    expect(onToggleSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 3, name: 'temporary-skill' })
+    )
   }, 15_000)
 })
