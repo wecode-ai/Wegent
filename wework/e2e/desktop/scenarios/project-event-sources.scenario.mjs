@@ -2,9 +2,18 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 
+import {
+  assistantMessage,
+  createSse,
+  responseCompleted,
+  responseCreated,
+} from '../modules/response-protocol.mjs'
+
 const PROJECT_NAME = '外部事件源矩阵验收'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const CLOUD_MODEL_NAME = 'desktop-e2e-public-model'
+const GITHUB_HANDLER_PROMPT = '处理 GitHub pull request 的 CI 失败。'
+const GITLAB_HANDLER_PROMPT = '处理 GitLab merge request 的新评论。'
 const GITHUB_EVENT_TYPES = [
   'change_request.checks_failed',
   'change_request.merge_conflict',
@@ -402,6 +411,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   let upstreamRequests = []
   let currentGithubFixture = null
   let currentGitlabFixture = null
+  let modelRequestCount = 0
+  const workflowModelRequests = []
 
   const request = (pathname, options) => requestJson(backendUrl, token, pathname, options)
 
@@ -701,6 +712,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       uiTimeoutMs * 3
     )
     assert.deepEqual(workflowHandlerRunNodeIds(issue.id), ['github-handler'])
+    assert.deepEqual(workflowModelRequests, ['github-handler'])
     const githubBranch = afterGithub.workflow.nodes.find(node => node.id === 'event-branch')
     assert.equal(githubBranch.collectors.github.collector_id, githubHook.id)
     assert.equal(githubBranch.collectors.gitlab.collector_id, gitlabHook.id)
@@ -720,6 +732,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       uiTimeoutMs * 3
     )
     assert.deepEqual(workflowHandlerRunNodeIds(issue.id), ['github-handler', 'gitlab-handler'])
+    assert.deepEqual(workflowModelRequests, ['github-handler', 'gitlab-handler'])
     assert.equal(
       completed.workflow.nodes.every(node => node.status === 'completed'),
       true
@@ -871,6 +884,46 @@ export function createDesktopScenario({ uiTimeoutMs }) {
 
   return {
     requiresCloudEnvironment: true,
+
+    async handleHttp(incomingRequest, response, url) {
+      if (
+        incomingRequest.method !== 'POST' ||
+        !['/responses', '/v1/responses'].includes(url.pathname)
+      ) {
+        return false
+      }
+      const chunks = []
+      for await (const chunk of incomingRequest) chunks.push(chunk)
+      const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const serialized = JSON.stringify(payload)
+      const responseId = `project-event-sources-${++modelRequestCount}`
+      // Codex can send its first prewarm before tools or request metadata exist.
+      if (
+        serialized.includes('"request_kind":"prewarm"') ||
+        (modelRequestCount === 1 && !payload.tools?.length)
+      ) {
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(createSse([responseCreated(responseId), responseCompleted(responseId)]))
+        return true
+      }
+
+      const nodeId = serialized.includes(GITHUB_HANDLER_PROMPT)
+        ? 'github-handler'
+        : serialized.includes(GITLAB_HANDLER_PROMPT)
+          ? 'gitlab-handler'
+          : null
+      assert.ok(nodeId, 'The external event workflow sent an unexpected model request')
+      workflowModelRequests.push(nodeId)
+      response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      response.end(
+        createSse([
+          responseCreated(responseId),
+          assistantMessage(`${nodeId} completed`),
+          responseCompleted(responseId),
+        ])
+      )
+      return true
+    },
 
     async prepareCloud({
       authToken,
