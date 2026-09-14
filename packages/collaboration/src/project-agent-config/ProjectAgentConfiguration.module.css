@@ -199,6 +199,7 @@
 }
 
 .hostComposer {
+  overflow: visible;
   padding: 0;
 }
 
@@ -370,6 +371,16 @@
   border: 1px dashed rgb(var(--color-border));
   border-radius: 10px;
   background: rgb(var(--color-bg-surface));
+}
+
+.composerEmpty {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  color: rgb(var(--color-text-muted));
+  background: rgb(var(--color-bg-surface));
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 @media (max-width: 680px) {

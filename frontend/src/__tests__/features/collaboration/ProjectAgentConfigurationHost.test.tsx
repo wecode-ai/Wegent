@@ -65,8 +65,21 @@ describe('webProjectAgentConfigurationHost', () => {
     )
 
     expect(screen.getByTestId('agent-backdrop')).toHaveClass('bg-black/80')
-    expect(screen.getByTestId('agent-dialog')).toHaveClass('max-w-lg', 'bg-base')
-    expect(screen.getByTestId('mode-wegent').parentElement).toHaveClass('bg-surface')
+    expect(screen.getByTestId('agent-dialog')).toHaveClass(
+      'bg-base',
+      'gap-0',
+      'overflow-hidden',
+      'p-0',
+      'sm:max-w-[520px]'
+    )
+    expect(screen.getByTestId('mode-wegent').parentElement).toHaveClass(
+      'h-9',
+      'border',
+      'border-border',
+      'bg-surface',
+      'p-0.5'
+    )
+    expect(screen.getByTestId('mode-wegent')).toHaveClass('h-8', 'text-sm')
     expect(screen.getByTestId('agent-select')).toHaveClass('border-border', 'rounded-lg')
     expect(screen.getByTestId('agent-submit')).toHaveClass('bg-primary', 'rounded-lg')
 

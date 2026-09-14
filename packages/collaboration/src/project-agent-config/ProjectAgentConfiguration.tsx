@@ -544,7 +544,7 @@ export function ProjectAgentConfiguration({
                         {
                           label: translate(
                             "todo.choose_wegent_agent",
-                            "选择 Wegent 智能体",
+                            "Wegent 智能体",
                           ),
                           testId: "project-agent-mode-wegent",
                           value: "wegent",
@@ -552,7 +552,7 @@ export function ProjectAgentConfiguration({
                         {
                           label: translate(
                             "todo.create_codex_agent",
-                            "自定义 Codex 智能体",
+                            "Codex 智能体",
                           ),
                           testId: "project-agent-mode-codex",
                           value: "codex",
@@ -637,7 +637,7 @@ export function ProjectAgentConfiguration({
                       </div>
                     ) : (
                       <p
-                        className={styles.empty}
+                        className={styles.composerEmpty}
                         data-testid="project-agent-wegent-empty"
                       >
                         {translate(
@@ -738,7 +738,7 @@ export function ProjectAgentConfiguration({
                     </div>
                   ) : (
                     <p
-                      className={styles.empty}
+                      className={styles.composerEmpty}
                       data-testid="project-agent-codex-environment-empty"
                     >
                       {translate(

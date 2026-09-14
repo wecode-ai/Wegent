@@ -36,8 +36,10 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
         }}
       >
         <DialogContent
+          className="gap-0 overflow-hidden p-0 sm:max-w-[520px]"
           closeButtonProps={{
             'aria-label': closeLabel,
+            className: 'right-5 top-5',
             'data-testid': testIds.close,
             disabled: busy,
           }}
@@ -46,11 +48,13 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
           preventEscapeClose={busy}
           preventOutsideClick={busy}
         >
-          <DialogHeader>
-            <DialogTitle>{title}</DialogTitle>
-            <DialogDescription>{description}</DialogDescription>
+          <DialogHeader className="space-y-1 px-5 pb-4 pr-12 pt-5">
+            <DialogTitle className="text-lg leading-6">{title}</DialogTitle>
+            <DialogDescription className="text-sm leading-5 text-text-muted">
+              {description}
+            </DialogDescription>
           </DialogHeader>
-          {children}
+          <div className="px-5 pb-5">{children}</div>
         </DialogContent>
       </Dialog>
     )
@@ -58,9 +62,14 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
   renderModePicker({ onChange, options, value }) {
     return (
       <Tabs value={value} onValueChange={nextValue => onChange(nextValue as typeof value)}>
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid h-9 w-full grid-cols-2 border border-border bg-surface p-0.5 shadow-none">
           {options.map(option => (
-            <TabsTrigger data-testid={option.testId} key={option.value} value={option.value}>
+            <TabsTrigger
+              className="h-8 rounded-md px-3 py-0 text-sm shadow-none data-[state=active]:shadow-sm"
+              data-testid={option.testId}
+              key={option.value}
+              value={option.value}
+            >
               {option.label}
             </TabsTrigger>
           ))}
