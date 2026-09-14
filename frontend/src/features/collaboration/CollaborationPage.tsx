@@ -22,6 +22,7 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webAutomationUiHost } from '@/features/collaboration/automation/WebAutomationHost'
+import { webProjectAgentConfigurationHost } from '@/features/collaboration/ProjectAgentConfigurationHost'
 import { collaborationLocationPath } from '@/features/collaboration/routes'
 import {
   CollapsedSidebarButtons,
@@ -80,7 +81,7 @@ function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: Re
   }
 
   return (
-    <div className="flex smart-h-screen bg-base text-text-primary box-border">
+    <div className="flex smart-h-screen bg-base text-text-primary box-border [--collaboration-primary-background:rgb(var(--color-primary))] [--collaboration-primary-foreground:rgb(var(--color-primary-contrast))]">
       {isCollapsed && !isMobile && (
         <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
       )}
@@ -234,6 +235,7 @@ export function CollaborationPage() {
         if (kind === 'success') toast.success(message)
         else toast.error(message)
       },
+      projectAgentConfiguration: webProjectAgentConfigurationHost,
     }),
     [issueId, pathname, projectId, projectView, router, workspaceId]
   )

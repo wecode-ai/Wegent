@@ -9,6 +9,11 @@ import { Bot, Code2, Settings2 } from 'lucide-react'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
+  simpleChoiceCardBaseClass,
+  simpleChoiceCardSelectedClass,
+  simpleChoiceCardUnselectedClass,
+} from '@/components/common/simple-choice-card-styles'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -18,11 +23,6 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { UnifiedShell } from '@/apis/shells'
-import {
-  simpleChoiceCardBaseClass,
-  simpleChoiceCardSelectedClass,
-  simpleChoiceCardUnselectedClass,
-} from './simple-choice-card-styles'
 import {
   getCustomShells,
   getSimpleExecutorOptions,

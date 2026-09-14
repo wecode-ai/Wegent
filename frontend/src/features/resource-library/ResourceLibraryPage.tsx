@@ -103,16 +103,9 @@ function TeamSkillResources({
 }) {
   const { t } = useTranslation('resource-library')
   const { t: tCommon } = useTranslation('common')
-  const [nativeState, setNativeState] = useState<ResourceListState>(initialResourceListState)
-  const [installedState, setInstalledState] = useState<ResourceListState>(initialResourceListState)
-  const hasItems = nativeState.hasItems || installedState.hasItems
-  const isLoading = !hasItems && (nativeState.loading || installedState.loading)
-  const isEmpty =
-    !hasItems &&
-    !nativeState.loading &&
-    !installedState.loading &&
-    !nativeState.hasError &&
-    !installedState.hasError
+  const [listState, setListState] = useState<ResourceListState>(initialResourceListState)
+  const isLoading = !listState.hasItems && listState.loading
+  const isEmpty = !listState.hasItems && !listState.loading && !listState.hasError
 
   return (
     <div className="space-y-6" data-testid="team-skill-resources">
@@ -127,16 +120,7 @@ function TeamSkillResources({
         hideLoadingState
         compact
         searchQuery={keyword}
-        onListStateChange={setNativeState}
-      />
-      <InstalledResources
-        resourceType="skill"
-        keyword={keyword}
-        groupNamespaces={[groupName]}
-        excludeGroupOwned
-        hideLoadingState
-        hideEmptyState
-        onListStateChange={setInstalledState}
+        onListStateChange={setListState}
       />
       {isLoading && (
         <div
@@ -195,6 +179,7 @@ export function ResourceLibraryPage() {
   const isUnsupportedSource =
     (source === 'installed' && !supportsInstalledSource) ||
     (source === 'system' && !supportsSystemSource) ||
+    (source === 'personal' && supportsCreatedByMeSource) ||
     (source === 'mine' && !supportsCreatedByMeSource)
   const fallbackSource: MineSource = supportsCreatedByMeSource ? 'mine' : 'personal'
   const effectiveSource = isUnsupportedSource ? fallbackSource : source
@@ -381,17 +366,19 @@ export function ResourceLibraryPage() {
   const handleTypeChange = (nextType: ResourceNavigationType | 'all') => {
     if (nextType === 'all') return
     const nextSupportsInstalledSource = nextType === 'agent' || nextType === 'skill'
-    const nextSupportsCreatedByMeSource = nextType === 'agent'
+    const nextSupportsCreatedByMeSource = nextType === 'agent' || nextType === 'skill'
     const nextSupportsSystemSource =
       nextType === 'model' || nextType === 'shell' || nextType === 'retriever'
     const shouldResetSource =
       (effectiveSource === 'installed' && !nextSupportsInstalledSource) ||
       (effectiveSource === 'system' && !nextSupportsSystemSource) ||
+      (effectiveSource === 'personal' && nextSupportsCreatedByMeSource) ||
       (effectiveSource === 'mine' && !nextSupportsCreatedByMeSource)
+    const nextFallbackSource = nextSupportsCreatedByMeSource ? 'mine' : 'personal'
 
     replaceParams({
       type: nextType,
-      source: shouldResetSource ? 'personal' : undefined,
+      source: shouldResetSource ? nextFallbackSource : undefined,
       group: effectiveSource === 'group' ? undefined : null,
       keyword: null,
       sort: null,
