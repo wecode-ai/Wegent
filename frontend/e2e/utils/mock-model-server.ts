@@ -40,6 +40,7 @@ interface VisionMessage {
 interface ModelRequest {
   model?: string
   messages?: VisionMessage[]
+  input?: unknown
   system?: unknown
   stream?: boolean
   tools?: Array<Record<string, unknown>>
@@ -160,32 +161,7 @@ function extractText(value: unknown): string {
 }
 
 function getRequestText(request: ModelRequest | null): string {
-  if (!request) {
-    return ''
-  }
-
-  const messageText = (request.messages || [])
-    .map(message => {
-      if (typeof message.content === 'string') {
-        return message.content
-      }
-
-      if (Array.isArray(message.content)) {
-        return message.content
-          .map(item => {
-            if (item.type === 'text') {
-              return item.text || ''
-            }
-            return ''
-          })
-          .join(' ')
-      }
-
-      return ''
-    })
-    .join(' ')
-
-  return [extractText(request.system), messageText].join(' ')
+  return extractText(request)
 }
 
 function findStreamRule(request: ModelRequest | null): StreamRule | undefined {
@@ -402,6 +378,71 @@ function writeStreamingResponse(
   }
 
   sendChunk()
+}
+
+function writeResponsesSseEvent(res: http.ServerResponse, data: Record<string, unknown>): void {
+  res.write(`event: ${data.type}\n`)
+  res.write(`data: ${JSON.stringify(data)}\n\n`)
+}
+
+function writeResponsesStreamingResponse(
+  res: http.ServerResponse,
+  content: string,
+  model: string,
+  doneDelayMs: number
+): void {
+  const responseId = `resp_${Date.now()}`
+  const messageId = `msg_${Date.now()}`
+  const output = [
+    {
+      id: messageId,
+      type: 'message',
+      role: 'assistant',
+      status: 'completed',
+      content: [{ type: 'output_text', text: content, annotations: [] }],
+    },
+  ]
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  })
+  writeResponsesSseEvent(res, {
+    type: 'response.created',
+    response: {
+      id: responseId,
+      object: 'response',
+      status: 'in_progress',
+      model,
+      output: [],
+    },
+  })
+  writeResponsesSseEvent(res, {
+    type: 'response.output_item.done',
+    output_index: 0,
+    item: output[0],
+  })
+  setTimeout(() => {
+    writeResponsesSseEvent(res, {
+      type: 'response.completed',
+      response: {
+        id: responseId,
+        object: 'response',
+        status: 'completed',
+        model,
+        output,
+        usage: {
+          input_tokens: 100,
+          input_tokens_details: { cached_tokens: 0 },
+          output_tokens: Math.max(1, content.split(' ').length),
+          output_tokens_details: { reasoning_tokens: 0 },
+          total_tokens: 100 + Math.max(1, content.split(' ').length),
+        },
+      },
+    })
+    res.end()
+  }, doneDelayMs)
 }
 
 function writeAnthropicSseEvent(res: http.ServerResponse, event: string, data: unknown): void {
@@ -771,7 +812,14 @@ const server = http.createServer((req, res) => {
     }
 
     // Handle different endpoints
-    if (req.url?.includes('/chat/completions')) {
+    if (req.url?.includes('/responses')) {
+      const streamRule = findStreamRule(parsedBody)
+      const responseContent =
+        streamRule?.responseContent || buildContextAwareResponseContent(parsedBody)
+      const model = parsedBody?.model || 'mock-codex'
+      console.log(`Mock response content: ${truncateForLog(responseContent)}`)
+      writeResponsesStreamingResponse(res, responseContent, model, streamRule?.doneDelayMs ?? 0)
+    } else if (req.url?.includes('/chat/completions')) {
       const toolScenario = findToolScenario(parsedBody)
       if (toolScenario && parsedBody) {
         toolScenario.capturedRequests.push(parsedBody)
@@ -1008,6 +1056,7 @@ server.listen(PORT, () => {
 ║  Server running on: http://localhost:${PORT}                  ║
 ║                                                            ║
 ║  Endpoints:                                                ║
+║    POST /v1/responses        - Mock OpenAI Responses API   ║
 ║    POST /v1/chat/completions - Mock OpenAI chat API        ║
 ║    POST /v1/messages         - Mock Anthropic Messages API ║
 ║    GET  /captured-requests   - View captured requests      ║

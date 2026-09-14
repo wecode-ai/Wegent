@@ -41,6 +41,7 @@ const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
   10_000,
   'WEWORK_E2E_STEP_TIMEOUT_MS'
 )
+const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 const DESKTOP_MODEL_SERVER_PORT = readOptionalPort(
   process.env.WEWORK_E2E_MODEL_SERVER_PORT,
   'WEWORK_E2E_MODEL_SERVER_PORT'
@@ -1223,7 +1224,7 @@ async function sendPromptUntilScenarioRequest(
   selector,
   prompt,
   scenario,
-  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+  timeoutMs = MODEL_REQUEST_TIMEOUT_MS
 ) {
   const scenarioRequest = control.awaitScenarioRequest(scenario)
   await sendPrompt(control, selector, prompt)

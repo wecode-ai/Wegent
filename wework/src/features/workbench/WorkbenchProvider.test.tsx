@@ -96,6 +96,7 @@ const localExecutorMocks = vi.hoisted(() => ({
   connectLocalExecutorToBackend: vi.fn().mockResolvedValue({ running: true, ready: true }),
   disconnectLocalExecutorFromBackend: vi.fn().mockResolvedValue({ running: true, ready: true }),
   ensureBundledPluginMarketplaceRegistered: vi.fn().mockResolvedValue(undefined),
+  ensureLocalExecutorAvailable: vi.fn(),
   ensureLocalExecutorStarted: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
   getKnownLocalExecutorDeviceId: vi.fn().mockReturnValue('local-device'),
@@ -123,6 +124,7 @@ vi.mock('@/desktop/localExecutor', () => ({
   disconnectLocalExecutorFromBackend: localExecutorMocks.disconnectLocalExecutorFromBackend,
   ensureBundledPluginMarketplaceRegistered:
     localExecutorMocks.ensureBundledPluginMarketplaceRegistered,
+  ensureLocalExecutorAvailable: localExecutorMocks.ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted: localExecutorMocks.ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace: localExecutorMocks.getInitializedBundledPluginMarketplace,
   getKnownLocalExecutorDeviceId: localExecutorMocks.getKnownLocalExecutorDeviceId,
@@ -2557,6 +2559,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     resetComposerAppsMemory()
     resetRuntimeTerminalContextForTests()
     pluginApiMocks.cloudListInstalledPlugins.mockResolvedValue({ items: [] })
+    localExecutorMocks.ensureLocalExecutorAvailable.mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+    })
     localExecutorMocks.ensureLocalExecutorStarted.mockResolvedValue({
       running: true,
       ready: true,
@@ -2587,7 +2594,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('project-count')).toHaveTextContent('0')
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('0')
     expect(localExecutorMocks.ensureLocalExecutorStarted).toHaveBeenCalled()
-    expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.tasks.list', {})
+    expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.tasks.list', {
+      preferCached: true,
+    })
   })
 
   test('opens a forked task before refreshing the runtime task list', async () => {
@@ -3099,6 +3108,27 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
     expect(services.projectApi.listProjects).not.toHaveBeenCalled()
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('loads task composer catalogs after runtime work bootstrap', async () => {
+    const runtimeWork = deferred<RuntimeWorkListResponse>()
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({
+        listRuntimeWork: vi.fn(() => runtimeWork.promise),
+      }) as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<BootstrapProbe />, services)
+
+    await waitFor(() => expect(services.deviceApi.listDevices).toHaveBeenCalled())
+    expect(services.modelApi.listModels).not.toHaveBeenCalled()
+    expect(services.skillApi.listSkills).not.toHaveBeenCalled()
+
+    runtimeWork.resolve(createRuntimeWork())
+
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    await waitFor(() => expect(services.modelApi.listModels).toHaveBeenCalled())
+    expect(services.skillApi.listSkills).toHaveBeenCalled()
   })
 
   test('warms Codex composer apps once during workbench startup', async () => {

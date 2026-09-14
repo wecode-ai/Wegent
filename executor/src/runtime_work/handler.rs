@@ -890,7 +890,7 @@ impl RuntimeWorkRpcHandler {
             self.resume_persisted_turns().await;
         }
         match method {
-            "runtime.tasks.list" => self.list_tasks().await,
+            "runtime.tasks.list" => self.list_tasks(&payload).await,
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,

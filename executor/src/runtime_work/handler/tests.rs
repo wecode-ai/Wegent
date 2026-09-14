@@ -4526,6 +4526,37 @@ fn cached_codex_link_stays_visible_until_provider_thread_is_discovered() {
 }
 
 #[tokio::test]
+async fn cached_task_list_uses_the_existing_runtime_work_store() {
+    let (handler, root) = isolated_runtime_work_handler("cached-task-list");
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "local-task-1".to_owned(),
+        runtime: "claude".to_owned(),
+        workspace_path: "/tmp/cached-project".to_owned(),
+        title: "Cached task".to_owned(),
+        status: "active".to_owned(),
+        ..RuntimeTaskLink::default()
+    });
+
+    let response = handler
+        .list_tasks(&json!({ "preferCached": true }))
+        .await
+        .expect("cached task list should be available");
+    let tasks = response["workspaces"]
+        .as_array()
+        .expect("workspaces should be an array")
+        .iter()
+        .filter_map(|workspace| workspace["tasks"].as_array())
+        .flatten()
+        .collect::<Vec<_>>();
+
+    assert!(tasks
+        .iter()
+        .any(|task| { task["taskId"] == "local-task-1" && task["title"] == "Cached task" }));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn create_task_stores_model_selection_in_runtime_handle() {
     let index_path = temp_runtime_work_index_path("create-task-model-selection");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");

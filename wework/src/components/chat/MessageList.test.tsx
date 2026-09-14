@@ -5304,8 +5304,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
-  test('collapses tool rows without trailing generic thinking once final text is visible', () => {
-    const runningBlock: ProcessingBlock = {
+  test('keeps the processing layout stable while final text is streaming', () => {
+    const completedBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
       type: 'tool',
@@ -5315,16 +5315,19 @@ describe('MessageList', () => {
       createdAt: 1770000000000,
     }
 
-    render(
+    const streamingMessage = {
+      id: '2',
+      role: 'assistant' as const,
+      content: 'Let me explore the repo structure for you.',
+      status: 'streaming' as const,
+      createdAt: '2026-05-25T18:46:00.000+08:00',
+    }
+    const { rerender } = render(
       <MessageList
         messages={[
           {
-            id: '2',
-            role: 'assistant',
-            content: 'Let me explore the repo structure for you.',
-            status: 'streaming',
-            createdAt: '2026-05-25T18:46:00.000+08:00',
-            blocks: [runningBlock],
+            ...streamingMessage,
+            blocks: [completedBlock],
           },
         ]}
       />
@@ -5333,6 +5336,56 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('tool-block-thinking')).not.toBeInTheDocument()
     expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('已处理')
+    const content = screen.getByTestId('assistant-message-content')
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...streamingMessage,
+            content: `${streamingMessage.content} More text.`,
+            blocks: [{ ...completedBlock, status: 'streaming' }],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-message-content')).toBe(content)
+
+    rerender(
+      <MessageList
+        isWaitingForAssistant
+        messages={[
+          {
+            ...streamingMessage,
+            content: `${streamingMessage.content} More text. Done.`,
+            status: 'done',
+            blocks: [completedBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-message-content')).toBe(content)
+    expect(screen.getByTestId('message-assistant-waiting')).toBeInTheDocument()
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...streamingMessage,
+            content: `${streamingMessage.content} More text. Done.`,
+            status: 'done',
+            blocks: [completedBlock],
+          },
+        ]}
+      />
+    )
+
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
   })
 

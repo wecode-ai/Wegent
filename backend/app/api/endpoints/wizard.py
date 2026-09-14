@@ -696,6 +696,14 @@ async def recommend_shell_and_model(
                     confidence=0.85,
                 )
                 break
+            elif shell_type == "Codex" and protocol == "openai":
+                model_recommendation = ModelRecommendation(
+                    model_name=model.name,
+                    model_id=model_spec.get("modelConfig", {}).get("modelId"),
+                    reason="Recommended for Codex execution",
+                    confidence=0.9,
+                )
+                break
 
         # If no specific match, use the first available
         if not model_recommendation and available_models:
@@ -719,6 +727,10 @@ async def recommend_shell_and_model(
         "ClaudeCode": (
             "For coding and technical work",
             "Best when you need to work with code",
+        ),
+        "Codex": (
+            "For coding and agentic development",
+            "Best when you want Codex to work in a repository",
         ),
         "Agno": (
             "For complex multi-step tasks",

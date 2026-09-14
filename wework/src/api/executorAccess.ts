@@ -51,6 +51,7 @@ import type {
   RuntimeWorkspaceSearchResponse,
 } from '@/types/api'
 import type { HttpRequestOptions } from './http'
+import type { RuntimeWorkListRequestOptions } from './runtimeWork'
 import type {
   WorkspaceFileApi,
   WorkspaceTextFileResponse,
@@ -100,7 +101,7 @@ export interface ExecutorCommandClient {
 export interface ExecutorRuntimeClient {
   prepareRuntimeModel: (data: RuntimeModelPrepareRequest) => Promise<boolean>
   listRuntimeWork: (
-    requestOptions?: Pick<HttpRequestOptions, 'signal'>
+    requestOptions?: RuntimeWorkListRequestOptions
   ) => Promise<RuntimeWorkListResponse>
   prepareDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['prepareDeviceWorkspace']
   deleteDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['deleteDeviceWorkspace']

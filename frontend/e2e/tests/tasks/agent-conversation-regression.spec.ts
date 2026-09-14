@@ -3,8 +3,8 @@
  *
  * These tests use the real frontend, backend, Socket.IO, Chat Shell, and
  * backend execution routing. CI uses:
- * - mock-model-server for Chat Shell and ClaudeCode model requests
- * - real executor-manager plus a real ClaudeCode executor image for ClaudeCode HTTP tasks
+ * - mock-model-server for Chat Shell, ClaudeCode, and Codex model requests
+ * - real executor-manager plus a real coding executor image for ClaudeCode and Codex HTTP tasks
  * - real local executor registered as a Wework app device for device WebSocket tasks
  */
 
@@ -16,15 +16,18 @@ import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
 const CLAUDE_MODEL_SERVER_URL = process.env.E2E_CLAUDE_MODEL_SERVER_URL || MOCK_MODEL_SERVER_URL
+const CODEX_MODEL_SERVER_URL = process.env.E2E_CODEX_MODEL_SERVER_URL || MOCK_MODEL_SERVER_URL
 const LOCAL_CLAUDE_MODEL_SERVER_URL =
   process.env.E2E_LOCAL_CLAUDE_MODEL_SERVER_URL || MOCK_MODEL_SERVER_URL
 const DEVICE_ID = process.env.E2E_DEVICE_ID || 'e2e-claudecode-device'
 const TEST_PREFIX = `e2e-agent-reg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 const CHAT_MODEL_NAME = `${TEST_PREFIX}-chat-model`
 const CLAUDE_MODEL_NAME = `${TEST_PREFIX}-claude-model`
+const CODEX_MODEL_NAME = `${TEST_PREFIX}-codex-model`
 const DEVICE_CLAUDE_MODEL_NAME = `${TEST_PREFIX}-device-claude-model`
 const CLAUDE_SHELL_NAME = `${TEST_PREFIX}-claude-shell`
-const CLAUDE_EXECUTOR_IMAGE =
+const CODEX_SHELL_NAME = `${TEST_PREFIX}-codex-shell`
+const CODING_EXECUTOR_IMAGE =
   process.env.E2E_CLAUDE_EXECUTOR_IMAGE || 'wegent/e2e-claudecode-executor:latest'
 const RESPONSE_TIMEOUT_MS = 120_000
 // Mock control requests can race with Node closing an idle keep-alive socket.
@@ -77,6 +80,7 @@ test.describe('Agent conversation regression', () => {
   let chatShellTeam: CreatedTeam
   let claudeChatTeam: CreatedTeam
   let codeTeam: CreatedTeam
+  let codexCodeTeam: CreatedTeam
   let deviceTeam: CreatedTeam
   let manualPipelineTeam: CreatedPipelineTeam
   let automaticPipelineTeam: CreatedPipelineTeam
@@ -423,6 +427,50 @@ test.describe('Agent conversation regression', () => {
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
   })
 
+  test('coding mode Codex executes through app-server and resumes a follow-up', async ({
+    page,
+    request,
+  }) => {
+    const contextToken = makeContextToken('codex_code')
+    const firstPrompt = `Remember this Codex context token: ${contextToken}`
+    const followUpPrompt = 'What context token did I provide in the previous Codex turn?'
+
+    await openTaskPage(page, '/chat?agent=code', codexCodeTeam.id, 'code')
+
+    await sendMessage(page, firstPrompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+    await expect(page.getByTestId('messages-container')).toContainText(
+      `Mock model remembered ${contextToken}`,
+      { timeout: RESPONSE_TIMEOUT_MS }
+    )
+    await waitForBackendTerminal(request, taskId)
+
+    const firstRequest = await waitForCapturedModelRequest(
+      request,
+      capture =>
+        isOpenAIResponsesRequest(capture) && extractText(capture.body).includes(firstPrompt),
+      `Codex Responses request containing ${firstPrompt}`
+    )
+    expect(firstRequest.url).toContain('/responses')
+
+    await sendMessage(page, `${followUpPrompt} Reply with only that token.`)
+    await expect(page.getByTestId('messages-container')).toContainText(
+      `Mock model resumed with ${contextToken}`,
+      { timeout: RESPONSE_TIMEOUT_MS }
+    )
+    await waitForBackendTerminal(request, taskId)
+
+    const secondRequest = await waitForCapturedModelRequest(
+      request,
+      capture =>
+        isOpenAIResponsesRequest(capture) && extractText(capture.body).includes(followUpPrompt),
+      `resumed Codex Responses request containing ${followUpPrompt}`
+    )
+    expect(extractText(secondRequest.body)).toContain(contextToken)
+    expect(extractText(secondRequest.body)).toContain(firstPrompt)
+  })
+
   test('Wework app device supports ClaudeCode dialogue and follow-up', async ({
     page,
     request,
@@ -727,6 +775,35 @@ test.describe('Agent conversation regression', () => {
     )
     expect([200, 201]).toContain(claudeModelResponse.status())
 
+    const codexModelResponse = await request.post(
+      `${API_BASE_URL}/api/v1/namespaces/default/models`,
+      {
+        headers: authHeaders(),
+        data: {
+          apiVersion: 'agent.wecode.io/v1',
+          kind: 'Model',
+          metadata: {
+            name: CODEX_MODEL_NAME,
+            namespace: 'default',
+          },
+          spec: {
+            protocol: 'openai-responses',
+            apiFormat: 'responses',
+            modelConfig: {
+              env: {
+                model: 'openai',
+                model_id: 'gpt-5.1-codex',
+                api_key: 'mock-api-key',
+                OPENAI_API_KEY: 'mock-api-key',
+                base_url: `${CODEX_MODEL_SERVER_URL}/v1`,
+              },
+            },
+          },
+        },
+      }
+    )
+    expect([200, 201]).toContain(codexModelResponse.status())
+
     const deviceClaudeModelResponse = await request.post(
       `${API_BASE_URL}/api/v1/namespaces/default/models`,
       {
@@ -755,7 +832,7 @@ test.describe('Agent conversation regression', () => {
     )
     expect([200, 201]).toContain(deviceClaudeModelResponse.status())
 
-    await createClaudeShell(request)
+    await createCodingShells(request)
 
     const interactiveSkillRef = await resolveSkillRef(request, 'interactive')
     chatShellTeam = await createTeam(request, {
@@ -782,6 +859,13 @@ test.describe('Agent conversation regression', () => {
       shellName: CLAUDE_SHELL_NAME,
       bindMode: ['code'],
       modelName: CLAUDE_MODEL_NAME,
+    })
+    codexCodeTeam = await createTeam(request, {
+      teamName: `${TEST_PREFIX}-codex-code-team`,
+      botName: `${TEST_PREFIX}-codex-code-bot`,
+      shellName: CODEX_SHELL_NAME,
+      bindMode: ['code'],
+      modelName: CODEX_MODEL_NAME,
     })
     deviceTeam = await createTeam(request, {
       teamName: `${TEST_PREFIX}-device-team`,
@@ -814,17 +898,28 @@ test.describe('Agent conversation regression', () => {
     })
   }
 
-  async function createClaudeShell(request: APIRequestContext): Promise<void> {
-    const response = await request.post(`${API_BASE_URL}/api/shells`, {
-      headers: authHeaders(),
-      data: {
+  async function createCodingShells(request: APIRequestContext): Promise<void> {
+    for (const shell of [
+      {
         name: CLAUDE_SHELL_NAME,
         displayName: 'E2E ClaudeCode Executor',
         baseShellRef: 'ClaudeCode',
-        baseImage: CLAUDE_EXECUTOR_IMAGE,
       },
-    })
-    expect([200, 201]).toContain(response.status())
+      {
+        name: CODEX_SHELL_NAME,
+        displayName: 'E2E Codex Executor',
+        baseShellRef: 'Codex',
+      },
+    ]) {
+      const response = await request.post(`${API_BASE_URL}/api/shells`, {
+        headers: authHeaders(),
+        data: {
+          ...shell,
+          baseImage: CODING_EXECUTOR_IMAGE,
+        },
+      })
+      expect([200, 201]).toContain(response.status())
+    }
   }
 
   async function createTeam(
@@ -1037,6 +1132,7 @@ test.describe('Agent conversation regression', () => {
       automaticPipelineTeam,
       manualPipelineTeam,
       deviceTeam,
+      codexCodeTeam,
       codeTeam,
       claudeChatTeam,
       chatShellTeam,
@@ -1059,7 +1155,12 @@ test.describe('Agent conversation regression', () => {
       }
     }
 
-    for (const modelName of [DEVICE_CLAUDE_MODEL_NAME, CLAUDE_MODEL_NAME, CHAT_MODEL_NAME]) {
+    for (const modelName of [
+      DEVICE_CLAUDE_MODEL_NAME,
+      CODEX_MODEL_NAME,
+      CLAUDE_MODEL_NAME,
+      CHAT_MODEL_NAME,
+    ]) {
       await request
         .delete(`${API_BASE_URL}/api/v1/namespaces/default/models/${modelName}`, {
           headers: authHeaders(),
@@ -1067,11 +1168,13 @@ test.describe('Agent conversation regression', () => {
         .catch(() => null)
     }
 
-    await request
-      .delete(`${API_BASE_URL}/api/shells/${CLAUDE_SHELL_NAME}`, {
-        headers: authHeaders(),
-      })
-      .catch(() => null)
+    for (const shellName of [CODEX_SHELL_NAME, CLAUDE_SHELL_NAME]) {
+      await request
+        .delete(`${API_BASE_URL}/api/shells/${shellName}`, {
+          headers: authHeaders(),
+        })
+        .catch(() => null)
+    }
   }
 
   async function cleanupCreatedTasks(request: APIRequestContext): Promise<void> {
@@ -1482,6 +1585,10 @@ test.describe('Agent conversation regression', () => {
 
   function isAnthropicMessagesRequest(capture: CapturedModelRequest): boolean {
     return capture.url.includes('/messages') && !capture.url.includes('/messages/count_tokens')
+  }
+
+  function isOpenAIResponsesRequest(capture: CapturedModelRequest): boolean {
+    return capture.url.includes('/responses')
   }
 
   function requestContainsAll(capture: CapturedModelRequest, expectedTexts: string[]): boolean {
