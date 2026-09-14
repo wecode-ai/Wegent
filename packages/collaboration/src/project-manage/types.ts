@@ -58,6 +58,7 @@ export interface ProjectManageProject {
   visibility?: ProjectManageVisibility;
   tags: string[];
   version: number;
+  access_role?: ProjectManageRole | "RestrictedAnalyst";
 }
 
 export interface ProjectManageMember {
@@ -121,6 +122,7 @@ export interface ProjectManageApi<
     },
   ): Promise<Member>;
   removeMember(projectId: string, userId: number): Promise<void>;
+  transferOwnership?(projectId: string, userId: number): Promise<Project>;
   updateItem(
     itemId: string,
     values: { version: number; tags: string[] },

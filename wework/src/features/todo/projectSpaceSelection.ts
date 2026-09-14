@@ -22,7 +22,7 @@ export interface ProjectSpaceOption {
 export { isDefaultWorkItemProject }
 
 export function canEditProjectSpaceIssue(issue: {
-  can_edit?: boolean
+  permissions?: CloudLoopItem['permissions']
   project_store?: 'local' | 'backend'
 }): boolean {
   return issue.project_store === 'local' ? true : canEditCollaborationIssue(issue)

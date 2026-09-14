@@ -383,14 +383,18 @@ The Wework local runtime classifies bindings as `system` or `user`. Every runtim
 
 ## Authorization
 
-Reuse `resource_members` and `share_links` with a new `CloudProject` resource type.
+Reuse `resource_members` and `share_links` with a new `CloudProject` resource type. Project roles authorize individual actions instead of deriving every capability from one `can_edit` flag.
 
-| Role       | Read | Edit TODOs/files | Manage members | Archive project |
-| ---------- | ---- | ---------------- | -------------- | --------------- |
-| Reporter   | Yes  | No               | No             | No              |
-| Developer  | Yes  | Yes              | No             | No              |
-| Maintainer | Yes  | Yes              | Yes            | No              |
-| Owner      | Yes  | Yes              | Yes            | Yes             |
+| Role       | Read/comment | Edit/execute | Claim unassigned | Hand off own task/submit review | Assign others/complete/reopen | Manage members | Archive/transfer ownership |
+| ---------- | ------------ | ------------ | ---------------- | ------------------------------- | ----------------------------- | -------------- | -------------------------- |
+| Reporter   | Yes          | No           | No               | No                              | No                            | No             | No                         |
+| Developer  | Yes          | Yes          | Yes              | Yes                             | No                            | No             | No                         |
+| Maintainer | Yes          | Yes          | Yes              | Yes                             | Yes                           | Yes            | No                         |
+| Owner      | Yes          | Yes          | Yes              | Yes                             | Yes                           | Yes            | Yes                        |
+
+Issue responses expose `edit_content`, `comment`, `claim`, `handoff`, `assign`, `execute`, `submit_review`, `complete`, and `reopen` under `permissions`. Clients consume these server capabilities directly. Update endpoints derive and authorize actions from actual assignee, status, and content changes; no-op updates require no additional write action.
+
+Workspace and project ownership can be transferred only to an approved human member. The operation locks the resource, confirms the current owner again, and atomically promotes the recipient to `Owner` while demoting the previous owner to `Maintainer`.
 
 Every TODO, delivery, file, and MCP request resolves the caller's cloud-project role first. Inaccessible resources return 404 to avoid disclosing their existence.
 

@@ -218,6 +218,7 @@ function createMockDeliveryApi() {
     addCloudProjectMember: vi.fn().mockResolvedValue({ id: 1 }),
     updateCloudProjectMember: vi.fn().mockResolvedValue({ id: 1 }),
     removeCloudProjectMember: vi.fn().mockResolvedValue(undefined),
+    transferCloudProjectOwnership: vi.fn().mockResolvedValue(project),
     listCloudFiles: vi.fn().mockResolvedValue({
       items: [cloudFile, { ...cloudFile, id: 'file-2', path: 'other.txt' }],
     }),
@@ -531,6 +532,13 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       capability_description: 'Reviewer',
     })
     await api.members.remove('project-1', 8)
+    vi.mocked(deliveryApi.transferCloudProjectOwnership).mockResolvedValue({
+      ...project,
+      id: 9001,
+    })
+    await expect(api.members.transferOwnership?.('project-1', 8)).resolves.toMatchObject({
+      id: '9001',
+    })
   })
 
   it('maps files, deliveries, and executions without desktop side effects', async () => {
@@ -604,6 +612,14 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       'create',
       'update',
       'archive',
+    ])
+    expect(WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS.members).toEqual([
+      'list',
+      'searchUsers',
+      'add',
+      'update',
+      'remove',
+      'transferOwnership',
     ])
     expect(WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS.myWork).toEqual(['list'])
     expect(WEWORK_DELIVERY_SHARED_WORKSPACE_MISSING_METHODS).toEqual({

@@ -12,7 +12,7 @@ import logging
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -435,6 +435,43 @@ def test_completed_external_issue_stays_open_and_archive_closes_it(
     assert writes[0]["state"] == "opened"
     assert "wegent:status:completed" in writes[0]["labels"]
     assert writes[1] == {"state": "closed"}
+
+
+def test_external_noop_status_and_assignment_update_has_no_side_effects(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    issue = _issue()
+    update_issue = Mock()
+    apply_assignee_executions = Mock()
+
+    monkeypatch.setattr(
+        external_loop_item_provider, "_get_issue", lambda _project, _number: issue
+    )
+    monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_apply_assignee_executions",
+        apply_assignee_executions,
+    )
+
+    current = external_loop_item_provider.get(test_db, _item_id(project), test_user.id)
+    updated = external_loop_item_provider.update(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        LoopItemUpdate(
+            version=1,
+            status=current["status"],
+            assignee_user_id=current["assignee_user_id"],
+            assignee_agent_id=current["assignee_agent_id"],
+            assignee_team_id=current["assignee_team_id"],
+        ),
+    )
+
+    assert updated["version"] == current["version"]
+    update_issue.assert_not_called()
+    apply_assignee_executions.assert_not_called()
 
 
 def test_assign_robot_on_gitlab_creates_index_row_and_execution(

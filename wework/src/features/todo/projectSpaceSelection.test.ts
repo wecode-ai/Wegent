@@ -33,19 +33,29 @@ describe('projectSpaceSelection', () => {
     expect(
       canEditProjectSpaceIssue({
         project_store: 'backend',
-        can_edit: undefined,
+        permissions: undefined,
       })
     ).toBe(false)
     expect(
       canEditProjectSpaceIssue({
         project_store: 'backend',
-        can_edit: true,
+        permissions: {
+          edit_content: true,
+          comment: false,
+          claim: false,
+          handoff: false,
+          assign: false,
+          execute: false,
+          submit_review: false,
+          complete: false,
+          reopen: false,
+        },
       })
     ).toBe(true)
     expect(
       canEditProjectSpaceIssue({
         project_store: 'local',
-        can_edit: undefined,
+        permissions: undefined,
       })
     ).toBe(true)
   })

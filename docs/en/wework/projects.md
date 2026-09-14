@@ -73,6 +73,28 @@ Each completed step is marked automatically, and the guide hides after all three
 
 Empty columns also explain what belongs in each stage and name the creation action that is currently available. During a drag, the destination column describes the resulting status. The default **My tasks** board uses task terminology, while other project spaces continue to use issue terminology.
 
+## Collaboration members and permissions
+
+Collaboration workspaces and project spaces maintain separate member roles. Workspace roles govern members, shared resources, and project creation within the workspace. Project roles govern actions on a specific board. Joining a workspace does not automatically grant management rights to every project in it.
+
+A collaboration workspace has these roles:
+
+- **Workspace owner** manages the workspace, members, shared resources, and ownership.
+- **Workspace admin** manages workspace members and shared resources but cannot transfer ownership.
+- **Workspace collaborator** uses workspace resources and creates projects without managing workspace members.
+- **Workspace observer** views the workspace and visible resources without modifying them.
+
+A project space has these roles:
+
+- **Project owner** has full governance rights, including member management, task assignment and acceptance, project archival, and ownership transfer.
+- **Project admin** manages members and robots and can assign, complete, or reopen tasks.
+- **Executor** edits and executes tasks. An executor can claim an unassigned task, hand off a task they own, and submit it for review, but cannot assign work for other members or accept completed work.
+- **Observer** views tasks and comments but cannot edit, claim, execute, or change task status.
+
+Assignee, status, execution, attachment, and comment controls in issue details follow the action permissions returned by the Backend. The UI hides or disables unavailable actions, and the server independently authorizes every write request.
+
+A workspace or project owner can transfer ownership to an existing member from member management. After a successful transfer, the recipient becomes the owner and the previous owner becomes a workspace admin or project admin.
+
 ## Message AI
 
 Use **Message AI** in the project-space header for project exploration and temporary questions. It opens the project conversation sidebar, where you can start or switch conversations and select an execution project. For work that needs formal execution, create a board task and assign a robot so its owner, status, and deliverables remain trackable.

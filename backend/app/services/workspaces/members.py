@@ -7,13 +7,19 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject
+from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
-from app.schemas.base_role import BaseRole
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.workspace import WorkspaceMemberCreate, WorkspaceMemberUpdate
 from app.services.workspaces.access import require_workspace_role
-from app.services.workspaces.storage import project_ids_for_workspace
+from app.services.workspaces.storage import (
+    COLLABORATION_WORKSPACE_KIND,
+    CollaborationWorkspace,
+    project_ids_for_workspace,
+    workspace_from_kind,
+)
 
 
 class WorkspaceMemberService:
@@ -63,7 +69,9 @@ class WorkspaceMemberService:
         user_id: int,
         values: WorkspaceMemberCreate,
     ) -> dict[str, object]:
-        require_workspace_role(db, workspace_id, user_id, BaseRole.Maintainer)
+        _kind, _workspace = _lock_workspace_for_mutation(
+            db, workspace_id, user_id, BaseRole.Maintainer
+        )
         target = db.get(User, values.user_id)
         if target is None or not target.is_active:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
@@ -85,9 +93,9 @@ class WorkspaceMemberService:
         user_id: int,
         values: WorkspaceMemberUpdate,
     ) -> dict[str, object]:
-        workspace = require_workspace_role(
+        _kind, workspace = _lock_workspace_for_mutation(
             db, workspace_id, user_id, BaseRole.Maintainer
-        ).workspace
+        )
         if member_user_id == workspace.created_by_user_id:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Workspace owner is immutable"
@@ -105,9 +113,9 @@ class WorkspaceMemberService:
         member_user_id: int,
         user_id: int,
     ) -> None:
-        workspace = require_workspace_role(
+        _kind, workspace = _lock_workspace_for_mutation(
             db, workspace_id, user_id, BaseRole.Maintainer
-        ).workspace
+        )
         if member_user_id == workspace.created_by_user_id:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Workspace owner cannot be removed"
@@ -140,6 +148,40 @@ class WorkspaceMemberService:
         )
         db.delete(member)
         db.commit()
+
+    def transfer_ownership(
+        self,
+        db: Session,
+        workspace_id: int,
+        new_owner_user_id: int,
+        user_id: int,
+    ) -> CollaborationWorkspace:
+        kind, workspace = _lock_workspace_for_mutation(
+            db, workspace_id, user_id, BaseRole.Owner
+        )
+        if workspace.created_by_user_id != user_id:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Only the current Workspace owner can transfer ownership",
+            )
+        if new_owner_user_id == user_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "User already owns this Workspace"
+            )
+        new_owner, _ = _get_member(db, workspace_id, new_owner_user_id)
+        previous_owner, _ = _get_member(db, workspace_id, user_id)
+        previous_owner.role = BaseRole.Maintainer.value
+        new_owner.role = BaseRole.Owner.value
+        kind.user_id = new_owner_user_id
+        if workspace.is_default:
+            payload = dict(kind.json or {})
+            spec = dict(payload.get("spec") or {})
+            spec["isDefault"] = False
+            payload["spec"] = spec
+            kind.json = payload
+        db.commit()
+        db.refresh(kind)
+        return workspace_from_kind(kind)
 
     def ensure_human_member(
         self,
@@ -198,6 +240,51 @@ def _member_values(member: ResourceMember, user: User) -> dict[str, object]:
         "email": user.email,
         "role": member.role,
     }
+
+
+def _lock_workspace_for_mutation(
+    db: Session,
+    workspace_id: int,
+    user_id: int,
+    required_role: BaseRole,
+) -> tuple[Kind, CollaborationWorkspace]:
+    """Lock a Workspace before authorizing a membership mutation."""
+
+    kind = (
+        db.query(Kind)
+        .filter(
+            Kind.id == workspace_id,
+            Kind.kind == COLLABORATION_WORKSPACE_KIND,
+            Kind.is_active.is_(True),
+        )
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if kind is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+    membership = (
+        db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == ResourceType.WORKSPACE.value,
+            ResourceMember.resource_id == workspace_id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        .first()
+    )
+    if membership is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+    try:
+        role = BaseRole(membership.role)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Invalid Workspace role"
+        ) from exc
+    if not has_permission(role, required_role):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+    return kind, workspace_from_kind(kind)
 
 
 def _get_member(

@@ -33,6 +33,23 @@ import {
   type WorkspaceWorkflowPlan,
 } from '@wegent/collaboration'
 
+function issuePermissions(
+  overrides: Partial<NonNullable<CollaborationIssue['permissions']>> = {}
+): NonNullable<CollaborationIssue['permissions']> {
+  return {
+    edit_content: true,
+    comment: true,
+    claim: true,
+    handoff: true,
+    assign: true,
+    execute: true,
+    submit_review: true,
+    complete: true,
+    reopen: true,
+    ...overrides,
+  }
+}
+
 const issue: CollaborationIssue = {
   id: 'issue-1',
   cloud_project_id: 'project-1',
@@ -52,6 +69,7 @@ const issue: CollaborationIssue = {
   updated_at: '2026-09-10T00:00:00Z',
   completed_at: null,
   can_edit: true,
+  permissions: issuePermissions(),
 }
 
 const project = {
@@ -389,6 +407,15 @@ describe('shared IssueDetail', () => {
       ...issue,
       can_edit: false,
       can_view_detail: true,
+      permissions: issuePermissions({
+        edit_content: false,
+        claim: false,
+        handoff: false,
+        assign: false,
+        submit_review: false,
+        complete: false,
+        reopen: false,
+      }),
       tags: ['只读'],
     }
     const api = createApi({
@@ -464,37 +491,141 @@ describe('shared IssueDetail', () => {
     expect(removeCollaborator).not.toHaveBeenCalled()
   })
 
-  it('allows a project member to comment and start work without assignment permission', () => {
+  it('allows an observer to comment without assignment or execution permission', () => {
     const onCreateTask = jest.fn()
+    const observerIssue = {
+      ...issue,
+      can_edit: false,
+      can_view_detail: true,
+      permissions: issuePermissions({
+        edit_content: false,
+        claim: false,
+        handoff: false,
+        assign: false,
+        execute: false,
+        submit_review: false,
+        complete: false,
+        reopen: false,
+      }),
+    }
 
     renderDetail(createApi(), {
       project: { ...project, access_role: 'Reporter' },
-      issue: { ...issue, can_edit: false, can_view_detail: true },
-      allIssues: [{ ...issue, can_edit: false, can_view_detail: true }],
+      issue: observerIssue,
+      allIssues: [observerIssue],
       members: [member],
       onCreateTask,
     })
 
     expect(screen.getByTestId('collaboration-issue-comment')).toBeEnabled()
     expect(screen.queryByTestId('collaboration-assignment-target')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('cloud-todo-create-task'))
-    expect(onCreateTask).toHaveBeenCalledWith()
+    expect(screen.queryByTestId('cloud-todo-create-task')).not.toBeInTheDocument()
+    expect(onCreateTask).not.toHaveBeenCalled()
   })
 
-  it('keeps comments and assignment closed for a restricted viewer without blocking work', () => {
+  it.each([
+    {
+      permission: 'submit_review' as const,
+      currentStatus: 'pending',
+      nextStatus: 'in_review',
+    },
+    {
+      permission: 'complete' as const,
+      currentStatus: 'in_review',
+      nextStatus: 'completed',
+    },
+    {
+      permission: 'reopen' as const,
+      currentStatus: 'completed',
+      nextStatus: 'in_progress',
+    },
+  ])(
+    'allows a status-only $permission transition without content editing permission',
+    async ({ permission, currentStatus, nextStatus }) => {
+      const update = jest.fn().mockResolvedValue({
+        ...issue,
+        status: nextStatus,
+        version: 2,
+      })
+      const statusOnlyIssue = {
+        ...issue,
+        status: currentStatus,
+        can_edit: false,
+        permissions: issuePermissions({
+          edit_content: false,
+          claim: false,
+          handoff: false,
+          assign: false,
+          execute: true,
+          submit_review: permission === 'submit_review',
+          complete: permission === 'complete',
+          reopen: permission === 'reopen',
+        }),
+      }
+      const projectWithReview = {
+        ...project,
+        board_config: {
+          ...project.board_config,
+          statuses: [
+            ...project.board_config.statuses,
+            { id: 'in_review', name: '待确认', color: 'purple' as const },
+            { id: 'completed', name: '已完成', color: 'green' as const },
+          ],
+        },
+      }
+
+      renderDetail(createApi({ issues: { update } }), {
+        project: projectWithReview,
+        issue: statusOnlyIssue,
+        allIssues: [statusOnlyIssue],
+      })
+
+      expect(screen.getByTestId('cloud-todo-detail-title')).toHaveAttribute('readonly')
+      expect(screen.getByTestId('cloud-todo-detail-status')).toBeEnabled()
+      fireEvent.change(screen.getByTestId('cloud-todo-detail-status'), {
+        target: { value: nextStatus },
+      })
+      fireEvent.click(screen.getByTestId('cloud-todo-save'))
+
+      await waitFor(() =>
+        expect(update).toHaveBeenCalledWith(issue.id, {
+          version: issue.version,
+          status: nextStatus,
+        })
+      )
+    }
+  )
+
+  it('keeps comments, assignment and execution closed for a restricted viewer', () => {
     const onCreateTask = jest.fn()
+    const restrictedIssue = {
+      ...issue,
+      can_edit: false,
+      can_view_detail: true,
+      permissions: issuePermissions({
+        edit_content: false,
+        comment: false,
+        claim: false,
+        handoff: false,
+        assign: false,
+        execute: false,
+        submit_review: false,
+        complete: false,
+        reopen: false,
+      }),
+    }
 
     renderDetail(createApi(), {
       project: { ...project, access_role: 'RestrictedAnalyst' },
-      issue: { ...issue, can_edit: false, can_view_detail: true },
-      allIssues: [{ ...issue, can_edit: false, can_view_detail: true }],
+      issue: restrictedIssue,
+      allIssues: [restrictedIssue],
       onCreateTask,
     })
 
     expect(screen.getByTestId('collaboration-issue-comment')).toBeDisabled()
     expect(screen.queryByTestId('collaboration-assignment-target')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('cloud-todo-create-task'))
-    expect(onCreateTask).toHaveBeenCalledWith()
+    expect(screen.queryByTestId('cloud-todo-create-task')).not.toBeInTheDocument()
+    expect(onCreateTask).not.toHaveBeenCalled()
   })
 
   it('allows an explicitly editable Issue to submit a comment', async () => {

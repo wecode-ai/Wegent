@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   canAccessCollaborationProjectView,
+  canApplyCollaborationIssueMutation,
   canAssignCollaborationIssue,
   canCommentCollaborationIssue,
   canEditCollaborationIssue,
@@ -14,10 +15,26 @@ import {
 } from "./permissions";
 
 describe("collaboration permissions", () => {
-  it("fails closed when a cloud issue omits can_edit", () => {
-    expect(canEditCollaborationIssue({})).toBe(false);
-    expect(canEditCollaborationIssue({ can_edit: false })).toBe(false);
-    expect(canEditCollaborationIssue({ can_edit: true })).toBe(true);
+  const permissions = {
+    edit_content: false,
+    comment: false,
+    claim: false,
+    handoff: false,
+    assign: false,
+    execute: false,
+    submit_review: false,
+    complete: false,
+    reopen: false,
+  };
+
+  it("uses server permissions and fails closed when a cloud issue omits them", () => {
+    expect(canEditCollaborationIssue({ project_store: "backend" })).toBe(false);
+    expect(
+      canEditCollaborationIssue({
+        project_store: "backend",
+        permissions: { ...permissions, edit_content: true },
+      }),
+    ).toBe(true);
   });
 
   it("fails closed when a backend project omits access_role", () => {
@@ -47,8 +64,12 @@ describe("collaboration permissions", () => {
 
   it("keeps edit, comment, assignment and start-work permissions independent", () => {
     const readOnlyIssue = {
-      can_edit: false,
-      can_view_detail: true,
+      permissions: {
+        ...permissions,
+        comment: true,
+        assign: true,
+        execute: true,
+      },
     };
 
     expect(
@@ -61,63 +82,159 @@ describe("collaboration permissions", () => {
       canComment: true,
       canAssign: true,
       canStartWork: true,
+      canSubmitReview: false,
+      canComplete: false,
+      canReopen: false,
     });
     expect(
       getCollaborationIssueActionPermissions(
-        { access_role: "Reporter", project_store: "backend" },
-        readOnlyIssue,
+        { project_store: "backend" },
+        {
+          permissions: {
+            ...permissions,
+            comment: true,
+          },
+        },
       ),
     ).toEqual({
       canEdit: false,
       canComment: true,
       canAssign: false,
-      canStartWork: true,
+      canStartWork: false,
+      canSubmitReview: false,
+      canComplete: false,
+      canReopen: false,
     });
     expect(
       getCollaborationIssueActionPermissions(
-        { access_role: "RestrictedAnalyst", project_store: "backend" },
-        readOnlyIssue,
+        { project_store: "backend" },
+        { permissions },
       ),
     ).toEqual({
       canEdit: false,
       canComment: false,
       canAssign: false,
-      canStartWork: true,
+      canStartWork: false,
+      canSubmitReview: false,
+      canComplete: false,
+      canReopen: false,
     });
   });
 
-  it("requires project management permission for assignment", () => {
+  it("uses the server assignment capability", () => {
     expect(
-      canAssignCollaborationIssue({
-        access_role: "Maintainer",
-        project_store: "backend",
-      }),
+      canAssignCollaborationIssue(
+        { project_store: "backend" },
+        { permissions: { ...permissions, assign: true } },
+      ),
     ).toBe(true);
     expect(
-      canAssignCollaborationIssue({
-        access_role: "Developer",
-        project_store: "backend",
-      }),
+      canAssignCollaborationIssue(
+        { project_store: "backend" },
+        { permissions },
+      ),
     ).toBe(false);
   });
 
-  it("uses membership for comments and visibility for starting work", () => {
-    const reporter = {
-      access_role: "Reporter" as const,
+  it("keeps comment and execution capabilities independent", () => {
+    expect(
+      canCommentCollaborationIssue(
+        { project_store: "backend" },
+        { permissions: { ...permissions, comment: true } },
+      ),
+    ).toBe(true);
+    expect(
+      canCommentCollaborationIssue(
+        { project_store: "backend" },
+        { permissions },
+      ),
+    ).toBe(false);
+    expect(
+      canStartWorkOnCollaborationIssue(
+        { project_store: "backend" },
+        { permissions: { ...permissions, execute: true } },
+      ),
+    ).toBe(true);
+    expect(
+      canStartWorkOnCollaborationIssue(
+        { project_store: "backend" },
+        { permissions },
+      ),
+    ).toBe(false);
+  });
+
+  it("authorizes board status drops with the matching workflow capability", () => {
+    const project = {
+      current_user_id: 7,
       project_store: "backend" as const,
+    };
+    const developerIssue = {
+      assignee_agent_id: null,
+      assignee_team_id: null,
+      assignee_user_id: 7,
+      permissions: {
+        ...permissions,
+        edit_content: true,
+        handoff: true,
+        submit_review: true,
+      },
+      status: "in_progress",
     };
 
     expect(
-      canCommentCollaborationIssue(reporter, { can_view_detail: true }),
+      canApplyCollaborationIssueMutation(project, developerIssue, {
+        kind: "status",
+        status: "in_review",
+      }),
     ).toBe(true);
     expect(
-      canCommentCollaborationIssue(reporter, { can_view_detail: false }),
+      canApplyCollaborationIssueMutation(project, developerIssue, {
+        kind: "status",
+        status: "completed",
+      }),
     ).toBe(false);
-    expect(canStartWorkOnCollaborationIssue({ can_view_detail: true })).toBe(
-      true,
-    );
-    expect(canStartWorkOnCollaborationIssue({ can_view_detail: false })).toBe(
-      false,
-    );
+    expect(
+      canApplyCollaborationIssueMutation(
+        project,
+        { ...developerIssue, status: "completed" },
+        { kind: "status", status: "pending" },
+      ),
+    ).toBe(false);
+  });
+
+  it("only uses claim permission for assigning an unassigned issue to self", () => {
+    const project = {
+      current_user_id: 7,
+      project_store: "backend" as const,
+    };
+    const unassignedIssue = {
+      assignee_agent_id: "",
+      assignee_team_id: null,
+      assignee_user_id: null,
+      permissions: { ...permissions, claim: true, edit_content: true },
+      status: "pending",
+    };
+
+    expect(
+      canApplyCollaborationIssueMutation(project, unassignedIssue, {
+        kind: "assignee",
+        assigneeId: "7",
+        assigneeType: "user",
+      }),
+    ).toBe(true);
+    expect(
+      canApplyCollaborationIssueMutation(project, unassignedIssue, {
+        kind: "assignee",
+        assigneeId: "8",
+        assigneeType: "user",
+      }),
+    ).toBe(false);
+    expect(
+      canApplyCollaborationIssueMutation(project, unassignedIssue, {
+        kind: "assignee",
+        assigneeId: "agent-1",
+        assigneeType: "agent",
+      }),
+    ).toBe(false);
   });
 });

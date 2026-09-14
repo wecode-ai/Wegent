@@ -391,6 +391,22 @@ const sharedMessages: Record<
     "todo.update_member_failed": "更新成员失败",
     "todo.update_member_capability_failed": "更新成员能力失败",
     "todo.remove_member_failed": "移除成员失败",
+    "todo.project_role_owner": "项目负责人",
+    "todo.project_role_owner_description":
+      "管理项目、成员与任务规则，并可移交所有权。",
+    "todo.project_role_maintainer": "项目管理员",
+    "todo.project_role_maintainer_description":
+      "管理成员、指派任务、验收完成或重新打开任务。",
+    "todo.project_role_developer": "执行者",
+    "todo.project_role_developer_description":
+      "编辑和执行任务，可自领、转交本人任务并提交验收。",
+    "todo.project_role_reporter": "项目观察者",
+    "todo.project_role_reporter_description":
+      "查看任务并参与评论，不编辑或执行任务。",
+    "todo.transfer_project_ownership": "移交负责人",
+    "todo.transfer_project_ownership_confirm":
+      "将项目负责人移交给“{{name}}”？移交后你将成为项目管理员。",
+    "todo.transfer_project_ownership_failed": "移交项目负责人失败",
     "todo.create_tag_failed": "新建标签失败",
     "todo.rename_tag_failed": "重命名标签失败",
     "todo.delete_tag_failed": "删除标签失败",
@@ -933,6 +949,23 @@ const sharedMessages: Record<
     "todo.execution_tasks": "Execution tasks",
     "todo.execution_duration": "Execution duration",
     "todo.follow_up_owner": "Owner",
+    "todo.project_role_owner": "Project owner",
+    "todo.project_role_owner_description":
+      "Manages the project, members, task rules, and ownership.",
+    "todo.project_role_maintainer": "Project admin",
+    "todo.project_role_maintainer_description":
+      "Manages members, assignments, completion, and reopening.",
+    "todo.project_role_developer": "Executor",
+    "todo.project_role_developer_description":
+      "Edits and runs tasks, self-claims, hands off owned tasks, and submits review.",
+    "todo.project_role_reporter": "Project observer",
+    "todo.project_role_reporter_description":
+      "Views and comments without editing or executing tasks.",
+    "todo.transfer_project_ownership": "Transfer ownership",
+    "todo.transfer_project_ownership_confirm":
+      "Transfer Project ownership to {{name}}? You will become a Project admin.",
+    "todo.transfer_project_ownership_failed":
+      "Failed to transfer Project ownership",
     "todo.new_task": "New task",
     "todo.no_linked_task": "No linked tasks",
     "todo.no_running_task": "No running tasks",

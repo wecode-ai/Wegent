@@ -49,6 +49,7 @@ function createWorkspaceApi() {
     capability_description: "Release owner",
   });
   const removeMember = vi.fn().mockResolvedValue(undefined);
+  const transferOwnership = vi.fn().mockResolvedValue(project);
 
   const workspaceApi: SharedProjectManageWorkspaceApi = {
     projects: { update: updateProject },
@@ -62,6 +63,7 @@ function createWorkspaceApi() {
       add: addMember,
       update: updateMember,
       remove: removeMember,
+      transferOwnership,
     },
   };
 
@@ -75,6 +77,7 @@ function createWorkspaceApi() {
     addMember,
     updateMember,
     removeMember,
+    transferOwnership,
   };
 }
 
@@ -106,6 +109,7 @@ describe("createSharedWorkspaceProjectManageApi", () => {
       capability_description: "Release owner",
     });
     await api.removeMember("project-1", 7);
+    await api.transferOwnership?.("project-1", 7);
 
     expect(mocks.addMember).toHaveBeenCalledWith("project-1", 7, undefined);
     expect(mocks.updateMember).toHaveBeenCalledWith("project-1", 7, {
@@ -113,6 +117,7 @@ describe("createSharedWorkspaceProjectManageApi", () => {
       capabilityDescription: "Release owner",
     });
     expect(mocks.removeMember).toHaveBeenCalledWith("project-1", 7);
+    expect(mocks.transferOwnership).toHaveBeenCalledWith("project-1", 7);
   });
 
   it("converts manage form updates to canonical workspace input names", async () => {

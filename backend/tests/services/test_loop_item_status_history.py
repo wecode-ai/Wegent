@@ -159,6 +159,7 @@ def test_creator_only_project_still_records(test_db, test_user) -> None:
 def test_from_equals_to_adds_nothing(test_db, test_user) -> None:
     project = _make_project(test_db, test_user)
     item = _create_item(test_db, project, test_user)
+    original_version = item.version
 
     updated = loop_item_service.update(
         test_db,
@@ -167,6 +168,7 @@ def test_from_equals_to_adds_nothing(test_db, test_user) -> None:
         LoopItemUpdate(version=item.version, status="inbox"),
     )
     assert len(_history(updated)) == 1
+    assert updated.version == original_version
 
 
 def test_processing_boundary_uses_project_status_order(test_db, test_user) -> None:

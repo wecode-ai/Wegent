@@ -26,7 +26,10 @@ import {
   type StandardCloudBoardMutation,
 } from "../project-board";
 import type { WorkspaceTaskBinding } from "../ports/SharedWorkspaceApi";
-import { canEditCollaborationIssue } from "../permissions";
+import {
+  canApplyCollaborationIssueMutation,
+  canEditCollaborationIssue,
+} from "../permissions";
 import { collaborationTestIds } from "../testIds";
 import type {
   CollaborationIssue,
@@ -266,8 +269,10 @@ export function ProjectBoardAdapter({
     focusStorageKey: `collaboration-board-focus:${project.id}`,
     items: issues,
     onGroupByChange,
-    onMove: (issue, _column, _beforeItemId, mutation) =>
-      onMove(issue, mutation),
+    onMove: (issue, _column, _beforeItemId, mutation) => {
+      if (!canApplyCollaborationIssueMutation(project, issue, mutation)) return;
+      return onMove(issue, mutation);
+    },
     personalGroupStorageKey: null,
   });
   const display = project.card_display ?? {
@@ -405,9 +410,9 @@ export function ProjectBoardAdapter({
         renderItem={(issue, column) => {
           const nativeContainerProps: ProjectBoardIssueCardRenderContext["nativeContainerProps"] =
             {
-              draggable: canEditCollaborationIssue(issue),
+              draggable: canEditCollaborationIssue(project, issue),
               onDragStart: (event) => {
-                if (!canEditCollaborationIssue(issue)) {
+                if (!canEditCollaborationIssue(project, issue)) {
                   event.preventDefault();
                   return;
                 }
@@ -425,7 +430,10 @@ export function ProjectBoardAdapter({
                 const itemId = event.dataTransfer.getData("text/plain");
                 controller.setActiveDragItemId(null);
                 const movingIssue = issues.find((item) => item.id === itemId);
-                if (movingIssue && canEditCollaborationIssue(movingIssue)) {
+                if (
+                  movingIssue &&
+                  canEditCollaborationIssue(project, movingIssue)
+                ) {
                   controller.moveItem(itemId, column, issue.id);
                 }
               },

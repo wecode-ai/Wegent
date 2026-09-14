@@ -62,6 +62,17 @@ const baseItem = {
   updated_at: '2026-08-01T00:00:00',
   version: 1,
   can_edit: true,
+  permissions: {
+    edit_content: true,
+    comment: true,
+    claim: true,
+    handoff: true,
+    assign: true,
+    execute: true,
+    submit_review: true,
+    complete: true,
+    reopen: true,
+  },
 } as unknown as CloudLoopItem
 
 const project = { id: '11', name: 'Wework' } as unknown as CloudProject
@@ -144,7 +155,12 @@ describe('TodoEditor external item sync', () => {
     render(
       <TodoEditor
         mode="edit"
-        item={{ ...baseItem, can_edit: undefined, project_store: 'backend' }}
+        item={{
+          ...baseItem,
+          can_edit: undefined,
+          permissions: undefined,
+          project_store: 'backend',
+        }}
         project={{ ...project, project_store: 'backend' }}
         allItems={[baseItem]}
         onUpdated={vi.fn()}
@@ -169,6 +185,13 @@ describe('TodoEditor external item sync', () => {
       ...baseItem,
       can_view_detail: true,
       can_edit: false,
+      permissions: {
+        ...baseItem.permissions!,
+        edit_content: false,
+        claim: false,
+        handoff: false,
+        assign: false,
+      },
       assignee_user_id: 42,
       assignee_agent_id: null,
       project_store: 'backend' as const,
