@@ -46,7 +46,7 @@ jest.mock('@/features/settings/services/teams', () => ({
 
 jest.mock('@/features/settings/components/team-modes', () => ({
   getAllowedAgentsForTeamMode: (mode: string) => {
-    if (mode === 'pipeline' || mode === 'coordinate') return ['ClaudeCode']
+    if (mode === 'pipeline' || mode === 'coordinate') return ['Codex', 'ClaudeCode']
     if (mode === 'route' || mode === 'collaborate') return []
     return undefined
   },
@@ -193,7 +193,7 @@ describe('TeamEditDialog display name', () => {
     })
   })
 
-  it('restricts the executor to ClaudeCode when code or task mode is selected', async () => {
+  it('restricts the executor to coding agents when code or task mode is selected', async () => {
     const team = makeTeam()
     team.bind_mode = ['code']
 
@@ -210,21 +210,21 @@ describe('TeamEditDialog display name', () => {
       />
     )
 
-    // 'code' alone is enough to restrict to ClaudeCode
+    // 'code' alone is enough to restrict to coding agents
     await screen.findByRole('button', { name: 'Task' })
     expect(mockTeamModeEditor).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        allowedAgentsForMode: ['ClaudeCode'],
+        allowedAgentsForMode: ['Codex', 'ClaudeCode'],
       })
     )
 
-    // Adding 'task' keeps the ClaudeCode restriction
+    // Adding 'task' keeps the coding-agent restriction
     fireEvent.click(screen.getByRole('button', { name: 'Task' }))
 
     await waitFor(() => {
       expect(mockTeamModeEditor).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          allowedAgentsForMode: ['ClaudeCode'],
+          allowedAgentsForMode: ['Codex', 'ClaudeCode'],
         })
       )
     })

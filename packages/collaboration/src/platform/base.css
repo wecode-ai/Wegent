@@ -35,8 +35,11 @@
   border: 0;
   border-radius: 8px;
   padding: 8px 14px;
-  color: rgb(var(--color-bg-base));
-  background: rgb(var(--color-text-primary));
+  color: var(--collaboration-primary-foreground, rgb(var(--color-bg-base)));
+  background: var(
+    --collaboration-primary-background,
+    rgb(var(--color-text-primary))
+  );
   cursor: pointer;
 }
 

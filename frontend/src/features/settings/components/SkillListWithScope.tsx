@@ -319,8 +319,8 @@ export function SkillListWithScope({
 
   const isGroupSkill = useCallback(
     (skill: UnifiedSkill) =>
-      !isSystemSkill(skill) &&
-      (Boolean(skill.namespace && skill.namespace !== 'default') || Boolean(skill.is_group_shared)),
+      Boolean(skill.is_group_shared) ||
+      (!isSystemSkill(skill) && Boolean(skill.namespace && skill.namespace !== 'default')),
     []
   )
 

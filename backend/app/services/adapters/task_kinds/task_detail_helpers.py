@@ -206,6 +206,7 @@ def get_requested_skills_from_task(task_crd: Any) -> Optional[List[SkillRef]]:
 
     return [
         SkillRef(
+            skill_id=ref.get("skill_id"),
             name=ref["name"],
             namespace=ref["namespace"],
             is_public=ref["is_public"],

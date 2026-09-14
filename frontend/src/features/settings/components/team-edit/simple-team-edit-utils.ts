@@ -7,7 +7,8 @@ import { filterSelectableShells, type UnifiedShell } from '@/apis/shells'
 import type { Bot, TaskType } from '@/types/api'
 
 export type SimpleExecutorMode = 'simple' | 'complex' | 'custom'
-export type ExecutorNormalizationReason = 'requires_claude_code' | null
+export type CodingExecutorRuntime = 'codex' | 'claude_code'
+export type ExecutorNormalizationReason = 'requires_coding_agent' | null
 
 export interface SimpleBindModeOption {
   value: Extract<TaskType, 'chat' | 'code' | 'task' | 'video' | 'image'>
@@ -23,6 +24,7 @@ export interface SimpleExecutorOption {
 
 export interface NormalizedExecutor {
   mode: SimpleExecutorMode
+  codingRuntime: CodingExecutorRuntime
   reason: ExecutorNormalizationReason
 }
 
@@ -84,7 +86,7 @@ export function getSimpleExecutorOptions(): SimpleExecutorOption[] {
   return SIMPLE_EXECUTOR_OPTIONS
 }
 
-export function bindModeRequiresClaudeCode(bindMode: TaskType[]): boolean {
+export function bindModeRequiresCodingAgent(bindMode: TaskType[]): boolean {
   return bindMode.includes('code') || bindMode.includes('task')
 }
 
@@ -94,15 +96,16 @@ export function getModelCategoryTypeForBindMode(bindMode: TaskType[]): ModelCate
   return 'llm'
 }
 
-export function isClaudeCodeShell(shell: UnifiedShell | null | undefined): boolean {
-  return shell?.shellType === 'ClaudeCode'
+export function isCodingAgentShell(shell: UnifiedShell | null | undefined): boolean {
+  const shellType = shell?.shellType.toLowerCase()
+  return shellType === 'codex' || shellType === 'claudecode'
 }
 
 type ShellIdentity = Pick<UnifiedShell, 'name'> & Partial<Pick<UnifiedShell, 'shellType'>>
 
 export function shellSupportsPreloadSkills(shell: ShellIdentity | null | undefined): boolean {
-  const shellType = shell?.shellType || shell?.name
-  return shellType === 'Chat' || shellType === 'ClaudeCode'
+  const shellType = (shell?.shellType || shell?.name || '').toLowerCase()
+  return shellType === 'chat' || shellType === 'codex' || shellType === 'claudecode'
 }
 
 export function getCustomShells(shells: UnifiedShell[]): UnifiedShell[] {
@@ -114,14 +117,16 @@ export function getCustomShells(shells: UnifiedShell[]): UnifiedShell[] {
 export function resolveShellForExecutor(
   shells: UnifiedShell[],
   mode: SimpleExecutorMode,
-  customShellName?: string
+  customShellName?: string,
+  codingRuntime: CodingExecutorRuntime = 'codex'
 ): UnifiedShell | null {
   if (mode === 'simple') {
     return shells.find(shell => shell.shellType === 'Chat') ?? null
   }
 
   if (mode === 'complex') {
-    return shells.find(shell => shell.shellType === 'ClaudeCode') ?? null
+    const shellType = codingRuntime === 'codex' ? 'codex' : 'claudecode'
+    return shells.find(shell => shell.shellType.toLowerCase() === shellType) ?? null
   }
 
   if (!customShellName) {
@@ -133,46 +138,68 @@ export function resolveShellForExecutor(
 
 export function resolveSimpleExecutorFromBot(bot: Bot | undefined): {
   mode: SimpleExecutorMode
+  codingRuntime: CodingExecutorRuntime
   customShellName: string
 } {
   if (!bot) {
-    return { mode: 'simple', customShellName: '' }
+    return { mode: 'simple', codingRuntime: 'codex', customShellName: '' }
+  }
+
+  const shellType = bot.shell_type.toLowerCase()
+  if (bot.shell_name === 'Codex') {
+    return { mode: 'complex', codingRuntime: 'codex', customShellName: '' }
   }
 
   if (bot.shell_name === 'ClaudeCode') {
-    return { mode: 'complex', customShellName: '' }
+    return { mode: 'complex', codingRuntime: 'claude_code', customShellName: '' }
   }
 
   if (bot.shell_name === 'Chat') {
-    return { mode: 'simple', customShellName: '' }
+    return { mode: 'simple', codingRuntime: 'codex', customShellName: '' }
   }
 
-  return { mode: 'custom', customShellName: bot.shell_name }
+  if (!bot.shell_name && shellType === 'codex') {
+    return { mode: 'complex', codingRuntime: 'codex', customShellName: '' }
+  }
+
+  if (!bot.shell_name && shellType === 'claudecode') {
+    return { mode: 'complex', codingRuntime: 'claude_code', customShellName: '' }
+  }
+
+  return { mode: 'custom', codingRuntime: 'codex', customShellName: bot.shell_name }
 }
 
 export function normalizeExecutorForBindMode(
   mode: SimpleExecutorMode,
   bindMode: TaskType[],
   shells: UnifiedShell[],
-  customShellName?: string
+  customShellName?: string,
+  codingRuntime: CodingExecutorRuntime = 'codex'
 ): NormalizedExecutor {
-  if (!bindModeRequiresClaudeCode(bindMode)) {
-    return { mode, reason: null }
+  if (!bindModeRequiresCodingAgent(bindMode)) {
+    return { mode, codingRuntime, reason: null }
   }
 
   if (mode === 'custom') {
-    return { mode, reason: null }
+    return { mode, codingRuntime, reason: null }
   }
 
-  const selectedShell = resolveShellForExecutor(shells, mode, customShellName)
-  if (isClaudeCodeShell(selectedShell)) {
-    return { mode, reason: null }
+  const selectedShell = resolveShellForExecutor(shells, mode, customShellName, codingRuntime)
+  if (isCodingAgentShell(selectedShell)) {
+    return { mode, codingRuntime, reason: null }
   }
 
-  const complexShell = resolveShellForExecutor(shells, 'complex')
-  if (complexShell) {
-    return { mode: 'complex', reason: 'requires_claude_code' }
+  if (resolveShellForExecutor(shells, 'complex', undefined, 'codex')) {
+    return { mode: 'complex', codingRuntime: 'codex', reason: 'requires_coding_agent' }
   }
 
-  return { mode, reason: 'requires_claude_code' }
+  if (resolveShellForExecutor(shells, 'complex', undefined, 'claude_code')) {
+    return {
+      mode: 'complex',
+      codingRuntime: 'claude_code',
+      reason: 'requires_coding_agent',
+    }
+  }
+
+  return { mode, codingRuntime, reason: 'requires_coding_agent' }
 }

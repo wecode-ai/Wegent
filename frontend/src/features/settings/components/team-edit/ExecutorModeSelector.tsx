@@ -9,6 +9,11 @@ import { Bot, Code2, Settings2 } from 'lucide-react'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
+  simpleChoiceCardBaseClass,
+  simpleChoiceCardSelectedClass,
+  simpleChoiceCardUnselectedClass,
+} from '@/components/common/simple-choice-card-styles'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -19,13 +24,9 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { UnifiedShell } from '@/apis/shells'
 import {
-  simpleChoiceCardBaseClass,
-  simpleChoiceCardSelectedClass,
-  simpleChoiceCardUnselectedClass,
-} from './simple-choice-card-styles'
-import {
   getCustomShells,
   getSimpleExecutorOptions,
+  type CodingExecutorRuntime,
   type SimpleExecutorMode,
 } from './simple-team-edit-utils'
 
@@ -35,6 +36,8 @@ interface ExecutorModeSelectorProps {
   shells: UnifiedShell[]
   customShellName: string
   onCustomShellChange: (value: string) => void
+  codingRuntime: CodingExecutorRuntime
+  onCodingRuntimeChange: (value: CodingExecutorRuntime) => void
   disabledModes?: SimpleExecutorMode[]
   helperText?: string | null
   hideLabel?: boolean
@@ -52,6 +55,8 @@ export default function ExecutorModeSelector({
   shells,
   customShellName,
   onCustomShellChange,
+  codingRuntime,
+  onCodingRuntimeChange,
   disabledModes = [],
   helperText,
   hideLabel = false,
@@ -107,6 +112,47 @@ export default function ExecutorModeSelector({
       </RadioGroup>
 
       {helperText && <p className="text-xs text-text-secondary">{helperText}</p>}
+
+      {value === 'complex' && (
+        <div className="space-y-1.5">
+          <Label className="text-xs text-text-secondary">
+            {t('settings:team.simple.executor.coding_runtime_label')}
+          </Label>
+          <RadioGroup
+            value={codingRuntime}
+            onValueChange={next => onCodingRuntimeChange(next as CodingExecutorRuntime)}
+          >
+            <div className="grid gap-2 sm:grid-cols-2">
+              {(['codex', 'claude_code'] as const).map(runtime => (
+                <label
+                  key={runtime}
+                  className={cn(
+                    simpleChoiceCardBaseClass,
+                    codingRuntime === runtime
+                      ? simpleChoiceCardSelectedClass
+                      : simpleChoiceCardUnselectedClass
+                  )}
+                  data-testid={`simple-coding-runtime-${runtime}-card`}
+                >
+                  <RadioGroupItem
+                    value={runtime}
+                    aria-label={t(`settings:team.simple.executor.${runtime}.title`)}
+                    data-testid={`simple-coding-runtime-${runtime}-radio`}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">
+                      {t(`settings:team.simple.executor.${runtime}.title`)}
+                    </div>
+                    <p className="mt-0.5 text-xs leading-5 text-text-secondary">
+                      {t(`settings:team.simple.executor.${runtime}.description`)}
+                    </p>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </RadioGroup>
+        </div>
+      )}
 
       {value === 'custom' && (
         <div className="space-y-1.5">

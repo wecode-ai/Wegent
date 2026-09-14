@@ -18,6 +18,7 @@ import type {
   CollaborationWorkspaceNavigationContext,
 } from "../types";
 import type { CollaborationPlatformLocation } from "./types";
+import type { WorkspaceProjectIssuesSnapshot } from "./workspaceOperations";
 
 export interface CollaborationPlatformState {
   workspaces: CollaborationWorkspace[];
@@ -25,6 +26,7 @@ export interface CollaborationPlatformState {
   workspaceNavigationContext: CollaborationWorkspaceNavigationContext | null;
   navigationProjects: CollaborationProject[];
   projects: CollaborationProject[];
+  projectIssues: Record<string, WorkspaceProjectIssuesSnapshot>;
   members: CollaborationMember[];
   agents: CollaborationOwnedAgent[];
   collaborationGroups: CollaborationGroup[];
@@ -73,6 +75,7 @@ export function useCollaborationPlatformController({
     workspaceNavigationContext: null,
     navigationProjects: [],
     projects: [],
+    projectIssues: {},
     members: [],
     agents: [],
     collaborationGroups: [],
@@ -94,7 +97,13 @@ export function useCollaborationPlatformController({
       }));
       return;
     }
-    setState((current) => ({ ...current, loading: true, error: null }));
+    setState((current) => ({
+      ...current,
+      loading:
+        current.workspace?.id !== location.workspaceId ||
+        Boolean(location.projectId),
+      error: null,
+    }));
     try {
       const [workspaces, navigationProjects] = await Promise.all([
         api.workspaces.list(),
@@ -109,6 +118,7 @@ export function useCollaborationPlatformController({
           workspaceNavigationContext: null,
           navigationProjects,
           projects: navigationProjects,
+          projectIssues: {},
           members: [],
           agents: [],
           collaborationGroups: [],
@@ -137,6 +147,7 @@ export function useCollaborationPlatformController({
           projects: navigationProjects.filter(
             (project) => project.workspace_id === location.workspaceId,
           ),
+          projectIssues: {},
           members: [],
           agents: [],
           collaborationGroups: [],
@@ -146,6 +157,9 @@ export function useCollaborationPlatformController({
         }));
         return;
       }
+      const workspaceProjects = navigationProjects.filter(
+        (project) => project.workspace_id === location.workspaceId,
+      );
       const [
         workspace,
         members,
@@ -153,6 +167,7 @@ export function useCollaborationPlatformController({
         collaborationGroups,
         executionEnvironments,
         resources,
+        projectSnapshots,
       ] = await Promise.all([
         api.workspaces.get(location.workspaceId),
         api.workspaces.listMembers(location.workspaceId),
@@ -160,6 +175,31 @@ export function useCollaborationPlatformController({
         api.workspaces.listCollaborationGroups(location.workspaceId),
         api.workspaces.listExecutionEnvironments(location.workspaceId),
         api.resources ? api.resources.list() : emptyResources,
+        location.workspaceView === "home"
+          ? Promise.all(
+              workspaceProjects.map(async (project) => {
+                try {
+                  const snapshot = await api.issues.getBoardSnapshot(
+                    project.id,
+                  );
+                  return {
+                    projectId: project.id,
+                    value: {
+                      status: "available",
+                      issues: snapshot.items,
+                    } satisfies WorkspaceProjectIssuesSnapshot,
+                  };
+                } catch {
+                  return {
+                    projectId: project.id,
+                    value: {
+                      status: "unavailable",
+                    } satisfies WorkspaceProjectIssuesSnapshot,
+                  };
+                }
+              }),
+            )
+          : Promise.resolve([]),
       ]);
       if (revision !== loadRevisionRef.current) return;
       setState((current) => ({
@@ -168,8 +208,9 @@ export function useCollaborationPlatformController({
         workspace,
         workspaceNavigationContext: null,
         navigationProjects,
-        projects: navigationProjects.filter(
-          (project) => project.workspace_id === location.workspaceId,
+        projects: workspaceProjects,
+        projectIssues: Object.fromEntries(
+          projectSnapshots.map(({ projectId, value }) => [projectId, value]),
         ),
         members,
         agents,
@@ -186,7 +227,13 @@ export function useCollaborationPlatformController({
         error: loadFailedMessage,
       }));
     }
-  }, [api, loadFailedMessage, location.projectId, location.workspaceId]);
+  }, [
+    api,
+    loadFailedMessage,
+    location.projectId,
+    location.workspaceId,
+    location.workspaceView,
+  ]);
 
   useEffect(() => {
     void load();
@@ -247,6 +294,10 @@ export function useCollaborationPlatformController({
         setState((current) => ({
           ...current,
           projects: [project, ...current.projects],
+          projectIssues: {
+            ...current.projectIssues,
+            [project.id]: { status: "available", issues: [] },
+          },
           navigationProjects: [project, ...current.navigationProjects],
           ...updateCurrentWorkspace(current, (workspace) => ({
             ...workspace,

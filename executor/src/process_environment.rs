@@ -387,7 +387,7 @@ fn capture_shell_environment(
         SHELL_ENV_DELIMITER
     );
     let mut child = Command::new(shell)
-        .args(["-ilc", &script])
+        .args(["-lc", &script])
         .env("CODEX_SHELL", "1")
         .env(SHELL_ENV_MARKER, "1")
         .env("DISABLE_AUTO_UPDATE", "true")
@@ -645,6 +645,35 @@ mod tests {
         assert_eq!(
             environment.values.get("SHELL").map(String::as_str),
             Some(script_path.to_string_lossy().as_ref())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_environment_loader_uses_a_non_interactive_login_shell() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temp directory should be created");
+        let arguments_path = directory.path().join("arguments");
+        let script_path = directory.path().join("shell");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" > '{1}'\nprintf '{0}PATH=/usr/bin\\n{0}'\n",
+            SHELL_ENV_DELIMITER,
+            arguments_path.display()
+        );
+        std::fs::write(&script_path, script).expect("script should be written");
+        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
+            .expect("script should be executable");
+
+        load_shell_environment_from_candidates(
+            &[script_path.display().to_string()],
+            Duration::from_secs(30),
+        )
+        .expect("shell environment should load");
+
+        assert_eq!(
+            std::fs::read_to_string(arguments_path).expect("arguments should be captured"),
+            "-lc\n"
         );
     }
 

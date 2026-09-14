@@ -4,6 +4,7 @@
 
 import type { ReactNode } from "react";
 import type { SharedWorkflowNode } from "./issue-detail/workflowTypes";
+import type { ProjectAgentConfigurationHost } from "./project-agent-config/types";
 import type { ProjectCreateHostAdapter } from "./project-create/types";
 
 export type CollaborationProjectId = string;
@@ -375,6 +376,7 @@ export interface CollaborationHostAdapter {
   onProjectsChange?(projects: CollaborationProject[]): void;
   openExternal?(url: string): void;
   notify?(message: string, kind?: "success" | "error"): void;
+  projectAgentConfiguration?: ProjectAgentConfigurationHost;
   projectCreate?: ProjectCreateHostAdapter;
   projectActions?: Array<{
     id: string;

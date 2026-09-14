@@ -562,6 +562,7 @@ export function CollaborationApp({
                     testId: "collaboration-project-settings-agents",
                     content: (
                       <CollaborationSettings
+                        agentConfigurationHost={host.projectAgentConfiguration}
                         api={api}
                         project={project}
                         onChange={commands.replaceProject}

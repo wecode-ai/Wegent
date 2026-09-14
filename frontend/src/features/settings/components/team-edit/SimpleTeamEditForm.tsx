@@ -38,7 +38,7 @@ import QuickPhraseEditor from './QuickPhraseEditor'
 import InputPlaceholderEditor from './InputPlaceholderEditor'
 import TeamBindModeCards from './TeamBindModeCards'
 import { parseModelSelectValue, resolveSelectedModel } from './model-select-utils'
-import type { SimpleExecutorMode } from './simple-team-edit-utils'
+import type { CodingExecutorRuntime, SimpleExecutorMode } from './simple-team-edit-utils'
 
 interface SimpleTeamEditFormProps {
   name: string
@@ -61,6 +61,8 @@ interface SimpleTeamEditFormProps {
   setRequiresWorkspace: (value: boolean | null) => void
   executorMode: SimpleExecutorMode
   setExecutorMode: (value: SimpleExecutorMode) => void
+  codingRuntime: CodingExecutorRuntime
+  setCodingRuntime: (value: CodingExecutorRuntime) => void
   shells: UnifiedShell[]
   customShellName: string
   setCustomShellName: (value: string) => void
@@ -155,6 +157,8 @@ export default function SimpleTeamEditForm({
   setRequiresWorkspace,
   executorMode,
   setExecutorMode,
+  codingRuntime,
+  setCodingRuntime,
   shells,
   customShellName,
   setCustomShellName,
@@ -387,6 +391,8 @@ export default function SimpleTeamEditForm({
               shells={shells}
               customShellName={customShellName}
               onCustomShellChange={setCustomShellName}
+              codingRuntime={codingRuntime}
+              onCodingRuntimeChange={setCodingRuntime}
               disabledModes={disabledExecutorModes}
               helperText={executorHelperText}
               hideLabel
