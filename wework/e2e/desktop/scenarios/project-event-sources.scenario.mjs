@@ -14,6 +14,8 @@ const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const CLOUD_MODEL_NAME = 'desktop-e2e-public-model'
 const GITHUB_HANDLER_PROMPT = '处理 GitHub pull request 的 CI 失败。'
 const GITLAB_HANDLER_PROMPT = '处理 GitLab merge request 的新评论。'
+const triggerPrompt = sourceType =>
+  `Report the failed ${sourceType} checks for this change request.`
 const GITHUB_EVENT_TYPES = [
   'change_request.checks_failed',
   'change_request.merge_conflict',
@@ -487,7 +489,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       method: 'POST',
       body: JSON.stringify({
         name: `External ${sourceType} trigger ${hook.id}`,
-        prompt: `Report the failed ${sourceType} checks for this change request.`,
+        prompt: triggerPrompt(sourceType),
         triggerType: 'event',
         eventType: 'change_request.checks_failed',
         eventConfig: {
@@ -913,13 +915,19 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         : serialized.includes(GITLAB_HANDLER_PROMPT)
           ? 'gitlab-handler'
           : null
-      assert.ok(nodeId, 'The external event workflow sent an unexpected model request')
-      workflowModelRequests.push(nodeId)
+      const triggerSource = ['github', 'gitlab'].find(sourceType =>
+        serialized.includes(triggerPrompt(sourceType))
+      )
+      assert.ok(
+        nodeId || triggerSource,
+        'The external event scenario sent an unexpected model request'
+      )
+      if (nodeId) workflowModelRequests.push(nodeId)
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       response.end(
         createSse([
           responseCreated(responseId),
-          assistantMessage(`${nodeId} completed`),
+          assistantMessage(nodeId ? `${nodeId} completed` : `${triggerSource} trigger completed`),
           responseCompleted(responseId),
         ])
       )
