@@ -175,6 +175,7 @@ describe('core DSH runtime', () => {
         '@wegent/dsh-terminal-runtime': expect.stringContaining('wework-terminal-runtime'),
         '@wegent/dsh-transcript-sync': expect.stringContaining('wework-transcript-sync'),
         '@wegent/dsh-plugin-runtime': expect.stringContaining('wework-plugin-runtime'),
+        '@wegent/dsh-internal-telemetry': expect.stringContaining('wework-internal-telemetry'),
         '@wegent/dsh-ui-core-apps': expect.stringContaining('wework-ui-core-apps'),
         '@wegent/dsh-ui-core-settings': expect.stringContaining('wework-ui-core-settings'),
         '@wegent/dsh-ui-plugin-center': expect.stringContaining('wework-ui-plugin-center'),
@@ -200,6 +201,7 @@ describe('core DSH runtime', () => {
             '@deepseek-ai/dsh-web-app',
             '@wegent/dsh-executor-runtime',
             '@wegent/dsh-transcript-sync',
+            '@wegent/dsh-internal-telemetry',
             '@wegent/dsh-conversation-export',
             '@wegent/dsh-ui-core-apps',
             '@wegent/dsh-ui-core-settings',
@@ -226,7 +228,6 @@ describe('core DSH runtime', () => {
     ).toEqual({
       dshVersion: CORE_DSH_VERSION,
       managedUiPlugins: true,
-      internalTelemetry: false,
       role: 'core',
       sourceFingerprint: 'a'.repeat(64),
       corePluginsFingerprint: 'f'.repeat(64),
@@ -283,37 +284,6 @@ describe('core DSH runtime', () => {
     ).resolves.toBe('{}')
     await expect(
       readFile(join(profileModules, 'dsh-ui-outputs', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await root.remove()
-  })
-
-  test('includes internal telemetry in an enabled internal profile', async () => {
-    const root = await temporaryDirectory('core-dsh-internal-telemetry-')
-    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
-    const dataDirectory = join(root.path, 'data')
-
-    await prepareCoreDshLaunch({
-      runtimeRoot: runtime.root,
-      dataDirectory,
-      environment: {
-        PATH: '/usr/bin',
-        WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
-        WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
-        WEWORK_INTERNAL_TELEMETRY: '1',
-        WEWORK_NODE_PATH: '/managed/node',
-      },
-      port: 3080,
-    })
-
-    const profileRoot = join(dataDirectory, 'dsh-core', 'profiles', 'wework-core')
-    await expect(readFile(join(profileRoot, 'package.json'), 'utf8')).resolves.toContain(
-      '"@wegent/dsh-internal-telemetry"'
-    )
-    await expect(
-      readFile(
-        join(profileRoot, 'node_modules', '@wegent', 'dsh-internal-telemetry', 'package.json'),
-        'utf8'
-      )
     ).resolves.toBe('{}')
     await root.remove()
   })
@@ -515,7 +485,6 @@ describe('core DSH runtime', () => {
     expect(JSON.parse(await readFile(stampPath, 'utf8'))).toEqual({
       dshVersion: CORE_DSH_VERSION,
       managedUiPlugins: true,
-      internalTelemetry: false,
       role: 'core',
       sourceFingerprint: 'a'.repeat(64),
       corePluginsFingerprint: 'f'.repeat(64),
@@ -637,6 +606,7 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-transcript-sync',
       '@wegent/dsh-plugin-runtime',
+      '@wegent/dsh-internal-telemetry',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
       '@deepseek-ai/dsh-base',
@@ -649,6 +619,7 @@ describe('core DSH runtime', () => {
       '@deepseek-ai/dsh-web-app',
       '@wegent/dsh-executor-runtime',
       '@wegent/dsh-transcript-sync',
+      '@wegent/dsh-internal-telemetry',
     ])
     await expect(
       readFile(
