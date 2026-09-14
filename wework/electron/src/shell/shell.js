@@ -3,6 +3,8 @@ const details = document.querySelector('#details')
 const reloadButton = document.querySelector('#reload-dsh')
 const overlay = document.querySelector('#runtime-overlay')
 const runtimeCard = document.querySelector('.runtime-card')
+const failureBackdrop = document.querySelector('.runtime-failure-backdrop')
+const loadingStatus = document.querySelector('#loading-status')
 
 async function refreshState() {
   try {
@@ -10,6 +12,8 @@ async function refreshState() {
     overlay.dataset.phase = state.phase
     const failed = state.phase === 'failed'
     runtimeCard.hidden = !failed
+    failureBackdrop.hidden = !failed
+    loadingStatus.textContent = state.ready ? '本地运行时已就绪' : '正在准备本地运行时…'
     status.textContent = state.ready
       ? '运行时已就绪'
       : state.phase === 'failed'
@@ -23,6 +27,8 @@ async function refreshState() {
   } catch (error) {
     overlay.dataset.phase = 'failed'
     runtimeCard.hidden = false
+    failureBackdrop.hidden = false
+    loadingStatus.textContent = '无法读取本地运行时状态'
     status.textContent = `无法读取运行时状态：${error instanceof Error ? error.message : String(error)}`
     details.hidden = false
     details.textContent = error instanceof Error ? error.stack || error.message : String(error)

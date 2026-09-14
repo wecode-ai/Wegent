@@ -621,9 +621,13 @@ export function createHybridWorkbenchServices(
     const cloudDevices = await listCloudDevices()
     return cloudDevices.find(device => device.device_id === deviceId) ?? null
   }
-  const listLocalRuntimeWork = async (signal?: AbortSignal) => {
-    const work = signal
-      ? await localServices.runtimeWorkApi!.listRuntimeWork({ signal })
+  const listLocalRuntimeWork = async (
+    requestOptions?: Parameters<
+      NonNullable<WorkbenchServices['runtimeWorkApi']>['listRuntimeWork']
+    >[0]
+  ) => {
+    const work = requestOptions
+      ? await localServices.runtimeWorkApi!.listRuntimeWork(requestOptions)
       : await localServices.runtimeWorkApi!.listRuntimeWork()
     rememberLocalRuntimeWorkDevices(work)
     return work
@@ -840,7 +844,7 @@ export function createHybridWorkbenchServices(
       return runtimeApiForDevice(data.deviceId).then(api => api.prepareRuntimeModel(data))
     },
     async listRuntimeWork(requestOptions) {
-      return listLocalRuntimeWork(requestOptions?.signal)
+      return listLocalRuntimeWork(requestOptions)
     },
     getKeybindings() {
       return localServices.runtimeWorkApi!.getKeybindings()

@@ -243,12 +243,6 @@ async function prepareProfile(options: {
   const currentDependencies = stringRecord(currentManifestRoot.dependencies)
   const currentProfile = objectRecord(objectRecord(currentManifestRoot.dsh).profile)
   const currentBundles = stringArray(currentProfile.bundles)
-  const recoveredUserPlugins = await recoverInstalledDshDependencies(
-    profileRoot,
-    currentDependencies,
-    currentBundles,
-    new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
-  )
   const removedDependencies = new Set<string>(
     REMOVED_CORE_DEPENDENCIES.filter(
       name => Object.hasOwn(currentDependencies, name) || currentBundles.includes(name)
@@ -260,16 +254,16 @@ async function prepareProfile(options: {
     managedDependencies
   )
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
-  if (
-    stampIsCurrent &&
-    removedDependencies.size === 0 &&
-    recoveredUserPlugins.dependencies.size === 0 &&
-    coreDependenciesAreCurrent
-  ) {
-    await ensureCoreWorkspace(workspacePath)
+  if (stampIsCurrent && removedDependencies.size === 0 && coreDependenciesAreCurrent) {
     return
   }
 
+  const recoveredUserPlugins = await recoverInstalledDshDependencies(
+    profileRoot,
+    currentDependencies,
+    currentBundles,
+    new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
+  )
   await mkdir(profileRoot, { recursive: true, mode: 0o700 })
   if (
     currentManifest &&
