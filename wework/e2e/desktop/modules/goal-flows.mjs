@@ -32,7 +32,6 @@ import {
   GOAL_RESTART_COMPLETION_TEXT,
   GOAL_RESTART_INITIAL_TEXT,
   GOAL_RESTART_PROMPT,
-  GOAL_RESTART_RESUME_PROMPT,
   SUPERVISOR_COMPLETION_TEXT,
   SUPERVISOR_CORRECTION,
   SUPERVISOR_CORRECTION_COMPLETION_TEXT,
@@ -804,6 +803,7 @@ async function verifyGoalRestartRecoveryLifecycle({
     )
   })
   await captureVerificationScreenshot(control, 'goal-restart-01-working-before-restart.png')
+  const requestCountBeforeRestart = control.scenarioRequests.get('goal_restart')?.length ?? 0
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
@@ -839,12 +839,17 @@ async function verifyGoalRestartRecoveryLifecycle({
     control,
     snapshot =>
       snapshot.testIds.includes(goalTaskRowTestId) &&
-      !snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalRunningTestId) &&
       !snapshot.testIds.includes(goalUnreadTestId),
-    'The interrupted Goal looked running or completed after Wework restarted',
+    'The interrupted Goal did not automatically recover after Wework restarted',
     WORKBENCH_READY_TIMEOUT_MS
   )
-  await captureVerificationScreenshot(control, 'goal-restart-02-returned-not-running.png')
+  await withTimeout(
+    control.awaitScenarioRequestCount('goal_restart', requestCountBeforeRestart + 1),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The restarted executor did not resume the active Goal without user input'
+  )
+  await captureVerificationScreenshot(control, 'goal-restart-02-automatically-recovering.png')
 
   await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -853,21 +858,21 @@ async function verifyGoalRestartRecoveryLifecycle({
   await waitForSnapshot(
     control,
     snapshot =>
-      !snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalRunningTestId) &&
       !snapshot.testIds.includes(goalUnreadTestId) &&
       snapshot.testIds.includes(goalTaskRowTestId),
-    'Opening the interrupted Goal did not preserve its stable sidebar state',
+    'Opening the recovered Goal did not preserve its running sidebar state',
     WORKBENCH_READY_TIMEOUT_MS
   )
   await waitForSnapshot(
     control,
     snapshot =>
       snapshot.testIds.includes('goal-status-bar') &&
-      snapshot.testIds.includes('send-message-button') &&
-      !snapshot.testIds.includes('pause-response-button') &&
-      !snapshot.testIds.includes('thinking-indicator') &&
+      snapshot.testIds.includes('pause-response-button') &&
+      snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes('send-message-button') &&
       snapshot.text.includes(GOAL_RESTART_PROMPT),
-    'Opening the interrupted Goal did not present a stable, user-controlled recovery state',
+    'Opening the automatically recovered Goal did not show active work',
     WORKBENCH_READY_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
@@ -875,54 +880,21 @@ async function verifyGoalRestartRecoveryLifecycle({
     control,
     snapshot =>
       snapshot.workbench?.currentRuntimeTask?.taskId === goalTaskId &&
-      snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+      snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
       snapshot.pane?.goal?.status === 'active',
-    'The interrupted Goal did not finish hydrating after Wework restarted'
+    'The automatically recovered Goal did not finish hydrating after Wework restarted'
   )
   assert.equal(
     interruptedDebugSnapshot.workbench?.lifecycleCurrentTaskRunning,
-    false,
-    'Opening the interrupted Goal changed the executor-owned running state'
+    true,
+    'The restarted executor did not own the recovered Goal execution'
   )
   assert.equal(
     interruptedDebugSnapshot.pane?.goal?.status,
     'active',
     'Restarting Wework discarded the persisted Goal'
   )
-  await captureVerificationScreenshot(control, 'goal-restart-03-opened-waiting-for-user.png')
-
-  const requestCountBeforeUserResume = control.scenarioRequests.get('goal_restart')?.length ?? 0
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
-  assert.equal(
-    control.scenarioRequests.get('goal_restart')?.length ?? 0,
-    requestCountBeforeUserResume,
-    'The interrupted Goal resumed without an explicit user action'
-  )
-
-  control.markGoalRestartResumeRequested()
-  await sendPrompt(control, composerSelector, GOAL_RESTART_RESUME_PROMPT)
-  await withTimeout(
-    control.awaitScenarioRequestCount('goal_restart', requestCountBeforeUserResume + 1),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The executor did not resume the Goal after explicit user input'
-  )
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes(goalRunningTestId) && !snapshot.testIds.includes(goalUnreadTestId),
-    'The explicitly resumed Goal did not show consistent sidebar feedback'
-  )
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('pause-response-button') &&
-      snapshot.testIds.includes('thinking-indicator') &&
-      !snapshot.testIds.includes('send-message-button'),
-    'The user did not see consistent workbench feedback after explicitly resuming the Goal',
-    DEFAULT_STEP_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
-  await captureVerificationScreenshot(control, 'goal-restart-04-explicitly-resumed.png')
+  await captureVerificationScreenshot(control, 'goal-restart-03-opened-automatically-running.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
@@ -930,7 +902,7 @@ async function verifyGoalRestartRecoveryLifecycle({
   await control.command('waitFor', `[data-testid="${goalUnreadTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'goal-restart-05-completed-unread.png')
+  await captureVerificationScreenshot(control, 'goal-restart-04-completed-unread.png')
 
   await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,

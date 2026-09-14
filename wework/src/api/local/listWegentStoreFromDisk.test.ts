@@ -34,6 +34,7 @@ describe('listWegentStorePluginsFromDisk', () => {
         {
           name: 'sina-email',
           packageId: '269646-wegent-sina-email-0.1.11',
+          installedPluginId: 269646,
           marketplace: 'wegent',
           version: '0.1.11',
           enabled: true,
@@ -71,6 +72,10 @@ describe('listWegentStorePluginsFromDisk', () => {
           displayName: 'Sina Email',
           logo: '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins/269646-wegent-sina-email-0.1.11/assets/icon.png',
           category: 'Productivity',
+        },
+        sourcePayload: {
+          managedByWegent: true,
+          cloudInstalledPluginId: 269646,
         },
       },
     })

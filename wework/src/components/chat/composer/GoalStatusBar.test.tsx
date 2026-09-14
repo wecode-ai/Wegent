@@ -44,4 +44,25 @@ describe('GoalStatusBar', () => {
 
     expect(screen.getByTestId('goal-objective-tooltip')).toHaveTextContent(goal.objective)
   })
+
+  test('shows recovery state and exposes a resume action when attention is required', () => {
+    const onResumeGoal = vi.fn()
+    render(
+      <GoalStatusBar
+        goal={{ ...goal, status: 'active' }}
+        executionStatus="needsAttention"
+        onResumeGoal={onResumeGoal}
+      />
+    )
+
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('需要恢复')
+    fireEvent.click(screen.getByTestId('resume-goal-button'))
+    expect(onResumeGoal).toHaveBeenCalledOnce()
+  })
+
+  test('shows an automatic restart recovery separately from normal execution', () => {
+    render(<GoalStatusBar goal={{ ...goal, status: 'active' }} executionStatus="recovering" />)
+
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('正在恢复')
+  })
 })

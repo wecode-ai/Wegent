@@ -1542,6 +1542,91 @@ fn active_codex_items_replace_stale_paginated_items() {
 }
 
 #[test]
+fn active_codex_plan_deltas_restore_complete_streaming_content() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "plan-1",
+                "delta": "# Plan\n"
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "plan-1",
+                "delta": "\n- Inspect the repo."
+            }
+        }),
+    );
+
+    let messages = handler.active_codex_transcript_messages("task-1");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["status"], "streaming");
+    assert_eq!(messages[0]["blocks"][0]["id"], "plan-plan-1");
+    assert_eq!(messages[0]["blocks"][0]["type"], "plan");
+    assert_eq!(
+        messages[0]["blocks"][0]["content"],
+        "# Plan\n\n- Inspect the repo."
+    );
+    assert_eq!(messages[0]["blocks"][0]["status"], "streaming");
+}
+
+#[test]
+fn completed_codex_plan_replaces_active_delta_snapshot() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "itemId": "plan-1",
+                "delta": "# Plan\n"
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "plan-1",
+                    "type": "plan",
+                    "text": "# Plan\n\n- Inspect the repo."
+                }
+            }
+        }),
+    );
+
+    let messages = handler.active_codex_transcript_messages("task-1");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["blocks"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        messages[0]["blocks"][0]["content"],
+        "# Plan\n\n- Inspect the repo."
+    );
+    assert_eq!(messages[0]["blocks"][0]["status"], "done");
+}
+
+#[test]
 fn late_codex_items_do_not_recreate_cleared_active_transcript() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
@@ -1673,6 +1758,32 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
             }
         }),
     );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-live",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-live",
+                "itemId": "plan-live",
+                "delta": "# Quicksort plan\n"
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-live",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-live",
+                "itemId": "plan-live",
+                "delta": "\n- Partition the input."
+            }
+        }),
+    );
 
     let transcript = handler
         .handle_runtime_rpc(json!({
@@ -1701,6 +1812,19 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
         transcript["messages"][4]["blocks"][0]["content"],
         "Writing quicksort"
     );
+    let plan = transcript["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|message| message["blocks"].as_array().into_iter().flatten())
+        .find(|block| block["id"] == "plan-plan-live")
+        .expect("running transcript should include the active plan");
+    assert_eq!(plan["type"], "plan");
+    assert_eq!(
+        plan["content"],
+        "# Quicksort plan\n\n- Partition the input."
+    );
+    assert_eq!(plan["status"], "streaming");
     let _ = fs::remove_dir_all(root);
 }
 

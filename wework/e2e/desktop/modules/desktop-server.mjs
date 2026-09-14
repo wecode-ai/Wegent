@@ -592,7 +592,6 @@ class DesktopE2EServer {
     this.goalBusyStage = 'plan'
     this.goalRestartStage = 'initial'
     this.cloudGoalRestartStage = 'initial'
-    this.goalRestartResumeRequested = false
     this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
@@ -1012,10 +1011,6 @@ class DesktopE2EServer {
 
   releaseGoalRestartResponse() {
     this.releaseGoalRestartResume()
-  }
-
-  markGoalRestartResumeRequested() {
-    this.goalRestartResumeRequested = true
   }
 
   releaseCloudInitialResponse() {
@@ -3073,11 +3068,6 @@ class DesktopE2EServer {
         return
       }
       if (this.goalRestartStage === 'waiting_resume') {
-        assert.equal(
-          this.goalRestartResumeRequested,
-          true,
-          'The interrupted Goal resumed without explicit user input'
-        )
         const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
         this.goalRestartStage = 'awaiting_resume_release'
         response.writeHead(200, {

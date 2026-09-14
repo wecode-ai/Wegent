@@ -83,8 +83,6 @@ interface ToolBlocksDisplayProps {
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onOpenSubagent?: (block: SubagentBlock) => void
@@ -105,8 +103,6 @@ export function ToolBlocksDisplay({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
   hideRequestUserInputBlocks = false,
   hiddenRequestUserInputIds,
   onOpenSubagent,
@@ -347,8 +343,6 @@ export function ToolBlocksDisplay({
                 stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenAssistantPlan={onOpenAssistantPlan}
-                onLoadFullTranscript={onLoadFullTranscript}
-                loadingFullTranscript={loadingFullTranscript}
                 fileEditDurations={fileEditDurations}
               />
             )
@@ -360,8 +354,6 @@ export function ToolBlocksDisplay({
       expanded,
       onOpenWorkspaceFile,
       onOpenAssistantPlan,
-      onLoadFullTranscript,
-      loadingFullTranscript,
       fileEditDurations,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,

@@ -236,8 +236,6 @@ export function RuntimeTaskExecutionOverlay({
               turnNavigation={session.turnNavigation}
               loadedTranscriptRanges={session.loadedTranscriptRanges}
               onLoadMoreBefore={session.loadMoreTranscriptBefore}
-              onLoadFullTranscript={session.loadFullTranscript}
-              loadingFullTranscript={session.transcriptLoadingFullContent}
               onLoadTurnNavigationItem={session.loadTranscriptTurnNavigationItem}
               onLoadTranscriptGap={session.loadTranscriptGap}
               conversationKey={`${address.deviceId}:${address.taskId}`}

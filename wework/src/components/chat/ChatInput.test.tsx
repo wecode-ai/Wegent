@@ -3470,7 +3470,7 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('goal-status-bar')).not.toHaveTextContent('继续执行中')
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('正在开始下一轮')
     expect(screen.getByTestId('pause-goal-button')).toBeInTheDocument()
   })
 

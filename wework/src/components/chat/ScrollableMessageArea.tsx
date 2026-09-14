@@ -121,8 +121,6 @@ interface ScrollableMessageAreaProps {
   onAskSelectionInSidebar?: (text: string) => void
   autoScrollSuspended?: boolean
   onLoadMoreBefore?: () => Promise<void> | void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
   initialScrollPosition?: 'restore' | 'latest'
@@ -209,8 +207,6 @@ function areScrollableMessageAreaPropsEqual(
       : null,
     previous.autoScrollSuspended !== next.autoScrollSuspended ? 'autoScrollSuspended' : null,
     previous.onLoadMoreBefore !== next.onLoadMoreBefore ? 'onLoadMoreBefore' : null,
-    previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
-    previous.loadingFullTranscript !== next.loadingFullTranscript ? 'loadingFullTranscript' : null,
     previous.onLoadTurnNavigationItem !== next.onLoadTurnNavigationItem
       ? 'onLoadTurnNavigationItem'
       : null,
@@ -265,8 +261,6 @@ function ScrollableMessagePaneContent({
   onAskSelectionInSidebar,
   autoScrollSuspended = false,
   onLoadMoreBefore,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
   onLoadTurnNavigationItem,
   onLoadTranscriptGap,
   initialScrollPosition = 'restore',
@@ -1442,8 +1436,6 @@ function ScrollableMessagePaneContent({
                 onEditLastUserMessage={onEditLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
                 onForkMessage={onForkMessage}
-                onLoadFullTranscript={onLoadFullTranscript}
-                loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 onAddSelectionToConversation={onAddSelectionToConversation}

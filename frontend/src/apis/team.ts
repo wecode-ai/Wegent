@@ -33,6 +33,10 @@ export interface TeamListResponse {
   items: Team[]
 }
 
+export interface GetTeamsOptions {
+  signal?: AbortSignal
+}
+
 // Team Share Response Type
 export interface TeamShareResponse {
   share_url: string
@@ -121,7 +125,8 @@ export const teamApis = {
   async getTeams(
     params?: PaginationParams,
     scope?: 'personal' | 'group' | 'all',
-    groupName?: string
+    groupName?: string,
+    options?: GetTeamsOptions
   ): Promise<TeamListResponse> {
     const p = params ? params : { page: 1, limit: 100 }
     const queryParams = new URLSearchParams()
@@ -133,7 +138,7 @@ export const teamApis = {
     if (groupName) {
       queryParams.append('group_name', groupName)
     }
-    return apiClient.get(`/teams?${queryParams.toString()}`)
+    return apiClient.get(`/teams?${queryParams.toString()}`, options)
   },
   /**
    * Create a new team
