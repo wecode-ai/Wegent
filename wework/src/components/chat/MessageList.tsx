@@ -629,6 +629,7 @@ export const MessageList = memo(function MessageList({
               <AssistantMessage
                 message={message}
                 conversationKey={conversationKey}
+                isActiveTurn={isWaitingForAssistant && index === visibleMessages.length - 1}
                 devices={devices}
                 onRetryFailedMessage={onRetryFailedMessage}
                 onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
@@ -1933,6 +1934,7 @@ function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
 export function AssistantMessage({
   message,
   conversationKey,
+  isActiveTurn = false,
   devices,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
@@ -1953,6 +1955,7 @@ export function AssistantMessage({
 }: {
   message: WorkbenchMessage
   conversationKey?: string | number | null
+  isActiveTurn?: boolean
   devices: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
@@ -2039,6 +2042,8 @@ export function AssistantMessage({
   const usesFinalProcessingShell =
     hasBlocks &&
     !hasPlanResponse &&
+    !isStreaming &&
+    !isActiveTurn &&
     !hasRunningBlocks &&
     !isCancelled &&
     !hasProcessingAfterContent &&

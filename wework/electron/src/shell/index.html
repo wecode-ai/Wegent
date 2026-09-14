@@ -13,11 +13,68 @@
   </head>
   <body>
     <main id="runtime-overlay" data-phase="initializing">
-      <section class="runtime-card" aria-live="polite" hidden>
-        <h1>正在启动 Wework</h1>
+      <div class="workbench-shell" data-testid="startup-workbench-shell">
+        <header class="titlebar">
+          <div class="traffic-light-space" aria-hidden="true"></div>
+          <div class="titlebar-brand">Wework</div>
+          <div class="titlebar-actions" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+        </header>
+        <div class="workbench-body">
+          <aside class="sidebar" aria-label="正在加载的导航">
+            <div class="sidebar-primary">
+              <div class="nav-row nav-row-active"><span>任务</span></div>
+              <div class="nav-row"><span>协作</span></div>
+              <div class="nav-row"><span>智能体</span></div>
+            </div>
+            <div class="sidebar-section">
+              <div class="section-label">项目空间</div>
+              <div class="nav-row nav-row-muted"><span>新建项目</span></div>
+            </div>
+            <div class="sidebar-section">
+              <div class="section-label">任务</div>
+              <div class="task-placeholder" aria-hidden="true"></div>
+              <div class="task-placeholder task-placeholder-short" aria-hidden="true"></div>
+            </div>
+            <div class="runtime-progress" aria-live="polite">
+              <span class="runtime-indicator" aria-hidden="true"></span>
+              <span id="loading-status">正在准备本地运行时…</span>
+            </div>
+          </aside>
+          <section class="workspace">
+            <div class="workspace-toolbar" aria-hidden="true">
+              <span class="workspace-tab workspace-tab-active">任务</span>
+              <span class="workspace-tab">看板</span>
+            </div>
+            <div class="workspace-home">
+              <div class="home-content">
+                <h1>我们该做什么？</h1>
+                <div class="quick-actions" aria-hidden="true">
+                  <div class="quick-action"></div>
+                  <div class="quick-action"></div>
+                  <div class="quick-action"></div>
+                  <div class="quick-action"></div>
+                </div>
+                <div class="composer-placeholder" aria-hidden="true">
+                  <span>随心输入</span>
+                  <span class="composer-submit"></span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+      <div class="runtime-failure-backdrop" hidden></div>
+      <section class="runtime-card" aria-live="assertive" hidden>
+        <h1>Wework 启动失败</h1>
         <p id="runtime-status">正在初始化 Core DSH…</p>
         <pre id="details" hidden></pre>
-        <button id="reload-dsh" type="button" hidden>重试启动</button>
+        <button id="reload-dsh" data-testid="startup-runtime-retry" type="button" hidden>
+          重试启动
+        </button>
       </section>
     </main>
     <script src="./shell.js"></script>

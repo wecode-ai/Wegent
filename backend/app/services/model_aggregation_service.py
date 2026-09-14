@@ -352,7 +352,7 @@ class ModelAggregationService:
 
         Args:
             provider: Model provider (e.g., 'openai', 'claude')
-            shell_type: Shell type (e.g., 'Agno', 'ClaudeCode')
+            shell_type: Shell type (e.g., 'Agno', 'Codex', 'ClaudeCode')
             support_model: List of supported model providers from shell spec
 
         Returns:
@@ -362,6 +362,7 @@ class ModelAggregationService:
         # Agno supports OpenAI, Claude and Gemini models
         shell_provider_map = {
             "Agno": ["openai", "claude", "gemini"],
+            "Codex": ["openai"],
             "ClaudeCode": ["claude", "openai"],
         }
 
@@ -369,7 +370,7 @@ class ModelAggregationService:
             if provider not in support_model:
                 return False
 
-        if shell_type == "ClaudeCode" and provider == "openai":
+        if shell_type in {"Codex", "ClaudeCode"} and provider == "openai":
             return self._is_codex_compatible_model_config(config or {})
 
         if support_model:

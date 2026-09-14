@@ -119,7 +119,20 @@ describe('CollaborationPage platform routing', () => {
       workspaceLocations: ['cloud'],
       sidebarPresentation: 'context',
     })
+    expect(capturedHost?.projectAgentConfiguration).toEqual(
+      expect.objectContaining({
+        renderDialog: expect.any(Function),
+        renderModePicker: expect.any(Function),
+        renderPrimaryAction: expect.any(Function),
+        renderSelect: expect.any(Function),
+        renderTextControl: expect.any(Function),
+      })
+    )
     expect(screen.getByTestId('collaboration-page-main')).toHaveClass('flex-1', 'overflow-hidden')
+    expect(screen.getByTestId('collaboration-page-main').parentElement?.parentElement).toHaveClass(
+      '[--collaboration-primary-background:rgb(var(--color-primary))]',
+      '[--collaboration-primary-foreground:rgb(var(--color-primary-contrast))]'
+    )
     expect(screen.getByTestId('task-sidebar-system-navigation')).toBeInTheDocument()
     expect(screen.getByTestId('task-sidebar-collaboration-context')).toContainElement(
       screen.getByTestId('shared-collaboration-sidebar')

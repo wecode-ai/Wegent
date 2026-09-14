@@ -9,7 +9,10 @@ import {
   ProjectManageView,
   type ProjectManageHost,
 } from "./project-manage";
-import { ProjectAgentConfiguration } from "./project-agent-config";
+import {
+  ProjectAgentConfiguration,
+  type ProjectAgentConfigurationHost,
+} from "./project-agent-config";
 import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
 import type { CollaborationProject } from "./types";
 import type { CollaborationTranslate } from "./i18n";
@@ -20,6 +23,7 @@ interface CollaborationSettingsProps {
   onChange(project: CollaborationProject): void;
   onError(): void;
   onAgentsChange?(): void;
+  agentConfigurationHost?: ProjectAgentConfigurationHost;
   translate: CollaborationTranslate;
   section?: "overview" | "members" | "agents" | "board";
 }
@@ -68,6 +72,7 @@ export function CollaborationSettings({
   onChange,
   onError,
   onAgentsChange,
+  agentConfigurationHost,
   translate,
   section = "overview",
 }: CollaborationSettingsProps) {
@@ -129,6 +134,7 @@ export function CollaborationSettings({
       renderProviderSettings={() => (
         <ProjectAgentConfiguration
           api={api}
+          host={agentConfigurationHost}
           project={project}
           onError={onError}
           onAgentsChange={onAgentsChange}

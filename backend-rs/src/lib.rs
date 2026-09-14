@@ -1,8 +1,13 @@
 //! Public integration boundary for moving Wegent backend routes to Rust.
 //!
 //! Generic routing and transport live in `brz-http-gateway`. This crate owns only
-//! Wegent's public route implementation seam and executable configuration. A
-//! private crate can depend on this library and provide a superset of routes.
+//! Wegent's public route implementation seam and executable configuration.
+
+mod application;
+mod hybrid;
+
+pub use application::{AppState, PublicApi};
+pub use hybrid::{HybridConfig, run_hybrid, serve_hybrid};
 
 pub use brz_http_gateway::{
     BoxError, ConfigError, Gateway, GatewayBody, GatewayResponse, MatchedService as RustApi,

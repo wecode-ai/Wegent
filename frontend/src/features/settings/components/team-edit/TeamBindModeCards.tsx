@@ -9,14 +9,14 @@ import { ChevronDown, Code2, ImageIcon, MessageCircle, Monitor, Video } from 'lu
 
 import { Checkbox } from '@/components/ui/checkbox'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
-import type { TaskType } from '@/types/api'
 import {
   simpleChoiceCardBaseClass,
   simpleChoiceCardSelectedClass,
   simpleChoiceCardUnselectedClass,
-} from './simple-choice-card-styles'
+} from '@/components/common/simple-choice-card-styles'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import type { TaskType } from '@/types/api'
 import { getSimpleBindModeOptions } from './simple-team-edit-utils'
 
 interface TeamBindModeCardsProps {

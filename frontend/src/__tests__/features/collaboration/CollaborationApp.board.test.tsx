@@ -126,6 +126,13 @@ describe('CollaborationApp shared project board', () => {
 
     expect(await screen.findByTestId('cloud-project-header')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-header-title')).toHaveTextContent('Web 协作项目')
+    expect(screen.getByTestId('collaboration-board')).toHaveClass(
+      'flex',
+      'min-h-0',
+      'min-w-0',
+      'flex-1',
+      'flex-col'
+    )
     expect(screen.getByTestId('cloud-board-toolbar')).toBeInTheDocument()
     for (const status of statuses) {
       expect(screen.getByTestId(`cloud-todo-column-${status.id}`)).toBeInTheDocument()
