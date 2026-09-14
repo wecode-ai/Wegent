@@ -104,9 +104,13 @@ fn side_source_thread(payload: &Value) -> Option<SideSourceThread> {
             })
         })
         .filter(|path| !path.trim().is_empty());
+    let workspace_path = string_field(source, "workspacePath")
+        .or_else(|| string_field(source, "workspace_path"))
+        .filter(|path| !path.trim().is_empty());
     Some(SideSourceThread {
         thread_id,
         thread_path,
+        workspace_path,
     })
 }
 

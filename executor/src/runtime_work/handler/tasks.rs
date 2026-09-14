@@ -387,6 +387,24 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| payload.get("workspace_source_task"))
             .and_then(Value::as_object);
         let mut side_source = side_source_thread(&payload);
+        let side_source_workspace_path = side_source
+            .as_ref()
+            .and_then(|source| source.workspace_path.clone());
+        if let Some(source_workspace_path) = side_source_workspace_path.as_deref() {
+            for requested_workspace_path in [payload_workspace_path.as_deref(), request.cwd()]
+                .into_iter()
+                .flatten()
+            {
+                if normalize_workspace_path(requested_workspace_path)
+                    != normalize_workspace_path(source_workspace_path)
+                {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "sideSource workspacePath conflicts with the requested workspace",
+                    ));
+                }
+            }
+        }
         let inherited_workspace_path = if let Some(source) = workspace_source_task {
             let source_device_id = source
                 .get("deviceId")
@@ -421,7 +439,8 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
-        let source_workspace_path = payload_workspace_path
+        let source_workspace_path = side_source_workspace_path
+            .or(payload_workspace_path)
             .or(inherited_workspace_path)
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| {
