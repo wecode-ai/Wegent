@@ -83,6 +83,11 @@ const prepareState = vi.hoisted(() => ({
   resolveLaunch: null as ((value: unknown) => void) | null,
 }))
 
+const deviceIdentityState = vi.hoisted(() => ({
+  pending: false,
+  resolve: null as ((value: string) => void) | null,
+}))
+
 vi.mock('./core-dsh-runtime.js', () => ({
   prepareCoreDshLaunch: vi.fn(() => {
     prepareState.prepareCalls += 1
@@ -91,6 +96,19 @@ vi.mock('./core-dsh-runtime.js', () => ({
     })
   }),
 }))
+
+vi.mock('./desktop-device-id.js', async importOriginal => {
+  const original = await importOriginal<typeof import('./desktop-device-id.js')>()
+  return {
+    ...original,
+    resolveDesktopDeviceId: vi.fn((options: { environment: NodeJS.ProcessEnv }) => {
+      if (!deviceIdentityState.pending) return original.resolveDesktopDeviceId(options)
+      return new Promise<string>(resolve => {
+        deviceIdentityState.resolve = resolve
+      })
+    }),
+  }
+})
 
 const created: FakeCoreDsh[] = []
 const hostPipe = new HostPipeServer(new HostCapabilityRouter())
@@ -129,6 +147,8 @@ describe('DesktopRuntime lifecycle generation', () => {
     created.length = 0
     prepareState.prepareCalls = 0
     prepareState.resolveLaunch = null
+    deviceIdentityState.pending = false
+    deviceIdentityState.resolve = null
     nextStartHang = null
   })
 
@@ -284,6 +304,7 @@ describe('DesktopRuntime lifecycle generation', () => {
     const executor = new FakeExecutor()
     executor.startHang = deferred()
     nextStartHang = deferred()
+    deviceIdentityState.pending = true
     const startupSteps: string[] = []
     const runtime = createRuntime(
       {
@@ -299,10 +320,8 @@ describe('DesktopRuntime lifecycle generation', () => {
     )
 
     const start = runtime.start()
-    await vi.waitFor(() => {
-      expect(executor.startCalls).toBe(1)
-      expect(prepareState.prepareCalls).toBe(1)
-    })
+    await vi.waitFor(() => expect(prepareState.prepareCalls).toBe(1))
+    expect(executor.startCalls).toBe(0)
 
     prepareState.resolveLaunch?.({
       command: 'node',
@@ -315,6 +334,11 @@ describe('DesktopRuntime lifecycle generation', () => {
       version: '0.0.0',
       sourceFingerprint: 'test',
     })
+    await flush()
+    expect(created).toHaveLength(0)
+
+    deviceIdentityState.resolve?.('test-device-id')
+    await vi.waitFor(() => expect(executor.startCalls).toBe(1))
     await vi.waitFor(() => expect(created).toHaveLength(1))
     expect(created[0].startCalls).toBe(1)
     expect(runtime.state().ready).toBe(false)
