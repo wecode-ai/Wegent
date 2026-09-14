@@ -1134,8 +1134,15 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   const activeProject = props.activeProjectRef ?? null
   const [location, setLocation] = useState<CollaborationPlatformLocation>(initialLocation)
   const startupReadySent = useRef(false)
+  const pendingProjectNavigation = useRef<{ projectId: string | null } | null>(null)
 
   useEffect(() => {
+    const pending = pendingProjectNavigation.current
+    if (pending) {
+      const activeProjectId = activeProject ? String(activeProject.projectId) : null
+      if (activeProjectId !== pending.projectId) return
+      pendingProjectNavigation.current = null
+    }
     if (!platformApi?.projects.get || !activeProject) return
     if (String(location.projectId) === String(activeProject.projectId)) return
 
@@ -1198,6 +1205,11 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
             sidebarPresentation: 'full',
           },
           navigate: nextLocation => {
+            if (props.onActiveProjectChange) {
+              pendingProjectNavigation.current = {
+                projectId: nextLocation.projectId ? String(nextLocation.projectId) : null,
+              }
+            }
             setLocation(nextLocation)
             if (!nextLocation.projectId) {
               props.onActiveProjectChange?.(null)

@@ -1,5 +1,5 @@
 import { createElement, useCallback, useEffect, useRef, useState } from 'react'
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import type { DeliveryApi } from '@/api/deliveries'
@@ -17,6 +17,7 @@ import {
   createWeworkPlatformApi,
   projectRuntimeStatusSignature,
   toWeworkIssueTaskBinding,
+  WeworkCollaborationPlatform,
   WeworkSharedProject,
 } from './WeworkCollaborationPlatform'
 
@@ -24,6 +25,45 @@ vi.mock('@wegent/collaboration', async importOriginal => {
   const actual = await importOriginal<typeof import('@wegent/collaboration')>()
   return {
     ...actual,
+    CollaborationPlatformApp: ({
+      host,
+    }: {
+      host: {
+        location: {
+          workspaceId: string | null
+          workspaceView: string
+          projectId: string | null
+        }
+        navigate(location: {
+          workspaceId: string | null
+          workspaceView: string
+          projectId: string | null
+        }): void
+      }
+    }) =>
+      createElement(
+        'div',
+        null,
+        createElement(
+          'span',
+          { 'data-testid': 'platform-project-id' },
+          host.location.projectId ?? 'none'
+        ),
+        createElement(
+          'button',
+          {
+            'data-testid': 'platform-open-settings',
+            onClick: () =>
+              host.navigate({
+                ...host.location,
+                workspaceView: 'settings',
+                projectId: null,
+              }),
+            type: 'button',
+          },
+          'Open settings'
+        )
+      ),
     CollaborationApp: ({
       api,
       host,
@@ -144,6 +184,52 @@ function runtimeWork(tasks: RuntimeTaskSummary[]): RuntimeWorkListResponse {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it('does not restore a stale active project while leaving it for workspace settings', async () => {
+    const project = {
+      id: 'active-project',
+      name: 'Active project',
+      project_store: 'backend',
+      workspace_id: 'workspace',
+    }
+    const onActiveProjectChange = vi.fn()
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: {
+          id: 1,
+          user_name: 'tester',
+          email: 'tester@example.com',
+        } as never,
+        localProjects: [],
+        services: {
+          sharedWorkspaceApi: {
+            projects: {
+              get: vi.fn().mockResolvedValue(project),
+            },
+          } as unknown as SharedWorkspaceApi,
+        } as never,
+        activeProjectRef: {
+          projectStore: 'backend',
+          projectId: project.id,
+        },
+        onActiveProjectChange,
+      })
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId('platform-project-id')).toHaveTextContent(project.id)
+
+    fireEvent.click(screen.getByTestId('platform-open-settings'))
+
+    expect(onActiveProjectChange).toHaveBeenCalledWith(null)
+    expect(screen.getByTestId('platform-project-id')).toHaveTextContent('none')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId('platform-project-id')).toHaveTextContent('none')
+  })
+
   it('maps shared board task bindings into the Issue drawer initial context', () => {
     expect(
       toWeworkIssueTaskBinding({
