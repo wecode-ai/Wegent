@@ -13,6 +13,8 @@ import { filterVisibleSkills } from '@/utils/skillVisibility'
 
 export type { SkillRef } from '@/types/api'
 
+const EMPTY_SKILL_NAMES: string[] = []
+
 export type AutoAvailableSkill = UnifiedSkill & {
   availabilitySources: Array<'agent_builtin' | 'my_default'>
 }
@@ -42,11 +44,11 @@ interface UseSkillSelectorReturn {
   /** Currently selected skills with full info (name, namespace, is_public) */
   selectedSkills: SkillRef[]
   /** Add a skill to selection */
-  addSkill: (skillName: string) => void
+  addSkill: (skill: UnifiedSkill) => void
   /** Remove a skill from selection */
   removeSkill: (skillName: string) => void
   /** Toggle a skill (add if not selected, remove if selected) */
-  toggleSkill: (skillName: string) => void
+  toggleSkill: (skill: UnifiedSkill) => void
   /** Reset all selected skills */
   resetSkills: () => void
   /** Set selected skill names directly */
@@ -72,14 +74,20 @@ interface UseSkillSelectorReturn {
 export function useSkillSelector({
   team,
   enabled = true,
-  initialSelectedSkills = [],
+  initialSelectedSkills = EMPTY_SKILL_NAMES,
 }: UseSkillSelectorOptions): UseSkillSelectorReturn {
   // State for available skills from unified API
   const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
   // State for team-specific skills (from backend)
   const [teamSkillsData, setTeamSkillsData] = useState<TeamSkillsResponse | null>(null)
-  // User-selected skill names - initialize with initialSelectedSkills
-  const [selectedSkillNames, setSelectedSkillNames] = useState<string[]>(initialSelectedSkills)
+  // Preserve record identity; names remain available for badges and task metadata.
+  const [selectedRefs, setSelectedRefs] = useState<SkillRef[]>(
+    initialSelectedSkills.map(name => ({ name, namespace: 'default', is_public: false }))
+  )
+  const selectedSkillNames = useMemo(() => selectedRefs.map(skill => skill.name), [selectedRefs])
+  const setSelectedSkillNames = useCallback((names: string[]) => {
+    setSelectedRefs(names.map(name => ({ name, namespace: 'default', is_public: false })))
+  }, [])
   // Loading and error states
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -184,71 +192,76 @@ export function useSkillSelector({
     if (initialSelectedSkills && initialSelectedSkills.length > 0) {
       setSelectedSkillNames(initialSelectedSkills)
     }
-  }, [initialSelectedSkills])
+  }, [initialSelectedSkills, setSelectedSkillNames])
 
   // Reset selected skills when team changes (only if no initialSelectedSkills provided)
   useEffect(() => {
     if (!initialSelectedSkills || initialSelectedSkills.length === 0) {
       setSelectedSkillNames([])
     }
-  }, [team?.id, initialSelectedSkills])
+  }, [team?.id, initialSelectedSkills, setSelectedSkillNames])
 
   useEffect(() => {
     if (autoAvailableSkillNames.size === 0) return
 
-    setSelectedSkillNames(prev => {
-      const temporarySelection = prev.filter(name => !autoAvailableSkillNames.has(name))
+    setSelectedRefs(prev => {
+      const temporarySelection = prev.filter(skill => !autoAvailableSkillNames.has(skill.name))
       return temporarySelection.length === prev.length ? prev : temporarySelection
     })
   }, [autoAvailableSkillNames])
 
-  // Skill management callbacks
-  const addSkill = useCallback((skillName: string) => {
-    setSelectedSkillNames(prev => {
-      if (prev.includes(skillName)) return prev
-      return [...prev, skillName]
-    })
-  }, [])
+  const resolveSkill = useCallback(
+    (skill: UnifiedSkill): SkillRef => ({
+      skill_id: skill.id,
+      name: skill.name,
+      namespace: skill.namespace,
+      is_public: skill.is_public,
+    }),
+    []
+  )
+
+  const resolveStoredSkill = useCallback(
+    (skill: SkillRef): SkillRef => {
+      if (skill.skill_id !== undefined) return skill
+      const matches = availableSkills.filter(item => item.name === skill.name)
+      return matches.length === 1 ? resolveSkill(matches[0]) : skill
+    },
+    [availableSkills, resolveSkill]
+  )
+
+  const addSkill = useCallback(
+    (selection: UnifiedSkill) => {
+      const skill = resolveSkill(selection)
+      setSelectedRefs(prev => [...prev.filter(item => item.name !== skill.name), skill])
+    },
+    [resolveSkill]
+  )
 
   const removeSkill = useCallback((skillName: string) => {
-    setSelectedSkillNames(prev => prev.filter(name => name !== skillName))
+    setSelectedRefs(prev => prev.filter(skill => skill.name !== skillName))
   }, [])
 
-  const toggleSkill = useCallback((skillName: string) => {
-    setSelectedSkillNames(prev => {
-      if (prev.includes(skillName)) {
-        return prev.filter(name => name !== skillName)
-      }
-      return [...prev, skillName]
-    })
-  }, [])
+  const toggleSkill = useCallback(
+    (selection: UnifiedSkill) => {
+      const skill = resolveSkill(selection)
+      setSelectedRefs(prev => {
+        const remaining = prev.filter(item => item.name !== skill.name)
+        return prev.some(item => resolveStoredSkill(item).skill_id === skill.skill_id)
+          ? remaining
+          : [...remaining, skill]
+      })
+    },
+    [resolveSkill, resolveStoredSkill]
+  )
 
   const resetSkills = useCallback(() => {
-    setSelectedSkillNames([])
+    setSelectedRefs([])
   }, [])
 
-  // Compute selected skills with full info (name, namespace, is_public)
-  // by looking up each selected skill name in availableSkills
-  const selectedSkills = useMemo<SkillRef[]>(() => {
-    return selectedSkillNames.map(name => {
-      const skill = availableSkills.find(s => s.name === name)
-      if (skill) {
-        return {
-          skill_id: skill.id,
-          name: skill.name,
-          namespace: skill.namespace,
-          is_public: skill.is_public,
-        }
-      }
-      // If skill not found in availableSkills, return with default values
-      // This shouldn't happen in normal usage, but provides a fallback
-      return {
-        name,
-        namespace: 'default',
-        is_public: false,
-      }
-    })
-  }, [selectedSkillNames, availableSkills])
+  const selectedSkills = useMemo(
+    () => selectedRefs.map(resolveStoredSkill),
+    [selectedRefs, resolveStoredSkill]
+  )
 
   return {
     availableSkills,

@@ -47,7 +47,7 @@ def normalize_requested_skill_refs(
             "namespace": namespace or "default",
             "is_public": is_public,
         }
-        if skill_id is not None:
+        if type(skill_id) is int and skill_id > 0:
             normalized_skill["skill_id"] = skill_id
         if name in normalized_by_name:
             del normalized_by_name[name]

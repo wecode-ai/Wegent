@@ -207,3 +207,28 @@ def test_removed_access_revokes_resolution_and_download(
         headers={"Authorization": f"Bearer {test_admin_token}"},
     )
     assert response.status_code == 404
+
+
+def test_restricted_analyst_cannot_download_group_bound_skill(
+    shared_skill, test_client, test_db, test_admin_user, test_admin_token
+):
+    source, _, _ = shared_skill
+    member = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Namespace",
+            ResourceMember.entity_id == str(test_admin_user.id),
+        )
+        .one()
+    )
+    member.role = "RestrictedAnalyst"
+    test_db.commit()
+
+    assert source.id not in skill_binding_service.list_user_group_skill_ids(
+        test_db, test_admin_user.id
+    )
+    response = test_client.get(
+        f"/api/v1/kinds/skills/{source.id}/download?namespace=default",
+        headers={"Authorization": f"Bearer {test_admin_token}"},
+    )
+    assert response.status_code in (403, 404)

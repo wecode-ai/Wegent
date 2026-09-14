@@ -69,12 +69,12 @@ function hasInstalledListing(install: ResourceLibraryInstall): install is Instal
 }
 
 function normalizeInstalls(items: ResourceLibraryInstall[]): InstalledResource[] {
-  const installsByListingId = new Map<number, InstalledResource>()
+  const installsById = new Map<number, InstalledResource>()
 
   items.filter(hasInstalledListing).forEach(install => {
-    if (installsByListingId.has(install.listing.id)) return
+    if (installsById.has(install.id)) return
 
-    installsByListingId.set(install.listing.id, {
+    installsById.set(install.id, {
       ...install,
       listing: {
         ...install.listing,
@@ -83,7 +83,7 @@ function normalizeInstalls(items: ResourceLibraryInstall[]): InstalledResource[]
     })
   })
 
-  return Array.from(installsByListingId.values())
+  return Array.from(installsById.values())
 }
 
 function matchesKeyword(listing: ResourceLibraryListing, keyword: string): boolean {

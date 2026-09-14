@@ -27,6 +27,38 @@ const sharedSkill: UnifiedSkill = {
 }
 
 describe.each(['button', 'autocomplete'] as const)('%s skill selection', entry => {
+  it('selects the clicked record when two namespaces contain the same name', async () => {
+    const user = userEvent.setup()
+    const onSelect = jest.fn()
+    const groupSkill = { ...sharedSkill, id: 9, namespace: 'engineering' }
+    const props = {
+      skills: [sharedSkill, groupSkill],
+      teamSkillNames: [],
+      preloadedSkillNames: [],
+      selectedSkillNames: [sharedSkill.name],
+      selectedSkillIds: [groupSkill.id],
+      isChatShell: false,
+    }
+    if (entry === 'button') {
+      render(<SkillSelectorPopover {...props} onToggleSkill={onSelect} />)
+      await user.click(screen.getByTitle('common:skillSelector.skill_button_tooltip'))
+    } else {
+      render(
+        <SkillAutocomplete
+          {...props}
+          query=""
+          position={{ top: 0, left: 0 }}
+          onSelect={onSelect}
+          onClose={jest.fn()}
+        />
+      )
+    }
+    const rows = screen.getAllByRole('button', { name: /ps-agent-recagent/ })
+    expect(rows).toHaveLength(2)
+    await user.click(rows[1])
+    expect(onSelect).toHaveBeenCalledWith(groupSkill)
+  })
+
   it('groups a shared personal skill with group skills and allows selection', async () => {
     const user = userEvent.setup()
     const onSelect = jest.fn()
@@ -67,7 +99,7 @@ describe.each(['button', 'autocomplete'] as const)('%s skill selection', entry =
     expect(screen.getByText('common:skillSelector.public_skills_section')).toBeVisible()
 
     await user.click(sharedRow)
-    expect(onSelect).toHaveBeenCalledWith('ps-agent-recagent')
+    expect(onSelect).toHaveBeenCalledWith(sharedSkill)
     expect(sharedSkill.namespace).toBe('default')
   })
 })

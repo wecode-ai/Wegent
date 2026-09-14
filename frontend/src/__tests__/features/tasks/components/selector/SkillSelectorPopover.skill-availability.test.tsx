@@ -99,6 +99,8 @@ describe('SkillSelectorPopover availability sections', () => {
     expect(onToggleSkill).not.toHaveBeenCalled()
 
     await user.click(screen.getByText('Temporary Skill'))
-    expect(onToggleSkill).toHaveBeenCalledWith('temporary-skill')
+    expect(onToggleSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 3, name: 'temporary-skill' })
+    )
   }, 15_000)
 })

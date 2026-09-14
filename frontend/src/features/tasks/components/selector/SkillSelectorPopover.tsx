@@ -25,9 +25,10 @@ interface SkillSelectorPopoverProps {
   /** Already preloaded skill names (filter out for ChatShell) */
   preloadedSkillNames: string[]
   /** Currently selected skill names */
+  selectedSkillIds?: number[]
   selectedSkillNames: string[]
   /** Callback when a skill is toggled */
-  onToggleSkill: (skillName: string) => void
+  onToggleSkill: (skill: UnifiedSkill) => void
   /** Whether this is a Chat Shell (affects filtering behavior) */
   isChatShell: boolean
   /** Whether the selector is disabled (cannot open popover) */
@@ -66,6 +67,7 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
       skills,
       teamSkillNames,
       preloadedSkillNames,
+      selectedSkillIds = [],
       selectedSkillNames,
       onToggleSkill,
       isChatShell,
@@ -306,7 +308,7 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
           )
         }
 
-        const isSelected = selectedSkillNames.includes(skill.name)
+        const isSelected = selectedSkillIds.includes(skill.id)
 
         elements.push(
           <div
@@ -315,7 +317,7 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
             className={`flex items-center gap-2 px-2 py-2 rounded-md transition-colors ${
               readOnly ? 'cursor-default' : 'cursor-pointer'
             } ${isSelected ? 'bg-primary/10' : readOnly ? '' : 'hover:bg-muted'}`}
-            onClick={readOnly ? undefined : () => onToggleSkill(skill.name)}
+            onClick={readOnly ? undefined : () => onToggleSkill(skill)}
             role={readOnly ? undefined : 'button'}
             tabIndex={readOnly ? -1 : 0}
             onKeyDown={
@@ -324,7 +326,7 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
                 : e => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault()
-                      onToggleSkill(skill.name)
+                      onToggleSkill(skill)
                     }
                   }
             }

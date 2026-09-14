@@ -26,10 +26,10 @@ interface SkillAutocompleteProps {
   preloadedSkillNames: string[]
   /** Filter query after / */
   query: string
-  /** Already selected skill names */
-  selectedSkillNames: string[]
+  /** Already selected skill IDs */
+  selectedSkillIds?: number[]
   /** Callback when a skill is selected */
-  onSelect: (skillName: string) => void
+  onSelect: (skill: UnifiedSkill) => void
   /** Callback when menu should close */
   onClose: () => void
   /** Position relative to container */
@@ -64,7 +64,7 @@ export default function SkillAutocomplete({
   teamSkillNames,
   preloadedSkillNames,
   query = '',
-  selectedSkillNames,
+  selectedSkillIds = [],
   onSelect,
   onClose,
   position,
@@ -129,7 +129,7 @@ export default function SkillAutocomplete({
   }, [onClose])
 
   const handleSelect = useCallback(
-    (skillName: string, event?: React.MouseEvent | React.KeyboardEvent) => {
+    (skill: UnifiedSkill, event?: React.MouseEvent | React.KeyboardEvent) => {
       // Get start position from the clicked element or menu
       let startX = 0
       let startY = 0
@@ -158,14 +158,14 @@ export default function SkillAutocomplete({
       // Trigger animation in parent component (so it persists after this component unmounts)
       if (onTriggerFlyAnimation) {
         onTriggerFlyAnimation({
-          skillName,
+          skillName: skill.name,
           startPosition: { x: startX, y: startY },
           endPosition: { x: endX, y: endY },
         })
       }
 
       // Call onSelect and onClose immediately
-      onSelect(skillName)
+      onSelect(skill)
       onClose()
     },
     [onSelect, onClose, skillButtonRef, onTriggerFlyAnimation]
@@ -201,9 +201,9 @@ export default function SkillAutocomplete({
             const fakeEvent = {
               currentTarget: selectedItem,
             } as unknown as React.KeyboardEvent
-            handleSelect(filteredSkills[selectedIndex].skill.name, fakeEvent)
+            handleSelect(filteredSkills[selectedIndex].skill, fakeEvent)
           } else {
-            handleSelect(filteredSkills[selectedIndex].skill.name)
+            handleSelect(filteredSkills[selectedIndex].skill)
           }
         }
       }
@@ -296,7 +296,7 @@ export default function SkillAutocomplete({
       )
     }
 
-    const isSelected = selectedSkillNames.includes(skill.name)
+    const isSelected = selectedSkillIds.includes(skill.id)
     const displayIndex = itemIndex
     itemIndex++
 
@@ -309,7 +309,7 @@ export default function SkillAutocomplete({
         } ${
           displayIndex === selectedIndex ? 'bg-muted' : readOnly ? '' : 'hover:bg-muted'
         } ${isSelected ? 'opacity-60' : ''}`}
-        onClick={readOnly ? undefined : e => handleSelect(skill.name, e)}
+        onClick={readOnly ? undefined : e => handleSelect(skill, e)}
         role={readOnly ? undefined : 'button'}
         tabIndex={readOnly ? -1 : 0}
         onKeyDown={
@@ -318,7 +318,7 @@ export default function SkillAutocomplete({
             : e => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault()
-                  handleSelect(skill.name, e)
+                  handleSelect(skill, e)
                 }
               }
         }
