@@ -185,7 +185,7 @@ describe('ComposerToolbar', () => {
     const goalPill = screen.getByTestId('goal-draft-pill')
 
     expect(toolbar).toHaveClass('flex-wrap', 'gap-x-2', 'gap-y-1')
-    expect(features).toHaveClass('flex-auto', 'min-w-0')
+    expect(features).toHaveClass('flex-auto', 'min-w-0', 'flex-wrap', 'gap-x-2', 'gap-y-1')
     expect(actions).toHaveClass('ml-auto', 'shrink-0')
     expect(goalPill).toHaveClass('min-w-8', 'max-w-full', 'shrink', 'overflow-hidden')
     expect(goalPill.querySelector('span')).toHaveClass('min-w-0', 'truncate')

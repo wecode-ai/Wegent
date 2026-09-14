@@ -151,7 +151,7 @@ export function ComposerToolbar({
     >
       <div
         data-composer-toolbar-group="features"
-        className="flex min-w-0 flex-auto items-center gap-2"
+        className="flex min-w-0 flex-auto flex-wrap items-center gap-x-2 gap-y-1"
       >
         <AddContextMenu
           disabled={disabled}
