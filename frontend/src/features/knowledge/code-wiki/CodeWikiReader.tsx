@@ -175,7 +175,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
+  const { teams, isTeamsLoading, isTeamsError, refreshTeams } = useTeamContext()
 
   const [pages, setPages] = useState<CodeWikiPageNode[]>([])
   const [loading, setLoading] = useState(true)
@@ -622,6 +622,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                 <ChatArea
                   teams={knowledgeTeams}
                   isTeamsLoading={isTeamsLoading}
+                  isTeamsError={isTeamsError}
                   showRepositorySelector={false}
                   taskType="knowledge"
                   knowledgeBaseId={wiki.id}
