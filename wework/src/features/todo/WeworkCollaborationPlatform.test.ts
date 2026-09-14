@@ -1023,6 +1023,39 @@ describe('Wework collaboration workspace API', () => {
     expect(listCloudMembers).not.toHaveBeenCalled()
   })
 
+  it('routes local workspace overview snapshots to the local project API', async () => {
+    const localSnapshot = {
+      items: [],
+      task_bindings: [],
+      members: [],
+      agents: [],
+    }
+    const localDeliveryApi = createLocalDeliveryApi()
+    localDeliveryApi.getBoardSnapshot = vi.fn().mockResolvedValue(localSnapshot)
+    const getCloudBoardSnapshot = vi.fn()
+    const cloudApi = {
+      workspaces: {},
+      projects: {},
+      issues: {
+        getBoardSnapshot: getCloudBoardSnapshot,
+      },
+    } as unknown as SharedWorkspaceApi
+    const api = createWeworkPlatformApi(
+      cloudApi,
+      localDeliveryApi,
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    await expect(api?.issues.getBoardSnapshot('local-project')).resolves.toEqual(
+      expect.objectContaining({ items: [] })
+    )
+    expect(localDeliveryApi.getBoardSnapshot).toHaveBeenCalledWith('local-project')
+    expect(getCloudBoardSnapshot).not.toHaveBeenCalled()
+  })
+
   it('keeps local navigation projects available when the cloud project list fails', async () => {
     const listCloudProjects = vi.fn().mockRejectedValue(new Error('cloud unavailable'))
     const listCloudWorkspaces = vi.fn().mockRejectedValue(new Error('cloud unavailable'))

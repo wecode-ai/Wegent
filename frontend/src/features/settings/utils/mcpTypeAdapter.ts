@@ -6,14 +6,14 @@
  * MCP Type Adapter Utility
  *
  * Handles type conversion between different agent platforms:
- * - ClaudeCode: supports sse, http, stdio
+ * - Codex and ClaudeCode: support sse, http, stdio
  * - Agno: supports sse, streamable-http, stdio
  */
 
 export type ClaudeCodeMcpType = 'sse' | 'http' | 'stdio'
 export type AgnoMcpType = 'sse' | 'streamable-http' | 'stdio'
-export type AgentType = 'ClaudeCode' | 'Agno'
-export type McpCapableShellType = AgentType | 'Chat' | 'Codex' | 'CodeX'
+export type AgentType = 'Codex' | 'ClaudeCode' | 'Agno'
+export type McpCapableShellType = AgentType | 'Chat' | 'CodeX'
 
 /**
  * Validate if a string is a valid AgentType
@@ -22,11 +22,11 @@ export type McpCapableShellType = AgentType | 'Chat' | 'Codex' | 'CodeX'
  * @returns True if the value is a valid AgentType
  */
 export function isValidAgentType(value: string): value is AgentType {
-  return value === 'ClaudeCode' || value === 'Agno'
+  return value === 'Codex' || value === 'ClaudeCode' || value === 'Agno'
 }
 
 export function isMcpCapableShellType(value: string): value is McpCapableShellType {
-  return isValidAgentType(value) || value === 'Chat' || value === 'Codex' || value === 'CodeX'
+  return isValidAgentType(value) || value === 'Chat' || value === 'CodeX'
 }
 
 /**
@@ -79,7 +79,7 @@ function normalizeMcpType(type: string): string {
  * Convert MCP configuration type based on target agent type
  *
  * @param mcpConfig - The MCP server configuration object
- * @param targetAgentType - The target agent type (ClaudeCode or Agno)
+ * @param targetAgentType - The target agent type
  * @returns Converted MCP configuration
  */
 export function adaptMcpConfigForAgent(
@@ -116,8 +116,8 @@ export function adaptMcpConfigForAgent(
           config.type = currentType
         }
       }
-    } else if (targetAgentType === 'ClaudeCode') {
-      // Convert to ClaudeCode format
+    } else if (targetAgentType === 'Codex' || targetAgentType === 'ClaudeCode') {
+      // Codex and ClaudeCode use the same transport names.
       const agnoType = currentType as AgnoMcpType
       if (AGNO_TO_CLAUDE_TYPE_MAP[agnoType]) {
         config.type = AGNO_TO_CLAUDE_TYPE_MAP[agnoType]
@@ -141,8 +141,12 @@ export function adaptMcpConfigForShell(
   mcpConfig: Record<string, unknown>,
   shellType: McpCapableShellType
 ): Record<string, unknown> {
-  if (shellType === 'ClaudeCode' || shellType === 'Agno') {
+  if (shellType === 'Codex' || shellType === 'ClaudeCode' || shellType === 'Agno') {
     return adaptMcpConfigForAgent(mcpConfig, shellType)
+  }
+
+  if (shellType === 'CodeX') {
+    return adaptMcpConfigForAgent(mcpConfig, 'Codex')
   }
 
   return adaptMcpConfigForAgent(mcpConfig, 'Agno')
@@ -158,7 +162,7 @@ export function adaptMcpConfigForShell(
 export function isValidMcpTypeForAgent(type: string, agentType: AgentType): boolean {
   const normalizedType = normalizeMcpType(type)
 
-  if (agentType === 'ClaudeCode') {
+  if (agentType === 'Codex' || agentType === 'ClaudeCode') {
     return ['sse', 'http', 'stdio'].includes(normalizedType)
   } else if (agentType === 'Agno') {
     return ['sse', 'streamable-http', 'stdio'].includes(normalizedType)
@@ -174,7 +178,7 @@ export function isValidMcpTypeForAgent(type: string, agentType: AgentType): bool
  * @returns Array of supported MCP types
  */
 export function getSupportedMcpTypes(agentType: AgentType): string[] {
-  if (agentType === 'ClaudeCode') {
+  if (agentType === 'Codex' || agentType === 'ClaudeCode') {
     return ['sse', 'http', 'stdio']
   } else if (agentType === 'Agno') {
     return ['sse', 'streamable-http', 'stdio']

@@ -954,6 +954,26 @@ describe("CollaborationPlatformApp real component flow", () => {
     },
   );
 
+  it("keeps workspace settings mounted while refreshing another workspace section", async () => {
+    const { api } = createApi();
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+    const pendingWorkspaces = deferred<CollaborationWorkspace[]>();
+    api.workspaces!.list = vi.fn(() => pendingWorkspaces.promise);
+
+    await click(byTestId("collaboration-workspace-actions"));
+    await click(byTestId("collaboration-workspace-nav-settings"));
+
+    expect(byTestId("workspace-settings-shell")).toBeTruthy();
+    expect(byTestId("collaboration-workspace-nav-agents")).toBeTruthy();
+
+    pendingWorkspaces.resolve([workspace]);
+  });
+
   it.each(["Developer", "Reporter", "Member"] as const)(
     "hides workspace settings from %s even for a direct settings location",
     async (role) => {

@@ -13,9 +13,9 @@ use serde_json::Value;
 use tokio::task::JoinHandle;
 
 use crate::{
-    claude_session,
+    agent_session,
     emitter::{EventEnvelope, ResponsesEventBuilder},
-    protocol::{AgentKind, ExecutionRequest, TaskStatus},
+    protocol::{ExecutionRequest, TaskStatus},
     runner::{AgentEngine, EventSink, ExecutionOutcome},
     server::{RunnerResult, TaskRunner},
 };
@@ -274,9 +274,7 @@ async fn run_managed_task<E, S>(
     let outcome = engine
         .run_with_events(request, sink.clone(), builder.clone())
         .await;
-    let executor_session = (session_request.resolved_agent_kind() == AgentKind::ClaudeCode)
-        .then(|| claude_session::saved_executor_session(&session_request))
-        .flatten();
+    let executor_session = agent_session::saved_executor_session(&session_request);
     let builder = builder.with_executor_session(executor_session);
     running_tasks.remove(&task_id);
     {
