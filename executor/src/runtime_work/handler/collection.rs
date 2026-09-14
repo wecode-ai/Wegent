@@ -1269,6 +1269,7 @@ impl RuntimeWorkRpcHandler {
         goal_status: Option<String>,
         update_activity_time: bool,
     ) {
+        let goal_is_active = goal_status.as_deref() == Some("active");
         self.store.update_task(local_task_id, |link| {
             if link.goal_status == goal_status {
                 return;
@@ -1278,6 +1279,9 @@ impl RuntimeWorkRpcHandler {
                 link.updated_at = now_ms();
             }
         });
+        if !goal_is_active {
+            self.clear_active_goal_turn(local_task_id);
+        }
     }
 }
 

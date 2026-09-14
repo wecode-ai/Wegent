@@ -5144,6 +5144,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         }
                                         goal={paneSession.goal}
                                         goalContinuing={paneSession.goalContinuing}
+                                        goalExecutionStatus={paneSession.goalExecutionStatus}
                                         taskPlan={paneSession.taskPlan}
                                         goalDraftActive={paneSession.goalDraftActive}
                                         onSetGoal={
@@ -5417,6 +5418,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           }
                           goal={paneSession.goal}
                           goalContinuing={paneSession.goalContinuing}
+                          goalExecutionStatus={paneSession.goalExecutionStatus}
                           taskPlan={paneSession.taskPlan}
                           goalDraftActive={paneSession.goalDraftActive}
                           onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}

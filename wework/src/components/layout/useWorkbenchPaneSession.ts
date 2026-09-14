@@ -448,6 +448,7 @@ export function useWorkbenchPaneSession({
   const lifecycleAddress = runtimeTaskLoadTarget?.address ?? currentRuntimeTask
   const taskLifecycle = useRuntimeTaskLifecycle(lifecycleAddress)
   const taskGoalStatus = taskLifecycle?.goalStatus ?? null
+  const goalExecutionStatus = taskLifecycle?.task?.goalExecutionStatus ?? null
   const currentRuntime =
     currentRuntimeTask?.runtime ??
     findRuntimeTask(workbenchState.runtimeWork, currentRuntimeTask)?.runtime ??
@@ -3138,6 +3139,7 @@ export function useWorkbenchPaneSession({
     subagentStatuses,
     goal,
     goalContinuing,
+    goalExecutionStatus,
     taskPlan,
     goalDraftActive,
     loadMoreTranscriptBefore,
