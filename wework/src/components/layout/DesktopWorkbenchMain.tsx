@@ -354,10 +354,6 @@ interface SelectedAssistantPlan {
   fallbackContent: string
 }
 
-interface SelectedSubagentPanel {
-  conversationId: string | null
-}
-
 interface SubagentTranscriptState {
   loading: boolean
   messages: WorkbenchMessage[]
@@ -417,16 +413,16 @@ function findSelectedAssistantPlanContent(
 
 function findSelectedSubagentConversation(
   messages: WorkbenchMessage[],
-  selection: SelectedSubagentPanel | null
+  conversationId: string | null
 ): SubagentBlock | null {
-  if (!selection?.conversationId) return null
+  if (!conversationId) return null
 
   const getConversationId = (block: SubagentBlock) =>
     block.agentThreadId ?? block.agentId ?? block.id
   const findInBlocks = (blocks: SubagentBlock['children']): SubagentBlock | null => {
     for (const block of blocks ?? []) {
       if (block.type !== 'subagent') continue
-      if (getConversationId(block) === selection.conversationId) return block
+      if (getConversationId(block) === conversationId) return block
       const nested = findInBlocks(block.children)
       if (nested) return nested
     }
@@ -1554,25 +1550,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
     () => initialWorkspaceState?.selectedAssistantPlan ?? null
   )
-  const [selectedSubagentPanel, setSelectedSubagentPanel] = useState<SelectedSubagentPanel | null>(
-    null
-  )
+  const [selectedSubagentConversationId, setSelectedSubagentConversationId] = useState<
+    string | null
+  >(null)
   const [subagentTranscripts, setSubagentTranscripts] = useState<
     Record<string, SubagentTranscriptState>
   >({})
   const requestedSubagentTranscriptIdsRef = useRef(new Set<string>())
-  const restoreEnvironmentInfoAfterSubagentRef = useRef(false)
-  const previousSubagentPanelOpenRef = useRef(false)
+  const restoreEnvironmentInfoAfterSubagentsRef = useRef(false)
   const subagentConversations = useMemo(
     () => collectSubagentConversations(paneSession.messages),
     [paneSession.messages]
   )
   const selectedSubagentBlock = useMemo(
-    () => findSelectedSubagentConversation(paneSession.messages, selectedSubagentPanel),
-    [paneSession.messages, selectedSubagentPanel]
+    () => findSelectedSubagentConversation(paneSession.messages, selectedSubagentConversationId),
+    [paneSession.messages, selectedSubagentConversationId]
   )
-  const subagentPanelOpen = selectedSubagentPanel !== null
-  const selectedSubagentConversationId = selectedSubagentPanel?.conversationId ?? null
   const selectedSubagentTranscript = selectedSubagentConversationId
     ? subagentTranscripts[selectedSubagentConversationId]
     : undefined
@@ -1877,20 +1870,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [currentRuntimeTask?.taskId, paneActive, paneVisible, workbenchVisible])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const closeRightPanel = () => {
-    if (subagentPanelOpen) {
-      setSelectedSubagentPanel(null)
-      return
-    }
     setRightPanelExpanded(false)
     setRightPanelOpen(false)
   }
-  const displayedRightPanelOpen = rightPanelOpen || subagentPanelOpen
-  const displayedRightPanelExpanded = subagentPanelOpen ? false : rightPanelExpanded
+  const displayedRightPanelOpen = rightPanelOpen
+  const displayedRightPanelExpanded = rightPanelExpanded
   const compactRightPanelOpen =
-    subagentPanelOpen ||
     (rightPanelTabs.length === 1 &&
       rightPanelTabs[0].startsWith('chat:') &&
       rightPanelView === rightPanelTabs[0]) ||
+    rightPanelView === 'subagents' ||
     isRightWorkspaceExtensionTab(rightPanelView)
   const {
     width: rightSplitChatWidth,
@@ -1938,16 +1927,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ]
   )
   useEffect(() => {
-    if (
-      previousSubagentPanelOpenRef.current &&
-      !subagentPanelOpen &&
-      restoreEnvironmentInfoAfterSubagentRef.current
-    ) {
-      restoreEnvironmentInfoAfterSubagentRef.current = false
-      setEnvironmentInfoOpen(true)
-    }
-    previousSubagentPanelOpenRef.current = subagentPanelOpen
-  }, [setEnvironmentInfoOpen, subagentPanelOpen])
+    if (rightPanelOpen || !restoreEnvironmentInfoAfterSubagentsRef.current) return
+    restoreEnvironmentInfoAfterSubagentsRef.current = false
+    setEnvironmentInfoOpen(true)
+  }, [rightPanelOpen, setEnvironmentInfoOpen])
   const openSupervisorDialog = useCallback(() => {
     setSupervisorDialogTaskKey(supervisorDialogScopeKey)
     if (!environmentInfoDocked) {
@@ -3080,32 +3063,42 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const openRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab, options?: { immediateLayout?: boolean }) => {
       if (options?.immediateLayout) setRightPanelImmediateLayout(true)
-      setSelectedSubagentPanel(null)
+      if (tab !== 'subagents') {
+        restoreEnvironmentInfoAfterSubagentsRef.current = false
+      }
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
       setRightPanelView(tab)
     },
-    [setRightPanelOpen, setRightPanelTabs, setRightPanelView, setSelectedSubagentPanel]
+    [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
   const openSubagentConversation = useCallback(
     (block: SubagentBlock) => {
-      if (!subagentPanelOpen) {
-        restoreEnvironmentInfoAfterSubagentRef.current = environmentInfoOpen
-        if (environmentInfoOpen) setEnvironmentInfoOpen(false)
+      if (environmentInfoOpen) {
+        restoreEnvironmentInfoAfterSubagentsRef.current = true
+        setEnvironmentInfoOpen(false)
       }
-      setSelectedSubagentPanel({
-        conversationId: block.agentThreadId ?? block.agentId ?? block.id,
-      })
+      setSelectedSubagentConversationId(block.agentThreadId ?? block.agentId ?? block.id)
+      openRightPanelTab('subagents')
     },
-    [environmentInfoOpen, setEnvironmentInfoOpen, setSelectedSubagentPanel, subagentPanelOpen]
+    [
+      environmentInfoOpen,
+      openRightPanelTab,
+      setEnvironmentInfoOpen,
+      setSelectedSubagentConversationId,
+    ]
   )
   const openSubagentOverview = useCallback(() => {
-    if (!subagentPanelOpen) {
-      restoreEnvironmentInfoAfterSubagentRef.current = environmentInfoOpen
-      if (environmentInfoOpen) setEnvironmentInfoOpen(false)
-    }
-    setSelectedSubagentPanel({ conversationId: null })
-  }, [environmentInfoOpen, setEnvironmentInfoOpen, setSelectedSubagentPanel, subagentPanelOpen])
+    restoreEnvironmentInfoAfterSubagentsRef.current = true
+    if (environmentInfoOpen) setEnvironmentInfoOpen(false)
+    setSelectedSubagentConversationId(null)
+    openRightPanelTab('subagents')
+  }, [
+    environmentInfoOpen,
+    openRightPanelTab,
+    setEnvironmentInfoOpen,
+    setSelectedSubagentConversationId,
+  ])
   const rightWorkspaceExtensionSessionId = currentRuntimeConversationSource
     ? `${currentRuntimeConversationSource.deviceId}:${currentRuntimeConversationSource.taskId}`
     : paneKey
@@ -3264,7 +3257,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         }
       })
       setRightPanelImmediateLayout(true)
-      setSelectedSubagentPanel(null)
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
       setRightPanelView(tab)
@@ -3277,7 +3269,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       defaultEmbeddedBrowserLabel,
       syncActiveEmbeddedBrowserLabel,
       setRightPanelImmediateLayout,
-      setSelectedSubagentPanel,
     ]
   )
   const closeSmartAppDevelopmentPreviewBrowser = useCallback(
@@ -3620,7 +3611,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ])
   const selectRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
-      setSelectedSubagentPanel(null)
+      if (tab !== 'subagents') {
+        restoreEnvironmentInfoAfterSubagentsRef.current = false
+      }
       setRightPanelOpen(true)
       setRightPanelView(tab)
       if (isRightWorkspaceBrowserTab(tab)) {
@@ -3628,7 +3621,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         if (activeBrowserLabel) syncActiveEmbeddedBrowserLabel(activeBrowserLabel)
       }
     },
-    [setRightPanelOpen, setRightPanelView, syncActiveEmbeddedBrowserLabel, setSelectedSubagentPanel]
+    [setRightPanelOpen, setRightPanelView, syncActiveEmbeddedBrowserLabel]
   )
   const openTemporaryChatTab = useCallback(
     (initialInput?: string) => {
@@ -3889,20 +3882,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         return next
       })
     }
-    setRightPanelTabs(current => {
-      const currentTabs = current.includes(tab) ? current : [...current, tab]
-      const next = currentTabs.filter(openTab => openTab !== tab)
-      if (next.length === 0) {
-        setRightPanelExpanded(false)
-        setRightPanelOpen(false)
-        setRightPanelView('launcher')
-        return next
-      }
-      if (rightPanelView === tab) {
-        setRightPanelView(next[next.length - 1])
-      }
-      return next
-    })
+    const currentTabs = rightPanelTabs.includes(tab) ? rightPanelTabs : [...rightPanelTabs, tab]
+    const nextTabs = currentTabs.filter(openTab => openTab !== tab)
+    setRightPanelTabs(nextTabs)
+    if (nextTabs.length === 0) {
+      setRightPanelExpanded(false)
+      setRightPanelOpen(false)
+      setRightPanelView('launcher')
+      return
+    }
+    if (tab === 'subagents') {
+      restoreEnvironmentInfoAfterSubagentsRef.current = false
+    }
+    if (rightPanelView === tab) {
+      setRightPanelView(nextTabs[nextTabs.length - 1])
+    }
   }
   const closeRightPanelTabFromExtension = useEffectEvent((tab: RightWorkspacePanelTab) => {
     closeRightPanelTab(tab)
@@ -4385,10 +4379,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : null
 
   const toggleRightPanel = () => {
-    if (subagentPanelOpen) {
-      setSelectedSubagentPanel(null)
-      return
-    }
     setRightPanelOpen(open => {
       const nextOpen = !open
       if (nextOpen) {
@@ -5541,22 +5531,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }}
           aria-hidden={!displayedRightPanelOpen}
         >
-          {selectedSubagentBlock ? (
-            <SubagentConversationPanel
-              block={selectedSubagentBlock}
-              onBack={() => setSelectedSubagentPanel({ conversationId: null })}
-              onOpenSubagent={openSubagentConversation}
-              onOpenWorkspaceFile={openWorkspaceFileFromMessage}
-              transcriptMessages={selectedSubagentTranscript?.messages}
-              transcriptLoading={selectedSubagentTranscript?.loading}
-              transcriptError={selectedSubagentTranscript?.error}
-            />
-          ) : subagentPanelOpen ? (
-            <SubagentOverviewPanel
-              blocks={subagentConversations}
-              onSelect={openSubagentConversation}
-            />
-          ) : shouldRenderRightPanel ? (
+          {shouldRenderRightPanel ? (
             <RightWorkspacePanel
               showWorkbenchBackground={hasMainBackground && !displayedRightPanelExpanded}
               visible={paneVisible && workbenchVisible && displayedRightPanelOpen}
@@ -5583,6 +5558,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               workspaceTargetError={openFileRequest?.target ? null : workspaceTargetError}
               review={reviewState}
               planContent={rightPanelPlanContent}
+              subagentPanel={
+                selectedSubagentBlock ? (
+                  <SubagentConversationPanel
+                    block={selectedSubagentBlock}
+                    onBack={() => setSelectedSubagentConversationId(null)}
+                    onOpenSubagent={openSubagentConversation}
+                    onOpenWorkspaceFile={openWorkspaceFileFromMessage}
+                    transcriptMessages={selectedSubagentTranscript?.messages}
+                    transcriptLoading={selectedSubagentTranscript?.loading}
+                    transcriptError={selectedSubagentTranscript?.error}
+                  />
+                ) : (
+                  <SubagentOverviewPanel
+                    blocks={subagentConversations}
+                    onSelect={openSubagentConversation}
+                  />
+                )
+              }
               extensionTabs={rightPanelExtensionTabs}
               extensionScope={rightWorkspaceExtensionScope}
               workItemPanel={

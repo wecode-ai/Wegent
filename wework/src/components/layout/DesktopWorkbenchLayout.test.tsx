@@ -6691,7 +6691,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
 
-  test('opens subagents from the environment panel and restores the environment view', async () => {
+  test('opens subagents in a right workspace tab and restores the environment view', async () => {
     const loadRuntimeTranscriptForPane = vi.fn().mockResolvedValue({
       messages: [
         {
@@ -6755,6 +6755,10 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
     expect(screen.getByTestId('subagent-overview-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-subagents-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
 
     await userEvent.click(screen.getByTestId('subagent-overview-item'))
 
@@ -6770,7 +6774,13 @@ describe('DesktopWorkbenchLayout', () => {
       }),
       { includeFullContent: true }
     )
-    expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-panel')).toContainElement(
+      screen.getByTestId('subagent-conversation-panel')
+    )
+    expect(screen.getByTestId('right-workspace-subagents-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
     expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
       'aria-hidden',
       'false'
@@ -6783,16 +6793,18 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('subagent-overview-item')).toHaveTextContent(
       'Inspect the runtime event flow'
     )
-    expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-subagents-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-subagents-tab-close-button'))
 
-    expect(screen.queryByTestId('subagent-overview-panel')).not.toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
     })
     expect(screen.getByTestId('environment-subagents-section')).toBeInTheDocument()
-    expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute('aria-hidden', 'true')
   })
 
   test('expands the right workspace panel without the composer and restores chat', async () => {
