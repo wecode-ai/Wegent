@@ -499,6 +499,7 @@ function CollaborationPlatformNavigation({
         >
           <button
             type="button"
+            className="collaboration-workspace-section-settings"
             aria-label={messages.collaborationSettings}
             title={messages.collaborationSettings}
             aria-expanded={collaborationMenuOpen}
@@ -510,6 +511,7 @@ function CollaborationPlatformNavigation({
           </button>
           <button
             type="button"
+            className="collaboration-workspace-section-create"
             aria-label={messages.createWorkspace}
             title={messages.createWorkspace}
             data-testid="collaboration-workspace-create"

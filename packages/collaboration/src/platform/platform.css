@@ -136,16 +136,24 @@
   display: flex;
   transform: translateY(-50%);
   align-items: center;
+  pointer-events: auto;
+}
+
+.collaboration-workspace-section-settings {
+  visibility: hidden;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 120ms ease-out;
+  transition:
+    visibility 120ms ease-out,
+    opacity 120ms ease-out;
 }
 
 .collaboration-workspace-section-heading:hover
-  .collaboration-workspace-section-actions,
+  .collaboration-workspace-section-settings,
 .collaboration-workspace-section-heading:focus-within
-  .collaboration-workspace-section-actions,
-.collaboration-workspace-section-actions:has(> button[aria-expanded="true"]) {
+  .collaboration-workspace-section-settings,
+.collaboration-workspace-section-settings[aria-expanded="true"] {
+  visibility: visible;
   opacity: 1;
   pointer-events: auto;
 }
