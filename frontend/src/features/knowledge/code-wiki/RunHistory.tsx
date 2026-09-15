@@ -37,7 +37,8 @@ interface RunHistoryProps {
   status: CodeWikiRunStatus | null
   /** Reload reader data after a past version becomes live again. */
   onRepublished?: () => void | Promise<void>
-  scheduledUpdateEnabled?: boolean
+  /** Whether this caller may restore versions and inspect management-only schedule state. */
+  canManage?: boolean
 }
 
 /** What the chip says before anyone opens it. */
@@ -113,11 +114,13 @@ function RunRow({
   knowledgeBaseId,
   onRepublished,
   scheduledUpdateEnabled,
+  canManage,
 }: {
   run: CodeWikiRunRecord
   knowledgeBaseId: number
   onRepublished: () => void | Promise<void>
   scheduledUpdateEnabled: boolean
+  canManage: boolean
 }) {
   const { t } = useTranslation('knowledge')
   const when = formatRelativeTime(run.started_at, t)
@@ -188,7 +191,7 @@ function RunRow({
               <span>{t('codeWiki.history.commitUnreported')}</span>
             )}
           </span>
-          {canRepublish(run) && (
+          {canManage && canRepublish(run) && (
             <button
               type="button"
               onClick={() => setConfirming(true)}
@@ -336,24 +339,32 @@ export function RunHistory({
   knowledgeBaseId,
   status,
   onRepublished,
-  scheduledUpdateEnabled = false,
+  canManage = false,
 }: RunHistoryProps) {
   const { t } = useTranslation('knowledge')
   const [runs, setRuns] = useState<CodeWikiRunRecord[] | null>(null)
   const [loading, setLoading] = useState(false)
+  const [scheduledUpdateEnabled, setScheduledUpdateEnabled] = useState(false)
   const chip = summarise(status, t)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      setRuns((await codeWikiApi.history(knowledgeBaseId)).runs)
+      const [history, scheduledUpdate] = await Promise.all([
+        codeWikiApi.history(knowledgeBaseId),
+        canManage
+          ? codeWikiApi.scheduledUpdate(knowledgeBaseId).catch(() => null)
+          : Promise.resolve(null),
+      ])
+      setRuns(history.runs)
+      setScheduledUpdateEnabled(Boolean(scheduledUpdate?.enabled))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
       setRuns([])
     } finally {
       setLoading(false)
     }
-  }, [knowledgeBaseId])
+  }, [canManage, knowledgeBaseId])
 
   const handleRepublished = useCallback(async () => {
     await load()
@@ -398,6 +409,7 @@ export function RunHistory({
                 knowledgeBaseId={knowledgeBaseId}
                 onRepublished={handleRepublished}
                 scheduledUpdateEnabled={scheduledUpdateEnabled}
+                canManage={canManage}
               />
             ))}
           </ul>

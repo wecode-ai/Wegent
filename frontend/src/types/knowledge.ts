@@ -454,6 +454,7 @@ export interface KnowledgeBaseCreate {
     hour: number
     minute: number
     timezone: string
+    execution_principal_user_id?: number | null
   } | null
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   guided_questions?: string[]

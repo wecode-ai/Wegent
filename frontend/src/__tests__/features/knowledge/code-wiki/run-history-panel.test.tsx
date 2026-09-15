@@ -18,7 +18,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 jest.mock('@/apis/code-wiki', () => ({
-  codeWikiApi: { history: jest.fn(), republish: jest.fn() },
+  codeWikiApi: { history: jest.fn(), republish: jest.fn(), scheduledUpdate: jest.fn() },
 }))
 
 jest.mock('sonner', () => ({ toast: { success: jest.fn(), error: jest.fn() } }))
@@ -39,7 +39,7 @@ const RESTORABLE: CodeWikiRunRecord = {
 }
 
 async function openHistory() {
-  render(<RunHistory knowledgeBaseId={1} status={null} />)
+  render(<RunHistory knowledgeBaseId={1} status={null} canManage />)
   fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
   return screen.findByTestId(`code-wiki-republish-${RESTORABLE.generation_id}`)
 }
@@ -53,6 +53,7 @@ describe('restoring a past version', () => {
     jest.clearAllMocks()
     mockHistory([RESTORABLE])
     ;(codeWikiApi.republish as jest.Mock).mockResolvedValue({})
+    ;(codeWikiApi.scheduledUpdate as jest.Mock).mockResolvedValue({ enabled: false })
   })
 
   it('asks before replacing what readers currently see', async () => {
@@ -66,7 +67,7 @@ describe('restoring a past version', () => {
 
   it('restores once confirmed', async () => {
     const onRepublished = jest.fn()
-    render(<RunHistory knowledgeBaseId={1} status={null} onRepublished={onRepublished} />)
+    render(<RunHistory knowledgeBaseId={1} status={null} onRepublished={onRepublished} canManage />)
     fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
     const button = await screen.findByTestId(`code-wiki-republish-${RESTORABLE.generation_id}`)
     fireEvent.click(button)
@@ -107,7 +108,7 @@ describe('restoring a past version', () => {
 
   it('does not report success when the reader fails to reload restored pages', async () => {
     const onRepublished = jest.fn().mockRejectedValue(new Error('Page reload failed'))
-    render(<RunHistory knowledgeBaseId={1} status={null} onRepublished={onRepublished} />)
+    render(<RunHistory knowledgeBaseId={1} status={null} onRepublished={onRepublished} canManage />)
     fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
     fireEvent.click(await screen.findByTestId(`code-wiki-republish-${RESTORABLE.generation_id}`))
     fireEvent.click(await screen.findByTestId(`code-wiki-republish-confirm-${42}`))
@@ -116,6 +117,19 @@ describe('restoring a past version', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Page reload failed'))
     expect(onRepublished).toHaveBeenCalled()
     expect(toast.success).not.toHaveBeenCalled()
+  })
+})
+
+describe('read-only history', () => {
+  it('does not offer a restore action to a caller who cannot manage the wiki', async () => {
+    mockHistory([RESTORABLE])
+    render(<RunHistory knowledgeBaseId={1} status={null} />)
+    fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
+
+    await screen.findByTestId('code-wiki-run-row')
+    expect(
+      screen.queryByTestId(`code-wiki-republish-${RESTORABLE.generation_id}`)
+    ).not.toBeInTheDocument()
   })
 })
 

@@ -130,6 +130,12 @@ const statusConfig: Record<
   },
 }
 
+const codeWikiExecutionMessageKeys: Record<string, string> = {
+  'repository unchanged since last run': 'code_wiki_repository_unchanged',
+  'Skipped because another generation is running': 'code_wiki_generation_running',
+  'Skipped because scheduled update was disabled': 'code_wiki_schedule_disabled',
+}
+
 export function SubscriptionList({
   onCreateSubscription,
   onEditSubscription,
@@ -382,6 +388,14 @@ export function SubscriptionList({
               const isLoadingHistory = executionHistoryLoading === subscription.id
 
               if (subscription.code_wiki_id) {
+                const lastStatus = subscription.last_execution_status as
+                  | BackgroundExecutionStatus
+                  | undefined
+                const lastStatusDisplay = lastStatus ? statusConfig[lastStatus] : undefined
+                const lastMessage = subscription.last_execution_message
+                const lastMessageKey = lastMessage
+                  ? codeWikiExecutionMessageKeys[lastMessage]
+                  : undefined
                 return (
                   <a
                     key={subscription.id}
@@ -393,10 +407,49 @@ export function SubscriptionList({
                       <CalendarClock className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium">{subscription.display_name}</div>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-medium">{subscription.display_name}</span>
+                        <Badge variant="secondary" className="shrink-0 text-xs">
+                          {t('code_wiki_scheduled_update')}
+                        </Badge>
+                      </div>
                       <div className="text-xs text-text-muted">
-                        {getTriggerLabel(subscription)} · {t('next_execution')}:{' '}
-                        {formatNextExecution(subscription.next_execution_time)}
+                        {getTriggerLabel(subscription)} ·{' '}
+                        {subscription.enabled ? (
+                          <>
+                            {t('next_execution')}:{' '}
+                            {formatNextExecution(subscription.next_execution_time)}
+                          </>
+                        ) : (
+                          t('execution_disabled')
+                        )}
+                      </div>
+                      <div
+                        className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-text-muted"
+                        data-testid="code-wiki-subscription-last-execution"
+                      >
+                        {lastStatusDisplay ? (
+                          <span
+                            className={`inline-flex items-center gap-1 ${lastStatusDisplay.color}`}
+                          >
+                            {lastStatusDisplay.icon}
+                            {t(lastStatusDisplay.text)}
+                            {subscription.last_execution_time && (
+                              <> · {formatRelativeTime(subscription.last_execution_time)}</>
+                            )}
+                          </span>
+                        ) : (
+                          <span>{t('code_wiki_not_checked')}</span>
+                        )}
+                        <span>
+                          {subscription.execution_count} {t('executions')}
+                        </span>
+                        {lastMessage && (
+                          <span className="min-w-0 max-w-xs truncate" title={lastMessage}>
+                            {lastMessageKey ? t(lastMessageKey) : lastMessage}
+                          </span>
+                        )}
+                        <span>{t('code_wiki_scheduled_update_hint')}</span>
                       </div>
                     </div>
                     <Badge variant={subscription.enabled ? 'default' : 'secondary'}>

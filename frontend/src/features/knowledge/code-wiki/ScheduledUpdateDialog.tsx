@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -19,6 +19,17 @@ import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -29,52 +40,76 @@ import { codeWikiApi } from '@/apis/code-wiki'
 import { userApis } from '@/apis/user'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { CodeWikiScheduledUpdate } from '@/types/code-wiki'
+import type { CodeWikiScheduledUpdate, CodeWikiScheduledUpdateRequest } from '@/types/code-wiki'
 import type { SearchUser } from '@/types/api'
 
 interface Props {
   knowledgeBaseId: number
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSaved: (plan: CodeWikiScheduledUpdate) => void
+  /** An unapplied change from this editor, retained if the dialog is reopened. */
+  draft?: CodeWikiScheduledUpdateRequest | null
+  /** The outer knowledge-base form has staged deletion of the saved plan. */
+  deleteRequested?: boolean
+  onDraftSaved: (plan: CodeWikiScheduledUpdateRequest) => void
+  onDeleteRequested: () => void
 }
 
-export function ScheduledUpdateDialog({ knowledgeBaseId, open, onOpenChange, onSaved }: Props) {
+export function ScheduledUpdateDialog({
+  knowledgeBaseId,
+  open,
+  onOpenChange,
+  draft,
+  deleteRequested = false,
+  onDraftSaved,
+  onDeleteRequested,
+}: Props) {
   const { t } = useTranslation('knowledge')
   const [plan, setPlan] = useState<CodeWikiScheduledUpdate | null>(null)
   const [selectedRunners, setSelectedRunners] = useState<SearchUser[]>([])
-  const [saving, setSaving] = useState(false)
+  const [executionPrincipalUserId, setExecutionPrincipalUserId] = useState<number | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const loadRequestId = useRef(0)
 
   const loadPlan = useCallback(async () => {
+    const requestId = ++loadRequestId.current
     setLoadError(null)
     try {
       const value = await codeWikiApi.scheduledUpdate(knowledgeBaseId)
-      setPlan(
-        value.configured
-          ? value
-          : { ...value, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
-      )
+      if (loadRequestId.current !== requestId) return
+      const loadedPlan = value.configured
+        ? value
+        : { ...value, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+      setPlan(draft ? { ...loadedPlan, ...draft } : loadedPlan)
       setSelectedRunners([])
-      if (value.execution_principal_user_id) {
+      const runnerId = draft?.execution_principal_user_id ?? value.execution_principal_user_id
+      setExecutionPrincipalUserId(runnerId ?? null)
+      if (runnerId) {
         try {
-          const response = await userApis.getUsersByIds([value.execution_principal_user_id])
+          const response = await userApis.getUsersByIds([runnerId])
+          if (loadRequestId.current !== requestId) return
           setSelectedRunners(response.users)
         } catch (error) {
+          if (loadRequestId.current !== requestId) return
           toast.error(error instanceof Error ? error.message : String(error))
         }
       }
     } catch (error) {
+      if (loadRequestId.current !== requestId) return
       setPlan(null)
       setLoadError(error instanceof Error ? error.message : String(error))
     }
-  }, [knowledgeBaseId])
+  }, [draft, knowledgeBaseId])
 
   useEffect(() => {
-    if (open) void loadPlan()
+    if (!open) return
+    void loadPlan()
+    return () => {
+      loadRequestId.current += 1
+    }
   }, [loadPlan, open])
 
-  const save = async () => {
+  const saveDraft = () => {
     if (!plan) return
     if (
       plan.cadence === 'custom' &&
@@ -83,27 +118,22 @@ export function ScheduledUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
       toast.error(t('codeWiki.scheduledUpdate.invalidCustomDays'))
       return
     }
-    setSaving(true)
-    try {
-      const saved = await codeWikiApi.configureScheduledUpdate(knowledgeBaseId, {
-        enabled: plan.enabled,
-        cadence: plan.cadence,
-        interval_days: plan.interval_days,
-        weekday: plan.weekday,
-        hour: plan.hour,
-        minute: plan.minute,
-        timezone: plan.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
-        execution_principal_user_id: selectedRunners[0]?.id ?? null,
-      })
-      setPlan(saved)
-      onSaved(saved)
-      onOpenChange(false)
-      toast.success(t('codeWiki.scheduledUpdate.saved'))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error))
-    } finally {
-      setSaving(false)
-    }
+    onDraftSaved({
+      enabled: plan.enabled,
+      cadence: plan.cadence,
+      interval_days: plan.interval_days,
+      weekday: plan.weekday,
+      hour: plan.hour,
+      minute: plan.minute,
+      timezone: plan.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      execution_principal_user_id: executionPrincipalUserId,
+    })
+    onOpenChange(false)
+  }
+
+  const deletePlan = () => {
+    onDeleteRequested()
+    onOpenChange(false)
   }
 
   return (
@@ -111,7 +141,13 @@ export function ScheduledUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
       <DialogContent data-testid="code-wiki-scheduled-update-dialog">
         <DialogHeader>
           <DialogTitle>{t('codeWiki.scheduledUpdate.title')}</DialogTitle>
-          <DialogDescription>{t('codeWiki.scheduledUpdate.description')}</DialogDescription>
+          <DialogDescription>
+            {t(
+              deleteRequested
+                ? 'codeWiki.scheduledUpdate.pendingDeleteDescription'
+                : 'codeWiki.scheduledUpdate.draftDescription'
+            )}
+          </DialogDescription>
         </DialogHeader>
         {plan && (
           <div className="space-y-4 py-2">
@@ -175,7 +211,10 @@ export function ScheduledUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
               )}
             </div>
             <details className="rounded-md border border-border p-3">
-              <summary className="cursor-pointer text-sm font-medium">
+              <summary
+                className="cursor-pointer text-sm font-medium"
+                data-testid="code-wiki-scheduled-advanced"
+              >
                 {t('codeWiki.scheduledUpdate.advanced')}
               </summary>
               <div className="mt-3 space-y-2">
@@ -185,9 +224,13 @@ export function ScheduledUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
                 </p>
                 <UserSearchSelect
                   selectedUsers={selectedRunners}
-                  onSelectedUsersChange={setSelectedRunners}
+                  onSelectedUsersChange={users => {
+                    setSelectedRunners(users)
+                    setExecutionPrincipalUserId(users[0]?.id ?? null)
+                  }}
                   multiple={false}
                   placeholder={t('codeWiki.scheduledUpdate.runnerPlaceholder')}
+                  inputTestId="code-wiki-scheduled-runner"
                 />
               </div>
             </details>
@@ -223,27 +266,27 @@ export function ScheduledUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
                   type="time"
                   value={`${String(plan.hour).padStart(2, '0')}:${String(plan.minute).padStart(2, '0')}`}
                   onChange={event => {
+                    if (!event.target.value) return
                     const [hour, minute] = event.target.value.split(':').map(Number)
+                    if (
+                      !Number.isInteger(hour) ||
+                      !Number.isInteger(minute) ||
+                      hour < 0 ||
+                      hour > 23 ||
+                      minute < 0 ||
+                      minute > 59
+                    ) {
+                      return
+                    }
                     setPlan(current => current && { ...current, hour, minute })
                   }}
                   data-testid="code-wiki-scheduled-time"
                 />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="code-wiki-scheduled-timezone">
-                {t('codeWiki.scheduledUpdate.timezone')}
-              </Label>
-              <Input
-                id="code-wiki-scheduled-timezone"
-                value={plan.timezone}
-                onChange={event =>
-                  setPlan(current => current && { ...current, timezone: event.target.value })
-                }
-                placeholder="Asia/Shanghai"
-                data-testid="code-wiki-scheduled-timezone"
-              />
-            </div>
+            <p className="text-xs text-text-muted" data-testid="code-wiki-scheduled-timezone">
+              {t('codeWiki.scheduledUpdate.timezoneHint', { timezone: plan.timezone })}
+            </p>
             <p className="text-xs text-text-secondary">
               {t('codeWiki.scheduledUpdate.next', {
                 when: plan.next_execution_time
@@ -295,6 +338,38 @@ export function ScheduledUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
           </div>
         )}
         <DialogFooter>
+          {plan?.configured && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="mr-auto text-destructive hover:text-destructive"
+                  data-testid="code-wiki-scheduled-delete"
+                >
+                  {t('codeWiki.scheduledUpdate.delete')}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent data-testid="code-wiki-scheduled-delete-confirm">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{t('codeWiki.scheduledUpdate.deleteTitle')}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {t('codeWiki.scheduledUpdate.deleteDescription')}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel data-testid="code-wiki-scheduled-delete-cancel">
+                    {t('common:actions.cancel')}
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={deletePlan}
+                    data-testid="code-wiki-scheduled-delete-action"
+                  >
+                    {t('codeWiki.scheduledUpdate.delete')}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
@@ -304,11 +379,11 @@ export function ScheduledUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
           </Button>
           <Button
             variant="primary"
-            onClick={save}
-            disabled={!plan || saving}
+            onClick={saveDraft}
+            disabled={!plan}
             data-testid="code-wiki-scheduled-save"
           >
-            {saving ? t('codeWiki.scheduledUpdate.saving') : t('common:actions.save')}
+            {t('codeWiki.scheduledUpdate.apply')}
           </Button>
         </DialogFooter>
       </DialogContent>

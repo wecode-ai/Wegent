@@ -25,10 +25,15 @@ from app.services.knowledge.code_wiki.generation import (
     GenerationInFlight,
     current_run_state,
 )
+from app.services.knowledge.code_wiki.generation_strategy import (
+    GENERATION_STRATEGY_SPEC_KEY,
+    strategy_for_run,
+)
 from app.services.knowledge.code_wiki.runner import (
     CodeWikiRunError,
     source_of,
     start_run,
+    strategy_team_readiness_many,
 )
 from app.services.knowledge.code_wiki.source import (
     SourceAccessDenied,
@@ -58,6 +63,20 @@ def code_wiki_id(subscription: Kind) -> int | None:
     return value if isinstance(value, int) and value > 0 else None
 
 
+def _references_code_wiki(subscription: Kind, knowledge_base: Kind) -> bool:
+    """Match the complete persisted Kind identity."""
+    if code_wiki_id(subscription) != knowledge_base.id:
+        return False
+    code_wiki_ref = (subscription.json or {}).get("spec", {}).get(CODE_WIKI_REF_KEY)
+    expected = {
+        "id": knowledge_base.id,
+        "name": knowledge_base.name,
+        "namespace": knowledge_base.namespace,
+        "userId": knowledge_base.user_id,
+    }
+    return all(code_wiki_ref.get(key) == value for key, value in expected.items())
+
+
 def is_code_wiki_scheduled_update(subscription: Kind) -> bool:
     return code_wiki_id(subscription) is not None
 
@@ -68,12 +87,8 @@ def reject_code_wiki_scheduled_update(subscription: Kind, *, detail: str) -> Non
         raise HTTPException(status_code=409, detail=detail)
 
 
-def scheduled_update_for(db: Session, knowledge_base: Kind | int) -> Kind | None:
+def scheduled_update_for(db: Session, knowledge_base: Kind) -> Kind | None:
     """Resolve a plan only through the authoritative id stored on the Code Wiki."""
-    if isinstance(knowledge_base, int):
-        knowledge_base = db.get(Kind, knowledge_base)
-    if knowledge_base is None:
-        return None
     subscription_id = (
         (knowledge_base.json or {}).get("spec", {}).get(SUBSCRIPTION_SPEC_KEY)
     )
@@ -83,34 +98,79 @@ def scheduled_update_for(db: Session, knowledge_base: Kind | int) -> Kind | None
     if (
         subscription is None
         or not subscription.is_active
-        or code_wiki_id(subscription) != knowledge_base.id
+        or not _references_code_wiki(subscription, knowledge_base)
     ):
         return None
     return subscription
 
 
 def first_scheduled_time(
-    data: CodeWikiScheduledUpdateRequest, now: datetime | None = None
+    data: CodeWikiScheduledUpdateRequest,
+    now: datetime | None = None,
+    *,
+    defer_first_execution: bool = False,
 ) -> datetime:
-    """Return the first allowed slot as naive UTC; creation day is never eligible."""
+    """Return the first matching future slot as naive UTC.
+
+    Creation may defer to tomorrow because it already starts the first full
+    generation immediately. Editing or re-enabling a plan instead uses a later slot
+    today when one remains, which keeps a changed schedule intuitive to test.
+    """
     try:
         local_tz = ZoneInfo(data.timezone)
     except Exception as exc:
         raise ValueError(f"Invalid IANA timezone: {data.timezone}") from exc
     current = (now or datetime.now(timezone.utc)).astimezone(local_tz)
-    tomorrow = current.date() + timedelta(days=1)
+    first_date = (
+        current.date() + timedelta(days=1) if defer_first_execution else current.date()
+    )
     candidate = datetime.combine(
-        tomorrow, datetime.min.time(), tzinfo=local_tz
+        first_date, datetime.min.time(), tzinfo=local_tz
     ).replace(hour=data.hour, minute=data.minute)
     if data.cadence in {"weekly", "biweekly", "four_weeks"}:
         candidate += timedelta(days=(data.weekday - candidate.weekday()) % 7)
+        if candidate <= current:
+            candidate += timedelta(days=7)
+    elif candidate <= current:
+        candidate += timedelta(days=1)
     return candidate.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _is_local_creation_day(
+    knowledge_base: Kind, timezone_name: str, now: datetime
+) -> bool:
+    created_at = knowledge_base.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    try:
+        local_timezone = ZoneInfo(timezone_name)
+    except Exception as exc:
+        raise ValueError(f"Invalid IANA timezone: {timezone_name}") from exc
+    return (
+        created_at.astimezone(local_timezone).date()
+        == now.astimezone(local_timezone).date()
+    )
+
+
 def validate_runner(db: Session, knowledge_base: Kind, user_id: int) -> User:
-    return validate_runner_for_source(
+    runner = validate_runner_for_source(
         db, user_id=user_id, source=source_of(knowledge_base)
     )
+    stored_strategy_id = ((knowledge_base.json or {}).get("spec") or {}).get(
+        GENERATION_STRATEGY_SPEC_KEY
+    )
+    try:
+        legacy_strategy = strategy_for_run(None, db=db)
+        stored_strategy = strategy_for_run(stored_strategy_id, db=db)
+    except ValueError as exc:
+        raise CodeWikiRunError(str(exc)) from exc
+    strategies = [legacy_strategy]
+    if stored_strategy.strategy_id != legacy_strategy.strategy_id:
+        strategies.append(stored_strategy)
+    for readiness in strategy_team_readiness_many(db, runner, strategies).values():
+        if readiness:
+            raise CodeWikiRunError(f"MODEL_UNAVAILABLE: {readiness}")
+    return runner
 
 
 def validate_runner_for_source(
@@ -126,18 +186,6 @@ def validate_runner_for_source(
     except SourceAccessDenied as exc:
         raise CodeWikiRunError(f"REPOSITORY_ACCESS_DENIED: {exc}") from exc
 
-    from app.services.adapters.team_kinds import team_kinds_service
-
-    team = team_kinds_service.get_team_by_name_and_namespace(
-        db=db,
-        team_name=wiki_settings.CODE_WIKI_TEAM_NAME,
-        team_namespace="default",
-        user_id=runner.id,
-    )
-    if not team:
-        raise CodeWikiRunError(
-            "MODEL_UNAVAILABLE: Code Wiki team is unavailable for this runner"
-        )
     return runner
 
 
@@ -154,6 +202,9 @@ def configure_scheduled_update(
     )
     if knowledge_base is None:
         raise CodeWikiRunError("Code Wiki no longer exists")
+    knowledge_base_spec = (knowledge_base.json or {}).get("spec") or {}
+    if knowledge_base_spec.get("kbType") != "code_wiki":
+        raise CodeWikiRunError("Knowledge base is not a Code Wiki")
 
     runner_id = data.execution_principal_user_id or knowledge_base.user_id
     if data.enabled:
@@ -162,7 +213,15 @@ def configure_scheduled_update(
     previous_internal = (
         dict((subscription.json or {}).get("_internal", {})) if subscription else {}
     )
-    scheduled_at = first_scheduled_time(data)
+    now = datetime.now(timezone.utc)
+    scheduled_at = first_scheduled_time(
+        data,
+        now=now,
+        defer_first_execution=(
+            subscription is None
+            and _is_local_creation_day(knowledge_base, data.timezone, now)
+        ),
+    )
     schedule = {
         "cadence": data.cadence,
         "interval_days": data.interval_days,
@@ -179,7 +238,7 @@ def configure_scheduled_update(
             "namespace": knowledge_base.namespace,
         },
         "spec": {
-            "displayName": knowledge_base.name,
+            "displayName": str(knowledge_base_spec.get("name") or knowledge_base.name),
             "taskType": "execution",
             "visibility": "private",
             "trigger": {
@@ -195,7 +254,12 @@ def configure_scheduled_update(
             "timeoutSeconds": SCHEDULED_UPDATE_TIMEOUT_SECONDS,
             "enabled": data.enabled,
             "executionTarget": {"type": "managed"},
-            CODE_WIKI_REF_KEY: {"id": knowledge_base.id},
+            CODE_WIKI_REF_KEY: {
+                "id": knowledge_base.id,
+                "name": knowledge_base.name,
+                "namespace": knowledge_base.namespace,
+                "userId": knowledge_base.user_id,
+            },
         },
         "status": {},
         "_internal": {
@@ -204,6 +268,9 @@ def configure_scheduled_update(
             "next_execution_time": scheduled_at.isoformat() if data.enabled else None,
             "last_execution_time": previous_internal.get("last_execution_time"),
             "last_execution_status": previous_internal.get("last_execution_status", ""),
+            "last_execution_message": previous_internal.get(
+                "last_execution_message", ""
+            ),
             "execution_count": previous_internal.get("execution_count", 0),
             "success_count": previous_internal.get("success_count", 0),
             "failure_count": previous_internal.get("failure_count", 0),
@@ -239,6 +306,84 @@ def configure_scheduled_update(
     db.commit()
     db.refresh(subscription)
     return subscription
+
+
+def delete_scheduled_update(db: Session, *, knowledge_base: Kind) -> None:
+    """Archive one Code Wiki plan without deleting its execution history."""
+    knowledge_base = (
+        db.query(Kind)
+        .filter(Kind.id == knowledge_base.id, Kind.is_active)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+    if knowledge_base is None:
+        raise CodeWikiRunError("Code Wiki no longer exists")
+
+    subscription = scheduled_update_for(db, knowledge_base)
+    if subscription is not None:
+        subscription = (
+            db.query(Kind)
+            .filter(Kind.id == subscription.id, Kind.is_active)
+            .with_for_update()
+            .first()
+        )
+        if subscription is not None:
+            subscription.is_active = False
+            internal = dict((subscription.json or {}).get("_internal", {}))
+            internal["enabled"] = False
+            subscription.json["_internal"] = internal
+            flag_modified(subscription, "json")
+
+    # Clear the authoritative KB link even when an earlier partial operation has
+    # already made its plan inactive. Otherwise this idempotent delete would leave
+    # a dangling projection id that no longer resolves to a configurable plan.
+    kb_json = dict(knowledge_base.json or {})
+    spec = dict(kb_json.get("spec") or {})
+    spec.pop(SUBSCRIPTION_SPEC_KEY, None)
+    spec.pop(RUNNER_SPEC_KEY, None)
+    kb_json["spec"] = spec
+    knowledge_base.json = kb_json
+    flag_modified(knowledge_base, "json")
+    db.commit()
+
+
+def retarget_scheduled_update(
+    db: Session,
+    *,
+    knowledge_base: Kind,
+    name: str,
+    namespace: str,
+    user_id: int | None = None,
+) -> None:
+    """Keep an internal plan attached when its Code Wiki Kind identity changes."""
+    subscription = scheduled_update_for(db, knowledge_base)
+    if subscription is None:
+        return
+    subscription = (
+        db.query(Kind)
+        .filter(Kind.id == subscription.id, Kind.is_active)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
+    target_user_id = user_id if user_id is not None else knowledge_base.user_id
+    subscription.namespace = namespace
+    subscription.user_id = target_user_id
+    subscription_json = dict(subscription.json or {})
+    metadata = dict(subscription_json.get("metadata") or {})
+    metadata["namespace"] = namespace
+    subscription_json["metadata"] = metadata
+    spec = dict(subscription_json.get("spec") or {})
+    spec[CODE_WIKI_REF_KEY] = {
+        "id": knowledge_base.id,
+        "name": name,
+        "namespace": namespace,
+        "userId": target_user_id,
+    }
+    subscription_json["spec"] = spec
+    subscription.json = subscription_json
+    flag_modified(subscription, "json")
 
 
 def read_scheduled_update(
@@ -311,7 +456,26 @@ def advance_scheduled_update(
 def execute_scheduled_update(
     db: Session, *, subscription_id: int, execution_id: int
 ) -> None:
-    subscription = db.get(Kind, subscription_id)
+    snapshot = db.get(Kind, subscription_id)
+    knowledge_base_id = code_wiki_id(snapshot) if snapshot is not None else None
+    if knowledge_base_id is None:
+        return
+    # Lifecycle writers lock the Code Wiki and then its plan. Use the same order so
+    # delete/configure and a queued worker have one deterministic linearization point.
+    knowledge_base = (
+        db.query(Kind)
+        .filter(Kind.id == knowledge_base_id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+    subscription = (
+        db.query(Kind)
+        .filter(Kind.id == subscription_id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
     execution = db.get(BackgroundExecution, execution_id)
     if (
         subscription is None
@@ -326,13 +490,37 @@ def execute_scheduled_update(
         status=BackgroundExecutionStatus.RUNNING,
         skip_notifications=True,
     )
-    knowledge_base = db.get(Kind, code_wiki_id(subscription))
-    if knowledge_base is None or not knowledge_base.is_active:
+    # A worker may have been enqueued just before its plan was deleted. Preserve the
+    # execution record but make that queued attempt terminal instead of starting a
+    # run after the user explicitly removed future updates.
+    if not subscription.is_active:
+        manager.update_execution_status(
+            db,
+            execution_id=execution_id,
+            status=BackgroundExecutionStatus.COMPLETED_SILENT,
+            result_summary="Skipped because scheduled update was deleted",
+            skip_notifications=True,
+        )
+        return
+    if not bool((subscription.json or {}).get("_internal", {}).get("enabled", False)):
+        manager.update_execution_status(
+            db,
+            execution_id=execution_id,
+            status=BackgroundExecutionStatus.COMPLETED_SILENT,
+            result_summary="Skipped because scheduled update was disabled",
+            skip_notifications=True,
+        )
+        return
+    if (
+        knowledge_base is None
+        or not knowledge_base.is_active
+        or not _references_code_wiki(subscription, knowledge_base)
+    ):
         manager.update_execution_status(
             db,
             execution_id=execution_id,
             status=BackgroundExecutionStatus.FAILED,
-            error_message="Code Wiki no longer exists",
+            error_message="Code Wiki no longer exists or its reference no longer matches",
             skip_notifications=True,
         )
         return

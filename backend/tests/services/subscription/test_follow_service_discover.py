@@ -24,7 +24,16 @@ def test_code_wiki_plan_cannot_be_shared(test_db: Session, test_user: User):
         kind="Subscription",
         name="code-wiki-123",
         namespace="default",
-        json={"spec": {"codeWikiRef": {"id": 123}}},
+        json={
+            "spec": {
+                "codeWikiRef": {
+                    "id": 123,
+                    "name": "wiki",
+                    "namespace": "default",
+                    "userId": 1,
+                }
+            }
+        },
         is_active=True,
     )
     test_db.add(plan)

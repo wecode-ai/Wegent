@@ -12,6 +12,7 @@ wiki, and that the commit the agent reports is the one the next run compares aga
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 import pytest
 from sqlalchemy.orm import Session
@@ -266,6 +267,37 @@ def test_the_run_is_reachable_from_the_task_it_created(
 
     assert started.generation.task_id == started.task_id
     assert started.task_id > 0
+
+
+def test_generation_is_linked_before_the_task_can_be_dispatched(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.adapters import task_kinds
+
+    def assert_generation_linked_before_dispatch(**kwargs: Any) -> dict[str, int]:
+        generation = (
+            test_db.query(WikiGeneration)
+            .filter(WikiGeneration.kind_id == knowledge_base.id)
+            .one()
+        )
+        assert generation.task_id == kwargs["task_id"]
+        return tasks.create_task_or_append(**kwargs)
+
+    monkeypatch.setattr(
+        task_kinds.task_kinds_service,
+        "create_task_or_append",
+        assert_generation_linked_before_dispatch,
+    )
+
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.task_id == started.generation.task_id
 
 
 def test_a_first_run_gets_the_full_rebuild_instructions(

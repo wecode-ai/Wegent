@@ -1333,6 +1333,7 @@ class SubscriptionService:
             webhook_secret=internal.get("webhook_secret"),
             last_execution_time=last_execution_time,
             last_execution_status=internal.get("last_execution_status"),
+            last_execution_message=internal.get("last_execution_message"),
             next_execution_time=next_execution_time,
             execution_count=internal.get("execution_count", 0),
             success_count=internal.get("success_count", 0),

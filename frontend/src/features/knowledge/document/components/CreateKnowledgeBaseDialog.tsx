@@ -17,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -27,6 +28,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
 import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
+import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import {
   CodeWikiSourceFields,
@@ -40,6 +42,7 @@ import type {
   RetrievalConfigDraft,
   RagConfigMode,
 } from '@/types/knowledge'
+import type { SearchUser } from '@/types/api'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
 import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
@@ -157,6 +160,7 @@ export function CreateKnowledgeBaseDialog({
   const [initialTimezone, setInitialTimezone] = useState(
     () => Intl.DateTimeFormat().resolvedOptions().timeZone
   )
+  const [initialRunner, setInitialRunner] = useState<SearchUser[]>([])
   // Default enable summary for all KB types
   const [summaryEnabled, setSummaryEnabled] = useState(true)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
@@ -208,6 +212,7 @@ export function CreateKnowledgeBaseDialog({
       setInitialWeekday(0)
       setInitialTime('09:00')
       setInitialTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)
+      setInitialRunner([])
       setSelectedGroupId(defaultGroupId || 'personal')
       setDirectAccessRequirement('read')
       setAllowDocumentDownload(true)
@@ -276,6 +281,21 @@ export function CreateKnowledgeBaseDialog({
     ) {
       setError(t('knowledge:codeWiki.scheduledUpdate.invalidCustomDays'))
       return
+    }
+
+    if (kind === 'code' && scheduledUpdateEnabled) {
+      const [hour, minute] = initialTime.split(':').map(Number)
+      if (
+        !Number.isInteger(hour) ||
+        !Number.isInteger(minute) ||
+        hour < 0 ||
+        hour > 23 ||
+        minute < 0 ||
+        minute > 59
+      ) {
+        setError(t('knowledge:codeWiki.scheduledUpdate.invalidTime'))
+        return
+      }
     }
 
     if (name.length > 100) {
@@ -348,6 +368,7 @@ export function CreateKnowledgeBaseDialog({
                     hour: Number(initialTime.split(':')[0]),
                     minute: Number(initialTime.split(':')[1]),
                     timezone: initialTimezone,
+                    execution_principal_user_id: initialRunner[0]?.id ?? null,
                   }
                 : null,
             }
@@ -368,6 +389,7 @@ export function CreateKnowledgeBaseDialog({
       setInitialWeekday(0)
       setInitialTime('09:00')
       setInitialTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)
+      setInitialRunner([])
       setSummaryEnabled(true)
       setSummaryModelRef(null)
       setExecutionModelRef(null)
@@ -400,6 +422,7 @@ export function CreateKnowledgeBaseDialog({
       setInitialWeekday(0)
       setInitialTime('09:00')
       setInitialTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)
+      setInitialRunner([])
       setSummaryEnabled(true)
       setSummaryModelRef(null)
       setExecutionModelRef(null)
@@ -485,6 +508,126 @@ export function CreateKnowledgeBaseDialog({
                       testId="code-wiki-generation-strategy"
                     />
                   </SimpleConfigRow>
+                  <SimpleConfigRow
+                    label={t('knowledge:codeWiki.create.scheduledUpdate')}
+                    description={t('knowledge:codeWiki.create.scheduledUpdateHint')}
+                    align="start"
+                  >
+                    <div className="space-y-3">
+                      <Switch
+                        checked={scheduledUpdateEnabled}
+                        onCheckedChange={setScheduledUpdateEnabled}
+                        aria-label={t('knowledge:codeWiki.create.scheduledUpdate')}
+                        data-testid="code-wiki-create-scheduled-update"
+                      />
+                      {scheduledUpdateEnabled && (
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-2 gap-2">
+                            <Select
+                              value={initialCadence}
+                              onValueChange={value => {
+                                const cadence = value as typeof initialCadence
+                                setInitialCadence(cadence)
+                                const fixed = {
+                                  daily: 1,
+                                  weekly: 7,
+                                  biweekly: 14,
+                                  four_weeks: 28,
+                                }
+                                if (cadence !== 'custom') setInitialIntervalDays(fixed[cadence])
+                              }}
+                            >
+                              <SelectTrigger data-testid="code-wiki-create-cadence">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="daily">
+                                  {t('knowledge:codeWiki.scheduledUpdate.daily')}
+                                </SelectItem>
+                                <SelectItem value="weekly">
+                                  {t('knowledge:codeWiki.scheduledUpdate.weekly')}
+                                </SelectItem>
+                                <SelectItem value="biweekly">
+                                  {t('knowledge:codeWiki.scheduledUpdate.biweekly')}
+                                </SelectItem>
+                                <SelectItem value="four_weeks">
+                                  {t('knowledge:codeWiki.scheduledUpdate.four_weeks')}
+                                </SelectItem>
+                                <SelectItem value="custom">
+                                  {t('knowledge:codeWiki.scheduledUpdate.custom')}
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                            {initialCadence === 'custom' && (
+                              <Input
+                                type="number"
+                                min={2}
+                                max={365}
+                                value={initialIntervalDays}
+                                onChange={event =>
+                                  setInitialIntervalDays(Number(event.target.value))
+                                }
+                                aria-label={t('knowledge:codeWiki.scheduledUpdate.customDays')}
+                                data-testid="code-wiki-create-custom-days"
+                              />
+                            )}
+                            {['weekly', 'biweekly', 'four_weeks'].includes(initialCadence) && (
+                              <Select
+                                value={String(initialWeekday)}
+                                onValueChange={value => setInitialWeekday(Number(value))}
+                              >
+                                <SelectTrigger data-testid="code-wiki-create-weekday">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {[0, 1, 2, 3, 4, 5, 6].map(day => (
+                                    <SelectItem key={day} value={String(day)}>
+                                      {t(`knowledge:codeWiki.scheduledUpdate.weekdays.${day}`)}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                            <div className="space-y-2">
+                              <Label htmlFor="code-wiki-create-time">
+                                {t('knowledge:codeWiki.scheduledUpdate.time')}
+                              </Label>
+                              <Input
+                                id="code-wiki-create-time"
+                                type="time"
+                                value={initialTime}
+                                onChange={event => setInitialTime(event.target.value)}
+                                data-testid="code-wiki-create-time"
+                              />
+                            </div>
+                          </div>
+                          <p
+                            className="text-xs text-text-muted"
+                            data-testid="code-wiki-create-timezone"
+                          >
+                            {t('knowledge:codeWiki.scheduledUpdate.timezoneHint', {
+                              timezone: initialTimezone,
+                            })}
+                          </p>
+                          <div className="space-y-2">
+                            <Label>{t('knowledge:codeWiki.scheduledUpdate.runner')}</Label>
+                            <p className="text-xs text-text-secondary">
+                              {t('knowledge:codeWiki.scheduledUpdate.runnerHint')}
+                            </p>
+                            <UserSearchSelect
+                              selectedUsers={initialRunner}
+                              onSelectedUsersChange={setInitialRunner}
+                              multiple={false}
+                              placeholder={t(
+                                'knowledge:codeWiki.scheduledUpdate.runnerPlaceholder'
+                              )}
+                              inputTestId="code-wiki-create-scheduled-runner"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </SimpleConfigRow>
                   <GenerationTaskRow
                     checked={source.show_generation_task}
                     onChange={checked => setSource({ ...source, show_generation_task: checked })}
@@ -506,91 +649,6 @@ export function CreateKnowledgeBaseDialog({
                 {kind === 'code' ? (
                   <>
                     <CodeWikiSourceFields value={source} onChange={setSource} />
-                    <SimpleConfigRow
-                      label={t('knowledge:codeWiki.create.scheduledUpdate')}
-                      description={t('knowledge:codeWiki.create.scheduledUpdateHint')}
-                      align="start"
-                    >
-                      <Switch
-                        checked={scheduledUpdateEnabled}
-                        onCheckedChange={setScheduledUpdateEnabled}
-                        aria-label={t('knowledge:codeWiki.create.scheduledUpdate')}
-                        data-testid="code-wiki-create-scheduled-update"
-                      />
-                      {scheduledUpdateEnabled && (
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          <Select
-                            value={initialCadence}
-                            onValueChange={value => {
-                              const cadence = value as typeof initialCadence
-                              setInitialCadence(cadence)
-                              const fixed = { daily: 1, weekly: 7, biweekly: 14, four_weeks: 28 }
-                              if (cadence !== 'custom') setInitialIntervalDays(fixed[cadence])
-                            }}
-                          >
-                            <SelectTrigger data-testid="code-wiki-create-cadence">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="daily">
-                                {t('knowledge:codeWiki.scheduledUpdate.daily')}
-                              </SelectItem>
-                              <SelectItem value="weekly">
-                                {t('knowledge:codeWiki.scheduledUpdate.weekly')}
-                              </SelectItem>
-                              <SelectItem value="biweekly">
-                                {t('knowledge:codeWiki.scheduledUpdate.biweekly')}
-                              </SelectItem>
-                              <SelectItem value="four_weeks">
-                                {t('knowledge:codeWiki.scheduledUpdate.four_weeks')}
-                              </SelectItem>
-                              <SelectItem value="custom">
-                                {t('knowledge:codeWiki.scheduledUpdate.custom')}
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                          {initialCadence === 'custom' && (
-                            <Input
-                              type="number"
-                              min={2}
-                              max={365}
-                              value={initialIntervalDays}
-                              onChange={event => setInitialIntervalDays(Number(event.target.value))}
-                              aria-label={t('knowledge:codeWiki.scheduledUpdate.customDays')}
-                              data-testid="code-wiki-create-custom-days"
-                            />
-                          )}
-                          {['weekly', 'biweekly', 'four_weeks'].includes(initialCadence) && (
-                            <Select
-                              value={String(initialWeekday)}
-                              onValueChange={value => setInitialWeekday(Number(value))}
-                            >
-                              <SelectTrigger data-testid="code-wiki-create-weekday">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {[0, 1, 2, 3, 4, 5, 6].map(day => (
-                                  <SelectItem key={day} value={String(day)}>
-                                    {t(`knowledge:codeWiki.scheduledUpdate.weekdays.${day}`)}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          )}
-                          <Input
-                            type="time"
-                            value={initialTime}
-                            onChange={event => setInitialTime(event.target.value)}
-                            data-testid="code-wiki-create-time"
-                          />
-                          <Input
-                            value={initialTimezone}
-                            onChange={event => setInitialTimezone(event.target.value)}
-                            data-testid="code-wiki-create-timezone"
-                          />
-                        </div>
-                      )}
-                    </SimpleConfigRow>
                     <SimpleConfigRow
                       label={t('knowledge:codeWiki.create.modelLabel')}
                       description={t('knowledge:codeWiki.create.modelDescription')}

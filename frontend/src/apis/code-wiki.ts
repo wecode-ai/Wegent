@@ -138,4 +138,7 @@ export const codeWikiApi = {
       `/knowledge-bases/${knowledgeBaseId}/code-wiki/scheduled-update`,
       data
     ),
+
+  deleteScheduledUpdate: async (knowledgeBaseId: number): Promise<void> =>
+    client.delete(`/knowledge-bases/${knowledgeBaseId}/code-wiki/scheduled-update`),
 }

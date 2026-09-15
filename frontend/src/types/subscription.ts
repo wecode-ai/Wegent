@@ -132,6 +132,7 @@ export interface Subscription {
   webhook_secret?: string // HMAC signing secret for webhook verification
   last_execution_time?: string
   last_execution_status?: string
+  last_execution_message?: string
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
   // Skill references

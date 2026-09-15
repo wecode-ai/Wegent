@@ -224,7 +224,6 @@ export function useKnowledgeBaseDialogs({
         await updateKnowledgeBase(editingKb.id, data)
 
         await sidebar.refreshAll()
-        setEditingKb(null)
       } finally {
         setIsUpdating(false)
       }

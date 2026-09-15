@@ -1397,8 +1397,19 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                     if running_hours <= threshold_hours:
                         continue
                     if execution.task_id > 0:
+                        from app.models.wiki import WikiGeneration
+
+                        generation = (
+                            db.query(WikiGeneration)
+                            .filter(WikiGeneration.task_id == execution.task_id)
+                            .order_by(WikiGeneration.id.desc())
+                            .first()
+                        )
                         code_wiki_tasks_to_cancel.append(
-                            (execution.task_id, execution.user_id)
+                            (
+                                execution.task_id,
+                                generation.user_id if generation else execution.user_id,
+                            )
                         )
 
                 execution.status = BackgroundExecutionStatus.FAILED.value

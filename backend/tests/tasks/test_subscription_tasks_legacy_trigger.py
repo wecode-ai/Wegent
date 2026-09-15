@@ -15,6 +15,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.models.user import User
+from app.models.wiki import WikiGeneration, WikiGenerationStatus, WikiGenerationType
 from app.schemas.subscription import (
     SubscriptionCreate,
     SubscriptionVisibility,
@@ -62,13 +63,26 @@ def test_code_wiki_execution_uses_subscription_timeout(
                 "timeoutSeconds": 21600,
                 "enabled": True,
                 "executionTarget": {"type": "managed"},
-                "codeWikiRef": {"id": 99},
+                "codeWikiRef": {
+                    "id": 99,
+                    "name": "wiki",
+                    "namespace": "default",
+                    "userId": test_user.id,
+                },
             },
             "status": {},
             "_internal": {},
         },
     )
     test_db.add(plan)
+    test_db.flush()
+    runner = User(
+        user_name="scheduled-wiki-runner",
+        email="scheduled-wiki-runner@example.com",
+        password_hash="x",
+        is_active=True,
+    )
+    test_db.add(runner)
     test_db.flush()
     execution = BackgroundExecution(
         user_id=test_user.id,
@@ -81,6 +95,19 @@ def test_code_wiki_execution_uses_subscription_timeout(
         started_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=4),
     )
     test_db.add(execution)
+    test_db.add(
+        WikiGeneration(
+            project_id=0,
+            kind_id=99,
+            user_id=runner.id,
+            task_id=execution.task_id,
+            team_id=0,
+            generation_type=WikiGenerationType.FULL,
+            source_snapshot={},
+            status=WikiGenerationStatus.RUNNING,
+            completed_at=datetime(1970, 1, 1),
+        )
+    )
     test_db.commit()
 
     assert _cleanup_stale_running_executions(test_db) == 0
@@ -93,7 +120,7 @@ def test_code_wiki_execution_uses_subscription_timeout(
     test_db.commit()
     assert _cleanup_stale_running_executions(test_db) == 1
     assert execution.status == "FAILED"
-    cancel_task.assert_awaited_once_with(test_db, task_id=123, user_id=test_user.id)
+    cancel_task.assert_awaited_once_with(test_db, task_id=123, user_id=runner.id)
 
 
 def test_recovery_uses_the_code_wiki_dispatcher(
@@ -126,7 +153,12 @@ def test_recovery_uses_the_code_wiki_dispatcher(
                 "timeoutSeconds": 21600,
                 "enabled": True,
                 "executionTarget": {"type": "managed"},
-                "codeWikiRef": {"id": 99},
+                "codeWikiRef": {
+                    "id": 99,
+                    "name": "wiki",
+                    "namespace": "default",
+                    "userId": test_user.id,
+                },
             },
             "status": {},
             "_internal": {},
@@ -411,7 +443,14 @@ def test_dispatch_due_code_wiki_plan_uses_its_dedicated_executor():
                 "next_execution_time": "2026-08-31T01:00:00",
                 "schedule": {"interval_days": 7},
             },
-            "spec": {"codeWikiRef": {"id": 99}},
+            "spec": {
+                "codeWikiRef": {
+                    "id": 99,
+                    "name": "wiki",
+                    "namespace": "default",
+                    "userId": 20,
+                }
+            },
         },
     )
     execution = MagicMock(id=30)

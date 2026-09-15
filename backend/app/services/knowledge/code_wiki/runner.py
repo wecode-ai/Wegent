@@ -354,8 +354,6 @@ def start_run(
         model_ref=_execution_model_of(knowledge_base),
     )
 
-    generation.task_id = task_id
-    db.commit()
     logger.info(
         "[code_wiki] generation %s for kb %s running under task %s",
         generation.id,
@@ -710,6 +708,11 @@ def _create_task(
 
     try:
         task_id = task_kinds_service.create_task_id(db, task_user.id)
+        # The placeholder is committed by create_task_id. Persist the reverse link
+        # before create_task_or_append can dispatch it, so an immediate callback can
+        # recover the scheduler execution through this generation.
+        generation.task_id = task_id
+        db.commit()
         task_kinds_service.create_task_or_append(
             db=db,
             obj_in=TaskCreate(

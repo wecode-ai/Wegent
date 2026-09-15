@@ -191,6 +191,9 @@ class SubscriptionCodeWikiRef(BaseModel):
     """Reference controlled by the Code Wiki scheduled-update API."""
 
     id: int = Field(..., gt=0, description="Knowledge base id")
+    name: str = Field(..., min_length=1, description="Kind name")
+    namespace: str = Field(..., min_length=1, description="Kind namespace")
+    userId: int = Field(..., gt=0, description="Kind owner id")
 
 
 class SubscriptionSkillRef(BaseModel):
@@ -526,6 +529,7 @@ class SubscriptionInDB(SubscriptionBase):
     webhook_secret: Optional[str] = None
     last_execution_time: Optional[datetime] = None
     last_execution_status: Optional[str] = None
+    last_execution_message: Optional[str] = None
     next_execution_time: Optional[datetime] = None
     execution_count: int = 0
     success_count: int = 0
