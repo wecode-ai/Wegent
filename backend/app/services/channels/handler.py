@@ -753,7 +753,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             f"[{self._channel_type.value}Handler] Ignoring model override: "
             f"user_id={user_id}, model={model_name}, "
             f"team_id={getattr(team, 'id', None)}, "
-            f"team={getattr(team, 'namespace', None)}/{getattr(team, 'name', None)}, "
             f"reason=agent_model_restriction"
         )
         return None, None
@@ -2421,8 +2420,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"[{self._channel_type.value}Handler] Rejected model selection: "
                 f"user_id={user.id}, model={matched_model.get('name', '')}, "
                 f"team_id={getattr(selected_team, 'id', None)}, "
-                f"team={getattr(selected_team, 'namespace', None)}"
-                f"/{getattr(selected_team, 'name', None)}, "
                 f"reason=agent_model_restriction"
             )
             await self.send_text_reply(

@@ -161,7 +161,6 @@ class TestTelegramChannelHandler:
         assert "user_id=42" in logged
         assert "model=openai-gpt-5.1(overseas)" in logged
         assert "team_id=100" in logged
-        assert "team=rcdp/restricted-agent" in logged
 
     def test_default_team_id(self, handler):
         """Test getting default team ID."""

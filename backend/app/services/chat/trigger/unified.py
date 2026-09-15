@@ -976,9 +976,7 @@ async def build_execution_request(
                 f"[build_execution_request] Ignoring task model override blocked by "
                 f"the agent model restriction: task_id={task.id}, "
                 f"subtask_id={assistant_subtask.id}, user_id={user.id}, "
-                f"modelId={override_model_name}, "
-                f"team={getattr(team, 'namespace', None)}"
-                f"/{getattr(team, 'name', None)}"
+                f"modelId={override_model_name}, team_id={getattr(team, 'id', None)}"
             )
             override_model_name = None
             force_override = False

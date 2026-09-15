@@ -519,6 +519,7 @@ class TestBuildExecutionRequestUserSubtaskId:
         assert "subtask_id=2" in dropped[0]
         assert "user_id=7" in dropped[0]
         assert "modelId=codex-gpt-5.5" in dropped[0]
+        assert "team_id=" in dropped[0]
 
     async def test_device_execution_keeps_sandbox_path_in_context_processing(self):
         """Device-routed tasks should keep sandbox path placeholders for executor rewrite."""
