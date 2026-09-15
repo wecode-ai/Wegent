@@ -1,4 +1,5 @@
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
+import { ensurePython } from '@/desktop/executionEnvironments'
 import type { PluginLocalAuthDefinition } from '@/types/api'
 
 export type LocalConnectorAuthStatus =
@@ -84,7 +85,7 @@ export function localConnectorAuthHealth(
 }
 
 export function localConnectorAuthStart(target: LocalConnectorAuthTarget) {
-  return callLocalConnectorAuth('start', target)
+  return ensurePython().then(() => callLocalConnectorAuth('start', target))
 }
 
 export function localConnectorAuthPoll(
