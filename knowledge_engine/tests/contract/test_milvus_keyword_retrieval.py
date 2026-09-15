@@ -399,8 +399,10 @@ def test_metadata_conditions_keep_their_documented_semantics(
             "year": 2024,
             "note": 'a"b\\c',
             "tags": ["alpha", "beta"],
+            "codes": [2026, 7],
+            "flags": [True],
         },
-        "7502": {"category": "db", "year": 2023},
+        "7502": {"category": "db", "year": 2023, "codes": [2025], "flags": [False]},
         "7503": {"year": 2025},
     }
     for doc_ref, metadata in rows.items():
@@ -487,6 +489,60 @@ def test_metadata_conditions_keep_their_documented_semantics(
             ],
         }
     ) == {"7501"}, "text_match is a case-sensitive substring on Milvus 2.5.4"
+    # Array membership keeps the value type: the number 2026 matches the number
+    # element, the string "2026" does not, and a neighbouring number does not.
+    assert matching(
+        {
+            "operator": "and",
+            "conditions": [{"key": "codes", "operator": "contains", "value": 2026}],
+        }
+    ) == {"7501"}, "contains matches a numeric JSON array element"
+    assert (
+        matching(
+            {
+                "operator": "and",
+                "conditions": [
+                    {"key": "codes", "operator": "contains", "value": "2026"}
+                ],
+            }
+        )
+        == set()
+    ), "a string value never matches a numeric element"
+    assert matching(
+        {
+            "operator": "and",
+            "conditions": [{"key": "codes", "operator": "contains", "value": 2025}],
+        }
+    ) == {"7502"}, "a different number is not a match"
+    assert matching(
+        {
+            "operator": "and",
+            "conditions": [{"key": "flags", "operator": "contains", "value": True}],
+        }
+    ) == {"7501"}, "contains matches a boolean JSON array element"
+    assert matching(
+        {
+            "operator": "and",
+            "conditions": [{"key": "flags", "operator": "contains", "value": False}],
+        }
+    ) == {"7502"}, "the opposite boolean is not a match"
+
+    # Milvus cannot escape its like wildcards, so a literal pattern containing
+    # one fails instead of silently widening the condition.
+    for wildcard_value in ("50%off", "get_user_by_id"):
+        with pytest.raises(ValueError):
+            matching(
+                {
+                    "operator": "and",
+                    "conditions": [
+                        {
+                            "key": "category",
+                            "operator": "contains",
+                            "value": wildcard_value,
+                        }
+                    ],
+                }
+            )
 
     with pytest.raises(ValueError):
         _keyword_query(

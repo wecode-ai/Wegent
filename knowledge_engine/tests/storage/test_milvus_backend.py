@@ -872,6 +872,55 @@ def test_retrieve_compiles_text_conditions_against_json_and_arrays():
     assert 'source_file like "%doc%"' in expression
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("alpha", 'json_contains(metadata["tags"], "alpha")'),
+        (2026, 'json_contains(metadata["tags"], 2026)'),
+        (True, 'json_contains(metadata["tags"], true)'),
+    ],
+)
+def test_retrieve_compiles_json_array_membership_with_the_value_type(value, expected):
+    """A JSON array element keeps its type: 2026 is a number, not "2026"."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"score_threshold": 0.0},
+        metadata_condition={
+            "operator": "and",
+            "conditions": [{"key": "tags", "operator": "contains", "value": value}],
+        },
+    )
+
+    assert expected in store.searches[0]["filter"]
+
+
+@pytest.mark.parametrize("value", ["50%off", "get_user_by_id"])
+def test_retrieve_rejects_text_conditions_milvus_cannot_match_literally(value):
+    """A literal LIKE wildcard has no escaped form, so the condition fails."""
+    backend = _backend()
+    backend._store = FakeStore(rows=[])
+
+    with pytest.raises(ValueError):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=FakeEmbedModel([[1.0, 0.0]]),
+            retrieval_setting={"score_threshold": 0.0},
+            metadata_condition={
+                "operator": "and",
+                "conditions": [
+                    {"key": "category", "operator": "contains", "value": value}
+                ],
+            },
+        )
+
+
 def test_retrieve_rejects_nested_metadata_conditions():
     backend = _backend()
     backend._store = FakeStore(rows=[])

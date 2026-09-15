@@ -18,9 +18,10 @@ Recorded semantics of the compiled contract:
   Elasticsearch backend does for an absent field.
 - ``contains`` and ``text_match`` are both case-sensitive substring matches:
   Milvus 2.5.4 cannot run an analyzed ``TEXT_MATCH`` against a JSON path. For a
-  JSON key an array value also matches by element. ``%`` and ``_`` act as the
-  Milvus ``like`` wildcards and cannot be escaped; the Elasticsearch backend has
-  the same class of limitation with its ``*``/``?`` wildcard query.
+  JSON key an array also matches by element, keeping the value type (a number
+  matches a number, a boolean matches a boolean). Milvus has no way to escape
+  its ``like`` wildcards, so a literal ``%`` or ``_`` in the value is rejected
+  instead of silently widening the match.
 - A condition without a key or with a null value carries no constraint in the
   shared contract and is skipped, exactly as the Elasticsearch backend does.
 - A nested condition, an unsupported operator, a non-scalar value outside
@@ -136,12 +137,34 @@ def _literal(key: str, literal_kind: LiteralKind, value: Any) -> str:
 def _compile_text_condition(
     key: str, field: str, literal_kind: LiteralKind, value: Any
 ) -> str:
-    """Compile a substring condition, including JSON array membership."""
-    pattern = sanitize_filter_value(_scalar_value(key, value))
+    """Compile a substring condition, including JSON array membership.
+
+    A JSON array element keeps the value type, so ``contains 2026`` matches the
+    number ``2026`` and not the string ``"2026"``. Milvus only ever treats
+    ``%`` and ``_`` as ``like`` wildcards and cannot escape them, so a value
+    that contains one is rejected instead of widening the condition.
+    """
+    scalar = _scalar_value(key, value)
+    pattern = _literal_pattern(key, scalar)
     substring = f'{field} like "%{pattern}%"'
     if literal_kind != "json":
         return substring
-    return f'(json_contains({field}, "{pattern}") or {substring})'
+    if isinstance(scalar, str):
+        return f'(json_contains({field}, "{pattern}") or {substring})'
+    return f"json_contains({field}, {_json_literal(key, scalar)})"
+
+
+def _literal_pattern(key: str, value: Any) -> str:
+    """Escape a literal substring, rejecting the unescapeable LIKE wildcards."""
+    text = str(value)
+    wildcard = next((character for character in ("%", "_") if character in text), None)
+    if wildcard is not None:
+        raise ValueError(
+            f"metadata_condition '{key}' cannot match {text!r} literally: "
+            "Milvus only supports '%' and '_' as like wildcards and cannot "
+            "escape them."
+        )
+    return sanitize_filter_value(text)
 
 
 def _scalar_value(key: str, value: Any) -> Any:
