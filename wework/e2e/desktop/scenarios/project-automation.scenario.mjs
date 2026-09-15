@@ -285,11 +285,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
     async verify(control) {
       try {
+        await ensureExperimentalFeaturesEnabled(control)
         const catalog = await request('/api/teams?page=1&limit=100')
         const sourceTeam = catalog.items?.[0]
         assert.ok(sourceTeam?.id, 'Team catalog pagination requires a real Team fixture')
         await verifyTeamCatalogPagination(control, request, sourceTeam)
-        await ensureExperimentalFeaturesEnabled(control)
         await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
           timeoutMs: workbenchReadyTimeoutMs,
         })
