@@ -49,10 +49,6 @@ from shared.telemetry.decorators import trace_async
 if TYPE_CHECKING:
     from dingtalk_stream.stream import DingTalkStreamClient
 
-    from app.services.channels.dingtalk.selection_cards import (
-        DingTalkSelectionCardService,
-    )
-
 logger = logging.getLogger(__name__)
 
 # Message deduplication settings
@@ -102,9 +98,6 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         channel_id: int,
         dingtalk_client: Optional["DingTalkStreamClient"] = None,
         use_ai_card: bool = True,
-        conversation_card_template_id: str = "",
-        interaction_card_template_id: str = "",
-        selection_card_service: Optional["DingTalkSelectionCardService"] = None,
         get_default_team_id: Optional[Callable[[], Optional[int]]] = None,
         get_default_task_team_id: Optional[Callable[[], Optional[int]]] = None,
         get_default_model_name: Optional[Callable[[], Optional[str]]] = None,
@@ -131,9 +124,6 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         )
         self._dingtalk_client = dingtalk_client
         self._use_ai_card = use_ai_card
-        self._conversation_card_template_id = conversation_card_template_id
-        self._interaction_card_template_id = interaction_card_template_id
-        self._selection_card_service = selection_card_service
         # Store incoming_message for reply operations
         self._current_incoming_message: Optional[ChatbotMessage] = None
 
@@ -337,9 +327,6 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             channel_id=self._channel_id,
             conversation_id=message_context.conversation_id,
             incoming_message_data=message_context.extra_data.get("callback_data"),
-            user_id=message_context.extra_data.get("resolved_user_id"),
-            conversation_card_template_id=self._conversation_card_template_id,
-            interaction_card_template_id=self._interaction_card_template_id,
         )
 
     def get_callback_service(self) -> Optional[BaseChannelCallbackService]:
@@ -368,18 +355,9 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         if not isinstance(incoming_message, ChatbotMessage):
             return None
 
-        conversation_template_id = (
-            self._conversation_card_template_id
-            if self._interaction_card_template_id
-            else ""
-        )
         return StreamingResponseEmitter(
             dingtalk_client=self._dingtalk_client,
             incoming_message=incoming_message,
-            conversation_card_template_id=conversation_template_id,
-            interaction_card_template_id=self._interaction_card_template_id,
-            channel_id=self._channel_id,
-            user_id=message_context.extra_data.get("resolved_user_id"),
         )
 
     async def _resolve_new_task_team(
@@ -519,37 +497,6 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         lines.append(f"**当前绑定 Task 智能体**: {current_label}")
         return "\n".join(lines)
 
-    async def try_handle_interactive_control(
-        self,
-        db: Session,
-        user: User,
-        im_session: Any,
-        message_context: MessageContext,
-    ) -> bool:
-        """Open a DingTalk selection card for no-argument control intents."""
-
-        if self._selection_card_service is None:
-            return False
-        from app.services.channels.dingtalk.selection_cards import (
-            selection_kind_for_message,
-        )
-
-        kind = selection_kind_for_message(message_context.content)
-        if kind is False:
-            return False
-        if kind is not None and kind.value == "task" and im_session is None:
-            return False
-        incoming_message = message_context.raw_message
-        if not isinstance(incoming_message, ChatbotMessage):
-            return False
-        return await self._selection_card_service.open_from_message(
-            db=db,
-            user=user,
-            incoming_message=incoming_message,
-            session=im_session,
-            kind=kind,
-        )
-
     def set_chatbot_handler(self, handler: "WegentChatbotHandler") -> None:
         """Set reference to the SDK chatbot handler for reply operations."""
         self._chatbot_handler = handler
@@ -572,9 +519,6 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         dingtalk_client: Optional["DingTalkStreamClient"] = None,
         default_team_id: Optional[int] = None,
         use_ai_card: bool = True,
-        conversation_card_template_id: str = "",
-        interaction_card_template_id: str = "",
-        selection_card_service: Optional["DingTalkSelectionCardService"] = None,
         on_message: Optional[Callable[[Dict[str, Any]], asyncio.Future]] = None,
         get_default_team_id: Optional[Callable[[], Optional[int]]] = None,
         get_default_task_team_id: Optional[Callable[[], Optional[int]]] = None,
@@ -613,9 +557,6 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             channel_id=self._channel_id,
             dingtalk_client=dingtalk_client,
             use_ai_card=use_ai_card,
-            conversation_card_template_id=conversation_card_template_id,
-            interaction_card_template_id=interaction_card_template_id,
-            selection_card_service=selection_card_service,
             get_default_team_id=get_default_team_id,
             get_default_task_team_id=get_default_task_team_id,
             get_default_model_name=get_default_model_name,

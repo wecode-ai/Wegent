@@ -81,22 +81,8 @@ def parse_command(content: str) -> Optional[ParsedCommand]:
     if not content:
         return None
 
-    # Keep short, exact natural-language aliases deterministic. This makes the
-    # common control flow discoverable without letting an LLM reinterpret a
-    # normal user message as a command.
+    # Strip whitespace first, then check for command prefix
     content = content.strip()
-    content = {
-        "设置": "/status",
-        "会话设置": "/status",
-        "切模型": "/models",
-        "换模型": "/models",
-        "切设备": "/devices",
-        "换设备": "/devices",
-        "切智能体": "/agents",
-        "换智能体": "/agents",
-        "切任务": "/switch",
-        "换任务": "/switch",
-    }.get(content, content)
     if not content.startswith("/"):
         return None
 

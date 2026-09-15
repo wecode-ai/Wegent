@@ -96,18 +96,16 @@ Enable the following permissions for your application:
 3. Click **Add Channel**
 4. Fill in the configuration:
 
-| Field                                 | Description                                                   | Example                            |
-| ------------------------------------- | ------------------------------------------------------------- | ---------------------------------- |
-| **Channel Name**                      | Display name for this channel                                 | "DingTalk Bot"                     |
-| **Channel Type**                      | Select platform                                               | DingTalk                           |
-| **Client ID**                         | From Step 3                                                   | `dingxxxxxxxx`                     |
-| **Client Secret**                     | From Step 3                                                   | `xxxxxxxxxxxxxxxx`                 |
-| **Chat Agent**                        | Handles `/chat` and `/use chat`                               | Select from list                   |
-| **Task Agent**                        | Handles `/task`, cloud execution, and device execution        | Select a ClaudeCode agent          |
-| **Default Chat Model**                | Optional Chat model override                                  | Leave empty to follow Chat Agent   |
-| **Enable AI Card**                    | Use streaming AI Card                                         | ✅ Recommended                     |
-| **Conversation Card Template ID**     | Show a Session Settings action after an answer (optional)     | `xxxxxxxx.schema`                  |
-| **Session Settings Card Template ID** | Clickable model, device, agent, and task selection (optional) | `xxxxxxxx.schema`                  |
+| Field                  | Description                                            | Example                          |
+| ---------------------- | ------------------------------------------------------ | -------------------------------- |
+| **Channel Name**       | Display name for this channel                          | "DingTalk Bot"                   |
+| **Channel Type**       | Select platform                                        | DingTalk                         |
+| **Client ID**          | From Step 3                                            | `dingxxxxxxxx`                   |
+| **Client Secret**      | From Step 3                                            | `xxxxxxxxxxxxxxxx`               |
+| **Chat Agent**         | Handles `/chat` and `/use chat`                        | Select from list                 |
+| **Task Agent**         | Handles `/task`, cloud execution, and device execution | Select a ClaudeCode agent        |
+| **Default Chat Model** | Optional Chat model override                           | Leave empty to follow Chat Agent |
+| **Enable AI Card**     | Use streaming AI Card                                  | ✅ Recommended                   |
 
 5. Click **Save** to create the channel
 6. Toggle **Enable** to activate the channel
@@ -160,36 +158,13 @@ DingTalk AI Cards provide a rich streaming response experience:
 - Code block syntax highlighting
 - Collapsible long content
 
-### Clickable session settings
+### Agent and model selection
 
-After configuring the **Session Settings Card Template ID**, users can send `设置` to open the console, `切模型`, `切设备`, or `切智能体` to open a selector, and `切任务` in a direct message to select a task. The existing `/status`, `/models`, `/devices`, `/agents`, and `/switch` commands remain available. Commands with arguments still use their text flow, and a card creation failure falls back to the original text response.
-
-The console displays the current model, device, direct-message task, Chat Agent, next-new-Task Agent, and the Agent bound to the current Task:
-
-- Selecting an option applies it immediately and returns the same card to the console.
-- Each page contains up to eight options, with previous, next, refresh, back, and close actions.
+- `/status` shows the current Chat Agent, next-new-Task Agent, Agent bound to the current Task, execution mode, and model.
+- `/agents`, `/models`, `/devices`, and direct-message `/switch` use text lists; commands can include an option number or name.
 - Chat and Task keep separate Agent and model selections. Task lists only Claude models and also offers “Follow Task Agent”.
 - `/task`, `/use cloud`, and `/use device` always use the Task Agent, whose Bots must all use ClaudeCode. `/chat` and `/use chat` use the Chat Agent.
-- Offline devices and current options are disabled.
-- Tasks are available only in direct messages and include the user's five most recent Wework tasks.
 - Selecting an agent never mutates an existing Task. In Task mode it detaches the current binding, so the next message enters the new-Task flow; `/switch` can bind the old Task again.
-- In a group, only the user who opened the card can act on it. The server also revalidates identity, ownership, and current availability.
-- Cards contain random 15-minute option tokens rather than internal model, device, agent, or task IDs. Repeated clicks are applied only once.
-
-When the **Conversation Card Template ID** is also configured, completed, failed, and cancelled answers show a Session Settings action on the answer card. Configuring only the conversation template does not replace the built-in answer card, which prevents a non-functional action.
-
-#### Create the two DingTalk card templates
-
-Create two IM card templates in DingTalk Card Platform, then configure their variables, visibility conditions, and request actions according to these contracts:
-
-- [Conversation answer card contract](../../../../examples/dingtalk-conversation-card-contract.json)
-- [Session settings card contract](../../../../examples/dingtalk-session-settings-card-contract.json)
-
-The conversation card's `content` must use an AI Markdown streaming component that supports `flowStatus`. Its settings button sends the fixed parameter `action=open_console`. The settings card uses a loop container for `options`; each row action must send that row's `token`, never an internal resource ID. Use server request actions and select **Stream** as the callback mode.
-
-After publishing both templates, enter their `.schema` template IDs in Wegent Admin and restart the IM channel. The settings template works by itself; the answer-card entry requires both IDs.
-
-> Only one Stream consumer may use the same Client ID and Client Secret at a time. Use separate development-app credentials for live testing so another instance cannot consume the card callback.
 
 ---
 
@@ -255,22 +230,6 @@ After publishing both templates, enter their `.schema` template IDs in Wegent Ad
 1. Try disabling AI Card streaming temporarily
 2. Check network connectivity
 3. The system will fall back to sync mode if streaming fails
-
-#### Card clicks do not respond
-
-**Possible causes:**
-
-1. The settings card callback mode is not Stream
-2. Template action parameters do not match the contract
-3. Card creation and Stream callback registration use different Client IDs
-4. Multiple Stream consumers use the same application credentials
-
-**Solutions:**
-
-1. Verify every template variable and request action against the contract
-2. Restart the Wegent channel and confirm the settings card is reported as configured
-3. Use the same Client ID for card creation and callback registration
-4. Stop other Stream instances using the same credentials and test again
 
 ### User Issues
 

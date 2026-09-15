@@ -280,33 +280,12 @@ class StreamingResponseEmitter(ResultEmitter):
         dingtalk_client: "DingTalkStreamClient",
         incoming_message: "ChatbotMessage",
         existing_card_instance_id: Optional[str] = None,
-        conversation_card_template_id: str = "",
-        interaction_card_template_id: str = "",
-        channel_id: int = 0,
-        user_id: Optional[int] = None,
     ):
+        from app.services.channels.dingtalk.card import DingTalkMarkdownCard
+
         self._dingtalk_client = dingtalk_client
         self._incoming_message = incoming_message
-        self._conversation_card_template_id = (
-            conversation_card_template_id if interaction_card_template_id else ""
-        )
-        self._interaction_card_template_id = interaction_card_template_id
-        self._channel_id = channel_id
-        self._user_id = user_id
-        if self._conversation_card_template_id:
-            from app.services.channels.dingtalk.conversation_card import (
-                DingTalkConversationCardInstance,
-            )
-
-            self._card = DingTalkConversationCardInstance(
-                dingtalk_client,
-                incoming_message,
-                self._conversation_card_template_id,
-            )
-        else:
-            from app.services.channels.dingtalk.card import DingTalkMarkdownCard
-
-            self._card = DingTalkMarkdownCard(dingtalk_client, incoming_message)
+        self._card = DingTalkMarkdownCard(dingtalk_client, incoming_message)
         self._card.set_order(["msgContent"])
         self._full_content = ""
         self._pending_content = ""
@@ -431,32 +410,6 @@ class StreamingResponseEmitter(ResultEmitter):
                 await redis_client.aclose()
         except Exception:
             logger.exception("[StreamingEmitter] Failed to clean shared card state")
-
-    async def _save_settings_action_state(self) -> None:
-        if (
-            not self._conversation_card_template_id
-            or not self._interaction_card_template_id
-            or not self._channel_id
-            or not self._user_id
-            or not self.card_instance_id
-        ):
-            return
-        from app.services.channels.dingtalk.selection_cards import (
-            save_conversation_card_state,
-        )
-
-        try:
-            await save_conversation_card_state(
-                out_track_id=self.card_instance_id,
-                channel_id=self._channel_id,
-                interaction_template_id=self._interaction_card_template_id,
-                user_id=self._user_id,
-                incoming_message=self._incoming_message,
-            )
-        except Exception:
-            logger.exception(
-                "[StreamingEmitter] Failed to persist settings action state"
-            )
 
     async def _may_update_display(self, force: bool) -> bool:
         if force or self.MIN_UPDATE_INTERVAL <= 0:
@@ -940,7 +893,6 @@ class StreamingResponseEmitter(ResultEmitter):
             await asyncio.sleep(0.1)
             await self._call_card("ai_finish", content)
         await self._mark_finished()
-        await self._save_settings_action_state()
         self._progress.mode = "answer"
         self._full_content = content
         self._pending_content = ""

@@ -343,17 +343,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         """
         pass
 
-    async def try_handle_interactive_control(
-        self,
-        db: Session,
-        user: User,
-        im_session: Any,
-        message_context: MessageContext,
-    ) -> bool:
-        """Let a rich channel replace a no-argument control command with UI."""
-
-        return False
-
     async def _register_streaming_emitter(
         self,
         task_id: int | str,
@@ -877,14 +866,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     proactive_recipient_id=message_context.proactive_recipient_id,
                     display_name=message_context.sender_name or "",
                 )
-
-            if await self.try_handle_interactive_control(
-                db=db,
-                user=user,
-                im_session=im_session,
-                message_context=message_context,
-            ):
-                return True
 
             if im_session is not None:
                 if await self._route_private_im_session(
