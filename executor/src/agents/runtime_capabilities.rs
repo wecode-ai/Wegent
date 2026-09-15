@@ -2627,64 +2627,73 @@ mod tests {
         assert_eq!(payload["attachments"][1]["error"], "HTTP 404");
     }
 
-    #[tokio::test]
-    async fn null_interactive_form_answer_keeps_claude_attachment_processing() {
+    #[test]
+    fn null_interactive_form_answer_keeps_claude_attachment_processing() {
         let _lock = crate::test_env::lock();
-        let temp = env::temp_dir().join(format!(
-            "claude-null-interactive-attachment-{}",
-            std::process::id()
-        ));
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut buffer = vec![0; 8192];
-            let read = stream.read(&mut buffer).await.unwrap();
-            let request = String::from_utf8_lossy(&buffer[..read]);
-            assert!(request.starts_with("GET /api/attachments/1/executor-download "));
-            assert!(request.contains("authorization: Bearer test-token\r\n"));
-            let body = b"image-bytes";
-            let header = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            );
-            stream.write_all(header.as_bytes()).await.unwrap();
-            stream.write_all(body).await.unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let temp = env::temp_dir().join(format!(
+                "claude-null-interactive-attachment-{}",
+                std::process::id()
+            ));
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buffer = vec![0; 8192];
+                let read = stream.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..read]);
+                assert!(request.starts_with("GET /api/attachments/1/executor-download "));
+                assert!(request.contains("authorization: Bearer test-token\r\n"));
+                let body = b"image-bytes";
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(header.as_bytes()).await.unwrap();
+                stream.write_all(body).await.unwrap();
+            });
+            let _workspace = EnvGuard::set("WORKSPACE_ROOT", temp.to_str().unwrap());
+            let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
+            let _task_api = EnvGuard::remove("TASK_API_DOMAIN");
+            let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+            let request: ExecutionRequest = serde_json::from_value(json!({
+                "task_id": 72,
+                "subtask_id": 204,
+                "prompt": "Read /home/user/72:executor:attachments/203/image.png",
+                "auth_token": "test-token",
+                "backend_url": format!("http://{address}"),
+                "interactive_form_answer": null,
+                "attachments": [{
+                    "id": 1,
+                    "original_filename": "image.png",
+                    "file_size": 12,
+                    "mime_type": "image/png",
+                    "subtask_id": 203
+                }]
+            }))
+            .unwrap();
+
+            let prepared = prepare_claude_execution_request(request).await;
+            let prompt = prepared.prompt.as_str().unwrap();
+            let downloaded = temp
+                .join("72")
+                .join("72:executor:attachments")
+                .join("203")
+                .join("image.png");
+
+            tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .expect("mock attachment server timed out")
+                .unwrap();
+            assert_eq!(fs::read(&downloaded).unwrap(), b"image-bytes");
+            assert!(prompt.contains(downloaded.to_str().unwrap()));
+            assert!(!prompt.contains("/home/user/72:executor:attachments/203/image.png"));
+            let _ = fs::remove_dir_all(temp);
         });
-        let _workspace = EnvGuard::set("WORKSPACE_ROOT", temp.to_str().unwrap());
-        let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
-        let _task_api = EnvGuard::remove("TASK_API_DOMAIN");
-        let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
-        let request: ExecutionRequest = serde_json::from_value(json!({
-            "task_id": 72,
-            "subtask_id": 204,
-            "prompt": "Read /home/user/72:executor:attachments/203/image.png",
-            "auth_token": "test-token",
-            "backend_url": format!("http://{address}"),
-            "interactive_form_answer": null,
-            "attachments": [{
-                "id": 1,
-                "original_filename": "image.png",
-                "file_size": 12,
-                "mime_type": "image/png",
-                "subtask_id": 203
-            }]
-        }))
-        .unwrap();
-
-        let prepared = prepare_claude_execution_request(request).await;
-        let prompt = prepared.prompt.as_str().unwrap();
-        let downloaded = temp
-            .join("72")
-            .join("72:executor:attachments")
-            .join("203")
-            .join("image.png");
-
-        server.await.unwrap();
-        assert_eq!(fs::read(&downloaded).unwrap(), b"image-bytes");
-        assert!(prompt.contains(downloaded.to_str().unwrap()));
-        assert!(!prompt.contains("/home/user/72:executor:attachments/203/image.png"));
-        let _ = fs::remove_dir_all(temp);
     }
 
     #[tokio::test]
