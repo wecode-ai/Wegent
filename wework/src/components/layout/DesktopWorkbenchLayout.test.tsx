@@ -12527,6 +12527,42 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('opens an embedded browser requested by the active blank pane', async () => {
+    runtimeMocks.electron = true
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+    desktopHostMocks.invoke.mockClear()
+
+    act(() => {
+      desktopHostMocks.emit({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 1,
+          type: 'open-request',
+          payload: {
+            id: 'agent-open-blank-pane',
+            baseLabel: 'workspace-browser-blank-0',
+            source: 'agent',
+            disposition: 'current-tab',
+            targetLabel: 'workspace-browser-blank-0',
+            label: 'workspace-browser-blank-0',
+            url: 'https://example.com/',
+          },
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-blank-0',
+          url: 'about:blank',
+        })
+      )
+    })
+  })
+
   test('keeps a default browser request assigned to the task active when it arrived', async () => {
     runtimeMocks.electron = true
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
