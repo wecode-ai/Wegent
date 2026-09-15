@@ -191,12 +191,46 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await cp(residueBackup, newRoot, { recursive: true })
   const stale = await readCapabilities()
   stale.plugins[managedKey] = removedEntry
+  const sharedPluginKey = `${pluginKey}-shared`
+  const sharedManagedKey = `${sharedPluginKey}@wework-personal`
+  const sharedStorePath = `${removedEntry.store_path}-shared`
+  const sharedClaudeRoot = join(
+    dirname(dirname(dirname(removedEntry.runtime.claude_link))),
+    'wework-personal',
+    sharedPluginKey,
+    newVersion
+  )
+  const sharedCodexRoot = join(
+    dirname(dirname(dirname(removedEntry.runtime.codex_link))),
+    'wework-personal',
+    sharedPluginKey,
+    newVersion
+  )
+  await cp(residueBackup, sharedStorePath, { recursive: true })
+  await cp(residueBackup, sharedClaudeRoot, { recursive: true })
+  await cp(residueBackup, sharedCodexRoot, { recursive: true })
+  stale.plugins[sharedManagedKey] = {
+    ...removedEntry,
+    name: sharedPluginKey,
+    key: sharedManagedKey,
+    marketplace: 'wework-personal',
+    installed_plugin_id: Number(removedEntry.installed_plugin_id) + 100000,
+    store_path: sharedStorePath,
+    runtime: {
+      claude_link: sharedClaudeRoot,
+      codex_link: sharedCodexRoot,
+    },
+  }
   await writeFile(capabilityManifestPath, JSON.stringify(stale))
   await control.command('click', '[data-testid="plugin-detail-back-button"]')
   await refreshAndVerify()
   assert.equal((await readCapabilities()).plugins[managedKey], undefined)
+  assert.equal((await readCapabilities()).plugins[sharedManagedKey], undefined)
   await assert.rejects(access(removedEntry.store_path), { code: 'ENOENT' })
   await assert.rejects(access(newRoot), { code: 'ENOENT' })
+  await assert.rejects(access(sharedStorePath), { code: 'ENOENT' })
+  await assert.rejects(access(sharedClaudeRoot), { code: 'ENOENT' })
+  await assert.rejects(access(sharedCodexRoot), { code: 'ENOENT' })
   await capture('05b-refresh-cleared-uninstalled-residue')
   await control.command('click', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`)
   setPhase('plugin-upgrade-reinstall')
