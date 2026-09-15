@@ -10,10 +10,12 @@ for multi-worker deployments.
 """
 
 import logging
+from urllib.parse import urlsplit
 
 import socketio
 
 from app.core.config import settings
+from app.core.terminal_socketio_manager import TerminalDiagnosticAsyncRedisManager
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +40,15 @@ def create_socketio_server() -> socketio.AsyncServer:
     redis_url = settings.REDIS_URL
 
     try:
-        mgr = socketio.AsyncRedisManager(redis_url)
-        logger.info(f"Socket.IO Redis manager initialized with {redis_url}")
+        mgr = TerminalDiagnosticAsyncRedisManager(redis_url)
+        logger.info(
+            "Socket.IO Redis manager initialized endpoint=%s",
+            _safe_redis_endpoint(redis_url),
+        )
     except Exception as e:
         logger.warning(
-            f"Failed to create Redis manager: {e}, falling back to in-memory"
+            "Failed to create Redis manager error_type=%s, falling back to in-memory",
+            type(e).__name__,
         )
         mgr = None
 
@@ -92,3 +98,17 @@ def get_sio() -> socketio.AsyncServer:
     if _sio_instance is None:
         _sio_instance = create_socketio_server()
     return _sio_instance
+
+
+def _safe_redis_endpoint(redis_url: str) -> str:
+    """Describe a Redis endpoint without credentials or query parameters."""
+    try:
+        parsed = urlsplit(redis_url)
+        database = parsed.path.lstrip("/") or "0"
+        if not database.isdigit():
+            database = "unknown"
+        host = parsed.hostname or "unknown"
+        port = parsed.port or (6380 if parsed.scheme == "rediss" else 6379)
+        return f"{parsed.scheme or 'redis'}://{host}:{port}/{database}"
+    except (TypeError, ValueError):
+        return "unparseable"

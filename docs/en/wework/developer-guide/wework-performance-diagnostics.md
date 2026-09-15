@@ -171,6 +171,33 @@ Acceptance targets, not measured local-script performance claims:
 - Executor `/metrics`: `terminal_output_batches_total`, `terminal_output_bytes_total`, `terminal_replayed_batches_total`, `terminal_replay_bytes`, `terminal_ack_lag_bytes`, and `terminal_backpressured_sessions`.
 - Wework performance events: `remote-terminal-write` and `remote-terminal-replay-request`. Metrics, traces, and diagnostic logs must not record raw terminal content or credentials. Use Redis `INFO commandstats`, never `SCAN`, `KEYS`, or `MONITOR`, for observation.
 
+### Backend-only Segmented Latency Diagnostics
+
+To separate Backend handler time, local Socket.IO delivery, and cross-Pod Redis relay time in production, configure an exact device allowlist on Backend only:
+
+```text
+TERMINAL_BACKEND_DIAGNOSTICS_DEVICE_IDS=device-id-1,device-id-2
+TERMINAL_BACKEND_DIAGNOSTICS_SAMPLE_RATE=0.01
+TERMINAL_BACKEND_DIAGNOSTICS_SLOW_THRESHOLD_MS=50
+TERMINAL_BACKEND_DIAGNOSTICS_LOOP_LAG_INTERVAL_SECONDS=1
+```
+
+Device IDs use complete-string matching; wildcards, prefixes, and regular expressions are unsupported. An empty allowlist disables the feature: no trace is created, no Socket.IO envelope is changed, and no event-loop lag sampler starts. `attach`, `input`, `resize`, `close`, and `exit` are always recorded. High-frequency `output` and `ack` events are sampled deterministically by trace ID. An unsampled target event still carries minimal safe trace metadata so a later slow stage can record itself; it cannot backfill complete logs for earlier stages.
+
+Logs use the `[TerminalBackendTrace]` prefix and can be grouped by `trace_id`, `session_hash`, and `device_id`. Important stages are:
+
+- `namespace.relay`: parsing, authorization, target lookup, and total `emit` or `call` time. A normal return uses `result=handler_accepted` and only means that Backend completed the handler. `call_total_ms` includes the Executor or Browser callback round trip and is not one-way network latency.
+- `socketio.local_enqueue`: time for Engine.IO send coroutines to enqueue when the target is on the current Pod. It does not mean the Browser or Executor has received the event.
+- `redis.publish`: Redis publish time and subscriber count. `published_no_subscribers` is distinct from a publish failure.
+- `redis.consume_enqueue`: time for another Pod to consume the envelope and complete local enqueue; a normal return uses `result=enqueued`. `approx_queue_ms` is calculated when the target Pod starts handling the envelope and is a wall-clock approximation across hosts; negative values are preserved with `clock_skew=true`.
+- `namespace.forced_exit`: confirmation of a terminal end to the original Browser SID after a rejected event. `queue_bypassed=true` means same-Pod direct delivery.
+
+Records contain only the first 12 characters of the session SHA-256, byte counts, protocol versions, sequences, Pods, PIDs, durations, and internal reason codes. They never contain terminal content, user tokens, complete session IDs, Socket.IO SIDs, paths, or environment-variable values. The Socket.IO Redis initialization log also removes usernames, passwords, and query parameters.
+
+Start by correlating `namespace.relay → socketio.local_enqueue` or `namespace.relay → redis.publish → redis.consume_enqueue` with the same `trace_id`. Compare `event_loop_lag_ms` as well: slow handlers with low lag point toward authorization or Redis; slow publish or cross-Pod queue stages point toward Redis or Pod networking; fast enqueue with poor user experience requires follow-up in the Executor PTY, network RTT, and Wework `remote-terminal-write`. These logs cannot measure WebSocket arrival or xterm render completion and do not replace an end-to-end probe.
+
+Enable one affected device first and observe log volume before widening the allowlist. To roll back, clear `TERMINAL_BACKEND_DIAGNOSTICS_DEVICE_IDS` and roll Backend; no Wework, Executor, protocol, or Redis data change is required.
+
 ## Local Codex Streaming Logs
 
 The local executor keeps Codex delta details enabled by default so developers can diagnose streaming order, phase classification, and final-content overwrite issues. By default, it records raw Codex delta events and run-state classification summaries.
