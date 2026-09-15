@@ -568,6 +568,11 @@ function browserLabelForRightWorkspaceTab(
   return suffix === '1' ? baseLabel : `${baseLabel}-${suffix}`
 }
 
+function browserBaseLabelForWorkbenchPane(taskId: string | undefined, paneKey: string): string {
+  const labelSegment = taskId ?? paneKey
+  return `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(labelSegment)}`
+}
+
 function createInitialBrowserWorkspaceState({
   initialWorkspaceState,
   defaultEmbeddedBrowserLabel,
@@ -874,18 +879,27 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       if (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL) {
         return props.visible === false ? null : activePaneKey
       }
+      if (
+        props.visible !== false &&
+        requestBaseLabel ===
+          browserBaseLabelForWorkbenchPane(
+            props.activePane.currentRuntimeTask?.taskId,
+            activePaneKey
+          )
+      ) {
+        return activePaneKey
+      }
       return (
         runtimePaneKeys.find(paneKey => {
           const pane = resolvePane(paneKey)
-          const taskId = pane?.currentRuntimeTask?.taskId
-          return (
-            taskId !== undefined &&
-            requestBaseLabel === `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(taskId)}`
-          )
+          return pane
+            ? requestBaseLabel ===
+                browserBaseLabelForWorkbenchPane(pane.currentRuntimeTask?.taskId, paneKey)
+            : false
         }) ?? null
       )
     },
-    [activePaneKey, props.visible, resolvePane, runtimePaneKeys]
+    [activePaneKey, props.activePane, props.visible, resolvePane, runtimePaneKeys]
   )
   useEffect(() => {
     const listener = listenEmbeddedBrowserOpenRequests(request => {
@@ -3290,25 +3304,25 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }
         : null
 
-      setBrowserStates(current => {
-        const currentState = current[tab]
-        return {
-          ...current,
-          [tab]: currentState
-            ? {
-                ...currentState,
-                ...overrides,
-                openRequest: normalizedRequest ?? currentState.openRequest,
-              }
-            : createBrowserTabState(tab, {
-                label: stateLabel,
-                browserSessionId:
-                  request?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
-                openRequest: normalizedRequest,
-                ...overrides,
-              }),
-        }
-      })
+      const currentState = browserStatesRef.current[tab]
+      const nextBrowserStates = {
+        ...browserStatesRef.current,
+        [tab]: currentState
+          ? {
+              ...currentState,
+              ...overrides,
+              openRequest: normalizedRequest ?? currentState.openRequest,
+            }
+          : createBrowserTabState(tab, {
+              label: stateLabel,
+              browserSessionId:
+                request?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
+              openRequest: normalizedRequest,
+              ...overrides,
+            }),
+      }
+      browserStatesRef.current = nextBrowserStates
+      setBrowserStates(nextBrowserStates)
       setRightPanelImmediateLayout(true)
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
