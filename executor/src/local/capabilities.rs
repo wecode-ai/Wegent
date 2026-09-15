@@ -92,6 +92,42 @@ impl CapabilitySyncError {
 }
 
 #[derive(Debug)]
+struct PluginSyncFailure {
+    stage: &'static str,
+    error_code: &'static str,
+    retryable: bool,
+    error: CapabilitySyncError,
+}
+
+impl PluginSyncFailure {
+    fn new(
+        stage: &'static str,
+        error_code: &'static str,
+        retryable: bool,
+        error: CapabilitySyncError,
+    ) -> Self {
+        Self {
+            stage,
+            error_code,
+            retryable,
+            error,
+        }
+    }
+
+    fn runtime_metadata(error: CapabilitySyncError) -> Self {
+        if error.to_string().contains("Invalid Codex config") {
+            return Self::new("codex_config", "INVALID_CODEX_CONFIG", false, error);
+        }
+        Self::new(
+            "runtime_metadata",
+            "PLUGIN_RUNTIME_METADATA_FAILED",
+            false,
+            error,
+        )
+    }
+}
+
+#[derive(Debug)]
 struct FileSnapshot {
     path: PathBuf,
     backup: Option<PathBuf>,
@@ -1386,17 +1422,23 @@ where
                 Some(id) => json!({"id": id, "name": spec.name, "status": "synced"}),
                 None => json!({"name": spec.name, "status": "synced"}),
             },
-            Err(error) => match spec.installed_plugin_id {
+            Err(failure) => match spec.installed_plugin_id {
                 Some(id) => json!({
                     "id": id,
                     "name": spec.name,
                     "status": "failed",
-                    "error": error.to_string(),
+                    "stage": failure.stage,
+                    "error_code": failure.error_code,
+                    "retryable": failure.retryable,
+                    "error": failure.error.to_string(),
                 }),
                 None => json!({
                     "name": spec.name,
                     "status": "failed",
-                    "error": error.to_string(),
+                    "stage": failure.stage,
+                    "error_code": failure.error_code,
+                    "retryable": failure.retryable,
+                    "error": failure.error.to_string(),
                 }),
             },
         }
@@ -1406,7 +1448,7 @@ where
         &self,
         spec: &PluginSyncSpec,
         manifest: &mut Value,
-    ) -> Result<(), CapabilitySyncError> {
+    ) -> Result<(), PluginSyncFailure> {
         let Some(store_path) = self.store.plugin_store_path(spec) else {
             ensure_object_field(manifest, "plugins").insert(
                 spec.key.clone(),
@@ -1421,7 +1463,9 @@ where
             );
             return Ok(());
         };
-        let installed = read_installed_plugins(&self.store.plugins_dir)?;
+        let installed = read_installed_plugins(&self.store.plugins_dir).map_err(|error| {
+            PluginSyncFailure::new("local_state", "PLUGIN_STATE_READ_FAILED", false, error)
+        })?;
         let previous_checksum = installed
             .get("plugins")
             .and_then(|plugins| plugins.get(&spec.key))
@@ -1445,55 +1489,79 @@ where
 
         if should_download {
             let download_path = spec.download_path.as_deref().unwrap_or_default();
-            let package = self.package_provider.download_plugin(download_path).await?;
+            let package = self
+                .package_provider
+                .download_plugin(download_path)
+                .await
+                .map_err(|error| {
+                    PluginSyncFailure::new("download", "PLUGIN_DOWNLOAD_FAILED", true, error)
+                })?;
             if let Some(expected) = &spec.checksum {
                 let actual = sha256_digest(&package);
                 if &actual != expected {
-                    return Err(CapabilitySyncError::ChecksumMismatch {
-                        expected: expected.clone(),
-                        actual,
-                    });
+                    return Err(PluginSyncFailure::new(
+                        "checksum",
+                        "PLUGIN_CHECKSUM_MISMATCH",
+                        false,
+                        CapabilitySyncError::ChecksumMismatch {
+                            expected: expected.clone(),
+                            actual,
+                        },
+                    ));
                 }
             }
             let backup_path = if store_path.exists() || store_path.is_symlink() {
                 let backup = rollback_temp_path(&store_path);
-                remove_existing_path(&backup)?;
-                fs::rename(&store_path, &backup)?;
+                remove_existing_path(&backup).map_err(|error| {
+                    PluginSyncFailure::new("prepare", "PLUGIN_PACKAGE_PREPARE_FAILED", false, error)
+                })?;
+                fs::rename(&store_path, &backup).map_err(|error| {
+                    PluginSyncFailure::new(
+                        "prepare",
+                        "PLUGIN_PACKAGE_PREPARE_FAILED",
+                        false,
+                        error.into(),
+                    )
+                })?;
                 Some(backup)
             } else {
                 None
             };
             let extract_result = extract_plugin_zip(&package, &store_path);
             if let Err(error) = extract_result {
-                return Err(rollback_plugin_package(
-                    &store_path,
-                    backup_path.as_deref(),
-                    error,
+                return Err(PluginSyncFailure::new(
+                    "extract",
+                    "PLUGIN_PACKAGE_EXTRACT_FAILED",
+                    false,
+                    rollback_plugin_package(&store_path, backup_path.as_deref(), error),
                 ));
             }
             if let Err(error) =
                 self.store
                     .install_plugin_runtime_metadata(spec, &store_path, manifest)
             {
-                return Err(rollback_plugin_package(
-                    &store_path,
-                    backup_path.as_deref(),
-                    error,
-                ));
+                let error = rollback_plugin_package(&store_path, backup_path.as_deref(), error);
+                return Err(PluginSyncFailure::runtime_metadata(error));
             }
             if let Some(backup) = backup_path.as_ref() {
                 let _ = remove_existing_path(backup);
             }
             return Ok(());
         } else if !has_plugin_manifest(&store_path) {
-            return Err(CapabilitySyncError::invalid_payload(format!(
-                "Plugin package {} is not available",
-                spec.key
-            )));
+            return Err(PluginSyncFailure::new(
+                "package",
+                "PLUGIN_PACKAGE_UNAVAILABLE",
+                true,
+                CapabilitySyncError::invalid_payload(format!(
+                    "Plugin package {} is not available",
+                    spec.key
+                )),
+            ));
         }
 
         self.store
-            .install_plugin_runtime_metadata(spec, &store_path, manifest)?;
+            .install_plugin_runtime_metadata(spec, &store_path, manifest)
+            .map_err(PluginSyncFailure::runtime_metadata)?;
         Ok(())
     }
 

@@ -110,7 +110,7 @@ SEMVER_PATTERN = re.compile(
 )
 SLUG_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$")
 MAX_RESOLVED_INTERFACE_CACHE_ENTRIES = 128
-AUTO_UPDATE_BATCH_SIZE = 5
+AUTO_UPDATE_BATCH_SIZE = 1
 logger = logging.getLogger(__name__)
 
 
@@ -529,7 +529,7 @@ class PluginMarketplaceService:
     def auto_update_batch(
         self, db: Session, *, user_id: int
     ) -> PluginAutoUpdateBatchResponse:
-        """Advance at most five cloud marketplace installs to their latest release."""
+        """Advance one cloud marketplace install to keep updates isolated."""
         installed_rows = (
             db.query(Kind)
             .filter(

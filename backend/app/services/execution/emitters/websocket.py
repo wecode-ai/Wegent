@@ -350,7 +350,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
     async def _emit_direct_block_created(
         self, event: ExecutionEvent, ws_emitter
     ) -> None:
-        """Emit chat:block_created from an ExecutionEvent block payload."""
+        """Broadcast chat:block_created from an ExecutionEvent block payload."""
         block = event.data.get("block") if event.data else None
         if not isinstance(block, dict):
             return
@@ -359,16 +359,11 @@ class WebSocketResultEmitter(BaseResultEmitter):
             subtask_id=event.subtask_id,
             block=block,
         )
-        # Persist block to Redis so it survives page refresh and is included
-        # in the final subtask result via finalize_and_get_blocks().
-        import app.services.chat.storage as chat_storage
-
-        await chat_storage.session_manager.add_block(event.subtask_id, block)
 
     async def _emit_direct_block_updated(
         self, event: ExecutionEvent, ws_emitter
     ) -> None:
-        """Emit chat:block_updated from an ExecutionEvent block update payload."""
+        """Broadcast chat:block_updated from an ExecutionEvent block update payload."""
         block_id = event.data.get("block_id") if event.data else None
         updates = event.data.get("updates") if event.data else None
         if not block_id or not isinstance(updates, dict):
@@ -392,18 +387,6 @@ class WebSocketResultEmitter(BaseResultEmitter):
             if source_key in updates:
                 update_kwargs[target_key] = updates[source_key]
         await ws_emitter.emit_block_updated(**update_kwargs)
-
-        import app.services.chat.storage as chat_storage
-
-        blocks = await chat_storage.session_manager.get_blocks(event.subtask_id)
-        existing_block = next(
-            (block for block in blocks if block.get("id") == str(block_id)),
-            None,
-        )
-        if existing_block is None:
-            return
-        existing_block.update(updates)
-        await chat_storage.session_manager.add_block(event.subtask_id, existing_block)
 
     async def _emit_result_guidance_blocks(
         self, event: ExecutionEvent, ws_emitter

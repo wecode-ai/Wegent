@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { release } from 'node:os'
-import { delimiter, dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import {
@@ -281,14 +281,19 @@ const systemSleep = new SystemSleepController()
 const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
 const executorHome =
   process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+const configuredExecutorLogFile = process.env.WEGENT_EXECUTOR_LOG_FILE?.trim()
+const runtimeLogDirectories = [
+  app.getPath('logs'),
+  join(executorHome, 'logs'),
+  ...(process.env.WEGENT_EXECUTOR_LOG_DIR?.trim()
+    ? [process.env.WEGENT_EXECUTOR_LOG_DIR.trim()]
+    : []),
+  ...(configuredExecutorLogFile && isAbsolute(configuredExecutorLogFile)
+    ? [dirname(configuredExecutorLogFile)]
+    : []),
+].filter((directory, index, directories) => directories.indexOf(directory) === index)
 const logRetention = new LogRetentionService({
-  directories: [
-    app.getPath('logs'),
-    join(executorHome, 'logs'),
-    ...(process.env.WEGENT_EXECUTOR_LOG_DIR?.trim()
-      ? [process.env.WEGENT_EXECUTOR_LOG_DIR.trim()]
-      : []),
-  ],
+  directories: runtimeLogDirectories,
   onResult: reportLogCleanup,
 })
 autoUpdater.logger = appUpdateLogger
@@ -1351,7 +1356,7 @@ async function configureDesktopRuntime(): Promise<void> {
     appVersion: () => app.getVersion(),
     cacheDirectory: join(app.getPath('userData'), 'cache'),
     downloadsDirectory,
-    logDirectories: [app.getPath('logs')],
+    logDirectories: runtimeLogDirectories,
   })
   const secureStorage = new SecureValueStore(app.getPath('userData'))
   embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {

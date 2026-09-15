@@ -2366,6 +2366,9 @@ export interface DeviceCapabilityItemResult {
   id?: string | number | null
   name?: string | null
   status: string
+  stage?: string | null
+  error_code?: string | null
+  retryable?: boolean | null
   error?: string | null
 }
 

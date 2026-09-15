@@ -1114,6 +1114,9 @@ async fn cloud_plugin_update_and_removal_restore_local_state_when_codex_config_i
 
     assert_eq!(update["success"], false);
     assert_eq!(update["plugins"][0]["status"], "failed");
+    assert_eq!(update["plugins"][0]["stage"], "codex_config");
+    assert_eq!(update["plugins"][0]["error_code"], "INVALID_CODEX_CONFIG");
+    assert_eq!(update["plugins"][0]["retryable"], false);
     assert!(update["plugins"][0]["error"]
         .as_str()
         .unwrap()

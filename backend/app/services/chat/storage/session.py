@@ -1080,8 +1080,23 @@ class SessionManager:
                     # Update existing block
                     block_to_store = block.copy()
                     content_key = (existing_block or {}).get(BLOCK_CONTENT_KEY_FIELD)
+                    # `content_delta` carries an incremental text append, not a
+                    # full replacement. Accumulate it onto the block content so
+                    # streamed text blocks keep their full text instead of only
+                    # the initial `block.created` content.
+                    content_delta = block_to_store.pop("content_delta", None)
                     async with redis_client.pipeline(transaction=False) as pipe:
-                        if isinstance(content_key, str):
+                        if content_delta:
+                            if isinstance(content_key, str):
+                                pipe.append(content_key, content_delta)
+                                pipe.expire(content_key, STREAMING_TTL)
+                                block_to_store[BLOCK_CONTENT_KEY_FIELD] = content_key
+                                block_to_store["content"] = ""
+                            else:
+                                block_to_store["content"] = (existing_block or {}).get(
+                                    "content", ""
+                                ) + content_delta
+                        elif isinstance(content_key, str):
                             content_value = block_to_store.get("content", "")
                             block_to_store[BLOCK_CONTENT_KEY_FIELD] = content_key
                             block_to_store["content"] = ""
