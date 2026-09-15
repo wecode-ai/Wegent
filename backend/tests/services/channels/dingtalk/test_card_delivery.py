@@ -37,6 +37,30 @@ async def test_sdk_delivery_failure_reaches_the_caller(monkeypatch, failure):
 
 
 @pytest.mark.asyncio
+async def test_custom_answer_card_preserves_checked_delivery(monkeypatch):
+    response = requests.Response()
+    response.status_code = 500
+    response._content = b"{}"
+    response._content_consumed = True
+    monkeypatch.setattr(requests, "put", lambda *args, **kwargs: response)
+    client = SimpleNamespace(get_access_token=Mock(return_value="test-token"))
+    emitter = StreamingResponseEmitter(
+        client,
+        SimpleNamespace(hosting_context=None),
+        existing_card_instance_id="card-1",
+        conversation_card_template_id="answer.schema",
+        interaction_card_template_id="settings.schema",
+        channel_id=77,
+        user_id=9,
+    )
+
+    with pytest.raises(requests.HTTPError):
+        await emitter.emit_done(1, 2, {"value": "final"})
+    assert not emitter._finished
+    await emitter.close()
+
+
+@pytest.mark.asyncio
 async def test_sdk_updates_have_timeout_and_keep_full_final_payload(monkeypatch):
     calls = []
 

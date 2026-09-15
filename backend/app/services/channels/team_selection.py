@@ -18,7 +18,12 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import Optional
 
+from sqlalchemy.orm import Session
+
 from app.core.cache import cache_manager
+from app.core.config import settings
+from app.models.kind import Kind
+from app.services.readers.kinds import KindType, kindReader
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +93,7 @@ class TeamSelectionManager:
 
         return None
 
-    async def set_selection(self, user_id: int, selection: TeamSelection) -> None:
+    async def set_selection(self, user_id: int, selection: TeamSelection) -> bool:
         """Set user's team selection in Redis.
 
         Args:
@@ -97,17 +102,26 @@ class TeamSelectionManager:
         """
         key = f"{TEAM_SELECTION_KEY_PREFIX}{user_id}"
         try:
-            await cache_manager.set(
+            saved = await cache_manager.set(
                 key, json.dumps(selection.to_dict()), expire=TEAM_SELECTION_TTL
             )
+            if not saved:
+                logger.error(
+                    "[TeamSelectionManager] Cache rejected team selection for "
+                    "user %s",
+                    user_id,
+                )
+                return False
             logger.info(
                 f"[TeamSelectionManager] Saved team selection for user {user_id}: "
                 f"{selection.team_name} (id={selection.team_id})"
             )
+            return True
         except Exception as e:
             logger.error(
                 f"[TeamSelectionManager] Failed to save selection for user {user_id}: {e}"
             )
+            return False
 
     async def clear_selection(self, user_id: int) -> None:
         """Clear user's team selection (revert to default).
@@ -122,3 +136,88 @@ class TeamSelectionManager:
 
 # Global instance
 team_selection_manager = TeamSelectionManager()
+
+
+def get_team_display_name(team: Kind | None) -> str:
+    """Return a stable user-facing Team name."""
+
+    if team is None:
+        return "未配置"
+    team_json = team.json if isinstance(team.json, dict) else {}
+    metadata = (
+        team_json.get("metadata") if isinstance(team_json.get("metadata"), dict) else {}
+    )
+    spec = team_json.get("spec") if isinstance(team_json.get("spec"), dict) else {}
+    return str(metadata.get("displayName") or spec.get("displayName") or team.name)
+
+
+async def resolve_selected_team(db: Session, user_id: int) -> Optional[Kind]:
+    """Resolve the saved Team selection and revalidate current access."""
+
+    selection = await team_selection_manager.get_selection(user_id)
+    if selection is None:
+        return None
+
+    from app.services.share.team_share_service import team_share_service
+
+    team = team_share_service.get_resource(db, selection.team_id, user_id)
+    if team is not None and (
+        team.name != selection.team_name or team.namespace != selection.team_namespace
+    ):
+        team = None
+
+    if team is not None:
+        return team
+
+    logger.warning(
+        "[TeamSelectionManager] Selected team is unavailable: user_id=%s, "
+        "team_id=%s; clearing selection",
+        user_id,
+        selection.team_id,
+    )
+    await team_selection_manager.clear_selection(user_id)
+    return None
+
+
+def resolve_task_mode_team(
+    db: Session,
+    user_id: int,
+    *,
+    default_team_id: Optional[int] = None,
+) -> Optional[Kind]:
+    """Resolve the configured Task-mode Team with channel fallback."""
+
+    config_value = settings.DEFAULT_TEAM_TASK
+    if config_value and config_value.strip():
+        parts = config_value.strip().split("#", 1)
+        name = parts[0].strip()
+        namespace = parts[1].strip() if len(parts) > 1 else "default"
+        if name:
+            team = kindReader.get_by_name_and_namespace(
+                db,
+                user_id,
+                KindType.TEAM,
+                namespace,
+                name,
+            )
+            if team is not None:
+                return team
+            logger.warning(
+                "[TeamSelectionManager] Task-mode team is unavailable: "
+                "user_id=%s, name=%s, namespace=%s",
+                user_id,
+                name,
+                namespace,
+            )
+
+    if not default_team_id:
+        return None
+    return (
+        db.query(Kind)
+        .filter(
+            Kind.id == default_team_id,
+            Kind.kind == KindType.TEAM.value,
+            Kind.is_active.is_(True),
+        )
+        .first()
+    )

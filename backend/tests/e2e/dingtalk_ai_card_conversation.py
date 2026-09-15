@@ -2,18 +2,19 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""CI E2E coverage for DingTalk private-chat runtime conversations.
+"""CI E2E coverage for DingTalk private-chat runtime and selection cards.
 
 The test uses the migrated CI database and real Redis-backed session/callback
-state. DingTalk transport and the local runtime are the only substituted
-boundaries, so the production command router, runtime event parser, callback
-registry, cross-worker reconstruction, quoted-notification routing, and AI Card
-emitter run together.
+state. DingTalk transport, model/device inventory, and the local runtime are the
+only substituted boundaries, so command routing, selection application,
+callback reconstruction, quoted-notification routing, and AI Card projection
+run together.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -23,8 +24,11 @@ import dingtalk_stream
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
+from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.db.session import SessionLocal
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
+from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.runtime_work import RuntimeSendResponse
 from app.services import runtime_work_service
@@ -41,7 +45,26 @@ from app.services.channels.device_selection import (
 from app.services.channels.dingtalk import card as card_module
 from app.services.channels.dingtalk.callback import dingtalk_callback_service
 from app.services.channels.dingtalk.handler import DingTalkChannelHandler
+from app.services.channels.dingtalk.selection_cards import (
+    ACTIVE_CARD_PREFIX,
+    CARD_ACTION_PREFIX,
+    CARD_STATE_PREFIX,
+    DingTalkSelectionCardCallbackHandler,
+    DingTalkSelectionCardService,
+    save_conversation_card_state,
+)
 from app.services.channels.handler import CHANNEL_CONV_TASK_PREFIX, MessageContext
+from app.services.channels.model_selection import (
+    CHANNEL_USER_MODEL_PREFIX,
+    ModelSelection,
+    model_selection_manager,
+)
+from app.services.channels.selection_service import channel_selection_service
+from app.services.channels.team_selection import (
+    TEAM_SELECTION_KEY_PREFIX,
+    team_selection_manager,
+)
+from app.services.device_service import device_service
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.im.notification_dispatcher import IMNotificationDispatcher
 from app.services.im.session_service import (
@@ -61,6 +84,11 @@ EMPTY_FINAL_STATUS = "本轮已结束，未生成最终回复。"
 WAITING_STATUS = "等待你在 Wework 中确认后继续。"
 PRIVATE_THINKING = "private chain of thought must stay inside Wework"
 SECRET_VALUE = "dingtalk-ci-e2e-secret"
+INTERACTION_TEMPLATE_ID = "dingtalk-ci-selection.schema"
+CONVERSATION_TEMPLATE_ID = "dingtalk-ci-answer.schema"
+CLAUDE_MODEL_NAME = "dingtalk-ci-claude"
+GPT_MODEL_NAME = "dingtalk-ci-gpt"
+DEVICE_EXECUTION_TARGET_ID = "app-record-dingtalk-ci"
 NOTIFIED_DEVICE_ID = "dingtalk-ci-e2e-notified-device"
 NOTIFIED_LOCAL_TASK_ID = "dingtalk-ci-e2e-notified-task"
 NOTIFICATION_PROCESS_QUERY_KEY = "dingtalk-ci-e2e-notification-query"
@@ -79,6 +107,21 @@ class CardRecord:
     updates: list[str]
     finished: list[str]
     failed: bool = False
+
+
+@dataclass(frozen=True)
+class CacheSnapshot:
+    value: Any
+    ttl: int
+
+
+@dataclass(frozen=True)
+class SelectionCardRecord:
+    out_track_id: str
+    template_id: str
+    space_type: str
+    space_id: str
+    card_data: dict[str, Any]
 
 
 class FakeAICardInstance:
@@ -110,6 +153,35 @@ class FakeAICardInstance:
     def _record(self) -> CardRecord:
         assert self.card_instance_id is not None
         return self.records.setdefault(self.card_instance_id, CardRecord([], []))
+
+
+class FakeSelectionCardTransport:
+    """Record card deliveries while callbacks use real Redis state."""
+
+    def __init__(self) -> None:
+        self.records: list[SelectionCardRecord] = []
+
+    def new_out_track_id(self) -> str:
+        return f"selection-card-{uuid.uuid4().hex}"
+
+    async def create_and_deliver(
+        self,
+        *,
+        out_track_id: str,
+        template_id: str,
+        space: Any,
+        card_data: dict[str, Any],
+    ) -> bool:
+        self.records.append(
+            SelectionCardRecord(
+                out_track_id=out_track_id,
+                template_id=template_id,
+                space_type=space.space_type,
+                space_id=space.space_id,
+                card_data=dict(card_data),
+            )
+        )
+        return True
 
 
 class DingTalkConversationHarness(DingTalkChannelHandler):
@@ -231,6 +303,50 @@ class DingTalkConversationHarness(DingTalkChannelHandler):
         )
 
 
+class DingTalkSelectionHarness(DingTalkChannelHandler):
+    """Drive the production inbound command path for selection cards."""
+
+    def __init__(
+        self,
+        user_id: int,
+        selection_service: DingTalkSelectionCardService,
+    ) -> None:
+        super().__init__(
+            channel_id=CHANNEL_ID,
+            dingtalk_client=object(),
+            conversation_card_template_id=CONVERSATION_TEMPLATE_ID,
+            interaction_card_template_id=INTERACTION_TEMPLATE_ID,
+            selection_card_service=selection_service,
+        )
+        self._user_id = user_id
+        self.replies: list[str] = []
+
+    async def resolve_user(
+        self,
+        db: Session,
+        message_context: MessageContext,
+    ) -> User | None:
+        del message_context
+        return db.get(User, self._user_id)
+
+    async def send_text_reply(
+        self,
+        message_context: MessageContext,
+        text: str,
+    ) -> bool:
+        del message_context
+        self.replies.append(text)
+        return True
+
+    async def _process_chat_message(
+        self,
+        user: User,
+        message_context: MessageContext,
+    ) -> None:
+        del user, message_context
+        raise AssertionError("Selection-card command unexpectedly reached chat routing")
+
+
 class DingTalkNotificationHarness(IMNotificationDispatcher):
     """Substitute only DingTalk delivery while exercising notification routing."""
 
@@ -292,13 +408,149 @@ def _message(
     return message
 
 
+def _create_selection_agent(
+    db: Session,
+    user_id: int,
+    *,
+    name: str,
+    display_name: str,
+) -> Kind:
+    team = Kind(
+        user_id=user_id,
+        kind="Team",
+        name=name,
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {
+                "name": name,
+                "namespace": "default",
+                "displayName": display_name,
+            },
+            "spec": {"collaborationModel": "pipeline", "members": []},
+            "status": {"state": "Available"},
+        },
+    )
+    db.add(team)
+    db.commit()
+    db.refresh(team)
+    return team
+
+
+def _create_selection_task(
+    db: Session,
+    user_id: int,
+    title: str,
+    *,
+    team_name: str,
+) -> TaskResource:
+    name = f"dingtalk-selection-e2e-{uuid.uuid4().hex}"
+    task = TaskResource(
+        user_id=user_id,
+        kind="Task",
+        name=name,
+        namespace="default",
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        is_active=TaskResource.STATE_ACTIVE,
+        is_group_chat=False,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {"name": name, "namespace": "default"},
+            "spec": {
+                "title": title,
+                "prompt": title,
+                "teamRef": {
+                    "name": team_name,
+                    "namespace": "default",
+                    "user_id": user_id,
+                },
+                "workspaceRef": {
+                    "name": "workspace-dingtalk-e2e",
+                    "namespace": "default",
+                },
+                "is_group_chat": False,
+            },
+            "status": {"status": "COMPLETED"},
+        },
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+async def _cache_snapshot(key: str) -> CacheSnapshot:
+    value = await cache_manager.get(key)
+    client = await cache_manager._get_client()
+    try:
+        ttl = await client.ttl(key)
+    finally:
+        await client.aclose()
+    return CacheSnapshot(value=value, ttl=ttl)
+
+
+async def _restore_cache_snapshot(key: str, snapshot: CacheSnapshot) -> None:
+    if snapshot.value is None:
+        await cache_manager.delete(key)
+        return
+    expire = snapshot.ttl if snapshot.ttl > 0 else None
+    await cache_manager.set(key, snapshot.value, expire=expire)
+
+
+def _card_callback(
+    *,
+    out_track_id: str,
+    actor_id: str,
+    params: dict[str, str],
+) -> Any:
+    callback = dingtalk_stream.CallbackMessage()
+    callback.data = {
+        "outTrackId": out_track_id,
+        "userId": actor_id,
+        "content": json.dumps({"cardPrivateData": {"params": params}}),
+    }
+    return callback
+
+
+async def _invoke_card_action(
+    callback_handler: DingTalkSelectionCardCallbackHandler,
+    *,
+    out_track_id: str,
+    actor_id: str,
+    params: dict[str, str],
+) -> dict[str, Any]:
+    status, response = await callback_handler.process(
+        _card_callback(
+            out_track_id=out_track_id,
+            actor_id=actor_id,
+            params=params,
+        )
+    )
+    assert status == dingtalk_stream.AckMessage.STATUS_OK
+    assert isinstance(response, dict)
+    return response
+
+
+def _option_token(response: dict[str, Any], label: str) -> str:
+    card_param_map = response["cardData"]["cardParamMap"]
+    options = json.loads(card_param_map["options"])
+    option = next(item for item in options if item["label"] == label)
+    assert option["disabled"] is False
+    token = option["token"]
+    assert token and label not in token
+    return token
+
+
 async def _cleanup(
     *,
     user_id: int,
     session_key: str,
     conversation_cache_key: str,
     callback_keys: list[str],
-    cache_snapshots: dict[str, tuple[Any | None, int]],
+    cache_snapshots: dict[str, CacheSnapshot],
 ) -> None:
     for callback_key in callback_keys:
         emitter = dingtalk_callback_service._active_emitters.pop(callback_key, None)
@@ -327,20 +579,394 @@ async def _cleanup(
     finally:
         await client.aclose()
 
-    for key, (value, ttl) in cache_snapshots.items():
-        if value is None:
-            continue
-        await cache_manager.set(key, value, expire=ttl if ttl > 0 else None)
+    for key, snapshot in cache_snapshots.items():
+        await _restore_cache_snapshot(key, snapshot)
 
 
-async def _cache_snapshot(key: str) -> tuple[Any | None, int]:
-    value = await cache_manager.get(key)
-    client = await cache_manager._get_client()
+async def _run_selection_card_flow(user_id: int) -> None:
+    conversation_id = f"dingtalk-selection-e2e-{uuid.uuid4().hex}"
+    sender_id = f"dingtalk-selection-user-{uuid.uuid4().hex}"
+    task_title = f"DingTalk selection E2E {uuid.uuid4().hex[:8]}"
+    session_key = im_session_service.build_session_key(
+        user_id=user_id,
+        channel_type="dingtalk",
+        channel_id=CHANNEL_ID,
+        conversation_id=conversation_id,
+    )
+    model_key = f"{CHANNEL_USER_MODEL_PREFIX}{user_id}"
+    device_key = f"{CHANNEL_USER_DEVICE_PREFIX}{user_id}"
+    team_key = f"{TEAM_SELECTION_KEY_PREFIX}{user_id}"
+    model_snapshot = await _cache_snapshot(model_key)
+    device_snapshot = await _cache_snapshot(device_key)
+    team_snapshot = await _cache_snapshot(team_key)
+
+    db = SessionLocal()
     try:
-        ttl = await client.ttl(key)
+        suffix = uuid.uuid4().hex
+        old_agent = _create_selection_agent(
+            db,
+            user_id,
+            name=f"dingtalk-ci-old-agent-{suffix}",
+            display_name="DingTalk CI Old Agent",
+        )
+        selected_agent = _create_selection_agent(
+            db,
+            user_id,
+            name=f"dingtalk-ci-selected-agent-{suffix}",
+            display_name="DingTalk CI Selected Agent",
+        )
+        task = _create_selection_task(
+            db,
+            user_id,
+            task_title,
+            team_name=old_agent.name,
+        )
+        task_id = task.id
+        old_agent_id = old_agent.id
+        selected_agent_id = selected_agent.id
     finally:
-        await client.aclose()
-    return value, ttl
+        db.close()
+
+    models = [
+        {
+            "name": GPT_MODEL_NAME,
+            "displayName": "GPT E2E",
+            "type": "public",
+            "provider": "openai",
+        },
+        {
+            "name": CLAUDE_MODEL_NAME,
+            "displayName": "Claude E2E",
+            "type": "public",
+            "provider": "anthropic",
+        },
+    ]
+    devices = [
+        {
+            "device_id": "dingtalk-ci-logical-device",
+            "execution_target_id": DEVICE_EXECUTION_TARGET_ID,
+            "name": "DingTalk CI Mac",
+            "status": "online",
+        }
+    ]
+
+    async def get_devices(_db: Session, requested_user_id: int) -> list[dict[str, Any]]:
+        assert requested_user_id == user_id
+        return [dict(device) for device in devices]
+
+    model_override_existed = "_available_models" in channel_selection_service.__dict__
+    model_override = channel_selection_service.__dict__.get("_available_models")
+    device_override_existed = "get_all_devices" in device_service.__dict__
+    device_override = device_service.__dict__.get("get_all_devices")
+    setattr(
+        channel_selection_service,
+        "_available_models",
+        lambda _db, _user: [dict(model) for model in models],
+    )
+    setattr(device_service, "get_all_devices", get_devices)
+
+    transport = FakeSelectionCardTransport()
+    selection_service = DingTalkSelectionCardService(
+        client=object(),
+        channel_id=CHANNEL_ID,
+        interaction_template_id=INTERACTION_TEMPLATE_ID,
+        get_default_team_id=lambda: old_agent_id,
+        get_default_model_name=lambda: None,
+        get_user_mapping_config=lambda: {
+            "mode": "select_user",
+            "config": {"target_user_id": user_id},
+        },
+    )
+    selection_service._transport = transport
+    callback_handler = DingTalkSelectionCardCallbackHandler(selection_service)
+    handler = DingTalkSelectionHarness(user_id, selection_service)
+    action_tokens: list[tuple[str, str]] = []
+    answer_card_id = f"answer-card-{uuid.uuid4().hex}"
+
+    try:
+        await model_selection_manager.set_selection(
+            user_id,
+            ModelSelection(
+                model_name=GPT_MODEL_NAME,
+                model_type="public",
+                display_name="GPT E2E",
+                provider="openai",
+            ),
+        )
+        await device_selection_manager.set_cloud_executor(user_id)
+
+        incoming_message = _message("设置", conversation_id, sender_id)
+        assert await handler.handle_message(incoming_message)
+        assert handler.replies == []
+        assert len(transport.records) == 1
+        card = transport.records[0]
+        assert card.template_id == INTERACTION_TEMPLATE_ID
+        assert card.space_type == "IM_ROBOT"
+        assert card.space_id == sender_id
+        assert card.card_data["view"] == "console"
+        assert card.card_data["showTask"] is True
+        default_agent_label = card.card_data["nextTaskAgent"]
+        assert default_agent_label
+
+        direct_entries = [
+            ("/models", "model", "Claude E2E"),
+            ("/devices", "device", "DingTalk CI Mac"),
+            ("/agents", "agent", "DingTalk CI Selected Agent"),
+            ("/switch", "task", task_title),
+        ]
+        for command, kind, option_label in direct_entries:
+            assert await handler.handle_message(
+                _message(command, conversation_id, sender_id)
+            )
+            direct_card = transport.records[-1]
+            assert direct_card.card_data["view"] == "options"
+            assert direct_card.card_data["kind"] == kind
+            assert any(
+                option["label"] == option_label
+                for option in direct_card.card_data["options"]
+            )
+        assert len(transport.records) == 5
+        assert handler.replies == []
+
+        non_requester = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id="another-staff-user",
+            params={"action": "open_kind", "kind": "model"},
+        )
+        assert non_requester["cardUpdateOptions"]["updateCardDataByKey"] is False
+        assert "仅发起" in non_requester["userPrivateData"]["cardParamMap"]["status"]
+
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "open_kind", "kind": "model"},
+        )
+        model_token = _option_token(response, "Claude E2E")
+        action_tokens.append((card.out_track_id, model_token))
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "select", "token": model_token},
+        )
+        assert response["cardData"]["cardParamMap"]["status"] == (
+            "已切换到模型：Claude E2E"
+        )
+        model_selection = await model_selection_manager.get_selection(user_id)
+        assert model_selection is not None
+        assert model_selection.model_name == CLAUDE_MODEL_NAME
+
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "open_kind", "kind": "device"},
+        )
+        device_token = _option_token(response, "DingTalk CI Mac")
+        action_tokens.append((card.out_track_id, device_token))
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "select", "token": device_token},
+        )
+        assert response["cardData"]["cardParamMap"]["status"] == (
+            "已切换到设备：DingTalk CI Mac"
+        )
+        device_selection = await device_selection_manager.get_selection(user_id)
+        assert device_selection.device_type == DeviceType.LOCAL
+        assert device_selection.device_id == DEVICE_EXECUTION_TARGET_ID
+
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "open_kind", "kind": "task"},
+        )
+        task_token = _option_token(response, task_title)
+        action_tokens.append((card.out_track_id, task_token))
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "select", "token": task_token},
+        )
+        assert response["cardData"]["cardParamMap"]["status"] == (
+            f"已切换到任务：{task_title}"
+        )
+        session = await im_session_service.get_session(session_key)
+        assert session is not None
+        assert session.mode == IMSessionMode.TASK
+        assert session.active_task_id == task_id
+        assert session.state == IMSessionState.IDLE
+
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "open_kind", "kind": "agent"},
+        )
+        agent_token = _option_token(response, "DingTalk CI Selected Agent")
+        action_tokens.append((card.out_track_id, agent_token))
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "select", "token": agent_token},
+        )
+        card_params = response["cardData"]["cardParamMap"]
+        assert (
+            "已切换到智能体：DingTalk CI Selected Agent" in card_params["status"]
+        ), card_params["status"]
+        assert "当前任务未修改" in card_params["status"]
+        assert card_params["currentTaskAgent"] == "未绑定"
+        assert card_params["nextTaskAgent"] == (
+            "DingTalk CI Selected Agent（用户选择）"
+        )
+
+        team_selection = await team_selection_manager.get_selection(user_id)
+        assert team_selection is not None
+        assert team_selection.team_id == selected_agent_id
+        session = await im_session_service.get_session(session_key)
+        assert session is not None
+        assert session.mode == IMSessionMode.TASK
+        assert session.active_task_id is None
+
+        verification_db = SessionLocal()
+        try:
+            persisted_task = verification_db.get(TaskResource, task_id)
+            assert persisted_task is not None
+            assert persisted_task.json["spec"]["teamRef"]["name"] == old_agent.name
+            resolved_team = await handler._resolve_new_task_team(
+                verification_db,
+                user_id,
+            )
+            assert resolved_team is not None
+            assert resolved_team.id == selected_agent_id
+        finally:
+            verification_db.close()
+
+        next_message = "使用卡片选择的智能体创建新任务"
+        assert await handler.handle_message(
+            _message(next_message, conversation_id, sender_id)
+        )
+        session = await im_session_service.get_session(session_key)
+        assert session is not None
+        assert session.state == IMSessionState.PENDING_TASK_CREATION
+        assert session.pending_payload["first_message"] == next_message
+        assert await handler.handle_message(
+            _message("/cancel", conversation_id, sender_id)
+        )
+
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "open_kind", "kind": "task"},
+        )
+        rebound_task_token = _option_token(response, task_title)
+        action_tokens.append((card.out_track_id, rebound_task_token))
+        await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "select", "token": rebound_task_token},
+        )
+        session = await im_session_service.get_session(session_key)
+        assert session is not None
+        assert session.active_task_id == task_id
+
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "open_kind", "kind": "agent"},
+        )
+        default_agent_token = _option_token(response, "系统默认智能体")
+        action_tokens.append((card.out_track_id, default_agent_token))
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "select", "token": default_agent_token},
+        )
+        card_params = response["cardData"]["cardParamMap"]
+        assert (
+            f"已恢复默认智能体：{default_agent_label}" in card_params["status"]
+        ), card_params["status"]
+        assert card_params["currentTaskAgent"] == "未绑定"
+        assert card_params["nextTaskAgent"] == default_agent_label
+        assert await team_selection_manager.get_selection(user_id) is None
+
+        await save_conversation_card_state(
+            out_track_id=answer_card_id,
+            channel_id=CHANNEL_ID,
+            interaction_template_id=INTERACTION_TEMPLATE_ID,
+            user_id=user_id,
+            incoming_message=incoming_message,
+        )
+        delivered_count = len(transport.records)
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=answer_card_id,
+            actor_id=sender_id,
+            params={"action": "open_console"},
+        )
+        assert "已打开会话设置" in response["userPrivateData"]["cardParamMap"]["status"]
+        assert len(transport.records) == delivered_count + 1
+        assert transport.records[-1].card_data["view"] == "console"
+    finally:
+        if model_override_existed:
+            setattr(
+                channel_selection_service,
+                "_available_models",
+                model_override,
+            )
+        else:
+            delattr(channel_selection_service, "_available_models")
+        if device_override_existed:
+            setattr(device_service, "get_all_devices", device_override)
+        else:
+            delattr(device_service, "get_all_devices")
+
+        cleanup_db = SessionLocal()
+        try:
+            cleanup_task = cleanup_db.get(TaskResource, task_id)
+            if cleanup_task is not None:
+                cleanup_db.delete(cleanup_task)
+            for team_id in (old_agent_id, selected_agent_id):
+                cleanup_team = cleanup_db.get(Kind, team_id)
+                if cleanup_team is not None:
+                    cleanup_db.delete(cleanup_team)
+            cleanup_db.commit()
+        finally:
+            cleanup_db.close()
+
+        for record in transport.records:
+            await cache_manager.delete(f"{CARD_STATE_PREFIX}{record.out_track_id}")
+        await cache_manager.delete(f"{CARD_STATE_PREFIX}{answer_card_id}")
+        for out_track_id, token in action_tokens:
+            await cache_manager.delete(f"{CARD_ACTION_PREFIX}{out_track_id}:{token}")
+        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{user_id}:model")
+        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{user_id}:device")
+        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{user_id}:agent")
+        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{session_key}:task")
+        await cache_manager.delete(f"{PRIVATE_SESSION_KEY_PREFIX}{session_key}")
+        await cache_manager.delete(
+            f"{CHANNEL_CONV_TASK_PREFIX}dingtalk:{conversation_id}:{user_id}"
+        )
+        cache_client = await cache_manager._get_client()
+        try:
+            await cache_client.zrem(
+                f"{USER_PRIVATE_SESSIONS_PREFIX}{user_id}", session_key
+            )
+        finally:
+            await cache_client.aclose()
+        await _restore_cache_snapshot(model_key, model_snapshot)
+        await _restore_cache_snapshot(device_key, device_snapshot)
+        await _restore_cache_snapshot(team_key, team_snapshot)
 
 
 async def run() -> None:
@@ -585,6 +1211,8 @@ async def run() -> None:
         assert session is not None
         assert session.mode == IMSessionMode.TASK
         assert session.active_runtime_task == notified_runtime_task
+
+        await _run_selection_card_flow(user_id)
     finally:
         card_module.DingTalkMarkdownCard = original_card_class
         channel_manager_module.get_channel_manager = original_get_channel_manager
@@ -600,4 +1228,4 @@ async def run() -> None:
 
 if __name__ == "__main__":
     asyncio.run(run())
-    print("DingTalk private-chat runtime conversation E2E passed")
+    print("DingTalk private-chat runtime and selection card E2E passed")
