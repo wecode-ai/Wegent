@@ -32,6 +32,9 @@ import {
   GOAL_SNAPSHOT_RECONCILIATION_PROMPT,
   GOAL_SNAPSHOT_RECONCILIATION_TEXT,
   GOAL_RESTART_COMPLETION_TEXT,
+  GOAL_RESTART_BLOCKER_COMPLETION_TEXT,
+  GOAL_RESTART_BLOCKER_INITIAL_TEXT,
+  GOAL_RESTART_BLOCKER_PROMPT,
   GOAL_RESTART_INITIAL_TEXT,
   GOAL_RESTART_PROMPT,
   SUPERVISOR_COMPLETION_TEXT,
@@ -828,6 +831,38 @@ async function verifyGoalRestartRecoveryLifecycle({
   executorLogPath,
   restartDesktopApp,
 }) {
+  control.setScenario('goal_restart_blocker')
+  const taskRowsBeforeBlocker = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  await selectE2EModel(control)
+  await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`)
+  await control.command('click', '[data-testid="set-goal-button"]')
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="goal-draft-pill"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    GOAL_RESTART_BLOCKER_PROMPT,
+    'goal_restart_blocker'
+  )
+  const blockerTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeBlocker,
+    'WEWORK_DESKTOP_E2E_GOAL_RESTART_BLOCKER'
+  )
+  const blockerTaskId = blockerTaskRowTestId.replace('runtime-local-task-row-', '')
+  await withTimeout(
+    control.awaitScenarioRequestCount('goal_restart_blocker', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The Goal restart blocker did not enter automatic continuation'
+  )
+
   control.setScenario('goal_restart')
   const taskRowsBeforeGoal = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
@@ -893,13 +928,25 @@ async function verifyGoalRestartRecoveryLifecycle({
     )
   })
   await captureVerificationScreenshot(control, 'goal-restart-01-working-before-restart.png')
-  const requestCountBeforeRestart = control.scenarioRequests.get('goal_restart')?.length ?? 0
+  const requestCountsBeforeRestart = {
+    [blockerTaskId]: control.scenarioRequests.get('goal_restart_blocker')?.length ?? 0,
+    [goalTaskId]: control.scenarioRequests.get('goal_restart')?.length ?? 0,
+  }
+  const concurrencyResponse = JSON.parse(
+    await control.command('setLocalRuntimeMaxConcurrentTasks', 'body', { value: '1' })
+  )
+  assert.equal(
+    concurrencyResponse.maxConcurrentTasks,
+    1,
+    'The real executor did not apply the single-slot restart fixture'
+  )
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
   const executorReadyBeforeRestart = await waitForExecutorRuntimeEvidence(control, executorLogPath)
   const executorProcessIdBeforeRestart = executorReadyBeforeRestart.processIds.at(-1)
   assert.ok(executorProcessIdBeforeRestart, 'The original executor process ID was not recorded')
+  const restartExecutorLogOffset = (await readFile(executorLogPath, 'utf8')).length
 
   await restartDesktopApp()
 
@@ -922,35 +969,66 @@ async function verifyGoalRestartRecoveryLifecycle({
     'The original executor remained alive after a full Wework restart'
   )
 
-  await control.command('waitFor', `[data-testid="${goalTaskRowTestId}"]`, {
+  const recoveringTask = await waitForRecoveringExecutorGoal(control, [blockerTaskId, goalTaskId])
+  const recoveringTaskId = recoveringTask.taskId ?? recoveringTask.task_id
+  const recoveringTaskRowTestId = `runtime-local-task-row-${recoveringTaskId}`
+  const recoveringTaskRunningTestId = `runtime-local-task-running-${recoveringTaskId}`
+  const recoveringTaskUnreadTestId = `runtime-local-task-unread-dot-${recoveringTaskId}`
+  const recoveringScenario =
+    recoveringTaskId === blockerTaskId ? 'goal_restart_blocker' : 'goal_restart'
+  const recoveringPrompt =
+    recoveringTaskId === blockerTaskId ? GOAL_RESTART_BLOCKER_PROMPT : GOAL_RESTART_PROMPT
+  const recoveringCompletionText =
+    recoveringTaskId === blockerTaskId
+      ? GOAL_RESTART_BLOCKER_COMPLETION_TEXT
+      : GOAL_RESTART_COMPLETION_TEXT
+
+  await control.command('waitFor', `[data-testid="${recoveringTaskRowTestId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes(goalTaskRowTestId) &&
-      snapshot.testIds.includes(goalRunningTestId) &&
-      !snapshot.testIds.includes(goalUnreadTestId),
-    'The interrupted Goal did not automatically recover after Wework restarted',
-    WORKBENCH_READY_TIMEOUT_MS
-  )
-  await withTimeout(
-    control.awaitScenarioRequestCount('goal_restart', requestCountBeforeRestart + 1),
-    WORKBENCH_READY_TIMEOUT_MS,
-    'The restarted executor did not resume the active Goal without user input'
-  )
-  await captureVerificationScreenshot(control, 'goal-restart-02-automatically-recovering.png')
-
-  await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
+  await control.command('clickWhenEnabled', `[data-testid="${recoveringTaskRowTestId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.testIds.includes(goalRunningTestId) &&
-      !snapshot.testIds.includes(goalUnreadTestId) &&
-      snapshot.testIds.includes(goalTaskRowTestId),
+      snapshot.testIds.includes(recoveringTaskRowTestId) &&
+      snapshot.testIds.includes(recoveringTaskRunningTestId) &&
+      !snapshot.testIds.includes(recoveringTaskUnreadTestId),
+    'The queued executor-authoritative Goal recovery was not shown as running',
+    DEFAULT_STEP_TIMEOUT_MS
+  ).catch(async error => {
+    const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; workbench debug: ${JSON.stringify(
+        {
+          currentRuntimeTask: debugSnapshot.workbench?.currentRuntimeTask ?? null,
+          lifecycleCurrentTaskRunning: debugSnapshot.workbench?.lifecycleCurrentTaskRunning ?? null,
+          runningState: debugSnapshot.workbench?.runningState ?? null,
+          activeTask: debugSnapshot.workbench?.activeTask ?? null,
+          goal: debugSnapshot.pane?.goal ?? null,
+        }
+      )}`
+    )
+  })
+  control.releaseFirstGoalRestartResponse()
+  await withTimeout(
+    control.awaitScenarioRequestCount(
+      recoveringScenario,
+      requestCountsBeforeRestart[recoveringTaskId] + 1
+    ),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The real executor did not start the queued Goal recovery after capacity became available'
+  )
+  await captureVerificationScreenshot(control, 'goal-restart-02-automatically-recovering.png')
+
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(recoveringTaskRunningTestId) &&
+      !snapshot.testIds.includes(recoveringTaskUnreadTestId) &&
+      snapshot.testIds.includes(recoveringTaskRowTestId),
     'Opening the recovered Goal did not preserve its running sidebar state',
     WORKBENCH_READY_TIMEOUT_MS
   )
@@ -959,17 +1037,16 @@ async function verifyGoalRestartRecoveryLifecycle({
     snapshot =>
       snapshot.testIds.includes('goal-status-bar') &&
       snapshot.testIds.includes('pause-response-button') &&
-      snapshot.testIds.includes('thinking-indicator') &&
       !snapshot.testIds.includes('send-message-button') &&
-      snapshot.text.includes(GOAL_RESTART_PROMPT),
+      snapshot.text.includes(recoveringPrompt),
     'Opening the automatically recovered Goal did not show active work',
-    WORKBENCH_READY_TIMEOUT_MS,
+    DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
   const interruptedDebugSnapshot = await waitForWorkbenchDebugState(
     control,
     snapshot =>
-      snapshot.workbench?.currentRuntimeTask?.taskId === goalTaskId &&
+      snapshot.workbench?.currentRuntimeTask?.taskId === recoveringTaskId &&
       snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
       snapshot.pane?.goal?.status === 'active',
     'The automatically recovered Goal did not finish hydrating after Wework restarted'
@@ -988,24 +1065,25 @@ async function verifyGoalRestartRecoveryLifecycle({
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
-  control.releaseGoalRestartResponse()
-  await control.command('waitFor', `[data-testid="${goalUnreadTestId}"]`, {
+  releaseGoalRestartTask(control, recoveringTaskId, blockerTaskId)
+  await control.command('waitFor', `[data-testid="${recoveringTaskUnreadTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'goal-restart-04-completed-unread.png')
 
-  await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
+  await control.command('clickWhenEnabled', `[data-testid="${recoveringTaskRowTestId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: GOAL_RESTART_COMPLETION_TEXT,
+    text: recoveringCompletionText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await waitForSnapshot(
     control,
     snapshot =>
-      !snapshot.testIds.includes(goalUnreadTestId) && !snapshot.testIds.includes(goalRunningTestId),
+      !snapshot.testIds.includes(recoveringTaskUnreadTestId) &&
+      !snapshot.testIds.includes(recoveringTaskRunningTestId),
     'The recovered Goal did not clear its sidebar state'
   )
   await waitForSnapshot(
@@ -1019,7 +1097,73 @@ async function verifyGoalRestartRecoveryLifecycle({
     DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
+  const restoredConcurrency = JSON.parse(
+    await control.command('setLocalRuntimeMaxConcurrentTasks', 'body', { value: '10' })
+  )
+  assert.equal(
+    restoredConcurrency.maxConcurrentTasks,
+    10,
+    'The Goal restart fixture did not restore executor concurrency'
+  )
+  const restartExecutorLog = (await readFile(executorLogPath, 'utf8')).slice(
+    restartExecutorLogOffset
+  )
+  assert.equal(
+    restartExecutorLog.includes('codex app-server turn made no model or tool progress'),
+    false,
+    `The Goal restart fixture only advanced after a model-progress watchdog failure:\n${restartExecutorLog}`
+  )
   await captureVerificationScreenshot(control, 'goal-restart-06-completed-read.png')
+}
+
+async function waitForRecoveringExecutorGoal(control, taskIds) {
+  const startedAt = Date.now()
+  let observedTasks = []
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const runtimeWork = JSON.parse(await control.command('getLocalRuntimeWork', 'body'))
+    const workspaces = Array.isArray(runtimeWork.workspaces)
+      ? runtimeWork.workspaces
+      : Object.values(runtimeWork.workspaces ?? {})
+    observedTasks = workspaces
+      .flatMap(workspace => (Array.isArray(workspace.tasks) ? workspace.tasks : []))
+      .filter(candidate => taskIds.includes(candidate.taskId ?? candidate.task_id))
+      .map(candidate => ({
+        taskId: candidate.taskId ?? candidate.task_id,
+        running: candidate.running,
+        status: candidate.status,
+        threadStatus: candidate.threadStatus ?? candidate.thread_status,
+        turnStatus: candidate.turnStatus ?? candidate.turn_status,
+        goalStatus: candidate.goalStatus ?? candidate.goal_status,
+        goalExecutionStatus: candidate.goalExecutionStatus ?? candidate.goal_execution_status,
+        completedAt: candidate.completedAt ?? candidate.completed_at,
+      }))
+    const task = observedTasks.find(candidate => {
+      const taskId = candidate.taskId ?? candidate.task_id
+      const goalExecutionStatus = candidate.goalExecutionStatus ?? candidate.goal_execution_status
+      const goalStatus = candidate.goalStatus ?? candidate.goal_status
+      return (
+        taskIds.includes(taskId) &&
+        candidate.running === false &&
+        (goalExecutionStatus === 'recovering' ||
+          (goalStatus === 'active' && candidate.status === 'queued'))
+      )
+    })
+    if (task) return task
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(
+    `The real executor did not expose a queued recovering Goal after restart: ${JSON.stringify(
+      observedTasks
+    )}`
+  )
+}
+
+function releaseGoalRestartTask(control, taskId, blockerTaskId) {
+  if (taskId === blockerTaskId) {
+    control.releaseGoalRestartBlockerResponse()
+    return
+  }
+  control.releaseGoalRestartResponse()
 }
 
 async function verifyCloudGoalRestartRecoveryLifecycle({

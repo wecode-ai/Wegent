@@ -1621,6 +1621,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'setLocalRuntimeMaxConcurrentTasks':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.settings.update', {
+          maxConcurrentTasks: Number(command.value),
+        })
+      )
     case 'dropNextRuntimeEvent': {
       const root = globalThis as typeof globalThis & {
         [E2E_DROPPED_RUNTIME_EVENTS_KEY]?: string[]
