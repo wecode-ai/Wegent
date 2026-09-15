@@ -1489,7 +1489,7 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
     expect(await screen.findByText('产品发布页')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      '/api/sites?app_type=web&offset=0&limit=20',
+      expect.stringMatching(/(?:^|\/)api\/sites\?app_type=web&offset=0&limit=20$/),
       expect.objectContaining({
         method: 'GET',
         headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
@@ -1501,7 +1501,7 @@ describe('App plugins route', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/builtin/wegent-sites/ensure-installed',
+      expect.stringMatching(/(?:^|\/)api\/plugins\/builtin\/wegent-sites\/ensure-installed$/),
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ device_id: 'local-device' }),
@@ -1629,7 +1629,9 @@ describe('App plugins route', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed',
+      expect.stringMatching(
+        /(?:^|\/)api\/plugins\/builtin\/weibo-miniapp-h5-develop-agent\/ensure-installed$/
+      ),
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ device_id: 'local-device' }),
@@ -1753,7 +1755,7 @@ describe('App plugins route', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/builtin/wegent-sites/ensure-installed',
+      expect.stringMatching(/(?:^|\/)api\/plugins\/builtin\/wegent-sites\/ensure-installed$/),
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ device_id: 'local-device' }),

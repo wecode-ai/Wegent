@@ -138,6 +138,8 @@ interface MessageListProps {
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   virtualAnchorToEnd?: boolean
+  /** Reports a re-measured row, which changes the content under the reader without resizing the scroller. */
+  onItemSizeChange?: () => void
   bottomOrigin?: boolean
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
@@ -231,6 +233,7 @@ export const MessageList = memo(function MessageList({
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   virtualAnchorToEnd = true,
+  onItemSizeChange,
   bottomOrigin = false,
   renderGapAfterMessage,
 }: MessageListProps) {
@@ -338,6 +341,7 @@ export const MessageList = memo(function MessageList({
     initialContentHeightPx: initialVirtualContentHeight,
     initialDistanceFromBottomPx,
     positionKey: conversationKey,
+    onItemSizeChange,
     scrollElementRef,
     shouldAdjustScrollPositionOnItemSizeChange: bottomOrigin
       ? undefined
@@ -782,6 +786,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'onAskSelectionInSidebar'
       : null,
     previous.virtualAnchorToEnd !== next.virtualAnchorToEnd ? 'virtualAnchorToEnd' : null,
+    previous.onItemSizeChange !== next.onItemSizeChange ? 'onItemSizeChange' : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
 

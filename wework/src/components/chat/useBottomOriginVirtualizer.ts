@@ -25,6 +25,12 @@ type VirtualizerOptions<TScrollElement extends HTMLElement, TItemElement extends
   positionKey?: string | number | null
   preserveBottomOriginItemResizeAnchor?: boolean
   scrollElementRef?: RefObject<TScrollElement | null>
+  /**
+   * Reports that a row was re-measured. A re-measured row changes the content under the reader without
+   * changing the scroller's own box, so it never reaches the scroll owner through its ResizeObserver;
+   * this is how the owner gets to re-measure the reader's position for it.
+   */
+  onItemSizeChange?: () => void
   shouldAdjustScrollPositionOnItemSizeChange?: ReactVirtualizer<
     TScrollElement,
     TItemElement
@@ -42,6 +48,7 @@ export function useBottomOriginVirtualizer<
   positionKey,
   preserveBottomOriginItemResizeAnchor = false,
   scrollElementRef,
+  onItemSizeChange,
   shouldAdjustScrollPositionOnItemSizeChange,
   ...options
 }: VirtualizerOptions<TScrollElement, TItemElement>): ReactVirtualizer<
@@ -122,28 +129,42 @@ export function useBottomOriginVirtualizer<
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = bottomOrigin
     ? (item, delta, instance) => {
         const element = instance.scrollElement
-        if (
-          !preserveBottomOriginItemResizeAnchor ||
-          !element ||
-          element.scrollTop >= -0.5 ||
-          delta <= 0 ||
-          !bottomOriginAnchorItemKeys?.has(item.key)
-        ) {
-          return false
+        if (element && element.scrollTop < -0.5 && delta !== 0) {
+          const preserveAnchor =
+            preserveBottomOriginItemResizeAnchor &&
+            delta > 0 &&
+            bottomOriginAnchorItemKeys?.has(item.key) === true
+          if (preserveAnchor) {
+            const offset = getVirtualizerOffset(instance, element)
+            if (item.start < offset) {
+              // The streaming row is the last one, so nothing underneath it absorbs its growth: the
+              // extra height pushes the whole history up under the reader. This is the same correction
+              // `ScrollableMessageArea` applies after a layout change, but it has to happen here and
+              // now: the commit that grew the row runs before the frame's paint, while a ResizeObserver
+              // correction would only land in the next frame and show a one-frame jump.
+              // Grow the spacer with the row so the offset can be shifted without the scroller
+              // clamping at the end of the history. The shift is deliberately not reported to the
+              // scroll owner: it is the same offset movement the scroller performs by itself for this
+              // height change, and the owner already leaves that movement out of the reader's own
+              // scrolling.
+              const itemElement = instance.elementsCache.get(item.key)
+              const listElement = itemElement?.parentElement
+              if (listElement instanceof HTMLElement) {
+                const currentHeight =
+                  Number.parseFloat(listElement.style.height) ||
+                  listElement.getBoundingClientRect().height
+                listElement.style.height = `${Math.max(0, currentHeight + delta)}px`
+              }
+              element.scrollTop -= delta
+              return false
+            }
+          }
+          // Everything else (a whole-list reflow, a re-measured row above or below the viewport) is left
+          // to the scroll owner, which measures how far the text under the reader actually moved once the
+          // layout lands. Unlike a box resize this never reaches its ResizeObserver, so the owner is told
+          // here, in the same frame as the measurement, rather than a frame later.
+          onItemSizeChange?.()
         }
-
-        const offset = getVirtualizerOffset(instance, element)
-        if (item.start >= offset) return false
-
-        const itemElement = instance.elementsCache.get(item.key)
-        const listElement = itemElement?.parentElement
-        if (listElement instanceof HTMLElement) {
-          const currentHeight =
-            Number.parseFloat(listElement.style.height) ||
-            listElement.getBoundingClientRect().height
-          listElement.style.height = `${Math.max(0, currentHeight + delta)}px`
-        }
-        element.scrollTop -= delta
         return false
       }
     : shouldAdjustScrollPositionOnItemSizeChange
@@ -194,8 +215,6 @@ function getVirtualizerOffset<TScrollElement extends HTMLElement, TItemElement e
   instance: Virtualizer<TScrollElement, TItemElement>,
   element: TScrollElement
 ): number {
-  return Math.min(
-    getVirtualizerMaximumOffset(instance, element),
-    Math.max(0, getVirtualizerMaximumOffset(instance, element) + element.scrollTop)
-  )
+  const maximumOffset = getVirtualizerMaximumOffset(instance, element)
+  return Math.min(maximumOffset, Math.max(0, maximumOffset + element.scrollTop))
 }

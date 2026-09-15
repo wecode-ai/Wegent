@@ -11,6 +11,7 @@ import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 import {
   createCheckpointTaskFixture,
   distanceFromBottom,
+  getElementMetrics,
   getSingleElementMetrics,
   prepareCompletedTurnScreenshot,
   verifyShortConversationLayout,
@@ -3496,13 +3497,34 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The conversation after opening a linked file',
         DEFAULT_STEP_TIMEOUT_MS
       )
-      const filePanelAnchorAfterOpen = await waitForElementTop(
-        control,
-        filePanelAnchorSelector,
-        top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
-        'The linked file paragraph after opening the file panel',
-        DEFAULT_STEP_TIMEOUT_MS
-      )
+      // Capture the settled state before the anchor expectation is read: a failing run has to show where
+      // the paragraph ended up, not only where it started.
+      await captureVerificationScreenshot(control, 'file-panel-anchor-02-after-open.png')
+      let filePanelAnchorAfterOpen
+      try {
+        filePanelAnchorAfterOpen = await waitForElementTop(
+          control,
+          filePanelAnchorSelector,
+          top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
+          'The linked file paragraph after opening the file panel',
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+      } catch (error) {
+        const settled = {
+          anchor: (await getElementMetrics(control, filePanelAnchorSelector)).at(-1) ?? null,
+          scroller: await getSingleElementMetrics(
+            control,
+            conversationScrollerSelector,
+            'The conversation after the anchor expectation failed'
+          ),
+        }
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} (before=${JSON.stringify({
+            anchor: filePanelAnchorBeforeOpen,
+            scroller: filePanelScrollerBeforeOpen,
+          })} settled=${JSON.stringify(settled)})`
+        )
+      }
       assert.ok(
         filePanelScrollerAfterOpen.width < filePanelScrollerBeforeOpen.width - 100,
         `Opening the file panel did not resize the conversation from ${filePanelScrollerBeforeOpen.width}px; after=${filePanelScrollerAfterOpen.width}px`
@@ -3521,7 +3543,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           }
         )}`
       )
-      await captureVerificationScreenshot(control, 'file-panel-anchor-02-after-open.png')
       await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
       await waitForSnapshot(
         control,
