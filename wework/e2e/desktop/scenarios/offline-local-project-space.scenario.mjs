@@ -11,7 +11,6 @@ const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const CLOUD_WORKSPACE_ID = 'offline-cloud-workspace'
 const PROJECT_NAME = '离线本地项目空间'
 const ISSUE_NAME = '离线本地 Issue'
-const AGENT_NAME = '离线项目智能体'
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json' })
@@ -80,6 +79,12 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       }
       if (request.method === 'GET' && url.pathname === '/api/devices') {
         json(response, 200, { items: [] })
+        return true
+      }
+      if (request.method === 'GET' && url.pathname === '/api/models/unified') {
+        json(response, 503, {
+          detail: 'Desktop E2E cloud model service is unavailable',
+        })
         return true
       }
       if (
@@ -259,26 +264,21 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="wework-agent-resource-creator-error"]', {
+      await control.command('waitFor', '[data-testid="wework-agent-model-load-error"]', {
+        text: 'Desktop E2E cloud model service is unavailable',
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('fill', '[data-testid="wework-agent-resource-name"]', {
-        value: 'offline-project-agent',
-      })
-      await control.command('fill', '[data-testid="wework-agent-display-name"]', {
-        value: AGENT_NAME,
-      })
-      await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="wework-agent-resource-creator-error"]', {
-        text: '/api/bots',
-        timeoutMs: uiTimeoutMs,
-      })
+      assert.notEqual(
+        await control.command('getAttribute', '[data-testid="wework-agent-resource-create"]', {
+          value: 'disabled',
+        }),
+        null,
+        'Agent creation must remain disabled without an available model'
+      )
       assert.deepEqual(
         cloudAgentMutationRequests,
-        ['POST /api/bots'],
-        'Offline Agent creation must fail at the first real cloud resource write'
+        [],
+        'Unavailable model metadata must not trigger a cloud Agent mutation'
       )
       await control.command('click', '[data-testid="wework-agent-resource-creator-close"]')
       await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {

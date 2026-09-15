@@ -49,32 +49,53 @@ export function WeworkAgentResourceCreator({
   const [mcpConfig, setMcpConfig] = useState('{}')
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
   const [selectedSkillIds, setSelectedSkillIds] = useState<number[]>([])
-  const [loadingCapabilities, setLoadingCapabilities] = useState(true)
+  const [loadingModels, setLoadingModels] = useState(true)
+  const [loadingSkills, setLoadingSkills] = useState(true)
+  const [modelLoadError, setModelLoadError] = useState<string | null>(null)
+  const [skillLoadError, setSkillLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
-    void Promise.all([api.listModels(), api.listSkills()])
-      .then(([nextModels, nextSkills]) => {
+
+    void api
+      .listModels()
+      .then(loadedModels => {
         if (!active) return
         setModels(
-          nextModels.filter(model => model.isActive !== false && !model.compatibilityDisabled)
+          loadedModels.filter(model => model.isActive !== false && !model.compatibilityDisabled)
         )
-        setSkills(nextSkills)
       })
       .catch(cause => {
-        if (active) {
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : t('workbench.agent_creator_skills_load_failed', '加载 Skill 失败')
-          )
-        }
+        if (!active) return
+        setModelLoadError(
+          cause instanceof Error
+            ? cause.message
+            : t('workbench.agent_creator_models_load_failed', '加载模型失败')
+        )
       })
       .finally(() => {
-        if (active) setLoadingCapabilities(false)
+        if (active) setLoadingModels(false)
       })
+
+    void api
+      .listSkills()
+      .then(loadedSkills => {
+        if (active) setSkills(loadedSkills)
+      })
+      .catch(cause => {
+        if (!active) return
+        setSkillLoadError(
+          cause instanceof Error
+            ? cause.message
+            : t('workbench.agent_creator_skills_load_failed', '加载 Skill 失败')
+        )
+      })
+      .finally(() => {
+        if (active) setLoadingSkills(false)
+      })
+
     return () => {
       active = false
     }
@@ -249,7 +270,7 @@ export function WeworkAgentResourceCreator({
               <select
                 className={cn('wework-native-select h-10', fieldClassName)}
                 data-testid="wework-agent-model"
-                disabled={saving || loadingCapabilities}
+                disabled={saving || loadingModels}
                 onChange={event => setSelectedModelIndex(event.target.value)}
                 value={selectedModelIndex}
               >
@@ -265,6 +286,15 @@ export function WeworkAgentResourceCreator({
                   </option>
                 ))}
               </select>
+              {modelLoadError ? (
+                <span
+                  className="block rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500"
+                  data-testid="wework-agent-model-load-error"
+                  role="alert"
+                >
+                  {modelLoadError}
+                </span>
+              ) : null}
             </label>
 
             <fieldset className="space-y-2">
@@ -273,7 +303,7 @@ export function WeworkAgentResourceCreator({
                 className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-border bg-background p-2"
                 data-testid="wework-agent-skills"
               >
-                {loadingCapabilities ? (
+                {loadingSkills ? (
                   <div className="flex items-center gap-2 px-2 py-3 text-sm text-text-muted">
                     <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
                     {t('workbench.agent_creator_skills_loading', '正在加载 Skill…')}
@@ -314,6 +344,15 @@ export function WeworkAgentResourceCreator({
                   </div>
                 )}
               </div>
+              {skillLoadError ? (
+                <div
+                  className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500"
+                  data-testid="wework-agent-skill-load-error"
+                  role="alert"
+                >
+                  {skillLoadError}
+                </div>
+              ) : null}
             </fieldset>
 
             <label className="block space-y-1.5 text-sm text-text-secondary">
@@ -368,7 +407,7 @@ export function WeworkAgentResourceCreator({
             </Button>
             <Button
               data-testid="wework-agent-resource-create"
-              disabled={saving || loadingCapabilities || !selectedModel}
+              disabled={saving || loadingModels || !selectedModel}
               onClick={() => void createAgent()}
               type="button"
               variant="primary"

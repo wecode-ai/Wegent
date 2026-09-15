@@ -197,4 +197,62 @@ describe('weworkProjectAgentConfigurationHost', () => {
       teamId: 52,
     })
   })
+
+  it('keeps model-backed Agent creation available when optional Skill loading fails', async () => {
+    const createAgent = vi.fn(async () => ({
+      id: 53,
+      name: 'offline-agent',
+      displayName: 'Offline Agent',
+      namespace: 'default',
+    }))
+    const api = {
+      listModels: vi.fn(async () => [
+        {
+          name: 'desktop-e2e-public-model',
+          type: 'public',
+          displayName: 'Desktop E2E',
+          namespace: 'default',
+        },
+      ]),
+      listSkills: vi.fn(async () => {
+        throw new Error('Skill catalog unavailable')
+      }),
+      createAgent,
+    } as unknown as ReturnType<typeof createAgentResourceApi>
+    const host = createWeworkProjectAgentConfigurationHost(api)
+
+    render(
+      host.renderAgentCreator!({
+        namespace: 'default',
+        onClose: vi.fn(),
+        onCreated: vi.fn(async () => undefined),
+        workspaceName: 'Local Space',
+      })
+    )
+
+    await waitFor(() => expect(screen.getByText('Skill catalog unavailable')).toBeInTheDocument())
+    fireEvent.change(screen.getByTestId('wework-agent-resource-name'), {
+      target: { value: 'offline-agent' },
+    })
+    fireEvent.change(screen.getByTestId('wework-agent-model'), {
+      target: { value: '0' },
+    })
+
+    expect(screen.getByTestId('wework-agent-resource-create')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('wework-agent-resource-create'))
+
+    await waitFor(() =>
+      expect(createAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'offline-agent',
+          model: {
+            name: 'desktop-e2e-public-model',
+            type: 'public',
+            namespace: 'default',
+          },
+          skills: [],
+        })
+      )
+    )
+  })
 })

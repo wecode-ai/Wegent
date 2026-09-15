@@ -41,6 +41,7 @@
     "agent_creator_prompt": "System prompt",
     "agent_creator_prompt_placeholder": "Define the Agent's responsibilities, constraints, and output requirements",
     "agent_creator_skills_loading": "Loading Skills…",
+    "agent_creator_models_load_failed": "Failed to load models",
     "agent_creator_skills_load_failed": "Failed to load Skills",
     "agent_creator_no_skills": "No Skills are available for this runtime",
     "agent_creator_name_required": "Enter a resource name",

@@ -42,6 +42,7 @@
     "agent_creator_prompt": "系统提示词",
     "agent_creator_prompt_placeholder": "定义智能体职责、约束和输出要求",
     "agent_creator_skills_loading": "正在加载 Skill…",
+    "agent_creator_models_load_failed": "加载模型失败",
     "agent_creator_skills_load_failed": "加载 Skill 失败",
     "agent_creator_no_skills": "当前执行器没有可用 Skill",
     "agent_creator_name_required": "请输入资源名称",
