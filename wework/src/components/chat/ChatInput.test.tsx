@@ -608,8 +608,14 @@ describe('ChatInput', () => {
     )
 
     const menuButton = screen.getByTestId('send-mode-menu-button')
-    expect(menuButton).toHaveAttribute('title', '选择发送方式')
+    expect(menuButton).not.toHaveAttribute('title')
     expect(menuButton.querySelector('.lucide-chevron-down')).toBeInTheDocument()
+
+    vi.useFakeTimers()
+    fireEvent.pointerEnter(menuButton.parentElement as HTMLElement)
+    act(() => vi.advanceTimersByTime(700))
+    expect(screen.getByTestId('send-mode-menu-button-tooltip')).toHaveTextContent('选择发送方式')
+    vi.useRealTimers()
 
     await userEvent.click(menuButton)
     expect(
