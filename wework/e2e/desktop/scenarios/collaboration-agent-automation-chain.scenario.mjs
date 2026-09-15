@@ -466,10 +466,26 @@ export async function createDesktopScenario({
       'The collaboration Workspace was not persisted by the real API',
       uiTimeoutMs
     )
+    await control.command('waitFor', scoped('[data-testid="collaboration-workspace-name-input"]'), {
+      visible: false,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command(
+      'waitFor',
+      scoped('[data-testid="collaboration-workspace-project-create"]'),
+      {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      }
+    )
     await capture(control, 'collaboration-agent-chain-02-workspace-created.png')
 
     const projectName = `${PROJECT_NAME}-${process.pid}`
-    await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
+    await control.command(
+      'clickWhenEnabled',
+      scoped('[data-testid="collaboration-workspace-project-create"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
     await control.command('waitFor', scoped('[data-testid="collaboration-project-name-input"]'), {
       timeoutMs: uiTimeoutMs,
     })
