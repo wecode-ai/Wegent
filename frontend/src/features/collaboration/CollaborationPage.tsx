@@ -39,6 +39,7 @@ function workspaceViewFromPath(pathname: string): CollaborationWorkspaceView {
   if (pathname.endsWith('/projects')) return 'projects'
   if (pathname.endsWith('/members')) return 'members'
   if (pathname.endsWith('/agents')) return 'agents'
+  if (pathname.endsWith('/participants')) return 'collaboration-participants'
   if (pathname.endsWith('/collaboration-groups')) return 'collaboration-groups'
   if (pathname.endsWith('/execution-environments')) return 'execution-environments'
   if (pathname.endsWith('/settings')) return 'settings'

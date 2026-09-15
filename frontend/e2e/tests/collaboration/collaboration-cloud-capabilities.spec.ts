@@ -658,8 +658,11 @@ test.describe('Collaboration cloud capabilities', () => {
       ).toBeVisible()
       await page.getByTestId('automatic-processing-create').click()
       await expect(page.getByTestId('automatic-processing-form')).toBeVisible()
-      await page.getByTestId('automatic-processing-trigger-created').click()
-      await page.getByTestId('automatic-processing-target-kind-human').click()
+      await expect(page.getByTestId('automatic-processing-trigger-created')).toBeChecked()
+      await expect(page.getByTestId('automatic-processing-target-kind-human')).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
 
       const createResponse = page.waitForResponse(
         response =>
@@ -897,7 +900,8 @@ test.describe('Collaboration cloud capabilities', () => {
         .not.toBe(previousPriorityDisplay)
       await captureEvidence(page, 'web-10-project-manage')
 
-      await page.getByTestId('collaboration-tab-board').click()
+      await page.getByTestId('project-board-settings-close').click()
+      await expect(page.getByTestId('project-board-settings-dialog')).toBeHidden()
       await expect(page).toHaveURL(
         new RegExp(
           `${collaborationProjectPath(workspace.id, project.id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`

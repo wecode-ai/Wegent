@@ -171,6 +171,21 @@ describe('CollaborationPage platform routing', () => {
     })
   })
 
+  it('maps the Workspace collaboration participants URL into the shared location', () => {
+    mockPathname = '/collaboration/workspaces/workspace%201/participants'
+
+    render(<CollaborationPage />)
+
+    expect(capturedHost?.location).toEqual({
+      platformView: 'spaces',
+      workspaceId: 'workspace 1',
+      workspaceView: 'collaboration-participants',
+      projectId: null,
+      projectView: 'board',
+      issueId: null,
+    })
+  })
+
   it('opens an Issue drawer with native shallow history inside the current Project', () => {
     mockPathname = '/collaboration/workspaces/workspace%201/projects/project%201'
     const pushState = jest.spyOn(window.history, 'pushState').mockImplementation(() => undefined)
@@ -269,6 +284,12 @@ describe('CollaborationPage platform routing', () => {
     }
 
     expect(collaborationLocationPath(base)).toBe('/collaboration/workspaces/workspace%201/members')
+    expect(
+      collaborationLocationPath({
+        ...base,
+        workspaceView: 'collaboration-participants',
+      })
+    ).toBe('/collaboration/workspaces/workspace%201/participants')
     expect(
       collaborationLocationPath({
         ...base,
