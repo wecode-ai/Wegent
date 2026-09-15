@@ -914,8 +914,11 @@ export class EmbeddedBrowserManager {
   async requestClose(label: string): Promise<void> {
     const normalizedLabel = requiredLabel(label)
     const entry = this.entries.get(normalizedLabel)
-    if (!entry) return
     const requestId = randomUUID()
+    // The renderer can retain a stale native reference after Electron has
+    // already discarded the corresponding entry. Use a unique close identity
+    // so it still clears and acknowledges that logical browser before reopen.
+    const nativeLabel = entry?.nativeLabel ?? `missing-browser-${requestId}`
     const handled = new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.closeRequestWaiters.delete(requestId)
@@ -925,17 +928,17 @@ export class EmbeddedBrowserManager {
       }, 5_000)
       this.closeRequestWaiters.set(requestId, {
         label: normalizedLabel,
-        nativeLabel: entry.nativeLabel,
+        nativeLabel,
         resolve,
         reject,
         timeout,
       })
     })
-    this.close(normalizedLabel)
+    if (entry) this.close(normalizedLabel)
     this.emit('close-request', {
       requestId,
       label: normalizedLabel,
-      nativeLabel: entry.nativeLabel,
+      nativeLabel,
     })
     await handled
   }

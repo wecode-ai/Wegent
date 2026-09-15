@@ -864,6 +864,35 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
+  test('asks the renderer to clear a stale browser when no native entry remains', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+
+    let settled = false
+    const close = manager.requestClose('workspace-browser').then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+
+    expect(settled).toBe(false)
+    const request = events.find(event => event.type === 'close-request')?.payload
+    expect(request).toMatchObject({
+      requestId: expect.any(String),
+      label: 'workspace-browser',
+      nativeLabel: expect.stringMatching(/^missing-browser-/),
+    })
+
+    manager.notifyCloseRequestHandled(
+      String(request?.requestId),
+      'workspace-browser',
+      String(request?.nativeLabel)
+    )
+    await close
+    expect(settled).toBe(true)
+    await rm(directory, { recursive: true, force: true })
+  })
+
   test('settles a pending target open when relabeling an attached browser', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)
