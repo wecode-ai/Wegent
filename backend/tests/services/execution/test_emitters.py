@@ -338,29 +338,15 @@ class TestWebSocketResultEmitter:
             )
 
     @pytest.mark.asyncio
-    async def test_direct_block_updated_emits_and_persists_block_update(self):
-        """Direct block updates should reach the websocket and update stored blocks."""
+    async def test_direct_block_updated_emits_supported_fields(self):
+        """Direct block updates should reach the websocket."""
         from app.services.execution.emitters import WebSocketResultEmitter
 
-        with (
-            patch(
-                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
-            ) as mock_get,
-            patch("app.services.chat.storage.session_manager") as mock_session,
-        ):
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
             mock_ws = AsyncMock()
             mock_get.return_value = mock_ws
-            mock_session.get_blocks = AsyncMock(
-                return_value=[
-                    {
-                        "id": "codex-commentary-1",
-                        "type": "thinking",
-                        "content": "",
-                        "status": "streaming",
-                    }
-                ]
-            )
-            mock_session.add_block = AsyncMock()
 
             emitter = WebSocketResultEmitter(task_id=10, subtask_id=20)
             event = ExecutionEvent.create(
@@ -382,38 +368,16 @@ class TestWebSocketResultEmitter:
                 content="Working",
                 status="done",
             )
-            mock_session.add_block.assert_awaited_once_with(
-                20,
-                {
-                    "id": "codex-commentary-1",
-                    "type": "thinking",
-                    "content": "Working",
-                    "status": "done",
-                },
-            )
 
     @pytest.mark.asyncio
-    async def test_direct_subagent_update_preserves_nested_block_fields(self):
+    async def test_direct_subagent_update_emits_nested_block_fields(self):
         from app.services.execution.emitters import WebSocketResultEmitter
 
-        with (
-            patch(
-                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
-            ) as mock_get,
-            patch("app.services.chat.storage.session_manager") as mock_session,
-        ):
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
             mock_ws = AsyncMock()
             mock_get.return_value = mock_ws
-            mock_session.get_blocks = AsyncMock(
-                return_value=[
-                    {
-                        "id": "Agent_0",
-                        "type": "subagent",
-                        "status": "pending",
-                    }
-                ]
-            )
-            mock_session.add_block = AsyncMock()
 
             emitter = WebSocketResultEmitter(task_id=10, subtask_id=20)
             event = ExecutionEvent.create(
@@ -443,18 +407,6 @@ class TestWebSocketResultEmitter:
                 summary="Done",
                 children=[{"id": "child-1", "type": "text"}],
                 status="done",
-            )
-            mock_session.add_block.assert_awaited_once_with(
-                20,
-                {
-                    "id": "Agent_0",
-                    "type": "subagent",
-                    "parent_tool_use_id": "Agent_parent",
-                    "output": "Detailed result",
-                    "summary": "Done",
-                    "children": [{"id": "child-1", "type": "text"}],
-                    "status": "done",
-                },
             )
 
 

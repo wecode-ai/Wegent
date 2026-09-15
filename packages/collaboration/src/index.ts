@@ -18,6 +18,7 @@ export { IssueCreate, IssueDetail } from "./IssueDetail";
 export * from "./my-work";
 export * from "./ports/SharedWorkspaceApi";
 export * from "./project-board";
+export * from "./project-agent-config";
 export * from "./project-create";
 export * from "./project-manage";
 export * from "./project-shell";
@@ -32,3 +33,5 @@ export * from "./workspace";
 export * from "./workspace-controller";
 export * from "./workspace-header/ProjectViewSwitcher";
 export * from "./web-adapter/createSharedWorkspaceFilesViewApi";
+export { createAutomationExecutionCatalogApi } from './runtime-profile/executionCatalog'
+export { RuntimeConfigurationProvider } from './runtime-profile/RuntimeConfigurationProvider'

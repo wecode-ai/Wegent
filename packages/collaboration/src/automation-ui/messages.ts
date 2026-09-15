@@ -46,6 +46,9 @@ const zhCN: AutomationMessages = {
     "每次触发时，系统都会在对应 Issue 中留下分配与执行记录。",
   "automation.policy.testRun": "测试运行",
   "automation.policy.runNow": "立即执行",
+  "automation.policy.configureRuntime": "立即配置",
+  "automation.policy.coordinatorConfigurationMissing":
+    "AI 调度器的执行配置不完整。请先在上方「我的默认执行配置」中选择设备和模型，并设为项目默认。",
   "automation.policy.runConfirm":
     "这会对真实 Issue 执行分配并可能发送通知或启动智能体。确定继续吗？",
   "automation.policy.openIssue": "打开 Issue",
@@ -652,6 +655,9 @@ const en: AutomationMessages = {
     "Each trigger leaves assignment and execution records in the corresponding Issue.",
   "automation.policy.testRun": "Test run",
   "automation.policy.runNow": "Run now",
+  "automation.policy.configureRuntime": "Configure now",
+  "automation.policy.coordinatorConfigurationMissing":
+    "The AI coordinator configuration is incomplete. Choose a device and model in My default execution settings above, then set it as the project default.",
   "automation.policy.runConfirm":
     "This will dispatch real issues and may notify members or start agents. Continue?",
   "automation.policy.openIssue": "Open issue",

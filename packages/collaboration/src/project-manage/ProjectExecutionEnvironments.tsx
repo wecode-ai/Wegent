@@ -2,43 +2,50 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import type { CollaborationTranslate } from "../i18n";
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+import type { CollaborationTranslate } from '../i18n'
+import {
+  executionEnvironmentStatuses,
+  executionEnvironmentStatusLabel,
+} from '../execution-environment/status'
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type {
   CollaborationExecutionEnvironment,
   CollaborationProject,
-} from "../types";
+} from '../types'
 
 export function ProjectExecutionEnvironments({
   api,
   project,
   translate,
 }: {
-  api: SharedWorkspaceApi;
-  project: CollaborationProject;
-  translate: CollaborationTranslate;
+  api: SharedWorkspaceApi
+  project: Pick<CollaborationProject, 'id' | 'workspace_id' | 'access_role'>
+  translate: CollaborationTranslate
 }) {
   const [workspaceItems, setWorkspaceItems] = useState<
     CollaborationExecutionEnvironment[]
-  >([]);
+  >([])
   const [personalItems, setPersonalItems] = useState<
     CollaborationExecutionEnvironment[]
-  >([]);
+  >([])
   const [projectItems, setProjectItems] = useState<
     CollaborationExecutionEnvironment[]
-  >([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  >([])
+  const [selectedDeviceId, setSelectedDeviceId] = useState('')
+  const [statusFilter, setStatusFilter] = useState<
+    'all' | CollaborationExecutionEnvironment['status']
+  >('all')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const canManage =
-    project.access_role === "Owner" || project.access_role === "Maintainer";
+    project.access_role === 'Owner' || project.access_role === 'Maintainer'
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
+    setLoading(true)
+    setError('')
     try {
       const [projectEnvironments, personalResources, workspaceEnvironments] =
         await Promise.all([
@@ -50,27 +57,27 @@ export function ProjectExecutionEnvironments({
           project.workspace_id && api.workspaces
             ? api.workspaces.listExecutionEnvironments(project.workspace_id)
             : [],
-        ]);
-      setWorkspaceItems(workspaceEnvironments);
-      setPersonalItems(personalResources.execution_environments);
-      setProjectItems(projectEnvironments);
+        ])
+      setWorkspaceItems(workspaceEnvironments)
+      setPersonalItems(personalResources.execution_environments)
+      setProjectItems(projectEnvironments)
     } catch (loadError) {
       setError(
         loadError instanceof Error
           ? loadError.message
           : translate(
-              "todo.execution_environments_load_failed",
-              "加载执行环境失败",
+              'todo.execution_environments_load_failed',
+              '加载执行环境失败',
             ),
-      );
+      )
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [api, project.id, project.workspace_id, translate]);
+  }, [api, project.id, project.workspace_id, translate])
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load()
+  }, [load])
 
   const selectedDeviceIds = useMemo(
     () =>
@@ -80,7 +87,7 @@ export function ProjectExecutionEnvironments({
           .filter((deviceId): deviceId is number => deviceId != null),
       ),
     [projectItems],
-  );
+  )
   const workspaceDeviceIds = useMemo(
     () =>
       new Set(
@@ -89,73 +96,80 @@ export function ProjectExecutionEnvironments({
           .filter((deviceId): deviceId is number => deviceId != null),
       ),
     [workspaceItems],
-  );
+  )
   const availableItems = useMemo(() => {
-    const environments = new Map<number, CollaborationExecutionEnvironment>();
+    const environments = new Map<number, CollaborationExecutionEnvironment>()
     for (const environment of [...personalItems, ...workspaceItems]) {
       if (environment.device_id != null) {
-        environments.set(environment.device_id, environment);
+        environments.set(environment.device_id, environment)
       }
     }
-    return [...environments.values()];
-  }, [personalItems, workspaceItems]);
+    return [...environments.values()]
+  }, [personalItems, workspaceItems])
   const candidates = availableItems.filter(
     (environment) =>
       environment.device_id != null &&
       !selectedDeviceIds.has(environment.device_id),
-  );
+  )
+  const matchesStatus = (environment: CollaborationExecutionEnvironment) =>
+    statusFilter === 'all' || environment.status === statusFilter
+  const visibleCandidates = candidates.filter(matchesStatus)
+  const visibleProjectItems = projectItems.filter(matchesStatus)
+  const selectedCandidate = visibleCandidates.find(
+    (environment) => String(environment.device_id) === selectedDeviceId,
+  )
 
   async function addEnvironment() {
-    const deviceId = Number(selectedDeviceId);
-    if (!Number.isInteger(deviceId) || deviceId < 1) return;
-    setSaving(true);
-    setError("");
+    const deviceId = selectedCandidate?.device_id
+    if (deviceId == null || saving) return
+    setSaving(true)
+    setError('')
     try {
       const created = await api.projects.addExecutionEnvironment(
         project.id,
         deviceId,
-      );
-      setProjectItems((current) => [...current, created]);
-      setSelectedDeviceId("");
+      )
+      setProjectItems((current) => [...current, created])
+      setSelectedDeviceId('')
     } catch (saveError) {
       setError(
         saveError instanceof Error
           ? saveError.message
           : translate(
-              "todo.execution_environment_add_failed",
-              "添加执行环境失败",
+              'todo.execution_environment_add_failed',
+              '添加执行环境失败',
             ),
-      );
+      )
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
   }
 
   async function removeEnvironment(
     environment: CollaborationExecutionEnvironment,
   ) {
-    if (environment.device_id == null) return;
-    setSaving(true);
-    setError("");
+    if (environment.device_id == null) return
+    setSaving(true)
+    setError('')
     try {
       await api.projects.removeExecutionEnvironment(
         project.id,
         environment.device_id,
-      );
+      )
       setProjectItems((current) =>
         current.filter((item) => item.id !== environment.id),
-      );
+      )
     } catch (saveError) {
       setError(
         saveError instanceof Error
           ? saveError.message
           : translate(
-              "todo.execution_environment_remove_failed",
-              "移除执行环境失败",
+              'todo.execution_environment_remove_failed',
+              '移除执行环境失败',
             ),
-      );
+      )
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
   }
 
@@ -163,36 +177,74 @@ export function ProjectExecutionEnvironments({
     <div className="min-h-0 flex-1 overflow-y-auto px-8 py-7">
       <div className="mx-auto max-w-[840px]">
         <h1 className="text-heading-lg font-semibold">
-          {translate("todo.project_execution_environments", "执行环境")}
+          {translate('todo.project_execution_environments', '执行环境')}
         </h1>
         <p className="mt-1 text-sm text-text-muted">
           {translate(
-            "todo.project_execution_environments_description",
-            "直接管理这个项目使用的执行环境；空间共享的环境也可以在这里复用。",
+            'todo.project_execution_environments_description',
+            '直接管理这个项目使用的执行环境；空间共享的环境也可以在这里复用。',
           )}
         </p>
 
+        <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-border pt-5">
+          <label className="flex items-center gap-2 text-sm">
+            {translate('todo.execution_environment_status_filter', '设备状态')}
+            <select
+              className="h-9 rounded-lg border border-border bg-background px-3 text-sm"
+              data-testid="collaboration-project-execution-environment-status-filter"
+              value={statusFilter}
+              onChange={(event) => {
+                setStatusFilter(event.target.value as typeof statusFilter)
+                setSelectedDeviceId('')
+              }}
+            >
+              <option value="all">
+                {translate(
+                  'todo.execution_environment_all_statuses',
+                  '全部状态',
+                )}
+              </option>
+              {executionEnvironmentStatuses.map((status) => (
+                <option key={status} value={status}>
+                  {executionEnvironmentStatusLabel(status, translate)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
         {canManage && candidates.length > 0 ? (
-          <div className="mt-6 flex gap-2 border-t border-border pt-5">
+          <div className="mt-3 flex gap-2">
             <select
               className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm"
               data-testid="collaboration-project-execution-environment-select"
-              value={selectedDeviceId}
+              aria-label={translate(
+                'todo.select_workspace_execution_environment',
+                '选择执行环境',
+              )}
+              disabled={visibleCandidates.length === 0 || saving}
+              value={selectedCandidate ? selectedDeviceId : ''}
               onChange={(event) => setSelectedDeviceId(event.target.value)}
             >
               <option value="">
-                {translate(
-                  "todo.select_workspace_execution_environment",
-                  "选择执行环境",
-                )}
+                {visibleCandidates.length === 0
+                  ? translate(
+                      'todo.execution_environment_no_matches',
+                      '没有符合当前状态的执行环境',
+                    )
+                  : translate(
+                      'todo.select_workspace_execution_environment',
+                      '选择执行环境',
+                    )}
               </option>
-              {candidates.map((environment) => (
+              {visibleCandidates.map((environment) => (
                 <option key={environment.id} value={environment.device_id}>
                   {environment.name}
+                  {` · ${executionEnvironmentStatusLabel(environment.status, translate)}`}
                   {environment.device_id != null &&
                   workspaceDeviceIds.has(environment.device_id)
-                    ? ` · ${translate("todo.workspace_shared", "空间共享")}`
-                    : ` · ${translate("todo.personal_resource", "我的资源")}`}
+                    ? ` · ${translate('todo.workspace_shared', '空间共享')}`
+                    : ` · ${translate('todo.personal_resource', '我的资源')}`}
                 </option>
               ))}
             </select>
@@ -200,20 +252,18 @@ export function ProjectExecutionEnvironments({
               type="button"
               className="collaboration-primary-button"
               data-testid="collaboration-project-execution-environment-add"
-              disabled={!selectedDeviceId || saving}
+              disabled={!selectedCandidate || saving}
               onClick={() => void addEnvironment()}
             >
-              {translate("common.add", "添加")}
+              {translate('common.add', '添加')}
             </button>
           </div>
-        ) : (
-          <div className="mt-6 border-t border-border" />
-        )}
+        ) : null}
 
         <div className="pt-5">
           {loading ? (
             <p className="text-sm text-text-muted">
-              {translate("common.loading", "加载中…")}
+              {translate('common.loading', '加载中…')}
             </p>
           ) : error ? (
             <div
@@ -227,27 +277,35 @@ export function ProjectExecutionEnvironments({
             <div className="rounded-xl bg-muted px-4 py-5">
               <p className="text-sm font-medium">
                 {translate(
-                  "todo.no_project_execution_environments",
-                  "项目还没有执行环境",
+                  'todo.no_project_execution_environments',
+                  '项目还没有执行环境',
                 )}
               </p>
               <p className="mt-1 text-sm text-text-muted">
                 {availableItems.length === 0
                   ? translate(
-                      "todo.configure_project_environment",
-                      "当前没有执行环境。请先在资源库添加本地设备或云主机。",
+                      'todo.configure_project_environment',
+                      '当前没有执行环境。请先在资源库添加本地设备或云主机。',
                     )
                   : translate(
-                      "todo.select_project_environment",
-                      "从我的资源或空间共享资源中选择执行环境。",
+                      'todo.select_project_environment',
+                      '从我的资源或空间共享资源中选择执行环境。',
                     )}
               </p>
             </div>
+          ) : visibleProjectItems.length === 0 ? (
+            <p className="text-sm text-text-muted" role="status">
+              {translate(
+                'todo.execution_environment_no_matches',
+                '没有符合当前状态的执行环境',
+              )}
+            </p>
           ) : (
             <div className="space-y-2">
-              {projectItems.map((environment) => (
+              {visibleProjectItems.map((environment) => (
                 <div
                   className="flex items-center rounded-xl border border-border px-4 py-3"
+                  data-testid={`collaboration-project-execution-environment-${environment.device_id}`}
                   key={environment.id}
                 >
                   <span className="min-w-0 flex-1">
@@ -255,20 +313,21 @@ export function ProjectExecutionEnvironments({
                       {environment.name}
                     </span>
                     <span className="block text-xs text-text-muted">
-                      {environment.kind === "cloud_host"
-                        ? translate("todo.cloud_host", "云主机")
-                        : translate("todo.local_device", "本地设备")}
-                      {" · "}
+                      {environment.kind === 'cloud_host'
+                        ? translate('todo.cloud_host', '云主机')
+                        : translate('todo.local_device', '本地设备')}
+                      {' · '}
                       {environment.device_id != null &&
                       workspaceDeviceIds.has(environment.device_id)
-                        ? translate("todo.workspace_shared", "空间共享")
-                        : translate("todo.project_direct", "项目直接添加")}
+                        ? translate('todo.workspace_shared', '空间共享')
+                        : translate('todo.project_direct', '项目直接添加')}
                     </span>
                   </span>
                   <span className="mr-3 text-xs text-text-secondary">
-                    {environment.status === "online"
-                      ? translate("common.online", "在线")
-                      : translate("common.offline", "离线")}
+                    {executionEnvironmentStatusLabel(
+                      environment.status,
+                      translate,
+                    )}
                   </span>
                   {canManage ? (
                     <button
@@ -278,7 +337,7 @@ export function ProjectExecutionEnvironments({
                       disabled={saving}
                       onClick={() => void removeEnvironment(environment)}
                     >
-                      {translate("common.remove", "移除")}
+                      {translate('common.remove', '移除')}
                     </button>
                   ) : null}
                 </div>
@@ -288,5 +347,5 @@ export function ProjectExecutionEnvironments({
         </div>
       </div>
     </div>
-  );
+  )
 }

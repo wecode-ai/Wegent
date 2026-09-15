@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Check, Zap, User, Users, Globe } from 'lucide-react'
 import type { UnifiedSkill } from '@/apis/skills'
+import { groupSkillsBySource, type SourceGroupedSkill } from '@/utils/skillGrouping'
 
 /** Animation trigger data for fly animation */
 export interface SkillFlyAnimationTrigger {
@@ -25,10 +26,10 @@ interface SkillAutocompleteProps {
   preloadedSkillNames: string[]
   /** Filter query after / */
   query: string
-  /** Already selected skill names */
-  selectedSkillNames: string[]
+  /** Already selected skill IDs */
+  selectedSkillIds?: number[]
   /** Callback when a skill is selected */
-  onSelect: (skillName: string) => void
+  onSelect: (skill: UnifiedSkill) => void
   /** Callback when menu should close */
   onClose: () => void
   /** Position relative to container */
@@ -43,9 +44,8 @@ interface SkillAutocompleteProps {
   onTriggerFlyAnimation?: (data: SkillFlyAnimationTrigger) => void
 }
 
-interface GroupedSkill {
-  skill: UnifiedSkill
-  group: 'team' | 'personal' | 'group' | 'public'
+interface GroupedSkill extends Omit<SourceGroupedSkill, 'group'> {
+  group: SourceGroupedSkill['group'] | 'team'
 }
 
 /**
@@ -54,9 +54,9 @@ interface GroupedSkill {
  * Displays a floating autocomplete menu for selecting skills when user types /.
  * Skills are grouped into:
  * 1. Team Skills - Skills configured for the current agent
- * 2. Personal Skills - User's own uploaded skills (namespace='default', is_public=false)
- * 3. Group Skills - Skills from user's groups (namespace!='default', is_public=false)
- *    - Each group's skills are shown under a separate header with the group name
+ * 2. Personal Skills - Non-public skills without a group source
+ * 3. Group Skills - Group-owned skills and personal skills shared through bindings
+ *    - Group names are shown only for skills stored in a group namespace
  * 4. Public Skills - System-wide public skills (is_public=true)
  */
 export default function SkillAutocomplete({
@@ -64,7 +64,7 @@ export default function SkillAutocomplete({
   teamSkillNames,
   preloadedSkillNames,
   query = '',
-  selectedSkillNames,
+  selectedSkillIds = [],
   onSelect,
   onClose,
   position,
@@ -73,7 +73,7 @@ export default function SkillAutocomplete({
   skillButtonRef,
   onTriggerFlyAnimation,
 }: SkillAutocompleteProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const menuRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
 
@@ -87,43 +87,11 @@ export default function SkillAutocomplete({
     // Create a set of team skill names for fast lookup
     const teamSkillSet = new Set(teamSkillNames)
 
-    // Group skills
-    const grouped: GroupedSkill[] = []
-    const teamSkills: GroupedSkill[] = []
-    const personalSkills: GroupedSkill[] = []
-    // Use Map to group skills by namespace for proper ordering
-    const groupSkillsByNamespace: Map<string, GroupedSkill[]> = new Map()
-    const publicSkills: GroupedSkill[] = []
-
-    for (const skill of filteredSkills) {
-      if (teamSkillSet.has(skill.name)) {
-        teamSkills.push({ skill, group: 'team' })
-      } else if (skill.is_public) {
-        publicSkills.push({ skill, group: 'public' })
-      } else if (skill.namespace && skill.namespace !== 'default') {
-        // Group skills: namespace is not 'default' and not public
-        // Group by namespace for proper ordering
-        const namespace = skill.namespace
-        if (!groupSkillsByNamespace.has(namespace)) {
-          groupSkillsByNamespace.set(namespace, [])
-        }
-        groupSkillsByNamespace.get(namespace)!.push({ skill, group: 'group' })
-      } else {
-        // Personal skills: namespace is 'default' and not public
-        personalSkills.push({ skill, group: 'personal' })
-      }
-    }
-
-    // Flatten group skills, sorted by namespace
-    const sortedNamespaces = Array.from(groupSkillsByNamespace.keys()).sort()
-    const groupSkills: GroupedSkill[] = []
-    for (const namespace of sortedNamespaces) {
-      groupSkills.push(...groupSkillsByNamespace.get(namespace)!)
-    }
-
-    // Sort: Team -> Personal -> Group (by namespace) -> Public
-    grouped.push(...teamSkills, ...personalSkills, ...groupSkills, ...publicSkills)
-    return grouped
+    const teamSkills: GroupedSkill[] = filteredSkills
+      .filter(skill => teamSkillSet.has(skill.name))
+      .map(skill => ({ skill, group: 'team' }))
+    const otherSkills = filteredSkills.filter(skill => !teamSkillSet.has(skill.name))
+    return [...teamSkills, ...groupSkillsBySource(otherSkills)]
   }, [skills, teamSkillNames, preloadedSkillNames, isChatShell])
 
   // Filter by query
@@ -161,7 +129,7 @@ export default function SkillAutocomplete({
   }, [onClose])
 
   const handleSelect = useCallback(
-    (skillName: string, event?: React.MouseEvent | React.KeyboardEvent) => {
+    (skill: UnifiedSkill, event?: React.MouseEvent | React.KeyboardEvent) => {
       // Get start position from the clicked element or menu
       let startX = 0
       let startY = 0
@@ -190,14 +158,14 @@ export default function SkillAutocomplete({
       // Trigger animation in parent component (so it persists after this component unmounts)
       if (onTriggerFlyAnimation) {
         onTriggerFlyAnimation({
-          skillName,
+          skillName: skill.name,
           startPosition: { x: startX, y: startY },
           endPosition: { x: endX, y: endY },
         })
       }
 
       // Call onSelect and onClose immediately
-      onSelect(skillName)
+      onSelect(skill)
       onClose()
     },
     [onSelect, onClose, skillButtonRef, onTriggerFlyAnimation]
@@ -233,9 +201,9 @@ export default function SkillAutocomplete({
             const fakeEvent = {
               currentTarget: selectedItem,
             } as unknown as React.KeyboardEvent
-            handleSelect(filteredSkills[selectedIndex].skill.name, fakeEvent)
+            handleSelect(filteredSkills[selectedIndex].skill, fakeEvent)
           } else {
-            handleSelect(filteredSkills[selectedIndex].skill.name)
+            handleSelect(filteredSkills[selectedIndex].skill)
           }
         }
       }
@@ -299,27 +267,27 @@ export default function SkillAutocomplete({
   const renderItems: React.ReactNode[] = []
   let itemIndex = 0
 
-  for (const { skill, group } of filteredSkills) {
+  for (const { skill, group, groupNamespace } of filteredSkills) {
     // Add section header when group changes
     // For 'group' type, also add header when namespace changes
     const needsHeader =
-      group !== currentGroup || (group === 'group' && skill.namespace !== currentNamespace)
+      group !== currentGroup || (group === 'group' && (groupNamespace || null) !== currentNamespace)
 
     if (needsHeader) {
       currentGroup = group
       if (group === 'group') {
-        currentNamespace = skill.namespace || null
+        currentNamespace = groupNamespace || null
       }
 
       // For group skills, show the group name (namespace) in the header
       const headerText =
-        group === 'group' && skill.namespace
-          ? `${t('common:skillSelector.group_skills_section')} - ${skill.namespace}`
+        group === 'group' && groupNamespace
+          ? `${t('common:skillSelector.group_skills_section')} - ${groupNamespace}`
           : getSectionHeader(group)
 
       renderItems.push(
         <div
-          key={group === 'group' ? `header-${group}-${skill.namespace}` : `header-${group}`}
+          key={group === 'group' ? `header-${group}-${groupNamespace || ''}` : `header-${group}`}
           className="px-3 py-1.5 text-xs text-text-muted font-medium flex items-center gap-1.5 border-t border-border first:border-t-0 mt-1 first:mt-0"
         >
           {getGroupIcon(group)}
@@ -328,7 +296,7 @@ export default function SkillAutocomplete({
       )
     }
 
-    const isSelected = selectedSkillNames.includes(skill.name)
+    const isSelected = selectedSkillIds.includes(skill.id)
     const displayIndex = itemIndex
     itemIndex++
 
@@ -341,7 +309,7 @@ export default function SkillAutocomplete({
         } ${
           displayIndex === selectedIndex ? 'bg-muted' : readOnly ? '' : 'hover:bg-muted'
         } ${isSelected ? 'opacity-60' : ''}`}
-        onClick={readOnly ? undefined : e => handleSelect(skill.name, e)}
+        onClick={readOnly ? undefined : e => handleSelect(skill, e)}
         role={readOnly ? undefined : 'button'}
         tabIndex={readOnly ? -1 : 0}
         onKeyDown={
@@ -350,7 +318,7 @@ export default function SkillAutocomplete({
             : e => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault()
-                  handleSelect(skill.name, e)
+                  handleSelect(skill, e)
                 }
               }
         }

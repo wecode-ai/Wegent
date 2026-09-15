@@ -7,6 +7,7 @@
 import io
 from datetime import datetime
 from typing import BinaryIO
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -1840,7 +1841,12 @@ def test_cloud_project_codex_agent_requires_explicit_project_environment(
     test_db: Session,
     test_user: User,
     test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "app.services.workspaces.environment_status.cache_manager.mget_or_raise",
+        AsyncMock(return_value={}),
+    )
     device = Kind(
         kind="Device",
         name="personal-codex-device",

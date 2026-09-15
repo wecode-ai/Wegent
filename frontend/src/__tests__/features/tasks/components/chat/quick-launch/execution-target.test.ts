@@ -22,10 +22,30 @@ function buildTeam(overrides: Partial<Team>): Team {
 }
 
 describe('shouldClearDeviceSelectionForQuickLauncher', () => {
-  it('clears device selection for non-ClaudeCode teams', () => {
+  it('clears device selection for non-coding teams', () => {
     const team = buildTeam({ agent_type: 'agno' })
 
     expect(shouldClearDeviceSelectionForQuickLauncher(team)).toBe(true)
+  })
+
+  it('keeps device selection for Codex teams', () => {
+    const team = buildTeam({
+      agent_type: 'Codex',
+      bots: [
+        {
+          bot_id: 1,
+          bot_prompt: '',
+          bot: {
+            shell_type: 'Codex',
+            agent_config: {
+              protocol: 'openai',
+            },
+          },
+        },
+      ],
+    })
+
+    expect(shouldClearDeviceSelectionForQuickLauncher(team)).toBe(false)
   })
 
   it('keeps device selection for ClaudeCode teams using predefined bound models', () => {

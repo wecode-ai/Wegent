@@ -266,6 +266,8 @@ where
                         "error": "Capability sync handler is not available",
                     }),
                 };
+                log_capability_sync_items(&response, "skills", "skill");
+                log_capability_sync_items(&response, "plugins", "plugin");
                 write_executor_log_line(&format_executor_log(
                     "device capability sync finished",
                     &[
@@ -519,6 +521,65 @@ where
                 Some(handler.handle_run_extension(payload).await)
             })
         })
+    }
+}
+
+fn log_capability_sync_items(response: &Value, field: &str, capability_type: &str) {
+    let Some(items) = response.get(field).and_then(Value::as_array) else {
+        return;
+    };
+    for item in items {
+        let status = item
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let fields = [
+            ("type", capability_type.to_owned()),
+            (
+                "id",
+                item.get("id").map(Value::to_string).unwrap_or_default(),
+            ),
+            (
+                "name",
+                item.get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            ("status", status.to_owned()),
+            (
+                "stage",
+                item.get("stage")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "error_code",
+                item.get("error_code")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "error",
+                item.get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+        ];
+        if status == "failed" || status == "error" {
+            write_executor_error_line(&format_executor_log(
+                "device capability sync item failed",
+                &fields,
+            ));
+        } else {
+            write_executor_log_line(&format_executor_log(
+                "device capability sync item finished",
+                &fields,
+            ));
+        }
     }
 }
 

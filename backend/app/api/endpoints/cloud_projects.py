@@ -262,7 +262,7 @@ def update_cloud_project(
     "/{project_id}/execution-environments",
     response_model=WorkspaceExecutionEnvironmentListResponse,
 )
-def list_project_execution_environments(
+async def list_project_execution_environments(
     project_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
@@ -270,7 +270,7 @@ def list_project_execution_environments(
     return WorkspaceExecutionEnvironmentListResponse(
         items=[
             WorkspaceExecutionEnvironmentResponse.model_validate(item)
-            for item in cloud_project_service.list_execution_environments(
+            for item in await cloud_project_service.list_execution_environments(
                 db, project_id, current_user.id
             )
         ]
@@ -282,14 +282,14 @@ def list_project_execution_environments(
     response_model=WorkspaceExecutionEnvironmentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def add_project_execution_environment(
+async def add_project_execution_environment(
     project_id: int,
     values: WorkspaceExecutionEnvironmentCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> WorkspaceExecutionEnvironmentResponse:
     return WorkspaceExecutionEnvironmentResponse.model_validate(
-        cloud_project_service.add_execution_environment(
+        await cloud_project_service.add_execution_environment(
             db, project_id, values.device_id, current_user.id
         )
     )

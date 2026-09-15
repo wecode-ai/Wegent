@@ -302,11 +302,16 @@ class DeviceCapabilityItemResult(BaseModel):
     name: Optional[str] = None
     server_name: Optional[str] = None
     status: str = "ok"
+    stage: Optional[str] = None
+    error_code: Optional[str] = None
+    retryable: Optional[bool] = None
     error: Optional[str] = None
 
 
 class DeviceCapabilitySyncResult(BaseModel):
     """Per-device capability sync result."""
+
+    scope: Optional[str] = None
 
     device_id: str
     success: bool

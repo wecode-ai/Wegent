@@ -202,7 +202,16 @@ test.describe('Collaboration module', () => {
     await page.getByTestId('collaboration-issue-comment').click()
     await page.getByTestId('collaboration-issue-mention-trigger').click()
     await page.getByTestId(`collaboration-issue-mention-member-${assignedMember.user_id}`).click()
-    await page.getByTestId('collaboration-issue-comment').pressSequentially(assignmentComment)
+    const assignmentComposer = page.getByTestId('collaboration-issue-comment')
+    await expect(assignmentComposer).toHaveValue(`@${assignedMemberName} `)
+    await expect(assignmentComposer).toBeFocused()
+    await expect
+      .poll(() =>
+        assignmentComposer.evaluate((element: HTMLTextAreaElement) => element.selectionStart)
+      )
+      .toBe(assignedMemberName.length + 2)
+    await assignmentComposer.pressSequentially(assignmentComment)
+    await expect(assignmentComposer).toHaveValue(`@${assignedMemberName} ${assignmentComment}`)
     await page.getByTestId('collaboration-issue-comment-submit').click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignmentComment)
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignedMemberName)

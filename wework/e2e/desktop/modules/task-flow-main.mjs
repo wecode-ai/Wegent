@@ -76,6 +76,7 @@ import {
   verifyActiveGoalIdleUnreadLifecycle,
   verifyBusyTurnGoalHandoff,
   verifyGoalRestartRecoveryLifecycle,
+  verifyMissingGoalSnapshotReconciliation,
   verifyTaskSupervisorLifecycle,
 } from './goal-flows.mjs'
 
@@ -3183,6 +3184,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
 
     if (shouldRunDesktopCheckpoint('goal-lifecycle')) {
+      phase = 'goal-missing-snapshot-reconciliation'
+      await verifyMissingGoalSnapshotReconciliation({
+        composerSelector,
+        control,
+      })
+
       phase = 'goal-busy-handoff'
       await verifyBusyTurnGoalHandoff({
         composerSelector,

@@ -861,6 +861,10 @@ async function verifyPopoutWindowLifecycle(control, composerSelector) {
   await control.command('showPopoutWindow', 'body', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  const initialPopout = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
+  assert.equal(initialPopout.popoutVisible, true, 'Popout Window did not become visible')
+  assert.ok(initialPopout.popoutWindowId, 'Popout Window identity was unavailable')
+  assert.ok(initialPopout.popoutWebContentsId, 'Popout Window WebContents identity was unavailable')
   try {
     if (process.platform === 'darwin') {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
@@ -876,15 +880,33 @@ async function verifyPopoutWindowLifecycle(control, composerSelector) {
   } finally {
     await control.command('dismissPopoutWindow', 'body')
   }
-  const reopenStartedAt = Date.now()
+  const hiddenPopout = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
+  assert.equal(hiddenPopout.popoutVisible, false, 'Dismissed Popout Window remained visible')
+  assert.equal(
+    hiddenPopout.popoutWindowId,
+    initialPopout.popoutWindowId,
+    'Dismissing the Popout Window replaced its native window'
+  )
+  assert.equal(
+    hiddenPopout.popoutWebContentsId,
+    initialPopout.popoutWebContentsId,
+    'Dismissing the Popout Window replaced its WebContents'
+  )
   await control.command('showPopoutWindow', 'body', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const reopenDurationMs = Date.now() - reopenStartedAt
+  const reopenedPopout = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
   try {
-    assert.ok(
-      reopenDurationMs < 2_000,
-      `Warm Popout Window reopen took ${reopenDurationMs}ms instead of reusing the hidden WebView`
+    assert.equal(reopenedPopout.popoutVisible, true, 'Reopened Popout Window was not visible')
+    assert.equal(
+      reopenedPopout.popoutWindowId,
+      initialPopout.popoutWindowId,
+      'Reopened Popout Window did not reuse its hidden native window'
+    )
+    assert.equal(
+      reopenedPopout.popoutWebContentsId,
+      initialPopout.popoutWebContentsId,
+      'Reopened Popout Window did not reuse its hidden WebContents'
     )
     if (process.platform === 'darwin') {
       const dataUrl = await control.command('capturePopoutWindow', 'body', {

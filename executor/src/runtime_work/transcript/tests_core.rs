@@ -1009,6 +1009,32 @@ fn transcript_unwraps_codex_plan_items_as_plan_blocks() {
 }
 
 #[test]
+fn transcript_keeps_in_progress_codex_plan_items_streaming() {
+    let thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "startedAt": 1_780_000_000,
+            "status": "inProgress",
+            "items": [{
+                "id": "plan-1",
+                "type": "plan",
+                "text": "# Plan\n\n- Inspect the repo.",
+                "status": "inProgress"
+            }]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["status"], "streaming");
+    assert_eq!(messages[0]["blocks"][0]["type"], "plan");
+    assert_eq!(messages[0]["blocks"][0]["status"], "streaming");
+}
+
+#[test]
 fn transcript_deduplicates_completed_event_and_response_items_with_equivalent_text() {
     let thread = json!({
         "id": "thread-1",

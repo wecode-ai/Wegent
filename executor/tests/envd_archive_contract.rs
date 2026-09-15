@@ -32,6 +32,11 @@ fn executor_archive_includes_workspace_and_sanitized_claude_home() {
         .join(task_id)
         .join(".claude_session_id_987");
     write_file(&session_file, "session-id");
+    let codex_thread_file = home
+        .join(".wegent-executor/sessions")
+        .join(task_id)
+        .join(".codex_thread_id_654");
+    write_file(&codex_thread_file, "codex-thread-id");
     write_file(
         &home.join(".wegent-executor/sessions/other-task/.claude_session_id_987"),
         "other-session",
@@ -68,6 +73,7 @@ fn executor_archive_includes_workspace_and_sanitized_claude_home() {
     assert!(
         names.contains(&"home/.wegent-executor/sessions/1385/.claude_session_id_987".to_owned())
     );
+    assert!(names.contains(&"home/.wegent-executor/sessions/1385/.codex_thread_id_654".to_owned()));
     assert!(names.contains(&"workspace/.git/HEAD".to_owned()));
     assert!(names.contains(&"home/.claude/home-memory.md".to_owned()));
     assert!(names.contains(&"home/.claude.json".to_owned()));
@@ -115,6 +121,10 @@ fn executor_archive_includes_workspace_and_sanitized_claude_home() {
         r#"{"theme":"dark"}"#
     );
     assert_eq!(fs::read_to_string(session_file).unwrap(), "session-id");
+    assert_eq!(
+        fs::read_to_string(codex_thread_file).unwrap(),
+        "codex-thread-id"
+    );
     assert!(!home.join(".wegent-executor/sessions/other-task").exists());
     assert!(!home
         .join(".wegent-executor/sessions/1385/request.json")

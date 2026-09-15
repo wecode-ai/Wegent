@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from 'vitest'
-import { isWeworkAutomationEnabled } from './automation'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { fillDesktopControlElement, isWeworkAutomationEnabled } from './automation'
 
 afterEach(() => {
   delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
@@ -30,5 +30,22 @@ describe('Electron desktop E2E automation', () => {
     }
 
     expect(isWeworkAutomationEnabled()).toBe(true)
+  })
+
+  test('fills a contenteditable through its atomic value setter when available', async () => {
+    const editor = document.createElement('div')
+    editor.contentEditable = 'true'
+    const updateApplicationState = vi.fn()
+    Object.defineProperty(editor, 'value', {
+      configurable: true,
+      set: nextValue => {
+        updateApplicationState(String(nextValue))
+      },
+    })
+    document.body.append(editor)
+
+    await fillDesktopControlElement(editor, 'WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK')
+
+    expect(updateApplicationState).toHaveBeenCalledWith('WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK')
   })
 })
