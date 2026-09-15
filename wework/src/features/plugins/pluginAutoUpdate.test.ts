@@ -13,10 +13,14 @@ import {
 } from './pluginAutoUpdate'
 import { clearPluginDeviceAutoSyncAttempts } from './pluginDeviceAutoSync'
 
-function batch(updatedCount: number, remainingCount: number): PluginAutoUpdateBatchResponse {
+function batch(
+  updatedCount: number,
+  remainingCount: number,
+  startId = 1
+): PluginAutoUpdateBatchResponse {
   return {
     updated: Array.from({ length: updatedCount }, (_, index) => ({
-      installedPluginId: index + 1,
+      installedPluginId: startId + index,
       pluginId: index + 101,
       fromReleaseId: index + 201,
       toReleaseId: index + 301,
@@ -27,7 +31,7 @@ function batch(updatedCount: number, remainingCount: number): PluginAutoUpdateBa
   }
 }
 
-function sync(success: boolean): PluginDeviceSyncResponse {
+function sync(success: boolean, installedPluginId = 1): PluginDeviceSyncResponse {
   return {
     deviceId: 'device-1',
     pendingCount: 0,
@@ -36,7 +40,19 @@ function sync(success: boolean): PluginDeviceSyncResponse {
       device_id: 'device-1',
       mode: 'replace',
       skills: [],
-      plugins: [],
+      plugins: [
+        success
+          ? { id: installedPluginId, name: `plugin-${installedPluginId}`, status: 'synced' }
+          : {
+              id: installedPluginId,
+              name: `plugin-${installedPluginId}`,
+              status: 'failed',
+              stage: 'codex_config',
+              error_code: 'INVALID_CODEX_CONFIG',
+              retryable: false,
+              error: 'Invalid Codex config',
+            },
+      ],
       mcps: [],
       errors: success ? [] : [{ error: 'sync failed' }],
       synced: success ? 1 : 0,
@@ -52,50 +68,84 @@ describe('runPluginAutoUpdate', () => {
     clearPluginDeviceAutoSyncAttempts()
   })
 
-  test('processes batches serially and syncs the device once per non-empty batch', async () => {
-    const responses = [batch(5, 7), batch(5, 2), batch(2, 0)]
+  test('processes every plugin independently across serial batches', async () => {
+    const responses = [batch(5, 7, 1), batch(5, 2, 6), batch(2, 0, 11)]
     const updateBatch = vi.fn(async () => responses.shift() ?? batch(0, 0))
+    const syncPlugin = vi.fn(async (installedPluginId: number) => sync(true, installedPluginId))
     const syncDevice = vi.fn(async () => sync(true))
     const onProgress = vi.fn()
 
-    await expect(runPluginAutoUpdate({ updateBatch, syncDevice, onProgress })).resolves.toBe(12)
+    await expect(
+      runPluginAutoUpdate({ updateBatch, syncPlugin, syncDevice, onProgress })
+    ).resolves.toEqual({ updatedCount: 12, failedCount: 0, failures: [] })
     expect(updateBatch).toHaveBeenCalledTimes(3)
-    expect(syncDevice).toHaveBeenCalledTimes(3)
-    expect(onProgress).toHaveBeenLastCalledWith({ updatedCount: 12, remainingCount: 0 })
+    expect(syncPlugin).toHaveBeenCalledTimes(12)
+    expect(syncDevice).not.toHaveBeenCalled()
+    expect(onProgress).toHaveBeenLastCalledWith({
+      processedCount: 12,
+      updatedCount: 12,
+      failedCount: 0,
+      remainingCount: 0,
+    })
   })
 
-  test('stops after a failed device sync and leaves later batches untouched', async () => {
-    const updateBatch = vi.fn(async () => batch(5, 5))
-    const syncDevice = vi.fn(async () => sync(false))
+  test('reports one plugin failure and continues with later plugins', async () => {
+    const responses = [batch(1, 1, 1), batch(1, 0, 2)]
+    const updateBatch = vi.fn(async () => responses.shift() ?? batch(0, 0))
+    const syncPlugin = vi.fn(async (installedPluginId: number) =>
+      sync(installedPluginId !== 1, installedPluginId)
+    )
+    const syncDevice = vi.fn(async () => sync(true))
 
-    await expect(runPluginAutoUpdate({ updateBatch, syncDevice })).rejects.toThrow('sync failed')
-    expect(updateBatch).toHaveBeenCalledTimes(1)
-    expect(syncDevice).toHaveBeenCalledTimes(1)
+    await expect(runPluginAutoUpdate({ updateBatch, syncPlugin, syncDevice })).resolves.toEqual({
+      updatedCount: 1,
+      failedCount: 1,
+      failures: [
+        expect.objectContaining({
+          installedPluginId: 1,
+          pluginName: 'plugin-1',
+          stage: 'codex_config',
+          errorCode: 'INVALID_CODEX_CONFIG',
+          message: 'Invalid Codex config',
+        }),
+      ],
+    })
+    expect(updateBatch).toHaveBeenCalledTimes(2)
+    expect(syncPlugin).toHaveBeenCalledTimes(2)
+    expect(syncDevice).not.toHaveBeenCalled()
   })
 
   test('does not sync when no update is pending', async () => {
     const updateBatch = vi.fn(async () => batch(0, 0))
+    const syncPlugin = vi.fn(async () => sync(true))
     const syncDevice = vi.fn(async () => sync(true))
 
-    await expect(runPluginAutoUpdate({ updateBatch, syncDevice })).resolves.toBe(0)
+    await expect(runPluginAutoUpdate({ updateBatch, syncPlugin, syncDevice })).resolves.toEqual({
+      updatedCount: 0,
+      failedCount: 0,
+      failures: [],
+    })
+    expect(syncPlugin).not.toHaveBeenCalled()
     expect(syncDevice).not.toHaveBeenCalled()
   })
 
   test('can retry device materialization after the account already advanced', async () => {
     const updateBatch = vi.fn(async () => batch(0, 0))
+    const syncPlugin = vi.fn(async () => sync(true))
     const syncDevice = vi.fn(async () => sync(true))
 
     await expect(
-      runPluginAutoUpdate({ updateBatch, syncDevice, syncWhenNoUpdates: true })
-    ).resolves.toBe(0)
+      runPluginAutoUpdate({ updateBatch, syncPlugin, syncDevice, syncWhenNoUpdates: true })
+    ).resolves.toEqual({ updatedCount: 0, failedCount: 0, failures: [] })
     expect(syncDevice).toHaveBeenCalledTimes(1)
   })
 
   test('fails instead of silently finishing when a batch makes no progress', async () => {
     const updateBatch = vi.fn(async () => batch(0, 1))
+    const syncPlugin = vi.fn(async () => sync(true))
     const syncDevice = vi.fn(async () => sync(true))
 
-    await expect(runPluginAutoUpdate({ updateBatch, syncDevice })).rejects.toThrow(
+    await expect(runPluginAutoUpdate({ updateBatch, syncPlugin, syncDevice })).rejects.toThrow(
       'Plugin auto-update made no progress'
     )
     expect(syncDevice).not.toHaveBeenCalled()
@@ -109,6 +159,9 @@ describe('runCurrentDevicePluginAutoUpdate', () => {
 
   test('resolves the live executor device before applying and materializing updates', async () => {
     const updateBatch = vi.fn(async () => batch(1, 0))
+    const syncPlugin = vi.fn(async (_deviceId: string, installedPluginId: number) =>
+      sync(true, installedPluginId)
+    )
     const syncDevice = vi.fn(async () => sync(true))
 
     await expect(
@@ -116,19 +169,24 @@ describe('runCurrentDevicePluginAutoUpdate', () => {
         listLocalInstalledPlugins: async () => ({ deviceId: ' device-1 ' }),
         listMarketplacePlugins: async () => ({ items: [] }),
         updateBatch,
+        syncPlugin,
         syncDevice,
       })
     ).resolves.toEqual({
       deviceId: 'device-1',
       updatedCount: 1,
+      failedCount: 0,
+      failures: [],
       deviceSyncPerformed: true,
     })
-    expect(syncDevice).toHaveBeenCalledWith('device-1')
+    expect(syncPlugin).toHaveBeenCalledWith('device-1', 1)
+    expect(syncDevice).not.toHaveBeenCalled()
   })
 
   test('skips cloud requests until the local executor reports a device id', async () => {
     const listMarketplacePlugins = vi.fn(async () => ({ items: [] }))
     const updateBatch = vi.fn(async () => batch(0, 0))
+    const syncPlugin = vi.fn(async () => sync(true))
     const syncDevice = vi.fn(async () => sync(true))
 
     await expect(
@@ -136,11 +194,13 @@ describe('runCurrentDevicePluginAutoUpdate', () => {
         listLocalInstalledPlugins: async () => ({ deviceId: '' }),
         listMarketplacePlugins,
         updateBatch,
+        syncPlugin,
         syncDevice,
       })
     ).resolves.toBeNull()
     expect(listMarketplacePlugins).not.toHaveBeenCalled()
     expect(updateBatch).not.toHaveBeenCalled()
+    expect(syncPlugin).not.toHaveBeenCalled()
     expect(syncDevice).not.toHaveBeenCalled()
   })
 
@@ -159,17 +219,21 @@ describe('runCurrentDevicePluginAutoUpdate', () => {
       },
     } as PluginMarketplaceItem
     const syncDevice = vi.fn(async () => sync(true))
+    const syncPlugin = vi.fn(async () => sync(true))
 
     await expect(
       runCurrentDevicePluginAutoUpdate({
         listLocalInstalledPlugins: async () => ({ deviceId: 'device-1' }),
         listMarketplacePlugins: async () => ({ items: [pendingItem] }),
         updateBatch: async () => batch(0, 0),
+        syncPlugin,
         syncDevice,
       })
     ).resolves.toEqual({
       deviceId: 'device-1',
       updatedCount: 0,
+      failedCount: 0,
+      failures: [],
       deviceSyncPerformed: true,
     })
     expect(syncDevice).toHaveBeenCalledWith('device-1')
