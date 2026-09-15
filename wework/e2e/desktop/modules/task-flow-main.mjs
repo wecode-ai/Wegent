@@ -11,6 +11,7 @@ import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 import {
   createCheckpointTaskFixture,
   distanceFromBottom,
+  getElementMetrics,
   getSingleElementMetrics,
   prepareCompletedTurnScreenshot,
   verifyShortConversationLayout,
@@ -3490,12 +3491,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           DEFAULT_STEP_TIMEOUT_MS
         )
       } catch (error) {
-        const settled = await waitForElementInsideScroller(
-          control,
-          filePanelAnchorSelector,
-          conversationScrollerSelector,
-          'The linked file paragraph after the anchor expectation failed'
-        )
+        const settled = {
+          anchor: (await getElementMetrics(control, filePanelAnchorSelector)).at(-1) ?? null,
+          scroller: await getSingleElementMetrics(
+            control,
+            conversationScrollerSelector,
+            'The conversation after the anchor expectation failed'
+          ),
+        }
         throw new Error(
           `${error instanceof Error ? error.message : String(error)} (before=${JSON.stringify({
             anchor: filePanelAnchorBeforeOpen,
