@@ -66,6 +66,7 @@ interface ComposerToolbarProps {
   leadingContext?: ReactNode
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   workspaceTarget?: WorkspaceTarget | null
+  sendKey?: 'enter' | 'cmd_enter'
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -112,6 +113,7 @@ export function ComposerToolbar({
   leadingContext,
   onListLocalApps,
   workspaceTarget,
+  sendKey = 'enter',
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -288,7 +290,7 @@ export function ComposerToolbar({
                   icon: Clock3,
                   testId: 'send-after-turn-option',
                   onSelect: () => onSubmit(),
-                  shortcut: 'Enter',
+                  shortcut: sendKey === 'enter' ? 'Enter' : undefined,
                 },
                 {
                   label:

@@ -9,7 +9,15 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { forwardRef, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  forwardRef,
+  useContext,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import type { TFunction } from 'i18next'
 import { Button } from '@/components/ui/button'
@@ -60,6 +68,7 @@ import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
 import type { ModelSelectorCloseReason } from './composer/model-selector-types'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { QuickPhrase } from '@/desktop/appPreferences'
+import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -634,6 +643,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
 ) {
   const { t } = useTranslation('common')
   const { t: tChat } = useTranslation('chat')
+  const workbench = useContext(WorkbenchContext)
+  const sendKey = workbench?.state?.user?.preferences?.send_key ?? 'enter'
   const [pendingQueuedSend, setPendingQueuedSend] = useState<PendingQueuedSend | null>(null)
   const [pendingModelSelection, setPendingModelSelection] = useState<PendingModelSelection | null>(
     null
@@ -835,6 +846,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     cloudSpaceEnabled,
     onSelectExternalMention,
     onSelectCloudProject,
+    sendKey,
   }
   const errorBanner = error ? (
     <div
