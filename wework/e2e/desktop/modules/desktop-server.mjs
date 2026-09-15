@@ -3052,8 +3052,17 @@ class DesktopE2EServer {
       return
     }
 
-    const requestThreadId = body.client_metadata?.thread_id
     const serializedBody = JSON.stringify(body)
+    const requestThreadId = body.client_metadata?.thread_id
+    const turnMetadata = body.client_metadata?.['x-codex-turn-metadata']
+    let parentThreadId
+    if (typeof turnMetadata === 'string') {
+      try {
+        parentThreadId = JSON.parse(turnMetadata).parent_thread_id
+      } catch {
+        parentThreadId = undefined
+      }
+    }
     if (
       typeof requestThreadId === 'string' &&
       serializedBody.includes(GOAL_RESTART_BLOCKER_PROMPT)
@@ -3066,9 +3075,15 @@ class DesktopE2EServer {
     ) {
       this.goalRestartScenarioByThreadId.set(requestThreadId, 'goal_restart')
     }
+    const taggedThreadId =
+      typeof requestThreadId === 'string' && this.goalRestartScenarioByThreadId.has(requestThreadId)
+        ? requestThreadId
+        : typeof parentThreadId === 'string'
+          ? parentThreadId
+          : undefined
     const goalRestartScenario =
-      typeof requestThreadId === 'string'
-        ? this.goalRestartScenarioByThreadId.get(requestThreadId)
+      typeof taggedThreadId === 'string'
+        ? this.goalRestartScenarioByThreadId.get(taggedThreadId)
         : undefined
 
     if (goalRestartScenario === 'goal_restart_blocker') {

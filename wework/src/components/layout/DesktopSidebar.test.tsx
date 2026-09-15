@@ -3661,6 +3661,22 @@ describe('DesktopSidebar', () => {
     ).not.toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-queue-down-recovering-goal')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-force-start-recovering-goal')).toBeInTheDocument()
+
+    act(() => {
+      cacheRuntimeConversationQueuePaused(
+        {
+          deviceId: 'local-device',
+          taskId: 'recovering-goal',
+          workspacePath: '/repo/Wegent',
+        },
+        true
+      )
+    })
+
+    expect(screen.getByTestId('runtime-local-task-running-recovering-goal')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('runtime-local-task-queue-paused-recovering-goal')
+    ).not.toBeInTheDocument()
   })
 
   test('shows a paused status when a running task has a paused follow-up queue', async () => {
