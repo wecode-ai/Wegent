@@ -988,6 +988,17 @@ function DeviceStatusProbe() {
   return <span data-testid="device-status">{workbench.state.devices[0]?.status ?? 'missing'}</span>
 }
 
+function DeviceSlotProbe() {
+  const device = useWorkbench().state.devices[0]
+  return (
+    <span data-testid="device-slot">
+      {device
+        ? `${device.slot_used ?? 0}/${device.slot_max ?? 0}:${device.running_tasks?.[0]?.task_id ?? 'none'}`
+        : 'missing'}
+    </span>
+  )
+}
+
 function RuntimeRunningTasksProbe() {
   const lifecycle = useRuntimeTaskLifecycleStoreSnapshot()
   const runningTaskIds = [...lifecycle.runningTaskKeys].map(key => key.split('\0')[1])
@@ -4771,6 +4782,42 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(screen.getByTestId('device-status')).toHaveTextContent('online')
+  })
+
+  test('applies slot updates without refreshing the full device list', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers = handlers
+      return vi.fn()
+    })
+    const listDevices = vi
+      .fn()
+      .mockResolvedValue([createDevice({ slot_used: 0, slot_max: 1, running_tasks: [] })])
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<DeviceSlotProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('device-slot')).toHaveTextContent('0/1:none'))
+    const callsBeforeEvent = listDevices.mock.calls.length
+
+    await act(async () => {
+      streamHandlers.onDeviceSlotUpdate?.({
+        device_id: 'device-1',
+        slot_used: 1,
+        slot_max: 3,
+        running_tasks: [{ task_id: 42 }],
+      })
+    })
+
+    expect(screen.getByTestId('device-slot')).toHaveTextContent('1/3:42')
+    expect(listDevices).toHaveBeenCalledTimes(callsBeforeEvent)
   })
 
   test('keeps the last confirmed online state when an offline event refresh fails', async () => {
