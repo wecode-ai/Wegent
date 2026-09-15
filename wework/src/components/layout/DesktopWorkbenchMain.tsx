@@ -1248,7 +1248,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     associateRuntimeTaskWithExistingItem,
     associateRuntimeTaskWithNewItem,
     boundCloudItem,
-    boundCloudItemStatusOverride,
     boundCloudProject,
     boundProjectSpaceApi,
     clearCloudActionNotice,
@@ -3157,7 +3156,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         integrated
         project={boundCloudProject}
         item={boundCloudItem}
-        statusOverride={boundCloudItemStatusOverride}
         api={boundProjectSpaceApi}
         currentTask={currentProjectSpaceRuntimeTask}
         projects={availableWorkItemProjects}

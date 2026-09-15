@@ -1261,7 +1261,6 @@ export function useWorkbenchCloudProjectContext({
   return {
     activeDeliveryItem,
     boundCloudItem: projectedBoundCloudItem,
-    boundCloudItemStatusOverride,
     boundCloudProject,
     boundProjectSpaceApi,
     clearCloudActionNotice,
