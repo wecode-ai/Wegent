@@ -568,11 +568,6 @@ function browserLabelForRightWorkspaceTab(
   return suffix === '1' ? baseLabel : `${baseLabel}-${suffix}`
 }
 
-function browserBaseLabelForWorkbenchPane(taskId: string | undefined, paneKey: string): string {
-  const labelSegment = taskId ?? paneKey
-  return `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(labelSegment)}`
-}
-
 function createInitialBrowserWorkspaceState({
   initialWorkspaceState,
   defaultEmbeddedBrowserLabel,
@@ -879,27 +874,19 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       if (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL) {
         return props.visible === false ? null : activePaneKey
       }
-      if (
-        props.visible !== false &&
-        requestBaseLabel ===
-          browserBaseLabelForWorkbenchPane(
-            props.activePane.currentRuntimeTask?.taskId,
-            activePaneKey
-          )
-      ) {
-        return activePaneKey
-      }
       return (
-        runtimePaneKeys.find(paneKey => {
+        Array.from(new Set([activePaneKey, ...runtimePaneKeys])).find(paneKey => {
           const pane = resolvePane(paneKey)
-          return pane
-            ? requestBaseLabel ===
-                browserBaseLabelForWorkbenchPane(pane.currentRuntimeTask?.taskId, paneKey)
-            : false
+          const labelSegment = pane?.currentRuntimeTask?.taskId ?? paneKey
+          return (
+            pane !== null &&
+            requestBaseLabel ===
+              `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(labelSegment)}`
+          )
         }) ?? null
       )
     },
-    [activePaneKey, props.activePane, props.visible, resolvePane, runtimePaneKeys]
+    [activePaneKey, props.visible, resolvePane, runtimePaneKeys]
   )
   useEffect(() => {
     const listener = listenEmbeddedBrowserOpenRequests(request => {

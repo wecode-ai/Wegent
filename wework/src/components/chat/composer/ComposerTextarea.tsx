@@ -94,7 +94,7 @@ import { debugComposerEvent, textMetrics } from './composerDebug'
 import { ComposerMentionMenu, type MentionMenuRow } from './ComposerMentionMenu'
 import { useWorkspaceMentionSearch } from './useWorkspaceMentionSearch'
 import { useComposerMentionCandidates } from './useComposerMentionCandidates'
-import type { ComposerTextareaProps } from './composerTextareaTypes'
+import { primaryComposerSubmitOptions, type ComposerTextareaProps } from './composerTextareaTypes'
 import { OPEN_COMPOSER_SLASH_MENU_EVENT } from './composerEvents'
 import type { ComposerLinkPayload } from './composerLinks'
 
@@ -155,6 +155,8 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       onBlockedModelSelect,
       isModelSelectionReady = true,
       sendKey = 'enter',
+      followUpBehavior = 'queue',
+      isStreaming = false,
     },
     ref
   ) {
@@ -1484,11 +1486,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
           if (snapshot.value.trim().length > 0 || canSend) {
             onSubmit(
               snapshot.value,
-              modifierPressed
-                ? event.shiftKey
-                  ? { interruptWhenBusy: true }
-                  : { guideWhenBusy: true }
-                : undefined
+              modifierPressed && event.shiftKey
+                ? { interruptWhenBusy: true }
+                : primaryComposerSubmitOptions(isStreaming, followUpBehavior)
             )
           }
           return true
@@ -1523,7 +1523,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         canSend,
         closeAutocompleteMenu,
         confirmHighlightedMenuSelection,
+        followUpBehavior,
         isComposing,
+        isStreaming,
         moveHighlightedIndex,
         onKeyDown,
         onSubmit,
