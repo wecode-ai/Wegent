@@ -126,6 +126,16 @@ function clearRetentionTimeout(host: HostedElectronWebview) {
   host.retentionTimeout = null
 }
 
+function retainHostedWebview(host: HostedElectronWebview) {
+  host.retained = true
+  clearRetentionTimeout(host)
+  host.retentionTimeout = window.setTimeout(() => {
+    host.retentionTimeout = null
+    host.retained = false
+    if (host.owner === null) destroyHostedWebview(host)
+  }, WEBVIEW_TRANSFER_RETENTION_MS)
+}
+
 function destroyElectronWebview(webview: ElectronWebviewElement): void {
   if (typeof webview.destroy === 'function') webview.destroy()
   webview.remove()
@@ -263,6 +273,7 @@ export function relabelElectronEmbeddedBrowserView(
 export function resetElectronEmbeddedBrowserView(label: string): void {
   const host = connectedHostedWebview(label)
   if (!host) return
+  retainHostedWebview(host)
   const previousWebview = host.webview
   const nextWebview = createElectronWebview(host.label)
   host.webview = nextWebview
@@ -297,11 +308,5 @@ export function syncElectronEmbeddedBrowserView(
 export function retainElectronEmbeddedBrowserView(label: string): void {
   const host = hostedWebviews.get(label)
   if (!host || host.destroyed || !host.container.isConnected) return
-  host.retained = true
-  clearRetentionTimeout(host)
-  host.retentionTimeout = window.setTimeout(() => {
-    host.retentionTimeout = null
-    host.retained = false
-    if (host.owner === null) destroyHostedWebview(host)
-  }, WEBVIEW_TRANSFER_RETENTION_MS)
+  retainHostedWebview(host)
 }
