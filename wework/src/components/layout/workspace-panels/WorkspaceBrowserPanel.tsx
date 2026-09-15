@@ -117,7 +117,7 @@ import type { BrowserAnnotationCommand } from '@/types/browser-annotation'
 import { browserAnnotationStateToContexts } from '@/lib/browser-annotation-context'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
-import { retainElectronEmbeddedBrowserView } from './electronEmbeddedBrowserHost'
+import { resetElectronEmbeddedBrowserView } from './electronEmbeddedBrowserHost'
 
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
 const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
@@ -728,7 +728,7 @@ export function WorkspaceBrowserTabPanel({
         '[Wework] Embedded browser close consumed',
         JSON.stringify({ label: event.label, nativeLabel: event.nativeLabel })
       )
-      retainElectronEmbeddedBrowserView(event.label)
+      resetElectronEmbeddedBrowserView(event.label)
       nativeBrowserOpenRef.current = false
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
