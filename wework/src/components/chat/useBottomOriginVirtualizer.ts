@@ -8,7 +8,6 @@ import {
 } from '@tanstack/react-virtual'
 import { useLayoutEffect, useRef } from 'react'
 import type { RefObject } from 'react'
-import { scrollDiag } from './scrollDiagnostics'
 
 const UNINITIALIZED_POSITION = Symbol('uninitialized-bottom-origin-position')
 
@@ -87,11 +86,6 @@ export function useBottomOriginVirtualizer<
     const maximumOffset = getVirtualizerMaximumOffset(instance, element)
     const targetOffset = Math.min(maximumOffset, Math.max(0, offset + adjustments))
     const distanceFromBottom = maximumOffset - targetOffset
-    // TEMP-DIAG (WORK-447): the virtualizer's own scroll writer.
-    scrollDiag(
-      `VDISPATCH offset=${Math.round(offset)} adjustments=${Math.round(adjustments)} target=${Math.round(targetOffset)} d=${Math.round(distanceFromBottom)} behavior=${String(behavior)}`,
-      true
-    )
     element.scrollTo({
       top: distanceFromBottom === 0 ? 0 : -distanceFromBottom,
       behavior,
@@ -135,12 +129,6 @@ export function useBottomOriginVirtualizer<
         if (!element) return false
         const offset = getVirtualizerOffset(instance, element)
         const streamingRow = bottomOriginAppendOnlyItemKeys?.has(item.key) === true
-        if (element.scrollTop < -0.5 && Math.abs(delta) >= 0.5) {
-          scrollDiag(
-            `ITEM-SIZE key=${String(item.key)} start=${Math.round(item.start)} end=${Math.round(item.start + (item.size ?? 0))} delta=${Math.round(delta)} streaming=${streamingRow} offset=${Math.round(offset)} client=${element.clientHeight} scrollTop=${Math.round(element.scrollTop)}`,
-            true
-          )
-        }
         if (element.scrollTop >= -0.5 || delta === 0) return false
         if (streamingRow && delta > 0 && item.start < offset) {
           // The streaming row is the last one, so nothing underneath it absorbs its growth: the
