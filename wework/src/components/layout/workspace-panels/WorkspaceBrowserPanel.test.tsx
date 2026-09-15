@@ -2037,6 +2037,67 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('recreates the Electron host before immediately reopening the same route', async () => {
+    const previousRuntimeConfig = window.__WEWORK_RUNTIME_CONFIG__
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...previousRuntimeConfig,
+      desktopHost: 'electron',
+    }
+    mockBrowserHostRect()
+    let handleClose!: (event: { label: string; nativeLabel: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      handleClose = handler
+      return Promise.resolve(vi.fn())
+    })
+    embeddedBrowserMocks.openEmbeddedBrowser
+      .mockResolvedValueOnce({
+        nativeLabel: 'workspace-browser-native-1',
+        title: null,
+        url: 'about:blank',
+      })
+      .mockResolvedValueOnce({
+        nativeLabel: 'workspace-browser-native-2',
+        title: null,
+        url: 'about:blank',
+      })
+    const initialRequest = {
+      id: 'test-immediate-reopen-1',
+      baseLabel: 'workspace-browser',
+      source: 'agent' as const,
+      disposition: 'current-tab' as const,
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+    }
+    const view = render(<WorkspaceBrowserPanel active openRequest={initialRequest} />)
+
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1))
+    const previousWebview = screen
+      .getByTestId('workspace-browser-electron-webview')
+      .querySelector('webview')
+
+    act(() => {
+      handleClose({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+      })
+      view.rerender(
+        <WorkspaceBrowserPanel
+          active
+          openRequest={{
+            ...initialRequest,
+            id: 'test-immediate-reopen-2',
+          }}
+        />
+      )
+    })
+
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(2))
+    expect(
+      screen.getByTestId('workspace-browser-electron-webview').querySelector('webview')
+    ).not.toBe(previousWebview)
+    window.__WEWORK_RUNTIME_CONFIG__ = previousRuntimeConfig
+  })
+
   test('opens hidden immediately when the active browser host is not measurable yet', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockReturnValueOnce({
