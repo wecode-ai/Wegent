@@ -714,15 +714,17 @@ export class EmbeddedBrowserManager {
     if (activeLabel) this.activeTabs.delete(normalizedBaseLabel)
 
     const prefixes = [`${normalizedBaseLabel}:`, `${normalizedBaseLabel}-`]
-    const visibleEntry = [...this.entries.values()].find(
+    const scopedEntries = [...this.entries.values()].filter(
       entry =>
-        entry.visible &&
-        (entry.label === normalizedBaseLabel ||
-          prefixes.some(prefix => entry.label.startsWith(prefix)))
+        entry.label === normalizedBaseLabel ||
+        prefixes.some(prefix => entry.label.startsWith(prefix))
     )
-    if (!visibleEntry) return normalizedBaseLabel
-    this.activeTabs.set(normalizedBaseLabel, visibleEntry.label)
-    return visibleEntry.label
+    const fallbackEntry =
+      scopedEntries.find(entry => entry.visible) ??
+      (scopedEntries.length === 1 ? scopedEntries[0] : null)
+    if (!fallbackEntry) return normalizedBaseLabel
+    this.activeTabs.set(normalizedBaseLabel, fallbackEntry.label)
+    return fallbackEntry.label
   }
 
   has(label: string): boolean {

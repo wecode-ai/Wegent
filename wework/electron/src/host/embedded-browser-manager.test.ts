@@ -876,7 +876,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
-  test('falls back from a stale global route to the remaining visible browser', async () => {
+  test('falls back from a stale global route to the sole remaining browser', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)
     const firstContents = new FakeWebContents()
@@ -906,11 +906,6 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     manager.setActiveTab('workspace-browser', 'workspace-browser-runtime-second')
 
     manager.close('workspace-browser-runtime-second')
-    manager.setBounds(
-      'workspace-browser-runtime-first',
-      { x: 0, y: 0, width: 800, height: 600 },
-      true
-    )
 
     expect(manager.activeLabel('workspace-browser')).toBe('workspace-browser-runtime-first')
     await rm(directory, { recursive: true, force: true })
