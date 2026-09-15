@@ -186,6 +186,20 @@ describe('CollaborationPage platform routing', () => {
     })
   })
 
+  it('removes an obsolete view from a canonical Project URL', async () => {
+    mockPathname = '/collaboration/workspaces/workspace%201/projects/project%201'
+    mockSearchParams = new URLSearchParams('view=automation')
+
+    render(<CollaborationPage />)
+
+    expect(capturedHost?.location.projectView).toBe('board')
+    await waitFor(() =>
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/collaboration/workspaces/workspace%201/projects/project%201'
+      )
+    )
+  })
+
   it('opens an Issue drawer with native shallow history inside the current Project', () => {
     mockPathname = '/collaboration/workspaces/workspace%201/projects/project%201'
     const pushState = jest.spyOn(window.history, 'pushState').mockImplementation(() => undefined)

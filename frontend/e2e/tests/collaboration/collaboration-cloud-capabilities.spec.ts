@@ -684,16 +684,16 @@ test.describe('Collaboration cloud capabilities', () => {
           const rules = await webApi<
             Array<{
               id: string
-              event_type?: string
-              target_kind?: string
+              eventType?: string
+              targetKind?: string
               enabled: boolean
             }>
           >(page, `/api/v1/cloud-projects/${encodeURIComponent(project.id)}/automations`)
           const rule = rules.find(candidate => candidate.id === createdRule.id)
           return {
             enabled: rule?.enabled,
-            eventType: rule?.event_type,
-            targetKind: rule?.target_kind,
+            eventType: rule?.eventType,
+            targetKind: rule?.targetKind,
           }
         })
         .toEqual({

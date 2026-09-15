@@ -140,6 +140,27 @@ export function CollaborationPage() {
       : 'board'
   const locale: CollaborationLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
   useEffect(() => {
+    if (
+      !projectRoute ||
+      !workspaceId ||
+      !projectId ||
+      !rawView ||
+      PROJECT_VIEWS.has(rawView as CollaborationView)
+    ) {
+      return
+    }
+    router.replace(
+      collaborationLocationPath({
+        platformView: 'spaces',
+        workspaceId,
+        workspaceView: 'projects',
+        projectId,
+        projectView: 'board',
+        issueId,
+      })
+    )
+  }, [issueId, projectId, projectRoute, rawView, router, workspaceId])
+  useEffect(() => {
     if (removedMyWorkRoute || removedResourcesRoute) {
       router.replace('/collaboration')
       return
