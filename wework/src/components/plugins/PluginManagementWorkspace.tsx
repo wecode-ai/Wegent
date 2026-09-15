@@ -49,6 +49,7 @@ import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 import { getRuntimeConfig } from '@/config/runtime'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
+import { buildPluginMcpHeadersUpdate } from './pluginMcpHeaders'
 
 function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
   const labels = item.metadata['labels']
@@ -273,7 +274,11 @@ export function PluginManagementWorkspace({
 
   const updateInstalledPlugin = (
     id: string | number,
-    request: { enabled?: boolean; componentStates?: Record<string, boolean> }
+    request: {
+      enabled?: boolean
+      componentStates?: Record<string, boolean>
+      componentConfig?: Record<string, unknown>
+    }
   ) => {
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) return Promise.reject(new Error('Installed plugin not found'))
@@ -353,6 +358,23 @@ export function PluginManagementWorkspace({
         )
         track('operation_failed', { operation: 'plugin_toggle' })
       })
+  }
+
+  const savePluginMcpHeaders = async (
+    id: string | number,
+    componentKey: string,
+    headers: Record<string, string> | null
+  ) => {
+    const plugin = installedPlugins.find(item => String(item.id) === String(id))
+    if (!plugin) throw new Error('Installed plugin not found')
+    const updated = await updateInstalledPlugin(
+      id,
+      buildPluginMcpHeadersUpdate(componentKey, headers)
+    )
+    setInstalledPlugins(previous =>
+      previous.map(item => (String(item.id) === String(id) ? toInstalledPluginItem(updated) : item))
+    )
+    notifyLocalPluginSkillsChanged()
   }
 
   const requestUninstallPlugin = (id: string | number, name: string) => {
@@ -626,6 +648,9 @@ export function PluginManagementWorkspace({
           onToggle={() => tryPluginInChat(selectedPlugin.raw)}
           onComponentToggle={(componentKey, enabled) =>
             togglePluginComponent(selectedPlugin.id, componentKey, enabled)
+          }
+          onMcpHeadersSave={(componentKey, headers) =>
+            savePluginMcpHeaders(selectedPlugin.id, componentKey, headers)
           }
           onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
         />

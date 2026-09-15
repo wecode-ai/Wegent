@@ -9,6 +9,7 @@ import {
   pluginUsesWegentConnectorOAuth,
   queueMarketplacePluginTrial,
   requiredConnectionNames,
+  withMarketplacePluginDetail,
 } from './marketplaceWorkspaceHelpers'
 
 vi.mock('@/lib/navigation', () => ({
@@ -27,6 +28,22 @@ const emptyComponents = {
   connectors: [],
 }
 
+test.each([{ mcps: [] }, { mcps: [{ name: 'business', server: {} }] }])(
+  'retains installed MCP transport when native detail contains only names (%j)',
+  ({ mcps }) => {
+    const installed = githubInstalledItem()
+    const server = { url: 'https://example.test/mcp', command: null }
+    installed.raw.spec.components = { ...emptyComponents, mcps: [{ name: 'business', server }] }
+    const detail = {
+      ...installed.raw,
+      spec: { ...installed.raw.spec, components: { ...emptyComponents, mcps } },
+    }
+    expect(withMarketplacePluginDetail(installed, detail).raw.spec.components.mcps).toEqual([
+      { name: 'business', server },
+    ])
+  }
+)
+
 test('account connections do not require legacy login during plugin installation', () => {
   const item = githubMarketplaceItem()
   item.components = {
@@ -42,6 +59,21 @@ test('account connections do not require legacy login during plugin installation
   expect(requiredConnectionNames(item)).toEqual([])
   delete item.components.connectors![0].accountAuth
   expect(requiredConnectionNames(item)).toEqual(['GitHub'])
+})
+
+test('local detail restores persisted headers while cloud installation keeps its own overrides', () => {
+  const installed = githubInstalledItem()
+  const localConfig = { 'mcp:business': { headers: { 'X-Local': 'local' } } }
+  const cloudConfig = { 'mcp:business': { headers: { 'X-Cloud': 'cloud' } } }
+  const detail = { ...installed.raw, spec: { ...installed.raw.spec, componentConfig: localConfig } }
+  expect(withMarketplacePluginDetail(installed, detail).raw.spec.componentConfig).toEqual(
+    localConfig
+  )
+  installed.raw.spec.pluginId = 42
+  installed.raw.spec.componentConfig = cloudConfig
+  expect(withMarketplacePluginDetail(installed, detail).raw.spec.componentConfig).toEqual(
+    cloudConfig
+  )
 })
 
 function githubMarketplaceItem(): PluginMarketplaceItem {

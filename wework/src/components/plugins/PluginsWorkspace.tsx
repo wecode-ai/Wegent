@@ -102,6 +102,7 @@ import { holdBackInFlightMarketplaceInstalls } from './holdBackInFlightMarketpla
 import { retainMarketplaceInstalledState } from './retainMarketplaceInstallHints'
 import { type InstalledPluginItem } from './PluginManagementRows'
 import { PluginCreateMenu } from './PluginCreateMenu'
+import { buildPluginMcpHeadersUpdate } from './pluginMcpHeaders'
 import { PluginImportDialog } from './PluginImportDialog'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
@@ -1312,6 +1313,41 @@ export function PluginsWorkspace({
         setInstalledPlugins(previous => previous.map(item => (item.id === id ? plugin : item)))
         track('operation_failed', { operation: 'plugin_toggle' })
       })
+  }
+
+  const savePluginMcpHeaders = async (
+    id: string | number,
+    componentKey: string,
+    headers: Record<string, string> | null
+  ) => {
+    const plugin = installedPlugins.find(item => String(item.id) === String(id))
+    if (!plugin) throw new Error('Installed plugin not found')
+    const request = buildPluginMcpHeadersUpdate(componentKey, headers)
+    const updateApi =
+      plugin.origin === 'created' || !plugin.raw.spec.pluginId
+        ? localPluginApi.updateInstalledPlugin(id, request)
+        : pluginApi.updateInstalledPlugin(id, request, currentDeviceId)
+    const updated = await updateApi
+    const nextItem = toInstalledPluginItem(updated)
+    setInstalledPlugins(previous =>
+      previous.map(item => (String(item.id) === String(id) ? nextItem : item))
+    )
+    setSelectedMarketplacePluginDetail(previous =>
+      previous?.raw.spec.source.pluginKey === nextItem.raw.spec.source.pluginKey &&
+      previous.raw.spec.source.marketplace === nextItem.raw.spec.source.marketplace
+        ? {
+            ...previous,
+            raw: {
+              ...previous.raw,
+              spec: {
+                ...previous.raw.spec,
+                componentConfig: updated.spec.componentConfig,
+              },
+            },
+          }
+        : previous
+    )
+    notifyLocalPluginSkillsChanged()
   }
 
   const changePluginAutoUpdatePolicy = (plugin: InstalledPluginItem, enabled: boolean) => {
@@ -4601,6 +4637,9 @@ export function PluginsWorkspace({
           onComponentToggle={(componentKey, enabled) =>
             togglePluginComponent(selectedPlugin.id, componentKey, enabled)
           }
+          onMcpHeadersSave={(componentKey, headers) =>
+            savePluginMcpHeaders(selectedPlugin.id, componentKey, headers)
+          }
           autoUpdateEnabled={selectedPlugin.raw.spec.updatePolicy === 'auto'}
           autoUpdateSaving={updatingPluginPolicyIds.has(selectedPlugin.id)}
           autoUpdatePaused={
@@ -4633,7 +4672,21 @@ export function PluginsWorkspace({
     const baseDetailPlugin = installedDetail
       ? withMarketplaceListingInterface(installedDetail, selectedMarketplacePlugin)
       : toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
-    const detailPlugin = selectedMarketplacePluginDetail ?? baseDetailPlugin
+    const resolvedDetailPlugin = selectedMarketplacePluginDetail ?? baseDetailPlugin
+    const detailPlugin = installedDetail
+      ? {
+          ...resolvedDetailPlugin,
+          raw: {
+            ...resolvedDetailPlugin.raw,
+            spec: {
+              ...resolvedDetailPlugin.raw.spec,
+              componentConfig:
+                installedDetail.raw.spec.componentConfig ??
+                resolvedDetailPlugin.raw.spec.componentConfig,
+            },
+          },
+        }
+      : resolvedDetailPlugin
     const detailedMarketplacePlugin = withMarketplaceDetailComponents(
       selectedMarketplacePlugin,
       detailPlugin
@@ -4890,6 +4943,12 @@ export function PluginsWorkspace({
               togglePluginComponent(installedDetail.id, componentKey, enabled)
             }
           }}
+          onMcpHeadersSave={
+            installedDetail
+              ? (componentKey, headers) =>
+                  savePluginMcpHeaders(installedDetail.id, componentKey, headers)
+              : undefined
+          }
           autoUpdateEnabled={installedDetail?.raw.spec.updatePolicy === 'auto'}
           autoUpdateSaving={
             installedDetail ? updatingPluginPolicyIds.has(installedDetail.id) : false

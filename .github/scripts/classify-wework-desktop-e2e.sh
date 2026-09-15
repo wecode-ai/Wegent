@@ -3,6 +3,7 @@
 set -euo pipefail
 
 core_segments=(
+  plugin-mcp-headers
   remote-device-onboarding
   workspace-tabs
   collaboration-shared-core
@@ -106,6 +107,7 @@ cloud_segments=(
   project-automation
   plugin-auto-update
   plugin-account-auth
+  plugin-task-token
   plugin-workspace-publication
 )
 # Group checkpoints by observed Cloud CI duration so every serial shard stays
@@ -125,7 +127,7 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing
-  plugin-account-auth,cloud-device-lifecycle
+  plugin-account-auth,plugin-task-token,cloud-device-lifecycle
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
 )
@@ -149,7 +151,7 @@ core_shards=(
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
+  codex-notification-isolation,core-dsh-plugin-management,plugin-development,plugin-mcp-headers,workbench-mode,executor-stream-recovery,transcript-sync
   model-routing,computer-use,codex-account-login
 )
 
@@ -296,6 +298,15 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/scenarios/plugin-mcp-headers.scenario.mjs | \
+      executor/src/local/plugin_mcp_config.rs)
+      select_target "core:plugin-mcp-headers"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/plugin-task-token.scenario.mjs)
+      select_target "cloud:plugin-task-token"
+      return
+      ;;
     # Cloud device restart and upgrade actions require the managed Nevis fixture.
     wework/src/components/settings/ConnectionsSettingsPage* | \
       wework/src/components/settings/DeviceVersionBadge* | \
@@ -798,6 +809,21 @@ classify_path() {
   esac
 
   case "$path" in
+    executor/src/plugin_task_token/* | backend/app/services/auth/*task_token.py | \
+      backend/app/api/endpoints/mcp_identity.py | backend/app/api/ws/plugin_auth_broker.py | \
+      backend/app/api/ws/device_namespace.py | backend/app/services/installed_plugin_service.py | \
+      backend/app/services/device/capability_sync_service.py | \
+      backend/tests/api/test_runtime_task_token.py | \
+      backend/tests/api/test_mcp_identity_api.py | \
+      backend/tests/api/ws/test_plugin_auth_broker.py)
+      select_target "cloud:plugin-task-token"
+      if [[ "$path" == backend/app/api/ws/plugin_auth_broker.py ]]; then
+        select_target "cloud:plugin-account-auth"
+      fi
+      if [[ "$path" == backend/app/api/ws/device_namespace.py ]]; then
+        select_cloud_worktree_checkpoints
+      fi
+      ;;
     sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | executor/src/plugin_account_auth/* | \
       executor/tests/plugin_account_auth_contract.rs | \
       backend/app/services/plugin_account* | backend/app/services/plugin_auth* | \

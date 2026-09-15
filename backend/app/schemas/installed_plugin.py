@@ -202,6 +202,7 @@ class InstalledPluginSpec(BaseModel):
     installState: PluginInstallState = "installed"
     enabled: bool = True
     componentStates: Dict[str, bool] = Field(default_factory=dict)
+    componentConfig: Dict[str, Any] = Field(default_factory=dict)
     manifest: Dict[str, Any] = Field(default_factory=dict)
     components: InstalledPluginComponents = Field(
         default_factory=InstalledPluginComponents
@@ -268,6 +269,7 @@ class InstalledPluginUpdateRequest(BaseModel):
 
     enabled: Optional[bool] = None
     componentStates: Optional[Dict[str, bool]] = None
+    componentConfig: Optional[Dict[str, Any]] = None
     displayName: Optional[str] = None
     description: Optional[str] = None
     releaseId: Optional[int] = None

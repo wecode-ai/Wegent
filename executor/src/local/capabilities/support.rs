@@ -21,6 +21,9 @@ const CODEX_PLUGIN_MANIFEST_PATH: &str = ".codex-plugin/plugin.json";
 const PLUGIN_MANIFEST_PATHS: [&str; 2] = [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH];
 const MAX_PACKAGE_ENTRY_COUNT: usize = 10_000;
 const MAX_EXPANDED_PACKAGE_SIZE_BYTES: u64 = 200 * 1024 * 1024;
+pub const CODEX_TASK_MCP_SNAPSHOT: &str = ".wegent-task-mcp-source-codex.json";
+pub const CLAUDE_TASK_MCP_SNAPSHOT: &str = ".wegent-task-mcp-source-claude.json";
+pub const DEFAULT_MCP_SNAPSHOT: &str = ".wegent-default-mcp-source.json";
 const UNIX_FILE_TYPE_MASK: u32 = 0o170_000;
 const UNIX_MODE_SYMLINK: u32 = 0o120_000;
 const CODEX_MANIFEST_FIELDS: [&str; 11] = [
@@ -496,6 +499,9 @@ pub(super) fn upsert_installed_plugin(
     if !spec.component_states.as_object().is_some_and(Map::is_empty) {
         entry.insert("componentStates".to_owned(), spec.component_states.clone());
     }
+    if !spec.component_config.as_object().is_some_and(Map::is_empty) {
+        entry.insert("componentConfig".to_owned(), spec.component_config.clone());
+    }
     ensure_object_field(&mut installed, "plugins")
         .insert(spec.key.clone(), Value::Array(vec![Value::Object(entry)]));
     write_json(&path, &installed)
@@ -536,6 +542,9 @@ pub(super) fn plugin_manifest_entry(
     }
     if !spec.component_states.as_object().is_some_and(Map::is_empty) {
         entry.insert("component_states".to_owned(), spec.component_states.clone());
+    }
+    if !spec.component_config.as_object().is_some_and(Map::is_empty) {
+        entry.insert("component_config".to_owned(), spec.component_config.clone());
     }
     entry.insert(
         "store_path".to_owned(),
@@ -801,12 +810,20 @@ pub(super) fn link_or_copy_dir(target: &Path, link: &Path) -> Result<(), Capabil
 }
 
 pub(super) fn copy_dir_atomic(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
+    copy_dir_atomic_prepared(source, target, |_| Ok(()))
+}
+
+pub(super) fn copy_dir_atomic_prepared(
+    source: &Path,
+    target: &Path,
+    prepare: impl FnOnce(&Path) -> Result<(), CapabilitySyncError>,
+) -> Result<(), CapabilitySyncError> {
     let temporary = sibling_temp_path(target);
     remove_existing_path(&temporary)?;
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
     }
-    if let Err(error) = copy_dir_recursive(source, &temporary) {
+    if let Err(error) = copy_dir_recursive(source, &temporary).and_then(|()| prepare(&temporary)) {
         let _ = remove_existing_path(&temporary);
         return Err(error);
     }
@@ -830,7 +847,14 @@ pub(super) fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), Cap
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
+        let file_name = entry.file_name();
+        if file_name == *CODEX_TASK_MCP_SNAPSHOT
+            || file_name == *CLAUDE_TASK_MCP_SNAPSHOT
+            || file_name == *DEFAULT_MCP_SNAPSHOT
+        {
+            continue;
+        }
+        let target_path = target.join(&file_name);
         if source_path.is_dir() {
             copy_dir_recursive(&source_path, &target_path)?;
         } else {

@@ -1326,7 +1326,14 @@ async function waitForAttribute(control, selector, name, expected, message) {
   const startedAt = Date.now()
   let actual = null
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    actual = await control.command('getAttribute', selector, { value: name })
+    try {
+      actual = await control.command('getAttribute', selector, { value: name })
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith('Unable to find selector')) {
+        throw error
+      }
+      actual = null
+    }
     if (actual === expected) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }

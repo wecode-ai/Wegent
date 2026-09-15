@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import type { InstalledPlugin } from '@/types/api'
@@ -128,6 +128,123 @@ describe('PluginDetailView owner actions', () => {
     )
 
     expect(screen.getByTestId('plugin-auto-update-paused-local-1')).toHaveTextContent('3')
+  })
+
+  test('saves custom headers for a remote plugin MCP', async () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.components.mcps = [
+      {
+        name: 'business',
+        server: { url: 'https://business.example/mcp', headers: { 'X-Default': 'author' } },
+      },
+    ]
+    const onMcpHeadersSave = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onMcpHeadersSave={onMcpHeadersSave}
+        onUninstall={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('plugin-mcp-headers-edit-mcp:business'))
+    const input = screen.getByTestId('plugin-mcp-headers-input-mcp:business') as HTMLTextAreaElement
+    expect(input.value).toContain('"Authorization": "Bearer ${{task_token}}"')
+    fireEvent.change(input, {
+      target: { value: '{"Authorization":"Bearer ${{task_token}}"}' },
+    })
+    fireEvent.click(screen.getByTestId('plugin-mcp-headers-save-mcp:business'))
+
+    await waitFor(() => expect(onMcpHeadersSave).toHaveBeenCalled())
+    expect(onMcpHeadersSave).toHaveBeenCalledWith('mcp:business', {
+      Authorization: 'Bearer ${{task_token}}',
+    })
+  })
+
+  test('shows remote MCP header settings when the current device is unavailable', () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.installState = 'update_available'
+    plugin.raw.spec.components.mcps = [
+      { name: 'business', server: { url: 'https://business.example/mcp', command: null } },
+    ]
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        usableOnThisDevice={false}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onMcpHeadersSave={vi.fn()}
+        onUninstall={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('plugin-mcp-header-settings')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-mcp-headers-edit-mcp:business')).toBeInTheDocument()
+  })
+
+  test('rejects more than 32 custom MCP headers', async () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.components.mcps = [
+      { name: 'business', server: { url: 'https://business.example/mcp' } },
+    ]
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onMcpHeadersSave={vi.fn()}
+        onUninstall={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('plugin-mcp-headers-edit-mcp:business'))
+    const input = screen.getByTestId('plugin-mcp-headers-input-mcp:business') as HTMLTextAreaElement
+    fireEvent.change(input, {
+      target: {
+        value: JSON.stringify(
+          Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`X-Header-${index}`, '1']))
+        ),
+      },
+    })
+    fireEvent.click(screen.getByTestId('plugin-mcp-headers-save-mcp:business'))
+
+    expect(await screen.findByText('最多支持 32 个自定义 Header')).toBeInTheDocument()
+  })
+
+  test('rejects control characters in custom MCP header values', async () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.components.mcps = [
+      { name: 'business', server: { url: 'https://business.example/mcp' } },
+    ]
+    const onMcpHeadersSave = vi.fn()
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onMcpHeadersSave={onMcpHeadersSave}
+        onUninstall={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('plugin-mcp-headers-edit-mcp:business'))
+    fireEvent.change(screen.getByTestId('plugin-mcp-headers-input-mcp:business'), {
+      target: { value: JSON.stringify({ 'X-Custom': 'bad\u0000value' }) },
+    })
+    fireEvent.click(screen.getByTestId('plugin-mcp-headers-save-mcp:business'))
+
+    expect(await screen.findByText(/请输入 JSON 对象/)).toBeInTheDocument()
+    expect(onMcpHeadersSave).not.toHaveBeenCalled()
   })
 
   test('keeps automatic update controls visible for a materialized outdated release', () => {

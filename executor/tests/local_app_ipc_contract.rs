@@ -368,6 +368,34 @@ async fn app_ipc_lists_store_reads_manifest_and_saves_plugin_example() {
         .await
         .unwrap();
     assert_eq!(manifest["connectors"][0]["id"], "oauth");
+    fs::write(
+        local_plugin.join(".mcp.json"),
+        r#"{"business":{"url":"https://example.test/mcp"}}"#,
+    )
+    .unwrap();
+    let settings = json!({"mcp:business":{"headers":{"X-Test":"value"}}});
+    let saved = server
+        .dispatch(
+            "executor.plugins.mcp_config",
+            json!({
+                "marketplacePath": local_marketplace.display().to_string(),
+                "marketplaceName": "local-marketplace", "pluginName": "example",
+                "componentConfig": settings,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved, settings);
+    let loaded = server
+        .dispatch(
+            "executor.plugins.mcp_config",
+            json!({
+                "marketplaceName": "local-marketplace", "pluginName": "example",
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(loaded, settings);
 
     let saved = server
         .dispatch(
@@ -2404,6 +2432,7 @@ async fn app_ipc_describes_the_versioned_desktop_protocol() {
         "executor.plugins.personal.rollback_copy",
         "executor.plugins.store.list",
         "executor.plugins.manifest.read",
+        "executor.plugins.mcp_config",
         "executor.plugins.example.save",
     ] {
         assert!(description["renderer_methods"]

@@ -73,7 +73,7 @@ pub fn save_plugin_example(request: SavePluginExampleRequest) -> Result<String, 
     save_plugin_example_from_source(&source, Path::new(&request.destination_path))
 }
 
-fn executor_home_path() -> Result<PathBuf, String> {
+pub(super) fn executor_home_path() -> Result<PathBuf, String> {
     env::var_os(EXECUTOR_HOME_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -193,6 +193,19 @@ fn wegent_store_plugin_summary(
 }
 
 fn read_local_plugin_manifest(marketplace_path: &Path, plugin_name: &str) -> Result<Value, String> {
+    let plugin_root = local_plugin_root(marketplace_path, plugin_name)?;
+    let manifest_path = local_plugin_manifest_path(&plugin_root)?;
+    let manifest = read_json_file(&manifest_path, MAX_PLUGIN_MANIFEST_BYTES)?;
+    Ok(json!({
+        "connectors": manifest.get("connectors").cloned().unwrap_or_else(|| json!([])),
+        "mcpServers": crate::plugin_task_token::package::declarations(&plugin_root, false)?,
+    }))
+}
+
+pub(super) fn local_plugin_root(
+    marketplace_path: &Path,
+    plugin_name: &str,
+) -> Result<PathBuf, String> {
     let plugin_name = validate_plugin_name(plugin_name)?;
     let marketplace_path = marketplace_path
         .canonicalize()
@@ -200,15 +213,7 @@ fn read_local_plugin_manifest(marketplace_path: &Path, plugin_name: &str) -> Res
     let marketplace_root = marketplace_root_from_path(&marketplace_path)
         .canonicalize()
         .map_err(|error| format!("Failed to resolve local marketplace root: {error}"))?;
-    let plugin_root = resolve_local_plugin_root(&marketplace_path, &marketplace_root, plugin_name)?;
-    let manifest_path = local_plugin_manifest_path(&plugin_root)?;
-    let manifest = read_json_file(&manifest_path, MAX_PLUGIN_MANIFEST_BYTES)?;
-    Ok(json!({
-        "connectors": manifest
-            .get("connectors")
-            .cloned()
-            .unwrap_or_else(|| json!([])),
-    }))
+    resolve_local_plugin_root(&marketplace_path, &marketplace_root, plugin_name)
 }
 
 fn resolve_local_plugin_root(
@@ -752,6 +757,24 @@ mod tests {
 
         assert_eq!(manifest["connectors"][0]["id"], "example");
         assert!(read_local_plugin_manifest(&marketplace_manifest, "../outside").is_err());
+    }
+
+    #[test]
+    fn reads_remote_mcp_configuration_from_default_package_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("plugins/example");
+        write_plugin(&root, "example", json!([]));
+        write_json(
+            &root.join(".mcp.json"),
+            &json!({"mcpServers": {
+                "business": {"url": "https://business.example/mcp"}
+            }}),
+        );
+        let detail = read_local_plugin_manifest(temp.path(), "example").unwrap();
+        assert_eq!(
+            detail["mcpServers"]["business"]["url"],
+            "https://business.example/mcp"
+        );
     }
 
     #[test]

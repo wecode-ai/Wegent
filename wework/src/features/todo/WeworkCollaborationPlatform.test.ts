@@ -1366,4 +1366,35 @@ describe('Wework collaboration workspace API', () => {
     ])
     expect(listCloudProjects).toHaveBeenCalledWith()
   })
+
+  it('keeps workspace operation snapshots on the project storage owner', async () => {
+    const localDeliveryApi = createLocalDeliveryApi()
+    const getCloudBoardSnapshot = vi.fn().mockResolvedValue({
+      items: [],
+      taskBindings: [],
+      members: [],
+      agents: [],
+    })
+    const cloudApi = {
+      workspaces: {},
+      projects: {},
+      issues: { getBoardSnapshot: getCloudBoardSnapshot },
+    } as unknown as SharedWorkspaceApi
+    const api = createWeworkPlatformApi(
+      cloudApi,
+      localDeliveryApi,
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    await api?.issues.getBoardSnapshot('local-project')
+    await api?.issues.getBoardSnapshot('cloud-project')
+
+    expect(localDeliveryApi.getBoardSnapshot).toHaveBeenCalledOnce()
+    expect(localDeliveryApi.getBoardSnapshot).toHaveBeenCalledWith('local-project')
+    expect(getCloudBoardSnapshot).toHaveBeenCalledOnce()
+    expect(getCloudBoardSnapshot).toHaveBeenCalledWith('cloud-project')
+  })
 })

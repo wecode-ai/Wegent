@@ -1492,7 +1492,19 @@ fn codex_thread_plan(
         .map(str::trim)
         .filter(|thread_id| !thread_id.is_empty());
     let start = if let Some(thread_id) = direct_thread_id {
-        CodexThreadStart::Direct(thread_id.to_owned())
+        if request
+            .extra
+            .get("pluginTaskMcpPrepared")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            CodexThreadStart::Request {
+                operation: "thread/resume",
+                params: thread_resume_params(thread_id, request, launch_config),
+            }
+        } else {
+            CodexThreadStart::Direct(thread_id.to_owned())
+        }
     } else if let Some(thread_id) = fork_thread_id {
         CodexThreadStart::Request {
             operation: "thread/fork",
@@ -1509,9 +1521,17 @@ fn codex_thread_plan(
             params: thread_start_params(request, launch_config),
         }
     };
+    let resume_requested = resume_thread_id.is_some()
+        || matches!(
+            &start,
+            CodexThreadStart::Request {
+                operation: "thread/resume",
+                ..
+            }
+        );
     CodexThreadPlan {
         start,
-        resume_requested: resume_thread_id.is_some(),
+        resume_requested,
         fork_requested: fork_thread_id.is_some(),
     }
 }
@@ -1612,6 +1632,19 @@ async fn run_codex_app_server_turn_on_shared_client(
             request,
             &launch_config,
         );
+        if request.extra.get("pluginTaskMcpPrepared") == Some(&Value::Bool(true)) {
+            if let CodexThreadStart::Request {
+                operation: "thread/resume",
+                params,
+            } = &thread_plan.start
+            {
+                // Loaded Codex threads retain their MCP clients across resume.
+                // Unsubscribe first so resume opens this turn's task-owned routes.
+                if let Some(thread_id) = params.get("threadId").and_then(Value::as_str) {
+                    client.request_thread_unsubscribe(thread_id).await?;
+                }
+            }
+        }
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
             client.mark_thread_active(thread_id).await;
             subscribed_thread_id = Some(thread_id.to_owned());
@@ -3184,6 +3217,7 @@ fn bind_local_proxy_thread(
 struct PreparedCodexExecutionRequest {
     request: ExecutionRequest,
     generated_files: Vec<PathBuf>,
+    _plugin_mcps: crate::plugin_task_token::PreparedMcps,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4461,11 +4495,26 @@ async fn prepare_codex_execution_request(
     } else {
         super::runtime_capabilities::prepare_runtime_attachments(request).await
     };
+    let plugin_mcps =
+        crate::plugin_task_token::prepare(&request, &wework_codex_home(), false).await?;
+    if !plugin_mcps.servers.is_empty() {
+        request
+            .extra
+            .insert("pluginTaskMcpPrepared".into(), json!(true));
+    }
+    request
+        .mcp_servers
+        .extend(plugin_mcps.servers.iter().map(|(name, server)| {
+            let mut server = server.clone();
+            server["name"] = json!(name);
+            server
+        }));
     let attachments = attachment_records(&request);
     if attachments.is_empty() {
         return Ok(PreparedCodexExecutionRequest {
             request,
             generated_files: Vec::new(),
+            _plugin_mcps: plugin_mcps,
         });
     }
     log_executor_event(
@@ -4564,6 +4613,7 @@ async fn prepare_codex_execution_request(
     Ok(PreparedCodexExecutionRequest {
         request,
         generated_files,
+        _plugin_mcps: plugin_mcps,
     })
 }
 
