@@ -370,7 +370,10 @@ export class EmbeddedBrowserManager {
         this.entries.delete(entryLabel)
         removedLabels.add(entryLabel)
       }
-      for (const removedLabel of removedLabels) this.clearLabelScopedState(removedLabel)
+      for (const removedLabel of removedLabels) {
+        this.remapActiveRoutes(removedLabel)
+        this.clearLabelScopedState(removedLabel)
+      }
     })
     this.resolveAttachmentWaiters(normalizedLabel, contents)
   }
