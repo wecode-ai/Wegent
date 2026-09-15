@@ -6,8 +6,27 @@
 
 import base64
 import logging
+import subprocess
 
 from wecode.service.cloud_device_script import generate_simple_startup_script
+
+
+def _git_account(
+    domain: str,
+    token: str,
+    *,
+    login: str = "alice",
+    email: str | None = "alice@example.com",
+) -> dict[str, str | None]:
+    return {
+        "domain": domain,
+        "host": domain,
+        "provider": "gitlab",
+        "token": token,
+        "username": login or "oauth2",
+        "identity_name": login or None,
+        "identity_email": email,
+    }
 
 
 def test_simple_startup_script_exports_current_user_identity():
@@ -91,26 +110,9 @@ def test_simple_startup_script_exports_git_token_environment():
         auth_token="device-api-key",
         install_script_url="https://example.com/install.sh",
         git_tokens=[
-            {
-                "type": "gitlab",
-                "git_domain": "git.intra.weibo.com",
-                "git_token": "git-intra-token",
-            },
-            {
-                "type": "gitlab",
-                "git_domain": "git.staff.sina.com.cn",
-                "git_token": "git-staff-token",
-            },
-            {
-                "type": "gitlab",
-                "git_domain": "gitlab.weibo.cn",
-                "git_token": "gitlab-weibo-token",
-            },
-            {
-                "type": "gitlab",
-                "git_domain": "unsupported.example.com",
-                "git_token": "unsupported-token",
-            },
+            _git_account("git.intra.weibo.com", "git-intra-token"),
+            _git_account("git.staff.sina.com.cn", "git-staff-token"),
+            _git_account("gitlab.weibo.cn", "gitlab-weibo-token"),
         ],
     )
 
@@ -119,7 +121,6 @@ def test_simple_startup_script_exports_git_token_environment():
     assert 'export GIT_INTRA_WEIBO_COM_TOKEN="git-intra-token"' in script
     assert 'export GIT_STAFF_SINA_COM_CN_TOKEN="git-staff-token"' in script
     assert 'export GITLAB_WEIBO_CN_TOKEN="gitlab-weibo-token"' in script
-    assert "unsupported-token" not in script
 
 
 def test_simple_startup_script_exports_git_tokens_without_xtrace():
@@ -129,13 +130,7 @@ def test_simple_startup_script_exports_git_tokens_without_xtrace():
         backend_url="https://backend.example.com",
         auth_token="device-api-key",
         install_script_url="https://example.com/install.sh",
-        git_tokens=[
-            {
-                "type": "gitlab",
-                "git_domain": "git.intra.weibo.com",
-                "git_token": "git-intra-token",
-            }
-        ],
+        git_tokens=[_git_account("git.intra.weibo.com", "git-intra-token")],
     )
 
     script = base64.b64decode(encoded).decode("utf-8")
@@ -149,136 +144,129 @@ def test_simple_startup_script_exports_git_tokens_without_xtrace():
 
 
 def test_simple_startup_script_configures_git_token_clone_support():
-    """Cloud device should rewrite SSH Git URLs to HTTPS and use askpass tokens."""
+    """Cloud device should use the shared managed Git account configuration."""
     encoded = generate_simple_startup_script(
         user_name="alice",
         backend_url="https://backend.example.com",
         auth_token="device-api-key",
         install_script_url="https://example.com/install.sh",
         git_tokens=[
-            {
-                "type": "gitlab",
-                "git_domain": "git.intra.weibo.com",
-                "git_token": "git-intra-token",
-            },
-            {
-                "type": "gitlab",
-                "git_domain": "gitlab.weibo.cn",
-                "git_token": "gitlab-weibo-token",
-            },
+            _git_account(
+                "git.intra.weibo.com",
+                "git-intra-token",
+                login="alice-intra",
+                email="alice@intra.example.com",
+            ),
+            _git_account(
+                "gitlab.weibo.cn",
+                "gitlab-weibo-token",
+                login="alice-weibo",
+                email="alice@weibo.example.com",
+            ),
         ],
     )
 
     script = base64.b64decode(encoded).decode("utf-8")
 
-    assert 'ASKPASS_SCRIPT="$HOME/.wecode/git-askpass.sh"' in script
-    assert 'git config --global core.askPass "$ASKPASS_SCRIPT"' in script
     assert (
-        'git config --global --add url."https://git.intra.weibo.com/".insteadOf '
-        '"ssh://git@git.intra.weibo.com:2222/"'
-    ) in script
-    assert (
-        'git config --global --add url."https://gitlab.weibo.cn/".insteadOf '
-        '"ssh://git@gitlab.weibo.cn/"'
-    ) in script
-    assert (
-        '*Password*git.intra.weibo.com*) echo "$GIT_INTRA_WEIBO_COM_TOKEN" ;;' in script
+        "Configure managed Git authentication and per-domain commit identities"
+        in script
     )
-    assert '*Password*gitlab.weibo.cn*) echo "$GITLAB_WEIBO_CN_TOKEN" ;;' in script
-    assert (
-        'url."https://oauth2:git-intra-token@git.intra.weibo.com/".insteadOf'
-        not in script
-    )
+    assert '"identity_name":"alice-intra"' in script
+    assert '"identity_email":"alice@intra.example.com"' in script
+    assert '"identity_name":"alice-weibo"' in script
+    assert '"identity_email":"alice@weibo.example.com"' in script
+    assert "git-auth/current/credential-helper" in script
+    assert 'ASKPASS_SCRIPT="$HOME/.wecode/git-askpass.sh"' not in script
 
 
-def test_simple_startup_script_adds_all_git_url_rewrite_patterns():
-    """Git insteadOf is multi-valued, so every SSH pattern must be added."""
+def test_simple_startup_script_keeps_git_account_payload_out_of_xtrace():
+    """The managed account payload and command must not be traced."""
     encoded = generate_simple_startup_script(
         user_name="alice",
         backend_url="https://backend.example.com",
         auth_token="device-api-key",
         install_script_url="https://example.com/install.sh",
-        git_tokens=[
-            {
-                "type": "gitlab",
-                "git_domain": "git.intra.weibo.com",
-                "git_token": "git-intra-token",
-            }
-        ],
+        git_tokens=[_git_account("git.intra.weibo.com", "git-intra-token")],
     )
 
     script = base64.b64decode(encoded).decode("utf-8")
 
-    assert (
-        "git config --global --unset-all "
-        'url."https://git.intra.weibo.com/".insteadOf || true'
-    ) in script
-    assert (
-        'git config --global --add url."https://git.intra.weibo.com/".insteadOf '
-        '"ssh://git@git.intra.weibo.com/"'
-    ) in script
-    assert (
-        'git config --global --add url."https://git.intra.weibo.com/".insteadOf '
-        '"ssh://git@git.intra.weibo.com:2222/"'
-    ) in script
-    assert (
-        'git config --global --add url."https://git.intra.weibo.com/".insteadOf '
-        '"git@git.intra.weibo.com:"'
-    ) in script
+    managed_section = script.split(
+        "# Configure managed Git authentication and per-domain commit identities",
+        1,
+    )[1].split("# Export server-generated device ID and name", 1)[0]
+    assert managed_section.lstrip().startswith("set +x")
+    assert "git-intra-token" in managed_section
+    assert managed_section.rstrip().endswith("set -x")
 
 
 def test_simple_startup_script_persists_git_token_clone_support_for_new_shells():
-    """New interactive shells should inherit Git token clone support."""
+    """Managed credentials should replace the legacy AskPass profile setup."""
     encoded = generate_simple_startup_script(
         user_name="alice",
         backend_url="https://backend.example.com",
         auth_token="device-api-key",
         install_script_url="https://example.com/install.sh",
-        git_tokens=[
-            {
-                "type": "gitlab",
-                "git_domain": "git.intra.weibo.com",
-                "git_token": "git-intra-token",
-            }
-        ],
+        git_tokens=[_git_account("git.intra.weibo.com", "git-intra-token")],
     )
 
     script = base64.b64decode(encoded).decode("utf-8")
 
-    assert 'GIT_TOKEN_ENV_FILE="$HOME/.wecode/git-token-env"' in script
-    assert 'chmod 600 "$GIT_TOKEN_ENV_FILE"' in script
-    assert '. "$GIT_TOKEN_ENV_FILE"' in script
-    assert 'export GIT_ASKPASS="$HOME/.wecode/git-askpass.sh"' in script
+    assert "$HOME/.wecode/git-auth" in script
+    assert 'GIT_TOKEN_ENV_FILE="$HOME/.wecode/git-token-env"' not in script
+    assert 'ASKPASS_SCRIPT="$HOME/.wecode/git-askpass.sh"' not in script
     assert 'export GIT_INTRA_WEIBO_COM_TOKEN="git-intra-token"' in script
-    assert (
-        "if ! grep -Fq '# Wegent Git token environment' \"$HOME/.bashrc\"; then"
-        in script
-    )
 
 
-def test_simple_startup_script_uses_current_user_for_git_https_username():
-    """Git askpass should authenticate HTTPS GitLab clone as the current user."""
+def test_simple_startup_script_uses_per_domain_git_username():
+    """Managed credentials should authenticate with the matching Git account."""
     encoded = generate_simple_startup_script(
         user_name="alice",
         backend_url="https://backend.example.com",
         auth_token="device-api-key",
         install_script_url="https://example.com/install.sh",
         git_tokens=[
-            {
-                "type": "gitlab",
-                "git_domain": "git.intra.weibo.com",
-                "git_token": "git-intra-token",
-            }
+            _git_account(
+                "git.intra.weibo.com",
+                "git-intra-token",
+                login="alice-intra",
+            )
         ],
     )
 
     script = base64.b64decode(encoded).decode("utf-8")
 
-    assert 'export WEGENT_GIT_USERNAME="alice"' in script
-    assert (
-        '*Username*) echo "${WEGENT_GIT_USERNAME:-${WEGENT_USER_NAME:-oauth2}}" ;;'
-        in script
+    assert '"username":"alice-intra"' in script
+    assert 'export WEGENT_GIT_USERNAME="alice"' not in script
+
+
+def test_simple_startup_script_with_managed_git_accounts_has_valid_bash_syntax():
+    encoded = generate_simple_startup_script(
+        user_name="alice",
+        backend_url="https://backend.example.com",
+        auth_token="device-api-key",
+        install_script_url="https://example.com/install.sh",
+        git_tokens=[
+            _git_account(
+                "git.intra.weibo.com",
+                "token-with-'quotes-$and-specials",
+                login="alice-intra",
+                email="alice@intra.example.com",
+            )
+        ],
     )
+
+    script = base64.b64decode(encoded).decode("utf-8")
+    result = subprocess.run(
+        ["bash", "-n"],
+        input=script,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_simple_startup_script_logs_length_without_secrets(caplog):
