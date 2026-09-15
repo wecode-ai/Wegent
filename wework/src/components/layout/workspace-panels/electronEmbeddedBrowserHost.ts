@@ -264,9 +264,9 @@ export function resetElectronEmbeddedBrowserView(host: HostedElectronWebview, ow
   if (host.destroyed || host.owner !== owner) return
   const previousWebview = host.webview
   const nextWebview = createElectronWebview(host.label)
+  host.container.insertBefore(nextWebview, host.cursorHost)
   host.webview = nextWebview
   destroyElectronWebview(previousWebview)
-  host.container.insertBefore(nextWebview, host.cursorHost)
 }
 
 export function positionElectronEmbeddedBrowserView(
