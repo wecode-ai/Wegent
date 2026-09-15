@@ -529,16 +529,25 @@ def test_legacy_collection_without_contract_is_rejected(
 def test_concurrent_index_creation_keeps_one_valid_collection(
     milvus_server_env: MilvusContractEnv,
 ) -> None:
-    """Two writers race on the same contract: one collection, both succeed."""
+    """Same-contract writers race behind a barrier: one collection stays valid.
+
+    Milvus creates an identical collection idempotently, so both writers may
+    succeed; a bounded wait may also make one of them fail explicitly. Both
+    outcomes are legal, but the losers must fail loudly - never silently.
+    """
     from pymilvus import MilvusClient
 
     milvus_env = milvus_server_env
     knowledge_id = milvus_env.new_knowledge_id()
     backend = milvus_env.backend()
     errors: list[BaseException] = []
+    successes: list[int] = []
+    lock = threading.Lock()
+    barrier = threading.Barrier(2)
 
     def worker(document_id: int) -> None:
         try:
+            barrier.wait(timeout=60)
             _index_document(
                 milvus_env,
                 knowledge_id=knowledge_id,
@@ -547,8 +556,11 @@ def test_concurrent_index_creation_keeps_one_valid_collection(
                 dimension=1536,
                 backend=milvus_env.backend(),
             )
+            with lock:
+                successes.append(document_id)
         except BaseException as exc:  # noqa: BLE001 - re-raised below
-            errors.append(exc)
+            with lock:
+                errors.append(exc)
 
     threads = [
         threading.Thread(target=worker, args=(1001 + index,)) for index in range(2)
@@ -558,7 +570,9 @@ def test_concurrent_index_creation_keeps_one_valid_collection(
     for thread in threads:
         thread.join()
 
-    assert errors == []
+    assert successes, f"at least one writer must win; errors={errors}"
+    for error in errors:
+        assert isinstance(error, IndexContractIncompatibleError), error
 
     client = MilvusClient(uri=milvus_env.uri)
     try:
@@ -574,26 +588,31 @@ def test_concurrent_index_creation_keeps_one_valid_collection(
         dimension=1536,
         backend=backend,
     )
-    assert len(hits["records"]) == 2
+    assert {record["metadata"]["doc_ref"] for record in hits["records"]} == {
+        str(document_id) for document_id in successes
+    }
 
 
 def test_concurrent_incompatible_creation_fails_explicitly(
     milvus_server_env: MilvusContractEnv,
 ) -> None:
-    """A racing writer with an incompatible contract must fail loudly."""
+    """Same dimension, different model space: both must never succeed."""
     milvus_env = milvus_server_env
     knowledge_id = milvus_env.new_knowledge_id()
     outcomes: list[str] = []
     lock = threading.Lock()
+    barrier = threading.Barrier(2)
 
-    def worker(dimension: int, document_id: int) -> None:
+    def worker(model_name: str, document_id: int) -> None:
         try:
+            barrier.wait(timeout=60)
             _index_document(
                 milvus_env,
                 knowledge_id=knowledge_id,
                 document_id=document_id,
                 text=f"incompatible content {document_id}",
-                dimension=dimension,
+                dimension=1536,
+                model_name=model_name,
                 backend=milvus_env.backend(),
             )
             result = "ok"
@@ -605,15 +624,16 @@ def test_concurrent_incompatible_creation_fails_explicitly(
             outcomes.append(result)
 
     threads = [
-        threading.Thread(target=worker, args=(1536, 1101)),
-        threading.Thread(target=worker, args=(1024, 1102)),
+        threading.Thread(target=worker, args=("model-a", 1101)),
+        threading.Thread(target=worker, args=("model-b", 1102)),
     ]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
 
-    assert any(outcome == "ok" for outcome in outcomes), outcomes
+    assert outcomes.count("ok") <= 1, outcomes
+    assert outcomes.count("ok") == 1, outcomes
     assert any(outcome.startswith("incompatible") for outcome in outcomes), outcomes
 
 

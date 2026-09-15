@@ -17,6 +17,7 @@ from knowledge_engine.storage.milvus_native import (
     MilvusIndexBinding,
     build_collection_schema,
     build_scope_filter,
+    contract_token_field,
     node_row_id,
     strip_connection_credentials,
 )
@@ -112,7 +113,7 @@ def test_scope_filter_rejects_empty_document_scope():
 
 
 def test_collection_schema_declares_required_fields_and_dimension():
-    schema = build_collection_schema(4096)
+    schema = build_collection_schema(4096, "sha256:space")
     fields = {field.name: field for field in schema.fields}
 
     assert fields[DENSE_VECTOR_FIELD].params["dim"] == 4096
@@ -128,7 +129,23 @@ def test_collection_schema_declares_required_fields_and_dimension():
         "published",
     ):
         assert name in fields
+    assert contract_token_field("sha256:space") in fields
     assert fields["id"].is_primary
+
+
+def test_collection_schema_separates_embedding_spaces():
+    """Milvus only rejects a duplicate create when the schema differs.
+
+    The contract token encodes the embedding space, so two same-dimension
+    writers with different spaces produce different schemas and the server
+    refuses the second creation instead of returning an idempotent success.
+    """
+    first = {field.name for field in build_collection_schema(1536, "sha256:a").fields}
+    second = {field.name for field in build_collection_schema(1536, "sha256:b").fields}
+    same = {field.name for field in build_collection_schema(1536, "sha256:a").fields}
+
+    assert first != second
+    assert first == same
 
 
 def test_strip_connection_credentials_removes_userinfo():

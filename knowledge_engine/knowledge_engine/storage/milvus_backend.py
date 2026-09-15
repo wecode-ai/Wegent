@@ -62,6 +62,7 @@ from knowledge_engine.storage.milvus_native import (
     SOURCE_FILE_FIELD,
     MilvusDocumentStore,
     build_scope_filter,
+    contract_token_field,
     node_row_id,
     sanitize_filter_value,
 )
@@ -210,6 +211,7 @@ class MilvusBackend(BaseStorageBackend):
                 doc_ref=doc_ref,
                 generation=generation,
                 attempt_id=attempt_id,
+                embedding_space=embedding_space,
             )
             for node, vector in zip(materialized, vectors)
         ]
@@ -399,6 +401,7 @@ class MilvusBackend(BaseStorageBackend):
         doc_ref: str,
         generation: int,
         attempt_id: str,
+        embedding_space: str,
     ) -> Dict[str, Any]:
         metadata = dict(node.metadata or {})
         chunk_index = int(metadata.get("chunk_index") or 0)
@@ -424,6 +427,8 @@ class MilvusBackend(BaseStorageBackend):
             CREATED_AT_FIELD: str(metadata.get("created_at") or ""),
             PUBLISHED_FIELD: False,
             DENSE_VECTOR_FIELD: [float(value) for value in vector],
+            # Constant value; the field name carries the contract identity.
+            contract_token_field(embedding_space): "1",
         }
 
     @staticmethod

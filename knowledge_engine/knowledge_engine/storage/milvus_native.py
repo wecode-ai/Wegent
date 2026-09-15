@@ -209,11 +209,31 @@ def build_scope_filter(
     return " and ".join(conditions)
 
 
-def build_collection_schema(dimension: int) -> CollectionSchema:
+def contract_token_field(embedding_space: str) -> str:
+    """Field name that pins the collection schema to one embedding space.
+
+    Milvus creates a collection idempotently when the request matches an
+    existing one, so "create succeeded" alone cannot tell two writers apart.
+    Encoding the contract in the schema makes the server itself reject a
+    different contract for the same collection name; the field is never
+    queried or searched.
+    """
+    digest = hashlib.sha256(
+        f"v{SCHEMA_VERSION}|{embedding_space}".encode("utf-8")
+    ).hexdigest()
+    return f"contract_{digest[:16]}"
+
+
+def build_collection_schema(dimension: int, embedding_space: str) -> CollectionSchema:
     """Build the physical row layout for a dense Milvus index."""
     if dimension <= 0:
         raise ValueError("dimension must be a positive integer")
     fields = _scalar_row_fields() + [
+        FieldSchema(
+            name=contract_token_field(embedding_space),
+            dtype=DataType.VARCHAR,
+            max_length=MAX_KEY_LENGTH,
+        ),
         FieldSchema(
             name=DENSE_VECTOR_FIELD,
             dtype=DataType.FLOAT_VECTOR,
@@ -606,7 +626,9 @@ class MilvusDocumentStore:
         try:
             client.create_collection(
                 collection_name=binding.collection_name,
-                schema=build_collection_schema(binding.dimension),
+                schema=build_collection_schema(
+                    binding.dimension, binding.embedding_space
+                ),
                 index_params=index_params,
                 consistency_level="Strong",
             )
