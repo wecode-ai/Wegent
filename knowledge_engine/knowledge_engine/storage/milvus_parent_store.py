@@ -21,6 +21,7 @@ from llama_index.core.schema import BaseNode
 from knowledge_engine.storage.milvus_native import (
     MilvusDocumentStore,
     build_scope_filter,
+    sanitize_filter_value,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,8 @@ class MilvusParentStore:
                     filter=build_scope_filter(
                         knowledge_id=knowledge_id,
                         extra_conditions=[
-                            f'{PARENT_NODE_ID_FIELD} == "{parent_node_id}"'
+                            f"{PARENT_NODE_ID_FIELD} == "
+                            f'"{sanitize_filter_value(parent_node_id)}"'
                         ],
                         published=False,
                     ),

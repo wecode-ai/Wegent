@@ -617,42 +617,107 @@ def test_concurrent_incompatible_creation_fails_explicitly(
     assert any(outcome.startswith("incompatible") for outcome in outcomes), outcomes
 
 
-def test_racing_incompatible_writer_cannot_overwrite_a_confirmed_binding(
+def test_interrupted_creation_is_never_adopted_by_any_contract(
     milvus_server_env: MilvusContractEnv,
 ) -> None:
-    """A late incompatible writer must not clobber the winner's contract."""
+    """The creation window is refused for every writer, without writes.
+
+    Reproduces the reviewed interleaving through the real window: a collection
+    exists but its binding was never written (interrupted creation). Neither a
+    same-dimension writer with a different embedding space nor the original
+    contract may confirm it, and nothing may be written: an operator clears
+    the empty collection and retries.
+    """
+    from knowledge_engine.embedding.space import compute_embedding_space
+
+    milvus_env = milvus_server_env
+    knowledge_id = milvus_env.new_knowledge_id()
+    backend = milvus_env.backend()
+    model = DeterministicEmbedding(1536)
+    owner_space = compute_embedding_space(model)
+    collection_name = backend.get_index_name(knowledge_id)
+    store = backend._store
+
+    with store.client() as client:
+        owner_contract = store.build_binding(
+            collection_name, dimension=1536, embedding_space=owner_space
+        )
+        assert store._create_collection(client, owner_contract) is True
+        # The creator died before writing the binding.
+        assert store.read_binding(client, collection_name) is None
+
+    with store.client() as client:
+        for embedding_space in ("sha256:late-writer", owner_space):
+            with pytest.raises(IndexContractIncompatibleError):
+                store.ensure_index(
+                    client,
+                    collection_name,
+                    dimension=1536,
+                    embedding_space=embedding_space,
+                )
+        assert store.read_binding(client, collection_name) is None
+
+    # Reads of that collection fail loudly instead of returning content.
+    with pytest.raises(IndexContractIncompatibleError):
+        backend.get_all_chunks(knowledge_id)
+
+    # The operator clears the interrupted collection; the KB then rebuilds.
+    with store.client() as client:
+        client.drop_collection(collection_name=collection_name)
+
+    _, model, _ = _index_document(
+        milvus_env,
+        knowledge_id=knowledge_id,
+        document_id=1301,
+        text="content indexed after the interrupted creation was cleared",
+        dimension=1536,
+        backend=backend,
+    )
+    hits = _query(
+        milvus_env,
+        knowledge_id=knowledge_id,
+        query="content indexed after",
+        dimension=1536,
+        backend=backend,
+        model=model,
+    )
+    assert hits["records"]
+
+
+def test_confirmed_binding_is_not_overwritten_by_an_incompatible_writer(
+    milvus_server_env: MilvusContractEnv,
+) -> None:
+    """A different contract never replaces an existing, confirmed one."""
     milvus_env = milvus_server_env
     knowledge_id = milvus_env.new_knowledge_id()
     backend, model, _ = _index_document(
         milvus_env,
         knowledge_id=knowledge_id,
-        document_id=1301,
-        text="winner contract content that must stay queryable",
+        document_id=1401,
+        text="confirmed contract content that must stay queryable",
         dimension=1536,
     )
     collection_name = backend.get_index_name(knowledge_id)
+    store = backend._store
 
-    with backend._store.client() as client:
-        confirmed = backend._store.read_binding(client, collection_name)
-    assert confirmed is not None
+    with store.client() as client:
+        confirmed = store.read_binding(client, collection_name)
+        assert confirmed is not None
 
-    # The late writer claims its own contract and then tries to create the
-    # same collection: it must fail without touching the confirmed binding.
-    other = milvus_env.backend()
-    with other._store.client() as client:
         with pytest.raises(IndexContractIncompatibleError):
-            other._store.ensure_index(
+            store.ensure_index(
                 client,
                 collection_name,
-                dimension=1024,
+                dimension=1536,
                 embedding_space="sha256:late-writer",
             )
-        assert other._store.read_binding(client, collection_name) == confirmed
+
+        assert store.read_binding(client, collection_name) == confirmed
 
     hits = _query(
         milvus_env,
         knowledge_id=knowledge_id,
-        query="winner contract content",
+        query="confirmed contract content",
         dimension=1536,
         backend=backend,
         model=model,

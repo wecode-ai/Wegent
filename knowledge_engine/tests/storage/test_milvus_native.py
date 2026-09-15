@@ -11,15 +11,12 @@ from knowledge_engine.storage.errors import (
     IndexMissingError,
 )
 from knowledge_engine.storage.milvus_native import (
-    BINDING_STATE_CREATING,
-    BINDING_STATE_READY,
     DENSE_VECTOR_FIELD,
     METRIC_TYPE,
     MilvusDocumentStore,
     MilvusIndexBinding,
     build_collection_schema,
     build_scope_filter,
-    claim_id_for,
     node_row_id,
     strip_connection_credentials,
 )
@@ -206,20 +203,14 @@ class _CollectionClient:
         return self.collection_exists
 
 
-def _store_for_state(binding, state, *, collection_exists: bool):
+def _store_for_state(binding, *, collection_exists: bool):
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
-    store.read_binding_entry = lambda client, name: (binding, state)
+    store.read_binding = lambda client, name: binding
     store._assert_collection_dimension = lambda client, requested: None
     written: list[str] = []
-    store.write_binding = (
-        lambda client, requested, *, state=BINDING_STATE_READY: written.append(state)
+    store.write_binding = lambda client, requested: written.append(
+        requested.collection_name
     )
-    claims: list[str] = []
-    store.claim_index = lambda client, requested: claims.append(
-        "claim"
-    ) or claim_id_for(requested)
-    store.has_claim = lambda client, requested: bool(claims)
-    store.release_claim = lambda client, requested: claims.append("release")
     created: list[str] = []
     store._create_collection = (
         lambda client, requested: created.append(requested.collection_name) or True
@@ -227,34 +218,10 @@ def _store_for_state(binding, state, *, collection_exists: bool):
     return store, written, created
 
 
-def test_ensure_index_repairs_a_crashed_creation_holding_the_claim():
-    """A crash between collection creation and confirmation is retryable."""
+def test_ensure_index_writes_the_binding_only_after_creating():
+    """The creator owns the collection and is the only binding writer."""
     binding = _binding()
-    store, written, _ = _store_for_state(None, None, collection_exists=True)
-    claims: list[str] = []
-    store.has_claim = lambda client, requested: True
-    store.release_claim = lambda client, requested: claims.append("release")
-
-    result = store.ensure_index(
-        _CollectionClient(collection_exists=True),
-        binding.collection_name,
-        dimension=binding.dimension,
-        embedding_space=binding.embedding_space,
-    )
-
-    assert result == binding
-    assert written == [BINDING_STATE_READY]
-    assert claims == ["release"]
-
-
-def test_ensure_index_claims_before_creating():
-    """The creation claim is durable, so an interrupted create can be retried."""
-    binding = _binding()
-    store, written, created = _store_for_state(None, None, collection_exists=False)
-    claims: list[str] = []
-    store.claim_index = lambda client, requested: claims.append(
-        "claim"
-    ) or claim_id_for(requested)
+    store, written, created = _store_for_state(None, collection_exists=False)
 
     store.ensure_index(
         _CollectionClient(collection_exists=False),
@@ -263,15 +230,14 @@ def test_ensure_index_claims_before_creating():
         embedding_space=binding.embedding_space,
     )
 
-    assert claims == ["claim"]
-    assert written == [BINDING_STATE_READY]
+    assert written == [binding.collection_name]
     assert created == [binding.collection_name]
 
 
 def test_ensure_index_still_rejects_an_unknown_collection():
-    """A collection with no contract and no claim is never adopted."""
+    """A collection that exists without a contract is never adopted."""
     binding = _binding()
-    store, written, _ = _store_for_state(None, None, collection_exists=True)
+    store, written, _ = _store_for_state(None, collection_exists=True)
 
     with pytest.raises(IndexContractIncompatibleError):
         store.ensure_index(
@@ -284,23 +250,43 @@ def test_ensure_index_still_rejects_an_unknown_collection():
     assert written == []
 
 
-def test_claim_keys_are_contract_scoped():
-    """A different contract gets a different claim key and cannot clobber."""
-    first = _binding()
-    second = _binding(dimension=4096)
-    third = _binding(embedding_space="sha256:other")
+def test_ensure_index_rejects_a_second_contract_inside_the_creation_window():
+    """The creation window cannot be confirmed by a different contract.
 
-    assert claim_id_for(first) != claim_id_for(second)
-    assert claim_id_for(first) != claim_id_for(third)
-    assert claim_id_for(first) == claim_id_for(_binding())
+    Contract A created the collection but has not written its binding yet.
+    Contract B must not be able to confirm that physical collection just
+    because the dimension matches, and neither may A: an interrupted creation
+    fails loudly until an operator clears the empty collection.
+    """
+    binding = _binding()
+    store, written, _ = _store_for_state(None, collection_exists=True)
+
+    with pytest.raises(IndexContractIncompatibleError):
+        store.ensure_index(
+            _CollectionClient(collection_exists=True),
+            binding.collection_name,
+            dimension=binding.dimension,
+            embedding_space="sha256:late-writer",
+        )
+
+    assert written == []
+
+    # The original contract is rejected the same way: no silent adoption.
+    with pytest.raises(IndexContractIncompatibleError):
+        store.ensure_index(
+            _CollectionClient(collection_exists=True),
+            binding.collection_name,
+            dimension=binding.dimension,
+            embedding_space=binding.embedding_space,
+        )
+
+    assert written == []
 
 
 def test_ensure_index_reports_a_missing_confirmed_index():
     """A ready contract whose collection disappeared must fail loudly."""
     binding = _binding()
-    store, _, _ = _store_for_state(
-        binding, BINDING_STATE_READY, collection_exists=False
-    )
+    store, _, _ = _store_for_state(binding, collection_exists=False)
 
     with pytest.raises(IndexMissingError):
         store.ensure_index(
