@@ -295,6 +295,9 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
         Returns:
             StreamingResponseEmitter or None if creation failed
         """
+        if not self._is_current_card_round(callback_info, subtask_id):
+            return None
+
         try:
             # Get DingTalk channel to access the client
             from app.services.channels.manager import get_channel_manager

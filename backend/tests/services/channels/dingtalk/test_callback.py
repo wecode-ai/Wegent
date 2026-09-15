@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -204,3 +204,42 @@ async def test_registry_delivers_complete_terminal_result(monkeypatch, terminal_
         task_id=task_id, subtask_id=42, result=terminal_result
     )
     service.delete_callback_info.assert_awaited_once_with(task_id)
+
+
+@pytest.mark.asyncio
+async def test_round_change_during_locked_creation_rejects_stale_event(monkeypatch):
+    """A newer Redis snapshot must not create a card for the preceding round."""
+    from dingtalk_stream import ChatbotMessage
+
+    from app.services.channels import manager as manager_module
+    from app.services.channels.dingtalk import emitter as emitter_module
+
+    service = DingTalkCallbackService()
+    snapshots = [
+        DingTalkCallbackInfo(
+            channel_id=77,
+            conversation_id="group-a",
+            incoming_message_data={"msgId": f"message-{round_id}"},
+            chat_card={"template_id": "custom.schema"},
+            card_instance_id=f"card-{round_id}",
+            card_subtask_id=round_id,
+        )
+        for round_id in (42, 43)
+    ]
+    get_info = AsyncMock(side_effect=snapshots)
+    monkeypatch.setattr(service, "get_callback_info", get_info)
+    channel = SimpleNamespace(_client=object())
+    manager = SimpleNamespace(get_channel=lambda channel_id: channel)
+    monkeypatch.setattr(manager_module, "get_channel_manager", lambda: manager)
+    monkeypatch.setattr(ChatbotMessage, "from_dict", Mock(return_value=object()))
+    emitter = Mock(emit_start=AsyncMock())
+    create = Mock(return_value=emitter)
+    monkeypatch.setattr(emitter_module, "StreamingResponseEmitter", create)
+
+    result = await service._get_or_create_emitter(101, 42)
+
+    assert result is None
+    assert get_info.await_count == 2
+    create.assert_not_called()
+    emitter.emit_start.assert_not_awaited()
+    assert 101 not in service._active_emitters
