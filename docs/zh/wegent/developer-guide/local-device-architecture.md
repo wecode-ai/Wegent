@@ -100,6 +100,8 @@ Wework 使用独立 Codex Home 隔离本地运行时配置。首次初始化时�
 
 Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。 Electron 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
 
+Electron 启动主窗口时必须保持主窗口隐藏，并由独立的 startup splash 窗口持续展示启动动画。`wework/electron/src/shell/index.html` 只承载 Core DSH 启动宿主和失败诊断，不得模拟工作台布局、任务列表、输入框或其他骨架屏。Renderer 通过 `renderer.startupReady` 报告首个可操作工作台后，Electron 才显示主窗口并关闭 startup splash；启动失败时继续由 startup splash 提供重试和恢复操作。这样启动期间始终只有一条可见反馈路径，不会由未就绪的主窗口覆盖动画或在动画与真实界面之间闪现占位内容。
+
 ### 运行时任务与目标状态
 
 运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
