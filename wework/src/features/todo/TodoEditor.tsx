@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useCallback, useMemo, type ReactNode } from 'react'
 import {
   TodoEditor as SharedIssueDetailEditor,
   type CollaborationAssignment,
@@ -149,6 +149,10 @@ export function TodoEditor(props: TodoEditorProps) {
       }),
     [workspaceApi]
   )
+  const loadTeams = useCallback(
+    () => props.teamApi?.listTeams() ?? Promise.resolve([]),
+    [props.teamApi]
+  )
 
   const extensions: SharedIssueDetailExtensions = {
     normalizeDescription: normalizeTaskDescription,
@@ -221,7 +225,7 @@ export function TodoEditor(props: TodoEditorProps) {
     extensions,
     translate: (key: string, fallback?: string, options?: Record<string, string | number>) =>
       fallback === undefined ? t(key, options) : t(key, fallback, options),
-    loadTeams: () => props.teamApi?.listTeams() ?? Promise.resolve([]),
+    loadTeams,
     allItems: props.allItems as SharedEditorIssue[],
     onClose: props.onClose,
     presentation: props.presentation,

@@ -356,12 +356,15 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId(`collaboration-workspace-${workspace.id}`)).toContainText(
         workspace.name
       )
-      await expect(page.getByTestId(`collaboration-project-card-${project.id}`)).toContainText(
-        project.name
-      )
+      const workspaceToggle = page.getByTestId(`collaboration-workspace-toggle-${workspace.id}`)
+      if ((await workspaceToggle.getAttribute('aria-expanded')) !== 'true') {
+        await workspaceToggle.click()
+      }
+      const projectNavigation = page.getByTestId(`collaboration-workspace-project-${project.id}`)
+      await expect(projectNavigation).toContainText(project.name)
       await captureEvidence(page, 'web-01-project-home')
 
-      await page.getByTestId(`collaboration-project-card-${project.id}`).click()
+      await projectNavigation.click()
       await expect(page.getByTestId('collaboration-empty-project')).toBeVisible()
       await page.goto(collaborationProjectPath(workspace.id, project.id))
       await expect(page.getByTestId('collaboration-root')).toBeVisible()

@@ -1438,4 +1438,74 @@ describe('TodoEditor shared attachments', () => {
       })
     )
   })
+
+  it('does not reload issue resources when its parent rerenders', async () => {
+    const sharedApi = {
+      issues: {
+        update: vi.fn(),
+      },
+      attachments: {
+        list: vi.fn(async () => []),
+      },
+      collaborators: {
+        list: vi.fn(async () => []),
+      },
+      taskBindings: {
+        list: vi.fn(async () => []),
+      },
+      workflowPlans: {
+        get: vi.fn(async () => null),
+      },
+      members: {
+        list: vi.fn(async () => []),
+      },
+      agents: {
+        list: vi.fn(async () => []),
+      },
+      deliveries: {
+        list: vi.fn(async () => []),
+      },
+    } as never
+    const teamApi = {
+      listTeams: vi.fn(async () => []),
+    } as never
+    const onUpdated = vi.fn()
+    const onClose = vi.fn()
+    const renderEditor = () => (
+      <TodoEditor
+        mode="edit"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={onUpdated}
+        onClose={onClose}
+        sharedApi={sharedApi}
+        teamApi={teamApi}
+        currentUserId={1}
+      />
+    )
+    const view = render(renderEditor())
+
+    await vi.waitFor(() => {
+      expect(sharedApi.attachments.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.collaborators.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.taskBindings.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.members.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.agents.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.deliveries.list).toHaveBeenCalledTimes(1)
+      expect(teamApi.listTeams).toHaveBeenCalledTimes(1)
+    })
+
+    view.rerender(renderEditor())
+
+    await vi.waitFor(() => {
+      expect(sharedApi.attachments.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.collaborators.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.taskBindings.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.members.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.agents.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.deliveries.list).toHaveBeenCalledTimes(1)
+      expect(teamApi.listTeams).toHaveBeenCalledTimes(1)
+    })
+  })
 })
