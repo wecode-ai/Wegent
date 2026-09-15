@@ -31,6 +31,7 @@ import {
 import type { WorkbenchAction } from './workbenchReducer'
 import {
   findRuntimeTask,
+  findRuntimeTaskWorkspace,
   getRuntimeTaskRouteKey,
   getRuntimeTaskWorkspacePath,
   isSameRuntimeTaskAddress,
@@ -443,6 +444,11 @@ export function useWorkbenchRuntimeTasks({
       }
 
       try {
+        const sourceTask = findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)
+        const sourceWorkspace = findRuntimeTaskWorkspace(
+          state.runtimeWork,
+          state.currentRuntimeTask
+        )
         const response = await executorClient.runtime.forkRuntimeTask({
           source: state.currentRuntimeTask,
           target,
@@ -453,6 +459,33 @@ export function useWorkbenchRuntimeTasks({
           return
         }
 
+        if (sourceTask && sourceWorkspace) {
+          const now = new Date().toISOString()
+          const workspacePath =
+            response.target.workspacePath ||
+            getRuntimeTaskWorkspacePath(sourceWorkspace, sourceTask)
+          dispatch({
+            type: 'runtime_task_optimistic_upserted',
+            project: state.currentProject,
+            workspace: {
+              ...sourceWorkspace,
+              deviceId: response.target.deviceId,
+              workspacePath,
+              tasks: [],
+            },
+            task: {
+              taskId: response.target.taskId,
+              workspacePath,
+              title: options.title ?? sourceTask.title,
+              runtime: response.runtime ?? sourceTask.runtime,
+              status: 'active',
+              running: false,
+              optimistic: true,
+              createdAt: now,
+              updatedAt: now,
+            },
+          })
+        }
         await openRuntimeTask(response.target, {
           fallbackProject: state.currentProject,
         })
@@ -471,6 +504,7 @@ export function useWorkbenchRuntimeTasks({
       refreshWorkLists,
       state.currentProject,
       state.currentRuntimeTask,
+      state.runtimeWork,
     ]
   )
 

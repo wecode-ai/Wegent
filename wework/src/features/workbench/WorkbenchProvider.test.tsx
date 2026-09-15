@@ -900,6 +900,16 @@ function RuntimeTaskForkProbe() {
         {workbench.state.currentRuntimeTask?.taskId ?? 'none'}
       </span>
       <span data-testid="fork-current-project">{workbench.state.currentProject?.id ?? 'none'}</span>
+      <span data-testid="fork-runtime-task-titles">
+        {workbench.state.runtimeWork?.projects
+          .flatMap(project => project.deviceWorkspaces)
+          .flatMap(workspace => workspace.tasks)
+          .map(
+            task =>
+              `${task.taskId}:${task.title}:${task.optimistic === true ? 'optimistic' : 'resolved'}`
+          )
+          .join('|') ?? 'none'}
+      </span>
       <button
         type="button"
         data-testid="open-fork-source"
@@ -2653,6 +2663,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('fork-current-runtime-task')).toHaveTextContent('runtime-fork')
     )
     expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7')
+    expect(screen.getByTestId('fork-runtime-task-titles')).toHaveTextContent(
+      'runtime-fork:Runtime A:optimistic'
+    )
     expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2)
 
     refreshRequest.resolve(
