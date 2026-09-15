@@ -1233,7 +1233,7 @@ async function sendPromptUntilScenarioRequest(
   scenario,
   timeoutMs = MODEL_REQUEST_TIMEOUT_MS
 ) {
-  const scenarioRequest = control.awaitScenarioRequest(scenario)
+  const scenarioRequest = control.awaitNextScenarioRequest(scenario, timeoutMs)
   await sendPrompt(control, selector, prompt)
   return withTimeout(
     scenarioRequest,

@@ -880,6 +880,11 @@ class DesktopE2EServer {
     )
   }
 
+  awaitNextScenarioRequest(scenario, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
+    const nextCount = (this.scenarioRequests.get(scenario)?.length ?? 0) + 1
+    return this.awaitScenarioRequestCount(scenario, nextCount, timeoutMs)
+  }
+
   async awaitScenarioRequestCount(scenario, count, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
     const waitForCount = (async () => {
       while ((this.scenarioRequests.get(scenario)?.length ?? 0) < count) {

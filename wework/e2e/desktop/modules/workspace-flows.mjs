@@ -978,6 +978,10 @@ async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
 }
 
 async function verifyTrackedTaskSettledStatus(control) {
+  await control.command('waitFor', '[data-testid="work-item-open-board-menu"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
   const activeBoardContentSelector = await requireActiveWorkItemsTab(
     control,

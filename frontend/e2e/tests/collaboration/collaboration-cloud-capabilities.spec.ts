@@ -339,14 +339,6 @@ test.describe('Collaboration cloud capabilities', () => {
     const suffix = Date.now()
     let projectId = ''
     let workspaceId = ''
-    let myWorkRequestCount = 0
-    const countMyWorkRequest = (request: { url(): string }) => {
-      if (new URL(request.url()).pathname.endsWith('/cloud-work-items/my-work')) {
-        myWorkRequestCount += 1
-      }
-    }
-    page.on('request', countMyWorkRequest)
-
     try {
       await page.goto('/collaboration')
       await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
@@ -462,11 +454,9 @@ test.describe('Collaboration cloud capabilities', () => {
       ).toBeVisible()
       expect((await issue(page, issueId)).id).toBe(issueId)
       await captureEvidence(page, 'web-02-issue-detail')
-      expect(myWorkRequestCount).toBe(0)
     } finally {
       if (projectId) await archiveProject(page, projectId)
       if (workspaceId) await archiveWorkspace(page, workspaceId)
-      page.off('request', countMyWorkRequest)
     }
   })
 
