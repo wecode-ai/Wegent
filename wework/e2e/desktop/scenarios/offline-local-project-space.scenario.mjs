@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { captureVerificationScreenshot } from '../modules/workspace-flows.mjs'
+import {
+  captureVerificationScreenshot,
+  inCollaborationSidebar,
+} from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
@@ -17,6 +20,10 @@ function json(response, status, body) {
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
+}
+
+function sidebarScoped(selector) {
+  return inCollaborationSidebar(selector)
 }
 
 async function snapshot(control) {
@@ -101,7 +108,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       await control.command(
         'waitFor',
-        scoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`),
+        sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`),
         {
           text: '本地空间',
           timeoutMs: uiTimeoutMs,
@@ -109,7 +116,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       await control.command(
         'waitFor',
-        scoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
+        sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
         {
           text: '云端空间',
           timeoutMs: uiTimeoutMs,
@@ -136,9 +143,9 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       cloudOffline = true
       await control.command(
         'click',
-        scoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`)
+        sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`)
       )
-      const localWorkspaceTree = scoped(
+      const localWorkspaceTree = sidebarScoped(
         `[data-testid="collaboration-workspace-tree-${LOCAL_WORKSPACE_ID}"]`
       )
       const activeLocalWorkspace = `${localWorkspaceTree} [data-testid="collaboration-workspace-nav-projects"]`
@@ -279,10 +286,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       assert.equal(
         Number(
-          await control.command(
-            'getElementCount',
-            scoped('[data-testid^="project-agent-row-"]')
-          )
+          await control.command('getElementCount', scoped('[data-testid^="project-agent-row-"]'))
         ),
         0,
         'A failed offline cloud resource creation must not create a project Agent binding'
@@ -335,7 +339,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       await control.command(
         'waitFor',
-        scoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
+        sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
         {
           visible: false,
           timeoutMs: uiTimeoutMs,
