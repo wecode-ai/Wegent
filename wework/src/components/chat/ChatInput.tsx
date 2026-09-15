@@ -68,7 +68,7 @@ import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
 import type { ModelSelectorCloseReason } from './composer/model-selector-types'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { QuickPhrase } from '@/desktop/appPreferences'
-import { WorkbenchContext } from '@/features/workbench/useWorkbench'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
