@@ -168,10 +168,23 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     expect(closeCompleted).toBe(false)
 
     const replacement = new FakeWebContents()
+    replacement.loadURL.mockImplementation(async url => {
+      replacement.commitUrl(url)
+    })
     manager.attach('workspace-browser', replacement as unknown as WebContents)
     await close
 
     expect(closeCompleted).toBe(true)
+    expect(manager.hasAttached('workspace-browser')).toBe(true)
+    const reopened = await manager.openAttached(
+      'workspace-browser',
+      'https://reopened.example.test/'
+    )
+    expect(reopened).toMatchObject({
+      url: 'https://reopened.example.test/',
+      visible: true,
+    })
+    expect(replacement.loadURL).toHaveBeenCalledWith('https://reopened.example.test/')
     await rm(directory, { recursive: true, force: true })
   })
 
