@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  listenEmbeddedBrowserCloseRequests,
   notifyEmbeddedBrowserAgentCursorArrived,
   type EmbeddedBrowserAgentCursorEvent,
 } from '@/lib/embedded-browser'
@@ -11,6 +12,7 @@ import {
   relabelElectronEmbeddedBrowserView,
   releaseElectronEmbeddedBrowserView,
   resetElectronEmbeddedBrowserView,
+  retainElectronEmbeddedBrowserView,
   syncElectronEmbeddedBrowserView,
   type HostedElectronWebview,
 } from './electronEmbeddedBrowserHost'
@@ -26,7 +28,6 @@ interface ElectronEmbeddedBrowserViewProps {
   active: boolean
   interactionBlocked: boolean
   label: string
-  resetGeneration?: number
   transferFromLabel?: string
   visualRect: BrowserVisualRect | null
   cursor?: EmbeddedBrowserAgentCursorEvent | null
@@ -61,7 +62,6 @@ export function ElectronEmbeddedBrowserView({
   active,
   interactionBlocked,
   label,
-  resetGeneration = 0,
   transferFromLabel,
   visualRect,
   cursor = null,
@@ -73,7 +73,6 @@ export function ElectronEmbeddedBrowserView({
   const hostRef = useRef<HostedElectronWebview | null>(null)
   const labelRef = useRef(label)
   const ownerRef = useRef(Symbol('electron-embedded-browser-view'))
-  const resetGenerationRef = useRef(0)
   const [cursorOverlayHost, setCursorOverlayHost] = useState<HTMLDivElement | null>(null)
 
   useLayoutEffect(() => {
@@ -108,14 +107,6 @@ export function ElectronEmbeddedBrowserView({
   }, [])
 
   useLayoutEffect(() => {
-    if (resetGeneration <= resetGenerationRef.current) return
-    const host = hostRef.current
-    if (!host) return
-    resetElectronEmbeddedBrowserView(host, ownerRef.current)
-    resetGenerationRef.current = resetGeneration
-  }, [resetGeneration])
-
-  useLayoutEffect(() => {
     const host = hostRef.current
     const placeholder = placeholderRef.current
     if (!host || !placeholder) return
@@ -134,6 +125,30 @@ export function ElectronEmbeddedBrowserView({
     if (!host) return
     syncElectronEmbeddedBrowserView(host, ownerRef.current, active, interactionBlocked)
   }, [active, interactionBlocked])
+
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserCloseRequests(event => {
+      if (event.label !== labelRef.current) return
+      const host = hostRef.current
+      if (!host) return
+      resetElectronEmbeddedBrowserView(host, ownerRef.current)
+      retainElectronEmbeddedBrowserView(event.label)
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener.then(nextUnlisten => {
+      if (disposed) {
+        nextUnlisten()
+        return
+      }
+      unlisten = nextUnlisten
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
 
   return (
     <>

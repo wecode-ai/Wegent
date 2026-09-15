@@ -134,6 +134,47 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     vi.clearAllMocks()
   })
 
+  test('waits for a replacement webview before completing a bridge close', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    const pageState = await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    let closeCompleted = false
+
+    const close = manager.requestClose('workspace-browser').then(() => {
+      closeCompleted = true
+    })
+    await Promise.resolve()
+
+    expect(events.at(-1)).toMatchObject({
+      type: 'close-request',
+      payload: {
+        label: 'workspace-browser',
+        nativeLabel: pageState.nativeLabel,
+      },
+    })
+    expect(contents.close).toHaveBeenCalledOnce()
+    expect(closeCompleted).toBe(false)
+
+    const replacement = new FakeWebContents()
+    manager.attach('workspace-browser', replacement as unknown as WebContents)
+    await close
+
+    expect(closeCompleted).toBe(true)
+    await rm(directory, { recursive: true, force: true })
+  })
+
   test('applies request headers only to an exact HTTPS origin and path prefix', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)

@@ -9,6 +9,8 @@ import {
 } from './electronEmbeddedBrowserHost'
 
 const embeddedBrowserMocks = vi.hoisted(() => ({
+  closeRequestHandler: null as ((event: { label: string; nativeLabel: string }) => void) | null,
+  listenEmbeddedBrowserCloseRequests: vi.fn(),
   notifyEmbeddedBrowserAgentCursorArrived: vi.fn(),
 }))
 
@@ -31,6 +33,16 @@ describe('ElectronEmbeddedBrowserView', () => {
     vi.useFakeTimers()
     embeddedBrowserMocks.notifyEmbeddedBrowserAgentCursorArrived.mockReset()
     embeddedBrowserMocks.notifyEmbeddedBrowserAgentCursorArrived.mockResolvedValue(undefined)
+    embeddedBrowserMocks.closeRequestHandler = null
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockReset()
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      embeddedBrowserMocks.closeRequestHandler = handler
+      return Promise.resolve(() => {
+        if (embeddedBrowserMocks.closeRequestHandler === handler) {
+          embeddedBrowserMocks.closeRequestHandler = null
+        }
+      })
+    })
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     document.querySelector('[data-wework-browser-webview-host-root]')?.remove()
   })
@@ -202,13 +214,12 @@ describe('ElectronEmbeddedBrowserView', () => {
     expect(screen.queryByTestId('workspace-browser-electron-webview')).not.toBeInTheDocument()
   })
 
-  test('replaces a closed webview when the browser generation advances', () => {
+  test('retains a replacement webview until the same route reopens', async () => {
     const view = render(
       <ElectronEmbeddedBrowserView
         active
         interactionBlocked={false}
         label="workspace-browser"
-        resetGeneration={0}
         visualRect={null}
       />
     )
@@ -216,21 +227,35 @@ describe('ElectronEmbeddedBrowserView', () => {
     const previousWebview = host.querySelector('webview')
     const previousPartition = previousWebview?.getAttribute('partition')
 
-    view.rerender(
-      <ElectronEmbeddedBrowserView
-        active
-        interactionBlocked={false}
-        label="workspace-browser"
-        resetGeneration={1}
-        visualRect={null}
-      />
-    )
+    await act(async () => {
+      embeddedBrowserMocks.closeRequestHandler?.({
+        label: 'workspace-browser',
+        nativeLabel: 'electron-browser-1',
+      })
+    })
 
     const nextWebview = host.querySelector('webview')
     expect(nextWebview).not.toBe(previousWebview)
     expect(host.querySelectorAll('webview')).toHaveLength(1)
     expect(nextWebview?.getAttribute('partition')).not.toBe(previousPartition)
     expect(previousWebview?.isConnected).toBe(false)
+
+    view.unmount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId('workspace-browser-electron-webview')).toBe(host)
+
+    render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser"
+        visualRect={null}
+      />
+    )
+    expect(screen.getByTestId('workspace-browser-electron-webview')).toBe(host)
+    expect(host.querySelector('webview')).toBe(nextWebview)
     expect(host.style.visibility).toBe('visible')
     expect(host.style.pointerEvents).toBe('auto')
   })

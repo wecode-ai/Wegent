@@ -128,6 +128,50 @@ describe('EmbeddedBrowserBridge', () => {
     expect(browser.navigate).toHaveBeenCalledWith('workspace-browser-2', 'https://example.test/')
   })
 
+  test('does not acknowledge close until the replacement host is attached', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const browser = fakeBrowser()
+    let finishClose: () => void = () => undefined
+    browser.manager.requestClose = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          finishClose = resolve
+        })
+    )
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    const runtimePath = await bridge.start()
+    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
+      address: string
+      token: string
+    }
+    let responseCompleted = false
+
+    const response = fetch(`http://${identity.address}/browser`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${identity.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'close',
+        label: 'workspace-browser',
+      }),
+    }).then(result => {
+      responseCompleted = true
+      return result
+    })
+
+    await vi.waitFor(() => expect(browser.manager.requestClose).toHaveBeenCalledOnce())
+    expect(responseCompleted).toBe(false)
+    finishClose()
+
+    await expect((await response).json()).resolves.toEqual({
+      ok: true,
+      data: { ok: true },
+    })
+  })
+
   test('waits for the host cursor to arrive before dispatching a click', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
     const browser = fakeBrowser()
