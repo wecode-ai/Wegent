@@ -11,8 +11,9 @@ import {
   listenEmbeddedBrowserPageStateChanges,
   migrateEmbeddedBrowserLabel,
   migrateEmbeddedBrowserLabelSequence,
-  relabelEmbeddedBrowser,
   notifyEmbeddedBrowserAgentCursorArrived,
+  notifyEmbeddedBrowserCloseRequestHandled,
+  relabelEmbeddedBrowser,
   resolveEmbeddedBrowserAgentApproval,
   requestEmbeddedBrowserOpen,
   setEmbeddedBrowserAgentControlPaused,
@@ -214,6 +215,20 @@ describe('embedded-browser', () => {
     })
   })
 
+  test('acknowledges a handled close request through Electron', async () => {
+    await notifyEmbeddedBrowserCloseRequestHandled({
+      requestId: 'close-request-1',
+      label: 'workspace-browser-task-1',
+      nativeLabel: 'electron-browser-1',
+    })
+
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('browser.notifyCloseRequestHandled', {
+      requestId: 'close-request-1',
+      label: 'workspace-browser-task-1',
+      nativeLabel: 'electron-browser-1',
+    })
+  })
+
   test('listens for embedded browser agent state events', async () => {
     const handler = vi.fn()
 
@@ -317,6 +332,36 @@ describe('embedded-browser', () => {
 
     const release = await unlisten
     release?.()
+  })
+
+  test('stops dispatching open requests synchronously when a listener is released', () => {
+    let hostListener: ((event: unknown) => void) | undefined
+    desktopHostMocks.subscribe.mockImplementation(listener => {
+      hostListener = listener
+      return () => {}
+    })
+    const handler = vi.fn()
+
+    const release = listenEmbeddedBrowserOpenRequests(handler)
+    release?.()
+
+    expect(requestEmbeddedBrowserOpen('http://localhost:3000')).toBe(false)
+    hostListener?.({
+      sequence: 1,
+      type: 'browser.event',
+      payload: {
+        sequence: 1,
+        type: 'open-request',
+        payload: {
+          id: 'released-agent-open',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
+          url: 'https://example.test/',
+        },
+      },
+    })
+    expect(handler).not.toHaveBeenCalled()
   })
 
   test('dispatches Electron open request events', async () => {

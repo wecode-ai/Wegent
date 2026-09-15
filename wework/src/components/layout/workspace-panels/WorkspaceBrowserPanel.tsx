@@ -33,6 +33,7 @@ import {
   listenEmbeddedBrowserAgentState,
   listenEmbeddedBrowserAnnotationRequests,
   listenEmbeddedBrowserCloseRequests,
+  notifyEmbeddedBrowserCloseRequestHandled,
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
   EMBEDDED_BROWSER_OCCLUSION_EVENT,
   evalEmbeddedBrowserJson,
@@ -42,6 +43,7 @@ import {
   listenEmbeddedBrowserLocalFilePreview,
   listenEmbeddedBrowserPageStateChanges,
   isEmbeddedBrowserLabelTransferred,
+  isEmbeddedBrowserUnavailableError,
   listenEmbeddedBrowserAgentCursor,
   navigateEmbeddedBrowser,
   openEmbeddedBrowser,
@@ -722,52 +724,85 @@ export function WorkspaceBrowserTabPanel({
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserCloseRequests(event => {
-      if (!activeRef.current || event.label !== currentLabelRef.current) return
-      if (event.nativeLabel !== nativeLabelRef.current) {
+      if (event.label !== currentLabelRef.current) return
+      const acknowledgeCloseRequest = () => {
+        void notifyEmbeddedBrowserCloseRequestHandled(event).catch(error => {
+          console.error('Failed to acknowledge embedded browser close request:', error)
+        })
+      }
+      const consumeCloseRequest = () => {
+        if (!mountedRef.current || event.label !== currentLabelRef.current) return
         console.info(
-          '[Wework] Embedded browser close ignored',
+          '[Wework] Embedded browser close consumed',
+          JSON.stringify({ label: event.label, nativeLabel: event.nativeLabel })
+        )
+        nativeBrowserOpenRef.current = false
+        nativeLabelRef.current = null
+        adoptedDownloadOwnerLabelRef.current = null
+        activeDownloadIdsRef.current = new Set()
+        onNativeLabelChange?.(null)
+        onDownloadActivityChange?.(false)
+        currentUrlRef.current = null
+        pendingNavigationUrlRef.current = null
+        activePageUrlRef.current = null
+        annotationModeRef.current = false
+        pageStateRequestGenerationRef.current += 1
+        setCurrentUrl(null)
+        setPageUrl(null)
+        setAddress('')
+        onUrlChange?.(null)
+        setStatus('ready')
+        setError(null)
+        setInvalidTlsCertificate(null)
+        setAnnotationMode(false)
+        setOriginalViewHeld(false)
+        setAnnotations([])
+        setDownloads([])
+        setDownloadsOpen(false)
+        setLocalFilePreviewToast(null)
+        setClearDataNotice(null)
+        setClearingDataKind(null)
+        setAgentState(null)
+        setAgentCursor(null)
+        onTitleChange?.(null)
+        onFaviconChange?.(null)
+        acknowledgeCloseRequest()
+      }
+      const currentNativeLabel = nativeLabelRef.current
+      if (event.nativeLabel !== currentNativeLabel) {
+        console.info(
+          '[Wework] Embedded browser close requires reconciliation',
           JSON.stringify({
-            currentNativeLabel: nativeLabelRef.current,
+            currentNativeLabel,
             eventNativeLabel: event.nativeLabel,
             label: event.label,
           })
         )
+        void readEmbeddedBrowserPageState(event.label)
+          .then(pageState => {
+            if (!mountedRef.current || event.label !== currentLabelRef.current) return
+            console.info(
+              '[Wework] Embedded browser close ignored for live replacement',
+              JSON.stringify({
+                currentNativeLabel,
+                eventNativeLabel: event.nativeLabel,
+                label: event.label,
+                replacementNativeLabel: pageState.nativeLabel,
+              })
+            )
+            adoptNativeLabel(pageState.nativeLabel, event.label)
+            acknowledgeCloseRequest()
+          })
+          .catch(error => {
+            if (isEmbeddedBrowserUnavailableError(error, event.label)) {
+              consumeCloseRequest()
+              return
+            }
+            console.error('Failed to reconcile embedded browser close request:', error)
+          })
         return
       }
-      console.info(
-        '[Wework] Embedded browser close consumed',
-        JSON.stringify({ label: event.label, nativeLabel: event.nativeLabel })
-      )
-      nativeBrowserOpenRef.current = false
-      nativeLabelRef.current = null
-      adoptedDownloadOwnerLabelRef.current = null
-      activeDownloadIdsRef.current = new Set()
-      onNativeLabelChange?.(null)
-      onDownloadActivityChange?.(false)
-      currentUrlRef.current = null
-      pendingNavigationUrlRef.current = null
-      activePageUrlRef.current = null
-      annotationModeRef.current = false
-      pageStateRequestGenerationRef.current += 1
-      setCurrentUrl(null)
-      setPageUrl(null)
-      setAddress('')
-      onUrlChange?.(null)
-      setStatus('ready')
-      setError(null)
-      setInvalidTlsCertificate(null)
-      setAnnotationMode(false)
-      setOriginalViewHeld(false)
-      setAnnotations([])
-      setDownloads([])
-      setDownloadsOpen(false)
-      setLocalFilePreviewToast(null)
-      setClearDataNotice(null)
-      setClearingDataKind(null)
-      setAgentState(null)
-      setAgentCursor(null)
-      onTitleChange?.(null)
-      onFaviconChange?.(null)
+      consumeCloseRequest()
     })
     if (!listener) return undefined
     let disposed = false
@@ -787,7 +822,14 @@ export function WorkspaceBrowserTabPanel({
       disposed = true
       unlisten?.()
     }
-  }, [onDownloadActivityChange, onFaviconChange, onNativeLabelChange, onTitleChange, onUrlChange])
+  }, [
+    adoptNativeLabel,
+    onDownloadActivityChange,
+    onFaviconChange,
+    onNativeLabelChange,
+    onTitleChange,
+    onUrlChange,
+  ])
 
   useEffect(() => {
     if (!active || !nativeLabelRef.current) return

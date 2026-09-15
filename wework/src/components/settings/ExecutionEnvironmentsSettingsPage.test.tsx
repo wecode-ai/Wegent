@@ -6,6 +6,7 @@ import { ExecutionEnvironmentsSettingsPage } from './ExecutionEnvironmentsSettin
 
 const mocks = vi.hoisted(() => ({
   chooseNode: vi.fn(),
+  ensurePython: vi.fn(),
   list: vi.fn(),
   useBuiltinNode: vi.fn(),
 }))
@@ -16,6 +17,7 @@ vi.mock('@/lib/runtime-environment', () => ({
 
 vi.mock('@/desktop/executionEnvironments', () => ({
   chooseNodeExecutable: mocks.chooseNode,
+  ensurePython: mocks.ensurePython,
   listExecutionEnvironments: mocks.list,
   useBuiltinNode: mocks.useBuiltinNode,
 }))
@@ -23,12 +25,13 @@ vi.mock('@/desktop/executionEnvironments', () => ({
 describe('ExecutionEnvironmentsSettingsPage', () => {
   beforeEach(() => {
     mocks.chooseNode.mockReset()
+    mocks.ensurePython.mockReset().mockResolvedValue({ state: 'installed' })
     mocks.useBuiltinNode.mockReset()
     mocks.list.mockReset().mockResolvedValue([
       {
         id: 'node',
-        managed: false,
-        autoInstall: false,
+        managed: true,
+        autoInstall: true,
         state: 'installed',
         version: '24.13.0',
         downloadedBytes: 0,
@@ -47,13 +50,14 @@ describe('ExecutionEnvironmentsSettingsPage', () => {
         downloadedBytes: 0,
         totalBytes: 0,
         installedBytes: 0,
-        path: null,
+        path: '/runtime/python3',
         error: null,
+        source: 'managed',
       },
     ])
   })
 
-  test('shows Electron Node and manually detected Python', async () => {
+  test('shows Electron Node and Wework-managed Python', async () => {
     render(<ExecutionEnvironmentsSettingsPage />)
 
     expect(await screen.findByTestId('execution-environment-node')).toHaveTextContent('Node.js')
@@ -62,15 +66,17 @@ describe('ExecutionEnvironmentsSettingsPage', () => {
     expect(screen.getByTestId('execution-environment-node')).toHaveTextContent('/runtime/node')
     expect(screen.queryByTestId('execution-environment-node-remove')).not.toBeInTheDocument()
     expect(screen.getByTestId('execution-environment-python')).toHaveTextContent('Python')
-    expect(screen.getByTestId('execution-environment-python')).toHaveTextContent('默认不下载')
+    expect(screen.getByTestId('execution-environment-python')).toHaveTextContent('Wework 管理')
+    expect(screen.getByTestId('execution-environment-python')).toHaveTextContent('自动准备')
   })
 
-  test('refreshes manually detected Python', async () => {
+  test('installs managed Python', async () => {
     const user = userEvent.setup()
     render(<ExecutionEnvironmentsSettingsPage />)
 
-    await user.click(await screen.findByTestId('execution-environment-python-refresh'))
+    await user.click(await screen.findByTestId('execution-environment-python-install'))
 
+    await waitFor(() => expect(mocks.ensurePython).toHaveBeenCalledOnce())
     await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2))
   })
 

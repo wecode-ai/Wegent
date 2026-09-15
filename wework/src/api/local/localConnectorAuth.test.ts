@@ -5,17 +5,23 @@ import {
   isLocalConnector,
   isLocalQrConnector,
   localConnectorAuthHealth,
+  localConnectorAuthStart,
   localQrManageActionFromHealth,
 } from './localConnectorAuth'
 
 const mocks = vi.hoisted(() => ({
   ensureLocalExecutorStarted: vi.fn(),
+  ensurePython: vi.fn(),
   requestLocalExecutor: vi.fn(),
 }))
 
 vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: () => mocks.ensureLocalExecutorStarted(),
   requestLocalExecutor: (...args: unknown[]) => mocks.requestLocalExecutor(...args),
+}))
+
+vi.mock('@/desktop/executionEnvironments', () => ({
+  ensurePython: () => mocks.ensurePython(),
 }))
 
 describe('localQrManageActionFromHealth', () => {
@@ -37,6 +43,7 @@ describe('localConnectorAuthHealth cache', () => {
   beforeEach(() => {
     clearLocalConnectorAuthHealthCache()
     mocks.ensureLocalExecutorStarted.mockReset()
+    mocks.ensurePython.mockReset().mockResolvedValue({ state: 'installed' })
     mocks.requestLocalExecutor.mockReset()
     mocks.ensureLocalExecutorStarted.mockResolvedValue({ deviceId: 'local-device' })
     mocks.requestLocalExecutor.mockResolvedValue({ status: 'ok' })
@@ -55,6 +62,18 @@ describe('localConnectorAuthHealth cache', () => {
     await localConnectorAuthHealth(target, { bypassCache: true })
 
     expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
+  })
+
+  test('ensures managed Python before starting local authorization', async () => {
+    const target = { pluginKey: 'sina-email', connectorSlug: 'sina-email' }
+
+    await localConnectorAuthStart(target)
+
+    expect(mocks.ensurePython).toHaveBeenCalledOnce()
+    expect(mocks.ensureLocalExecutorStarted).toHaveBeenCalledOnce()
+    expect(mocks.ensurePython.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.ensureLocalExecutorStarted.mock.invocationCallOrder[0]
+    )
   })
 })
 

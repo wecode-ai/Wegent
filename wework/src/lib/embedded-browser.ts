@@ -79,6 +79,7 @@ export interface EmbeddedBrowserOpenRequest {
 }
 
 export interface EmbeddedBrowserCloseRequest {
+  requestId: string
   label: string
   nativeLabel: string
 }
@@ -313,6 +314,16 @@ export function listenEmbeddedBrowserCloseRequests(
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
   return listenElectronBrowserEvents('close-request', handler)
+}
+
+export async function notifyEmbeddedBrowserCloseRequestHandled(
+  request: EmbeddedBrowserCloseRequest
+): Promise<void> {
+  await invokeDesktopHost<void>('browser.notifyCloseRequestHandled', {
+    requestId: request.requestId,
+    label: request.label,
+    nativeLabel: request.nativeLabel,
+  })
 }
 
 export function listenEmbeddedBrowserAgentState(
@@ -569,7 +580,7 @@ export async function clearEmbeddedBrowserData(kinds?: EmbeddedBrowserDataKind[]
   return invokeDesktopHost<number>('browser.clearData', { dataKinds: kinds ?? null })
 }
 
-function isEmbeddedBrowserUnavailableError(error: unknown, label: string): boolean {
+export function isEmbeddedBrowserUnavailableError(error: unknown, label: string): boolean {
   return error instanceof Error && error.message === `Embedded browser is unavailable: ${label}`
 }
 
@@ -601,13 +612,21 @@ export function requestEmbeddedBrowserOpen(
 
 export function listenEmbeddedBrowserOpenRequests(
   handler: (request: EmbeddedBrowserOpenRequest) => void
-): Promise<UnlistenFn> | null {
+): UnlistenFn | null {
   if (!canUseEmbeddedBrowser()) return null
-  embeddedBrowserOpenRequestHandlers.add(handler)
-  return listenElectronBrowserEvents<EmbeddedBrowserOpenRequest>('open-request', handler).then(
-    unlisten => () => {
-      embeddedBrowserOpenRequestHandlers.delete(handler)
-      unlisten()
-    }
+  let active = true
+  const dispatch = (request: EmbeddedBrowserOpenRequest) => {
+    if (active) handler(request)
+  }
+  embeddedBrowserOpenRequestHandlers.add(dispatch)
+  const electronUnlisten = listenElectronBrowserEvents<EmbeddedBrowserOpenRequest>(
+    'open-request',
+    dispatch
   )
+  return () => {
+    if (!active) return
+    active = false
+    embeddedBrowserOpenRequestHandlers.delete(dispatch)
+    void electronUnlisten.then(unlisten => unlisten())
+  }
 }
