@@ -2638,10 +2638,37 @@ describe('WorkbenchProvider runtime tasks', () => {
         .mockReturnValueOnce(refreshRequest.promise),
       forkRuntimeTask: vi.fn().mockResolvedValue({
         accepted: true,
+        source: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-a',
+        },
         target: {
           deviceId: 'device-1',
           workspacePath: '/workspace/project-alpha',
           taskId: 'runtime-fork',
+        },
+        runtime: 'codex',
+        transcript: {
+          taskId: 'runtime-fork',
+          workspacePath: '/workspace/project-alpha',
+          runtime: 'codex',
+          running: false,
+          messages: [],
+          turns: [
+            {
+              id: 'fork-turn',
+              status: 'completed',
+              runtimeStatus: 'done',
+              items: [
+                {
+                  id: 'fork-assistant',
+                  type: 'assistant_text',
+                  content: 'Forked transcript is ready',
+                },
+              ],
+            },
+          ],
         },
       }),
     })
@@ -2666,6 +2693,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('fork-runtime-task-titles')).toHaveTextContent(
       'runtime-fork:Runtime A:optimistic'
     )
+    expect(
+      getRuntimeConversationMessages({
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-fork',
+      }).map(message => message.content)
+    ).toContain('Forked transcript is ready')
     expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2)
 
     refreshRequest.resolve(

@@ -46,7 +46,11 @@ import type {
   ArchiveRuntimeConversationsResult,
   RefreshWorkLists,
 } from './workbenchContextTypes'
-import { evictRuntimeConversation } from './runtimeConversationCache'
+import {
+  beginRuntimeConversationHydration,
+  completeRuntimeConversationHydration,
+  evictRuntimeConversation,
+} from './runtimeConversationCache'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { projectRuntimePaneTranscript } from './runtimeTaskLifecycle/projection'
 
@@ -459,6 +463,15 @@ export function useWorkbenchRuntimeTasks({
           return
         }
 
+        const forkedTranscript = projectRuntimePaneTranscript(response.transcript)
+        const hydrationToken = beginRuntimeConversationHydration(response.target)
+        completeRuntimeConversationHydration(
+          response.target,
+          hydrationToken,
+          forkedTranscript.turns
+        )
+        lifecycleStore.syncTranscript(response.target, forkedTranscript)
+
         if (sourceTask && sourceWorkspace) {
           const now = new Date().toISOString()
           const workspacePath =
@@ -500,6 +513,7 @@ export function useWorkbenchRuntimeTasks({
     [
       dispatch,
       executorClient,
+      lifecycleStore,
       openRuntimeTask,
       refreshWorkLists,
       state.currentProject,

@@ -248,7 +248,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('waitFor', scoped('[data-testid="project-agent-config"]'), {
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('click', scoped('[data-testid="project-agent-add"]'))
+        await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('click', '[data-testid="project-agent-mode-create"]')
         await control.command('waitFor', '[data-testid="project-agent-standard-create-form"]', {
           timeoutMs: uiTimeoutMs,

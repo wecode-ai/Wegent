@@ -497,7 +497,9 @@ export async function createDesktopScenario({
       model => model.name === MODEL_NAME && model.type === 'public'
     )
     assert.notEqual(publicModelIndex, -1, `${MODEL_NAME} is missing from the real model catalog`)
-    await control.command('click', scoped('[data-testid="project-agent-add"]'))
+    await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('waitFor', '[data-testid="project-agent-dialog"]', {
       timeoutMs: uiTimeoutMs,
     })
