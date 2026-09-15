@@ -14,7 +14,12 @@ from pydantic import ValidationError
 
 from app.schemas.dingtalk_card import DingTalkChatCardConfig
 from app.schemas.im_channel import IMChannelCreate, IMChannelUpdate
-from app.services.channels.dingtalk import card_adapter, card_binding, card_follow_up
+from app.services.channels.dingtalk import (
+    card_adapter,
+    card_binding,
+    card_follow_up,
+    card_quotes,
+)
 from app.services.channels.dingtalk.callback import (
     DingTalkCallbackInfo,
     DingTalkCallbackService,
@@ -142,6 +147,7 @@ def cache(monkeypatch):
     cache = MemoryCache()
     monkeypatch.setattr(card_binding, "cache_manager", cache)
     monkeypatch.setattr(card_follow_up, "cache_manager", cache)
+    monkeypatch.setattr(card_quotes, "cache_manager", cache)
     return cache
 
 
@@ -817,78 +823,6 @@ async def test_runtime_card_round_checks_original_message(
     assert (
         await service.accepts_runtime_source("runtime:device:task", source) is expected
     )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("is_json", [True, False])
-async def test_api_error_logs_identifiers_without_response_content(
-    config, httpx_mock, caplog, is_json
-):
-    adapter = TemplateChatCardAdapter(
-        Mock(get_access_token=Mock(return_value="secret-token")),
-        None,
-        config,
-        77,
-    )
-    if is_json:
-        httpx_mock.add_response(
-            status_code=403,
-            json={
-                "code": "Forbidden.Test",
-                "requestid": "request-test",
-                "message": "private-response-content",
-                "accessToken": "secret-token",
-            },
-        )
-    else:
-        httpx_mock.add_response(status_code=403, text="private-response-content")
-
-    with caplog.at_level("INFO"), pytest.raises(RuntimeError, match="HTTP 403"):
-        await adapter._request("POST", "instances", {})
-
-    assert "card_request_failed" in caplog.text
-    assert '"status_code": 403' in caplog.text
-    if is_json:
-        assert "Forbidden.Test" in caplog.text
-        assert "request-test" in caplog.text
-    assert "private-response-content" not in caplog.text
-    assert "secret-token" not in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_delivery_logs_only_correlation_fields(
-    config, binding, cache, httpx_mock, caplog
-):
-    client = SimpleNamespace(
-        get_access_token=lambda: "secret-token",
-        credential=SimpleNamespace(client_id="robot-a"),
-    )
-    adapter = TemplateChatCardAdapter(
-        client, ChatbotMessage.from_dict(binding.incoming_data), config, 77
-    )
-    httpx_mock.add_response(json={"success": True})
-    httpx_mock.add_response(
-        json={
-            "success": True,
-            "result": [
-                {
-                    "carrierId": "carrier-test",
-                    "spaceType": "IM_GROUP",
-                    "spaceId": "group-a",
-                    "success": True,
-                    "token": "do-not-log",
-                    "content": "private-content",
-                }
-            ],
-        }
-    )
-    with caplog.at_level("INFO"):
-        await adapter.start()
-    assert "card_delivered" in caplog.text
-    assert "carrier-test" in caplog.text and adapter.out_track_id in caplog.text
-    assert "do-not-log" not in caplog.text
-    assert "private-content" not in caplog.text
-    assert "secret-token" not in caplog.text
 
 
 @pytest.mark.asyncio

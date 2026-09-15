@@ -8,6 +8,8 @@ Open **Administration → IM channels → Edit DingTalk channel** and enter a Ch
 
 Publish the template for the robot's DingTalk application. Bind the same Markdown field in both writing and completed states; enable streaming on the writing component. The text input accepts text, while a separate Upload Image component supplies optional images. Card file uploads are not integrated yet.
 
+Deploy the complete backend first and wait until all instances are upgraded, then deploy the administration frontend and configure the chat template. Deploying only the backend is also supported: channels without `chat_card` keep their existing replies. Before enabling it broadly, verify streaming output, answer completion, and card follow-ups on a test channel.
+
 ## Configuration
 
 Entering only the template ID uses the defaults below. Advanced settings allow different field names and disabling follow-ups.

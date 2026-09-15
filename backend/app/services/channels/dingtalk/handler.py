@@ -383,12 +383,15 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             try:
                 await self._bind_chat_card(task_id, streaming_emitter, message_context)
             except Exception:
-                await self._fail_unstarted_card_task(
-                    task_id, streaming_emitter.subtask_id, message_context
-                )
-                await self.send_text_reply(
-                    message_context, "聊天卡片创建失败，请检查模板配置后重试。"
-                )
+                try:
+                    await self._fail_unstarted_card_task(
+                        task_id, streaming_emitter.subtask_id, message_context
+                    )
+                    await self.send_text_reply(
+                        message_context, "聊天卡片创建失败，请检查模板配置后重试。"
+                    )
+                finally:
+                    await streaming_emitter.close()
                 raise
         await super()._register_streaming_emitter(
             task_id,
@@ -428,9 +431,8 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
     ) -> None:
         if not isinstance(task_id, int) or not subtask_id:
             return
-        from app.models.subtask import Subtask
         from app.models.task import TaskResource
-        from app.stores.tasks import task_store
+        from app.stores.tasks import subtask_store, task_store
 
         with SessionLocal() as db:
             task = task_store.get_task_by_states(
@@ -440,15 +442,8 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
                 kind="Task",
                 user_id=context.extra_data["wegent_user_id"],
             )
-            subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.id == subtask_id,
-                    Subtask.task_id == task_id,
-                )
-                .first()
-            )
-            if task and subtask:
+            subtask = subtask_store.get_basic_by_id(db, subtask_id=subtask_id)
+            if task and subtask and subtask.task_id == task_id:
                 self._mark_private_im_task_response_failed(
                     db,
                     task=task,

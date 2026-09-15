@@ -13,6 +13,7 @@ from app.models.task import TaskResource
 from app.services.channels.dingtalk.card_binding import CardBinding
 from app.services.chat.storage.task_manager import get_task_with_access_check
 from app.services.task_member_service import task_member_service
+from app.stores.tasks import task_store
 
 
 def join_card_task(
@@ -33,12 +34,11 @@ def join_card_task(
 
     # Serialize joins across channels and API workers; both service mutations
     # below flush without releasing this row lock.
-    task = (
-        db.query(TaskResource)
-        .filter(TaskResource.id == task.id)
-        .with_for_update()
-        .one()
+    task = task_store.get_by_id_for_update(
+        db, task_id=task.id, owner_user_id=task.user_id
     )
+    if task is None:
+        raise ValueError("原卡片对应的任务已不可用")
     member = (
         db.query(ResourceMember)
         .filter(

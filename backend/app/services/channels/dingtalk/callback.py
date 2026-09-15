@@ -108,12 +108,19 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
         """Initialize the callback service."""
         super().__init__(ChannelType.DINGTALK)
 
-    async def _current_card_round(self, task_id, subtask_id) -> bool:
-        info = await self.get_callback_info(task_id)
+    @staticmethod
+    def _is_current_card_round(
+        info: Optional[DingTalkCallbackInfo], subtask_id: int
+    ) -> bool:
+        """Match a streamed event against the persisted card's active round."""
         if not info or not info.chat_card:
             return True
         # Runtime addresses currently use subtask 0; numeric tasks have round IDs.
         return info.card_subtask_id in (None, 0, subtask_id)
+
+    async def _current_card_round(self, task_id, subtask_id) -> bool:
+        info = await self.get_callback_info(task_id)
+        return self._is_current_card_round(info, subtask_id)
 
     async def accepts_runtime_source(
         self, task_id: int | str, source: Dict[str, Any]
@@ -129,9 +136,9 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
         )
 
     async def _get_or_create_emitter(self, task_id, subtask_id):
-        if not await self._current_card_round(task_id, subtask_id):
-            return None
         info = await self.get_callback_info(task_id)
+        if not self._is_current_card_round(info, subtask_id):
+            return None
         active = self._active_emitters.get(task_id)
         if info and info.chat_card and active:
             if active.card_instance_id != info.card_instance_id:
@@ -144,13 +151,20 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
         await super().register_emitter(task_id, emitter)
 
     async def send_task_result(
-        self, task_id, subtask_id, content, status="COMPLETED", error_message=None
+        self,
+        task_id: int | str,
+        subtask_id: int,
+        content: str,
+        status: str = "COMPLETED",
+        error_message: Optional[str] = None,
+        result: Optional[Dict[str, Any]] = None,
     ) -> bool:
+        """Finish the active card round while preserving terminal result metadata."""
         if not await self._current_card_round(task_id, subtask_id):
             return False
         await self._get_or_create_emitter(task_id, subtask_id)
         return await super().send_task_result(
-            task_id, subtask_id, content, status, error_message
+            task_id, subtask_id, content, status, error_message, result=result
         )
 
     def _parse_callback_info(self, data: Dict[str, Any]) -> DingTalkCallbackInfo:

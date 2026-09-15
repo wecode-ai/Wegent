@@ -26,6 +26,7 @@ class ChatCardAdapter(Protocol):
     async def update(self, content: str) -> None: ...
     async def finish(self, content: str) -> None: ...
     async def fail(self, error: str) -> None: ...
+    async def close(self) -> None: ...
 
 
 class BuiltinChatCardAdapter:
@@ -59,6 +60,9 @@ class BuiltinChatCardAdapter:
     async def fail(self, error: str) -> None:
         await asyncio.to_thread(self._instance.ai_fail)
 
+    async def close(self) -> None:
+        """The SDK owns its HTTP transport; this adapter has no client to close."""
+
 
 class TemplateChatCardAdapter:
     """Use DingTalk's AI-card protocol with configurable content/action fields."""
@@ -78,6 +82,7 @@ class TemplateChatCardAdapter:
         self.card_instance_id = card_id
         self._out_track_id = card_id or f"wegent-chat-{uuid4().hex}"
         self._created = bool(card_id)
+        self._http_client = httpx.AsyncClient(timeout=15.0)
 
     @property
     def out_track_id(self) -> str:
@@ -90,29 +95,28 @@ class TemplateChatCardAdapter:
         token = await asyncio.to_thread(self._client.get_access_token)
         if not token:
             raise RuntimeError("DingTalk access token unavailable")
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            for attempt in range(3):
-                try:
-                    response = await client.request(
-                        method,
-                        f"https://api.dingtalk.com/v1.0/card/{path}",
-                        headers={"x-acs-dingtalk-access-token": token},
-                        json=body,
-                    )
-                except httpx.TransportError:
-                    if method != "PUT" or attempt == 2:
-                        raise RuntimeError(
-                            f"DingTalk card {path}: transport failure"
-                        ) from None
-                else:
-                    if (
-                        method != "PUT"
-                        or attempt == 2
-                        or (response.status_code != 429 and response.status_code < 500)
-                    ):
-                        break
-                # Full replacement writes reuse the same body/guid on retry.
-                await asyncio.sleep(0.5 * (2**attempt))
+        for attempt in range(3):
+            try:
+                response = await self._http_client.request(
+                    method,
+                    f"https://api.dingtalk.com/v1.0/card/{path}",
+                    headers={"x-acs-dingtalk-access-token": token},
+                    json=body,
+                )
+            except httpx.TransportError:
+                if method != "PUT" or attempt == 2:
+                    raise RuntimeError(
+                        f"DingTalk card {path}: transport failure"
+                    ) from None
+            else:
+                if (
+                    method != "PUT"
+                    or attempt == 2
+                    or (response.status_code != 429 and response.status_code < 500)
+                ):
+                    break
+            # Full replacement writes reuse the same body/guid on retry.
+            await asyncio.sleep(0.5 * (2**attempt))
         # Never include response bodies, credentials or user text in exceptions.
         if response.is_error:
             self._log_request_failure(path, response)
@@ -121,6 +125,10 @@ class TemplateChatCardAdapter:
         if not isinstance(data, dict) or data.get("success") is not True:
             raise RuntimeError(f"DingTalk card {path}: request was not accepted")
         return data
+
+    async def close(self) -> None:
+        """Release the HTTP connection pool after all card writes have finished."""
+        await self._http_client.aclose()
 
     def _log_request_failure(self, path: str, response: httpx.Response) -> None:
         """Keep error identifiers for support without logging response content."""

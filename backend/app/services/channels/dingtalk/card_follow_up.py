@@ -271,7 +271,10 @@ class DingTalkCardCallbackHandler(CallbackHandler):
             record.binding.channel_id,
             record.track_id,
         )
-        await adapter.set_follow_up_status(status)
+        try:
+            await adapter.set_follow_up_status(status)
+        finally:
+            await adapter.close()
 
     @trace_async(
         span_name="dingtalk.card.follow_up", tracer_name="backend.channels.dingtalk"
