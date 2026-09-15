@@ -7222,6 +7222,20 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-browser-loading')).not.toBeInTheDocument()
   })
 
+  test('does not close an ordinary browser when its workbench surface is disposed', async () => {
+    runtimeMocks.electron = true
+    const { unmount } = renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    expect(screen.getByTestId('right-workspace-browser-tab-1')).toBeInTheDocument()
+    embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
+
+    unmount()
+
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
+  })
+
   test('adds browser pages from the right workspace new tab menu', async () => {
     renderWorkspacePanelLayout()
 
@@ -12525,6 +12539,42 @@ describe('DesktopWorkbenchLayout', () => {
         label: 'workspace-browser-runtime-b',
       })
     )
+  })
+
+  test('opens an embedded browser requested by the active blank pane', async () => {
+    runtimeMocks.electron = true
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+    desktopHostMocks.invoke.mockClear()
+
+    act(() => {
+      desktopHostMocks.emit({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 1,
+          type: 'open-request',
+          payload: {
+            id: 'agent-open-blank-pane',
+            baseLabel: 'workspace-browser-blank-0',
+            source: 'agent',
+            disposition: 'current-tab',
+            targetLabel: 'workspace-browser-blank-0',
+            label: 'workspace-browser-blank-0',
+            url: 'https://example.com/',
+          },
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-blank-0',
+          url: 'about:blank',
+        })
+      )
+    })
   })
 
   test('keeps a default browser request assigned to the task active when it arrived', async () => {
