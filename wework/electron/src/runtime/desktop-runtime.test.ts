@@ -300,7 +300,7 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(runtime.state().ready).toBe(false)
   })
 
-  test('prepares Core DSH in parallel but waits for the executor before starting it', async () => {
+  test('allocates the Core DSH port after the executor has started', async () => {
     const executor = new FakeExecutor()
     executor.startHang = deferred()
     nextStartHang = deferred()
@@ -320,8 +320,23 @@ describe('DesktopRuntime lifecycle generation', () => {
     )
 
     const start = runtime.start()
-    await vi.waitFor(() => expect(prepareState.prepareCalls).toBe(1))
+    await flush()
+    expect(prepareState.prepareCalls).toBe(0)
     expect(executor.startCalls).toBe(0)
+
+    deviceIdentityState.resolve?.('test-device-id')
+    await vi.waitFor(() => expect(executor.startCalls).toBe(1))
+    expect(prepareState.prepareCalls).toBe(0)
+    expect(created).toHaveLength(0)
+    expect(runtime.state().ready).toBe(false)
+    expect(startupSteps).not.toContain('core-dsh-prepare:started')
+    expect(startupSteps).not.toContain('core-dsh-process-start:started')
+
+    executor.startHang.resolve()
+    await vi.waitFor(() => expect(prepareState.prepareCalls).toBe(1))
+    expect(startupSteps.indexOf('executor-start:completed')).toBeLessThan(
+      startupSteps.indexOf('core-dsh-prepare:started')
+    )
 
     prepareState.resolveLaunch?.({
       command: 'node',
@@ -334,16 +349,6 @@ describe('DesktopRuntime lifecycle generation', () => {
       version: '0.0.0',
       sourceFingerprint: 'test',
     })
-    await flush()
-    expect(created).toHaveLength(0)
-
-    deviceIdentityState.resolve?.('test-device-id')
-    await vi.waitFor(() => expect(executor.startCalls).toBe(1))
-    expect(created).toHaveLength(0)
-    expect(runtime.state().ready).toBe(false)
-    expect(startupSteps).not.toContain('core-dsh-process-start:started')
-
-    executor.startHang.resolve()
     await vi.waitFor(() => expect(created).toHaveLength(1))
     expect(created[0].startCalls).toBe(1)
     expect(startupSteps.indexOf('executor-start:completed')).toBeLessThan(
