@@ -875,12 +875,13 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         return props.visible === false ? null : activePaneKey
       }
       return (
-        runtimePaneKeys.find(paneKey => {
+        Array.from(new Set([activePaneKey, ...runtimePaneKeys])).find(paneKey => {
           const pane = resolvePane(paneKey)
-          const taskId = pane?.currentRuntimeTask?.taskId
+          const labelSegment = pane?.currentRuntimeTask?.taskId ?? paneKey
           return (
-            taskId !== undefined &&
-            requestBaseLabel === `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(taskId)}`
+            pane !== null &&
+            requestBaseLabel ===
+              `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(labelSegment)}`
           )
         }) ?? null
       )
