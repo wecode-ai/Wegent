@@ -9,6 +9,7 @@ export interface User {
 
 export interface UserPreferences {
   send_key?: 'enter' | 'cmd_enter'
+  follow_up_behavior?: 'queue' | 'guide'
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
   memory_enabled?: boolean
   mcp_provider_keys?: Record<string, unknown> | null

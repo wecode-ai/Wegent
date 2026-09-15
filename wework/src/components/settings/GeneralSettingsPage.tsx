@@ -107,8 +107,14 @@ export function GeneralSettingsPage() {
   const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(DEFAULT_MAX_CONCURRENT_TASKS)
   const [installedSmartApps, setInstalledSmartApps] = useState<HarnessAppInstallation[]>([])
   const [pendingSendKey, setPendingSendKey] = useState<'enter' | 'cmd_enter' | null>(null)
+  const [pendingFollowUpBehavior, setPendingFollowUpBehavior] = useState<'queue' | 'guide' | null>(
+    null
+  )
   const persistedSendKey = workbench?.state?.user?.preferences?.send_key ?? 'enter'
   const sendKey = pendingSendKey ?? persistedSendKey
+  const persistedFollowUpBehavior =
+    workbench?.state?.user?.preferences?.follow_up_behavior ?? 'queue'
+  const followUpBehavior = pendingFollowUpBehavior ?? persistedFollowUpBehavior
 
   useEffect(() => {
     if (appPreferences && !appPreferences.loaded) return
@@ -337,6 +343,27 @@ export function GeneralSettingsPage() {
       setError(t('workbench.general_settings_send_key_save_failed'))
     } finally {
       setPendingSendKey(null)
+      setSaving(false)
+    }
+  }
+
+  const handleFollowUpBehaviorChange = async (nextFollowUpBehavior: 'queue' | 'guide') => {
+    if (nextFollowUpBehavior === followUpBehavior || !workbench?.updateUserPreferences) {
+      return
+    }
+
+    setPendingFollowUpBehavior(nextFollowUpBehavior)
+    setSaving(true)
+    setError(null)
+    try {
+      await workbench.updateUserPreferences({
+        follow_up_behavior: nextFollowUpBehavior,
+      })
+    } catch (saveError) {
+      console.error('[Wework] Failed to update follow-up behavior', saveError)
+      setError(t('workbench.general_settings_follow_up_behavior_save_failed'))
+    } finally {
+      setPendingFollowUpBehavior(null)
       setSaving(false)
     }
   }
@@ -596,6 +623,39 @@ export function GeneralSettingsPage() {
                       ].join(' ')}
                     >
                       <span className="truncate">{label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            }
+          />
+          <SettingsRow
+            label={t('workbench.general_settings_follow_up_behavior')}
+            description={t('workbench.general_settings_follow_up_behavior_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <div className="grid h-8 w-full shrink-0 grid-cols-2 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
+                {(['queue', 'guide'] as const).map(option => {
+                  const active = followUpBehavior === option
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      data-testid={`general-follow-up-${option}-button`}
+                      disabled={loading || saving || !workbench?.updateUserPreferences}
+                      aria-pressed={active}
+                      onClick={() => void handleFollowUpBehaviorChange(option)}
+                      className={[
+                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                        active
+                          ? 'bg-text-primary text-background shadow-sm'
+                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
+                      ].join(' ')}
+                    >
+                      <span className="truncate">
+                        {t(`workbench.general_settings_follow_up_behavior_${option}`)}
+                      </span>
                     </button>
                   )
                 })}

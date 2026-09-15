@@ -224,7 +224,39 @@ describe('ComposerToolbar', () => {
     await userEvent.click(screen.getByTestId('send-mode-menu-button'))
 
     const sendAfterTurnOption = screen.getByTestId('send-after-turn-option')
+    const guideCurrentTurnOption = screen.getByTestId('guide-current-turn-option')
     expect(sendAfterTurnOption).toHaveTextContent(modifier)
     expect(sendAfterTurnOption.querySelector('.lucide-corner-down-left')).toBeInTheDocument()
+    expect(guideCurrentTurnOption.querySelector('.lucide-corner-down-left')).not.toBeInTheDocument()
+  })
+
+  it('assigns the configured send shortcut only to the selected follow-up behavior', async () => {
+    vi.mocked(getPlatform).mockReturnValue('mac')
+
+    render(
+      <ComposerToolbar
+        canSend
+        isStreaming
+        sendKey="cmd_enter"
+        followUpBehavior="guide"
+        models={[]}
+        selectedModel={null}
+        selectedModelOptions={{}}
+        isModelSelectionReady
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+        onFileSelect={vi.fn()}
+        onQuickPhraseSelect={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('send-mode-menu-button'))
+
+    const sendAfterTurnOption = screen.getByTestId('send-after-turn-option')
+    const guideCurrentTurnOption = screen.getByTestId('guide-current-turn-option')
+    expect(sendAfterTurnOption.querySelector('.lucide-corner-down-left')).not.toBeInTheDocument()
+    expect(guideCurrentTurnOption).toHaveTextContent('⌘')
+    expect(guideCurrentTurnOption.querySelector('.lucide-corner-down-left')).toBeInTheDocument()
   })
 })
