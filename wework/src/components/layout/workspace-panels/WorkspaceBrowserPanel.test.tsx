@@ -2267,6 +2267,31 @@ describe('WorkspaceBrowserPanel', () => {
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('')
   })
 
+  test('consumes a close request while its task pane is inactive', async () => {
+    let handleClose!: (event: { label: string; nativeLabel: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      handleClose = handler
+      return Promise.resolve(vi.fn())
+    })
+    const view = render(
+      <WorkspaceBrowserPanel active label="workspace-browser-runtime-1" />
+    )
+    await screen.findByTestId('workspace-browser-native-view')
+    view.rerender(
+      <WorkspaceBrowserPanel active={false} label="workspace-browser-runtime-1" />
+    )
+
+    act(() => {
+      handleClose({
+        label: 'workspace-browser-runtime-1',
+        nativeLabel: 'workspace-browser-native-1',
+      })
+    })
+
+    expect(screen.queryByTestId('workspace-browser-native-view')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('')
+  })
+
   test('does not overwrite the address draft while page-state polling continues', async () => {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)

@@ -723,7 +723,7 @@ export function WorkspaceBrowserTabPanel({
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserCloseRequests(event => {
-      if (!activeRef.current || event.label !== currentLabelRef.current) return
+      if (event.label !== currentLabelRef.current) return
       console.info(
         '[Wework] Embedded browser close consumed',
         JSON.stringify({ label: event.label, nativeLabel: event.nativeLabel })
