@@ -8,6 +8,8 @@ import JSZip from 'jszip'
 import { localHarnessCliPath } from '../modules/local-harness-cli.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  assistantMessage,
+  codexRequestKind,
   createSse,
   functionCall,
   mcpToolRequestEvents,
@@ -185,13 +187,16 @@ function collaborationGroupAgentId(agent) {
   )
 }
 
-function summarizeModelRequest(body, issue, agent, ids) {
+function summarizeModelRequest(body, serialized, issue, agent, ids) {
   return {
     agent,
     issue: issue?.title ?? null,
     model: body.model ?? null,
+    requestKind: codexRequestKind(body),
     previousResponseId: body.previous_response_id ?? null,
     toolCount: Array.isArray(body.tools) ? body.tools.length : 0,
+    hasConfiguredSkill:
+      serialized.includes(SKILL_NAME) || serialized.includes(SKILL_CONTENT_MARKER),
     completedCalls: ids
       ? Object.entries(ids)
           .filter(([, callId]) => requestContainsToolOutput(body, callId))
@@ -1132,10 +1137,22 @@ export async function createDesktopScenario({
       const issue = issueFromRequest(serialized)
       const agent = agentFromRequest(serialized, issue)
       const ids = issue && agent ? stageCallIds(issue, agent) : null
-      const requestSummary = summarizeModelRequest(body, issue, agent, ids)
+      const requestSummary = summarizeModelRequest(body, serialized, issue, agent, ids)
       requestSummary.requestNumber = modelRequests.length + 1
       modelRequests.push(requestSummary)
       const responseId = `collaboration-agent-chain-${Date.now()}-${modelRequests.length}`
+      if (requestSummary.requestKind === 'prewarm') {
+        writeEvents(response, responseId, [])
+        return true
+      }
+      if (requestSummary.requestKind === 'compaction') {
+        writeEvents(
+          response,
+          responseId,
+          [assistantMessage('Collaboration chain context compaction completed.')]
+        )
+        return true
+      }
       if (!issue || !agent || !ids) {
         assert.fail(
           `Active collaboration execution emitted an unrecognized model request: ${JSON.stringify(requestSummary)}`
