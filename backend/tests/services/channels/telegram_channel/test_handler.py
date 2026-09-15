@@ -139,6 +139,30 @@ class TestTelegramChannelHandler:
                 model_name="openai-gpt-5.1(overseas)",
             ) == ("openai-gpt-5.1(overseas)", None)
 
+    def test_apply_team_model_restriction_logs_user_and_agent(self, handler):
+        """Dropped overrides must be traceable by user and agent."""
+        team = SimpleNamespace(id=100, name="restricted-agent", namespace="rcdp")
+
+        with (
+            patch(
+                "app.services.channels.handler.allowed_model_names_for_team",
+                return_value={"allowed-model"},
+            ),
+            patch.object(handler.logger, "warning") as warning_mock,
+        ):
+            handler._apply_team_model_restriction(
+                db=MagicMock(),
+                user_id=42,
+                team=team,
+                model_name="openai-gpt-5.1(overseas)",
+            )
+
+        logged = warning_mock.call_args.args[0]
+        assert "user_id=42" in logged
+        assert "model=openai-gpt-5.1(overseas)" in logged
+        assert "team_id=100" in logged
+        assert "team=rcdp/restricted-agent" in logged
+
     def test_default_team_id(self, handler):
         """Test getting default team ID."""
         assert handler.default_team_id == 100

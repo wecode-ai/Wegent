@@ -973,9 +973,12 @@ async def build_execution_request(
             )
         ):
             logger.info(
-                "[build_execution_request] Ignoring task model override blocked "
-                "by the agent model restriction: modelId=%s",
-                override_model_name,
+                f"[build_execution_request] Ignoring task model override blocked by "
+                f"the agent model restriction: task_id={task.id}, "
+                f"subtask_id={assistant_subtask.id}, user_id={user.id}, "
+                f"modelId={override_model_name}, "
+                f"team={getattr(team, 'namespace', None)}"
+                f"/{getattr(team, 'name', None)}"
             )
             override_model_name = None
             force_override = False
@@ -1010,9 +1013,10 @@ async def build_execution_request(
             )
         ):
             logger.info(
-                "[build_execution_request] Ignoring unavailable task model "
-                "override for payload fallback: modelId=%s",
-                override_model_name,
+                f"[build_execution_request] Ignoring unavailable task model override "
+                f"for payload fallback: task_id={task.id}, "
+                f"subtask_id={assistant_subtask.id}, user_id={user.id}, "
+                f"modelId={override_model_name}"
             )
             override_model_name = None
             force_override = False

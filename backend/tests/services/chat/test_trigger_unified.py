@@ -493,21 +493,32 @@ class TestBuildExecutionRequestUserSubtaskId:
                     ".allowed_model_names_for_team",
                     return_value={"another-model"},
                 ) as mock_allowed:
-                    await trigger_unified.build_execution_request(
-                        task=task,
-                        assistant_subtask=assistant_subtask,
-                        team=team,
-                        user=user,
-                        message="hello",
-                        payload=SimpleNamespace(
-                            ignore_unavailable_task_model_override=True
-                        ),
-                    )
+                    with patch.object(trigger_unified.logger, "info") as info_mock:
+                        await trigger_unified.build_execution_request(
+                            task=task,
+                            assistant_subtask=assistant_subtask,
+                            team=team,
+                            user=user,
+                            message="hello",
+                            payload=SimpleNamespace(
+                                ignore_unavailable_task_model_override=True
+                            ),
+                        )
 
         mock_allowed.assert_called_once_with(mock_db, team=team, user_id=7)
         assert mock_builder.build.call_args.kwargs["override_model_name"] is None
         assert mock_builder.build.call_args.kwargs["force_override"] is False
         assert mock_builder.build.call_args.kwargs["runtime_model_config"] is None
+        dropped = [
+            call.args[0]
+            for call in info_mock.call_args_list
+            if "blocked by the agent model restriction" in str(call.args[0])
+        ]
+        assert len(dropped) == 1
+        assert "task_id=1" in dropped[0]
+        assert "subtask_id=2" in dropped[0]
+        assert "user_id=7" in dropped[0]
+        assert "modelId=codex-gpt-5.5" in dropped[0]
 
     async def test_device_execution_keeps_sandbox_path_in_context_processing(self):
         """Device-routed tasks should keep sandbox path placeholders for executor rewrite."""
