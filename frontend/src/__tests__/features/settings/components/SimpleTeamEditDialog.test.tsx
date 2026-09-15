@@ -16,7 +16,7 @@ import { createTeam, updateTeam } from '@/features/settings/services/teams'
 import type { Bot, Team } from '@/types/api'
 import type { Group } from '@/types/group'
 
-const mockRefreshTeams = jest.fn()
+const mockInvalidateTeams = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -167,7 +167,7 @@ jest.mock('@/apis/skills', () => ({
 
 jest.mock('@/contexts/TeamContext', () => ({
   useTeamContext: () => ({
-    refreshTeams: mockRefreshTeams,
+    invalidateTeams: mockInvalidateTeams,
   }),
 }))
 
@@ -327,7 +327,7 @@ function makeTeam(overrides: Partial<Team> = {}): Team {
 describe('Simple TeamEditDialog', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockRefreshTeams.mockResolvedValue(undefined)
+    mockInvalidateTeams.mockReturnValue(undefined)
     mockedGetUnifiedShells.mockResolvedValue({
       data: [
         { name: 'Chat', type: 'public', displayName: 'Chat', shellType: 'Chat' },
@@ -1160,6 +1160,7 @@ describe('Simple TeamEditDialog', () => {
     await waitFor(() => {
       expect(mockedUpdateTeam).toHaveBeenCalled()
       expect(mockedCreateListing).toHaveBeenCalled()
+      expect(mockInvalidateTeams).toHaveBeenCalled()
       expect(onClose).toHaveBeenCalled()
     })
     expect(toast).toHaveBeenCalledWith({

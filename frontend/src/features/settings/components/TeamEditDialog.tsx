@@ -180,7 +180,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   } = props
 
   const { t } = useTranslation()
-  const { refreshTeams } = useTeamContext()
+  const { invalidateTeams } = useTeamContext({ enabled: false })
 
   // Current editing object (0 means create new)
   const editingTeam: Team | null =
@@ -345,7 +345,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       }
 
       await onSaved?.(team)
-      refreshTeams().catch(err => console.error('Failed to refresh teams after save:', err))
+      invalidateTeams()
       setUnsavedPrompts({})
       onClose()
     },
@@ -360,7 +360,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       onSaved,
       publishGroupNames,
       publishTarget,
-      refreshTeams,
+      invalidateTeams,
       t,
       toast,
     ]
