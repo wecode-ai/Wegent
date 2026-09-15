@@ -3,7 +3,9 @@ import { createPortal } from 'react-dom'
 import type { ProjectAgentConfigurationHost, ProjectAgentMode } from '@wegent/collaboration'
 
 import { Button } from '@/components/ui/button'
+import type { createAgentResourceApi } from '@/api/agentResources'
 import { cn } from '@/lib/utils'
+import { WeworkAgentResourceCreator } from './WeworkAgentResourceCreator'
 
 const modeIcons = {
   create: Plus,
@@ -124,30 +126,6 @@ export const weworkProjectAgentConfigurationHost: ProjectAgentConfigurationHost 
       </select>
     )
   },
-  renderTextControl({ ariaLabel, multiline, onChange, placeholder, testId, value }) {
-    if (multiline) {
-      return (
-        <textarea
-          aria-label={ariaLabel}
-          className={cn('min-h-24 resize-y py-2.5', controlClassName)}
-          data-testid={testId}
-          onChange={event => onChange(event.target.value)}
-          placeholder={placeholder}
-          value={value}
-        />
-      )
-    }
-    return (
-      <input
-        aria-label={ariaLabel}
-        className={cn('h-10', controlClassName)}
-        data-testid={testId}
-        onChange={event => onChange(event.target.value)}
-        placeholder={placeholder}
-        value={value}
-      />
-    )
-  },
   renderPrimaryAction({ children, disabled, onClick, testId }) {
     return (
       <Button
@@ -162,4 +140,16 @@ export const weworkProjectAgentConfigurationHost: ProjectAgentConfigurationHost 
       </Button>
     )
   },
+}
+
+export function createWeworkProjectAgentConfigurationHost(
+  agentResourceApi: ReturnType<typeof createAgentResourceApi> | undefined
+): ProjectAgentConfigurationHost {
+  if (!agentResourceApi) return weworkProjectAgentConfigurationHost
+  return {
+    ...weworkProjectAgentConfigurationHost,
+    renderAgentCreator(props) {
+      return <WeworkAgentResourceCreator api={agentResourceApi} {...props} />
+    },
+  }
 }

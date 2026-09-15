@@ -125,6 +125,7 @@ interface TeamEditDialogProps {
     publishAfterCreate: boolean,
     marketplaceTags: string[]
   ) => void
+  fixedCreateTargetLabel?: string
 }
 
 const SIMPLE_BIND_MODES = new Set<TaskType>(['chat', 'code', 'task', 'video', 'image'])
@@ -177,6 +178,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     writableGroups = [],
     publishAfterCreate = false,
     onCreateOptionsChange,
+    fixedCreateTargetLabel,
   } = props
 
   const { t } = useTranslation()
@@ -208,8 +210,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [leaderBotId, setLeaderBotId] = useState<number | null>(null)
 
   const [saving, setSaving] = useState(false)
-  const [creatingPublishTarget, setCreatingPublishTarget] =
-    useState<CapabilityPublishTarget>('personal')
+  const [creatingPublishTarget, setCreatingPublishTarget] = useState<CapabilityPublishTarget>(
+    createTarget.scope === 'group' ? 'team' : 'personal'
+  )
   const [editingPublishTarget, setEditingPublishTarget] =
     useState<CapabilityPublishTarget>('personal')
   const [editingGroupNames, setEditingGroupNames] = useState<string[]>([])
@@ -1625,17 +1628,32 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               </>
             )}
 
-            <div data-testid="team-publish-scope-section">
-              <CapabilityScopeSelector
-                value={publishTarget}
-                groups={writableGroups}
-                groupName={publishGroupName}
-                groupNames={publishGroupNames}
-                onChange={handlePublishTargetChange}
-                existingResource={isEditing}
-                multipleGroups
-              />
-            </div>
+            {fixedCreateTargetLabel && !isEditing ? (
+              <div
+                className="rounded-lg border border-border bg-surface px-4 py-3"
+                data-testid="team-fixed-create-target"
+              >
+                <div className="text-sm font-medium text-text-primary">
+                  {t('common:teams.create_target')}
+                </div>
+                <div className="mt-1 text-sm text-text-secondary">{fixedCreateTargetLabel}</div>
+                <div className="mt-1 text-xs text-text-muted">
+                  {t('common:teams.create_target_description')}
+                </div>
+              </div>
+            ) : (
+              <div data-testid="team-publish-scope-section">
+                <CapabilityScopeSelector
+                  value={publishTarget}
+                  groups={writableGroups}
+                  groupName={publishGroupName}
+                  groupNames={publishGroupNames}
+                  onChange={handlePublishTargetChange}
+                  existingResource={isEditing}
+                  multipleGroups
+                />
+              </div>
+            )}
             {publishTarget === 'marketplace' && (
               <>
                 <div className="space-y-2" data-testid="team-marketplace-tags-section">

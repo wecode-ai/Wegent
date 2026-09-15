@@ -31,10 +31,93 @@ from app.services.project_chat.workspace_binding import (
     adapt_legacy_workspace_binding,
     read_agent_workspace_binding,
 )
+from app.services.workspaces.storage import get_workspace_kind, workspace_id_for_project
 
 
 class WeworkExecutionProfileError(ValueError):
     """One canonical runtime profile cannot be materialized."""
+
+
+def _execution_environment_config(
+    db: Session,
+    project: CloudProject,
+) -> dict[str, Any]:
+    """Compile Workspace defaults and Project overrides into one Run snapshot."""
+
+    workspace_config: dict[str, Any] = {}
+    workspace_id = workspace_id_for_project(db, project.id)
+    if workspace_id is not None:
+        workspace = get_workspace_kind(db, workspace_id)
+        payload = workspace.json if workspace is not None else {}
+        spec = payload.get("spec") if isinstance(payload, dict) else {}
+        candidate = spec.get("executionEnvironment") if isinstance(spec, dict) else {}
+        if isinstance(candidate, dict):
+            workspace_config = candidate
+
+    metadata = project.metadata_json if isinstance(project.metadata_json, dict) else {}
+    candidate = metadata.get("execution_environment")
+    project_config = candidate if isinstance(candidate, dict) else {}
+    selected_config = project_config if project_config else workspace_config
+    selected_repositories = selected_config.get("repositories")
+    repositories = [
+        {
+            "name": str(repository.get("name") or "").strip(),
+            "url": str(repository.get("url") or "").strip(),
+            "ref": str(repository.get("ref") or "").strip(),
+            "path": str(repository.get("path") or "").strip(),
+            "primary": bool(repository.get("primary")),
+        }
+        for repository in (
+            selected_repositories if isinstance(selected_repositories, list) else []
+        )
+        if isinstance(repository, dict)
+        and str(repository.get("url") or "").strip()
+        and str(repository.get("path") or "").strip()
+    ]
+    selected_steps = selected_config.get("setup_steps")
+    setup_steps = [
+        {
+            "command": str(step.get("command") or "").strip(),
+            "workingDirectory": str(step.get("working_directory") or "").strip(),
+        }
+        for step in (selected_steps if isinstance(selected_steps, list) else [])
+        if isinstance(step, dict) and str(step.get("command") or "").strip()
+    ]
+    return {
+        "repositories": repositories,
+        "setup_steps": setup_steps,
+        "status": selected_config.get("status"),
+        "fingerprint": selected_config.get("fingerprint"),
+        "prepared_device_id": selected_config.get("prepared_device_id"),
+        "prepared_workspace_path": selected_config.get("prepared_workspace_path"),
+    }
+
+
+def _merge_environment_execution(
+    execution: dict[str, Any] | None,
+    environment: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Merge immutable environment preparation into the existing execution intent."""
+
+    merged = dict(execution or {})
+    repositories = environment.get("repositories")
+    if isinstance(repositories, list) and repositories:
+        workspace = (
+            dict(merged.get("workspace"))
+            if isinstance(merged.get("workspace"), dict)
+            else {}
+        )
+        workspace["repositories"] = list(repositories)
+        merged["workspace"] = workspace
+    setup_steps = environment.get("setup_steps")
+    if isinstance(setup_steps, list) and setup_steps:
+        setup = (
+            dict(merged.get("setup")) if isinstance(merged.get("setup"), dict) else {}
+        )
+        setup["steps"] = list(setup_steps)
+        setup["fingerprint"] = str(environment.get("fingerprint") or "")
+        merged["setup"] = setup
+    return merged or None
 
 
 def native_runtime_contract(runtime: object) -> tuple[RuntimeName, str]:
@@ -217,9 +300,9 @@ class WeworkExecutionProfile:
         from app.services.project_chat.service import (
             bot_config,
             bot_max_concurrent_executions,
+            compiled_bot_config,
         )
 
-        config = bot_config(agent)
         profile_metadata = (
             dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
         )
@@ -227,6 +310,15 @@ class WeworkExecutionProfile:
             runtime_profile.user_id
             if runtime_profile is not None
             else agent.created_by_user_id or 0
+        )
+        config = (
+            compiled_bot_config(
+                db,
+                agent,
+                execution_user_id=owner_user_id,
+            )
+            if db is not None
+            else bot_config(agent)
         )
         local_project_id = int(agent.local_project_id or 0)
         if db is not None and runtime_profile is not None and cloud_project_id:
@@ -547,12 +639,40 @@ class WeworkExecutionProfile:
             }
 
         configured_execution = origin_context.get("execution")
+        environment_config = _execution_environment_config(db, project)
+        environment_status = environment_config.get("status")
+        if environment_status in {"uninitialized", "preparing", "error"}:
+            raise WeworkExecutionProfileError(
+                "Project execution environment is not ready"
+            )
+        environment_workspace_path = (
+            str(environment_config.get("prepared_workspace_path") or "")
+            if str(environment_config.get("prepared_device_id") or "")
+            == execution_device_id
+            and environment_config.get("status") == "ready"
+            else ""
+        )
+        environment_uses_worktree = bool(
+            environment_workspace_path and environment_config.get("repositories")
+        )
         generated_execution = (
             {"workspace": {"source": "git_worktree"}}
-            if (has_bound_workspace or workspace_source_task)
-            and self.workspace_policy == "git_worktree"
+            if environment_uses_worktree
+            or (
+                (has_bound_workspace or workspace_source_task)
+                and self.workspace_policy == "git_worktree"
+            )
             else None
         )
+        execution = _merge_environment_execution(
+            (
+                configured_execution
+                if isinstance(configured_execution, dict)
+                else generated_execution
+            ),
+            environment_config,
+        )
+        origin["executionEnvironment"] = environment_config
         configured_plugins = origin_context.get("project_plugins")
         configured_system_prompt = origin_context.get("system_prompt")
         request = RuntimeTaskCreateRequest(
@@ -586,6 +706,7 @@ class WeworkExecutionProfile:
                 else None
             ),
             deviceWorkspaceId=workspace_binding.device_workspace_id,
+            workspacePath=environment_workspace_path or None,
             deviceId=execution_device_id or None,
             runtimeProjectKey=(
                 workspace_binding.runtime_project_key
@@ -594,7 +715,9 @@ class WeworkExecutionProfile:
             ),
             origin=origin,
             standaloneChatWorkspace=(
-                not has_bound_workspace and workspace_source_task is None
+                not has_bound_workspace
+                and workspace_source_task is None
+                and not environment_workspace_path
             ),
             workspaceSourceTask=workspace_source_task,
             additionalContext=additional_context,
@@ -604,11 +727,7 @@ class WeworkExecutionProfile:
                 else list(self.plugins)
             ),
             runtimePermissionMode=origin_context.get("runtime_permission_mode"),
-            execution=(
-                configured_execution
-                if isinstance(configured_execution, dict)
-                else generated_execution
-            ),
+            execution=(execution),
             initialGoal=origin_context.get("initial_goal"),
             initialSupervisor=origin_context.get("initial_supervisor"),
             additionalSkills=(

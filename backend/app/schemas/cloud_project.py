@@ -20,6 +20,10 @@ from app.schemas.base_role import BaseRole
 from app.schemas.issue_workflow import ProjectWorkflowDefinition
 from app.schemas.tagging import MAX_TAGS_PER_ITEM, normalize_tags
 from app.schemas.types import SnowflakeId
+from app.schemas.workspace import (
+    ExecutionEnvironmentConfig,
+    ExecutionEnvironmentDefinition,
+)
 
 TaskProvider = Literal["local", "github", "gitlab", "dingtalk_aitable"]
 ProjectVisibility = Literal["private", "public"]
@@ -192,6 +196,7 @@ class CloudProjectUpdate(BaseModel):
     ai_automation: CloudProjectAiAutomation | None = None
     pull_request_automation: CloudProjectPullRequestAutomation | None = None
     workflow_definition: ProjectWorkflowDefinition | None = None
+    execution_environment: ExecutionEnvironmentDefinition | None = None
     version: int = Field(ge=1)
 
     @field_validator("tags", mode="before")
@@ -245,6 +250,9 @@ class CloudProjectResponse(BaseModel):
         default_factory=ProjectWorkflowDefinition
     )
     workflow_automation_id: str | None = None
+    execution_environment: ExecutionEnvironmentConfig = Field(
+        default_factory=ExecutionEnvironmentConfig
+    )
     visibility: ProjectVisibility = "private"
     created_by_user_id: int
     current_user_id: int = 0
@@ -276,6 +284,7 @@ class CloudProjectResponse(BaseModel):
                 "pull_request_automation": metadata.get("pull_request_automation", {}),
                 "workflow_definition": metadata.get("workflow_definition", {}),
                 "workflow_automation_id": metadata.get("workflow_automation_id"),
+                "execution_environment": metadata.get("execution_environment", {}),
                 "visibility": (
                     "public" if metadata.get("visibility") == "public" else "private"
                 ),

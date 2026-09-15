@@ -19,6 +19,7 @@ from app.schemas.workspace import (
     CollaborationGroupListResponse,
     CollaborationGroupResponse,
     CollaborationGroupUpdate,
+    ExecutionEnvironmentInitialize,
     PersonalResourcesResponse,
     WorkspaceAgentCreate,
     WorkspaceAgentListResponse,
@@ -395,6 +396,26 @@ def remove_workspace_execution_environment(
     workspace_service.remove_execution_environment(
         db, workspace_id, device_id, current_user.id
     )
+
+
+@router.post(
+    "/{workspace_id}/execution-environment/initialize",
+    response_model=WorkspaceResponse,
+)
+async def initialize_workspace_execution_environment(
+    workspace_id: int,
+    values: ExecutionEnvironmentInitialize,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> WorkspaceResponse:
+    workspace = await workspace_service.initialize_execution_environment(
+        db,
+        workspace_id,
+        values.device_id,
+        current_user.id,
+        values.version,
+    )
+    return _response(db, workspace, current_user)
 
 
 @router.get(

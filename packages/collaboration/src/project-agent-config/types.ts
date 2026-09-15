@@ -24,6 +24,12 @@ export interface ProjectAgentConfigurationHost {
     description?: string;
     disabled: boolean;
   };
+  renderAgentCreator?(props: {
+    namespace: string;
+    onClose(): void;
+    onCreated(agent: { name: string; teamId: number }): Promise<void>;
+    workspaceName: string;
+  }): ReactNode;
   renderDialog(props: {
     busy: boolean;
     children: ReactNode;
@@ -46,14 +52,6 @@ export interface ProjectAgentConfigurationHost {
     ariaLabel: string;
     onChange(value: string): void;
     options: ProjectAgentSelectOption[];
-    placeholder: string;
-    testId: string;
-    value: string;
-  }): ReactNode;
-  renderTextControl(props: {
-    ariaLabel: string;
-    multiline?: boolean;
-    onChange(value: string): void;
     placeholder: string;
     testId: string;
     value: string;

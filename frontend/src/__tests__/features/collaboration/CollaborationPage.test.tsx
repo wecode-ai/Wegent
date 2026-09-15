@@ -18,6 +18,7 @@ let mockPathname = '/collaboration'
 let mockSearchParams = new URLSearchParams()
 let capturedHost: CollaborationPlatformHostAdapter | null = null
 const mockGetProject = jest.fn()
+const mockListGroups = jest.fn()
 
 jest.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
@@ -41,19 +42,6 @@ jest.mock('@wegent/collaboration', () => ({
   },
 }))
 
-jest.mock('@/features/tasks/components/sidebar', () => ({
-  CollapsedSidebarButtons: () => <div data-testid="collapsed-sidebar-buttons" />,
-  ResizableSidebar: ({ children }: { children: React.ReactNode }) => (
-    <aside data-testid="resizable-sidebar">{children}</aside>
-  ),
-  TaskSidebar: ({ contextSection }: { contextSection?: React.ReactNode }) => (
-    <div data-testid="task-sidebar">
-      <div data-testid="task-sidebar-system-navigation">system navigation</div>
-      <div data-testid="task-sidebar-collaboration-context">{contextSection}</div>
-    </div>
-  ),
-}))
-
 jest.mock(
   '@/features/layout/TopNavigation',
   () =>
@@ -62,12 +50,12 @@ jest.mock(
     }
 )
 
-jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
-  useIsMobile: () => false,
+jest.mock('@/features/layout/components/UserFloatingMenu', () => ({
+  UserFloatingMenu: () => <div data-testid="user-floating-menu" />,
 }))
 
-jest.mock('@/features/tasks/session/TaskSession', () => ({
-  useTaskSession: () => ({ selectTask: jest.fn() }),
+jest.mock('@/apis/groups', () => ({
+  listGroups: (...args: unknown[]) => mockListGroups(...args),
 }))
 
 jest.mock('@/features/collaboration/shared-api', () => ({
@@ -79,7 +67,10 @@ jest.mock('@/features/collaboration/shared-api', () => ({
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({ getCurrentLanguage: () => 'zh-CN' }),
+  useTranslation: () => ({
+    getCurrentLanguage: () => 'zh-CN',
+    t: (key: string) => key,
+  }),
 }))
 
 jest.mock('sonner', () => ({
@@ -98,6 +89,8 @@ describe('CollaborationPage platform routing', () => {
       id: 'project 1',
       workspace_id: 'workspace 1',
     })
+    mockListGroups.mockReset()
+    mockListGroups.mockReturnValue(new Promise(() => undefined))
     localStorage.clear()
   })
 
@@ -106,6 +99,7 @@ describe('CollaborationPage platform routing', () => {
 
     expect(capturedHost?.location).toEqual({
       platformView: 'spaces',
+      rootView: 'home',
       workspaceId: null,
       workspaceView: 'home',
       projectId: null,
@@ -125,7 +119,6 @@ describe('CollaborationPage platform routing', () => {
         renderModePicker: expect.any(Function),
         renderPrimaryAction: expect.any(Function),
         renderSelect: expect.any(Function),
-        renderTextControl: expect.any(Function),
       })
     )
     expect(screen.getByTestId('collaboration-page-main')).toHaveClass('flex-1', 'overflow-hidden')
@@ -133,8 +126,9 @@ describe('CollaborationPage platform routing', () => {
       '[--collaboration-primary-background:rgb(var(--color-primary))]',
       '[--collaboration-primary-foreground:rgb(var(--color-primary-contrast))]'
     )
-    expect(screen.getByTestId('task-sidebar-system-navigation')).toBeInTheDocument()
-    expect(screen.getByTestId('task-sidebar-collaboration-context')).toContainElement(
+    expect(screen.getByTestId('collaboration-context-sidebar')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-sidebar-system-navigation')).not.toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-context-sidebar')).toContainElement(
       screen.getByTestId('shared-collaboration-sidebar')
     )
   })
@@ -163,6 +157,7 @@ describe('CollaborationPage platform routing', () => {
 
     expect(capturedHost?.location).toEqual({
       platformView: 'spaces',
+      rootView: 'home',
       workspaceId: 'workspace 1',
       workspaceView: 'home',
       projectId: 'project%2',
@@ -178,6 +173,7 @@ describe('CollaborationPage platform routing', () => {
 
     expect(capturedHost?.location).toEqual({
       platformView: 'spaces',
+      rootView: 'home',
       workspaceId: 'workspace 1',
       workspaceView: 'collaboration-participants',
       projectId: null,
@@ -315,16 +311,34 @@ describe('CollaborationPage platform routing', () => {
     ).toBe(
       '/collaboration/workspaces/workspace%201/projects/project%2F1/issues/issue%201?view=table'
     )
+    expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'home' })).toBe(
+      '/collaboration'
+    )
+    expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'my-work' })).toBe(
+      '/collaboration/my-work'
+    )
+    expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'inbox' })).toBe(
+      '/collaboration/inbox'
+    )
+    expect(collaborationLocationPath({ ...base, workspaceId: null, rootView: 'runs' })).toBe(
+      '/collaboration/runs'
+    )
   })
 
-  it('redirects the removed My Work route to the collaboration home', async () => {
+  it('opens My Work as a first-class collaboration root view', () => {
     mockPathname = '/collaboration/my-work'
 
     render(<CollaborationPage />)
 
-    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/collaboration'))
+    expect(mockReplace).not.toHaveBeenCalled()
     expect(mockGetProject).not.toHaveBeenCalled()
-    expect(capturedHost?.location.platformView).toBe('spaces')
+    expect(capturedHost?.location).toEqual(
+      expect.objectContaining({
+        platformView: 'spaces',
+        rootView: 'my-work',
+        workspaceId: null,
+      })
+    )
   })
 
   it('redirects the removed global collaboration resources route to the collaboration home', async () => {

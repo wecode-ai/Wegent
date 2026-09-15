@@ -27,6 +27,7 @@ use crate::{
     local::{
         app_ipc::{AppIpcError, AppIpcServer, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
+        environment_prepare::execute_environment_prepare,
         event_stream::{event_sequence, ExecutorEventHub},
         session::{LocalSessionHandler, SessionType, TerminalEvent},
         session_gateway::start_session_gateway,

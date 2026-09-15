@@ -51,6 +51,19 @@ export interface WorkspaceProjectUpdateInput {
   workflowDefinition?: Record<string, unknown>;
   collaborationGroups?: import("../types").CollaborationGroup[];
   automaticProcessingRules?: WorkspaceAutomationRule[];
+  executionEnvironment?: {
+    repositories: Array<{
+      name: string;
+      url: string;
+      ref: string;
+      path: string;
+      primary: boolean;
+    }>;
+    setupSteps: Array<{
+      command: string;
+      workingDirectory: string;
+    }>;
+  };
 }
 
 export interface WorkspaceMyWorkItem extends CollaborationIssue {
@@ -151,12 +164,26 @@ export interface WorkspaceAssignmentCreateInput {
 export interface WorkspaceCreateInput {
   name: string;
   description?: string;
+  namespace?: string;
 }
 
 export interface WorkspaceUpdateInput {
   version: number;
   name?: string;
   description?: string;
+  executionEnvironment?: {
+    repositories: Array<{
+      name: string;
+      url: string;
+      ref: string;
+      path: string;
+      primary: boolean;
+    }>;
+    setupSteps: Array<{
+      command: string;
+      workingDirectory: string;
+    }>;
+  };
 }
 
 export interface WorkspaceMemberCreateInput {
@@ -175,6 +202,7 @@ export interface WorkspaceAgentCreateInput {
 export interface CollaborationGroupCreateInput {
   name: string;
   description?: string;
+  instructions?: string;
   leader: { kind: "human" | "agent"; id: string; responsibility?: string };
   members: Array<{
     kind: "human" | "agent";
@@ -192,6 +220,9 @@ export interface CollaborationGroupCreateInput {
       responsibility?: string;
     } | null;
   }>;
+  executionRequirements?: {
+    requiredTags: string[];
+  };
 }
 
 export interface CollaborationGroupUpdateInput extends Partial<CollaborationGroupCreateInput> {
@@ -385,6 +416,10 @@ export interface SharedWorkspaceProjectsApi {
     projectId: string,
     deviceId: number,
   ): Promise<void>;
+  initializeExecutionEnvironment(
+    projectId: string,
+    input: { deviceId: number; version: number },
+  ): Promise<CollaborationProject>;
   importMessages(
     projectId: string,
     input: WorkspaceMessageImportInput,
@@ -527,6 +562,10 @@ export interface SharedCollaborationWorkspacesApi {
     workspaceId: string,
     deviceId: number,
   ): Promise<void>;
+  initializeExecutionEnvironment(
+    workspaceId: string,
+    input: { deviceId: number; version: number },
+  ): Promise<CollaborationWorkspace>;
 }
 
 export interface SharedCollaborationResourcesApi {

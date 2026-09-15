@@ -66,9 +66,12 @@ export function workspaceHttpRequestBody(value: unknown): unknown {
   }
   return Object.fromEntries(
     Object.entries(value).map(([key, nested]) => {
-      const wireKey = snakeCaseKey(key)
+      const wireKey = snakeCaseKey(key);
       // Runtime/provider option names are opaque API values.
-      return [wireKey, wireKey === 'model_options' ? nested : workspaceHttpRequestBody(nested)]
+      return [
+        wireKey,
+        wireKey === "model_options" ? nested : workspaceHttpRequestBody(nested),
+      ];
     }),
   );
 }
@@ -92,8 +95,11 @@ function keysToCamelCase(value: unknown): unknown {
   }
   return Object.fromEntries(
     Object.entries(value).map(([key, nested]) => {
-      const viewKey = camelCaseKey(key)
-      return [viewKey, viewKey === 'modelOptions' ? nested : keysToCamelCase(nested)]
+      const viewKey = camelCaseKey(key);
+      return [
+        viewKey,
+        viewKey === "modelOptions" ? nested : keysToCamelCase(nested),
+      ];
     }),
   );
 }
@@ -120,7 +126,32 @@ function mapCollaborationGroupDto(input: unknown): CollaborationGroup {
   const row = record(input);
   const members = Array.isArray(row.members) ? row.members : [];
   const stages = Array.isArray(row.stages) ? row.stages : [];
+  const executionRequirements = record(
+    row.execution_requirements ?? row.executionRequirements,
+  );
+  const requiredTags =
+    executionRequirements.required_tags ?? executionRequirements.requiredTags;
   const leader = record(row.leader);
+  const mapStage = (stage: unknown) => {
+    const value = record(stage);
+    const assignee = value.assignee == null ? null : record(value.assignee);
+    return {
+      id: String(value.id),
+      name: String(value.name ?? ""),
+      description: String(value.description ?? ""),
+      assignee:
+        assignee === null
+          ? null
+          : {
+              kind:
+                assignee.kind === "human"
+                  ? ("human" as const)
+                  : ("agent" as const),
+              id: String(assignee.id),
+              responsibility: String(assignee.responsibility ?? ""),
+            },
+    };
+  };
   return {
     id: String(row.id),
     workspace_id: String(row.workspace_id ?? row.workspaceId),
@@ -129,6 +160,7 @@ function mapCollaborationGroupDto(input: unknown): CollaborationGroup {
     owner_id: String(row.owner_id ?? row.ownerId),
     name: String(row.name ?? ""),
     description: String(row.description ?? ""),
+    instructions: String(row.instructions ?? ""),
     leader: {
       kind: leader.kind === "human" ? "human" : "agent",
       id: String(leader.id),
@@ -143,23 +175,12 @@ function mapCollaborationGroupDto(input: unknown): CollaborationGroup {
       };
     }),
     coordination_mode: "manager",
-    stages: stages.map((stage) => {
-      const value = record(stage);
-      const assignee = value.assignee == null ? null : record(value.assignee);
-      return {
-        id: String(value.id),
-        name: String(value.name ?? ""),
-        description: String(value.description ?? ""),
-        assignee:
-          assignee === null
-            ? null
-            : {
-                kind: assignee.kind === "human" ? "human" : "agent",
-                id: String(assignee.id),
-                responsibility: String(assignee.responsibility ?? ""),
-              },
-      };
-    }),
+    stages: stages.map(mapStage),
+    execution_requirements: {
+      required_tags: Array.isArray(requiredTags)
+        ? requiredTags.map(String)
+        : [],
+    },
     version: Number(row.version ?? 1),
     created_by_user_id: Number(
       row.created_by_user_id ?? row.createdByUserId ?? 0,
@@ -324,6 +345,14 @@ export function createSharedWorkspaceHttpApi(
       async removeExecutionEnvironment(workspaceId, deviceId) {
         await transport.delete(
           `/v1/workspaces/${encoded(workspaceId)}/execution-environments/${encoded(deviceId)}`,
+        );
+      },
+      async initializeExecutionEnvironment(workspaceId, input) {
+        return mapCollaborationWorkspaceDto(
+          await transport.post(
+            `/v1/workspaces/${encoded(workspaceId)}/execution-environment/initialize`,
+            workspaceHttpRequestBody(input),
+          ),
         );
       },
     },

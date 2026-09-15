@@ -2072,22 +2072,9 @@ describe('CloudTodoWorkspace', () => {
     }
     const localItem = { ...item, id: 'LOCAL-1', cloud_project_id: 22 }
     const localServices = services()
-    const createLocalAgent = vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({
-      id: 'offline-local-codex',
-      projectId: String(localProject.id),
-      name: String(input.name),
-      runtime: 'codex' as const,
-      model: null,
-      systemPrompt: String(input.systemPrompt ?? ''),
-      status: 'active' as const,
-      version: 1,
-      createdAt: '2026-09-13T00:00:00Z',
-      updatedAt: '2026-09-13T00:00:00Z',
-      ...input,
-    }))
     localServices.localProjectChatAgentApi = {
       list: vi.fn(async () => []),
-      create: createLocalAgent,
+      create: vi.fn(),
       update: vi.fn(),
     } as never
     const localApi = localServices.deliveryApi!
@@ -2168,30 +2155,9 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('project-agent-mode-existing-card')).toHaveTextContent(
       '登录并连接云端后可选择已有智能体'
     )
-    expect(screen.getByTestId('project-agent-mode-create')).toBeChecked()
-    await userEvent.type(screen.getByTestId('project-agent-local-name'), '本地评审智能体')
-    await userEvent.type(
-      screen.getByTestId('project-agent-local-capability'),
-      '评审当前项目的代码变更'
-    )
-    await userEvent.type(
-      screen.getByTestId('project-agent-local-system-prompt'),
-      '检查代码、测试和风险'
-    )
+    expect(screen.queryByTestId('project-agent-mode-create')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-agent-open-create')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-agent-execution-environment')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('project-agent-local-create'))
-    expect(createLocalAgent).toHaveBeenCalledWith(localProject.id, {
-      name: '本地评审智能体',
-      runtime: 'codex',
-      model: 'gpt-5-codex',
-      modelOptions: {},
-      modelType: 'runtime',
-      capabilityDescription: '评审当前项目的代码变更',
-      systemPrompt: '检查代码、测试和风险',
-      additionalSkills: [],
-      mcpServers: {},
-    })
     await userEvent.click(screen.getByTestId('cloud-project-settings-automatic-processing'))
     expect(await screen.findByTestId('automatic-processing')).toBeInTheDocument()
 

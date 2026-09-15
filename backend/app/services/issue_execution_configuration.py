@@ -12,7 +12,7 @@ from app.models.delivery import ProjectAutomationRule, ProjectChatAgent, Runtime
 from app.schemas.issue_workflow import WorkflowExecutionConfig
 from app.schemas.project_chat import ProjectChatWorkspaceBinding
 from app.services.project_automation_domain import manager_type, runtime_config
-from app.services.project_chat.service import bot_config
+from app.services.project_chat.service import compiled_bot_config
 from app.services.project_chat.workspace_binding import read_agent_workspace_binding
 
 
@@ -45,7 +45,11 @@ def require_coordinator_execution_config(
 def project_robot_execution_config(
     db: Session, agent: ProjectChatAgent
 ) -> WorkflowExecutionConfig:
-    config = bot_config(agent)
+    config = compiled_bot_config(
+        db,
+        agent,
+        execution_user_id=int(agent.created_by_user_id or 0),
+    )
     runtime_profile_id = str(config.get("default_runtime_profile_id") or "") or None
     runtime_profile = (
         db.get(RuntimeProfile, runtime_profile_id) if runtime_profile_id else None

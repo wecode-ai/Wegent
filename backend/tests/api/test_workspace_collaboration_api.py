@@ -44,6 +44,216 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_workspace_persists_shared_execution_environment_defaults(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    created = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"Environment Workspace {uuid.uuid4().hex[:6]}"},
+    )
+    assert created.status_code == 201
+    workspace = created.json()
+
+    updated = test_client.patch(
+        f"/api/v1/workspaces/{workspace['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": workspace["version"],
+            "execution_environment": {
+                "repositories": [
+                    {
+                        "name": "Wegent",
+                        "url": "https://github.com/wecode-ai/Wegent.git",
+                        "ref": "main",
+                        "path": "wegent",
+                        "primary": True,
+                    },
+                    {
+                        "name": "SDK",
+                        "url": "https://github.com/example/sdk.git",
+                        "ref": "v2",
+                        "path": "deps/sdk",
+                        "primary": False,
+                    },
+                ],
+                "setup_steps": [
+                    {"command": "corepack enable", "working_directory": "wegent"},
+                    {"command": "pnpm install", "working_directory": "wegent"},
+                ],
+            },
+        },
+    )
+
+    assert updated.status_code == 200
+    environment = updated.json()["execution_environment"]
+    assert environment == {
+        "repositories": [
+            {
+                "name": "Wegent",
+                "url": "https://github.com/wecode-ai/Wegent.git",
+                "ref": "main",
+                "path": "wegent",
+                "primary": True,
+            },
+            {
+                "name": "SDK",
+                "url": "https://github.com/example/sdk.git",
+                "ref": "v2",
+                "path": "deps/sdk",
+                "primary": False,
+            },
+        ],
+        "setup_steps": [
+            {"command": "corepack enable", "working_directory": "wegent"},
+            {"command": "pnpm install", "working_directory": "wegent"},
+        ],
+        "status": "preparing",
+        "fingerprint": environment["fingerprint"],
+        "prepared_device_id": "",
+        "prepared_workspace_path": "",
+        "prepared_at": None,
+        "error": "",
+    }
+    assert len(environment["fingerprint"]) == 64
+
+
+def test_workspace_inherits_personal_or_group_resource_namespace(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    group_name = f"workspace-owner-{uuid.uuid4().hex[:8]}"
+    group_response = test_client.post(
+        "/api/groups",
+        headers=_auth(test_token),
+        json={
+            "name": group_name,
+            "display_name": "Workspace Owner Group",
+            "visibility": "private",
+        },
+    )
+    assert group_response.status_code == 201
+
+    group_workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={
+            "name": f"Group Workspace {uuid.uuid4().hex[:6]}",
+            "namespace": group_name,
+            "is_default": True,
+        },
+    )
+    assert group_workspace_response.status_code == 201
+    group_workspace = group_workspace_response.json()
+    assert group_workspace["namespace"] == group_name
+    assert group_workspace["is_default"] is False
+    stored_workspace = test_db.get(Kind, int(group_workspace["id"]))
+    assert stored_workspace is not None
+    assert stored_workspace.namespace == group_name
+    assert stored_workspace.json["metadata"]["namespace"] == group_name
+
+    personal_workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"Personal Workspace {uuid.uuid4().hex[:6]}"},
+    )
+    assert personal_workspace_response.status_code == 201
+    assert personal_workspace_response.json()["namespace"] == "default"
+
+    outsider, outsider_token = _user(
+        test_db, f"workspace-outsider-{uuid.uuid4().hex[:8]}"
+    )
+    denied_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(outsider_token),
+        json={
+            "name": f"Denied Workspace {outsider.id}",
+            "namespace": group_name,
+        },
+    )
+    assert denied_response.status_code == 403
+
+
+def test_workspace_execution_environment_initialize_preserves_namespace(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    group_name = f"environment-owner-{uuid.uuid4().hex[:8]}"
+    group_response = test_client.post(
+        "/api/groups",
+        headers=_auth(test_token),
+        json={
+            "name": group_name,
+            "display_name": "Environment Owner Group",
+            "visibility": "private",
+        },
+    )
+    assert group_response.status_code == 201
+    workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={
+            "name": f"Initialized Workspace {uuid.uuid4().hex[:6]}",
+            "namespace": group_name,
+        },
+    )
+    assert workspace_response.status_code == 201
+    workspace = workspace_response.json()
+    device = Kind(
+        kind="Device",
+        name=f"initialize-device-{uuid.uuid4().hex[:8]}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": {"deviceType": "local"}},
+    )
+    test_db.add(device)
+    test_db.commit()
+    test_db.refresh(device)
+    binding_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": device.id},
+    )
+    assert binding_response.status_code == 201
+    initialized_state = {
+        "repositories": [],
+        "setup_steps": [],
+        "status": "ready",
+        "fingerprint": "a" * 64,
+        "prepared_device_id": device.name,
+        "prepared_workspace_path": "/workspace/initialized",
+        "prepared_at": None,
+        "error": "",
+    }
+    initialize = AsyncMock(return_value=initialized_state)
+    monkeypatch.setattr(
+        "app.services.workspaces.execution_environments.initialize_execution_environment",
+        initialize,
+    )
+
+    initialize_response = test_client.post(
+        (f"/api/v1/workspaces/{workspace['id']}" "/execution-environment/initialize"),
+        headers=_auth(test_token),
+        json={"device_id": device.id, "version": workspace["version"]},
+    )
+
+    assert initialize_response.status_code == 200
+    initialized_workspace = initialize_response.json()
+    assert initialized_workspace["namespace"] == group_name
+    assert initialized_workspace["execution_environment"] == initialized_state
+    stored_workspace = test_db.get(Kind, int(workspace["id"]))
+    assert stored_workspace is not None
+    assert stored_workspace.namespace == group_name
+    assert stored_workspace.json["metadata"]["namespace"] == group_name
+    initialize.assert_awaited_once()
+
+
 def test_workspace_can_be_archived_after_its_projects_are_archived(
     test_client: TestClient,
     test_token: str,
@@ -141,15 +351,101 @@ def _workspace_project_with_maintainer(
 
 
 def _wegent_team(test_db: Session, owner: User) -> Kind:
-    team = Kind(
-        kind="Team",
-        name=f"assignment-team-{uuid.uuid4().hex[:8]}",
+    suffix = uuid.uuid4().hex[:8]
+    ghost_name = f"assignment-ghost-{suffix}"
+    shell_name = f"assignment-shell-{suffix}"
+    model_name = f"assignment-model-{suffix}"
+    bot_name = f"assignment-bot-{suffix}"
+    team_name = f"assignment-team-{suffix}"
+    ghost = Kind(
+        kind="Ghost",
+        name=ghost_name,
         namespace="default",
         user_id=owner.id,
         is_active=True,
         json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Ghost",
+            "metadata": {"name": ghost_name, "namespace": "default"},
+            "spec": {"systemPrompt": "Complete the assigned work."},
+        },
+    )
+    shell = Kind(
+        kind="Shell",
+        name=shell_name,
+        namespace="default",
+        user_id=owner.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Shell",
+            "metadata": {"name": shell_name, "namespace": "default"},
+            "spec": {"shellType": "Chat", "baseImage": "assignment:test"},
+            "status": {"state": "Available"},
+        },
+    )
+    model = Kind(
+        kind="Model",
+        name=model_name,
+        namespace="default",
+        user_id=owner.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": model_name, "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {
+                        "model": "test",
+                        "model_id": "assignment-model",
+                        "api_key": "test-key",
+                        "base_url": "https://gateway.example.test",
+                    }
+                }
+            },
+        },
+    )
+    test_db.add_all([ghost, shell, model])
+    test_db.flush()
+    bot = Kind(
+        kind="Bot",
+        name=bot_name,
+        namespace="default",
+        user_id=owner.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": bot_name, "namespace": "default"},
+            "spec": {
+                "ghostRef": {"name": ghost_name, "namespace": "default"},
+                "shellRef": {"name": shell_name, "namespace": "default"},
+                "modelRef": {"name": model_name, "namespace": "default"},
+            },
+        },
+    )
+    test_db.add(bot)
+    test_db.flush()
+    team = Kind(
+        kind="Team",
+        name=team_name,
+        namespace="default",
+        user_id=owner.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
             "kind": "Team",
-            "spec": {},
+            "metadata": {"name": team_name, "namespace": "default"},
+            "spec": {
+                "collaborationModel": "solo",
+                "members": [
+                    {
+                        "botRef": {"name": bot_name, "namespace": "default"},
+                        "role": "leader",
+                    }
+                ],
+            },
             "status": {"state": "Available"},
         },
     )
@@ -194,6 +490,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
         json={
             "name": "交付协作组",
             "description": "人与智能体共同交付",
+            "instructions": "实现工作应该 @智能体 来完成，完成后由负责人验收",
             "leader": {
                 "kind": "human",
                 "id": str(test_user.id),
@@ -224,6 +521,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
                     },
                 }
             ],
+            "execution_requirements": {"required_tags": ["macos", "workspace-ready"]},
         },
     )
     assert create_response.status_code == 201
@@ -248,6 +546,10 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
         },
     ]
     assert group["stages"][0]["name"] == "实现"
+    assert group["instructions"] == "实现工作应该 @智能体 来完成，完成后由负责人验收"
+    assert group["execution_requirements"] == {
+        "required_tags": ["macos", "workspace-ready"]
+    }
 
     enable_response = test_client.post(
         (

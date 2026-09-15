@@ -43,7 +43,7 @@ import {
   createWeworkAutomationSharedWorkspaceApi,
   createWeworkDeliverySharedWorkspaceApi,
 } from '@/features/collaboration'
-import { weworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
+import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
@@ -201,6 +201,7 @@ export function createLocalWorkspaceApi(
       id: LOCAL_WORKSPACE_ID,
       location: 'local',
       name: locale === 'zh-CN' ? '本地空间' : 'Local space',
+      namespace: 'default',
       description:
         locale === 'zh-CN'
           ? '保存在当前设备上的项目、Issue 与执行资源。'
@@ -377,6 +378,7 @@ export function createLocalWorkspaceApi(
       listExecutionEnvironments: executionEnvironments,
       addExecutionEnvironment: unavailable,
       removeExecutionEnvironment: unavailable,
+      initializeExecutionEnvironment: unavailable,
     },
     resources: {
       list: async () => ({
@@ -454,6 +456,7 @@ export function createLocalWorkspaceApi(
       listExecutionEnvironments: executionEnvironments,
       addExecutionEnvironment: unavailable,
       removeExecutionEnvironment: unavailable,
+      initializeExecutionEnvironment: unavailable,
       importMessages: unavailable,
       listCollaborationGroups: projectCollaborationGroups,
       async createCollaborationGroup(projectId, input) {
@@ -466,6 +469,7 @@ export function createLocalWorkspaceApi(
           owner_id: projectId,
           name: input.name,
           description: input.description ?? '',
+          instructions: input.instructions ?? '',
           leader: {
             ...input.leader,
             responsibility: input.leader.responsibility ?? '',
@@ -486,6 +490,9 @@ export function createLocalWorkspaceApi(
                 }
               : null,
           })),
+          execution_requirements: {
+            required_tags: input.executionRequirements?.requiredTags ?? [],
+          },
           version: 1,
           created_by_user_id: userId,
           created_at: now,
@@ -505,6 +512,7 @@ export function createLocalWorkspaceApi(
           ...current,
           ...(input.name === undefined ? {} : { name: input.name }),
           ...(input.description === undefined ? {} : { description: input.description }),
+          ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
           ...(input.leader === undefined
             ? {}
             : {
@@ -535,6 +543,13 @@ export function createLocalWorkspaceApi(
                       }
                     : null,
                 })),
+              }),
+          ...(input.executionRequirements === undefined
+            ? {}
+            : {
+                execution_requirements: {
+                  required_tags: input.executionRequirements.requiredTags,
+                },
               }),
           version: current.version + 1,
           updated_at: new Date().toISOString(),
@@ -1017,7 +1032,7 @@ export function WeworkSharedProject({
         if (!next.issueId && focusedItemId) onFocusedItemHandled?.()
       },
       projectAgentConfiguration: {
-        ...weworkProjectAgentConfigurationHost,
+        ...createWeworkProjectAgentConfigurationHost(services.agentResourceApi),
         existingAgentSelection: existingCloudAgentsAvailable
           ? undefined
           : {
@@ -1038,6 +1053,7 @@ export function WeworkSharedProject({
       onFocusedItemHandled,
       project.id,
       project.project_store,
+      services.agentResourceApi,
       setLocation,
       workspace.id,
     ]

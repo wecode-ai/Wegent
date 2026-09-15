@@ -14,6 +14,7 @@ import type {
 } from "../ports/SharedWorkspaceApi";
 import type { CollaborationOwnedAgent, CollaborationProject } from "../types";
 import { ProjectAgentConfiguration } from "./ProjectAgentConfiguration";
+import type { ProjectAgentConfigurationHost } from "./types";
 
 const project: CollaborationProject = {
   id: "8869148083931743937",
@@ -135,6 +136,70 @@ async function change(testId: string, value: string) {
   });
 }
 
+const hostedCreationHost: ProjectAgentConfigurationHost = {
+  renderAgentCreator({ namespace, onCreated, workspaceName }) {
+    return (
+      <button
+        data-testid="hosted-agent-create"
+        data-namespace={namespace}
+        data-workspace-name={workspaceName}
+        onClick={() => void onCreated({ name: "空间新智能体", teamId: 91 })}
+        type="button"
+      >
+        创建
+      </button>
+    );
+  },
+  renderDialog({ children, testIds }) {
+    return <div data-testid={testIds.dialog}>{children}</div>;
+  },
+  renderModePicker({ onChange, options }) {
+    return (
+      <div>
+        {options.map((option) => (
+          <button
+            data-testid={option.testId}
+            disabled={option.disabled}
+            key={option.value}
+            onClick={() => onChange(option.value)}
+            type="button"
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    );
+  },
+  renderSelect({ ariaLabel, onChange, options, testId, value }) {
+    return (
+      <select
+        aria-label={ariaLabel}
+        data-testid={testId}
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  },
+  renderPrimaryAction({ children, disabled, onClick, testId }) {
+    return (
+      <button
+        data-testid={testId}
+        disabled={disabled}
+        onClick={onClick}
+        type="button"
+      >
+        {children}
+      </button>
+    );
+  },
+};
+
 describe("ProjectAgentConfiguration", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -163,7 +228,7 @@ describe("ProjectAgentConfiguration", () => {
     });
   }
 
-  it("adds an existing Agent and opens the inline standard Agent creator", async () => {
+  it("adds an existing Agent without exposing a duplicate inline creator", async () => {
     const { api, create } = createApi();
     await render(api);
 
@@ -178,18 +243,29 @@ describe("ProjectAgentConfiguration", () => {
     expect(element("project-agent-row-created-wegent")).toBeTruthy();
 
     await click("project-agent-add");
-    await click("project-agent-mode-create");
-    expect(element("project-agent-standard-create-form")).toBeTruthy();
+    expect(
+      document.querySelector('[data-testid="project-agent-mode-create"]'),
+    ).toBeNull();
+    expect(
+      document.querySelector(
+        '[data-testid="project-agent-standard-create-form"]',
+      ),
+    ).toBeNull();
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it("creates a Claude Code Agent with Skill and MCP without choosing a device", async () => {
+  it("creates a project Agent through the resource-library host and binds it to the project", async () => {
     const { api, create } = createApi({ workspaceAgents: [] });
     await act(async () => {
       root.render(
         <ProjectAgentConfiguration
           api={api}
+          host={hostedCreationHost}
           project={project}
+          resourceContext={{
+            name: "研发空间",
+            namespace: "engineering",
+          }}
           onError={vi.fn()}
           translate={(_key, fallback) => fallback}
         />,
@@ -198,42 +274,20 @@ describe("ProjectAgentConfiguration", () => {
 
     await click("project-agent-add");
     await click("project-agent-mode-create");
-    expect(element("project-agent-standard-create-form")).toBeTruthy();
-    await change("project-agent-local-name", "Claude 代码评审");
-    await change("project-agent-local-runtime", "claude_code");
-    await change("project-agent-local-model", "0");
-    await change("project-agent-local-capability", "评审当前项目代码");
-    await change("project-agent-local-system-prompt", "先检查测试，再给出结论");
-    await change("project-agent-local-skills", "review, project-space");
-    await change(
-      "project-agent-local-mcp",
-      '{"repository":{"command":"node","args":["server.mjs"]}}',
+    expect(element("hosted-agent-create").dataset.namespace).toBe(
+      "engineering",
     );
-    await click("project-agent-local-create");
+    expect(element("hosted-agent-create").dataset.workspaceName).toBe(
+      "研发空间",
+    );
+    await click("hosted-agent-create");
 
     expect(create).toHaveBeenCalledWith(project.id, {
-      name: "Claude 代码评审",
-      runtime: "claude_code",
-      capabilityDescription: "评审当前项目代码",
-      model: "desktop-e2e-responses-model",
-      modelType: "runtime",
-      modelOptions: { providerProfileId: "desktop-e2e-responses" },
-      systemPrompt: "先检查测试，再给出结论",
-      additionalSkills: [
-        { name: "review", namespace: "default" },
-        { name: "project-space", namespace: "default" },
-      ],
-      mcpServers: {
-        repository: { command: "node", args: ["server.mjs"] },
-      },
+      name: "空间新智能体",
+      runtime: "wegent",
+      wegentTeamId: 91,
     });
-    expect(
-      document.querySelector('[data-testid="project-agent-dialog"]'),
-    ).toBeNull();
-    expect(element("project-agent-row-created-codex")).toBeTruthy();
-    expect(
-      document.querySelector('[data-testid*="execution-environment"]'),
-    ).toBeNull();
+    expect(element("project-agent-row-created-wegent")).toBeTruthy();
   });
 
   it("archives an existing project agent with optimistic concurrency", async () => {
@@ -261,8 +315,14 @@ describe("ProjectAgentConfiguration", () => {
       "智能体",
     );
 
-    await click("project-agent-mode-create");
-    expect(element("project-agent-standard-create-form")).toBeTruthy();
+    expect(
+      document.querySelector('[data-testid="project-agent-mode-create"]'),
+    ).toBeNull();
+    expect(
+      document.querySelector(
+        '[data-testid="project-agent-standard-create-form"]',
+      ),
+    ).toBeNull();
 
     await render(api, { ...project, workspace_id: null });
     expect(element("project-agent-config")).toBeTruthy();

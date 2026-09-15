@@ -493,6 +493,11 @@ class WorkspaceCollaborationGroupService:
                     if values.description is not None
                     else str(current["description"])
                 ),
+                instructions=(
+                    values.instructions
+                    if values.instructions is not None
+                    else str(current["instructions"])
+                ),
                 leader=leader,
                 members=members,
                 coordination_mode=(
@@ -501,6 +506,11 @@ class WorkspaceCollaborationGroupService:
                     else str(current["coordination_mode"])
                 ),
                 stages=stages,
+                execution_requirements=(
+                    values.execution_requirements
+                    if values.execution_requirements is not None
+                    else current["execution_requirements"]
+                ),
             ),
             version=values.version + 1,
         )
@@ -654,10 +664,14 @@ def _group_payload(
         "metadata": {"name": values.name},
         "spec": {
             "description": values.description,
+            "instructions": values.instructions,
             "leader": values.leader.model_dump(mode="json"),
             "members": [member.model_dump(mode="json") for member in values.members],
             "coordinationMode": values.coordination_mode,
             "stages": [stage.model_dump(mode="json") for stage in values.stages],
+            "executionRequirements": values.execution_requirements.model_dump(
+                mode="json"
+            ),
         },
         "status": {"state": "active", "version": version},
     }
@@ -689,6 +703,12 @@ def _group_values(
     members = raw_members if isinstance(raw_members, list) else []
     raw_stages = spec.get("stages")
     stages = raw_stages if isinstance(raw_stages, list) else []
+    raw_execution_requirements = spec.get("executionRequirements")
+    execution_requirements = (
+        raw_execution_requirements
+        if isinstance(raw_execution_requirements, dict)
+        else {"required_tags": []}
+    )
     return {
         "id": group.id,
         "workspace_id": workspace_id,
@@ -696,10 +716,12 @@ def _group_values(
         "owner_id": owner_id,
         "name": group.name,
         "description": str(spec.get("description") or ""),
+        "instructions": str(spec.get("instructions") or ""),
         "leader": spec.get("leader") if isinstance(spec.get("leader"), dict) else {},
         "members": members,
         "coordination_mode": str(spec.get("coordinationMode") or "manager"),
         "stages": stages,
+        "execution_requirements": execution_requirements,
         "version": int(status_value.get("version") or 1),
         "created_by_user_id": group.user_id,
         "created_at": group.created_at,

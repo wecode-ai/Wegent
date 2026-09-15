@@ -46,6 +46,7 @@ export interface CollaborationProject {
   project_store: "local" | "backend";
   task_provider: string;
   provider_config: Record<string, unknown>;
+  execution_environment?: CollaborationExecutionEnvironmentConfig;
   board_config?: {
     group_by: "status" | "priority" | "assignee" | "tag";
     processing_start_status_id: string | null;
@@ -153,15 +154,41 @@ export interface CollaborationWorkspace {
   location: "local" | "cloud";
   name: string;
   description: string;
+  namespace: string;
   access_role: CollaborationRole | "Member";
   member_count: number;
   agent_count: number;
   execution_environment_count: number;
+  execution_environment?: CollaborationExecutionEnvironmentConfig;
   project_count: number;
   created_by_user_id: number;
   version: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface CollaborationExecutionEnvironmentConfig {
+  repositories: CollaborationExecutionEnvironmentRepository[];
+  setup_steps: CollaborationExecutionEnvironmentSetupStep[];
+  status?: "uninitialized" | "preparing" | "ready" | "error";
+  fingerprint?: string;
+  prepared_device_id?: string;
+  prepared_workspace_path?: string;
+  prepared_at?: string | null;
+  error?: string;
+}
+
+export interface CollaborationExecutionEnvironmentRepository {
+  name: string;
+  url: string;
+  ref: string;
+  path: string;
+  primary: boolean;
+}
+
+export interface CollaborationExecutionEnvironmentSetupStep {
+  command: string;
+  working_directory: string;
 }
 
 export interface CollaborationWorkspaceNavigationContext {
@@ -219,10 +246,14 @@ export interface CollaborationGroup {
   owner_id: string;
   name: string;
   description: string;
+  instructions?: string;
   leader: CollaborationGroupMember;
   members: CollaborationGroupMember[];
   coordination_mode: "manager";
   stages: CollaborationGroupStage[];
+  execution_requirements?: {
+    required_tags: string[];
+  };
   version: number;
   created_by_user_id: number;
   created_at: string;
@@ -375,6 +406,10 @@ export interface CollaborationHostAdapter {
   openExternal?(url: string): void;
   notify?(message: string, kind?: "success" | "error"): void;
   projectAgentConfiguration?: ProjectAgentConfigurationHost;
+  projectAgentResourceContext?: {
+    name: string;
+    namespace: string;
+  };
   projectCreate?: ProjectCreateHostAdapter;
   projectActions?: Array<{
     id: string;

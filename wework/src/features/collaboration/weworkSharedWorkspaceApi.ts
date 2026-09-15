@@ -458,6 +458,15 @@ export function createWeworkDeliverySharedWorkspaceApi(
               automatic_processing_rules: input.automaticProcessingRules as Parameters<
                 DeliveryApi['updateCloudProject']
               >[1]['automatic_processing_rules'],
+              execution_environment: input.executionEnvironment
+                ? {
+                    repositories: input.executionEnvironment.repositories,
+                    setup_steps: input.executionEnvironment.setupSteps.map(step => ({
+                      command: step.command,
+                      working_directory: step.workingDirectory,
+                    })),
+                  }
+                : undefined,
             }) as Parameters<DeliveryApi['updateCloudProject']>[1]
           )
           .then(toProject)
@@ -946,6 +955,17 @@ export function createWeworkSharedWorkspaceApi<
       removeExecutionEnvironment(projectId, deviceId) {
         return client.delete(
           `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments/${encodeURIComponent(deviceId)}`
+        )
+      },
+      async initializeExecutionEnvironment(projectId, input) {
+        return toProject(
+          await client.post<CloudProject>(
+            `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environment/initialize`,
+            {
+              device_id: input.deviceId,
+              version: input.version,
+            }
+          )
         )
       },
       importMessages(projectId, input) {

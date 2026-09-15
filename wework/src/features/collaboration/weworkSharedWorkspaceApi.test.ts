@@ -272,11 +272,45 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       cardDisplay: project.card_display,
       pullRequestAutomation: { enabled: true },
       workflowDefinition: { version: 1 },
+      executionEnvironment: {
+        repositories: [
+          {
+            name: 'Wegent',
+            url: 'https://github.com/wecode-ai/Wegent.git',
+            ref: 'main',
+            path: 'wegent',
+            primary: true,
+          },
+        ],
+        setupSteps: [
+          {
+            command: 'pnpm install',
+            workingDirectory: 'wegent',
+          },
+        ],
+      },
     })
     expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith('project-1', {
       version: 2,
       pull_request_automation: { enabled: true },
       workflow_definition: { version: 1 },
+      execution_environment: {
+        repositories: [
+          {
+            name: 'Wegent',
+            url: 'https://github.com/wecode-ai/Wegent.git',
+            ref: 'main',
+            path: 'wegent',
+            primary: true,
+          },
+        ],
+        setup_steps: [
+          {
+            command: 'pnpm install',
+            working_directory: 'wegent',
+          },
+        ],
+      },
     })
     await api.projects.archive('project-1', 2)
     await expect(api.myWork.list()).resolves.toEqual([issue])
@@ -661,7 +695,21 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       created_at: '2026-09-11T00:00:00Z',
       updated_at: '2026-09-11T00:00:00Z',
     }
-    const mappedWorkspace = { ...workspace, location: 'cloud' as const }
+    const mappedWorkspace = {
+      ...workspace,
+      location: 'cloud' as const,
+      namespace: 'default',
+      execution_environment: {
+        repositories: [],
+        setup_steps: [],
+        status: 'uninitialized',
+        fingerprint: '',
+        prepared_device_id: '',
+        prepared_workspace_path: '',
+        prepared_at: null,
+        error: '',
+      },
+    }
     const client = {
       get: vi.fn().mockImplementation(async (endpoint: string) => {
         if (endpoint === '/v1/workspaces') return { items: [workspace] }

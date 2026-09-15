@@ -24,6 +24,10 @@ interface CollaborationSettingsProps {
   onError(): void;
   onAgentsChange?(): void;
   agentConfigurationHost?: ProjectAgentConfigurationHost;
+  agentResourceContext?: {
+    name: string;
+    namespace: string;
+  };
   embedded?: boolean;
   translate: CollaborationTranslate;
   section?: "overview" | "members" | "agents" | "board";
@@ -74,6 +78,7 @@ export function CollaborationSettings({
   onError,
   onAgentsChange,
   agentConfigurationHost,
+  agentResourceContext,
   embedded = false,
   translate,
   section = "overview",
@@ -139,6 +144,7 @@ export function CollaborationSettings({
           api={api}
           host={agentConfigurationHost}
           project={project}
+          resourceContext={agentResourceContext}
           onError={onError}
           onAgentsChange={onAgentsChange}
           translate={translate}

@@ -9,6 +9,7 @@ const PROJECT_NAME = '协作组验收项目'
 const WORKSPACE_GROUP_NAME = '空间交付协作组'
 const PROJECT_GROUP_NAME = '项目响应协作组'
 const PROJECT_AGENT_NAME = '项目 Codex 负责人'
+const PROJECT_AGENT_RESOURCE_NAME = 'project-codex-owner'
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -257,35 +258,37 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           timeoutMs: uiTimeoutMs,
         })
         await control.command('click', '[data-testid="project-agent-mode-create"]')
-        await control.command('waitFor', '[data-testid="project-agent-standard-create-form"]', {
+        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
           timeoutMs: uiTimeoutMs,
         })
         const agentDialogSnapshot = JSON.parse(
-          await control.command('snapshot', '[data-testid="project-agent-dialog"]')
+          await control.command('snapshot', '[data-testid="wework-agent-resource-creator"]')
         )
         assert.ok(
           !agentDialogSnapshot.testIds.some(testId => testId.includes('execution-environment')),
           'Custom Agent creation must not bind an execution environment'
         )
         await capture(control, 'project-automation-02-agent-create-without-environment.png')
-        await control.command('fill', '[data-testid="project-agent-local-name"]', {
+        await control.command('fill', '[data-testid="wework-agent-resource-name"]', {
+          value: `${PROJECT_AGENT_RESOURCE_NAME}-${process.pid}`,
+        })
+        await control.command('fill', '[data-testid="wework-agent-display-name"]', {
           value: PROJECT_AGENT_NAME,
         })
-        await control.command('select', '[data-testid="project-agent-local-runtime"]', {
-          value: 'codex',
+        await control.command('select', '[data-testid="wework-agent-runtime"]', {
+          value: 'Codex',
         })
-        await control.command('select', '[data-testid="project-agent-local-model"]', {
-          value: '0',
+        await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
+          value: '负责 Issue 分解、委派与交付验收。按项目约束完成任务并给出可验证证据。',
         })
-        await control.command('fill', '[data-testid="project-agent-local-capability"]', {
-          value: '负责 Issue 分解、委派与交付验收',
-        })
-        await control.command('fill', '[data-testid="project-agent-local-system-prompt"]', {
-          value: '按项目约束完成任务并给出可验证证据。',
-        })
-        await control.command('clickWhenEnabled', '[data-testid="project-agent-local-create"]', {
-          timeoutMs: uiTimeoutMs,
-        })
+        await control.command('fill', '[data-testid="wework-agent-mcp"]', { value: '{}' })
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="wework-agent-resource-create"]',
+          {
+            timeoutMs: uiTimeoutMs,
+          }
+        )
         const projectAgent = await waitForApiValue(
           () => request(`/api/v1/cloud-projects/${project.id}/chat-agents`),
           response => response.find(candidate => candidate.name === PROJECT_AGENT_NAME) ?? null,

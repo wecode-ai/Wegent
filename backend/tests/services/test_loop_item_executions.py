@@ -169,24 +169,172 @@ def _make_bot(
 def _make_wegent_bot(
     db: Session, project: CloudProject, user: User
 ) -> tuple[ProjectChatAgent, Kind]:
-    team = Kind(
-        kind="Team",
-        name=f"board-team-{uuid.uuid4().hex[:8]}",
+    return _make_native_team_binding(db, project, user, shell_type="Chat")
+
+
+def _make_native_team_binding(
+    db: Session,
+    project: CloudProject,
+    user: User,
+    *,
+    shell_type: str,
+) -> tuple[ProjectChatAgent, Kind]:
+    suffix = uuid.uuid4().hex[:8]
+    skill = Kind(
+        kind="Skill",
+        name=f"review-skill-{suffix}",
         namespace="default",
         user_id=user.id,
         is_active=True,
-        json={},
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Skill",
+            "metadata": {
+                "name": f"review-skill-{suffix}",
+                "namespace": "default",
+            },
+            "spec": {
+                "description": "Review the project result.",
+                "prompt": "Review every changed file.",
+                "bindShells": [shell_type],
+            },
+        },
+    )
+    db.add(skill)
+    db.flush()
+    ghost_name = f"native-ghost-{suffix}"
+    ghost = Kind(
+        kind="Ghost",
+        name=ghost_name,
+        namespace="default",
+        user_id=user.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Ghost",
+            "metadata": {"name": ghost_name, "namespace": "default"},
+            "spec": {
+                "systemPrompt": "Follow the referenced AgentSpec.",
+                "skills": [skill.name],
+                "skill_refs": {
+                    skill.name: {
+                        "skill_id": skill.id,
+                        "namespace": "default",
+                        "is_public": False,
+                    }
+                },
+                "mcpServers": {
+                    "repo": {
+                        "command": "node",
+                        "args": ["repo-server.mjs"],
+                    }
+                },
+            },
+        },
+    )
+    shell = Kind(
+        kind="Shell",
+        name=f"{shell_type}-{suffix}",
+        namespace="default",
+        user_id=user.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Shell",
+            "metadata": {
+                "name": f"{shell_type}-{suffix}",
+                "namespace": "default",
+            },
+            "spec": {
+                "shellType": shell_type,
+                "baseImage": "native-runtime:test",
+            },
+            "status": {"state": "Available"},
+        },
+    )
+    model = Kind(
+        kind="Model",
+        name=f"native-model-{suffix}",
+        namespace="default",
+        user_id=user.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {
+                "name": f"native-model-{suffix}",
+                "namespace": "default",
+            },
+            "spec": {
+                "modelConfig": {
+                    "env": {
+                        "model": "claude" if shell_type == "ClaudeCode" else "codex",
+                        "model_id": f"runtime-model-{suffix}",
+                        "api_key": "test-key",
+                        "base_url": "https://gateway.example.test",
+                    }
+                }
+            },
+        },
+    )
+    db.add_all([ghost, shell, model])
+    db.flush()
+    bot_name = f"native-bot-{suffix}"
+    native_bot = Kind(
+        kind="Bot",
+        name=bot_name,
+        namespace="default",
+        user_id=user.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": bot_name, "namespace": "default"},
+            "spec": {
+                "ghostRef": {"name": ghost.name, "namespace": "default"},
+                "shellRef": {"name": shell.name, "namespace": "default"},
+                "modelRef": {"name": model.name, "namespace": "default"},
+            },
+        },
+    )
+    db.add(native_bot)
+    db.flush()
+    team_name = f"native-team-{suffix}"
+    team = Kind(
+        kind="Team",
+        name=team_name,
+        namespace="default",
+        user_id=user.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {"name": team_name, "namespace": "default"},
+            "spec": {
+                "collaborationModel": "solo",
+                "members": [
+                    {
+                        "botRef": {
+                            "name": native_bot.name,
+                            "namespace": "default",
+                        },
+                        "prompt": "Apply the project-specific responsibility.",
+                        "role": "worker",
+                    }
+                ],
+            },
+        },
     )
     db.add(team)
     db.flush()
-    bot = ProjectChatAgent(
+    binding = ProjectChatAgent(
         id=f"B{uuid.uuid4().hex[:10]}",
         cloud_project_id=project.id,
-        title="Wegent Execution Bot",
-        name="Wegent Execution Bot",
+        title=f"{shell_type} Agent",
+        name=f"{shell_type} Agent",
         status="active",
         created_by_user_id=user.id,
-        device_id="",
+        device_id=None,
         metadata_json={
             "runtime": "wegent",
             "wegent_team_id": team.id,
@@ -194,11 +342,11 @@ def _make_wegent_bot(
             "visibility": "public",
         },
     )
-    db.add(bot)
+    db.add(binding)
     db.commit()
-    db.refresh(bot)
+    db.refresh(binding)
     db.refresh(team)
-    return bot, team
+    return binding, team
 
 
 def _make_item(
@@ -2298,6 +2446,216 @@ def test_project_agent_runtime_and_capabilities_reach_runtime_request(
             ],
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("shell_type", "runtime"),
+    [
+        ("Codex", "codex"),
+        ("ClaudeCode", "claude_code"),
+    ],
+)
+def test_team_reference_compiles_to_native_project_runtime(
+    test_db: Session,
+    test_user: User,
+    shell_type: str,
+    runtime: str,
+) -> None:
+    project = _make_project(test_db, test_user)
+    agent, team = _make_native_team_binding(
+        test_db,
+        project,
+        test_user,
+        shell_type=shell_type,
+    )
+    item = _make_item(test_db, project, test_user)
+    _ensure_device(test_db, test_user, "cloud-device-1")
+
+    config = project_robot_execution_config(test_db, agent)
+
+    assert agent.metadata_json == {
+        "runtime": "wegent",
+        "wegent_team_id": team.id,
+        "execution_mode": "auto",
+        "visibility": "public",
+    }
+    assert config.runtime == runtime
+    assert config.model and config.model.startswith("native-model-")
+    assert config.model_type == "user"
+    assert config.system_prompt == (
+        "<base_prompt>\n"
+        "Follow the referenced AgentSpec.\n\n"
+        "Apply the project-specific responsibility.\n"
+        "</base_prompt>"
+    )
+    assert config.additional_skills == [
+        {
+            "name": next(
+                row.name
+                for row in test_db.query(Kind).filter(Kind.kind == "Skill").all()
+                if row.name.startswith("review-skill-")
+            ),
+            "namespace": "default",
+        }
+    ]
+    assert config.mcp_servers == {
+        "repo": {
+            "command": "node",
+            "args": ["repo-server.mjs"],
+        }
+    }
+
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=agent,
+        assigner_user_id=test_user.id,
+        environment="cloud",
+        execution_device_id="cloud-device-1",
+        priority=item.priority,
+        automation_context=execution_context(
+            config,
+            runtime_subject_user_id=test_user.id,
+        ),
+    )
+
+    assert execution.optional_team_id is None
+    assert execution.execution_environment == "cloud"
+    assert execution.execution_device_id == "cloud-device-1"
+    assert execution.runtime_selection["model"] == config.model
+    request = execution.runtime_request
+    assert request["runtime"] == runtime
+    assert request["deviceId"] == "cloud-device-1"
+    assert request["modelId"] == config.model
+    assert request["projectInstructions"] == config.system_prompt
+    assert request["additionalSkills"] == config.additional_skills
+    assert request["bot"] == [
+        {
+            "id": agent.id,
+            "name": f"{shell_type} Agent",
+            "shell_type": shell_type,
+            "mcp_servers": [
+                {
+                    "name": "repo",
+                    "command": "node",
+                    "args": ["repo-server.mjs"],
+                }
+            ],
+        }
+    ]
+
+
+def test_project_execution_environment_reaches_runtime_request(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    metadata = dict(project.metadata_json or {})
+    metadata["execution_environment"] = {
+        "repositories": [
+            {
+                "name": "Wegent",
+                "url": "https://github.com/wecode-ai/Wegent.git",
+                "ref": "main",
+                "path": "wegent",
+                "primary": True,
+            },
+            {
+                "name": "SDK",
+                "url": "https://github.com/example/sdk.git",
+                "ref": "v2",
+                "path": "deps/sdk",
+                "primary": False,
+            },
+        ],
+        "setup_steps": [
+            {"command": "corepack enable", "working_directory": "wegent"},
+            {"command": "pnpm install", "working_directory": "wegent"},
+        ],
+        "status": "ready",
+        "fingerprint": "environment-v1",
+        "prepared_device_id": "cloud-device-1",
+        "prepared_workspace_path": "/workspace/environments/project-1",
+    }
+    project.metadata_json = metadata
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    test_db.commit()
+
+    request = WeworkExecutionProfile.for_project_robot(bot).build_runtime_request(
+        test_db,
+        execution_id=322,
+        runtime_task_id="environment-runtime-task",
+        task=TaskContext(
+            id=item.id,
+            cloud_project_id=str(project.id),
+            title=item.title,
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={},
+        execution_device_id="cloud-device-1",
+    )
+    payload = request.model_dump(by_alias=True, exclude_none=True)
+
+    assert payload["execution"] == {
+        "workspace": {
+            "source": "git_worktree",
+            "repositories": [
+                {
+                    "name": "Wegent",
+                    "url": "https://github.com/wecode-ai/Wegent.git",
+                    "ref": "main",
+                    "path": "wegent",
+                    "primary": True,
+                },
+                {
+                    "name": "SDK",
+                    "url": "https://github.com/example/sdk.git",
+                    "ref": "v2",
+                    "path": "deps/sdk",
+                    "primary": False,
+                },
+            ],
+        },
+        "setup": {
+            "steps": [
+                {"command": "corepack enable", "workingDirectory": "wegent"},
+                {"command": "pnpm install", "workingDirectory": "wegent"},
+            ],
+            "fingerprint": "environment-v1",
+        },
+    }
+    assert payload["origin"]["executionEnvironment"] == {
+        "repositories": [
+            {
+                "name": "Wegent",
+                "url": "https://github.com/wecode-ai/Wegent.git",
+                "ref": "main",
+                "path": "wegent",
+                "primary": True,
+            },
+            {
+                "name": "SDK",
+                "url": "https://github.com/example/sdk.git",
+                "ref": "v2",
+                "path": "deps/sdk",
+                "primary": False,
+            },
+        ],
+        "setup_steps": [
+            {"command": "corepack enable", "workingDirectory": "wegent"},
+            {"command": "pnpm install", "workingDirectory": "wegent"},
+        ],
+        "status": "ready",
+        "fingerprint": "environment-v1",
+        "prepared_device_id": "cloud-device-1",
+        "prepared_workspace_path": "/workspace/environments/project-1",
+    }
+    assert payload["workspacePath"] == "/workspace/environments/project-1"
 
 
 def test_claude_code_project_agent_compiles_executor_payload(

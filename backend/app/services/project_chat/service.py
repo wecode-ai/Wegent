@@ -28,6 +28,7 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
+from app.schemas.kind import Bot, Ghost, Shell, Team
 from app.schemas.project_chat import (
     ProjectChatAgentCreate,
     ProjectChatAgentFailure,
@@ -209,6 +210,150 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
         "system_prompt": metadata.get("system_prompt", ""),
         "max_concurrent_executions": bot_max_concurrent_executions(row),
         "workspace_policy": bot_workspace_policy(row),
+    }
+
+
+def compiled_bot_config(
+    db: Session,
+    row: ProjectChatAgent,
+    *,
+    execution_user_id: int | None = None,
+) -> dict[str, object]:
+    """Compile a project Agent binding into its current execution contract.
+
+    A project binding stores only the referenced Team identity. Solo Teams backed
+    by a native Codex or ClaudeCode Shell execute on the Project Runtime, while
+    every other Team keeps the managed Wegent execution path.
+    """
+
+    config = bot_config(row)
+    if config["runtime"] != "wegent":
+        return config
+
+    team_id = config.get("wegent_team_id")
+    if not isinstance(team_id, int):
+        return config
+
+    binding_user_id = int(row.created_by_user_id or execution_user_id or 0)
+    from app.services.execution.team_readiness import (
+        validate_team_execution_readiness,
+    )
+    from app.services.project_automation_domain import wegent_team
+
+    team = wegent_team(db, binding_user_id, team_id)
+    resolved_execution_user_id = int(execution_user_id or binding_user_id)
+    try:
+        validate_team_execution_readiness(
+            db,
+            team=team,
+            execution_user_id=resolved_execution_user_id,
+        )
+        team_crd = Team.model_validate(team.json)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Wegent Team is not runnable: {exc}",
+        ) from exc
+
+    members = team_crd.spec.members
+    if team_crd.spec.collaborationModel != "solo" or len(members) != 1:
+        return config
+
+    member = members[0]
+    from app.services.readers import KindType, kindReader
+
+    bot = kindReader.get_by_name_and_namespace(
+        db,
+        team.user_id,
+        KindType.BOT,
+        member.botRef.namespace,
+        member.botRef.name,
+    )
+    if bot is None:
+        return config
+    bot_crd = Bot.model_validate(bot.json)
+    shell = kindReader.get_by_name_and_namespace(
+        db,
+        team.user_id,
+        KindType.SHELL,
+        bot_crd.spec.shellRef.namespace,
+        bot_crd.spec.shellRef.name,
+    )
+    if shell is None:
+        return config
+    shell_type = Shell.model_validate(shell.json).spec.shellType
+    native_runtime = {
+        "Codex": "codex",
+        "ClaudeCode": "claude_code",
+    }.get(shell_type)
+    if native_runtime is None:
+        return config
+
+    ghost = kindReader.get_by_name_and_namespace(
+        db,
+        team.user_id,
+        KindType.GHOST,
+        bot_crd.spec.ghostRef.namespace,
+        bot_crd.spec.ghostRef.name,
+    )
+    if ghost is None:
+        return config
+    ghost_crd = Ghost.model_validate(ghost.json)
+
+    from app.services.chat.config.model_resolver import (
+        get_bot_system_prompt,
+        resolve_model_name_for_bot,
+    )
+
+    model_name = resolve_model_name_for_bot(
+        db,
+        bot,
+        resolved_execution_user_id,
+    )
+    model_kind = None
+    if bot_crd.spec.modelRef is not None:
+        model_kind = kindReader.get_by_name_and_namespace(
+            db,
+            resolved_execution_user_id,
+            KindType.MODEL,
+            bot_crd.spec.modelRef.namespace,
+            bot_crd.spec.modelRef.name,
+        )
+    if model_kind is None:
+        model_type = "runtime"
+    elif model_kind.user_id == 0:
+        model_type = "public"
+    elif model_kind.namespace == "default":
+        model_type = "user"
+    else:
+        model_type = "group"
+
+    skill_refs = ghost_crd.spec.skill_refs or {}
+    additional_skills = [
+        {
+            "name": name,
+            "namespace": (
+                skill_refs[name].namespace
+                if name in skill_refs
+                else bot_crd.spec.ghostRef.namespace
+            ),
+        }
+        for name in (ghost_crd.spec.skills or [])
+    ]
+    return {
+        **config,
+        "runtime": native_runtime,
+        "model": model_name,
+        "model_type": model_type,
+        "model_options": {},
+        "system_prompt": get_bot_system_prompt(
+            db,
+            bot,
+            team.user_id,
+            member.prompt,
+        ),
+        "additional_skills": additional_skills,
+        "mcp_servers": ghost_crd.spec.mcpServers or {},
     }
 
 

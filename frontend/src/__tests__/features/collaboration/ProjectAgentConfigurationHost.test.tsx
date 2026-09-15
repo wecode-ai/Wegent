@@ -39,7 +39,7 @@ describe('webProjectAgentConfigurationHost', () => {
                   value: 'existing',
                 },
                 {
-                  description: '使用标准表单',
+                  description: '使用资源库表单',
                   label: '新建智能体',
                   testId: 'mode-create',
                   value: 'create',
@@ -53,13 +53,6 @@ describe('webProjectAgentConfigurationHost', () => {
               options: [{ label: '研发团队', value: '12' }],
               placeholder: '选择智能体',
               testId: 'agent-select',
-              value: '',
-            })}
-            {webProjectAgentConfigurationHost.renderTextControl({
-              ariaLabel: '名称',
-              onChange: jest.fn(),
-              placeholder: '智能体名称',
-              testId: 'agent-name',
               value: '',
             })}
             {webProjectAgentConfigurationHost.renderPrimaryAction({
@@ -89,7 +82,6 @@ describe('webProjectAgentConfigurationHost', () => {
     )
     expect(screen.getByTestId('mode-create-card')).toHaveClass('border-border', 'bg-base')
     expect(screen.getByTestId('agent-select')).toHaveClass('border-border', 'rounded-lg')
-    expect(screen.getByTestId('agent-name')).toHaveClass('border-border', 'rounded-lg')
     expect(screen.getByTestId('agent-submit')).toHaveClass('bg-primary', 'rounded-lg')
 
     fireEvent.click(screen.getByTestId('mode-create'))

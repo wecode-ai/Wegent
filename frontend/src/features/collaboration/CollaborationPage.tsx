@@ -17,19 +17,14 @@ import {
 import { toast } from 'sonner'
 
 import { apiClient } from '@/apis/client'
+import { listGroups } from '@/apis/groups'
 import TopNavigation from '@/features/layout/TopNavigation'
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
+import { CollaborationContextSidebar } from '@/features/collaboration/CollaborationContextSidebar'
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webProjectAgentConfigurationHost } from '@/features/collaboration/ProjectAgentConfigurationHost'
 import { collaborationLocationPath } from '@/features/collaboration/routes'
-import {
-  CollapsedSidebarButtons,
-  ResizableSidebar,
-  TaskSidebar,
-} from '@/features/tasks/components/sidebar'
-import { useTaskSession } from '@/features/tasks/session/TaskSession'
-
+import { ResizableSidebar } from '@/features/tasks/components/sidebar'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 
@@ -47,55 +42,47 @@ function workspaceViewFromPath(pathname: string): CollaborationWorkspaceView {
 }
 
 function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: ReactNode }) {
-  const router = useRouter()
   const pathname = usePathname()
-  const isMobile = useIsMobile()
-  const { selectTask } = useTaskSession()
+  const { t } = useTranslation('common')
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-  const [isCollapsed, setIsCollapsed] = useState(false)
-
-  useEffect(() => {
-    setIsCollapsed(localStorage.getItem('task-sidebar-collapsed') === 'true')
-  }, [])
 
   useEffect(() => {
     setIsMobileSidebarOpen(false)
   }, [pathname])
 
-  const handleToggleCollapsed = () => {
-    setIsCollapsed(current => {
-      const next = !current
-      localStorage.setItem('task-sidebar-collapsed', String(next))
-      return next
-    })
-  }
-
-  const handleNewTask = () => {
-    selectTask(null)
-    router.replace('/chat')
-  }
-
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border [--collaboration-primary-background:rgb(var(--color-primary))] [--collaboration-primary-foreground:rgb(var(--color-primary-contrast))]">
-      {isCollapsed && !isMobile && (
-        <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
-      )}
-      <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
-        <TaskSidebar
-          isMobileSidebarOpen={isMobileSidebarOpen}
-          setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-          pageType="collaboration"
-          isCollapsed={isCollapsed}
-          onToggleCollapsed={handleToggleCollapsed}
-          contextSection={sidebar}
-        />
+      <ResizableSidebar
+        minWidth={220}
+        maxWidth={360}
+        defaultWidth={244}
+        storageKey="collaboration-sidebar-width"
+      >
+        <CollaborationContextSidebar workspaceTree={sidebar} />
       </ResizableSidebar>
+      {isMobileSidebarOpen ? (
+        <div className="fixed inset-0 z-50 flex lg:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/30"
+            aria-label={t('collaboration_sidebar.close_navigation')}
+            onClick={() => setIsMobileSidebarOpen(false)}
+          />
+          <div className="relative h-full">
+            <CollaborationContextSidebar
+              workspaceTree={sidebar}
+              mobile
+              onNavigate={() => setIsMobileSidebarOpen(false)}
+            />
+          </div>
+        </div>
+      ) : null}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <div className="lg:hidden">
           <TopNavigation
             variant="with-sidebar"
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
-            isSidebarCollapsed={isCollapsed}
+            isSidebarCollapsed={false}
           />
         </div>
         <div
@@ -115,6 +102,36 @@ export function CollaborationPage() {
   const searchParams = useSearchParams()
   const { getCurrentLanguage } = useTranslation()
   const api = useMemo(() => createWebSharedWorkspaceApi(apiClient), [])
+  const locale: CollaborationLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
+  const personalOwnerLabel = locale === 'zh-CN' ? '个人' : 'Personal'
+  const [workspaceOwnerOptions, setWorkspaceOwnerOptions] = useState([
+    { label: personalOwnerLabel, namespace: 'default' },
+  ])
+
+  useEffect(() => {
+    let active = true
+    void listGroups({ page: 1, limit: 100 })
+      .then(response => {
+        if (!active) return
+        setWorkspaceOwnerOptions([
+          { label: personalOwnerLabel, namespace: 'default' },
+          ...response.items
+            .filter(group => ['Owner', 'Maintainer', 'Developer'].includes(group.my_role ?? ''))
+            .map(group => ({
+              label: group.display_name || group.name,
+              namespace: group.name,
+            })),
+        ])
+      })
+      .catch(() => {
+        if (active) {
+          setWorkspaceOwnerOptions([{ label: personalOwnerLabel, namespace: 'default' }])
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [personalOwnerLabel])
 
   const segments = pathname.split('/').filter(Boolean)
   const workspaceRoute = segments[1] === 'workspaces'
@@ -123,10 +140,15 @@ export function CollaborationPage() {
   const projectId = projectRoute && segments[4] ? decodeURIComponent(segments[4]) : null
   const issueId =
     projectRoute && segments[5] === 'issues' && segments[6] ? decodeURIComponent(segments[6]) : null
-  const removedMyWorkRoute = pathname === '/collaboration/my-work'
+  const myWorkRoute = pathname === '/collaboration/my-work'
+  const inboxRoute = pathname === '/collaboration/inbox'
+  const runsRoute = pathname === '/collaboration/runs'
   const removedResourcesRoute = pathname === '/collaboration/resources'
+  const rootView = myWorkRoute ? 'my-work' : inboxRoute ? 'inbox' : runsRoute ? 'runs' : 'home'
   const legacyProjectId =
-    !workspaceRoute && segments[1] && segments[1] !== 'resources' && !removedMyWorkRoute
+    !workspaceRoute &&
+    segments[1] &&
+    !['resources', 'my-work', 'inbox', 'runs'].includes(segments[1])
       ? decodeURIComponent(segments[1])
       : null
   const legacyIssueId =
@@ -138,7 +160,6 @@ export function CollaborationPage() {
     rawView && PROJECT_VIEWS.has(rawView as CollaborationView)
       ? (rawView as CollaborationView)
       : 'board'
-  const locale: CollaborationLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
   useEffect(() => {
     if (
       !projectRoute ||
@@ -161,7 +182,7 @@ export function CollaborationPage() {
     )
   }, [issueId, projectId, projectRoute, rawView, router, workspaceId])
   useEffect(() => {
-    if (removedMyWorkRoute || removedResourcesRoute) {
+    if (removedResourcesRoute) {
       router.replace('/collaboration')
       return
     }
@@ -195,15 +216,7 @@ export function CollaborationPage() {
     return () => {
       active = false
     }
-  }, [
-    api,
-    legacyIssueId,
-    legacyProjectId,
-    projectView,
-    removedMyWorkRoute,
-    removedResourcesRoute,
-    router,
-  ])
+  }, [api, legacyIssueId, legacyProjectId, projectView, removedResourcesRoute, router])
 
   const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
@@ -216,6 +229,7 @@ export function CollaborationPage() {
       },
       location: {
         platformView: 'spaces',
+        rootView,
         workspaceId,
         workspaceView: workspaceViewFromPath(pathname),
         projectId,
@@ -253,9 +267,19 @@ export function CollaborationPage() {
         if (kind === 'success') toast.success(message)
         else toast.error(message)
       },
+      workspaceOwnerOptions,
       projectAgentConfiguration: webProjectAgentConfigurationHost,
     }),
-    [issueId, pathname, projectId, projectView, router, workspaceId]
+    [
+      issueId,
+      pathname,
+      projectId,
+      projectView,
+      rootView,
+      router,
+      workspaceId,
+      workspaceOwnerOptions,
+    ]
   )
 
   if (legacyProjectId) {

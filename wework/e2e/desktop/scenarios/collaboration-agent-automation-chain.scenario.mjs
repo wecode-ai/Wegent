@@ -3,6 +3,7 @@ import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import JSZip from 'jszip'
 
 import { localHarnessCliPath } from '../modules/local-harness-cli.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -23,8 +24,9 @@ import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
-const SKILL_NAME = 'wework-plugin-creator'
-const SKILL_UI_REFERENCE = `codex/${SKILL_NAME}`
+const SKILL_NAME = `collaboration-chain-skill-${process.pid}`
+const SKILL_UI_REFERENCE = `default/${SKILL_NAME}`
+const SKILL_CONTENT_MARKER = 'COLLABORATION_CHAIN_REAL_SKILL'
 const MCP_NAMESPACE = 'wework_space'
 const WORKSPACE_NAME = '协作链路验收空间'
 const PROJECT_NAME = '双智能体自动处理项目'
@@ -177,6 +179,12 @@ function agentList(response) {
   return Array.isArray(response) ? response : (response?.items ?? [])
 }
 
+function collaborationGroupAgentId(agent) {
+  return String(
+    agent.teamId ?? agent.team_id ?? agent.wegentTeamId ?? agent.wegent_team_id ?? agent.id
+  )
+}
+
 function summarizeModelRequest(body, issue, agent, ids) {
   return {
     agent,
@@ -210,6 +218,7 @@ export async function createDesktopScenario({
   let authToken = ''
   let workspace = null
   let project = null
+  let skillResource = null
   let codexAgent = null
   let claudeAgent = null
   let collaborationGroup = null
@@ -227,6 +236,47 @@ export async function createDesktopScenario({
 
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
+
+  async function createRealSkill() {
+    const archive = new JSZip()
+    archive.file(
+      `${SKILL_NAME}/SKILL.md`,
+      [
+        '---',
+        `name: ${SKILL_NAME}`,
+        'description: Real collaboration-chain E2E skill.',
+        'version: 1.0.0',
+        'author: Wegent E2E',
+        'bindShells: ["Codex", "ClaudeCode"]',
+        '---',
+        '',
+        `Always preserve the marker ${SKILL_CONTENT_MARKER} in execution context.`,
+        '',
+      ].join('\n')
+    )
+    const form = new FormData()
+    form.append(
+      'file',
+      new Blob([await archive.generateAsync({ type: 'uint8array' })], {
+        type: 'application/zip',
+      }),
+      `${SKILL_NAME}.zip`
+    )
+    form.append('name', SKILL_NAME)
+    form.append('namespace', 'default')
+    const response = await fetch(`${backendUrl}/api/v1/kinds/skills/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: form,
+    })
+    const text = await response.text()
+    assert.equal(
+      response.ok,
+      true,
+      `Real Skill upload failed with HTTP ${response.status}: ${text}`
+    )
+    return JSON.parse(text)
+  }
 
   function issueFromRequest(serialized) {
     for (const issue of [createdIssue, tagIssue].filter(Boolean)) {
@@ -455,26 +505,68 @@ export async function createDesktopScenario({
     )
     await control.command(
       'waitFor',
-      scoped('[data-testid="collaboration-project-execution-environment-select"]'),
+      scoped('[data-testid="collaboration-project-execution-environment-add"]'),
       { timeoutMs: uiTimeoutMs }
     )
     const devices = await request('/api/devices')
     const device = devices.items.find(candidate => candidate.device_id === CLOUD_DEVICE_ID)
     assert.ok(device?.id, 'The real cloud Executor device was not registered')
     await control.command(
-      'select',
-      scoped('[data-testid="collaboration-project-execution-environment-select"]'),
-      { value: String(device.id) }
+      'clickWhenEnabled',
+      scoped('[data-testid="collaboration-project-execution-environment-add"]'),
+      { timeoutMs: uiTimeoutMs }
     )
     await control.command(
       'clickWhenEnabled',
-      scoped('[data-testid="collaboration-project-execution-environment-add"]'),
+      scoped(`[data-testid="collaboration-project-execution-environment-candidate-${device.id}"]`),
       { timeoutMs: uiTimeoutMs }
     )
     await control.command(
       'waitFor',
       scoped(`[data-testid="collaboration-project-execution-environment-${device.id}"]`),
       { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'fill',
+      scoped('[data-testid="collaboration-project-execution-environment-repository-name-0"]'),
+      { value: 'Wegent' }
+    )
+    await control.command(
+      'fill',
+      scoped('[data-testid="collaboration-project-execution-environment-repository-path-0"]'),
+      { value: 'wegent' }
+    )
+    await control.command(
+      'fill',
+      scoped('[data-testid="collaboration-project-execution-environment-repository-url-0"]'),
+      { value: REPOSITORY_ROOT }
+    )
+    await control.command(
+      'click',
+      scoped('[data-testid="collaboration-project-execution-environment-add-setup-step"]')
+    )
+    await control.command(
+      'fill',
+      scoped('[data-testid="collaboration-project-execution-environment-setup-command-0"]'),
+      { value: 'test -f AGENTS.md && printf ready > .collaboration-e2e-ready' }
+    )
+    await control.command(
+      'fill',
+      scoped('[data-testid="collaboration-project-execution-environment-setup-directory-0"]'),
+      { value: 'wegent' }
+    )
+    await control.command(
+      'clickWhenEnabled',
+      scoped(`[data-testid="collaboration-project-execution-environment-initialize-${device.id}"]`),
+      { timeoutMs: Math.max(uiTimeoutMs, 60_000) }
+    )
+    await control.command(
+      'waitFor',
+      scoped(`[data-testid="collaboration-project-execution-environment-${device.id}"]`),
+      {
+        text: '环境已就绪',
+        timeoutMs: Math.max(uiTimeoutMs, 60_000),
+      }
     )
     const environments = await request(
       `/api/v1/cloud-projects/${project.id}/execution-environments`
@@ -483,20 +575,42 @@ export async function createDesktopScenario({
       environments.items.some(environment => environment.device_id === device.id),
       'The project device pool did not persist the real cloud Executor'
     )
+    const configuredProject = await request(`/api/v1/cloud-projects/${project.id}`)
+    assert.equal(configuredProject.execution_environment?.status, 'ready')
+    assert.equal(
+      configuredProject.execution_environment?.prepared_device_id,
+      CLOUD_DEVICE_ID,
+      'The initialized environment was prepared on the configured real cloud Executor'
+    )
+    assert.ok(
+      configuredProject.execution_environment?.prepared_workspace_path,
+      'The real environment initialization did not persist its workspace path'
+    )
     await capture(control, 'collaboration-agent-chain-04-device-pool.png')
   }
 
-  async function createProjectAgentThroughUi(control, { name, runtime, systemMarker }) {
+  async function createProjectAgentThroughUi(
+    control,
+    { name, nativeRuntime, shellRuntime, systemMarker }
+  ) {
     const modelCatalog = await request(
       '/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
     )
     const selectableModels = (modelCatalog.data ?? []).filter(
-      model => model.isActive !== false && model.modelCategoryType !== 'image'
+      model =>
+        model.isActive !== false &&
+        !model.compatibilityDisabled &&
+        model.modelCategoryType !== 'image'
     )
     const publicModelIndex = selectableModels.findIndex(
       model => model.name === MODEL_NAME && model.type === 'public'
     )
     assert.notEqual(publicModelIndex, -1, `${MODEL_NAME} is missing from the real model catalog`)
+    const skillCatalog = await request('/api/v1/kinds/skills/unified?scope=all')
+    const skill = skillCatalog.find(
+      candidate => candidate.name === SKILL_NAME && candidate.namespace === 'default'
+    )
+    assert.ok(skill?.id, `${SKILL_UI_REFERENCE} is missing from the real Skill catalog`)
     await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
       timeoutMs: uiTimeoutMs,
     })
@@ -504,55 +618,50 @@ export async function createDesktopScenario({
       timeoutMs: uiTimeoutMs,
     })
     await control.command('click', '[data-testid="project-agent-mode-create"]')
-    await control.command('waitFor', '[data-testid="project-agent-standard-create-form"]', {
+    await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('fill', '[data-testid="project-agent-local-name"]', {
-      value: name,
+    await control.command('fill', '[data-testid="wework-agent-resource-name"]', {
+      value: `${nativeRuntime}-collaboration-${process.pid}`,
     })
-    await control.command('select', '[data-testid="project-agent-local-runtime"]', {
-      value: runtime,
+    await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: name })
+    await control.command('select', '[data-testid="wework-agent-runtime"]', {
+      value: shellRuntime,
     })
-    await control.command('select', '[data-testid="project-agent-local-model"]', {
+    await control.command('select', '[data-testid="wework-agent-model"]', {
       value: String(publicModelIndex),
     })
-    await control.command('fill', '[data-testid="project-agent-local-capability"]', {
-      value: `${name} 负责协作小组中的固定阶段。`,
-    })
-    await control.command('fill', '[data-testid="project-agent-local-system-prompt"]', {
+    await control.command('click', `[data-testid="wework-agent-skill-${skill.id}"]`)
+    await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
       value: `${systemMarker}。按 Skill 约束工作，并严格依次调用 get_current_context、get_board_item、add_board_item_comment。`,
     })
-    await control.command('fill', '[data-testid="project-agent-local-skills"]', {
-      value: SKILL_UI_REFERENCE,
-    })
-    await control.command('fill', '[data-testid="project-agent-local-mcp"]', {
+    await control.command('fill', '[data-testid="wework-agent-mcp"]', {
       value: '{}',
     })
-    await control.command('clickWhenEnabled', '[data-testid="project-agent-local-create"]', {
+    await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
       timeoutMs: uiTimeoutMs,
     })
     const agent = await waitForValue(
       () => request(`/api/v1/cloud-projects/${project.id}/chat-agents`),
       response => agentList(response).find(candidate => candidate.name === name) ?? false,
-      `The ${runtime} Agent created through the real project UI was not persisted`,
+      `The ${nativeRuntime} Agent created through the real project UI was not persisted`,
       uiTimeoutMs
     )
-    assert.equal(agent.runtime, runtime)
-    assert.equal(agent.model, MODEL_NAME)
-    assert.equal(agent.modelType, 'public')
-    assert.equal(agent.modelOptions?.weworkCloudModelNamespace, 'default')
-    assert.equal(agent.modelOptions?.weworkCloudModelResourceUserId, '0')
-    assert.equal(agent.modelOptions?.weworkCloudModelUpstreamApiFormat, 'openai-responses')
-    assert.ok(
-      agent.additionalSkills?.some(
-        skill => skill.name === SKILL_NAME && skill.namespace === 'codex'
-      ),
-      `${name} did not persist ${SKILL_UI_REFERENCE}`
-    )
+    assert.equal(agent.runtime, 'wegent')
+    assert.ok(agent.wegentTeamId, `${name} did not persist its Team reference`)
+    const team = await request(`/api/teams/${agent.wegentTeamId}`)
+    assert.equal(team.displayName, name)
+    assert.equal(team.bots.length, 1)
+    const bot = await request(`/api/bots/${team.bots[0].bot.id}`)
+    assert.equal(bot.shell_type, shellRuntime)
+    assert.equal(bot.agent_config?.bind_model, MODEL_NAME)
+    assert.equal(bot.agent_config?.bind_model_type, 'public')
+    assert.ok(bot.skills?.includes(SKILL_NAME), `${name} did not persist ${SKILL_UI_REFERENCE}`)
+    assert.equal(bot.skill_refs?.[SKILL_NAME]?.namespace, 'default')
     assert.deepEqual(
-      agent.mcpServers ?? {},
+      bot.mcp_servers ?? {},
       {},
-      `${name} must use the executor-owned wework_space MCP, not a test MCP server`
+      `${name} must use the real execution-scoped wework_space MCP instead of a test server`
     )
     await control.command('waitFor', scoped(`[data-testid="project-agent-row-${agent.id}"]`), {
       text: name,
@@ -572,13 +681,15 @@ export async function createDesktopScenario({
     })
     codexAgent = await createProjectAgentThroughUi(control, {
       name: CODEX_AGENT_NAME,
-      runtime: 'codex',
+      nativeRuntime: 'codex',
+      shellRuntime: 'Codex',
       systemMarker: CODEX_SYSTEM_MARKER,
     })
     await capture(control, 'collaboration-agent-chain-05-codex-configured.png')
     claudeAgent = await createProjectAgentThroughUi(control, {
       name: CLAUDE_AGENT_NAME,
-      runtime: 'claude_code',
+      nativeRuntime: 'claude_code',
+      shellRuntime: 'ClaudeCode',
       systemMarker: CLAUDE_SYSTEM_MARKER,
     })
     assert.notEqual(codexAgent.id, claudeAgent.id)
@@ -587,6 +698,8 @@ export async function createDesktopScenario({
   }
 
   async function createCollaborationGroup(control) {
+    const codexMemberId = collaborationGroupAgentId(codexAgent)
+    const claudeMemberId = collaborationGroupAgentId(claudeAgent)
     await control.command('click', scoped('[data-testid="collaboration-participants-tab-groups"]'))
     await control.command('waitFor', scoped('[data-testid="collaboration-group-open-create"]'), {
       timeoutMs: uiTimeoutMs,
@@ -599,66 +712,58 @@ export async function createDesktopScenario({
       value: 'Codex 先完成实现，Claude Code 再复核并收敛。',
     })
     await control.command('select', scoped('[data-testid="collaboration-group-leader"]'), {
-      value: `agent:${codexAgent.id}`,
+      value: `agent:${codexMemberId}`,
     })
     await control.command(
-      'clickWhenEnabled',
-      scoped('[data-testid="collaboration-group-create"]'),
-      { timeoutMs: uiTimeoutMs }
-    )
-    collaborationGroup = await waitForValue(
-      async () => {
-        const response = await request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`)
-        return response.items?.find(candidate => candidate.name === GROUP_NAME) ?? null
-      },
-      Boolean,
-      'The collaboration group was not persisted',
-      uiTimeoutMs
-    )
-    await control.command(
-      'waitFor',
-      scoped(`[data-testid="collaboration-group-detail-${collaborationGroup.id}"]`),
-      { timeoutMs: uiTimeoutMs }
-    )
-    await capture(control, 'collaboration-agent-chain-08-group-created.png')
-
-    await control.command(
-      'click',
-      scoped(`[data-testid="collaboration-group-detail-member-agent-${claudeAgent.id}"]`)
-    )
-    await control.command(
       'fill',
-      scoped(`[data-testid="collaboration-group-detail-responsibility-agent-${codexAgent.id}"]`),
+      scoped(`[data-testid="collaboration-group-create-responsibility-agent-${codexMemberId}"]`),
       { value: '先实现并给出可验证结果' }
     )
     await control.command(
+      'click',
+      scoped(`[data-testid="collaboration-group-create-member-agent-${claudeMemberId}"]`)
+    )
+    await control.command(
       'fill',
-      scoped(`[data-testid="collaboration-group-detail-responsibility-agent-${claudeAgent.id}"]`),
+      scoped(`[data-testid="collaboration-group-create-responsibility-agent-${claudeMemberId}"]`),
       { value: '复核前序结果并完成收敛' }
+    )
+    await control.command(
+      'clickWhenEnabled',
+      scoped('[data-testid="collaboration-group-create-next"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'fill',
+      scoped('[data-testid="collaboration-group-create-instructions"]'),
+      {
+        value:
+          '严格按流程步骤执行：先由 Codex 完成实现并提交证据，再由 Claude Code 读取前序结果、复核并收敛。',
+      }
     )
 
     for (const stage of [
       {
         name: CODEX_STAGE_NAME,
         description: '先由 Codex 处理 Issue。',
-        assignee: `agent:${codexAgent.id}`,
+        assignee: `agent:${codexMemberId}`,
       },
       {
         name: CLAUDE_STAGE_NAME,
         description: 'Codex 完成后再由 Claude Code 处理。',
-        assignee: `agent:${claudeAgent.id}`,
+        assignee: `agent:${claudeMemberId}`,
       },
     ]) {
       const before = new Set(
         JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)).testIds.filter(
-          testId => testId.startsWith('collaboration-group-stage-')
+          testId => testId.startsWith('collaboration-group-create-stage-')
         )
       )
-      await control.command('click', scoped('[data-testid="collaboration-group-stage-add"]'))
+      await control.command('click', scoped('[data-testid="collaboration-group-create-stage-add"]'))
       const stageTestId = await waitForValue(
         async () =>
           JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)).testIds.find(
-            testId => testId.startsWith('collaboration-group-stage-') && !before.has(testId)
+            testId => testId.startsWith('collaboration-group-create-stage-') && !before.has(testId)
           ) ?? null,
         Boolean,
         `The ${stage.name} row was not added`,
@@ -676,19 +781,24 @@ export async function createDesktopScenario({
     }
     await control.command(
       'clickWhenEnabled',
-      scoped('[data-testid="collaboration-group-detail-save"]'),
+      scoped('[data-testid="collaboration-group-create-next"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'clickWhenEnabled',
+      scoped('[data-testid="collaboration-group-create"]'),
       { timeoutMs: uiTimeoutMs }
     )
     collaborationGroup = await waitForValue(
       async () => {
         const response = await request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`)
-        return response.items?.find(candidate => candidate.id === collaborationGroup.id) ?? null
+        return response.items?.find(candidate => candidate.name === GROUP_NAME) ?? null
       },
       group =>
         group?.members?.length === 2 &&
         group?.stages?.length === 2 &&
-        group.stages[0].assignee?.id === codexAgent.id &&
-        group.stages[1].assignee?.id === claudeAgent.id,
+        group.stages[0].assignee?.id === codexMemberId &&
+        group.stages[1].assignee?.id === claudeMemberId,
       'The Codex → Claude collaboration stages were not persisted in order',
       uiTimeoutMs
     )
@@ -698,10 +808,16 @@ export async function createDesktopScenario({
         name: stage.name,
       })),
       [
-        { assignee: `agent:${codexAgent.id}`, name: CODEX_STAGE_NAME },
-        { assignee: `agent:${claudeAgent.id}`, name: CLAUDE_STAGE_NAME },
+        { assignee: `agent:${codexMemberId}`, name: CODEX_STAGE_NAME },
+        { assignee: `agent:${claudeMemberId}`, name: CLAUDE_STAGE_NAME },
       ]
     )
+    await control.command(
+      'waitFor',
+      scoped(`[data-testid="collaboration-group-detail-${collaborationGroup.id}"]`),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await capture(control, 'collaboration-agent-chain-08-group-created.png')
     await capture(control, 'collaboration-agent-chain-09-group-stages.png')
   }
 
@@ -995,6 +1111,8 @@ export async function createDesktopScenario({
       backendUrl = cloud.backendUrl
       authToken = cloud.authToken
       await request('/api/admin/setup-complete', { method: 'POST' })
+      skillResource = await createRealSkill()
+      assert.equal(skillResource.metadata?.name, SKILL_NAME)
     },
 
     async handleHttp(requestMessage, response, url) {

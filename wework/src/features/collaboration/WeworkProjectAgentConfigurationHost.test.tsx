@@ -1,13 +1,16 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { weworkProjectAgentConfigurationHost } from './WeworkProjectAgentConfigurationHost'
+import type { createAgentResourceApi } from '@/api/agentResources'
+import {
+  createWeworkProjectAgentConfigurationHost,
+  weworkProjectAgentConfigurationHost,
+} from './WeworkProjectAgentConfigurationHost'
 
 describe('weworkProjectAgentConfigurationHost', () => {
   it('renders the shared Agent form with Wework design-system controls', () => {
     const onClose = vi.fn()
     const onModeChange = vi.fn()
-    const onNameChange = vi.fn()
 
     render(
       weworkProjectAgentConfigurationHost.renderDialog({
@@ -34,20 +37,13 @@ describe('weworkProjectAgentConfigurationHost', () => {
                   value: 'existing',
                 },
                 {
-                  description: '使用标准表单',
+                  description: '使用资源库表单',
                   label: '新建智能体',
                   testId: 'mode-create',
                   value: 'create',
                 },
               ],
               value: 'create',
-            })}
-            {weworkProjectAgentConfigurationHost.renderTextControl({
-              ariaLabel: '名称',
-              onChange: onNameChange,
-              placeholder: '智能体名称',
-              testId: 'agent-name',
-              value: '',
             })}
             {weworkProjectAgentConfigurationHost.renderPrimaryAction({
               children: '创建智能体',
@@ -72,20 +68,131 @@ describe('weworkProjectAgentConfigurationHost', () => {
       'bg-focus/5',
       'ring-1'
     )
-    expect(screen.getByTestId('agent-name')).toHaveClass(
-      'rounded-lg',
-      'border-border',
-      'bg-background'
-    )
     expect(screen.getByTestId('agent-submit')).toHaveClass('rounded-lg', 'bg-text-primary')
 
     fireEvent.click(screen.getByTestId('mode-existing'))
     expect(onModeChange).not.toHaveBeenCalled()
 
-    fireEvent.change(screen.getByTestId('agent-name'), { target: { value: '代码评审' } })
-    expect(onNameChange).toHaveBeenCalledWith('代码评审')
-
     fireEvent.click(screen.getByTestId('agent-close'))
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('uses the real unified resource creator contract and returns the created Team reference', async () => {
+    const onCreated = vi.fn(async () => undefined)
+    const createAgent = vi.fn(async () => ({
+      id: 52,
+      name: 'review-agent',
+      displayName: 'Review Agent',
+      namespace: 'workspace-alpha',
+    }))
+    const api = {
+      listModels: vi.fn(async () => [
+        {
+          name: 'desktop-e2e-public-model',
+          type: 'public',
+          displayName: 'Desktop E2E',
+          namespace: 'default',
+        },
+      ]),
+      listSkills: vi.fn(async () => [
+        {
+          id: 7,
+          name: 'codex-review',
+          namespace: 'workspace-alpha',
+          description: '',
+          displayName: 'Codex Review',
+          bindShells: ['Codex'],
+          visible: true,
+          is_active: true,
+          is_public: false,
+          user_id: 1,
+        },
+        {
+          id: 8,
+          name: 'claude-review',
+          namespace: 'workspace-alpha',
+          description: '',
+          displayName: 'Claude Review',
+          bindShells: ['ClaudeCode'],
+          visible: true,
+          is_active: true,
+          is_public: false,
+          user_id: 1,
+        },
+      ]),
+      createAgent,
+    } as unknown as ReturnType<typeof createAgentResourceApi>
+    const host = createWeworkProjectAgentConfigurationHost(api)
+
+    render(
+      host.renderAgentCreator!({
+        namespace: 'workspace-alpha',
+        onClose: vi.fn(),
+        onCreated,
+        workspaceName: 'Alpha Space',
+      })
+    )
+
+    await waitFor(() => expect(screen.getByText('Codex Review')).toBeInTheDocument())
+    expect(screen.queryByText('Claude Review')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('wework-agent-runtime'), {
+      target: { value: 'ClaudeCode' },
+    })
+    await waitFor(() => expect(screen.getByText('Claude Review')).toBeInTheDocument())
+    expect(screen.queryByText('Codex Review')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('wework-agent-resource-name'), {
+      target: { value: 'review-agent' },
+    })
+    fireEvent.change(screen.getByTestId('wework-agent-display-name'), {
+      target: { value: 'Review Agent' },
+    })
+    fireEvent.change(screen.getByTestId('wework-agent-model'), {
+      target: { value: '0' },
+    })
+    fireEvent.click(screen.getByTestId('wework-agent-skill-8'))
+    fireEvent.change(screen.getByTestId('wework-agent-system-prompt'), {
+      target: { value: 'Review the implementation.' },
+    })
+    fireEvent.change(screen.getByTestId('wework-agent-mcp'), {
+      target: {
+        value: '{"browser":{"command":"node","args":["browser.mjs"]}}',
+      },
+    })
+    fireEvent.click(screen.getByTestId('wework-agent-resource-create'))
+
+    await waitFor(() =>
+      expect(createAgent).toHaveBeenCalledWith({
+        name: 'review-agent',
+        displayName: 'Review Agent',
+        namespace: 'workspace-alpha',
+        runtime: 'ClaudeCode',
+        model: {
+          name: 'desktop-e2e-public-model',
+          type: 'public',
+          namespace: 'default',
+        },
+        systemPrompt: 'Review the implementation.',
+        skills: [
+          {
+            skillId: 8,
+            name: 'claude-review',
+            namespace: 'workspace-alpha',
+            isPublic: false,
+          },
+        ],
+        mcpServers: {
+          browser: {
+            command: 'node',
+            args: ['browser.mjs'],
+          },
+        },
+      })
+    )
+    expect(onCreated).toHaveBeenCalledWith({
+      name: 'Review Agent',
+      teamId: 52,
+    })
   })
 })

@@ -12,6 +12,7 @@ import type {
 import type {
   CollaborationGroup,
   CollaborationExecutionEnvironment,
+  CollaborationExecution,
   CollaborationMember,
   CollaborationOwnedAgent,
   CollaborationPlatformResources,
@@ -21,6 +22,7 @@ import type {
   CollaborationWorkspace,
   CollaborationWorkspaceNavigationContext,
 } from "../types";
+import type { WorkspaceMyWorkItem } from "../ports/SharedWorkspaceApi";
 import type { CollaborationPlatformLocation } from "./types";
 import type { WorkspaceProjectIssuesSnapshot } from "./workspaceOperations";
 
@@ -31,6 +33,11 @@ export interface CollaborationPlatformState {
   navigationProjects: CollaborationProject[];
   projects: CollaborationProject[];
   projectIssues: Record<string, WorkspaceProjectIssuesSnapshot>;
+  myWork: WorkspaceMyWorkItem[];
+  executions: Array<{
+    project: CollaborationProject;
+    execution: CollaborationExecution;
+  }>;
   members: CollaborationMember[];
   agents: CollaborationOwnedAgent[];
   collaborationGroups: CollaborationGroup[];
@@ -80,6 +87,8 @@ export function useCollaborationPlatformController({
     navigationProjects: [],
     projects: [],
     projectIssues: {},
+    myWork: [],
+    executions: [],
     members: [],
     agents: [],
     collaborationGroups: [],
@@ -115,6 +124,32 @@ export function useCollaborationPlatformController({
       ]);
       if (revision !== loadRevisionRef.current) return;
       if (!location.workspaceId) {
+        const [myWork, executions] = await Promise.all([
+          api.myWork?.list() ?? Promise.resolve([]),
+          location.rootView === "runs"
+            ? Promise.all(
+                navigationProjects.map(async (project) => {
+                  const projectExecutions = await api.executions.list(
+                    project.id,
+                    { includeTerminal: true },
+                  );
+                  return projectExecutions.map((execution) => ({
+                    project,
+                    execution,
+                  }));
+                }),
+              ).then((entries) =>
+                entries
+                  .flat()
+                  .sort((left, right) =>
+                    right.execution.updated_at.localeCompare(
+                      left.execution.updated_at,
+                    ),
+                  ),
+              )
+            : Promise.resolve([]),
+        ]);
+        if (revision !== loadRevisionRef.current) return;
         setState((current) => ({
           ...current,
           workspaces,
@@ -123,6 +158,8 @@ export function useCollaborationPlatformController({
           navigationProjects,
           projects: navigationProjects,
           projectIssues: {},
+          myWork,
+          executions,
           members: [],
           agents: [],
           collaborationGroups: [],
@@ -152,6 +189,8 @@ export function useCollaborationPlatformController({
             (project) => project.workspace_id === location.workspaceId,
           ),
           projectIssues: {},
+          myWork: [],
+          executions: [],
           members: [],
           agents: [],
           collaborationGroups: [],
@@ -216,6 +255,8 @@ export function useCollaborationPlatformController({
         projectIssues: Object.fromEntries(
           projectSnapshots.map(({ projectId, value }) => [projectId, value]),
         ),
+        myWork: [],
+        executions: [],
         members,
         agents,
         collaborationGroups,
@@ -235,6 +276,7 @@ export function useCollaborationPlatformController({
     api,
     loadFailedMessage,
     location.projectId,
+    location.rootView,
     location.workspaceId,
     location.workspaceView,
   ]);

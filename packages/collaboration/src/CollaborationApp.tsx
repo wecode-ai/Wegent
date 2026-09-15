@@ -580,6 +580,9 @@ export function CollaborationApp({
                               agentConfigurationHost={
                                 host.projectAgentConfiguration
                               }
+                              agentResourceContext={
+                                host.projectAgentResourceContext
+                              }
                               api={api}
                               embedded
                               project={project}
@@ -632,11 +635,6 @@ export function CollaborationApp({
                           api={api}
                           project={project}
                           translate={translate}
-                          onRegisterDevice={
-                            host.manageResource
-                              ? () => host.manageResource?.("environments")
-                              : undefined
-                          }
                         />
                       ),
                     },

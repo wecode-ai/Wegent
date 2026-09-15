@@ -26,6 +26,7 @@ async function snapshot(control) {
 export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let cloudOffline = false
   let cloudWorkspaceListFailures = 0
+  const cloudAgentMutationRequests = []
   const cloudProjectDetailRequests = []
   const assertLocalIsolation = () =>
     assert.deepEqual(
@@ -73,6 +74,12 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       if (request.method === 'GET' && url.pathname === '/api/devices') {
         json(response, 200, { items: [] })
         return true
+      }
+      if (
+        request.method === 'POST' &&
+        (url.pathname === '/api/bots' || url.pathname === '/api/teams')
+      ) {
+        cloudAgentMutationRequests.push(`${request.method} ${url.pathname}`)
       }
       if (url.pathname.startsWith('/api/v1/cloud-projects/')) {
         cloudProjectDetailRequests.push(`${request.method} ${url.pathname}`)
@@ -241,26 +248,45 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="project-agent-mode-create"]')
-      await control.command('waitFor', '[data-testid="project-agent-standard-create-form"]', {
+      await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('fill', '[data-testid="project-agent-local-name"]', {
+      await control.command('waitFor', '[data-testid="wework-agent-resource-creator-error"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', '[data-testid="wework-agent-resource-name"]', {
+        value: 'offline-project-agent',
+      })
+      await control.command('fill', '[data-testid="wework-agent-display-name"]', {
         value: AGENT_NAME,
       })
-      await control.command('select', '[data-testid="project-agent-local-runtime"]', {
-        value: 'codex',
-      })
-      await control.command('select', '[data-testid="project-agent-local-model"]', {
-        value: '0',
-      })
-      await control.command('clickWhenEnabled', '[data-testid="project-agent-local-create"]', {
+      await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', scoped('[data-testid="project-agent-list"]'), {
-        text: AGENT_NAME,
+      await control.command('waitFor', '[data-testid="wework-agent-resource-creator-error"]', {
+        text: '/api/bots',
         timeoutMs: uiTimeoutMs,
       })
+      assert.deepEqual(
+        cloudAgentMutationRequests,
+        ['POST /api/bots'],
+        'Offline Agent creation must fail at the first real cloud resource write'
+      )
+      await control.command('click', '[data-testid="wework-agent-resource-creator-close"]')
+      await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid^="project-agent-row-"]')
+          )
+        ),
+        0,
+        'A failed offline cloud resource creation must not create a project Agent binding'
+      )
 
       await control.command(
         'click',
@@ -273,36 +299,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
           timeoutMs: uiTimeoutMs,
         }
       )
-      assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            scoped('[data-testid="collaboration-dispatch-configure-agents"]')
-          )
-        ),
-        0,
-        'Projects with an existing Agent must not prompt users to add another Agent'
-      )
-      assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            scoped('[data-testid="collaboration-project-dispatch-unavailable"]')
-          )
-        ),
-        0,
-        'Local collaboration groups must not depend on the cloud collaboration-group service'
-      )
-      assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            scoped('[data-testid="collaboration-dispatch-continue-manual"]')
-          )
-        ),
-        0,
-        'The removed manual-assignment fallback action must not remain in Project settings'
-      )
+      await control.command('waitFor', scoped('[data-testid="automatic-processing"]'), {
+        text: '暂无自动处理规则',
+        timeoutMs: uiTimeoutMs,
+      })
       await captureVerificationScreenshot(
         control,
         'offline-local-project-space-02-local-project-settings.png',
@@ -350,7 +350,11 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     },
 
     diagnostics() {
-      return { cloudProjectDetailRequests, cloudWorkspaceListFailures }
+      return {
+        cloudAgentMutationRequests,
+        cloudProjectDetailRequests,
+        cloudWorkspaceListFailures,
+      }
     },
   }
 }

@@ -675,7 +675,7 @@ class LoopItemExecutionService:
         enters the queue immediately.
         """
 
-        from app.services.project_chat.service import bot_config
+        from app.services.project_chat.service import bot_config, compiled_bot_config
 
         inferred_context, _ = self._task_automation_context(db, loop_item_id)
         effective_context = (
@@ -683,14 +683,12 @@ class LoopItemExecutionService:
             if automation_context is not None
             else inferred_context
         )
-        config = bot_config(agent)
-        mode = str(config.get("execution_mode") or "auto")
-        runtime = str(config["runtime"])
-        team_id = int(config["wegent_team_id"]) if runtime == "wegent" else None
+        persisted_config = bot_config(agent)
+        mode = str(persisted_config.get("execution_mode") or "auto")
         runtime_source = str(effective_context.get("runtime_source") or "agent_default")
         runtime_profile_id = effective_context.get("runtime_profile_id")
         if runtime_source == "agent_default":
-            runtime_profile_id = config.get("default_runtime_profile_id")
+            runtime_profile_id = persisted_config.get("default_runtime_profile_id")
         runtime_profile = (
             db.get(RuntimeProfile, str(runtime_profile_id))
             if runtime_profile_id
@@ -712,6 +710,13 @@ class LoopItemExecutionService:
             or (task.created_by_user_id if task else 0)
             or assigner_user_id
         )
+        config = compiled_bot_config(
+            db,
+            agent,
+            execution_user_id=runtime_subject_user_id,
+        )
+        runtime = str(config["runtime"])
+        team_id = int(config["wegent_team_id"]) if runtime == "wegent" else None
         profile_metadata = (
             dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
         )

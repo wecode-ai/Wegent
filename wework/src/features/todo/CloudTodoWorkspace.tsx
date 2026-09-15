@@ -1,7 +1,7 @@
 import { RuntimeConfigurationProvider } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { weworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
+import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import {
   useCallback,
   useContext,
@@ -838,7 +838,7 @@ export function CloudTodoWorkspace({
   const existingCloudAgentsAvailable = cloudConnection.isConnected && Boolean(cloudWorkspaceApi)
   const projectAgentConfigurationHost = useMemo(
     () => ({
-      ...weworkProjectAgentConfigurationHost,
+      ...createWeworkProjectAgentConfigurationHost(services.agentResourceApi),
       existingAgentSelection: existingCloudAgentsAvailable
         ? undefined
         : {
@@ -848,7 +848,7 @@ export function CloudTodoWorkspace({
               : 'Sign in and connect to cloud to select an existing Agent',
           },
     }),
-    [existingCloudAgentsAvailable, i18n.language]
+    [existingCloudAgentsAvailable, i18n.language, services.agentResourceApi]
   )
   const [internalSelectedProjectRef, setSelectedProjectRef] =
     useState<RuntimeProjectSpaceRef | null>(null)
@@ -4829,11 +4829,6 @@ export function CloudTodoWorkspace({
                               translate={(key, fallback, options) =>
                                 fallback === undefined ? t(key, options) : t(key, fallback, options)
                               }
-                              onRegisterDevice={() => {
-                                const contentRoute = '/app/devices'
-                                window.history.pushState(null, '', contentRoute)
-                                window.dispatchEvent(new PopStateEvent('popstate'))
-                              }}
                             />
                           ),
                         },
