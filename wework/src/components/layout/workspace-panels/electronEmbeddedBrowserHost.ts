@@ -267,17 +267,6 @@ export function relabelElectronEmbeddedBrowserView(
   assignHostedWebviewLabel(host, label)
 }
 
-export function resetElectronEmbeddedBrowserView(label: string): void {
-  const host = connectedHostedWebview(label)
-  if (!host) return
-  retainHostedWebview(host)
-  const previousWebview = host.webview
-  const nextWebview = createElectronWebview(host.label)
-  host.webview = nextWebview
-  destroyElectronWebview(previousWebview)
-  host.container.insertBefore(nextWebview, host.cursorHost)
-}
-
 export function positionElectronEmbeddedBrowserView(
   host: HostedElectronWebview,
   owner: symbol,

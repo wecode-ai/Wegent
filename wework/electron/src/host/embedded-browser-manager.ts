@@ -164,6 +164,7 @@ export class EmbeddedBrowserManager {
   >()
   private readonly activeTabs = new Map<string, string>()
   private readonly downloads = new Map<string, BrowserDownload>()
+  private readonly agentClosedLabels = new Set<string>()
   private readonly agentControlPaused = new Set<string>()
   private readonly agentActive = new Set<string>()
   private readonly agentApprovals = new Map<string, BrowserAgentApproval>()
@@ -362,6 +363,7 @@ export class EmbeddedBrowserManager {
       for (const [entryLabel, entry] of this.entries) {
         if (entry.contents.id !== contents.id) continue
         this.entries.delete(entryLabel)
+        this.agentClosedLabels.delete(entryLabel)
         removedLabels.add(entryLabel)
       }
       for (const removedLabel of removedLabels) this.clearLabelScopedState(removedLabel)
@@ -392,7 +394,10 @@ export class EmbeddedBrowserManager {
   async open(input: BrowserOpenInput): Promise<BrowserPageState> {
     const label = requiredLabel(input.label)
     const existing = this.entries.get(label)
-    if (existing) return this.openExisting(existing, input)
+    if (existing) {
+      this.agentClosedLabels.delete(label)
+      return this.openExisting(existing, input)
+    }
     const contents = await this.waitForAttachedContents(label)
     const migrated = this.entries.get(label)
     if (migrated) return this.openExisting(migrated, input)
@@ -676,6 +681,7 @@ export class EmbeddedBrowserManager {
     this.clearAgentCursorHide(fromLabel)
     if (cursorState && !this.agentActive.has(fromLabel)) this.scheduleAgentCursorHide(target)
     if (this.agentActive.delete(fromLabel)) this.agentActive.add(target)
+    if (this.agentClosedLabels.delete(fromLabel)) this.agentClosedLabels.add(target)
     if (attached && !attached.isDestroyed()) this.resolveAttachmentWaiters(target, attached)
   }
 
@@ -701,7 +707,8 @@ export class EmbeddedBrowserManager {
   }
 
   has(label: string): boolean {
-    return this.entries.has(requiredLabel(label))
+    const normalizedLabel = requiredLabel(label)
+    return this.entries.has(normalizedLabel) && !this.agentClosedLabels.has(normalizedLabel)
   }
 
   isAgentControlPaused(label: string): boolean {
@@ -906,12 +913,13 @@ export class EmbeddedBrowserManager {
     const normalizedLabel = requiredLabel(label)
     const entry = this.entries.get(normalizedLabel)
     if (!entry) return
-    this.close(normalizedLabel)
+    entry.visible = false
+    this.agentClosedLabels.add(normalizedLabel)
+    this.clearLabelScopedState(normalizedLabel)
     this.emit('close-request', {
       label: normalizedLabel,
       nativeLabel: entry.nativeLabel,
     })
-    await this.waitForAttachedContents(normalizedLabel)
   }
 
   close(label: string, expectedNativeLabel?: string | null): void {
@@ -919,6 +927,7 @@ export class EmbeddedBrowserManager {
     if (!entry) return
     if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
     this.entries.delete(label)
+    this.agentClosedLabels.delete(label)
     this.clearLabelScopedState(label)
     if (!entry.contents.isDestroyed()) entry.contents.close()
   }
@@ -1131,7 +1140,9 @@ export class EmbeddedBrowserManager {
   private required(label: string): BrowserEntry {
     const normalized = requiredLabel(label)
     const entry = this.entries.get(normalized)
-    if (!entry) throw new Error(`Embedded browser is unavailable: ${normalized}`)
+    if (!entry || this.agentClosedLabels.has(normalized)) {
+      throw new Error(`Embedded browser is unavailable: ${normalized}`)
+    }
     return entry
   }
 
@@ -1180,7 +1191,7 @@ export class EmbeddedBrowserManager {
   }
 
   private emitPageState(entry: BrowserEntry): void {
-    if (this.entries.get(entry.label) !== entry) return
+    if (this.entries.get(entry.label) !== entry || this.agentClosedLabels.has(entry.label)) return
     this.emit('page-state', this.state(entry.label) as unknown as Record<string, unknown>)
   }
 
