@@ -41,6 +41,11 @@ jest.mock('@/hooks/useTranslation', () => ({
         'teams.create_first_team': 'Create Agent',
         'teams.no_teams_title': 'No teams',
         'teams.no_teams_description': 'Create a team first',
+        'teams.loading': 'Loading teams...',
+        'teams.load_failed_title': 'Failed to load agents',
+        'teams.load_failed_description': 'Something went wrong. Please try again.',
+        'teams.retry': 'Retry',
+        'teams.refresh_page': 'Refresh page',
       }
 
       return translations[key] || key
@@ -680,6 +685,87 @@ describe('QuickAccessCards', () => {
     await waitFor(() => expect(mockGetQuickAccess).toHaveBeenCalled())
 
     expect(screen.queryByText('regular-team')).not.toBeInTheDocument()
+  })
+
+  test('shows a loading state instead of the empty state while teams load', async () => {
+    renderQuickAccessCards(
+      [],
+      {
+        system_version: 1,
+        system_team_ids: [],
+        user_version: 1,
+        show_system_recommended: false,
+        teams: [],
+      },
+      {
+        isTeamsLoading: true,
+      }
+    )
+
+    expect(await screen.findByTestId('quick-access-teams-loading')).toBeInTheDocument()
+    expect(screen.queryByText('No teams')).not.toBeInTheDocument()
+  })
+
+  test('shows the retry action when the team request failed', async () => {
+    const onRefreshTeams = jest.fn().mockResolvedValue([])
+    renderQuickAccessCards(
+      [],
+      {
+        system_version: 1,
+        system_team_ids: [],
+        user_version: 1,
+        show_system_recommended: false,
+        teams: [],
+      },
+      { loadError: new Error('network error'), onRefreshTeams }
+    )
+
+    expect(await screen.findByTestId('quick-access-teams-error')).toBeInTheDocument()
+    expect(screen.queryByText('No teams')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('quick-access-teams-reload')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('quick-access-teams-retry'))
+
+    await waitFor(() => expect(onRefreshTeams).toHaveBeenCalledTimes(1))
+  })
+
+  test('shows the refresh page fallback after a manual retry fails', async () => {
+    const onRefreshTeams = jest.fn().mockRejectedValue(new Error('network error'))
+    renderQuickAccessCards(
+      [],
+      {
+        system_version: 1,
+        system_team_ids: [],
+        user_version: 1,
+        show_system_recommended: false,
+        teams: [],
+      },
+      { loadError: new Error('network error'), onRefreshTeams }
+    )
+
+    expect(await screen.findByTestId('quick-access-teams-error')).toBeInTheDocument()
+    expect(screen.queryByTestId('quick-access-teams-reload')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('quick-access-teams-retry'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('quick-access-teams-reload')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('quick-access-teams-reload')).toHaveTextContent('Refresh page')
+  })
+
+  test('shows the empty state only when teams loaded and none exist', async () => {
+    renderQuickAccessCards([], {
+      system_version: 1,
+      system_team_ids: [],
+      user_version: 1,
+      show_system_recommended: false,
+      teams: [],
+    })
+
+    expect(await screen.findByText('No teams')).toBeInTheDocument()
+    expect(screen.queryByTestId('quick-access-teams-loading')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('quick-access-teams-error')).not.toBeInTheDocument()
   })
 
   test('shows no quick access teams when only system recommendations are returned', async () => {

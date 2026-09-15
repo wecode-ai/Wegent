@@ -33,3 +33,5 @@ export * from "./workspace";
 export * from "./workspace-controller";
 export * from "./workspace-header/ProjectViewSwitcher";
 export * from "./web-adapter/createSharedWorkspaceFilesViewApi";
+export { createAutomationExecutionCatalogApi } from './runtime-profile/executionCatalog'
+export { RuntimeConfigurationProvider } from './runtime-profile/RuntimeConfigurationProvider'

@@ -4954,8 +4954,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
                     autoScrollSuspended={!paneVisible || !workbenchVisible}
                     onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
-                    onLoadFullTranscript={paneSession.loadFullTranscript}
-                    loadingFullTranscript={paneSession.transcriptLoadingFullContent}
                     onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
                     onLoadTranscriptGap={paneSession.loadTranscriptGap}
                     conversationKey={
@@ -5144,6 +5142,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         }
                                         goal={paneSession.goal}
                                         goalContinuing={paneSession.goalContinuing}
+                                        goalExecutionStatus={paneSession.goalExecutionStatus}
                                         taskPlan={paneSession.taskPlan}
                                         goalDraftActive={paneSession.goalDraftActive}
                                         onSetGoal={
@@ -5417,6 +5416,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           }
                           goal={paneSession.goal}
                           goalContinuing={paneSession.goalContinuing}
+                          goalExecutionStatus={paneSession.goalExecutionStatus}
                           taskPlan={paneSession.taskPlan}
                           goalDraftActive={paneSession.goalDraftActive}
                           onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}

@@ -73,12 +73,12 @@ def _project_response(
 
 
 @resources_router.get("", response_model=PersonalResourcesResponse)
-def list_personal_resources(
+async def list_personal_resources(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> PersonalResourcesResponse:
     return PersonalResourcesResponse.model_validate(
-        workspace_service.list_personal_resources(db, current_user.id)
+        await workspace_service.list_personal_resources(db, current_user.id)
     )
 
 
@@ -275,7 +275,7 @@ def remove_workspace_agent(
     "/{workspace_id}/execution-environments",
     response_model=WorkspaceExecutionEnvironmentListResponse,
 )
-def list_workspace_execution_environments(
+async def list_workspace_execution_environments(
     workspace_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
@@ -283,7 +283,7 @@ def list_workspace_execution_environments(
     return WorkspaceExecutionEnvironmentListResponse(
         items=[
             WorkspaceExecutionEnvironmentResponse.model_validate(environment)
-            for environment in workspace_service.list_execution_environments(
+            for environment in await workspace_service.list_execution_environments(
                 db, workspace_id, current_user.id
             )
         ]
@@ -295,14 +295,14 @@ def list_workspace_execution_environments(
     response_model=WorkspaceExecutionEnvironmentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def add_workspace_execution_environment(
+async def add_workspace_execution_environment(
     workspace_id: int,
     values: WorkspaceExecutionEnvironmentCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> WorkspaceExecutionEnvironmentResponse:
     return WorkspaceExecutionEnvironmentResponse.model_validate(
-        workspace_service.add_execution_environment(
+        await workspace_service.add_execution_environment(
             db, workspace_id, current_user.id, values
         )
     )

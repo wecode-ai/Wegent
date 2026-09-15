@@ -43,6 +43,8 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBinding,
 )
 from app.schemas.runtime_work import DeviceWorkspaceUpsert
+from app.services.loop_item_executions.profile import WeworkExecutionProfile
+from app.services.loop_item_executions.service import TaskContext
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service
 from app.services.runtime_work_service import upsert_device_workspace
@@ -180,6 +182,80 @@ def test_cloud_robot_persists_exact_workspace_binding_in_metadata(
     assert created.local_project_id == code_project.id
     assert created.workspace_policy == "git_worktree"
     assert [plugin.id for plugin in created.plugins] == ["github@openai"]
+
+
+@pytest.mark.parametrize("environment", ["local", "cloud"])
+def test_project_agent_without_code_project_can_save_and_build_execution(
+    test_db: Session, test_user: User, environment: str
+) -> None:
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+    from app.schemas.base_role import BaseRole
+
+    project = create_project(test_db, test_user)
+    device_id = f"{environment}-project-agent"
+    device = make_device(test_db, test_user, device_id, environment)
+    test_db.add(
+        ResourceMember(
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+    assert test_db.query(Project).count() == 0
+
+    created = project_chat_service.create_agent(
+        test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+        request=ProjectChatAgentCreate.model_validate(
+            {
+                "name": "codex工程师",
+                "runtime": "codex",
+                "capabilityDescription": "支持issue描述的内容",
+                "systemPrompt": "支持issue描述的内容",
+                "executionDeviceId": device_id,
+                "executionEnvironment": environment,
+                "workspaceBinding": {"type": "standalone"},
+            }
+        ),
+    )
+    agents = project_chat_service.list_agents(
+        test_db, user_id=test_user.id, project_id=project.id
+    )
+    saved = next(agent for agent in agents if agent.id == created.id)
+    assert saved.project_id == str(project.id)
+    assert saved.workspace_binding.type == "standalone"
+    assert saved.workspace_binding.status == "ready"
+    assert saved.local_project_id is None
+
+    row = test_db.get(ProjectChatAgent, created.id)
+    request = WeworkExecutionProfile.for_project_robot(row).build_runtime_request(
+        test_db,
+        execution_id=92,
+        runtime_task_id="project-agent-workspace-regression",
+        task=TaskContext(
+            id="issue-workspace-regression",
+            cloud_project_id=str(project.id),
+            title="Implement the issue",
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={},
+        execution_device_id=device_id,
+    )
+    assert request.cloud_project_id == str(project.id)
+    assert request.device_id == device_id
+    assert request.standalone_chat_workspace is True
+    assert request.project_id is None
+    assert request.device_workspace_id is None
+    assert request.runtime_project_key is None
 
 
 def test_legacy_cloud_project_binding_requires_rebind_when_not_unique(

@@ -12,6 +12,7 @@ use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
 
 use crate::{
+    agent_session,
     agents::{
         backend_url::request_backend_url, interactive_mcp::build_interactive_form_answer_query,
         runtime_capabilities::resolve_skill, skill_download::skill_download_concurrency,
@@ -20,7 +21,6 @@ use crate::{
     attachments::{
         append_text_to_vision_prompt, convert_openai_to_anthropic_content, create_multimodal_query,
     },
-    claude_session,
     hooks::pre_execute::{PreExecuteContext, PreExecuteHook},
     local::{
         backend::HttpPackageProvider,
@@ -337,7 +337,7 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
         spec = spec.arg("--model").arg(model);
     }
 
-    if let Some(session_id) = claude_session::load_saved_session_id(request) {
+    if let Some(session_id) = agent_session::load_saved_session_id(request) {
         spec = spec.arg("--resume").arg(session_id);
     }
 
@@ -686,7 +686,7 @@ pub(crate) fn claude_task_dir(request: &ExecutionRequest) -> Option<PathBuf> {
     request
         .cwd()
         .map(PathBuf::from)
-        .or_else(|| claude_session::preferred_task_dir(request))
+        .or_else(|| agent_session::preferred_task_dir(request))
 }
 
 pub(crate) fn claude_config_dir(

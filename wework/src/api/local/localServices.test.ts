@@ -14,6 +14,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import type { LocalExecutorStatus } from '@/desktop/localExecutor'
 import type { TurnFileChangesSummary, User } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
@@ -772,6 +773,43 @@ describe('createLocalAppServices', () => {
 
     resolveRestart?.({ restarted: true })
     await Promise.all([firstDevices, secondDevices])
+  })
+
+  test('loads devices and runtime work before Codex startup completes', async () => {
+    const available = vi.fn().mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+      version: '1.9.0',
+      runtimeInstanceId: 'runtime-1',
+    })
+    const ensure = vi.fn(
+      () =>
+        new Promise<LocalExecutorStatus>(() => {
+          // Keep Codex initialization pending to prove shell data does not depend on it.
+        })
+    )
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.list') {
+        return { projects: [], chats: [], totalTasks: 0 }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      available,
+      ensure,
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(services.deviceApi.listDevices()).resolves.toHaveLength(1)
+    await expect(services.runtimeWorkApi?.listRuntimeWork()).resolves.toMatchObject({
+      totalTasks: 0,
+    })
+
+    expect(available).toHaveBeenCalled()
+    expect(ensure).not.toHaveBeenCalled()
+    expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
   test('serializes catalog reconciliation while the runtime identity becomes available', async () => {
@@ -4282,6 +4320,7 @@ describe('createLocalAppServices', () => {
               title: 'Build',
               runtime: 'codex',
               goal_status: 'active',
+              goal_execution_status: 'recovering',
               continuable: true,
               thread_status: 'idle',
               turn_status: 'completed',
@@ -4298,6 +4337,7 @@ describe('createLocalAppServices', () => {
               workspacePath: '/Users/me/chat',
               title: 'Chat',
               runtime: 'codex',
+              goal_status: null,
               workspaceKind: 'chat',
             },
           ],
@@ -4357,6 +4397,7 @@ describe('createLocalAppServices', () => {
                   workspaceKind: 'worktree',
                   worktreeId: '42',
                   goalStatus: 'active',
+                  goalExecutionStatus: 'recovering',
                   continuable: true,
                   threadStatus: 'idle',
                   turnStatus: 'completed',
@@ -4375,6 +4416,7 @@ describe('createLocalAppServices', () => {
           tasks: [
             expect.objectContaining({
               taskId: 'chat-1',
+              goalStatus: null,
             }),
           ],
         }),

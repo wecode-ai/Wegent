@@ -51,6 +51,10 @@ import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
 import { createTrayTaskMenuId } from '@/desktop/trayTaskMenuId'
+import {
+  E2E_DROPPED_RUNTIME_EVENTS_KEY,
+  E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
+} from '@/api/runtime/runtimeChatStream'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -1155,7 +1159,7 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
   )
 }
 
-async function fillDesktopControlElement(element: HTMLElement, value: string) {
+export async function fillDesktopControlElement(element: HTMLElement, value: string) {
   element.focus()
 
   const codeMirrorRoot = element.closest<HTMLElement>('.cm-editor')
@@ -1170,6 +1174,7 @@ async function fillDesktopControlElement(element: HTMLElement, value: string) {
     return
   }
 
+  const ownValueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set
   if (element instanceof HTMLSelectElement) {
     selectDesktopControlOption(element, value)
     return
@@ -1180,6 +1185,9 @@ async function fillDesktopControlElement(element: HTMLElement, value: string) {
         : HTMLTextAreaElement.prototype
     const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
     setter?.call(element, value)
+  } else if (ownValueSetter) {
+    ownValueSetter.call(element, value)
+    return
   } else if (element.isContentEditable) {
     const selection = window.getSelection()
     const range = document.createRange()
@@ -1207,20 +1215,14 @@ async function fillDesktopControlElement(element: HTMLElement, value: string) {
     }
     return
   } else {
-    const valueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set
-    if (valueSetter) {
-      valueSetter.call(element, value)
-      return
-    } else {
-      const selection = window.getSelection()
-      const range = document.createRange()
-      range.selectNodeContents(element)
-      range.collapse(false)
-      selection?.removeAllRanges()
-      selection?.addRange(range)
-      document.execCommand('selectAll', false)
-      document.execCommand('insertText', false, value)
-    }
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    range.collapse(false)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    document.execCommand('selectAll', false)
+    document.execCommand('insertText', false, value)
   }
 
   element.dispatchEvent(
@@ -1619,6 +1621,37 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'dropNextRuntimeEvent': {
+      const root = globalThis as typeof globalThis & {
+        [E2E_DROPPED_RUNTIME_EVENTS_KEY]?: string[]
+      }
+      root[E2E_DROPPED_RUNTIME_EVENTS_KEY] ??= []
+      root[E2E_DROPPED_RUNTIME_EVENTS_KEY].push(command.value ?? '')
+      return ''
+    }
+    case 'clearRuntimeGoalDirectly':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.tasks.goal.clear', JSON.parse(command.value ?? '{}'))
+      )
+    case 'dispatchRuntimeEventLagged': {
+      const root = globalThis as typeof globalThis & {
+        [E2E_RUNTIME_EVENT_DISPATCHERS_KEY]?: Set<
+          (event: { event: string; payload: Record<string, unknown> }) => void
+        >
+      }
+      const dispatchers = root[E2E_RUNTIME_EVENT_DISPATCHERS_KEY]
+      if (!dispatchers?.size) {
+        throw new Error('No runtime event dispatcher is registered')
+      }
+      for (const dispatch of dispatchers) {
+        dispatch({
+          event: 'executor.event_lagged',
+          payload: { skipped: 1 },
+        })
+      }
+      await waitForDesktopControlTick()
+      return ''
+    }
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''

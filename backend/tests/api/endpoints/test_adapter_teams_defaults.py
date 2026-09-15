@@ -71,15 +71,18 @@ def test_list_teams_api_marks_wework_default(monkeypatch):
     monkeypatch.setattr(teams_endpoint.settings, "DEFAULT_TEAM_TASK", "")
     monkeypatch.setattr(
         teams_endpoint.team_kinds_service,
-        "get_user_teams",
-        lambda **_: [
-            {
-                "id": 1,
-                "name": "wegent-wework",
-                "namespace": "default",
-                "is_active": True,
-            }
-        ],
+        "get_user_teams_page",
+        lambda **_: (
+            [
+                {
+                    "id": 1,
+                    "name": "wegent-wework",
+                    "namespace": "default",
+                    "is_active": True,
+                }
+            ],
+            1,
+        ),
     )
 
     app = FastAPI()

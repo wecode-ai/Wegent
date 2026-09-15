@@ -5,6 +5,7 @@ import { join } from 'node:path'
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const MAIN_COMPOSER = `${ACTIVE_SURFACE} [data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]`
 const SIDE_CHAT = `${ACTIVE_SURFACE} [data-testid="right-workspace-chat-panel"]`
+const SIDE_SCROLL = `${SIDE_CHAT} [data-testid="right-workspace-chat-scroll-area"]`
 const SIDE_COMPOSER = `${SIDE_CHAT} [data-testid="chat-message-input"]`
 const SOURCE_PROMPT = 'TEMPORARY_CHAT_SOURCE_CONVERSATION'
 const SOURCE_COMPLETION = 'TEMPORARY_CHAT_SOURCE_COMPLETE'
@@ -227,6 +228,22 @@ async function waitForThinkingToSettle(control, timeoutMs) {
   throw new Error('The temporary-chat response did not settle before the direct follow-up')
 }
 
+async function assertSideChatBottomOrigin(control) {
+  assert.equal(
+    await control.command('getAttribute', SIDE_SCROLL, {
+      value: 'data-scroll-origin',
+    }),
+    'bottom',
+    'The temporary chat did not use bottom-origin scrolling'
+  )
+  const [metrics] = JSON.parse(await control.command('getElementMetrics', SIDE_SCROLL))
+  assert.ok(metrics, 'The temporary-chat scroll container was not measurable')
+  assert.ok(
+    metrics.scrollTop >= -1,
+    `The temporary chat was not anchored at the bottom: ${JSON.stringify(metrics)}`
+  )
+}
+
 async function waitForRuntimeSource(control, taskId, timeoutMs) {
   const startedAt = Date.now()
   let lastTask = null
@@ -439,6 +456,7 @@ export function createDesktopScenario({
         text: INITIAL_COMPLETION,
         timeoutMs: taskTimeoutMs,
       })
+      await assertSideChatBottomOrigin(control)
       await waitForThinkingToSettle(control, taskTimeoutMs)
       const sideThreadId = await waitForRetainedSideThread(
         executorLogPath,
@@ -510,6 +528,7 @@ export function createDesktopScenario({
           text: FOLLOW_UP_PROMPT,
           timeoutMs: taskTimeoutMs,
         })
+        await assertSideChatBottomOrigin(control)
 
         const restoredSideChat = JSON.parse(await control.command('snapshot', SIDE_CHAT))
         assert.ok(

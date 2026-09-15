@@ -510,3 +510,28 @@ describe('resolveProgressiveLocalInstalledRaw', () => {
     ).toEqual(peeked)
   })
 })
+
+test('Codex membership retains managed store ownership for cloud uninstall', () => {
+  const local = localCodexPlugin({ id: 'github@wegent', name: 'github', marketplace: 'wegent' })
+  const store = structuredClone(local)
+  store.spec.sourcePayload = { managedByWegent: true, cloudInstalledPluginId: 4 }
+  const enriched = mergeLocalInstalledWithStorePackages([local], [store])
+  expect(enriched).toHaveLength(1)
+  expect(enriched[0].spec.sourcePayload).toMatchObject({
+    managedByWegent: true,
+    cloudInstalledPluginId: 4,
+  })
+})
+
+test('personal copy links to the cloud catalog only through explicit identity', () => {
+  const cloud = cloudPlugin()
+  const local = localCodexPlugin({
+    id: 'github@wework-personal',
+    name: 'github',
+    marketplace: 'wework-personal',
+  })
+  local.spec.sourcePayload = { cloudPluginId: 4 }
+  expect(mergeInstalledPlugins([cloud], [local], 'device')).toHaveLength(1)
+  local.spec.sourcePayload.cloudPluginId = 99
+  expect(mergeInstalledPlugins([cloud], [local], 'device')).toHaveLength(2)
+})

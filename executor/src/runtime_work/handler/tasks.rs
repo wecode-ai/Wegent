@@ -386,6 +386,25 @@ impl RuntimeWorkRpcHandler {
             .get("workspaceSourceTask")
             .or_else(|| payload.get("workspace_source_task"))
             .and_then(Value::as_object);
+        let mut side_source = side_source_thread(&payload)?;
+        let side_source_workspace_path = side_source
+            .as_ref()
+            .map(|source| source.workspace_path.clone());
+        if let Some(source_workspace_path) = side_source_workspace_path.as_deref() {
+            for requested_workspace_path in [payload_workspace_path.as_deref(), request.cwd()]
+                .into_iter()
+                .flatten()
+            {
+                if normalize_workspace_path(requested_workspace_path)
+                    != normalize_workspace_path(source_workspace_path)
+                {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "sideSource workspacePath conflicts with the requested workspace",
+                    ));
+                }
+            }
+        }
         let inherited_workspace_path = if let Some(source) = workspace_source_task {
             let source_device_id = source
                 .get("deviceId")
@@ -420,7 +439,8 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
-        let source_workspace_path = payload_workspace_path
+        let source_workspace_path = side_source_workspace_path
+            .or(payload_workspace_path)
             .or(inherited_workspace_path)
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| {
@@ -467,7 +487,9 @@ impl RuntimeWorkRpcHandler {
                 );
                 AppIpcError::new("bad_request", "workspacePath is required")
             })?;
-        let workspace_path = if request.workspace_source.as_deref() == Some("git_worktree") {
+        let workspace_path = if side_source.is_none()
+            && request.workspace_source.as_deref() == Some("git_worktree")
+        {
             let git_ref = payload
                 .get("execution")
                 .and_then(|execution| execution.get("workspace"))
@@ -619,7 +641,6 @@ impl RuntimeWorkRpcHandler {
             }
         } else {
             let initial_thread_goal = initial_thread_goal_from_payload(&payload);
-            let mut side_source = side_source_thread(&payload);
             if let Some(source) = &mut side_source {
                 self.wait_for_running_side_source_turn(&source.thread_id)
                     .await;

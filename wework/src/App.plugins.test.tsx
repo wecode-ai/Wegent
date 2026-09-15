@@ -195,6 +195,9 @@ vi.mock('@/lib/local-terminal', async importOriginal => {
 })
 
 vi.mock('@/desktop/localExecutor', () => ({
+  ensureLocalExecutorAvailable: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
   ensureLocalExecutorStarted: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
