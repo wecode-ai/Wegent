@@ -871,7 +871,14 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const resolveBrowserOpenRequestPaneKey = useCallback(
     (request: EmbeddedBrowserOpenRequest) => {
       const requestBaseLabel = request.baseLabel || request.label || DEFAULT_EMBEDDED_BROWSER_LABEL
-      if (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL) {
+      const activeTaskId = props.activePane.currentRuntimeTask?.taskId
+      const activePaneBrowserLabel = activeTaskId
+        ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(activeTaskId)}`
+        : `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(activePaneKey)}`
+      if (
+        requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL ||
+        requestBaseLabel === activePaneBrowserLabel
+      ) {
         return props.visible === false ? null : activePaneKey
       }
       return (
@@ -885,7 +892,13 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         }) ?? null
       )
     },
-    [activePaneKey, props.visible, resolvePane, runtimePaneKeys]
+    [
+      activePaneKey,
+      props.activePane.currentRuntimeTask?.taskId,
+      props.visible,
+      resolvePane,
+      runtimePaneKeys,
+    ]
   )
   useEffect(() => {
     const listener = listenEmbeddedBrowserOpenRequests(request => {

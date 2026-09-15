@@ -1863,7 +1863,9 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       : developmentRuntimeRoot
   const nodeRuntime = await electronNodeRuntime()
   const pythonRuntime = await managedPythonRuntime()
-  if (!pluginDevelopmentInstance) pythonRuntime.startBackgroundEnsure()
+  if (!pluginDevelopmentInstance && process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP !== '1') {
+    pythonRuntime.startBackgroundEnsure()
+  }
   const cliBin = join(app.getPath('userData'), 'runtime', 'wework-cli-bin')
   await installWeworkCli(
     cliBin,
