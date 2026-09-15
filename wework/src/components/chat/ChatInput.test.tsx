@@ -4090,6 +4090,7 @@ describe('ChatInput', () => {
   })
 
   test('shows no-project transition from the standalone entry', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
 
     render(
@@ -4119,6 +4120,7 @@ describe('ChatInput', () => {
             },
           ],
           currentProjectId: 7,
+          onSelectProject,
           onSelectStandaloneDevice,
         })}
       />
@@ -4127,10 +4129,12 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
   test('shows no-project option before selecting a concrete project', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
 
     render(
@@ -4143,6 +4147,7 @@ describe('ChatInput', () => {
         projectWork={projectWorkControls({
           projects: [{ id: 7, name: 'Wegent', tasks: [] }],
           currentProjectId: undefined,
+          onSelectProject,
           onSelectStandaloneDevice,
         })}
       />
@@ -4154,10 +4159,12 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
-  test('hides standalone devices and selects the local device for no-project mode', async () => {
+  test('hides standalone devices and clears the project for no-project mode', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
     const devices: DeviceInfo[] = [
       {
@@ -4200,6 +4207,7 @@ describe('ChatInput', () => {
           projects: [{ id: 7, name: 'Wegent', tasks: [] }],
           devices,
           currentProjectId: 7,
+          onSelectProject,
           onSelectStandaloneDevice,
         })}
       />
@@ -4212,7 +4220,8 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('standalone-device-option-local-online')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('no-project-option'))
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('local-online')
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
   test('marks the current project instead of a remembered standalone device', async () => {
