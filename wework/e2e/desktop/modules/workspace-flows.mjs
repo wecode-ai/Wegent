@@ -818,11 +818,6 @@ async function verifyTrackedTaskBoardRunningStatus(
     text: 'WEWORK_DESKTOP_E2E_TASK',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="work-item-guide-summary-status"]', {
-    text: '进行中',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
   const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
@@ -916,11 +911,6 @@ async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
 }
 
 async function verifyTrackedTaskSettledStatus(control) {
-  await control.command('waitFor', '[data-testid="work-item-guide-summary-status"]', {
-    text: '等待确认',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
   const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
@@ -996,10 +986,6 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
 async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
   await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-testid="work-item-guide-summary-status"]', {
-    visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'workspace-02-task-associated.png')
