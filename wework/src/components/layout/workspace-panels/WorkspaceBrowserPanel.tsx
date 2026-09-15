@@ -739,6 +739,7 @@ export function WorkspaceBrowserTabPanel({
         JSON.stringify({ label: event.label, nativeLabel: event.nativeLabel })
       )
       nativeBrowserOpenRef.current = false
+      setBrowserOpenAttempt(attempt => attempt + 1)
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
       activeDownloadIdsRef.current = new Set()
@@ -2958,6 +2959,7 @@ export function WorkspaceBrowserTabPanel({
                 }
                 interactionBlocked={embeddedBrowserOccluded || Boolean(navigationError)}
                 label={label}
+                resetGeneration={browserOpenAttempt}
                 transferFromLabel={transferFromLabel}
                 visualRect={deviceVisualRect}
               />
