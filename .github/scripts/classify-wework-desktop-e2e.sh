@@ -49,6 +49,7 @@ core_segments=(
   renderer-storage
   tray-lifecycle
   conversation-state
+  send-key-preference
   environment-panel-scroll
   temporary-chat
   workspace-attachments
@@ -138,7 +139,7 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
+  conversation-state,send-key-preference,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors
@@ -736,6 +737,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs)
       select_target "core:executor-stream-recovery"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/send-key-preference.scenario.mjs)
+      select_target "core:send-key-preference"
       return
       ;;
     wework/dsh/transcript-sync/* | \
