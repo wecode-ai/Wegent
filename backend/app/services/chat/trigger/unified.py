@@ -306,12 +306,24 @@ def _task_model_override_available(
     *,
     model_name: str,
     user_id: int,
+    team: Kind,
 ) -> bool:
-    """Return whether the task-level model override resolves as a Model CRD."""
+    """Return whether a task-level model override still applies to this team.
+
+    The override is unusable when the model no longer resolves as a Model CRD
+    or when the team's bots restrict models and do not allow it. Forcing such an
+    override makes execution request building fail, which leaves IM cards open.
+    """
     from app.services.chat.config.model_resolver import _find_model_with_namespace
 
     _model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
-    return model_spec is not None
+    if model_spec is None:
+        return False
+
+    from app.services.chat.config.model_resolver import allowed_model_names_for_team
+
+    allowed_names = allowed_model_names_for_team(db, team=team, user_id=user_id)
+    return allowed_names is None or model_name in allowed_names
 
 
 def _model_has_explicit_provider_credentials(model_config: Dict[str, Any]) -> bool:
@@ -964,10 +976,11 @@ async def build_execution_request(
                 db,
                 model_name=override_model_name,
                 user_id=user.id,
+                team=team,
             )
         ):
             logger.info(
-                "[build_execution_request] Ignoring unavailable task model "
+                "[build_execution_request] Ignoring unusable task model "
                 "override for payload fallback: modelId=%s",
                 override_model_name,
             )

@@ -68,6 +68,7 @@ from app.services.channels.model_selection import (
     is_claude_provider,
     model_selection_manager,
 )
+from app.services.chat.config.model_resolver import allowed_model_names_for_team
 from app.services.chat.wework_task_defaults import extract_task_device_id
 from app.services.im import task_continuation_service as im_task_continuation_service
 from app.services.im.session_service import im_session_service
@@ -724,6 +725,38 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         return None, None
 
+    def _apply_team_model_restriction(
+        self,
+        *,
+        db: Session,
+        user_id: int,
+        team: Kind,
+        model_name: Optional[str],
+        model_type: Optional[str] = None,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Drop a model override the selected agent does not allow.
+
+        The web client only offers models the agent allows, but IM selections
+        and the channel default model bypass that filter. Forcing such a model
+        onto the agent makes it fail while building the execution request, so
+        the agent's model restriction wins and the task falls back to the
+        agent's own model.
+        """
+        if not model_name:
+            return None, None
+
+        allowed_names = allowed_model_names_for_team(db, team=team, user_id=user_id)
+        if allowed_names is None or model_name in allowed_names:
+            return model_name, model_type
+
+        self.logger.warning(
+            "[%sHandler] Ignoring model override '%s': not allowed by agent '%s'",
+            self._channel_type.value,
+            model_name,
+            getattr(team, "name", None),
+        )
+        return None, None
+
     async def handle_message(self, raw_data: Any) -> bool:
         """Handle an incoming message.
 
@@ -1352,6 +1385,20 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message_source=message_source,
             inherit_wework_model_selection=(self._channel_type != ChannelType.DINGTALK),
         )
+        restricted_model_name, restricted_model_type = (
+            self._apply_team_model_restriction(
+                db=db,
+                user_id=user.id,
+                team=team,
+                model_name=params.model_id,
+                model_type=params.force_override_bot_model_type,
+            )
+        )
+        if restricted_model_name != params.model_id:
+            params.model_options = None
+        params.model_id = restricted_model_name
+        params.force_override_bot_model_type = restricted_model_type
+        params.force_override_bot_model = restricted_model_name is not None
         result = await create_chat_task(
             db=db,
             user=user,
@@ -2223,6 +2270,21 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             await self.send_text_reply(message_context, MODELS_HEADER + MODELS_EMPTY)
             return
 
+        # The web client only offers models the current agent allows. Apply the
+        # same restriction here so an IM selection cannot make the agent fail.
+        if selection.device_type in (DeviceType.LOCAL, DeviceType.CLOUD):
+            selected_team = self._get_task_mode_team(db, user.id)
+        else:
+            selected_team = await self._get_selected_or_default_team(db, user.id)
+        allowed_names = (
+            allowed_model_names_for_team(db, team=selected_team, user_id=user.id)
+            if selected_team is not None
+            else None
+        )
+
+        def is_selectable(model: Dict[str, Any]) -> bool:
+            return allowed_names is None or model.get("name") in allowed_names
+
         # Check if there are available models for current mode
         if is_device_mode:
             claude_models = [
@@ -2238,10 +2300,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             mode_hint = "\n\n⚠️ 设备模式仅支持 Claude 模型"
         else:
             mode_hint = ""
+        if allowed_names is not None:
+            mode_hint += "\n\n⚠️ 当前智能体限制了可用模型"
 
         # No argument - list models
         if not argument:
             message = MODELS_HEADER + mode_hint + "\n\n"
+            listed_models = 0
 
             # Get current selection to mark it
             current_selection = await model_selection_manager.get_selection(user.id)
@@ -2255,6 +2320,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 # In device mode, skip non-Claude models
                 if is_device_mode and not is_claude_provider(model.get("provider")):
                     continue
+                # Skip models the current agent does not allow
+                if not is_selectable(model):
+                    continue
+                listed_models += 1
 
                 model_name = model.get("name", "")
                 display_name = model.get("displayName") or model_name
@@ -2276,6 +2345,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     provider=provider or "未知",
                     status=status_str,
                 )
+
+            if listed_models == 0:
+                await self.send_text_reply(
+                    message_context,
+                    MODELS_HEADER + "\n当前智能体限制了可用模型，暂无可选模型\n\n"
+                    "💡 请联系管理员调整该智能体的可用模型",
+                )
+                return
 
             message += MODELS_FOOTER
             await self.send_text_reply(message_context, message)
@@ -2332,6 +2409,17 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             await self.send_text_reply(
                 message_context,
                 f"❌ 未找到模型: {argument}\n\n使用 `/models` 查看可用模型列表",
+            )
+            return
+
+        if not is_selectable(matched_model):
+            display_name = matched_model.get("displayName") or matched_model.get(
+                "name", ""
+            )
+            await self.send_text_reply(
+                message_context,
+                f"❌ 模型 **{display_name}** 不在当前智能体的可用模型范围内\n\n"
+                "请使用 `/models` 查看该智能体允许的模型",
             )
             return
 
@@ -2930,6 +3018,18 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             if not team:
                 return "配置错误: 未配置默认智能体"
 
+            restricted_model_name, _ = self._apply_team_model_restriction(
+                db=db,
+                user_id=user.id,
+                team=team,
+                model_name=override_model_name,
+            )
+            if restricted_model_name != params.model_id:
+                params.model_options = None
+            override_model_name = restricted_model_name
+            params.model_id = restricted_model_name
+            params.force_override_bot_model = restricted_model_name is not None
+
             result = await create_task_and_subtasks(
                 db=db,
                 user=user,
@@ -3070,7 +3170,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             team=trigger_data["team"],
             user=trigger_data["user"],
             message=ai_message,
-            payload=self._build_chat_payload(params, override_model_name),
+            payload=self._build_chat_payload(
+                params,
+                override_model_name,
+                ignore_unavailable_task_model_override=True,
+            ),
             task_room=task_room,
             namespace=None,
             user_subtask_id=trigger_data["user_subtask_id"],
@@ -3159,6 +3263,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Get model for device mode (uses default Claude if user hasn't selected one)
         override_model_name, override_model_type = (
             await self._get_device_mode_model_override(db, user)
+        )
+        override_model_name, override_model_type = self._apply_team_model_restriction(
+            db=db,
+            user_id=user.id,
+            team=team,
+            model_name=override_model_name,
+            model_type=override_model_type,
         )
 
         params = TaskCreationParams(
@@ -3321,6 +3432,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Get user's model selection
         override_model_name, override_model_type = await self._get_user_model_override(
             user.id
+        )
+        override_model_name, override_model_type = self._apply_team_model_restriction(
+            db=db,
+            user_id=user.id,
+            team=team,
+            model_name=override_model_name,
+            model_type=override_model_type,
         )
 
         # Cloud executor runs Claude Code, which only accepts Claude models.

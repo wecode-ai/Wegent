@@ -510,26 +510,11 @@ def _resolve_model_for_bot(
     # Validate against allowed_models whitelist when an override model is used.
     # This is the single validation point covering all call paths (chat, task creation,
     # subscription, retry, etc.).
-    allowed_models = raw_agent_config.get("allowed_models")
-    if not allowed_models and override_model_name and bot_crd.spec.modelRef:
-        _, bound_model_spec = _find_model_with_namespace(
-            db, bot_crd.spec.modelRef.name, user_id
+    if override_model_name:
+        allowed_names = _resolve_allowed_model_names(
+            db, bot_crd=bot_crd, raw_agent_config=raw_agent_config, user_id=user_id
         )
-        if bound_model_spec:
-            bound_model_config = bound_model_spec.get("modelConfig", {})
-            if isinstance(bound_model_config, dict):
-                allowed_models = bound_model_config.get("allowed_models")
-    if (
-        allowed_models
-        and override_model_name
-        and (force_override or override_model_name)
-    ):
-        if isinstance(allowed_models, list) and len(allowed_models) > 0:
-            allowed_names = {
-                m.get("name")
-                for m in allowed_models
-                if isinstance(m, dict) and m.get("name")
-            }
+        if allowed_names is not None:
             if model_name not in allowed_names:
                 raise ValueError(
                     f"Model '{model_name}' is not in the allowed models list for bot '{bot.name}'"
@@ -546,6 +531,104 @@ def _resolve_model_for_bot(
         db, user_id, model_kind, model_spec
     )
     return model_kind, model_spec, model_name, raw_agent_config
+
+
+def _resolve_allowed_model_names(
+    db: Session,
+    *,
+    bot_crd: Bot,
+    raw_agent_config: Dict[str, Any],
+    user_id: int,
+) -> Optional[set[str]]:
+    """Resolve the model names a bot allows.
+
+    The whitelist lives either on the bot's agent_config or, for bots that bind
+    a private Model carrying only the restriction, on that Model's modelConfig.
+
+    Returns None when the bot does not restrict models. An empty set means a
+    whitelist is configured but declares no usable entry, which blocks every
+    override.
+    """
+    allowed_models = raw_agent_config.get("allowed_models")
+    if not allowed_models and bot_crd.spec.modelRef:
+        _, bound_model_spec = _find_model_with_namespace(
+            db, bot_crd.spec.modelRef.name, user_id
+        )
+        if bound_model_spec:
+            bound_model_config = bound_model_spec.get("modelConfig", {})
+            if isinstance(bound_model_config, dict):
+                allowed_models = bound_model_config.get("allowed_models")
+
+    if not isinstance(allowed_models, list) or not allowed_models:
+        return None
+
+    return {
+        m.get("name") for m in allowed_models if isinstance(m, dict) and m.get("name")
+    }
+
+
+def allowed_model_names_for_bot(
+    db: Session,
+    bot: Kind,
+    user_id: int,
+) -> Optional[set[str]]:
+    """Return the model names a bot allows, or None when it allows everything."""
+    bot_json = bot.json if isinstance(bot.json, dict) else {}
+    bot_crd = Bot.model_validate(bot_json)
+    bot_spec = bot_json.get("spec") or {}
+    raw_agent_config = bot_spec.get("agent_config") or {}
+    if not isinstance(raw_agent_config, dict):
+        raw_agent_config = {}
+    return _resolve_allowed_model_names(
+        db,
+        bot_crd=bot_crd,
+        raw_agent_config=raw_agent_config,
+        user_id=user_id,
+    )
+
+
+def allowed_model_names_for_team(
+    db: Session,
+    team: Kind,
+    user_id: int,
+) -> Optional[set[str]]:
+    """Return the model names every bot of a team allows.
+
+    A model override is applied to every bot of the team, so it has to satisfy
+    each bot's restriction. Returns None when the team JSON is unavailable or
+    no bot restricts models; an empty set means no model satisfies the team.
+    """
+    from app.schemas.kind import Team
+    from app.services.readers import KindType, kindReader
+
+    team_json = getattr(team, "json", None)
+    if not isinstance(team_json, dict):
+        return None
+
+    team_crd = Team.model_validate(team_json)
+    team_user_id = team.user_id or user_id
+    allowed_names: Optional[set[str]] = None
+
+    for member in team_crd.spec.members or []:
+        bot = kindReader.get_by_name_and_namespace(
+            db,
+            team_user_id,
+            KindType.BOT,
+            member.botRef.namespace,
+            member.botRef.name,
+        )
+        if bot is None:
+            continue
+        bot_allowed_names = allowed_model_names_for_bot(db, bot, user_id)
+        if bot_allowed_names is None:
+            continue
+        allowed_names = (
+            bot_allowed_names
+            if allowed_names is None
+            else allowed_names & bot_allowed_names
+        )
+
+    return allowed_names
 
 
 def resolve_model_name_for_bot(
