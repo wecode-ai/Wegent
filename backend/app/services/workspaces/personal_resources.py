@@ -9,17 +9,20 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.share_link import ResourceType
 from app.models.user import User
+from app.services.workspaces.environment_status import execution_environment_statuses
 from app.services.workspaces.resource_mapping import (
     agent_status,
     personal_environment_values,
 )
 from app.services.workspaces.storage import workspace_ids_for_resources
+from shared.telemetry.decorators import trace_async
 
 
 class WorkspacePersonalResourceService:
     """List user-owned resources and their Workspace availability."""
 
-    def list_personal_resources(
+    @trace_async("workspace.list_personal_resources", tracer_name="backend")
+    async def list_personal_resources(
         self, db: Session, user_id: int
     ) -> dict[str, list[dict[str, object]]]:
         user = db.get(User, user_id)
@@ -37,6 +40,7 @@ class WorkspacePersonalResourceService:
             resource_type=ResourceType.DEVICE.value,
             resource_ids=[device.id for device in devices],
         )
+        connection_statuses = await execution_environment_statuses(devices)
         environment_ids = [str(device.id) for device in devices]
         return {
             "agents": [
@@ -56,6 +60,7 @@ class WorkspacePersonalResourceService:
             "execution_environments": [
                 personal_environment_values(
                     device,
+                    connection_status=connection_statuses[device.id],
                     owner=user,
                     workspace_ids=device_workspace_ids.get(device.id, []),
                 )

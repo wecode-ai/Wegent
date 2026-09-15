@@ -293,6 +293,64 @@ describe('ComposerTextarea', () => {
     })
   })
 
+  test('uses Enter to send by default and Shift-Enter for a line break', () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onSubmit = vi.fn()
+
+    render(
+      <ComposerTextarea
+        value="Send this"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        canSend
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+      />
+    )
+
+    const editor = screen.getByTestId('chat-message-input')
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter' })
+    expect(onSubmit).toHaveBeenCalledWith('Send this', undefined)
+
+    onSubmit.mockClear()
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter', shiftKey: true })
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  test('uses Command-Enter to send when configured and keeps Enter as a line break', () => {
+    const textareaRef = createRef<HTMLElement>()
+    const composerRef = createRef<ComposerTextareaHandle>()
+    const onChange = vi.fn()
+    const onSubmit = vi.fn()
+
+    render(
+      <ComposerTextarea
+        ref={composerRef}
+        value="Send this"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        canSend
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+        sendKey="cmd_enter"
+      />
+    )
+
+    const editor = screen.getByTestId('chat-message-input')
+    composerRef.current?.setValue('Send this', 'Send this'.length)
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter' })
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(onChange).toHaveBeenCalledWith('Send this\n')
+    expect(composerRef.current?.getValue()).toBe('Send this\n')
+
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter', metaKey: true })
+    expect(onSubmit).toHaveBeenCalledWith('Send this\n', { guideWhenBusy: true })
+  })
+
   test('consumes the Enter that selects a skill without adding a line break', async () => {
     const textareaRef = createRef<HTMLElement>()
     const onChange = vi.fn()

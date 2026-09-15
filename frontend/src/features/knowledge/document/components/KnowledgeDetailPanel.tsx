@@ -81,7 +81,7 @@ export function KnowledgeDetailPanel({
   const { selectTask } = useTaskSession()
 
   // Team context for ChatArea
-  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
+  const { teams, isTeamsLoading, loadError, refreshTeams } = useTeamContext()
 
   // Tab state for documents/permissions (classic mode)
   const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
@@ -290,6 +290,8 @@ export function KnowledgeDetailPanel({
           <ChatArea
             teams={filteredTeams}
             isTeamsLoading={isTeamsLoading}
+            loadError={teams.length === 0 ? loadError : null}
+            rawTeamsEmpty={teams.length === 0}
             showRepositorySelector={false}
             taskType="knowledge"
             knowledgeBaseId={selectedKb.id}

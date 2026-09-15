@@ -216,6 +216,10 @@ function getSystemQuickLaunchFunctionId(selection: QuickPresetSelection): string
 interface ChatAreaProps {
   teams: Team[]
   isTeamsLoading: boolean
+  /** Error from the latest failed team list load, so the UI can offer a retry. */
+  loadError?: Error | null
+  /** Whether the raw team cache (before any mode filtering) is empty. */
+  rawTeamsEmpty?: boolean
   selectedTeamForNewTask?: Team | null
   showRepositorySelector?: boolean
   taskType?: TaskType
@@ -266,6 +270,8 @@ interface ChatAreaProps {
 function ChatAreaContent({
   teams,
   isTeamsLoading,
+  loadError = null,
+  rawTeamsEmpty = teams.length === 0,
   selectedTeamForNewTask,
   showRepositorySelector = true,
   taskType = 'chat',
@@ -2455,8 +2461,9 @@ function ChatAreaContent({
     hasNoTeams: filteredTeams.length === 0,
     // Knowledge base ID to exclude from context selector (used in notebook mode)
     knowledgeBaseId,
-    // Reason why input is disabled (shown as placeholder)
-    disabledReason,
+    // Reason why input is disabled (shown as placeholder). While the team list is
+    // still loading, tell the user instead of asking them to create an agent.
+    disabledReason: isTeamsLoading ? t('chat:input.loading_teams_placeholder') : disabledReason,
     // Project context
     projectId: projectIdFromUrl ? Number(projectIdFromUrl) : null,
     // Skill selector props
@@ -2656,6 +2663,8 @@ function ChatAreaContent({
                   currentMode={teamModeFilter}
                   isLoading={isTeamsLoading}
                   isTeamsLoading={isTeamsLoading}
+                  loadError={loadError}
+                  rawTeamsEmpty={rawTeamsEmpty}
                   hideSelected={true}
                   onRefreshTeams={onRefreshTeams}
                   showWizardButton={effectiveTaskType === 'chat'}

@@ -63,6 +63,7 @@ from app.services.device.capability_sync_service import (
     DeviceCapabilitySyncError,
     device_capability_sync_service,
 )
+from app.services.device.plugin_reconciliation import reconcile_device_plugins
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.marketplace_submission_upload import (
     InvalidMarketplaceSubmissionUploadToken,
@@ -207,6 +208,7 @@ def auto_update_installed_plugins(
 @router.post("/installed/sync-device", response_model=PluginDeviceSyncResponse)
 async def sync_installed_plugins_to_device(
     device_id: str,
+    reconcile: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginDeviceSyncResponse:
@@ -214,6 +216,11 @@ async def sync_installed_plugins_to_device(
     normalized_device_id = device_id.strip()
     if not normalized_device_id:
         raise HTTPException(status_code=400, detail="device_id is required")
+
+    if reconcile:
+        user_id = current_user.id
+        db.close()
+        return await reconcile_device_plugins(user_id, normalized_device_id)
 
     # Repair stale catalog refs before building desired state / pushing packages.
     # Close the request session before awaiting the device round-trip so the

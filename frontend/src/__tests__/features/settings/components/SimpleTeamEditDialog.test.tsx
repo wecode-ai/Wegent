@@ -16,7 +16,7 @@ import { createTeam, updateTeam } from '@/features/settings/services/teams'
 import type { Bot, Team } from '@/types/api'
 import type { Group } from '@/types/group'
 
-const mockRefreshTeams = jest.fn()
+const mockInvalidateTeams = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -76,6 +76,11 @@ jest.mock('@/hooks/useTranslation', () => ({
         'settings:team.simple.executor.complex.description':
           'Complex executor for code tasks, device tasks, or multi-step complex tasks.',
         'settings:team.simple.executor.complex.title': 'Complex',
+        'settings:team.simple.executor.coding_runtime_label': 'Coding engine',
+        'settings:team.simple.executor.codex.description': 'Codex description.',
+        'settings:team.simple.executor.codex.title': 'Codex',
+        'settings:team.simple.executor.claude_code.description': 'Claude Code description.',
+        'settings:team.simple.executor.claude_code.title': 'Claude Code',
         'settings:team.simple.executor.custom.description': 'Use an executor you created.',
         'settings:team.simple.executor.custom.title': 'Custom',
         'settings:team.simple.executor.custom_shell_placeholder': 'Choose custom executor',
@@ -83,7 +88,7 @@ jest.mock('@/hooks/useTranslation', () => ({
           'Manage custom executors in Resource Library - Executors.',
         'settings:team.simple.executor.no_custom_shells': 'No custom executors available',
         'settings:team.simple.executor.required': 'Choose executor',
-        'settings:team.simple.executor.requires_complex_hint': 'Code requires complex.',
+        'settings:team.simple.executor.requires_coding_agent_hint': 'Code requires a coding agent.',
         'settings:team.simple.executor.simple.description': 'Chat executor.',
         'settings:team.simple.executor.simple.title': 'Simple',
         'settings:team.simple.executor.title': 'Executor',
@@ -162,7 +167,7 @@ jest.mock('@/apis/skills', () => ({
 
 jest.mock('@/contexts/TeamContext', () => ({
   useTeamContext: () => ({
-    refreshTeams: mockRefreshTeams,
+    invalidateTeams: mockInvalidateTeams,
   }),
 }))
 
@@ -322,10 +327,16 @@ function makeTeam(overrides: Partial<Team> = {}): Team {
 describe('Simple TeamEditDialog', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockRefreshTeams.mockResolvedValue(undefined)
+    mockInvalidateTeams.mockReturnValue(undefined)
     mockedGetUnifiedShells.mockResolvedValue({
       data: [
         { name: 'Chat', type: 'public', displayName: 'Chat', shellType: 'Chat' },
+        {
+          name: 'Codex',
+          type: 'public',
+          displayName: 'Codex',
+          shellType: 'Codex',
+        },
         {
           name: 'ClaudeCode',
           type: 'public',
@@ -1149,6 +1160,7 @@ describe('Simple TeamEditDialog', () => {
     await waitFor(() => {
       expect(mockedUpdateTeam).toHaveBeenCalled()
       expect(mockedCreateListing).toHaveBeenCalled()
+      expect(mockInvalidateTeams).toHaveBeenCalled()
       expect(onClose).toHaveBeenCalled()
     })
     expect(toast).toHaveBeenCalledWith({
@@ -1229,6 +1241,76 @@ describe('Simple TeamEditDialog', () => {
         })
       )
       expect(mockedCreateListing.mock.calls[0][0]).not.toHaveProperty('name')
+    })
+  })
+
+  it('saves preload skills when the simple form uses the Claude Code executor', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
+
+    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'code-agent' } })
+    fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
+    fireEvent.click(screen.getByTestId('simple-coding-runtime-claude_code-card'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Add skill' }))
+    fireEvent.click(await screen.findByTestId('simple-skill-preload-repo-reader'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateBot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shell_name: 'ClaudeCode',
+          skills: ['repo-reader'],
+          preload_skills: ['repo-reader'],
+          preload_skill_refs: {
+            'repo-reader': {
+              skill_id: 5,
+              namespace: 'default',
+              is_public: false,
+            },
+          },
+        })
+      )
+    })
+  })
+
+  it('keeps Claude Code as the default coding engine', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
+
+    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'code-agent' } })
+    fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateBot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shell_name: 'ClaudeCode',
+        })
+      )
     })
   })
 

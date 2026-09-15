@@ -13,7 +13,7 @@ import type { ResourceLibraryListing } from '@/features/resource-library/types'
 const mockToast = jest.fn()
 const mockPush = jest.fn()
 const mockReplace = jest.fn()
-const mockRefreshTeams = jest.fn()
+const mockInvalidateTeams = jest.fn()
 const mockObserve = jest.fn()
 const mockUnobserve = jest.fn()
 const mockDisconnect = jest.fn()
@@ -59,7 +59,7 @@ jest.mock('@/hooks/use-toast', () => ({
 
 jest.mock('@/contexts/TeamContext', () => ({
   useTeamContext: () => ({
-    refreshTeams: mockRefreshTeams,
+    invalidateTeams: mockInvalidateTeams,
   }),
 }))
 
@@ -160,7 +160,7 @@ function createListing(overrides: Partial<ResourceLibraryListing> = {}): Resourc
 describe('DiscoverResources', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockRefreshTeams.mockResolvedValue([])
+    mockInvalidateTeams.mockImplementation(() => {})
     mockSearchParams = new URLSearchParams()
     mockResourceLibraryApi.listListings.mockResolvedValue({
       items: [createListing()],
@@ -797,17 +797,19 @@ describe('DiscoverResources', () => {
     expect(mockResourceLibraryApi.installListing).toHaveBeenCalledWith(82, {
       targetNamespace: 'default',
     })
-    expect(mockRefreshTeams).toHaveBeenCalledTimes(1)
-    expect(mockRefreshTeams.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mockInvalidateTeams).toHaveBeenCalledTimes(1)
+    expect(mockInvalidateTeams.mock.invocationCallOrder[0]).toBeLessThan(
       mockPush.mock.invocationCallOrder[0]
     )
     expect(mockToast).not.toHaveBeenCalled()
   })
 
-  it('opens an installed marketplace agent when refreshing teams fails', async () => {
+  it('opens an installed marketplace agent when invalidation fails', async () => {
     const refreshError = new Error('refresh failed')
     const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation()
-    mockRefreshTeams.mockRejectedValue(refreshError)
+    mockInvalidateTeams.mockImplementation(() => {
+      throw refreshError
+    })
     mockResourceLibraryApi.listListings.mockResolvedValue({
       items: [
         createListing({

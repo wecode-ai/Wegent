@@ -1,8 +1,14 @@
 import { act, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { getPlatform } from '@/lib/platform'
 import { ComposerToolbar } from './ComposerToolbar'
 
 let resizeCallback: ResizeObserverCallback | null = null
+
+vi.mock('@/lib/platform', () => ({
+  getPlatform: vi.fn(() => 'mac'),
+}))
 
 vi.mock('./QuickPhraseMenu', () => ({
   QuickPhraseMenu: () => <span data-testid="quick-phrase-layout">icon</span>,
@@ -189,5 +195,36 @@ describe('ComposerToolbar', () => {
     expect(actions).toHaveClass('ml-auto', 'shrink-0')
     expect(goalPill).toHaveClass('min-w-8', 'max-w-full', 'shrink', 'overflow-hidden')
     expect(goalPill.querySelector('span')).toHaveClass('min-w-0', 'truncate')
+  })
+
+  it.each([
+    ['mac', '⌘'],
+    ['win', 'Ctrl'],
+    ['linux', 'Ctrl'],
+  ] as const)('shows the configured send shortcut on %s', async (platform, modifier) => {
+    vi.mocked(getPlatform).mockReturnValue(platform)
+
+    render(
+      <ComposerToolbar
+        canSend
+        isStreaming
+        sendKey="cmd_enter"
+        models={[]}
+        selectedModel={null}
+        selectedModelOptions={{}}
+        isModelSelectionReady
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+        onFileSelect={vi.fn()}
+        onQuickPhraseSelect={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('send-mode-menu-button'))
+
+    const sendAfterTurnOption = screen.getByTestId('send-after-turn-option')
+    expect(sendAfterTurnOption).toHaveTextContent(modifier)
+    expect(sendAfterTurnOption.querySelector('.lucide-corner-down-left')).toBeInTheDocument()
   })
 })

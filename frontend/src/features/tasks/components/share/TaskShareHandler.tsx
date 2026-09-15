@@ -108,7 +108,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
         // Fetch share info and teams in parallel
         const [info, teamsResponse] = await Promise.all([
           taskApis.getTaskShareInfo(taskShareToken),
-          teamApis.getTeams({ page: 1, limit: 100 }),
+          teamApis.getAllTeams(),
         ])
 
         setShareInfo(info)

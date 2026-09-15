@@ -204,6 +204,8 @@ export interface ElectronE2EHost {
     exists: boolean
     focused: boolean
     visible: boolean
+    windowId: number | null
+    webContentsId: number | null
   }
   setSystemDragContext: (context: { conversationTitle: string | null }) => void
   setSystemSleepEnabled: (enabled: boolean) => void
@@ -259,7 +261,13 @@ export function createElectronCapabilityRouter(
     traySnapshot: () => null,
     scheduleCoreDshRestart: () => undefined,
     openWorkspace: () => Promise.reject(new Error('Workspace windows are unavailable')),
-    popoutWindowSnapshot: () => ({ exists: false, focused: false, visible: false }),
+    popoutWindowSnapshot: () => ({
+      exists: false,
+      focused: false,
+      visible: false,
+      windowId: null,
+      webContentsId: null,
+    }),
     setSystemDragContext: () => undefined,
     setSystemSleepEnabled: () => undefined,
     setSystemSleepTaskActive: () => undefined,
@@ -605,6 +613,8 @@ export function createElectronCapabilityRouter(
       popoutExists: popout.exists,
       popoutFocused: popout.focused,
       popoutVisible: popout.visible,
+      popoutWindowId: popout.windowId,
+      popoutWebContentsId: popout.webContentsId,
       workspaceWindows: e2eHost.workspaceWindowSnapshots(),
     }
   })

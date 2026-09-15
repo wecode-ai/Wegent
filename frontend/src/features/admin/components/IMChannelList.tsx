@@ -172,7 +172,7 @@ const IMChannelList: React.FC = () => {
 
   const fetchTeams = useCallback(async () => {
     try {
-      const response = await teamApis.getTeams({ page: 1, limit: 100 }, 'all')
+      const response = await teamApis.getAllTeams('all')
       setTeams(
         response.items.filter(
           team => team.is_active && (!team.bind_mode || team.bind_mode.includes('chat'))

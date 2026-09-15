@@ -18,6 +18,7 @@ export class RuntimeTaskMachine {
       turnOutcome: null,
       activeTurnId: null,
       goalStatus: null,
+      hasAuthoritativeGoalStatus: false,
       continuable: false,
       unread,
       expectedExecutorRunning: null,

@@ -42,8 +42,9 @@ impl RuntimeWorkRpcHandler {
         .map(|page| page.thread)
     }
 
-    pub(super) async fn list_tasks(&self) -> Result<Value, AppIpcError> {
+    pub(super) async fn list_tasks(&self, payload: &Value) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
+        let prefer_cached = bool_field(payload, "preferCached").unwrap_or(false);
         log_runtime_work_list_diagnostic("started", started_at, started_at, &[]);
         let stage_started_at = Instant::now();
         let project_index = CodexGlobalProjectIndex::load();
@@ -60,7 +61,11 @@ impl RuntimeWorkRpcHandler {
             ],
         );
         let stage_started_at = Instant::now();
-        let collected_links = self.collect_links(false).await;
+        let collected_links = if prefer_cached {
+            self.collect_cached_links(false)
+        } else {
+            self.collect_links(false).await
+        };
         for link in &collected_links {
             self.project_runtime_link_status(link);
         }
@@ -102,10 +107,30 @@ impl RuntimeWorkRpcHandler {
                 ("tasks", task_count.to_string()),
             ],
         );
+        if prefer_cached {
+            self.reconcile_codex_threads_after_cached_list();
+        }
         Ok(json!({
             "success": true,
             "workspaces": workspaces,
         }))
+    }
+
+    fn reconcile_codex_threads_after_cached_list(&self) {
+        let handler = self.clone();
+        tokio::spawn(async move {
+            let started_at = Instant::now();
+            handler.collect_links(false).await;
+            log_executor_event(
+                "runtime work cached list reconciliation finished",
+                &[("elapsed_ms", elapsed_ms(started_at))],
+            );
+            emit_runtime_work_changed(
+                &handler.event_tx,
+                &handler.device_id,
+                "runtime-work-bootstrap",
+            );
+        });
     }
 
     pub(super) async fn list_archived_conversations(

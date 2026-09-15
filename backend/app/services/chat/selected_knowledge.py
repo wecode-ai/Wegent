@@ -40,7 +40,7 @@ PROVIDER_SKILLS = {
     "wegent": "wegent-knowledge",
     "dingtalk": "dingtalk-docs",
 }
-SUPPORTED_PROVIDER_NATIVE_SHELLS = {"Chat", "ClaudeCode"}
+SUPPORTED_PROVIDER_NATIVE_SHELLS = {"Chat", "Codex", "ClaudeCode"}
 ROUTING_SUMMARY_MAX_LENGTH = 200
 ROUTING_TOPIC_MAX_LENGTH = 48
 MAX_ROUTING_TOPICS = 5
@@ -168,7 +168,8 @@ def activate_provider_native_knowledge(
             + ", ".join(invalid_mcp_skills)
         )
 
-    if get_request_shell_type(request) == "ClaudeCode":
+    shell_type = get_request_shell_type(request)
+    if shell_type in {"Codex", "ClaudeCode"}:
         bot_config = (
             request.bot[0] if request.bot and isinstance(request.bot[0], dict) else {}
         )
@@ -180,7 +181,7 @@ def activate_provider_native_knowledge(
         missing_mcp_names = sorted(expected_mcp_names - configured_mcp_names)
         if missing_mcp_names:
             _raise_capability_error(
-                "Required provider MCP is unavailable to ClaudeCode: "
+                f"Required provider MCP is unavailable to {shell_type}: "
                 + ", ".join(missing_mcp_names)
             )
 

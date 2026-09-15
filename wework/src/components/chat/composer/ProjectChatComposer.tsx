@@ -122,6 +122,7 @@ interface ProjectChatComposerProps {
   projectWorkBarTrailingContext?: ReactNode
   projectWorkBarEndContext?: ReactNode
   modelSelectorOverride?: ReactNode
+  sendKey?: 'enter' | 'cmd_enter'
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -205,6 +206,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       projectWorkBarTrailingContext,
       projectWorkBarEndContext,
       modelSelectorOverride,
+      sendKey = 'enter',
     },
     ref
   ) {
@@ -497,6 +499,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onSelectModel={onSelectModel}
             onBlockedModelSelect={onBlockedModelSelect}
             isModelSelectionReady={isModelSelectionReady}
+            sendKey={sendKey}
           />
           <ComposerToolbar
             className={styles.toolbar}
@@ -546,6 +549,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onQuickPhraseSelect={handleQuickPhraseSelect}
             projectPhrases={projectPhrases}
             onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
+            sendKey={sendKey}
             leadingContext={toolbarLeadingContext}
             onListLocalApps={onListLocalApps}
             workspaceTarget={workspaceTarget}

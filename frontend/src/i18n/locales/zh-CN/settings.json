@@ -328,23 +328,32 @@
         }
       },
       "executor": {
-        "title": "执行器",
-        "required": "请选择一个可用执行器",
-        "requires_complex_hint": "编码和设备模式需要 Claude Code 能力，已优先使用复杂执行器。",
-        "custom_shell_placeholder": "选择自定义执行器",
-        "no_custom_shells": "暂无自定义执行器",
-        "manage_custom_shells_hint": "可前往资源库 - 执行器管理自定义执行器。",
+        "title": "运行方式",
+        "required": "请选择一种可用的运行方式",
+        "requires_coding_agent_hint": "编码和设备模式需要选择一种编程引擎。",
+        "custom_shell_placeholder": "选择自定义运行环境",
+        "no_custom_shells": "暂无自定义运行环境",
+        "manage_custom_shells_hint": "可前往资源库 - 执行器管理中添加自定义运行环境。",
         "simple": {
-          "title": "简单",
-          "description": "使用 Chat 执行器，适合对话和轻量问答。"
+          "title": "日常对话",
+          "description": "适合对话、知识问答和轻量任务。"
         },
         "complex": {
-          "title": "复杂",
-          "description": "复杂执行器，适合代码任务、设备任务或需要较多步骤完成的复杂任务。"
+          "title": "复杂任务与编程",
+          "description": "适合多步骤复杂任务、代码开发、文件操作和命令执行。"
+        },
+        "coding_runtime_label": "选择编程引擎",
+        "codex": {
+          "title": "Codex",
+          "description": "适合使用 OpenAI 模型完成自主编程和工具调用。"
+        },
+        "claude_code": {
+          "title": "Claude Code",
+          "description": "适合使用 Anthropic 模型完成编程和工具调用。"
         },
         "custom": {
-          "title": "自定义",
-          "description": "使用你创建的执行器，适合特殊运行环境。"
+          "title": "高级自定义",
+          "description": "使用你创建的运行环境，适合特殊需求。"
         }
       }
     }

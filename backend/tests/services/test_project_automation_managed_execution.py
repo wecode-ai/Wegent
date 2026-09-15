@@ -672,6 +672,7 @@ async def test_managed_dispatch_projects_broker_enqueue_failure(monkeypatch):
     ("shell_type", "expected_mode"),
     [
         ("Chat", CommunicationMode.SSE),
+        ("Codex", CommunicationMode.HTTP_CALLBACK),
         ("ClaudeCode", CommunicationMode.HTTP_CALLBACK),
     ],
 )

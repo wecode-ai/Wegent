@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { runtimeProfileMessages } from './runtime-profile/messages'
+import { executionEnvironmentMessages } from './execution-environment/messages'
+
 export type CollaborationLocale = "zh-CN" | "en";
 
 export const collaborationMessages = {
@@ -242,6 +245,8 @@ const sharedMessages: Record<
     "common.remove": "移除",
     "common.retry": "重试",
     "common.save": "保存",
+    'todo.codex_environment_hint':
+      '任务会在所选执行环境的独立工作目录中运行，并关联当前协作项目。',
     "todo.status_inbox": "收集箱",
     "todo.status_pending": "待开始",
     "todo.status_in_progress": "进行中",
@@ -490,7 +495,13 @@ const sharedMessages: Record<
     "todo.execution_cancelled": "已取消",
     "todo.execution_unknown": "状态待同步",
     "todo.execution_waiting_approval": "等待审批",
-    "todo.execution_waiting_runtime": "等待执行环境",
+    "todo.execution_waiting_runtime": "等待设备或模型配置",
+    "todo.execution_manager_run": "AI 调度",
+    "todo.execution_manager_completed": "调度已完成；步骤执行与整个 Issue 的完成状态请查看上方进度。",
+    "todo.workflow_children_waiting_runtime": "子任务等待设备或模型配置",
+    "todo.workflow_children_pending": "已分派，等待子任务执行",
+    "todo.workflow_children_review": "子任务执行已结束，等待验收",
+    "todo.view_child_task": "查看子任务",
     "todo.execution_waiting_device": "等待执行设备",
     "todo.execution_queued": "排队中",
     "todo.execution_cancelling": "取消中",
@@ -629,6 +640,8 @@ const sharedMessages: Record<
     "common.remove": "Remove",
     "common.retry": "Retry",
     "common.save": "Save",
+    'todo.codex_environment_hint':
+      'Tasks run in their own working directories on the selected execution environment and remain linked to this collaboration project.',
     "todo.status_inbox": "Inbox",
     "todo.status_pending": "To do",
     "todo.status_in_progress": "In progress",
@@ -884,7 +897,13 @@ const sharedMessages: Record<
     "todo.execution_cancelled": "Cancelled",
     "todo.execution_unknown": "Status pending sync",
     "todo.execution_waiting_approval": "Waiting for approval",
-    "todo.execution_waiting_runtime": "Waiting for runtime",
+    "todo.execution_waiting_runtime": "Waiting for device or model configuration",
+    "todo.execution_manager_run": "AI coordination",
+    "todo.execution_manager_completed": "Coordination finished. See the progress above for step execution and overall Issue completion.",
+    "todo.workflow_children_waiting_runtime": "Subtasks need device or model configuration",
+    "todo.workflow_children_pending": "Assigned, waiting for subtasks to run",
+    "todo.workflow_children_review": "Subtask execution ended, awaiting review",
+    "todo.view_child_task": "View subtask",
     "todo.execution_waiting_device": "Waiting for device",
     "todo.execution_queued": "Queued",
     "todo.execution_cancelling": "Cancelling",
@@ -1025,7 +1044,8 @@ export function createCollaborationTranslator(
 ): CollaborationTranslate {
   const messages = sharedMessages[locale];
   return (key, fallback, options) => {
-    let value = messages[key] ?? fallback ?? key;
+    let value =
+      runtimeProfileMessages[locale][key] ?? executionEnvironmentMessages[locale][key] ?? messages[key] ?? fallback ?? key
     for (const [name, replacement] of Object.entries(options ?? {})) {
       value = value.split(`{{${name}}}`).join(String(replacement));
     }

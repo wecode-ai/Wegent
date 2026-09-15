@@ -70,6 +70,7 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onOpenAssistantPlan,
     onRequestUserInputSubmit,
     onRequestUserInputIgnore,
+    scrollOrigin,
   }: {
     messages: Array<{
       id: string
@@ -88,8 +89,9 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
       answers: Record<string, { answers: string[] }>
     }) => void
     onRequestUserInputIgnore?: (payload: { kind: string; request_id: string }) => void
+    scrollOrigin?: 'top' | 'bottom'
   }) => (
-    <div data-testid="mock-message-list">
+    <div data-testid="mock-message-list" data-scroll-origin={scrollOrigin}>
       {messages.flatMap(message =>
         (message.attachments ?? []).map(messageAttachment => (
           <span key={messageAttachment.id} data-testid="sent-message-attachment">
@@ -335,6 +337,40 @@ describe('TemporaryChatPanel', () => {
     mocks.activeModelSelection = null
     mocks.isBootstrapping = false
     mocks.runtimeWork = null
+  })
+
+  it('uses bottom-origin scrolling by default and allows an explicit override', () => {
+    mocks.conversationMessages = [
+      {
+        id: 'existing-message',
+        role: 'assistant',
+        content: 'existing conversation',
+        status: 'done',
+        createdAt: '2026-09-15T00:00:00.000Z',
+      },
+    ]
+    const { rerender } = render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="bottom-origin-default"
+        initialAddress={address}
+      />
+    )
+
+    expect(screen.getByTestId('mock-message-list')).toHaveAttribute('data-scroll-origin', 'bottom')
+
+    rerender(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="top-origin-override"
+        initialAddress={address}
+        scrollOrigin="top"
+      />
+    )
+
+    expect(screen.getByTestId('mock-message-list')).toHaveAttribute('data-scroll-origin', 'top')
   })
 
   it('passes the collapsed idle state through to the shared composer', () => {
