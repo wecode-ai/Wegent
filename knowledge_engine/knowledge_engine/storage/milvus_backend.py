@@ -964,7 +964,9 @@ class MilvusBackend(BaseStorageBackend):
             if not client.has_collection(collection_name):
                 client.create_collection(
                     collection_name=collection_name,
-                    dimension=1,
+                    # Milvus requires a dimension of at least 2; this sidecar
+                    # placeholder vector is never searched.
+                    dimension=2,
                     auto_id=True,
                     enable_dynamic_field=True,
                 )
@@ -980,7 +982,7 @@ class MilvusBackend(BaseStorageBackend):
                 collection_name=collection_name,
                 data=[
                     {
-                        "vector": [0.0],
+                        "vector": [0.0, 0.0],
                         "parent_node_id": node.node_id,
                         "knowledge_id": knowledge_id,
                         "doc_ref": node.metadata.get("doc_ref"),

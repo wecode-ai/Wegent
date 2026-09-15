@@ -76,6 +76,10 @@ ROW_OUTPUT_FIELDS: List[str] = [
 
 INDEX_BINDING_COLLECTION = "wegent_index_bindings"
 BINDING_VECTOR_FIELD = "binding_vector"
+# Milvus rejects dimensions below 2, so the registry placeholder is 2d even
+# though it is never searched.
+BINDING_VECTOR_DIM = 2
+BINDING_VECTOR_VALUE = [0.0, 0.0]
 BINDING_STATE_FIELD = "state"
 BINDING_STATE_CREATING = "creating"
 BINDING_STATE_READY = "ready"
@@ -319,7 +323,11 @@ def build_binding_collection_schema() -> CollectionSchema:
         ),
         # Milvus requires every collection to own a vector field. This
         # placeholder is never searched; the registry only answers filters.
-        FieldSchema(name=BINDING_VECTOR_FIELD, dtype=DataType.FLOAT_VECTOR, dim=1),
+        FieldSchema(
+            name=BINDING_VECTOR_FIELD,
+            dtype=DataType.FLOAT_VECTOR,
+            dim=BINDING_VECTOR_DIM,
+        ),
     ]
     return CollectionSchema(
         fields=fields,
@@ -458,7 +466,7 @@ class MilvusDocumentStore:
                 if not client.has_collection(INDEX_BINDING_COLLECTION):
                     raise
         row = binding.to_row()
-        row[BINDING_VECTOR_FIELD] = [0.0]
+        row[BINDING_VECTOR_FIELD] = list(BINDING_VECTOR_VALUE)
         row[BINDING_STATE_FIELD] = state
         client.upsert(
             collection_name=INDEX_BINDING_COLLECTION,

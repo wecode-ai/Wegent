@@ -1,10 +1,13 @@
 # Real Milvus service for the knowledge-engine contract tests.
 #
-# The image tag is pinned: a floating tag would silently change the
-# server/SDK combination the contract was verified against.
+# The combination mirrors the production server (Milvus 2.5.4) with the etcd
+# release paired by the upstream v2.5.x standalone compose. Tags are pinned: a
+# floating tag would silently change the server the contract was verified
+# against. minio is pulled from quay.io because the Docker Hub repository no
+# longer serves these release tags.
 services:
   etcd:
-    image: quay.io/coreos/etcd:v3.5.18
+    image: quay.io/coreos/etcd:v3.5.16
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
@@ -20,7 +23,7 @@ services:
       retries: 12
 
   minio:
-    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    image: quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
@@ -36,11 +39,12 @@ services:
       retries: 12
 
   standalone:
-    image: milvusdb/milvus:v2.6.3
+    image: milvusdb/milvus:v2.5.4
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
     environment:
+      MINIO_REGION: us-east-1
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
       MINIO_ACCESS_KEY_ID: minioadmin
