@@ -2,7 +2,7 @@
 
 `backend-rs` is the public Wegent integration boundary between the existing
 Python backend and incrementally implemented Rust APIs. It is a library plus a
-small executable built from `AppState`, `PublicApi`, and the reusable hybrid
+small executable built from `AppState`, `Application`, and the reusable hybrid
 runtime. Generic routing, streaming proxy, and upgrade behavior live in
 `brz-http-gateway`.
 
@@ -62,11 +62,13 @@ all-Python fallback does not register API metrics or start profile reporting.
 
 ## Library boundary
 
-`PublicApi` owns an `Arc<AppState>` and currently delegates selected requests to
-`NoRustApi`. Implement public routes behind this type as APIs migrate. Consumers
-can retain the state/API boundary, add routes, and call `run_hybrid` or
-`serve_hybrid` from their own binary.
+`Application` owns an `Arc<AppState>` and the public routes exported through
+`brz-http-server` macros. A private binary can collect its own named route group
+and merge it with `Application::with_routes` without introducing private state
+or modules into this crate. `run_hybrid` serves the composed application;
+`serve_hybrid` remains the lower-level entry point for custom matched services.
 
-Rust route implementations run in the gateway process; they do not open a
-second internal Rust listener. With the initial empty configuration every
-request is forwarded to Python.
+Macro-exported Rust APIs run on a loopback-only Breeze listener in the gateway
+process. The public listener forwards configured Rust routes to it and sends all
+other requests to Python. With the initial empty configuration every request is
+forwarded to Python.

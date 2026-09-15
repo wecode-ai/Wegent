@@ -1,13 +1,15 @@
 use std::env;
 use std::future::Future;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::Duration;
 
 use http::Uri;
 use tracing::info;
 
-use crate::{BoxError, Gateway, RouteTable, RoutesConfig, RustApi, bind, serve};
+use crate::{
+    Application, BoxError, Gateway, OriginService, RouteTable, RoutesConfig, RustApi, bind, serve,
+};
 
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 8000;
@@ -72,10 +74,7 @@ impl HybridConfig {
     }
 }
 
-/// Runs a route-selective Rust API with Python as the fallback origin.
-///
-/// The selected API is generic so a private crate can wrap [`crate::PublicApi`]
-/// with additional routes while reusing this listener and shutdown lifecycle.
+/// Runs a route-selective service with Python as the fallback origin.
 ///
 /// # Errors
 ///
@@ -100,18 +99,73 @@ where
     Ok(())
 }
 
+/// Serves a macro-exported application behind the hybrid gateway.
+///
+/// The Breeze router listens only on an ephemeral loopback address. The public
+/// listener sends configured Rust routes to it and forwards every other route
+/// directly to Python.
+///
+/// # Errors
+///
+/// Returns an error when either listener cannot bind or serve, or when an
+/// internal origin URL cannot be constructed.
+pub async fn serve_hybrid_application<F>(
+    config: HybridConfig,
+    application: Application,
+    shutdown: F,
+) -> Result<(), BoxError>
+where
+    F: Future<Output = ()>,
+{
+    let Application {
+        state: _state,
+        routes,
+    } = application;
+    let api_server =
+        brz_http_server::Server::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), routes).await?;
+    let api_address = api_server.local_addr()?;
+    let api_origin: Uri = format!("http://{api_address}").parse()?;
+    let api = OriginService::new(&api_origin)?;
+    let (api_shutdown, wait_for_api_shutdown) = tokio::sync::oneshot::channel();
+
+    info!(listen = %api_address, "Wegent exported Rust APIs started");
+
+    let api_server = api_server.serve_until(async move {
+        let _ = wait_for_api_shutdown.await;
+    });
+    let gateway = serve_hybrid(config, api, shutdown);
+    tokio::pin!(api_server);
+    tokio::pin!(gateway);
+
+    tokio::select! {
+        gateway_result = &mut gateway => {
+            let _ = api_shutdown.send(());
+            let api_result = api_server.await;
+            gateway_result?;
+            api_result?;
+            Ok(())
+        }
+        api_result = &mut api_server => {
+            api_result?;
+            Err(std::io::Error::other("exported Rust API listener stopped unexpectedly").into())
+        }
+    }
+}
+
 /// Runs the hybrid Backend until the process receives an interrupt or terminate
 /// signal.
 ///
 /// # Errors
 ///
 /// Returns the same listener, upstream configuration, and serving errors as
-/// [`serve_hybrid`].
-pub async fn run_hybrid<S>(config: HybridConfig, api: S) -> Result<(), BoxError>
-where
-    S: RustApi,
-{
-    serve_hybrid(config, api, shutdown_signal()).await
+/// [`serve_hybrid_application`].
+pub async fn run_hybrid(config: HybridConfig, application: Application) -> Result<(), BoxError> {
+    Box::pin(serve_hybrid_application(
+        config,
+        application,
+        shutdown_signal(),
+    ))
+    .await
 }
 
 async fn shutdown_signal() {
