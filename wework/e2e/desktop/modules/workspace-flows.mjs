@@ -28,8 +28,9 @@ const SHARED_COLLABORATION_PLATFORM_TEST_ID = 'collaboration-platform-root'
 const LOCAL_COLLABORATION_WORKSPACE_ID = 'wework-local-workspace'
 export const COLLABORATION_SIDEBAR_SELECTOR = '[data-testid="collaboration-platform-sidebar"]'
 
-export function inCollaborationSidebar(selector) {
-  return `${COLLABORATION_SIDEBAR_SELECTOR} ${selector}`
+export function inCollaborationSidebar(selector, contentSelector = '') {
+  const sidebarSelector = `${COLLABORATION_SIDEBAR_SELECTOR} ${selector}`
+  return contentSelector ? `${contentSelector} ${sidebarSelector}` : sidebarSelector
 }
 
 async function waitForNativeCollaborationPlatform(
@@ -72,7 +73,8 @@ async function waitForNativeCollaborationPlatform(
 async function enterLocalCollaborationWorkspace(control, contentSelector) {
   await waitForNativeCollaborationPlatform(control, contentSelector)
   const localWorkspaceTree = inCollaborationSidebar(
-    `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`
+    `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
+    contentSelector
   )
   const localWorkspaceIdentity = `${localWorkspaceTree} .collaboration-workspace-identity`
   await control.command('waitFor', localWorkspaceIdentity, {
@@ -1511,7 +1513,8 @@ async function verifyWorkspaceTabIsolation(control) {
   } = await openProjectWorkspaceTab(control, initialBoardIds)
   await enterLocalCollaborationWorkspace(control, firstBoardContent)
   const firstWorkspaceTree = inCollaborationSidebar(
-    `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`
+    `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
+    firstBoardContent
   )
   await control.command('hover', `${firstWorkspaceTree} .collaboration-workspace-row`)
   await control.command(
@@ -1549,7 +1552,8 @@ async function verifyWorkspaceTabIsolation(control) {
     firstBoardTestId,
   ])
   const secondLocalWorkspace = inCollaborationSidebar(
-    `[data-testid="collaboration-workspace-home-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`
+    `[data-testid="collaboration-workspace-home-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
+    secondBoardContent
   )
   await control.command('waitFor', secondLocalWorkspace, {
     visible: true,
@@ -1574,7 +1578,8 @@ async function verifyWorkspaceTabIsolation(control) {
   )
   await enterLocalCollaborationWorkspace(control, secondBoardContent)
   const secondWorkspaceHome = inCollaborationSidebar(
-    `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"] [data-testid="collaboration-workspace-nav-projects"]`
+    `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"] [data-testid="collaboration-workspace-nav-projects"]`,
+    secondBoardContent
   )
   await waitForAttribute(
     control,
