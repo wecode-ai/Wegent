@@ -2329,6 +2329,25 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
 
+    phase = 'composer-clear-project-preserves-draft'
+    const clearProjectDraft = 'WEWORK_DESKTOP_E2E_CLEAR_PROJECT_PRESERVES_DRAFT'
+    await control.command('fill', composerSelector, { value: clearProjectDraft })
+    await control.command('click', '[data-testid="project-work-button"]')
+    await control.command('waitFor', '[data-testid="no-project-option"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="no-project-option"]')
+    await control.command('waitFor', composerSelector, {
+      text: clearProjectDraft,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    assert.equal(
+      await control.command('getValue', composerSelector),
+      clearProjectDraft,
+      'Clearing the selected project discarded the unsent composer draft'
+    )
+    await control.command('fill', composerSelector, { value: '' })
+
     phase = 'project-folder-remove-immediately'
     await control.command('click', `[data-testid="${projectMenuTestId}"]`)
     await control.command('click', `[data-testid="remove-project-${projectId}"]`)
