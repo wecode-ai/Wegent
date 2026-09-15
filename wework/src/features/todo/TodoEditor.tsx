@@ -188,7 +188,7 @@ export function TodoEditor(props: TodoEditorProps) {
           onWorkflowManagerFinished={context.onWorkflowManagerFinished}
           taskBindings={context.tasks as LoopItemTaskBinding[]}
           onOpenTask={props.onOpenTaskConversation}
-          onRefreshTaskBindings={context.onTaskBindingsChange}
+          onRefreshExecutionArtifacts={context.onExecutionArtifactsChange}
           linear
         />
       ) : null,

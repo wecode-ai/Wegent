@@ -213,7 +213,10 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     const selectedModelLabel =
       selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
     const canSend =
-      (hasText || attachments.length > 0 || codeComments.length > 0) && !disabled && !submitDisabled
+      (hasText || attachments.length > 0 || codeComments.length > 0) &&
+      isModelSelectionReady &&
+      !disabled &&
+      !submitDisabled
     const explicitLineCount = value.split('\n').length
 
     useEffect(() => {

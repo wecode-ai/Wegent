@@ -134,7 +134,7 @@ export interface SharedIssueDetailExtensionContext {
   deliveries: SharedIssueDetailDelivery[];
   selectedTaskId?: string | null;
   workflowManagerRunId?: string;
-  onTaskBindingsChange(): Promise<void>;
+  onExecutionArtifactsChange(): Promise<void>;
   onItemChange(item: SharedEditorIssue): void;
   onOpenManagerExecutionChange(action: (() => void) | null): void;
   onWorkflowManagerFinished(): void;
@@ -868,6 +868,12 @@ export function TodoEditor(props: TodoEditorProps) {
       // Independent detail sources fail closed without hiding available data.
     }
   }, [editItemId, editorPort]);
+  const refreshExecutionArtifacts = useCallback(
+    async () => {
+      await Promise.all([refreshTaskBindings(), refreshDeliveries()]);
+    },
+    [refreshDeliveries, refreshTaskBindings],
+  );
   const openDelivery = useCallback(
     async (deliveryId: string) => {
       if (editItemId == null) return;
@@ -1742,7 +1748,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     "",
                 )
               : undefined,
-          onTaskBindingsChange: refreshTaskBindings,
+          onExecutionArtifactsChange: refreshExecutionArtifacts,
           onItemChange: editProps.onUpdated,
           onOpenManagerExecutionChange: registerWorkflowManagerExecution,
           onWorkflowManagerFinished: refreshWorkflowPlan,

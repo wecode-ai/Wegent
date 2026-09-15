@@ -887,7 +887,6 @@ async function showSystemDragPanel(): Promise<void> {
 
 async function showPopoutWindow(activation: 'focus' | 'inactive' = 'focus'): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
-  await popoutWindowReadyPromise
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   target.setPosition(
     Math.round(display.workArea.x + (display.workArea.width - 470) / 2),
@@ -895,6 +894,7 @@ async function showPopoutWindow(activation: 'focus' | 'inactive' = 'focus'): Pro
   )
   if (activation === 'inactive' && process.platform === 'darwin' && app.isHidden()) app.show()
   presentWindow(target, activation)
+  await popoutWindowReadyPromise
 }
 
 function resolvePopoutShortcut(preferenceRecord: Record<string, unknown>): string | null {
