@@ -721,8 +721,8 @@ function mergeRuntimeProjects(
             ...existing.project,
             ...normalizedProject.project,
             id:
-              existing.project.id ??
               normalizedProject.project.id ??
+              existing.project.id ??
               runtimeProjectUiId(normalizedProject.project),
             key: normalizedProject.project.key,
             sidebarStateKey: existing.project.sidebarStateKey ?? existing.project.key,
