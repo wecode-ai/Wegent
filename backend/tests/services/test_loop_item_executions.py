@@ -2482,6 +2482,10 @@ def test_team_reference_compiles_to_native_project_runtime(
     assert config.runtime == runtime
     assert config.model and config.model.startswith("native-model-")
     assert config.model_type == "user"
+    assert config.model_options == {
+        "weworkCloudModelNamespace": "default",
+        "weworkCloudModelResourceUserId": str(test_user.id),
+    }
     assert config.system_prompt == (
         "<base_prompt>\n"
         "Follow the referenced AgentSpec.\n\n"

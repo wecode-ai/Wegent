@@ -124,6 +124,7 @@ mod tests {
 
     #[test]
     fn runtime_local_task_id_stabilizes_thread_identity() {
+        let _lock = crate::test_env::lock();
         let mut request = ExecutionRequest {
             task_id: "execution-1".to_owned(),
             ..ExecutionRequest::default()

@@ -328,6 +328,18 @@ def compiled_bot_config(
     else:
         model_type = "group"
 
+    model_options: dict[str, str] = {}
+    if model_kind is not None:
+        from app.services.runtime_profiles import (
+            CLOUD_MODEL_NAMESPACE_OPTION,
+            CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
+        )
+
+        model_options = {
+            CLOUD_MODEL_NAMESPACE_OPTION: model_kind.namespace,
+            CLOUD_MODEL_RESOURCE_USER_ID_OPTION: str(model_kind.user_id),
+        }
+
     skill_refs = ghost_crd.spec.skill_refs or {}
     additional_skills = [
         {
@@ -345,7 +357,7 @@ def compiled_bot_config(
         "runtime": native_runtime,
         "model": model_name,
         "model_type": model_type,
-        "model_options": {},
+        "model_options": model_options,
         "system_prompt": get_bot_system_prompt(
             db,
             bot,

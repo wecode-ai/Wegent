@@ -53,6 +53,34 @@ async function createGroup(control, { name, leader }) {
   await control.command('select', scoped('[data-testid="collaboration-group-leader"]'), {
     value: leader,
   })
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="collaboration-group-create-next"]'),
+    {
+      timeoutMs: 10_000,
+    }
+  )
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="collaboration-group-create-tab-rules"][aria-selected="true"]'),
+    {
+      timeoutMs: 10_000,
+    }
+  )
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="collaboration-group-create-next"]'),
+    {
+      timeoutMs: 10_000,
+    }
+  )
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="collaboration-group-create-tab-environment"][aria-selected="true"]'),
+    {
+      timeoutMs: 10_000,
+    }
+  )
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-group-create"]'), {
     timeoutMs: 10_000,
   })

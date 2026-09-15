@@ -1153,8 +1153,8 @@ function workItemStep(
     return `${activeIndex + 1}/${nodes.length} ${nodes[activeIndex].name}`;
   }
   if (item.status === "in_review") return messages.waitingReview;
-  if (item.execution_state) return item.execution_state.replaceAll("_", " ");
-  return item.status.replaceAll("_", " ");
+  if (item.execution_state) return item.execution_state.replace(/_/g, " ");
+  return item.status.replace(/_/g, " ");
 }
 
 function workItemStatus(item: WorkspaceMyWorkItem, messages: PlatformMessages) {

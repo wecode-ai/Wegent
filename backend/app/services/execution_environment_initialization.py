@@ -109,7 +109,7 @@ async def initialize_execution_environment(
         "fingerprint": fingerprint,
         "prepared_device_id": device_key,
         "prepared_workspace_path": str(prepared.get("workspacePath") or ""),
-        "prepared_at": datetime.now(timezone.utc),
+        "prepared_at": datetime.now(timezone.utc).isoformat(),
         "error": "",
     }
 

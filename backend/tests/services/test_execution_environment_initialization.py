@@ -71,7 +71,8 @@ async def test_initialization_prepares_device_and_returns_ready_state(
     assert result["status"] == "ready"
     assert result["prepared_device_id"] == "device-runtime-id"
     assert result["prepared_workspace_path"] == "/workspace/environment-project-1"
-    assert result["prepared_at"] is not None
+    assert isinstance(result["prepared_at"], str)
+    assert result["prepared_at"].endswith("+00:00")
     assert result["error"] == ""
     assert len(result["fingerprint"]) == 64
     command = execute.await_args.kwargs
