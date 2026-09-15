@@ -181,29 +181,64 @@ describe('MessageList desktop virtualization', () => {
     // growth: it has to be given back right here, before the frame paints, or the text the reader
     // selected jumps for one frame while the response streams.
     scrollElement.scrollTop = -160
-    expect(
-      shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_500, size: 400 }, 40, instance)
-    ).toBe(false)
+    expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(false)
+    expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, -40, instance)).toBe(
+      false
+    )
+    expect(shouldAdjustScrollPosition?.({ key: 'user-18', start: 8_000 }, 40, instance)).toBe(false)
+    expect(listElement).toHaveStyle({ height: '3900px' })
+    expect(scrollElement.scrollTop).toBe(-160)
+
+    useVirtualizerMock.mockClear()
+    render(
+      <MessageList
+        messages={messages}
+        scrollElementRef={{ current: scrollElement }}
+        bottomOrigin
+        virtualAnchorToEnd={false}
+      />
+    )
+    const shouldPreserveScrollPosition = virtualizerInstances.at(-1)
+      ?.shouldAdjustScrollPositionOnItemSizeChange as
+      | ((
+          item: { key: string; start: number },
+          delta: number,
+          instance: typeof instance
+        ) => boolean)
+      | undefined
+
+    scrollElement.scrollTop = -160
+    expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(
+      false
+    )
     expect(listElement).toHaveStyle({ height: '3940px' })
     expect(scrollElement.scrollTop).toBe(-200)
 
-    // A re-measured row that ends above the viewport top is left to the scroll owner, which
-    // measures the layout it actually got instead of predicting anything from `delta`.
-    expect(
-      shouldAdjustScrollPosition?.({ key: 'user-18', start: 8_000, size: 100 }, 40, instance)
-    ).toBe(false)
+    expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, -40, instance)).toBe(
+      false
+    )
     expect(listElement).toHaveStyle({ height: '3940px' })
     expect(scrollElement.scrollTop).toBe(-200)
 
-    // A row that reaches past the viewport top and is not the streaming row only changes the height
-    // under the viewport, which the scroll owner accounts for; nothing is written here.
-    expect(
-      shouldAdjustScrollPosition?.({ key: 'user-18', start: 9_700, size: 100 }, -60, instance)
-    ).toBe(false)
+    expect(shouldPreserveScrollPosition?.({ key: 'user-18', start: 8_000 }, 40, instance)).toBe(
+      false
+    )
+    expect(listElement).toHaveStyle({ height: '3940px' })
+    expect(scrollElement.scrollTop).toBe(-200)
+
+    // A re-measured row that reaches past the viewport top and is not the streaming row only changes
+    // the height under the viewport, which the scroll owner accounts for; nothing is written here.
+    expect(shouldPreserveScrollPosition?.({ key: 'user-18', start: 9_700 }, -60, instance)).toBe(
+      false
+    )
+    expect(listElement).toHaveStyle({ height: '3940px' })
+    expect(scrollElement.scrollTop).toBe(-200)
     expect(scrollElement.scrollTop).toBe(-200)
 
     scrollElement.scrollTop = 0
-    expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(false)
+    expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(
+      false
+    )
     expect(listElement).toHaveStyle({ height: '3940px' })
     expect(scrollElement.scrollTop).toBe(0)
 
@@ -253,7 +288,12 @@ describe('MessageList desktop virtualization', () => {
     })
     scrollElement.scrollTo = scrollTo
     render(
-      <MessageList messages={messages} scrollElementRef={{ current: scrollElement }} bottomOrigin />
+      <MessageList
+        messages={messages}
+        scrollElementRef={{ current: scrollElement }}
+        bottomOrigin
+        virtualAnchorToEnd={false}
+      />
     )
 
     const instance = {
