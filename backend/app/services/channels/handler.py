@@ -2247,14 +2247,17 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     ) -> None:
         """Handle /models command - list/switch models.
 
-        In device mode, only Claude models are shown since device execution
-        requires Claude Code which only supports Claude/Anthropic models.
+        In device and cloud modes only Claude models are shown, since both
+        execute through Claude Code which only supports Claude/Anthropic models.
         """
         from app.services.model_aggregation_service import model_aggregation_service
 
         # Check current execution mode
         selection = await device_selection_manager.get_selection(user.id)
-        is_device_mode = selection.device_type == DeviceType.LOCAL
+        claude_code_mode_label = {
+            DeviceType.LOCAL: "设备模式",
+            DeviceType.CLOUD: "云端执行模式",
+        }.get(selection.device_type)
 
         # Get available models
         all_models = model_aggregation_service.list_available_models(
@@ -2286,7 +2289,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return allowed_names is None or model.get("name") in allowed_names
 
         # Check if there are available models for current mode
-        if is_device_mode:
+        if claude_code_mode_label:
             claude_models = [
                 m for m in all_models if is_claude_provider(m.get("provider"))
             ]
@@ -2294,10 +2297,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 await self.send_text_reply(
                     message_context,
                     MODELS_HEADER + "\n暂无可用的 Claude 模型\n\n"
-                    "💡 设备模式仅支持 Claude 模型，请联系管理员配置",
+                    f"💡 {claude_code_mode_label}仅支持 Claude 模型，请联系管理员配置",
                 )
                 return
-            mode_hint = "\n\n⚠️ 设备模式仅支持 Claude 模型"
+            mode_hint = f"\n\n⚠️ {claude_code_mode_label}仅支持 Claude 模型"
         else:
             mode_hint = ""
         if allowed_names is not None:
@@ -2314,11 +2317,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 current_selection.model_name if current_selection else None
             )
 
-            # In device mode, show real index from full list for consistency
+            # In Claude Code modes, show real index from full list for consistency
             # In other modes, show sequential index
             for idx, model in enumerate(all_models, start=1):
-                # In device mode, skip non-Claude models
-                if is_device_mode and not is_claude_provider(model.get("provider")):
+                # Claude Code only runs Claude/Anthropic models
+                if claude_code_mode_label and not is_claude_provider(
+                    model.get("provider")
+                ):
                     continue
                 # Skip models the current agent does not allow
                 if not is_selectable(model):
@@ -2368,12 +2373,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             model_index = int(argument)
             if 1 <= model_index <= len(all_models):
                 selected = all_models[model_index - 1]
-                # In device mode, verify it's a Claude model
-                if is_device_mode and not is_claude_provider(selected.get("provider")):
+                # Claude Code modes only run Claude/Anthropic models
+                if claude_code_mode_label and not is_claude_provider(
+                    selected.get("provider")
+                ):
                     await self.send_text_reply(
                         message_context,
                         f"❌ 模型 **{selected.get('displayName') or selected.get('name')}** "
-                        "不支持设备模式\n\n设备模式仅支持 Claude 模型，请选择其他模型",
+                        f"不支持{claude_code_mode_label}\n\n"
+                        f"{claude_code_mode_label}仅支持 Claude 模型，请选择其他模型",
                     )
                     return
                 matched_model = selected
@@ -2394,12 +2402,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     model_name.lower() == argument_lower
                     or display_name.lower() == argument_lower
                 ):
-                    # In device mode, verify it's a Claude model
-                    if is_device_mode and not is_claude_provider(model.get("provider")):
+                    # Claude Code modes only run Claude/Anthropic models
+                    if claude_code_mode_label and not is_claude_provider(
+                        model.get("provider")
+                    ):
                         await self.send_text_reply(
                             message_context,
-                            f"❌ 模型 **{display_name or model_name}** 不支持设备模式\n\n"
-                            "设备模式仅支持 Claude 模型，请选择其他模型",
+                            f"❌ 模型 **{display_name or model_name}** "
+                            f"不支持{claude_code_mode_label}\n\n"
+                            f"{claude_code_mode_label}仅支持 Claude 模型，请选择其他模型",
                         )
                         return
                     matched_model = model

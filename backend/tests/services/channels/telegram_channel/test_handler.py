@@ -1192,3 +1192,131 @@ class TestTelegramChannelHandler:
         set_selection.assert_not_called()
         reply = send_reply.await_args.args[1]
         assert "不在当前智能体的可用模型范围内" in reply
+
+    @pytest.mark.parametrize(
+        ("device_type", "mode_label"),
+        [
+            (DeviceType.LOCAL, "设备模式"),
+            (DeviceType.CLOUD, "云端执行模式"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_model_command_hides_non_claude_models_for_claude_code_modes(
+        self, handler, device_type, mode_label
+    ):
+        """Device and cloud execution both run Claude Code, so hide other models."""
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        db = MagicMock()
+        models = [
+            {
+                "name": "wecode-claude-x",
+                "displayName": "ClaudeX",
+                "provider": "claude",
+                "type": "public",
+            },
+            {
+                "name": "openai-gpt-5.1(overseas)",
+                "displayName": "GPT 5.1",
+                "provider": "openai",
+                "type": "public",
+            },
+        ]
+
+        with (
+            patch(
+                "app.services.model_aggregation_service.model_aggregation_service"
+                ".list_available_models",
+                return_value=models,
+            ),
+            patch.object(
+                handler,
+                "_get_task_mode_team",
+                return_value=SimpleNamespace(id=100),
+            ),
+            patch(
+                "app.services.channels.handler.allowed_model_names_for_team",
+                return_value=None,
+            ),
+            patch(
+                "app.services.channels.device_selection.device_selection_manager"
+                ".get_selection",
+                new=AsyncMock(return_value=DeviceSelection(device_type=device_type)),
+            ),
+            patch(
+                "app.services.channels.handler.model_selection_manager.get_selection",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+        ):
+            await handler._handle_model_command(
+                db=db,
+                user=user,
+                argument=None,
+                message_context=message_context,
+            )
+
+        reply = send_reply.await_args.args[1]
+        assert "ClaudeX" in reply
+        assert "GPT 5.1" not in reply
+        assert f"{mode_label}仅支持 Claude 模型" in reply
+
+    @pytest.mark.asyncio
+    async def test_model_command_rejects_non_claude_model_in_cloud_mode(self, handler):
+        """Cloud mode must reject a non-Claude selection instead of failing later."""
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        db = MagicMock()
+        models = [
+            {
+                "name": "openai-gpt-5.1(overseas)",
+                "displayName": "GPT 5.1",
+                "provider": "openai",
+                "type": "public",
+            },
+            {
+                "name": "wecode-claude-x",
+                "displayName": "ClaudeX",
+                "provider": "claude",
+                "type": "public",
+            },
+        ]
+
+        with (
+            patch(
+                "app.services.model_aggregation_service.model_aggregation_service"
+                ".list_available_models",
+                return_value=models,
+            ),
+            patch.object(
+                handler,
+                "_get_task_mode_team",
+                return_value=SimpleNamespace(id=100),
+            ),
+            patch(
+                "app.services.channels.handler.allowed_model_names_for_team",
+                return_value=None,
+            ),
+            patch(
+                "app.services.channels.device_selection.device_selection_manager"
+                ".get_selection",
+                new=AsyncMock(
+                    return_value=DeviceSelection(device_type=DeviceType.CLOUD)
+                ),
+            ),
+            patch(
+                "app.services.channels.handler.model_selection_manager.set_selection",
+                new=AsyncMock(),
+            ) as set_selection,
+            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+        ):
+            await handler._handle_model_command(
+                db=db,
+                user=user,
+                argument="1",
+                message_context=message_context,
+            )
+
+        set_selection.assert_not_called()
+        reply = send_reply.await_args.args[1]
+        assert "不支持云端执行模式" in reply
