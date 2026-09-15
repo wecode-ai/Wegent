@@ -1146,11 +1146,9 @@ export async function createDesktopScenario({
         return true
       }
       if (requestSummary.requestKind === 'compaction') {
-        writeEvents(
-          response,
-          responseId,
-          [assistantMessage('Collaboration chain context compaction completed.')]
-        )
+        writeEvents(response, responseId, [
+          assistantMessage('Collaboration chain context compaction completed.'),
+        ])
         return true
       }
       if (!issue || !agent || !ids) {
