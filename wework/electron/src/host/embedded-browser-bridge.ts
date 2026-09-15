@@ -179,6 +179,14 @@ export class EmbeddedBrowserBridge {
     const mutating = isMutatingAction(action)
     const target = actionTarget(request)
     const signature = actionSignature(action, request)
+    if (action === 'open' || action === 'close') {
+      console.info('[embedded-browser] bridge route', {
+        action,
+        baseLabel,
+        label,
+        hasResolvedLabel: this.browser.has(label),
+      })
+    }
     if (mutating && this.browser.isAgentControlPaused(label)) {
       const result = agentControlPausedResult(action)
       this.browser.emitAgentState(label, 'paused', {
