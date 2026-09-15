@@ -1,9 +1,14 @@
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { getPlatform } from '@/lib/platform'
 import { ComposerToolbar } from './ComposerToolbar'
 
 let resizeCallback: ResizeObserverCallback | null = null
+
+vi.mock('@/lib/platform', () => ({
+  getPlatform: vi.fn(() => 'mac'),
+}))
 
 vi.mock('./QuickPhraseMenu', () => ({
   QuickPhraseMenu: () => <span data-testid="quick-phrase-layout">icon</span>,
@@ -192,7 +197,13 @@ describe('ComposerToolbar', () => {
     expect(goalPill.querySelector('span')).toHaveClass('min-w-0', 'truncate')
   })
 
-  it('shows the configured send shortcut while streaming', async () => {
+  it.each([
+    ['mac', '⌘'],
+    ['win', 'Ctrl'],
+    ['linux', 'Ctrl'],
+  ] as const)('shows the configured send shortcut on %s', async (platform, modifier) => {
+    vi.mocked(getPlatform).mockReturnValue(platform)
+
     render(
       <ComposerToolbar
         canSend
@@ -213,7 +224,7 @@ describe('ComposerToolbar', () => {
     await userEvent.click(screen.getByTestId('send-mode-menu-button'))
 
     const sendAfterTurnOption = screen.getByTestId('send-after-turn-option')
-    expect(sendAfterTurnOption).toHaveTextContent('⌘')
+    expect(sendAfterTurnOption).toHaveTextContent(modifier)
     expect(sendAfterTurnOption.querySelector('.lucide-corner-down-left')).toBeInTheDocument()
   })
 })
