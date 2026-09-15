@@ -67,7 +67,7 @@ export function McpTargetSelectorDialog({
     setSelectedBotIds(new Set())
 
     Promise.all([
-      teamApis.getTeams({ page: 1, limit: 100 }, 'personal'),
+      teamApis.getAllTeams('personal'),
       botApis.getBots({ page: 1, limit: 100 }, 'personal'),
     ])
       .then(([teamResponse, botResponse]) => {

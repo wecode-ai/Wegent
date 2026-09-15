@@ -24,7 +24,7 @@ jest.mock('@/apis/bots', () => ({
 
 jest.mock('@/apis/team', () => ({
   teamApis: {
-    getTeams: jest.fn(),
+    getAllTeams: jest.fn(),
   },
 }))
 
@@ -69,7 +69,7 @@ const mockedTeamApis = teamApis as jest.Mocked<typeof teamApis>
 describe('McpTargetSelectorDialog', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockedTeamApis.getTeams.mockResolvedValue({
+    mockedTeamApis.getAllTeams.mockResolvedValue({
       total: 2,
       items: [
         {
@@ -289,7 +289,7 @@ describe('McpTargetSelectorDialog', () => {
   })
 
   it('does not offer Bots whose executor does not support MCP', async () => {
-    mockedTeamApis.getTeams.mockResolvedValue({
+    mockedTeamApis.getAllTeams.mockResolvedValue({
       total: 1,
       items: [
         {

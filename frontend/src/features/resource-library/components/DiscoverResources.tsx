@@ -73,7 +73,7 @@ export function DiscoverResources({
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const { refreshTeams } = useTeamContext()
+  const { invalidateTeams } = useTeamContext({ enabled: false })
   const { t, i18n } = useTranslation('resource-library')
   const { toast } = useToast()
   const [listings, setListings] = useState<ResourceLibraryListing[]>([])
@@ -337,7 +337,7 @@ export function DiscoverResources({
       const teamId = install.installed_reference.team_id
       if (listing.resource_type === 'agent' && targetNamespace === 'default' && teamId) {
         try {
-          await refreshTeams()
+          invalidateTeams()
         } catch (error) {
           console.error('Failed to refresh teams after marketplace install:', error)
         }
