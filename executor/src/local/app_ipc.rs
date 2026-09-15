@@ -31,6 +31,7 @@ use crate::{
         CodexLocalConfigUpdateRequest, ExternalContentImportRequest,
     },
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
+    local::environment_prepare::execute_environment_prepare,
     local::git_commands::{
         branch_diff, branch_diff_shortstat, hosting_cli_status, push_current_branch,
         workspace_diff, worktree_add, worktree_remove,
@@ -1530,6 +1531,9 @@ impl AppIpcServer {
         .round() as usize;
         let native_args = string_list(params.get("args")).unwrap_or_default();
         let native_result = match command_key {
+            "environment_prepare" => {
+                Some(execute_environment_prepare(&native_args, native_timeout).await)
+            }
             "git_diff" => Some(
                 workspace_diff(
                     native_path.clone(),

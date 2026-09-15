@@ -151,7 +151,7 @@ use super::{
     connectors::ConnectorRuntime,
     events::{
         emit_response_event, emit_runtime_work_changed, is_context_compaction_request,
-        CodexNotificationEventMapper,
+        next_runtime_event_sequence, CodexNotificationEventMapper,
     },
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
@@ -912,12 +912,31 @@ impl RuntimeWorkRpcHandler {
     /// read cloud project data. This mirrors `normalize_local_task_request`
     /// used by the `task:execute` channel so both paths behave identically
     /// regardless of when the executor process was spawned.
+    pub(super) fn backend_connection_snapshot(
+        &self,
+    ) -> Result<Option<ConnectionConfig>, AppIpcError> {
+        self.backend_connection
+            .lock()
+            .map(|guard| guard.clone())
+            .map_err(|_| {
+                AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection state is unavailable",
+                )
+            })
+    }
+
     fn apply_backend_connection(&self, request: &mut ExecutionRequest) {
-        let Ok(guard) = self.backend_connection.lock() else {
-            return;
-        };
-        let Some(connection) = guard.as_ref() else {
-            return;
+        let connection = match self.backend_connection_snapshot() {
+            Ok(Some(connection)) => connection,
+            Ok(None) => return,
+            Err(error) => {
+                log_executor_event(
+                    "backend connection snapshot failed",
+                    &[("error", error.message)],
+                );
+                return;
+            }
         };
         if connection.backend_url.trim().is_empty() || connection.auth_token.trim().is_empty() {
             return;
@@ -929,7 +948,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or("")
             .is_empty()
         {
-            request.backend_url = Some(connection.backend_url.clone());
+            request.backend_url = Some(connection.backend_url);
         }
         if request
             .auth_token
@@ -938,7 +957,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or("")
             .is_empty()
         {
-            request.auth_token = Some(connection.auth_token.clone());
+            request.auth_token = Some(connection.auth_token);
         }
         if request
             .runtime_auth_token
@@ -948,7 +967,7 @@ impl RuntimeWorkRpcHandler {
             .is_empty()
             && !connection.runtime_auth_token.trim().is_empty()
         {
-            request.runtime_auth_token = Some(connection.runtime_auth_token.clone());
+            request.runtime_auth_token = Some(connection.runtime_auth_token);
         }
     }
 

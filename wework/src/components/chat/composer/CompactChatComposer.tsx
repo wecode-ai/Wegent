@@ -224,7 +224,10 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
         ? t('workbench.guide_current_turn', '引导当前回复')
         : t('workbench.send_after_turn', '当前回复结束后发送')
     const canSend =
-      (hasText || attachments.length > 0 || codeComments.length > 0) && !disabled && !submitDisabled
+      (hasText || attachments.length > 0 || codeComments.length > 0) &&
+      isModelSelectionReady &&
+      !disabled &&
+      !submitDisabled
     const explicitLineCount = value.split('\n').length
 
     useEffect(() => {

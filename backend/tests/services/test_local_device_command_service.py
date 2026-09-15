@@ -1140,6 +1140,7 @@ def test_branch_diff_prefers_fork_parent_default_branch(tmp_path: Path) -> None:
 
 def test_remote_command_policy_separates_read_only_and_mutating_keys():
     from app.services.device.command_service import (
+        INTERNAL_DEVICE_COMMAND_KEYS,
         REMOTE_DEVICE_COMMAND_KEYS,
         REMOTE_MUTATING_COMMAND_KEYS,
         REMOTE_READ_ONLY_COMMAND_KEYS,
@@ -1156,7 +1157,16 @@ def test_remote_command_policy_separates_read_only_and_mutating_keys():
         "workspace_read_text_file",
         "workspace_read_file_chunk",
     } <= REMOTE_READ_ONLY_COMMAND_KEYS
-    assert {"git_checkout", "git_commit", "git_push"} <= REMOTE_MUTATING_COMMAND_KEYS
+    assert {
+        "environment_prepare",
+        "git_checkout",
+        "git_commit",
+        "git_push",
+    } <= REMOTE_MUTATING_COMMAND_KEYS
+    assert INTERNAL_DEVICE_COMMAND_KEYS == {
+        "environment_prepare",
+        "sync_git_credentials",
+    }
     assert REMOTE_DEVICE_COMMAND_KEYS == (
         REMOTE_READ_ONLY_COMMAND_KEYS
         | REMOTE_MUTATING_COMMAND_KEYS
@@ -2390,10 +2400,15 @@ async def test_execute_configured_device_command_rejects_unowned_device(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_execute_configured_device_command_hides_internal_git_sync_key(
+@pytest.mark.parametrize(
+    "command_key",
+    ["environment_prepare", "sync_git_credentials"],
+)
+async def test_execute_configured_device_command_hides_internal_keys(
     monkeypatch,
+    command_key,
 ):
-    """The generic command API must not expose the secret-bearing sync command."""
+    """The generic command API must not expose service-only commands."""
     from app.services.device import command_service
 
     execute_mock = AsyncMock()
@@ -2413,10 +2428,64 @@ async def test_execute_configured_device_command_hides_internal_git_sync_key(
             db=object(),
             user_id=7,
             device_id="device-abc",
-            command_key="sync_git_credentials",
+            command_key=command_key,
         )
 
     execute_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_configured_device_command_allows_internal_environment_prepare(
+    monkeypatch,
+):
+    """Initialization may explicitly dispatch the internal prepare command."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": {"workspacePath": "/workspace/environment"},
+            "stderr": "",
+        }
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda *_args: object(),
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id="device-abc",
+        command_key="environment_prepare",
+        args=["{}"],
+        command_config={
+            "environment_prepare": {
+                "command": "prepare-environment",
+            }
+        },
+        allow_internal=True,
+    )
+
+    assert result["success"] is True
+    execute_mock.assert_awaited_once_with(
+        user_id=7,
+        device_id="device-abc",
+        command="prepare-environment",
+        path=None,
+        args=["{}"],
+        env={},
+        timeout_seconds=60,
+        max_output_bytes=1048576,
+        command_key="environment_prepare",
+    )
 
 
 @pytest.mark.asyncio

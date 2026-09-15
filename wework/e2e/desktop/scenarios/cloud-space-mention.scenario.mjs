@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 
@@ -108,6 +109,10 @@ function json(response, status, body) {
 
 async function snapshot(control) {
   return JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+}
+
+function scoped(selector) {
+  return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
@@ -251,32 +256,40 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await control.command(
         'waitFor',
-        `[data-testid="collaboration-workspace-${CLOUD_WORKSPACE.id}"]`,
+        inCollaborationSidebar(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE.id}"]`),
         {
           timeoutMs: uiTimeoutMs,
         }
       )
       await control.command(
         'click',
-        `[data-testid="collaboration-workspace-${CLOUD_WORKSPACE.id}"]`
+        inCollaborationSidebar(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE.id}"]`)
       )
       await control.command(
         'waitFor',
-        `[data-testid="collaboration-workspace-project-${WEBSITE_PROJECT.id}"]`,
+        inCollaborationSidebar(
+          `[data-testid="collaboration-workspace-project-${WEBSITE_PROJECT.id}"]`
+        ),
         {
           timeoutMs: uiTimeoutMs,
         }
       )
       await control.command(
         'click',
-        `[data-testid="collaboration-workspace-project-${WEBSITE_PROJECT.id}"]`
+        inCollaborationSidebar(
+          `[data-testid="collaboration-workspace-project-${WEBSITE_PROJECT.id}"]`
+        )
       )
-      await control.command('waitFor', '[data-testid="collaboration-root"]', {
+      await control.command('waitFor', scoped('[data-testid="collaboration-root"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', `[data-testid="cloud-todo-card-${WEBSITE_TODO.id}"]`, {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        scoped(`[data-testid="cloud-todo-card-${WEBSITE_TODO.id}"]`),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       const projectSnapshot = await snapshot(control)
       assert.equal(
         projectSnapshot.testIds.includes('cloud-todo-workspace'),

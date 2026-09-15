@@ -2273,13 +2273,9 @@ describe('WorkspaceBrowserPanel', () => {
       handleClose = handler
       return Promise.resolve(vi.fn())
     })
-    const view = render(
-      <WorkspaceBrowserPanel active label="workspace-browser-runtime-1" />
-    )
+    const view = render(<WorkspaceBrowserPanel active label="workspace-browser-runtime-1" />)
     await screen.findByTestId('workspace-browser-native-view')
-    view.rerender(
-      <WorkspaceBrowserPanel active={false} label="workspace-browser-runtime-1" />
-    )
+    view.rerender(<WorkspaceBrowserPanel active={false} label="workspace-browser-runtime-1" />)
 
     act(() => {
       handleClose({

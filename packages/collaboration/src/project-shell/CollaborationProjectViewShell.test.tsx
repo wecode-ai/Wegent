@@ -16,7 +16,6 @@ const labels = {
   board: "Board",
   table: "Table",
   files: "Files",
-  automation: "Automation",
   manage: "Manage",
 };
 
@@ -24,7 +23,6 @@ const testIds = {
   board: "board",
   table: "table",
   files: "files",
-  automation: "automation",
   manage: "manage",
 };
 
@@ -32,21 +30,19 @@ const slots: CollaborationProjectViewSlots = {
   board: "board-content",
   table: "table-content",
   files: "files-content",
-  automation: "automation-content",
   manage: "manage-content",
 };
 
 const extensions: CollaborationProjectViewExtension[] = [];
 
 describe("CollaborationProjectViewShell permissions", () => {
-  it.each(["files", "automation", "manage"] as const)(
+  it.each(["files", "manage"] as const)(
     "falls back to board instead of mounting RestrictedAnalyst %s content",
     (view) => {
       const options = buildCollaborationProjectViewOptions({
         project: { access_role: "RestrictedAnalyst" },
         labels,
         testIds,
-        automationSupported: true,
       });
 
       expect(
@@ -64,29 +60,7 @@ describe("CollaborationProjectViewShell permissions", () => {
     },
   );
 
-  it("redirects legacy automation links to project settings", () => {
-    const options = buildCollaborationProjectViewOptions({
-      project: { access_role: "Owner" },
-      labels,
-      testIds,
-      automationSupported: false,
-    });
-
-    expect(
-      resolveCollaborationProjectView({
-        extensions,
-        options,
-        slots,
-        view: "automation",
-      }),
-    ).toEqual({
-      content: "manage-content",
-      view: "manage",
-      viewChanged: true,
-    });
-  });
-
-  it("honors an exact files extension before applying legacy remapping", () => {
+  it("honors an exact files extension", () => {
     const fileExtension: CollaborationProjectViewExtension = {
       id: "files",
       label: "Files",
@@ -97,7 +71,6 @@ describe("CollaborationProjectViewShell permissions", () => {
       project: { access_role: "Owner" },
       labels,
       testIds,
-      automationSupported: false,
       extensions: [fileExtension],
     });
 
@@ -115,12 +88,38 @@ describe("CollaborationProjectViewShell permissions", () => {
     });
   });
 
+  it("renders files through the standard project tab when no host extension exists", () => {
+    const options = buildCollaborationProjectViewOptions({
+      project: { access_role: "Owner" },
+      labels,
+      testIds,
+    });
+
+    expect(options.map((option) => option.id)).toEqual([
+      "board",
+      "table",
+      "files",
+      "manage",
+    ]);
+    expect(
+      resolveCollaborationProjectView({
+        extensions,
+        options,
+        slots,
+        view: "files",
+      }),
+    ).toEqual({
+      content: "files-content",
+      view: "files",
+      viewChanged: false,
+    });
+  });
+
   it("limits a system board to its explicitly enabled standard views", () => {
     const options = buildCollaborationProjectViewOptions({
       project: { access_role: "Owner" },
       labels,
       testIds,
-      automationSupported: true,
       enabledStandardViews: ["board"],
     });
 
@@ -130,7 +129,7 @@ describe("CollaborationProjectViewShell permissions", () => {
         extensions,
         options,
         slots,
-        view: "automation",
+        view: "files",
       }),
     ).toEqual({
       content: "board-content",
@@ -160,7 +159,6 @@ describe("CollaborationProjectViewShell permissions", () => {
       project: { access_role: "Owner" },
       labels,
       testIds,
-      automationSupported: true,
     });
 
     const resolved = resolveCollaborationProjectView({
@@ -186,12 +184,12 @@ describe("CollaborationProjectViewShell permissions", () => {
       project: { access_role: undefined, project_store: "local" },
       labels,
       testIds,
-      automationSupported: true,
     });
 
     expect(options.map((option) => option.id)).toEqual([
       "board",
       "table",
+      "files",
       "manage",
     ]);
   });

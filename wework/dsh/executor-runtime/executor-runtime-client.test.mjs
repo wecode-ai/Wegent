@@ -49,6 +49,29 @@ test('rejects an invalid local endpoint credential', async () => {
   }
 })
 
+test('waits for the local endpoint during parallel executor startup', async () => {
+  const fixture = await executorFixture({ startListening: false })
+  const client = new ExecutorRuntimeClient({
+    transport: new LocalEndpointTransport({
+      endpoint: fixture.endpoint,
+      token: fixture.token,
+      reconnectDelayMs: 10,
+      startTimeoutMs: 1_000,
+    }),
+  })
+  try {
+    const start = client.start()
+    await new Promise(resolve => setTimeout(resolve, 30))
+    await fixture.listen()
+    await start
+
+    assert.equal(client.describe().device_id, 'local-device')
+  } finally {
+    await client.stop()
+    await fixture.stop()
+  }
+})
+
 test('reconnects and renegotiates after the local endpoint disconnects', async () => {
   const fixture = await executorFixture({ descriptionDelayMs: 50 })
   const transport = new LocalEndpointTransport({
@@ -146,6 +169,7 @@ async function executorFixture(options = {}) {
   const clients = new Set()
   let connectionCount = 0
   let lastRequestId = null
+  let listening = false
   const server = createServer(socket => {
     connectionCount += 1
     clients.add(socket)
@@ -230,13 +254,19 @@ async function executorFixture(options = {}) {
     })
     socket.on('close', () => clients.delete(socket))
   })
-  await new Promise((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(endpoint, resolve)
-  })
+  const listen = async () => {
+    if (listening) return
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(endpoint, resolve)
+    })
+    listening = true
+  }
+  if (options.startListening !== false) await listen()
   return {
     endpoint,
     token,
+    listen,
     broadcast(message) {
       for (const client of clients) {
         client.write(`${JSON.stringify(message)}\n`)
@@ -253,7 +283,7 @@ async function executorFixture(options = {}) {
     },
     async stop() {
       for (const client of clients) client.destroy()
-      await new Promise(resolve => server.close(resolve))
+      if (listening) await new Promise(resolve => server.close(resolve))
       await rm(directory, { recursive: true, force: true })
     },
   }
