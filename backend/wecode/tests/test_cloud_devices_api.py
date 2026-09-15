@@ -4,14 +4,21 @@
 
 """Tests for cloud device API behavior."""
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 
 from wecode.api import cloud_devices
 from wecode.schemas.cloud_device import CreateCloudDeviceRequest
+from wecode.service.get_user_gitinfo import (
+    GitTokenNotConfiguredError,
+    GitTokenRejectedError,
+    GitTokenSourceUnavailableError,
+    GitTokenValidationUnavailableError,
+)
 
 
 class _FakeRequest:
@@ -70,6 +77,19 @@ async def test_create_cloud_device_passes_current_user_jwt_to_provider(monkeypat
         "wecode.service.api_key_service.create_api_key_for_cloud_device",
         lambda db, user_id, user_name: ("key-id", "device-api-key"),
     )
+    monkeypatch.setattr(
+        cloud_devices.get_user_gitinfo,
+        "get_validated_real_git_tokens",
+        lambda user_name: [
+            {
+                "type": "gitlab",
+                "git_domain": "git.intra.weibo.com",
+                "git_token": "git-intra-token",
+                "git_login": "alice",
+                "git_email": "alice@example.com",
+            }
+        ],
+    )
 
     await cloud_devices.create_cloud_device(
         request=_FakeRequest(),
@@ -101,17 +121,21 @@ async def test_create_cloud_device_passes_current_user_git_tokens_to_provider(
     )
     monkeypatch.setattr(
         cloud_devices.get_user_gitinfo,
-        "get_real_git_tokens",
+        "get_validated_real_git_tokens",
         lambda user_name: [
             {
                 "type": "gitlab",
                 "git_domain": "git.intra.weibo.com",
                 "git_token": "git-intra-token",
+                "git_login": "alice-intra",
+                "git_email": "alice@intra.example.com",
             },
             {
                 "type": "gitlab",
                 "git_domain": "gitlab.weibo.cn",
                 "git_token": "gitlab-weibo-token",
+                "git_login": "alice-weibo",
+                "git_email": "alice@weibo.example.com",
             },
         ],
     )
@@ -126,16 +150,133 @@ async def test_create_cloud_device_passes_current_user_git_tokens_to_provider(
 
     assert provider.create_device_kwargs["git_tokens"] == [
         {
-            "type": "gitlab",
-            "git_domain": "git.intra.weibo.com",
-            "git_token": "git-intra-token",
+            "domain": "git.intra.weibo.com",
+            "host": "git.intra.weibo.com",
+            "provider": "gitlab",
+            "token": "git-intra-token",
+            "username": "alice-intra",
+            "identity_name": "alice-intra",
+            "identity_email": "alice@intra.example.com",
         },
         {
-            "type": "gitlab",
-            "git_domain": "gitlab.weibo.cn",
-            "git_token": "gitlab-weibo-token",
+            "domain": "gitlab.weibo.cn",
+            "host": "gitlab.weibo.cn",
+            "provider": "gitlab",
+            "token": "gitlab-weibo-token",
+            "username": "alice-weibo",
+            "identity_name": "alice-weibo",
+            "identity_email": "alice@weibo.example.com",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_create_cloud_device_keeps_missing_git_identity_non_blocking(
+    monkeypatch,
+    caplog,
+):
+    """Missing provider email should warn without blocking token provisioning."""
+    provider = _FakeCloudDeviceProvider()
+    monkeypatch.setattr(cloud_devices, "cloud_device_provider", provider)
+    monkeypatch.setattr(
+        "wecode.service.api_key_service.create_api_key_for_cloud_device",
+        lambda db, user_id, user_name: ("key-id", "device-api-key"),
+    )
+    monkeypatch.setattr(
+        cloud_devices.get_user_gitinfo,
+        "get_validated_real_git_tokens",
+        lambda user_name: [
+            {
+                "type": "gitlab",
+                "git_domain": "git.intra.weibo.com",
+                "git_token": "git-intra-token",
+                "git_login": "alice",
+                "git_email": "",
+            }
+        ],
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await cloud_devices.create_cloud_device(
+            request=_FakeRequest(),
+            background_tasks=BackgroundTasks(),
+            body=CreateCloudDeviceRequest(),
+            db=SimpleNamespace(),
+            current_user=SimpleNamespace(id=7, user_name="alice"),
+        )
+
+    account = provider.create_device_kwargs["git_tokens"][0]
+    assert account["token"] == "git-intra-token"
+    assert account["identity_name"] == "alice"
+    assert account["identity_email"] is None
+    assert "Git commit identity is incomplete" in caplog.text
+    assert "git.intra.weibo.com" in caplog.text
+    assert "git-intra-token" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("token_error", "expected_status", "expected_detail"),
+    [
+        (
+            GitTokenNotConfiguredError(),
+            400,
+            "A valid Git token is required",
+        ),
+        (
+            GitTokenRejectedError("git.intra.weibo.com"),
+            400,
+            "is invalid or expired",
+        ),
+        (
+            GitTokenSourceUnavailableError(),
+            503,
+            "temporarily unavailable",
+        ),
+        (
+            GitTokenValidationUnavailableError("git.intra.weibo.com"),
+            503,
+            "temporarily unavailable",
+        ),
+    ],
+)
+async def test_create_cloud_device_blocks_unusable_git_credentials_before_side_effects(
+    monkeypatch,
+    token_error,
+    expected_status,
+    expected_detail,
+):
+    """Credential failures should not create an API key or Nevis sandbox."""
+    provider = _FakeCloudDeviceProvider()
+    create_api_key = MagicMock(return_value=("key-id", "device-api-key"))
+    monkeypatch.setattr(cloud_devices, "cloud_device_provider", provider)
+    monkeypatch.setattr(
+        "wecode.service.api_key_service.create_api_key_for_cloud_device",
+        create_api_key,
+    )
+
+    def raise_token_error(user_name):
+        raise token_error
+
+    monkeypatch.setattr(
+        cloud_devices.get_user_gitinfo,
+        "get_validated_real_git_tokens",
+        raise_token_error,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await cloud_devices.create_cloud_device(
+            request=_FakeRequest(),
+            background_tasks=BackgroundTasks(),
+            body=CreateCloudDeviceRequest(),
+            db=SimpleNamespace(),
+            current_user=SimpleNamespace(id=7, user_name="alice"),
+        )
+
+    assert exc_info.value.status_code == expected_status
+    assert expected_detail in exc_info.value.detail
+    create_api_key.assert_not_called()
+    assert provider.create_device_kwargs is None
 
 
 @pytest.mark.asyncio
