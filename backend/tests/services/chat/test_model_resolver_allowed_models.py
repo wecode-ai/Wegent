@@ -320,6 +320,29 @@ class TestAllowedModelsWithWhitelist:
                 force_override=True,
             )
 
+    def test_model_not_in_agent_config_bound_model_whitelist_raises(self):
+        """A whitelist carried by the agent_config bound model must be enforced."""
+        bot = _make_bot({"bind_model": "pointer-model"})
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace"
+        ) as mock_find:
+            mock_find.return_value = (
+                MagicMock(),
+                {"modelConfig": {"allowed_models": [{"name": "gpt-4o"}]}},
+            )
+            with pytest.raises(ValueError) as exc_info:
+                _resolve_model_for_bot(
+                    db=MagicMock(),
+                    bot=bot,
+                    user_id=1,
+                    override_model_name="forbidden-model",
+                    force_override=True,
+                )
+
+        assert "forbidden-model" in str(exc_info.value)
+        assert "test-bot" in str(exc_info.value)
+
 
 def _make_team(bot_names: list[str]) -> MagicMock:
     """Create a mock Team Kind object referencing the given bots."""
@@ -387,6 +410,47 @@ class TestAllowedModelNamesForBot:
             allowed_names = allowed_model_names_for_bot(MagicMock(), bot, 1)
 
         assert allowed_names == {"gpt-4o"}
+
+    def test_falls_back_to_agent_config_bound_model_whitelist(self):
+        """The agent_config bound model is read before the legacy modelRef."""
+        db = MagicMock()
+        bot = _make_bot({"bind_model": "pointer-model"})
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace"
+        ) as mock_find:
+            mock_find.return_value = (
+                MagicMock(),
+                {"modelConfig": {"allowed_models": [{"name": "gpt-4o"}]}},
+            )
+            allowed_names = allowed_model_names_for_bot(db, bot, 1)
+
+        assert allowed_names == {"gpt-4o"}
+        mock_find.assert_called_once_with(db, "pointer-model", 1)
+
+    def test_prefers_bind_model_whitelist_over_model_ref(self):
+        """The bound model of the bot wins over the legacy modelRef reference."""
+        db = MagicMock()
+        bot = _make_bot({"bind_model": "bind-model"})
+        bot.json["spec"]["modelRef"] = {"name": "legacy-model", "namespace": "default"}
+
+        def _fake_find(_db, model_name, _user_id):
+            if model_name == "bind-model":
+                return MagicMock(), {
+                    "modelConfig": {"allowed_models": [{"name": "bind-model"}]}
+                }
+            return MagicMock(), {
+                "modelConfig": {"allowed_models": [{"name": "legacy-model"}]}
+            }
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            side_effect=_fake_find,
+        ) as mock_find:
+            allowed_names = allowed_model_names_for_bot(db, bot, 1)
+
+        assert allowed_names == {"bind-model"}
+        mock_find.assert_called_once_with(db, "bind-model", 1)
 
     def test_malformed_entries_return_empty_set(self):
         """Malformed whitelist entries keep the restriction but allow nothing."""

@@ -543,21 +543,31 @@ def _resolve_allowed_model_names(
     """Resolve the model names a bot allows.
 
     The whitelist lives either on the bot's agent_config or, for bots that bind
-    a private Model carrying only the restriction, on that Model's modelConfig.
+    a Model carrying only the restriction, on that Model's modelConfig. Bound
+    Models are read in the same priority order as the model selection itself
+    (agent_config.bind_model, then the legacy spec.modelRef).
 
-    Returns None when the bot does not restrict models. An empty set means a
+    Returns None when the bot does not restrict models. An absent or empty
+    allowed_models list means "no restriction" (the settings UI only writes the
+    key once at least one model is allowed), while an empty set means a
     whitelist is configured but declares no usable entry, which blocks every
     override.
     """
     allowed_models = raw_agent_config.get("allowed_models")
-    if not allowed_models and bot_crd.spec.modelRef:
-        _, bound_model_spec = _find_model_with_namespace(
-            db, bot_crd.spec.modelRef.name, user_id
-        )
-        if bound_model_spec:
+    if not allowed_models:
+        for bound_model_name in _bound_model_names(bot_crd, raw_agent_config):
+            _, bound_model_spec = _find_model_with_namespace(
+                db, bound_model_name, user_id
+            )
+            if not bound_model_spec:
+                continue
             bound_model_config = bound_model_spec.get("modelConfig", {})
-            if isinstance(bound_model_config, dict):
-                allowed_models = bound_model_config.get("allowed_models")
+            if not isinstance(bound_model_config, dict):
+                continue
+            bound_allowed_models = bound_model_config.get("allowed_models")
+            if bound_allowed_models:
+                allowed_models = bound_allowed_models
+                break
 
     if not isinstance(allowed_models, list) or not allowed_models:
         return None
@@ -565,6 +575,21 @@ def _resolve_allowed_model_names(
     return {
         m.get("name") for m in allowed_models if isinstance(m, dict) and m.get("name")
     }
+
+
+def _bound_model_names(bot_crd: Bot, raw_agent_config: Dict[str, Any]) -> list[str]:
+    """Return models a bot binds, ordered like the model selection priority."""
+    bound_model_names: list[str] = []
+
+    bind_model = raw_agent_config.get("bind_model")
+    if isinstance(bind_model, str) and bind_model.strip():
+        bound_model_names.append(bind_model.strip())
+
+    model_ref = bot_crd.spec.modelRef
+    if model_ref and model_ref.name not in bound_model_names:
+        bound_model_names.append(model_ref.name)
+
+    return bound_model_names
 
 
 def allowed_model_names_for_bot(

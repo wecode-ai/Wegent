@@ -306,19 +306,28 @@ def _task_model_override_available(
     *,
     model_name: str,
     user_id: int,
-    team: Kind,
 ) -> bool:
-    """Return whether a task-level model override still applies to this team.
-
-    The override is unusable when the model no longer resolves as a Model CRD
-    or when the team's bots restrict models and do not allow it. Forcing such an
-    override makes execution request building fail, which leaves IM cards open.
-    """
+    """Return whether the task-level model override resolves as a Model CRD."""
     from app.services.chat.config.model_resolver import _find_model_with_namespace
 
     _model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
-    if model_spec is None:
-        return False
+    return model_spec is not None
+
+
+def _task_model_override_allowed_for_team(
+    db: "Session",
+    *,
+    team: Kind,
+    model_name: str,
+    user_id: int,
+) -> bool:
+    """Return whether the team's model restriction allows the override.
+
+    Forcing a model the selected agent restricts makes execution request
+    building fail, which leaves IM cards open, so callers that can fall back
+    must check this before consuming any override - including runtime (Codex)
+    overrides that skip model resolution altogether.
+    """
 
     from app.services.chat.config.model_resolver import allowed_model_names_for_team
 
@@ -949,6 +958,28 @@ async def build_execution_request(
                 catalog_model_id,
             )
 
+        # The agent's model restriction wins over a persisted task override for
+        # every override type, including runtime ones: those skip model
+        # resolution below and would otherwise bypass the restriction.
+        if (
+            force_override
+            and override_model_name
+            and _should_ignore_unavailable_task_model_override(payload)
+            and not _task_model_override_allowed_for_team(
+                db,
+                team=team,
+                model_name=override_model_name,
+                user_id=user.id,
+            )
+        ):
+            logger.info(
+                "[build_execution_request] Ignoring task model override blocked "
+                "by the agent model restriction: modelId=%s",
+                override_model_name,
+            )
+            override_model_name = None
+            force_override = False
+
         if (
             force_override
             and override_model_name
@@ -976,11 +1007,10 @@ async def build_execution_request(
                 db,
                 model_name=override_model_name,
                 user_id=user.id,
-                team=team,
             )
         ):
             logger.info(
-                "[build_execution_request] Ignoring unusable task model "
+                "[build_execution_request] Ignoring unavailable task model "
                 "override for payload fallback: modelId=%s",
                 override_model_name,
             )

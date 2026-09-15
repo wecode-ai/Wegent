@@ -459,6 +459,56 @@ class TestBuildExecutionRequestUserSubtaskId:
             "protocol": "openai-responses",
         }
 
+    async def test_runtime_task_model_override_blocked_by_agent_restriction(self):
+        """A runtime override the selected agent forbids must not be consumed."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+        task = MagicMock()
+        task.id = 1
+        task.json = {
+            "metadata": {
+                "labels": {
+                    "modelId": "codex-gpt-5.5",
+                    "forceOverrideBotModel": "true",
+                    "forceOverrideBotModelType": "runtime",
+                }
+            }
+        }
+        assistant_subtask = MagicMock()
+        assistant_subtask.id = 2
+        team = MagicMock()
+        user = MagicMock()
+        user.id = 7
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder", return_value=mock_builder
+            ):
+                with patch(
+                    "app.services.chat.config.model_resolver"
+                    ".allowed_model_names_for_team",
+                    return_value={"another-model"},
+                ) as mock_allowed:
+                    await trigger_unified.build_execution_request(
+                        task=task,
+                        assistant_subtask=assistant_subtask,
+                        team=team,
+                        user=user,
+                        message="hello",
+                        payload=SimpleNamespace(
+                            ignore_unavailable_task_model_override=True
+                        ),
+                    )
+
+        mock_allowed.assert_called_once_with(mock_db, team=team, user_id=7)
+        assert mock_builder.build.call_args.kwargs["override_model_name"] is None
+        assert mock_builder.build.call_args.kwargs["force_override"] is False
+        assert mock_builder.build.call_args.kwargs["runtime_model_config"] is None
+
     async def test_device_execution_keeps_sandbox_path_in_context_processing(self):
         """Device-routed tasks should keep sandbox path placeholders for executor rewrite."""
         from app.services.chat.trigger import unified as trigger_unified
