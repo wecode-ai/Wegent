@@ -12,6 +12,7 @@ import {
 import { reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import type { RuntimeWorkListRequestOptions } from '@/api/runtimeWork'
 import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
 import i18n from '@/i18n'
 import type {
@@ -113,6 +114,7 @@ import type {
 } from '@/types/automation'
 import type { WorkspaceTextFileResponse, WorkspaceTreeResponse } from '@/types/workspace-files'
 import {
+  ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
   requestLocalExecutor,
   subscribeLocalExecutorEvents,
@@ -370,6 +372,7 @@ type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>
 type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
 interface LocalAppServicesDeps {
+  available?: () => Promise<LocalExecutorStatus>
   ensure?: () => Promise<LocalExecutorStatus>
   request?: LocalExecutorRequest
   subscribe?: LocalExecutorSubscribe
@@ -797,7 +800,14 @@ function normalizeRuntimeTaskSummary(
   const modelSelection =
     modelSelectionValue(taskRecord.modelSelection ?? taskRecord.model_selection) ??
     modelSelectionValue(runtimeHandle.modelSelection ?? runtimeHandle.model_selection)
-  const goalStatus = runtimeGoalStatusValue(taskRecord.goalStatus ?? taskRecord.goal_status)
+  const rawGoalStatus = Object.hasOwn(taskRecord, 'goalStatus')
+    ? taskRecord.goalStatus
+    : taskRecord.goal_status
+  const goalStatus = rawGoalStatus === null ? null : runtimeGoalStatusValue(rawGoalStatus)
+  const hasGoalStatus = rawGoalStatus === null || goalStatus !== undefined
+  const goalExecutionStatus = runtimeGoalExecutionStatusValue(
+    taskRecord.goalExecutionStatus ?? taskRecord.goal_execution_status
+  )
   const threadStatus = stringValue(taskRecord.threadStatus ?? taskRecord.thread_status)
   const turnStatus = stringValue(taskRecord.turnStatus ?? taskRecord.turn_status)
   const continuableValue = taskRecord.continuable
@@ -825,7 +835,8 @@ function normalizeRuntimeTaskSummary(
     ...(gitInfo !== undefined ? { gitInfo } : {}),
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
     ...(modelSelection ? { modelSelection } : {}),
-    ...(goalStatus ? { goalStatus } : {}),
+    ...(hasGoalStatus ? { goalStatus } : {}),
+    ...(goalExecutionStatus ? { goalExecutionStatus } : {}),
     ...(threadStatus ? { threadStatus } : {}),
     ...(turnStatus ? { turnStatus } : {}),
     ...(continuable !== undefined ? { continuable } : {}),
@@ -842,6 +853,14 @@ function runtimeGoalStatusValue(value: unknown): RuntimeGoalStatus | undefined {
     value === 'complete' ||
     value === 'usageLimited' ||
     value === 'budgetLimited'
+    ? value
+    : undefined
+}
+
+function runtimeGoalExecutionStatusValue(
+  value: unknown
+): RuntimeTaskSummary['goalExecutionStatus'] | undefined {
+  return value === 'running' || value === 'recovering' || value === 'needsAttention'
     ? value
     : undefined
 }
@@ -2581,11 +2600,17 @@ export function createRuntimeWorkApiFromIpc(
 
   return {
     prepareRuntimeModel,
-    async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
+    async listRuntimeWork(
+      requestOptions?: RuntimeWorkListRequestOptions
+    ): Promise<RuntimeWorkListResponse> {
       const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()
       try {
-        const response = await request('runtime.tasks.list', {}, localDeviceId)
+        const response = await request(
+          'runtime.tasks.list',
+          requestOptions?.preferCached ? { preferCached: true } : {},
+          localDeviceId
+        )
         const runtimeWork = adaptListResponse(response, localDeviceId)
         return runtimeWork
       } catch (error) {
@@ -3420,6 +3445,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       return buildProjectPluginCatalog(installed, apps)
     },
   }
+  const available = deps.available ?? deps.ensure ?? ensureLocalExecutorAvailable
   const ensure = deps.ensure ?? ensureLocalExecutorStarted
   const request = deps.request ?? requestLocalExecutor
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
@@ -3427,7 +3453,22 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const readWorkspaceFileChunk = deps.readWorkspaceFileChunk ?? readLocalWorkspaceFileChunk
   const listWorkspaceEntries = deps.listWorkspaceEntries ?? listLocalWorkspaceEntries
   let lastStatus: LocalExecutorStatus | null = null
+  let availablePromise: Promise<LocalExecutorStatus> | null = null
   let ensurePromise: Promise<LocalExecutorStatus> | null = null
+
+  const availableStatus = async () => {
+    if (!availablePromise) {
+      availablePromise = available()
+        .then(status => {
+          lastStatus = status
+          return status
+        })
+        .finally(() => {
+          availablePromise = null
+        })
+    }
+    return availablePromise
+  }
 
   const ensureStatus = async () => {
     if (!ensurePromise) {
@@ -3445,9 +3486,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     return ensurePromise
   }
 
-  const getLocalDeviceId = async () => localDeviceIdFromStatus(await ensureStatus())
+  const bootstrapStatus = deps.available || !deps.ensure ? availableStatus : ensureStatus
+  const getLocalDeviceId = async () => localDeviceIdFromStatus(await bootstrapStatus())
   const getDeviceCommandLocalDeviceId = async () =>
-    localDeviceIdFromStatus(lastStatus ?? (await ensureStatus()))
+    localDeviceIdFromStatus(lastStatus ?? (await bootstrapStatus()))
 
   const executeCommand = async (
     deviceId: string,
@@ -3470,7 +3512,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const deviceApi: WorkbenchServices['deviceApi'] = {
     async listDevices() {
       try {
-        return [localDeviceFromStatus(await ensureStatus())]
+        return [localDeviceFromStatus(await bootstrapStatus())]
       } catch (error) {
         const fallback = {
           ...localExecutorErrorStatus(error),

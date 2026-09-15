@@ -23,6 +23,29 @@ export interface SoftwareRequirement {
 
 // Shell type to requirements mapping
 const shellRequirements: Record<string, SoftwareRequirement[]> = {
+  Codex: [
+    {
+      name: 'Node.js',
+      command: 'node --version',
+      minVersion: '20.0.0',
+      required: true,
+      description: 'JavaScript runtime for Codex CLI',
+    },
+    {
+      name: 'Python',
+      command: 'python --version',
+      minVersion: '3.12.0',
+      required: true,
+      description: 'Python interpreter for agent execution',
+    },
+    {
+      name: 'codex',
+      command: 'codex --version',
+      minVersion: '0.1.0',
+      required: true,
+      description: 'OpenAI Codex CLI',
+    },
+  ],
   ClaudeCode: [
     {
       name: 'Node.js',
@@ -66,7 +89,7 @@ const shellRequirements: Record<string, SoftwareRequirement[]> = {
 }
 
 interface SoftwareRequirementsProps {
-  shellType: string // Shell type (e.g., ClaudeCode, Agno, Dify)
+  shellType: string // Shell type (e.g., Codex, ClaudeCode, Agno, Dify)
 }
 
 const SoftwareRequirements: React.FC<SoftwareRequirementsProps> = ({ shellType }) => {

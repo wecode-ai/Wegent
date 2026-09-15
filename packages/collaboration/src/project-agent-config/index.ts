@@ -4,3 +4,4 @@
 
 export * from "./model";
 export * from "./ProjectAgentConfiguration";
+export * from "./types";

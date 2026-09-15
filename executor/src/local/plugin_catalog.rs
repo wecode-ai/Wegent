@@ -40,6 +40,7 @@ pub struct SavePluginExampleRequest {
 pub struct WegentStorePluginSummary {
     name: String,
     package_id: String,
+    installed_plugin_id: Option<i64>,
     marketplace: String,
     version: Option<String>,
     enabled: bool,
@@ -54,6 +55,7 @@ pub struct WegentStorePluginSummary {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WegentStoreListResult {
+    supports_plugin_reconciliation: bool,
     store_path: String,
     plugins: Vec<WegentStorePluginSummary>,
 }
@@ -86,6 +88,7 @@ fn list_wegent_store_plugins_at(executor_home: &Path) -> Result<WegentStoreListR
     let manifest_path = capabilities_root.join("manifest.json");
     if !manifest_path.is_file() {
         return Ok(WegentStoreListResult {
+            supports_plugin_reconciliation: true,
             store_path,
             plugins: Vec::new(),
         });
@@ -114,6 +117,7 @@ fn list_wegent_store_plugins_at(executor_home: &Path) -> Result<WegentStoreListR
         })?;
     let Ok(canonical_store_root) = store_root.canonicalize() else {
         return Ok(WegentStoreListResult {
+            supports_plugin_reconciliation: true,
             store_path,
             plugins: Vec::new(),
         });
@@ -148,6 +152,7 @@ fn list_wegent_store_plugins_at(executor_home: &Path) -> Result<WegentStoreListR
             .then_with(|| left.name.cmp(&right.name))
     });
     Ok(WegentStoreListResult {
+        supports_plugin_reconciliation: true,
         store_path,
         plugins,
     })
@@ -166,6 +171,7 @@ fn wegent_store_plugin_summary(
     Some(WegentStorePluginSummary {
         name,
         package_id,
+        installed_plugin_id: installed.get("installed_plugin_id").and_then(Value::as_i64),
         marketplace: optional_trimmed_string(installed.get("marketplace"))?,
         version: optional_trimmed_string(manifest.get("version"))
             .or_else(|| optional_trimmed_string(installed.get("version"))),
@@ -690,6 +696,7 @@ mod tests {
                 "plugins": {
                     "example@wegent": {
                         "name": "example",
+                        "installed_plugin_id": 104,
                         "marketplace": "wegent",
                         "version": "1.0.0",
                         "enabled": false,
@@ -709,6 +716,7 @@ mod tests {
         assert_eq!(listed.plugins.len(), 1);
         assert_eq!(listed.plugins[0].name, "example");
         assert_eq!(listed.plugins[0].package_id, "example@wegent");
+        assert_eq!(listed.plugins[0].installed_plugin_id, Some(104));
         assert_eq!(listed.plugins[0].marketplace, "wegent");
         assert!(!listed.plugins[0].enabled);
         assert_eq!(listed.plugins[0].version.as_deref(), Some("1.2.3"));

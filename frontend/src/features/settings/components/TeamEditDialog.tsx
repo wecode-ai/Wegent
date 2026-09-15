@@ -62,14 +62,16 @@ import TeamModeEditor from './team-edit/TeamModeEditor'
 import TeamModeChangeDialog from './team-edit/TeamModeChangeDialog'
 import SimpleTeamEditForm from './team-edit/SimpleTeamEditForm'
 import {
-  bindModeRequiresClaudeCode,
+  bindModeRequiresCodingAgent,
+  DEFAULT_CODING_EXECUTOR_RUNTIME,
   getDefaultSimpleBindMode,
   getModelCategoryTypeForBindMode,
-  isClaudeCodeShell,
+  isCodingAgentShell,
   normalizeExecutorForBindMode,
   resolveSimpleExecutorFromBot,
   resolveShellForExecutor,
   shellSupportsPreloadSkills,
+  type CodingExecutorRuntime,
   type SimpleExecutorMode,
 } from './team-edit/simple-team-edit-utils'
 import { buildSimpleBotRequest, buildSimpleTeamRequest } from './team-edit/simple-team-edit-save'
@@ -380,6 +382,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   // Simplified editor state
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [simpleExecutorMode, setSimpleExecutorMode] = useState<SimpleExecutorMode>('simple')
+  const [simpleCodingRuntime, setSimpleCodingRuntime] = useState<CodingExecutorRuntime>(
+    DEFAULT_CODING_EXECUTOR_RUNTIME
+  )
   const [simpleCustomShellName, setSimpleCustomShellName] = useState('')
   const [simpleBotName, setSimpleBotName] = useState('')
   const [simpleModelName, setSimpleModelName] = useState('')
@@ -457,21 +462,29 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const useSimpleEditor = !advancedOpen && !isNonSoloTeam
 
   const selectedSimpleShell = useMemo(
-    () => resolveShellForExecutor(shells, simpleExecutorMode, simpleCustomShellName),
-    [shells, simpleCustomShellName, simpleExecutorMode]
+    () =>
+      resolveShellForExecutor(
+        shells,
+        simpleExecutorMode,
+        simpleCustomShellName,
+        simpleCodingRuntime
+      ),
+    [shells, simpleCodingRuntime, simpleCustomShellName, simpleExecutorMode]
   )
 
   const simpleMcpAgentType = useMemo<McpAgentType | undefined>(() => {
     const shellType = selectedSimpleShell?.shellType || selectedSimpleShell?.name
-    return shellType === 'ClaudeCode' || shellType === 'Agno' ? shellType : undefined
+    return shellType === 'Codex' || shellType === 'ClaudeCode' || shellType === 'Agno'
+      ? shellType
+      : undefined
   }, [selectedSimpleShell])
   const simpleSupportsPreloadSkills = useMemo(() => {
     return shellSupportsPreloadSkills(selectedSimpleShell)
   }, [selectedSimpleShell])
 
-  const simpleExecutorNeedsComplex = bindModeRequiresClaudeCode(bindMode)
-  const simpleExecutorHelperText = simpleExecutorNeedsComplex
-    ? t('settings:team.simple.executor.requires_complex_hint')
+  const simpleExecutorNeedsCodingAgent = bindModeRequiresCodingAgent(bindMode)
+  const simpleExecutorHelperText = simpleExecutorNeedsCodingAgent
+    ? t('settings:team.simple.executor.requires_coding_agent_hint')
     : null
   const skillLoadingFailedTitle = t('common:skills.loading_failed')
   const modelLoadingFailedTitle = t('common:bot.errors.fetch_models_failed')
@@ -527,6 +540,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       const fullLeaderBot = bots.find(bot => bot.id === leaderBot?.bot_id)
       const executor = resolveSimpleExecutorFromBot(fullLeaderBot)
       setSimpleExecutorMode(executor.mode)
+      setSimpleCodingRuntime(executor.codingRuntime)
       setSimpleCustomShellName(executor.customShellName)
       setSimpleBotName(fullLeaderBot?.name || '')
       setSimplePrompt(fullLeaderBot?.system_prompt || '')
@@ -595,6 +609,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setRequireConfirmationMap({})
       setContextPassingMap({})
       setSimpleExecutorMode('simple')
+      setSimpleCodingRuntime(DEFAULT_CODING_EXECUTOR_RUNTIME)
       setSimpleCustomShellName('')
       setSimpleBotName('')
       setSimpleModelName('')
@@ -693,13 +708,24 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       simpleExecutorMode,
       bindMode,
       shells,
-      simpleCustomShellName
+      simpleCustomShellName,
+      simpleCodingRuntime
     )
 
     if (normalized.mode !== simpleExecutorMode) {
       setSimpleExecutorMode(normalized.mode)
     }
-  }, [bindMode, shells, simpleCustomShellName, simpleExecutorMode, useSimpleEditor])
+    if (normalized.codingRuntime !== simpleCodingRuntime) {
+      setSimpleCodingRuntime(normalized.codingRuntime)
+    }
+  }, [
+    bindMode,
+    shells,
+    simpleCodingRuntime,
+    simpleCustomShellName,
+    simpleExecutorMode,
+    useSimpleEditor,
+  ])
 
   const reloadSimpleSkills = useCallback(async () => {
     if (!useSimpleEditor) return
@@ -943,7 +969,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   }
 
   const handleSimpleSave = async (confirmation?: TeamIdentityConfirmation) => {
-    const selectedShell = resolveShellForExecutor(shells, simpleExecutorMode, simpleCustomShellName)
+    const selectedShell = resolveShellForExecutor(
+      shells,
+      simpleExecutorMode,
+      simpleCustomShellName,
+      simpleCodingRuntime
+    )
     if (!selectedShell) {
       toast({
         variant: 'destructive',
@@ -952,10 +983,10 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       return
     }
 
-    if (bindModeRequiresClaudeCode(bindMode) && !isClaudeCodeShell(selectedShell)) {
+    if (bindModeRequiresCodingAgent(bindMode) && !isCodingAgentShell(selectedShell)) {
       toast({
         variant: 'destructive',
-        title: t('settings:team.simple.executor.requires_complex_hint'),
+        title: t('settings:team.simple.executor.requires_coding_agent_hint'),
       })
       return
     }
@@ -1472,11 +1503,13 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   setRequiresWorkspace={setRequiresWorkspace}
                   executorMode={simpleExecutorMode}
                   setExecutorMode={setSimpleExecutorMode}
+                  codingRuntime={simpleCodingRuntime}
+                  setCodingRuntime={setSimpleCodingRuntime}
                   shells={shells}
                   customShellName={simpleCustomShellName}
                   setCustomShellName={setSimpleCustomShellName}
                   executorHelperText={simpleExecutorHelperText}
-                  disabledExecutorModes={simpleExecutorNeedsComplex ? ['simple'] : []}
+                  disabledExecutorModes={simpleExecutorNeedsCodingAgent ? ['simple'] : []}
                   modelName={simpleModelName}
                   modelType={simpleModelType}
                   modelNamespace={simpleModelNamespace}

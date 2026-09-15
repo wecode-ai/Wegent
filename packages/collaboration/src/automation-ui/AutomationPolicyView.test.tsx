@@ -35,6 +35,8 @@ vi.mock("@xyflow/react", () => ({
 
 import type { AutomationUiRule, AutomationUiStep } from "../automation";
 import { AutomationPolicyView } from "./AutomationPolicyView";
+import { RuntimeConfigurationProvider } from "../runtime-profile/RuntimeConfigurationProvider";
+import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import {
   AutomationUiHostProvider,
   type AutomationUiHost,
@@ -164,12 +166,20 @@ describe("AutomationPolicyView", () => {
   async function render(
     rules: AutomationUiRule[],
     props: Partial<React.ComponentProps<typeof AutomationPolicyView>> = {},
+    locale: "zh-CN" | "en" = "en",
+    configurationApi?: SharedWorkspaceApi,
   ) {
     await act(async () => {
       root.render(
-        <AutomationUiHostProvider host={host}>
-          <AutomationPolicyView rules={rules} runs={[]} {...props} />
-        </AutomationUiHostProvider>,
+        <RuntimeConfigurationProvider
+          api={configurationApi}
+          project={{ id: "project" }}
+          locale={locale}
+        >
+          <AutomationUiHostProvider host={host} locale={locale}>
+            <AutomationPolicyView rules={rules} runs={[]} {...props} />
+          </AutomationUiHostProvider>
+        </RuntimeConfigurationProvider>,
       );
     });
   }
@@ -422,4 +432,42 @@ describe("AutomationPolicyView", () => {
       "Delete request failed",
     );
   });
+
+  it.each(["zh-CN", "en"] as const)(
+    "translates a missing coordinator configuration into %s",
+    async (locale) => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const onRunRule = vi
+        .fn()
+        .mockRejectedValue(
+          Object.assign(
+            new Error(
+              "AI coordinator execution configuration is incomplete: device, model.",
+            ),
+            { errorCode: "COORDINATOR_EXECUTION_CONFIG_INCOMPLETE" },
+          ),
+        );
+      await render(
+        [rule("rule-1", "Policy")],
+        { onRunRule, canManage: true },
+        locale,
+        { automationExecutionCatalog: {} } as SharedWorkspaceApi,
+      );
+
+      await click("automation-run-now");
+
+      expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+        locale === "zh-CN"
+          ? "我的默认执行配置"
+          : "My default execution settings",
+      );
+      expect(
+        document.querySelector('[role="alert"]')?.textContent,
+      ).not.toContain("AI coordinator execution");
+      expect(onRunRule).toHaveBeenCalledOnce();
+      expect(element("automation-configure-runtime").textContent).toContain(
+        locale === "zh-CN" ? "立即配置" : "Configure now",
+      );
+    },
+  );
 });

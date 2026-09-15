@@ -809,6 +809,32 @@ describe('local codex plugin readState cache', () => {
     )
   })
 
+  test('explicit invalidation prevents an in-flight snapshot from reviving stale membership', async () => {
+    let finish: ((value: unknown) => void) | undefined
+    mocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params: { method?: string }) => {
+        if (method === 'codex.app_server_request' && params.method === 'plugin/installed') {
+          return { marketplaces: [personalMarketplace] }
+        }
+        if (method === 'codex.app_server_request' && params.method === 'plugin/list') {
+          return await new Promise(resolve => {
+            finish = resolve
+          })
+        }
+        throw new Error(`Unexpected request ${method}`)
+      }
+    )
+    const pending = createLocalCodexPluginApi().readState({
+      mergeAllMarketplaces: true,
+      refresh: true,
+    })
+    await vi.waitFor(() => expect(finish).toBeDefined())
+    clearLocalCodexPluginsReadStateCache()
+    finish!({ marketplaces: [personalMarketplace] })
+    await pending
+    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
+  })
+
   test('retains the cached OpenAI catalog when a refresh omits that marketplace', async () => {
     const openAiMarketplace = {
       name: 'openai-curated-remote',

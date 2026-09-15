@@ -43,6 +43,16 @@ process lines and the latest three tool activities. The preference is stored
 per user and project, hidden for other grouping modes, and restored when the
 board returns to status grouping.
 
+## Conversation Processing State
+
+对话中的工具和过程记录只有在最终文字停止流式输出、且当前轮次已经结束后，才会折叠为“已处理”。流式输出期间保持过程区域结构稳定，避免完成态反复显示和隐藏，导致后续文字跳动或闪烁。
+
+Tool and process activity in a conversation collapses into the completed
+processing summary only after final text has stopped streaming and the active
+turn has settled. While output is streaming, Wework keeps the processing layout
+stable so the completed state cannot repeatedly appear and disappear or make
+following text flicker.
+
 ## Development
 
 Requires Node.js 20+ and pnpm.

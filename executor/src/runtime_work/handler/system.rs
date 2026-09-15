@@ -41,6 +41,13 @@ impl RuntimeWorkRpcHandler {
             .clone();
         let worktrees = self.worktrees.clone();
         let store = self.store.clone();
+        let recoverable_goal_task_ids = self
+            .active_goal_turns
+            .lock()
+            .expect("active Goal turn map lock should not be poisoned")
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
         let result = tokio::task::spawn_blocking(move || {
             let reconciled = worktrees.reconcile()?;
             let mut failed_task_ids = HashSet::new();
@@ -53,6 +60,9 @@ impl RuntimeWorkRpcHandler {
                 let task_id = outcome
                     .interrupted_execution_task_id
                     .unwrap_or(outcome.record.worktree_id);
+                if recoverable_goal_task_ids.contains(&task_id) {
+                    continue;
+                }
                 let error = outcome.record.last_error.unwrap_or_else(|| {
                     if outcome.interrupted_execution {
                         "Executor restarted while the Worktree task was executing; runtime was not resumed"

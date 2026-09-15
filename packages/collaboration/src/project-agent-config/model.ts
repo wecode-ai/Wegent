@@ -2,11 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { WorkspaceProjectAgent } from "../ports/SharedWorkspaceApi";
+import type { WorkspaceProjectAgent, WorkspaceAutomationModel } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationExecutionEnvironment,
   CollaborationOwnedAgent,
-  CollaborationProject,
 } from "../types";
 
 export interface ProjectAgentConfigurationRecord {
@@ -19,6 +18,8 @@ export interface ProjectAgentConfigurationRecord {
   capabilityDescription: string;
   executionEnvironment: "local" | "cloud";
   executionDeviceId: string | null;
+  model: string | null
+  runtimeProfileId: string | null
 }
 
 function value(
@@ -54,6 +55,8 @@ export function normalizeProjectAgent(
     executionEnvironment: executionEnvironment === "cloud" ? "cloud" : "local",
     executionDeviceId:
       rawDeviceId == null || rawDeviceId === "" ? null : String(rawDeviceId),
+    model: typeof row.model === 'string' && row.model.trim() ? row.model : null,
+    runtimeProfileId: String(value(row, 'defaultRuntimeProfileId', 'default_runtime_profile_id') || '') || null,
   };
 }
 
@@ -71,11 +74,11 @@ export function createWegentProjectAgentInput(
 }
 
 export function createCodexProjectAgentInput(options: {
-  project: CollaborationProject;
   environment: CollaborationExecutionEnvironment;
   name: string;
   capabilityDescription: string;
   systemPrompt: string;
+  model?: WorkspaceAutomationModel
 }): Record<string, unknown> {
   const deviceKey = options.environment.device_key?.trim();
   if (!deviceKey) {
@@ -86,12 +89,16 @@ export function createCodexProjectAgentInput(options: {
     runtime: "codex",
     capabilityDescription: options.capabilityDescription.trim(),
     systemPrompt: options.systemPrompt.trim(),
+    ...(options.model ? {
+      model: options.model.name,
+      modelType: options.model.type,
+      modelOptions: options.model.options,
+    } : {}),
     executionDeviceId: deviceKey,
     executionEnvironment:
       options.environment.kind === "cloud_host" ? "cloud" : "local",
     workspaceBinding: {
-      type: "backend_project",
-      projectId: options.project.id,
+      type: 'standalone',
     },
   };
 }

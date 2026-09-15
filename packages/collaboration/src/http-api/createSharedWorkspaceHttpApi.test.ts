@@ -243,10 +243,12 @@ describe("createSharedWorkspaceHttpApi", () => {
       workspaceHttpRequestBody({
         executionDeviceId: "device-1",
         plugins: [{ marketplaceId: "official", enabled: true }],
+        modelOptions: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '0' },
       }),
     ).toEqual({
       execution_device_id: "device-1",
       plugins: [{ marketplace_id: "official", enabled: true }],
+      model_options: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '0' },
     });
   });
 });

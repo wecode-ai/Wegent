@@ -94,7 +94,13 @@ export function useCollaborationPlatformController({
       }));
       return;
     }
-    setState((current) => ({ ...current, loading: true, error: null }));
+    setState((current) => ({
+      ...current,
+      loading:
+        current.workspace?.id !== location.workspaceId ||
+        Boolean(location.projectId),
+      error: null,
+    }));
     try {
       const [workspaces, navigationProjects] = await Promise.all([
         api.workspaces.list(),

@@ -6,18 +6,24 @@ import { describe, expect, test, vi } from 'vitest'
 describe('Electron startup shell', () => {
   test('renders initialization and failure states and retries the runtime', async () => {
     const elements = new Map(
-      ['#runtime-status', '#details', '#reload-dsh', '#runtime-overlay', '.runtime-card'].map(
-        selector => [
-          selector,
-          {
-            dataset: {} as Record<string, string>,
-            disabled: false,
-            hidden: false,
-            textContent: '',
-            addEventListener: vi.fn(),
-          },
-        ]
-      )
+      [
+        '#runtime-status',
+        '#details',
+        '#reload-dsh',
+        '#runtime-overlay',
+        '.runtime-card',
+        '.runtime-failure-backdrop',
+        '#loading-status',
+      ].map(selector => [
+        selector,
+        {
+          dataset: {} as Record<string, string>,
+          disabled: false,
+          hidden: false,
+          textContent: '',
+          addEventListener: vi.fn(),
+        },
+      ])
     )
     const state = {
       phase: 'initializing',
@@ -46,6 +52,8 @@ describe('Electron startup shell', () => {
       expect(elements.get('#runtime-overlay')?.dataset.phase).toBe('initializing')
       expect(elements.get('#reload-dsh')?.hidden).toBe(true)
       expect(elements.get('.runtime-card')?.hidden).toBe(true)
+      expect(elements.get('.runtime-failure-backdrop')?.hidden).toBe(true)
+      expect(elements.get('#loading-status')?.textContent).toBe('正在准备本地运行时…')
     })
 
     state.phase = 'failed'
@@ -60,6 +68,7 @@ describe('Electron startup shell', () => {
       expect(elements.get('#details')?.hidden).toBe(false)
       expect(elements.get('#reload-dsh')?.hidden).toBe(false)
       expect(elements.get('.runtime-card')?.hidden).toBe(false)
+      expect(elements.get('.runtime-failure-backdrop')?.hidden).toBe(false)
     })
 
     const clickHandler = vi.mocked(elements.get('#reload-dsh')?.addEventListener).mock

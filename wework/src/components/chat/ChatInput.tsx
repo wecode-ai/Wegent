@@ -26,6 +26,7 @@ import type {
   ProjectWithTasks,
   RuntimeContextUsage,
   RuntimeGoal,
+  RuntimeGoalExecutionStatus,
   RuntimePlanEventPayload,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
@@ -206,6 +207,7 @@ export interface ChatInputProps {
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
   goalContinuing?: boolean
+  goalExecutionStatus?: RuntimeGoalExecutionStatus | null
   taskPlan?: RuntimePlanEventPayload | null
   goalDraftActive?: boolean
   onSetGoal?: () => void
@@ -615,6 +617,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onCompactContext,
     goal,
     goalContinuing = false,
+    goalExecutionStatus = null,
     taskPlan,
     goalDraftActive = false,
     onSetGoal,
@@ -920,6 +923,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 integrated
                 goal={displayedGoal}
                 continuing={goalContinuing}
+                executionStatus={goalExecutionStatus}
                 onEditGoal={onEditGoal}
                 onPauseGoal={onPauseGoal}
                 onResumeGoal={onResumeGoal}
@@ -1039,6 +1043,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         <GoalStatusBar
           goal={displayedGoal}
           continuing={goalContinuing}
+          executionStatus={goalExecutionStatus}
           onEditGoal={onEditGoal}
           onPauseGoal={onPauseGoal}
           onResumeGoal={onResumeGoal}

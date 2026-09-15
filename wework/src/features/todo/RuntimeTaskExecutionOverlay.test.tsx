@@ -36,11 +36,9 @@ vi.mock('@/components/layout/useWorkbenchPaneSession', () => ({
     waitingForAssistant: false,
     transcriptHasMoreBefore: false,
     transcriptLoadingMoreBefore: false,
-    transcriptLoadingFullContent: false,
     turnNavigation: [],
     loadedTranscriptRanges: [],
     loadMoreTranscriptBefore: vi.fn(),
-    loadFullTranscript: vi.fn(),
     loadTranscriptTurnNavigationItem: vi.fn(),
     loadTranscriptGap: vi.fn(),
     status: {
