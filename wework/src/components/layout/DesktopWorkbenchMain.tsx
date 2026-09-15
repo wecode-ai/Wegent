@@ -875,12 +875,10 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       const activePaneBrowserLabel = activeTaskId
         ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(activeTaskId)}`
         : `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(activePaneKey)}`
-      if (
-        requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL ||
-        requestBaseLabel === activePaneBrowserLabel
-      ) {
+      if (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL) {
         return props.visible === false ? null : activePaneKey
       }
+      if (requestBaseLabel === activePaneBrowserLabel) return activePaneKey
       return (
         runtimePaneKeys.find(paneKey => {
           const pane = resolvePane(paneKey)

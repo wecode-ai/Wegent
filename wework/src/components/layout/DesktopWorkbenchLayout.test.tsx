@@ -12570,6 +12570,44 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('opens a task-scoped browser request in its hidden owning workbench', async () => {
+    runtimeMocks.electron = true
+    const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+    render(<DesktopWorkbenchLayout {...propsForTask(taskA)} routeActive={false} />)
+    desktopHostMocks.invoke.mockClear()
+
+    act(() => {
+      desktopHostMocks.emit({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 1,
+          type: 'open-request',
+          payload: {
+            id: 'agent-open-hidden-owning-task',
+            baseLabel: 'workspace-browser-runtime-a',
+            source: 'agent',
+            disposition: 'current-tab',
+            targetLabel: 'workspace-browser-runtime-a',
+            label: 'workspace-browser-runtime-a',
+            url: 'https://example.com/',
+          },
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-runtime-a',
+          url: 'about:blank',
+          visible: false,
+        })
+      )
+    })
+  })
+
   test('keeps a default browser request assigned to the task active when it arrived', async () => {
     runtimeMocks.electron = true
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
