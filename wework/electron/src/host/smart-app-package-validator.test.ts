@@ -47,6 +47,15 @@ describe('Smart App package validator', () => {
       })
     ).toThrowError(expect.objectContaining({ code: 'SA-MANIFEST-ENTRY' }))
 
+    for (const profile of ['CON', 'com1', 'LPT1']) {
+      expect(() =>
+        validateSmartAppManifest({
+          ...validManifest(),
+          entry: { installPackage: 'app', profile },
+        })
+      ).toThrowError(expect.objectContaining({ code: 'SA-MANIFEST-ENTRY' }))
+    }
+
     expect(() =>
       validateSmartAppManifest({
         ...validManifest(),

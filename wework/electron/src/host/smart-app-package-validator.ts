@@ -223,12 +223,17 @@ export function isSafeSmartAppRelativePath(value: string): boolean {
   )
 }
 
+// Windows resolves these names to character devices wherever they appear, so a profile directory named
+// after one of them can never be created there.
+const WINDOWS_RESERVED_DEVICE_NAME = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i
+
 function validateManifestIdentity(manifest: WorkbenchAppManifest): void {
   if (
     !manifest.name?.trim() ||
     !/^[0-9A-Za-z_-]+$/.test(manifest.name) ||
     !manifest.entry?.profile?.trim() ||
     !/^[0-9A-Za-z_-]+$/.test(manifest.entry.profile) ||
+    WINDOWS_RESERVED_DEVICE_NAME.test(manifest.entry.profile) ||
     !isSafeSmartAppRelativePath(manifest.entry.installPackage)
   ) {
     throw validationError(
