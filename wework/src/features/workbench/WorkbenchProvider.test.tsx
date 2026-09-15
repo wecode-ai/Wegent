@@ -1215,6 +1215,9 @@ function ProjectSendProbe({
       <button type="button" onClick={() => workbench.selectProjectWorkspace(7, null)}>
         select project
       </button>
+      <button type="button" onClick={() => workbench.selectProject(null)}>
+        clear project
+      </button>
       <button type="button" onClick={() => workbench.startNewChat()}>
         start new chat
       </button>
@@ -12185,6 +12188,22 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('select project'))
 
     expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
+    expect(screen.getByTestId('project-attachment-count')).toHaveTextContent('1')
+  })
+
+  test('keeps blank chat draft when clearing a project chat context', async () => {
+    renderWorkbench(<ProjectSendProbe />)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('add image attachment'))
+    const blankChatKey = screen.getByTestId('standalone-chat-key').textContent
+
+    await userEvent.click(screen.getByText('clear project'))
+
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
+    expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent(blankChatKey ?? '')
     expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
     expect(screen.getByTestId('project-attachment-count')).toHaveTextContent('1')
   })
