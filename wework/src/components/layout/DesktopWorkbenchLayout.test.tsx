@@ -7318,6 +7318,64 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('routes an immediate bridge open request to a newly selected browser tab', async () => {
+    runtimeMocks.electron = true
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    desktopHostMocks.invoke.mockClear()
+
+    let emitted = false
+    embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockImplementation(
+      async (_baseLabel: string, activeLabel: string) => {
+        if (emitted || !activeLabel.endsWith('-2')) return
+        emitted = true
+        desktopHostMocks.emit({
+          sequence: 1,
+          type: 'browser.event',
+          payload: {
+            sequence: 1,
+            type: 'open-request',
+            payload: {
+              id: 'agent-open-new-browser-tab',
+              baseLabel: 'workspace-browser-blank-0',
+              source: 'agent',
+              disposition: 'current-tab',
+              targetLabel: activeLabel,
+              label: activeLabel,
+              url: 'https://example.com/second',
+            },
+          },
+        })
+      }
+    )
+
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    await userEvent.click(
+      within(screen.getByTestId('right-workspace-new-tab-menu')).getByTestId(
+        'right-workspace-browser-option'
+      )
+    )
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-blank-0-2',
+          url: 'about:blank',
+        })
+      )
+    })
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith(
+      'browser.open',
+      expect.objectContaining({
+        label: 'workspace-browser-blank-0',
+        url: 'about:blank',
+      })
+    )
+  })
+
   test('mixes browser pages with chat and terminal tabs in the right workspace tab bar', async () => {
     renderWorkspacePanelLayout()
 
