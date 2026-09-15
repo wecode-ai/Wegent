@@ -47,6 +47,7 @@ import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
+import { Tooltip } from '@/components/ui/tooltip'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
@@ -531,16 +532,18 @@ function ArchiveConversationsConfirmDialog({
           <h2 id={`${testId}-title`} className="heading-base tracking-normal">
             {title}
           </h2>
-          <button
-            type="button"
-            data-testid={`${testId}-close-button`}
-            onClick={onClose}
-            disabled={submitting}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
-            aria-label={cancelLabel}
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <Tooltip label={cancelLabel} testId={`${testId}-close-tooltip`}>
+            <button
+              type="button"
+              data-testid={`${testId}-close-button`}
+              onClick={onClose}
+              disabled={submitting}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
+              aria-label={cancelLabel}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </Tooltip>
         </div>
         <p className="mt-3 text-sm leading-6 text-text-secondary">{description}</p>
         <div className="mt-6 flex justify-end gap-2">
@@ -1176,34 +1179,35 @@ function GlobalImNotificationBell({
 
   return (
     <>
-      <button
-        type="button"
-        data-testid="sidebar-global-im-notification-button"
-        aria-pressed={notifying}
-        disabled={connecting}
-        onClick={() => onMenuOpenChange(!menuOpen)}
-        className={cn(
-          'relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-50',
-          notifying && 'text-primary hover:text-primary'
-        )}
-        title={title}
-        aria-label={title}
-      >
-        <NotificationIcon
-          data-testid={
-            notifying
-              ? 'sidebar-global-im-notification-on-icon'
-              : 'sidebar-global-im-notification-muted-icon'
-          }
-          className={cn('h-4 w-4', notifying && 'fill-current')}
-        />
-        {needsSession && (
-          <span
-            data-testid="sidebar-global-im-notification-indicator"
-            className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-amber-400 ring-2 ring-background"
+      <Tooltip label={title} testId="sidebar-global-im-notification-tooltip">
+        <button
+          type="button"
+          data-testid="sidebar-global-im-notification-button"
+          aria-pressed={notifying}
+          disabled={connecting}
+          onClick={() => onMenuOpenChange(!menuOpen)}
+          className={cn(
+            'relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-50',
+            notifying && 'text-primary hover:text-primary'
+          )}
+          aria-label={title}
+        >
+          <NotificationIcon
+            data-testid={
+              notifying
+                ? 'sidebar-global-im-notification-on-icon'
+                : 'sidebar-global-im-notification-muted-icon'
+            }
+            className={cn('h-4 w-4', notifying && 'fill-current')}
           />
-        )}
-      </button>
+          {needsSession && (
+            <span
+              data-testid="sidebar-global-im-notification-indicator"
+              className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-amber-400 ring-2 ring-background"
+            />
+          )}
+        </button>
+      </Tooltip>
 
       {menuOpen &&
         menuContainer &&
@@ -1343,16 +1347,21 @@ function SidebarReleaseNotesCard({
           {t('workbench.app_release_notes_summary', '查看此版本的新功能和改进')}
         </span>
       </button>
-      <button
-        type="button"
-        data-testid="sidebar-release-notes-dismiss"
-        aria-label={dismissLabel}
-        title={dismissLabel}
-        onClick={onDismiss}
-        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+      <Tooltip
+        label={dismissLabel}
+        testId="sidebar-release-notes-dismiss-tooltip"
+        className="absolute right-2 top-2"
       >
-        <X className="h-4 w-4" aria-hidden="true" />
-      </button>
+        <button
+          type="button"
+          data-testid="sidebar-release-notes-dismiss"
+          aria-label={dismissLabel}
+          onClick={onDismiss}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </Tooltip>
     </aside>
   )
 }
@@ -1649,24 +1658,25 @@ function RuntimeTaskRow({
     : t('workbench.subscribe_runtime_task_notifications', '订阅任务通知')
   const NotificationIcon = notificationsSubscribed ? MessageCircle : MessageCircleOff
   const renderNotificationButton = (testId: string, iconTestId: string) => (
-    <button
-      type="button"
-      data-testid={testId}
-      disabled={notificationsDisabled}
-      aria-pressed={notificationsSubscribed}
-      onClick={handleToggleNotification}
-      className={cn(
-        'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45',
-        notificationsSubscribed && 'text-primary'
-      )}
-      title={notificationActionLabel}
-      aria-label={notificationActionLabel}
-    >
-      <NotificationIcon
-        data-testid={iconTestId}
-        className={cn('h-[15px] w-[15px]', notificationsSubscribed && 'fill-current')}
-      />
-    </button>
+    <Tooltip label={notificationActionLabel} testId={`${testId}-tooltip`}>
+      <button
+        type="button"
+        data-testid={testId}
+        disabled={notificationsDisabled}
+        aria-pressed={notificationsSubscribed}
+        onClick={handleToggleNotification}
+        className={cn(
+          'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45',
+          notificationsSubscribed && 'text-primary'
+        )}
+        aria-label={notificationActionLabel}
+      >
+        <NotificationIcon
+          data-testid={iconTestId}
+          className={cn('h-[15px] w-[15px]', notificationsSubscribed && 'fill-current')}
+        />
+      </button>
+    </Tooltip>
   )
 
   return (
@@ -1961,105 +1971,125 @@ function RuntimeTaskRow({
                 )}
               {queued ? (
                 <>
-                  <button
-                    type="button"
-                    data-testid={`runtime-local-task-queue-up-${task.taskId}`}
-                    onClick={event => {
-                      event.stopPropagation()
-                      void reorderQueuedTask((queuePosition ?? 1) - 1)
-                    }}
-                    disabled={
-                      !workspace.available ||
-                      !workbench ||
-                      queueReordering ||
-                      queuePosition === null ||
-                      queuePosition <= 1
-                    }
-                    className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
-                    title={t('workbench.runtime_task_queue_move_up')}
-                    aria-label={t('workbench.runtime_task_queue_move_up')}
+                  <Tooltip
+                    label={t('workbench.runtime_task_queue_move_up')}
+                    testId={`runtime-local-task-queue-up-${task.taskId}-tooltip`}
                   >
-                    <ArrowUp className="h-[15px] w-[15px]" />
-                  </button>
-                  <button
-                    type="button"
-                    data-testid={`runtime-local-task-queue-down-${task.taskId}`}
-                    onClick={event => {
-                      event.stopPropagation()
-                      void reorderQueuedTask((queuePosition ?? 1) + 1)
-                    }}
-                    disabled={
-                      !workspace.available ||
-                      !workbench ||
-                      queueReordering ||
-                      queuePosition === null
-                    }
-                    className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
-                    title={t('workbench.runtime_task_queue_move_down')}
-                    aria-label={t('workbench.runtime_task_queue_move_down')}
+                    <button
+                      type="button"
+                      data-testid={`runtime-local-task-queue-up-${task.taskId}`}
+                      onClick={event => {
+                        event.stopPropagation()
+                        void reorderQueuedTask((queuePosition ?? 1) - 1)
+                      }}
+                      disabled={
+                        !workspace.available ||
+                        !workbench ||
+                        queueReordering ||
+                        queuePosition === null ||
+                        queuePosition <= 1
+                      }
+                      className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+                      aria-label={t('workbench.runtime_task_queue_move_up')}
+                    >
+                      <ArrowUp className="h-[15px] w-[15px]" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip
+                    label={t('workbench.runtime_task_queue_move_down')}
+                    testId={`runtime-local-task-queue-down-${task.taskId}-tooltip`}
                   >
-                    <ArrowDown className="h-[15px] w-[15px]" />
-                  </button>
-                  <button
-                    type="button"
-                    data-testid={`runtime-local-task-force-start-${task.taskId}`}
-                    onClick={event => {
-                      event.stopPropagation()
-                      void forceStartTask()
-                    }}
-                    disabled={!workspace.available || !workbench || forceStarting}
-                    className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
-                    title={t('workbench.runtime_task_force_start')}
-                    aria-label={t('workbench.runtime_task_force_start')}
+                    <button
+                      type="button"
+                      data-testid={`runtime-local-task-queue-down-${task.taskId}`}
+                      onClick={event => {
+                        event.stopPropagation()
+                        void reorderQueuedTask((queuePosition ?? 1) + 1)
+                      }}
+                      disabled={
+                        !workspace.available ||
+                        !workbench ||
+                        queueReordering ||
+                        queuePosition === null
+                      }
+                      className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+                      aria-label={t('workbench.runtime_task_queue_move_down')}
+                    >
+                      <ArrowDown className="h-[15px] w-[15px]" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip
+                    label={t('workbench.runtime_task_force_start')}
+                    testId={`runtime-local-task-force-start-${task.taskId}-tooltip`}
                   >
-                    {forceStarting ? (
-                      <RotateCw className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-[15px] w-[15px]" />
-                    )}
-                  </button>
+                    <button
+                      type="button"
+                      data-testid={`runtime-local-task-force-start-${task.taskId}`}
+                      onClick={event => {
+                        event.stopPropagation()
+                        void forceStartTask()
+                      }}
+                      disabled={!workspace.available || !workbench || forceStarting}
+                      className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+                      aria-label={t('workbench.runtime_task_force_start')}
+                    >
+                      {forceStarting ? (
+                        <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-[15px] w-[15px]" />
+                      )}
+                    </button>
+                  </Tooltip>
                 </>
               ) : (
+                <Tooltip
+                  label={
+                    marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task')
+                  }
+                  testId={`runtime-local-task-mark-${task.taskId}-tooltip`}
+                >
+                  <button
+                    type="button"
+                    data-testid={`runtime-local-task-mark-${task.taskId}`}
+                    onClick={handleToggleMark}
+                    disabled={!workspace.available || !threadId || !onSetRuntimeTaskPinned}
+                    className={cn(
+                      'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
+                      marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
+                    )}
+                    aria-label={
+                      marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task')
+                    }
+                  >
+                    <Pin
+                      data-testid={`runtime-local-task-pin-icon-${task.taskId}`}
+                      className={cn('h-[15px] w-[15px]', marked && 'fill-current')}
+                    />
+                  </button>
+                </Tooltip>
+              )}
+              <Tooltip
+                label={t('workbench.archive_runtime_task', '归档')}
+                testId={`runtime-local-task-archive-${task.taskId}-tooltip`}
+              >
                 <button
                   type="button"
-                  data-testid={`runtime-local-task-mark-${task.taskId}`}
-                  onClick={handleToggleMark}
-                  disabled={!workspace.available || !threadId || !onSetRuntimeTaskPinned}
-                  className={cn(
-                    'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
-                    marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
-                  )}
-                  title={
-                    marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task')
-                  }
-                  aria-label={
-                    marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task')
-                  }
+                  data-testid={`runtime-local-task-archive-${task.taskId}`}
+                  disabled={archiveDisabled}
+                  onClick={handleArchive}
+                  className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+                  aria-label={t('workbench.archive_runtime_task', '归档')}
                 >
-                  <Pin
-                    data-testid={`runtime-local-task-pin-icon-${task.taskId}`}
-                    className={cn('h-[15px] w-[15px]', marked && 'fill-current')}
-                  />
+                  {archiving ? (
+                    <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Archive
+                      data-testid={`runtime-local-task-archive-icon-${task.taskId}`}
+                      className="h-[15px] w-[15px]"
+                    />
+                  )}
                 </button>
-              )}
-              <button
-                type="button"
-                data-testid={`runtime-local-task-archive-${task.taskId}`}
-                disabled={archiveDisabled}
-                onClick={handleArchive}
-                className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
-                title={t('workbench.archive_runtime_task', '归档')}
-                aria-label={t('workbench.archive_runtime_task', '归档')}
-              >
-                {archiving ? (
-                  <RotateCw className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Archive
-                    data-testid={`runtime-local-task-archive-icon-${task.taskId}`}
-                    className="h-[15px] w-[15px]"
-                  />
-                )}
-              </button>
+              </Tooltip>
             </span>
           </span>
         </div>
@@ -2070,6 +2100,7 @@ function RuntimeTaskRow({
         contextMenuPosition={taskMenuPosition}
         onContextMenuClose={() => setTaskMenuPosition(null)}
         triggerClassName="hidden"
+        showTriggerTooltip={false}
         items={[
           ...(queued
             ? [
@@ -2201,16 +2232,21 @@ function RuntimeTaskRow({
               {t('workbench.archive_runtime_task_undo', '撤销')}
             </button>
             <span>{t('workbench.archive_runtime_task_pending', '，稍后将归档')}</span>
-            <button
-              type="button"
-              data-testid={`runtime-local-task-archive-toast-close-${task.taskId}`}
-              onClick={handleDismissArchiveNotice}
-              className="ml-2 flex h-5 w-5 items-center justify-center rounded-full text-text-muted hover:bg-muted hover:text-text-primary"
-              title={t('workbench.archive_runtime_task_notice_close', '关闭归档提示')}
-              aria-label={t('workbench.archive_runtime_task_notice_close', '关闭归档提示')}
+            <Tooltip
+              label={t('workbench.archive_runtime_task_notice_close', '关闭归档提示')}
+              testId={`runtime-local-task-archive-toast-close-${task.taskId}-tooltip`}
+              className="ml-2"
             >
-              <X className="h-3.5 w-3.5" />
-            </button>
+              <button
+                type="button"
+                data-testid={`runtime-local-task-archive-toast-close-${task.taskId}`}
+                onClick={handleDismissArchiveNotice}
+                className="flex h-5 w-5 items-center justify-center rounded-full text-text-muted hover:bg-muted hover:text-text-primary"
+                aria-label={t('workbench.archive_runtime_task_notice_close', '关闭归档提示')}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
           </div>,
           document.body
         )}
@@ -2286,26 +2322,36 @@ function LocalHarnessSessionRow({
         <span className="truncate">{session.title}</span>
       </button>
       {onClose && (canArchive || canClose) && (
-        <button
-          type="button"
-          data-testid={
-            useArchiveTestId
-              ? `archive-local-harness-session-${session.sessionId}`
-              : `close-local-harness-session-${session.sessionId}`
-          }
-          onClick={event => {
-            event.stopPropagation()
-            void onClose(session.sessionId)
-          }}
-          aria-label={
+        <Tooltip
+          label={
             canArchive
               ? t('workbench.archive_harness', '归档编码会话')
               : t('workbench.close_harness', '关闭编码工具')
           }
-          className="absolute right-1 flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 focus-visible:opacity-100"
+          testId={`local-harness-session-${session.sessionId}-action-tooltip`}
+          className="absolute right-1"
         >
-          {canArchive ? <Archive className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
-        </button>
+          <button
+            type="button"
+            data-testid={
+              useArchiveTestId
+                ? `archive-local-harness-session-${session.sessionId}`
+                : `close-local-harness-session-${session.sessionId}`
+            }
+            onClick={event => {
+              event.stopPropagation()
+              void onClose(session.sessionId)
+            }}
+            aria-label={
+              canArchive
+                ? t('workbench.archive_harness', '归档编码会话')
+                : t('workbench.close_harness', '关闭编码工具')
+            }
+            className="flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 focus-visible:opacity-100"
+          >
+            {canArchive ? <Archive className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
+          </button>
+        </Tooltip>
       )}
     </div>
   )
@@ -2797,21 +2843,25 @@ function ProjectItem({
               ]}
               triggerClassName="flex h-7 w-7 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
             />
-            <button
-              type="button"
-              data-testid="project-new-conversation-button"
-              disabled={!canStartProjectChat}
-              onClick={event => {
-                event.stopPropagation()
-                if (!canStartProjectChat) return
-                onStartNewProjectChat(project.id)
-              }}
-              className="flex h-7 w-7 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-[rgb(var(--color-sidebar-text-secondary))]"
-              title={newProjectChatTitle}
-              aria-label={newProjectChatTitle}
+            <Tooltip
+              label={newProjectChatTitle}
+              testId={`project-new-conversation-${project.id}-tooltip`}
             >
-              <MessageSquarePlus className="h-4 w-4" />
-            </button>
+              <button
+                type="button"
+                data-testid="project-new-conversation-button"
+                disabled={!canStartProjectChat}
+                onClick={event => {
+                  event.stopPropagation()
+                  if (!canStartProjectChat) return
+                  onStartNewProjectChat(project.id)
+                }}
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+                aria-label={newProjectChatTitle}
+              >
+                <MessageSquarePlus className="h-4 w-4" />
+              </button>
+            </Tooltip>
           </div>
         </div>
       </SidebarHoverCard>
@@ -4020,16 +4070,22 @@ export function DesktopSidebar({
                   />
                 )}
                 {onOpenSearch && (
-                  <button
-                    type="button"
-                    data-testid="runtime-search-button"
-                    onClick={onOpenSearch}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
-                    title={t('workbench.search')}
-                    aria-label={t('workbench.search')}
+                  <Tooltip
+                    label={t('workbench.search')}
+                    side="bottom"
+                    align="end"
+                    testId="runtime-search-tooltip"
                   >
-                    <Search className="h-4 w-4" />
-                  </button>
+                    <button
+                      type="button"
+                      data-testid="runtime-search-button"
+                      onClick={onOpenSearch}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                      aria-label={t('workbench.search')}
+                    >
+                      <Search className="h-4 w-4" />
+                    </button>
+                  </Tooltip>
                 )}
                 <TitlebarTooltip
                   label={
@@ -4418,19 +4474,24 @@ export function DesktopSidebar({
                           ]}
                           triggerClassName="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                         />
-                        <button
-                          type="button"
-                          aria-label={t('workbench.new_project', '新建项目')}
-                          data-testid="projects-create-button"
-                          onClick={event => {
-                            event.stopPropagation()
-                            openProjectCreateDialog()
-                          }}
-                          className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
-                          aria-expanded={projectCreateDialogOpen}
+                        <Tooltip
+                          label={t('workbench.new_project', '新建项目')}
+                          testId="projects-create-button-tooltip"
                         >
-                          <FolderPlus className="h-4 w-4" />
-                        </button>
+                          <button
+                            type="button"
+                            aria-label={t('workbench.new_project', '新建项目')}
+                            data-testid="projects-create-button"
+                            onClick={event => {
+                              event.stopPropagation()
+                              openProjectCreateDialog()
+                            }}
+                            className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                            aria-expanded={projectCreateDialogOpen}
+                          >
+                            <FolderPlus className="h-4 w-4" />
+                          </button>
+                        </Tooltip>
                       </div>
                     </DesktopSidebarSectionHeader>
                   </div>
@@ -4463,15 +4524,20 @@ export function DesktopSidebar({
                                 )}
                               </p>
                             </div>
-                            <button
-                              type="button"
-                              data-testid="close-project-source-dialog"
-                              aria-label={t('workbench.close_dialog', '关闭')}
-                              onClick={() => setProjectCreateDialogOpen(false)}
-                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
+                            <Tooltip
+                              label={t('workbench.close_dialog', '关闭')}
+                              testId="close-project-source-dialog-tooltip"
                             >
-                              <X className="h-4 w-4" />
-                            </button>
+                              <button
+                                type="button"
+                                data-testid="close-project-source-dialog"
+                                aria-label={t('workbench.close_dialog', '关闭')}
+                                onClick={() => setProjectCreateDialogOpen(false)}
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </Tooltip>
                           </div>
                           <div className="mt-5 grid gap-3 sm:grid-cols-2">
                             <button
@@ -4569,24 +4635,34 @@ export function DesktopSidebar({
                               </span>
                               {operation.status === 'failed' && (
                                 <>
-                                  <button
-                                    type="button"
-                                    data-testid={`retry-git-clone-project-${operation.id}`}
-                                    onClick={() => onRetryGitCloneOperation?.(operation)}
-                                    className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
-                                    aria-label={t('workbench.retry', '重试')}
+                                  <Tooltip
+                                    label={t('workbench.retry', '重试')}
+                                    testId={`retry-git-clone-project-${operation.id}-tooltip`}
                                   >
-                                    <RotateCw className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    data-testid={`dismiss-git-clone-project-${operation.id}`}
-                                    onClick={() => onDismissGitCloneOperation?.(operation.id)}
-                                    className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
-                                    aria-label={t('workbench.remove', '移除')}
+                                    <button
+                                      type="button"
+                                      data-testid={`retry-git-clone-project-${operation.id}`}
+                                      onClick={() => onRetryGitCloneOperation?.(operation)}
+                                      className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+                                      aria-label={t('workbench.retry', '重试')}
+                                    >
+                                      <RotateCw className="h-3.5 w-3.5" />
+                                    </button>
+                                  </Tooltip>
+                                  <Tooltip
+                                    label={t('workbench.remove', '移除')}
+                                    testId={`dismiss-git-clone-project-${operation.id}-tooltip`}
                                   >
-                                    <X className="h-3.5 w-3.5" />
-                                  </button>
+                                    <button
+                                      type="button"
+                                      data-testid={`dismiss-git-clone-project-${operation.id}`}
+                                      onClick={() => onDismissGitCloneOperation?.(operation.id)}
+                                      className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+                                      aria-label={t('workbench.remove', '移除')}
+                                    >
+                                      <X className="h-3.5 w-3.5" />
+                                    </button>
+                                  </Tooltip>
                                 </>
                               )}
                             </div>
@@ -4695,18 +4771,23 @@ export function DesktopSidebar({
                         ]}
                         triggerClassName="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                       />
-                      <button
-                        type="button"
-                        aria-label={t('workbench.new_task')}
-                        data-testid="runtime-chat-section-new-chat-button"
-                        onClick={event => {
-                          event.stopPropagation()
-                          onStartStandaloneChat()
-                        }}
-                        className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                      <Tooltip
+                        label={t('workbench.new_task')}
+                        testId="runtime-chat-section-new-chat-tooltip"
                       >
-                        <MessageSquarePlus className="h-4 w-4" />
-                      </button>
+                        <button
+                          type="button"
+                          aria-label={t('workbench.new_task')}
+                          data-testid="runtime-chat-section-new-chat-button"
+                          onClick={event => {
+                            event.stopPropagation()
+                            onStartStandaloneChat()
+                          }}
+                          className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                        >
+                          <MessageSquarePlus className="h-4 w-4" />
+                        </button>
+                      </Tooltip>
                     </div>
                   </DesktopSidebarSectionHeader>
                   {displayedChatsExpanded && (
