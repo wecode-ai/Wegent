@@ -24,7 +24,7 @@ import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isCloudDevice, isOnlineDevice, sortStandaloneDevices } from '@/lib/device-selection'
+import { isCloudDevice } from '@/lib/device-selection'
 import { isWeWorkExecutorVersionCompatible } from '@/lib/device-capabilities'
 import {
   buildProjectWorkspaceOptions,
@@ -45,7 +45,6 @@ import {
   getProjectMenuDeviceLabel,
   getProjectMenuFitHeight,
   isLocalProjectWorkspaceDevice,
-  isLocalStandaloneDevice,
 } from './project-work-bar-utils'
 import { useOutsideClick } from './useOutsideClick'
 
@@ -105,7 +104,6 @@ export function ProjectWorkBar({
   pendingProjectWorkspaceProjectId = null,
   extensionContext = {},
   onSelectProject,
-  onSelectStandaloneDevice,
   onSelectProjectWorkspace,
   onBindProjectWorkspace,
   onCreateProjectMode,
@@ -149,7 +147,6 @@ export function ProjectWorkBar({
     setExternalMenuAnchorElement(null)
   }, [])
 
-  const standaloneDevices = useMemo(() => sortStandaloneDevices(devices), [devices])
   const runtimeProjectChoices = useMemo(
     () => (runtimeWork?.projects ?? []).map(runtimeProjectToProject),
     [runtimeWork?.projects]
@@ -330,16 +327,6 @@ export function ProjectWorkBar({
       return searchableText.includes(normalizedProjectQuery)
     })
   }, [getDeviceForProject, normalizedProjectQuery, sortedProjects])
-  const selectedLocalStandaloneDeviceId = useMemo(
-    () =>
-      standaloneDevices
-        .filter(isLocalStandaloneDevice)
-        .find(
-          device =>
-            isOnlineDevice(device) && isWeWorkExecutorVersionCompatible(device.executor_version)
-        )?.device_id ?? null,
-    [standaloneDevices]
-  )
   const projectWorkTriggerLabel =
     emptyLabel ??
     (isMobile
@@ -408,8 +395,8 @@ export function ProjectWorkBar({
     closeMenu()
   }
 
-  const handleSelectStandaloneDevice = (deviceId: string | null) => {
-    onSelectStandaloneDevice(deviceId)
+  const handleClearProject = () => {
+    onSelectProject(null)
     closeMenu()
   }
 
@@ -775,9 +762,7 @@ export function ProjectWorkBar({
                       <button
                         type="button"
                         data-testid="no-project-option"
-                        onClick={() =>
-                          handleSelectStandaloneDevice(selectedLocalStandaloneDeviceId)
-                        }
+                        onClick={handleClearProject}
                         className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                       >
                         <FolderX className="h-4 w-4 shrink-0" />
@@ -825,7 +810,7 @@ export function ProjectWorkBar({
               <button
                 type="button"
                 data-testid="clear-project-button"
-                onClick={() => handleSelectStandaloneDevice(selectedLocalStandaloneDeviceId)}
+                onClick={handleClearProject}
                 title={t('workbench.no_project', '不使用项目')}
                 aria-label={t('workbench.no_project', '不使用项目')}
                 className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
