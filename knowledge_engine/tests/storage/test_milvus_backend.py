@@ -873,15 +873,29 @@ def test_retrieve_compiles_text_conditions_against_json_and_arrays():
 
 
 @pytest.mark.parametrize(
-    ("value", "expected"),
+    ("value", "membership", "substring"),
     [
-        ("alpha", 'json_contains(metadata["tags"], "alpha")'),
-        (2026, 'json_contains(metadata["tags"], 2026)'),
-        (True, 'json_contains(metadata["tags"], true)'),
+        (
+            "alpha",
+            'json_contains(metadata["tags"], "alpha")',
+            'metadata["tags"] like "%alpha%"',
+        ),
+        (
+            2026,
+            'json_contains(metadata["tags"], 2026)',
+            'metadata["tags"] like "%2026%"',
+        ),
+        (
+            True,
+            'json_contains(metadata["tags"], true)',
+            'metadata["tags"] like "%true%"',
+        ),
     ],
 )
-def test_retrieve_compiles_json_array_membership_with_the_value_type(value, expected):
-    """A JSON array element keeps its type: 2026 is a number, not "2026"."""
+def test_retrieve_keeps_json_array_membership_typed_and_the_substring_path(
+    value, membership, substring
+):
+    """A JSON condition keeps both the typed element match and the substring."""
     backend = _backend()
     store = FakeStore(rows=[])
     backend._store = store
@@ -897,7 +911,9 @@ def test_retrieve_compiles_json_array_membership_with_the_value_type(value, expe
         },
     )
 
-    assert expected in store.searches[0]["filter"]
+    expression = store.searches[0]["filter"]
+    assert membership in expression
+    assert substring in expression
 
 
 @pytest.mark.parametrize("value", ["50%off", "get_user_by_id"])

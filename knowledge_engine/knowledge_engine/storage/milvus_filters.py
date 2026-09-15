@@ -18,10 +18,11 @@ Recorded semantics of the compiled contract:
   Elasticsearch backend does for an absent field.
 - ``contains`` and ``text_match`` are both case-sensitive substring matches:
   Milvus 2.5.4 cannot run an analyzed ``TEXT_MATCH`` against a JSON path. For a
-  JSON key an array also matches by element, keeping the value type (a number
-  matches a number, a boolean matches a boolean). Milvus has no way to escape
-  its ``like`` wildcards, so a literal ``%`` or ``_`` in the value is rejected
-  instead of silently widening the match.
+  JSON key the value matches by element with its own type (``contains 2026``
+  hits the number ``2026`` but not the string ``"2026"``) or as a substring
+  (``contains 2026`` also hits the text ``"release2026"``). Milvus has no way
+  to escape its ``like`` wildcards, so a literal ``%`` or ``_`` in the value is
+  rejected instead of silently widening the match.
 - A condition without a key or with a null value carries no constraint in the
   shared contract and is skipped, exactly as the Elasticsearch backend does.
 - A nested condition, an unsupported operator, a non-scalar value outside
@@ -139,19 +140,29 @@ def _compile_text_condition(
 ) -> str:
     """Compile a substring condition, including JSON array membership.
 
-    A JSON array element keeps the value type, so ``contains 2026`` matches the
-    number ``2026`` and not the string ``"2026"``. Milvus only ever treats
-    ``%`` and ``_`` as ``like`` wildcards and cannot escape them, so a value
-    that contains one is rejected instead of widening the condition.
+    A JSON key keeps both ways the shared contract can match: the typed element
+    match (``contains 2026`` matches the number ``2026`` even inside an array)
+    and the string substring match (``contains 2026`` also matches the text
+    ``"release2026"``). Milvus only ever treats ``%`` and ``_`` as ``like``
+    wildcards and cannot escape them, so a value that contains one is rejected
+    instead of widening the condition.
     """
     scalar = _scalar_value(key, value)
-    pattern = _literal_pattern(key, scalar)
+    pattern = _literal_pattern(key, _json_text(key, scalar))
     substring = f'{field} like "%{pattern}%"'
     if literal_kind != "json":
         return substring
-    if isinstance(scalar, str):
-        return f'(json_contains({field}, "{pattern}") or {substring})'
-    return f"json_contains({field}, {_json_literal(key, scalar)})"
+    membership = _json_literal(key, scalar)
+    return f"(json_contains({field}, {membership}) or {substring})"
+
+
+def _json_text(key: str, value: Any) -> str:
+    """Lexical form of a scalar, used for the substring alternative."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return _numeric_literal(key, value)
+    return str(value)
 
 
 def _literal_pattern(key: str, value: Any) -> str:

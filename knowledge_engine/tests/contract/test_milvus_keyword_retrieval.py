@@ -403,7 +403,7 @@ def test_metadata_conditions_keep_their_documented_semantics(
             "flags": [True],
         },
         "7502": {"category": "db", "year": 2023, "codes": [2025], "flags": [False]},
-        "7503": {"year": 2025},
+        "7503": {"year": 2025, "note": "release2026"},
     }
     for doc_ref, metadata in rows.items():
         _index_nodes(
@@ -526,6 +526,23 @@ def test_metadata_conditions_keep_their_documented_semantics(
             "conditions": [{"key": "flags", "operator": "contains", "value": False}],
         }
     ) == {"7502"}, "the opposite boolean is not a match"
+    # The typed element match must not drop the substring path: a numeric value
+    # still matches text that contains it, and only that text.
+    assert matching(
+        {
+            "operator": "and",
+            "conditions": [{"key": "note", "operator": "contains", "value": 2026}],
+        }
+    ) == {"7503"}, "a numeric value still matches as a substring"
+    assert (
+        matching(
+            {
+                "operator": "and",
+                "conditions": [{"key": "note", "operator": "contains", "value": 2027}],
+            }
+        )
+        == set()
+    ), "a different number is not a substring match"
 
     # Milvus cannot escape its like wildcards, so a literal pattern containing
     # one fails instead of silently widening the condition.
