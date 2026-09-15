@@ -724,17 +724,6 @@ export function WorkspaceBrowserTabPanel({
   useEffect(() => {
     const listener = listenEmbeddedBrowserCloseRequests(event => {
       if (!activeRef.current || event.label !== currentLabelRef.current) return
-      if (event.nativeLabel !== nativeLabelRef.current) {
-        console.info(
-          '[Wework] Embedded browser close ignored',
-          JSON.stringify({
-            currentNativeLabel: nativeLabelRef.current,
-            eventNativeLabel: event.nativeLabel,
-            label: event.label,
-          })
-        )
-        return
-      }
       console.info(
         '[Wework] Embedded browser close consumed',
         JSON.stringify({ label: event.label, nativeLabel: event.nativeLabel })
