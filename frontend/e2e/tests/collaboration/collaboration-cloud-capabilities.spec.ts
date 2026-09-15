@@ -12,6 +12,7 @@ import {
 } from '../../utils/collaboration-test-support'
 import { REGULAR_USER } from '../../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
+import { createApiClient } from '../../utils/api-client'
 
 const appBaseUrl = process.env.E2E_BASE_URL || 'http://localhost:3000'
 const evidenceDir = process.env.COLLABORATION_EVIDENCE_DIR
@@ -322,19 +323,16 @@ async function openRestrictedProject(
   projectId: string,
   view: 'files' | 'automation' | 'manage'
 ) {
-  const body = await webApi<{ access_token: string }>(ownerPage, '/api/auth/login', {
-    method: 'POST',
-    body: {
-      user_name: REGULAR_USER.username,
-      password: REGULAR_USER.password,
-    },
-  })
+  const login = await createApiClient(ownerPage.request).login(
+    REGULAR_USER.username,
+    REGULAR_USER.password,
+    1
+  )
+  expect(login.status).toBe(200)
+  const token = login.data?.access_token
+  if (!token) throw new Error('Restricted user login did not return an access token')
   const context = await browser.newContext({
-    storageState: buildStorageState(
-      appBaseUrl,
-      body.access_token,
-      getJwtExpiryMs(body.access_token)
-    ),
+    storageState: buildStorageState(appBaseUrl, token, getJwtExpiryMs(token)),
   })
   const page = await context.newPage()
   await page.goto(collaborationProjectPath(workspaceId, projectId, { view }))
