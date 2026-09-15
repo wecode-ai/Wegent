@@ -10,10 +10,8 @@ function createWindow(input: { destroyed?: boolean; minimized?: boolean } = {}) 
     focus: vi.fn(),
     isDestroyed: vi.fn(() => input.destroyed ?? false),
     isMinimized: vi.fn(() => input.minimized ?? false),
-    moveTop: vi.fn(),
     restore: vi.fn(),
     show: vi.fn(),
-    showInactive: vi.fn(),
     webContents,
   } satisfies PresentableWindow
   return { target, webContents }
@@ -37,19 +35,6 @@ describe('presentWindow', () => {
     expect(presentWindow(target)).toBe(false)
 
     expect(target.restore).not.toHaveBeenCalled()
-    expect(target.show).not.toHaveBeenCalled()
-    expect(target.focus).not.toHaveBeenCalled()
-    expect(webContents.focus).not.toHaveBeenCalled()
-  })
-
-  test('reveals a window without activating its application', () => {
-    const { target, webContents } = createWindow({ minimized: true })
-
-    expect(presentWindow(target, 'inactive')).toBe(true)
-
-    expect(target.restore).toHaveBeenCalledOnce()
-    expect(target.showInactive).toHaveBeenCalledOnce()
-    expect(target.moveTop).toHaveBeenCalledOnce()
     expect(target.show).not.toHaveBeenCalled()
     expect(target.focus).not.toHaveBeenCalled()
     expect(webContents.focus).not.toHaveBeenCalled()

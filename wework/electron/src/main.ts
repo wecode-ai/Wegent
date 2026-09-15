@@ -850,7 +850,7 @@ async function createAuxiliaryWindow(
       popoutWindow = auxiliaryWindow
       readinessPromise = waitForRendererSelector(
         auxiliaryWindow.webContents,
-        '[data-testid="popout-workbench-page"] [data-testid="chat-message-input"]'
+        '[data-testid="popout-workbench-page"]'
       )
       popoutWindowReadyPromise = readinessPromise
       void readinessPromise.catch(error => {
@@ -885,16 +885,15 @@ async function showSystemDragPanel(): Promise<void> {
   target.moveTop()
 }
 
-async function showPopoutWindow(activation: 'focus' | 'inactive' = 'focus'): Promise<void> {
+async function showPopoutWindow(): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
+  await popoutWindowReadyPromise
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   target.setPosition(
     Math.round(display.workArea.x + (display.workArea.width - 470) / 2),
     Math.round(display.workArea.y + (display.workArea.height - 112) / 2)
   )
-  if (activation === 'inactive' && process.platform === 'darwin' && app.isHidden()) app.show()
-  presentWindow(target, activation)
-  await popoutWindowReadyPromise
+  presentWindow(target)
 }
 
 function resolvePopoutShortcut(preferenceRecord: Record<string, unknown>): string | null {
@@ -1024,12 +1023,6 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   logStartupStep('main-shell-load', 'started')
   await mainShellLoading
   logStartupStep('main-shell-load', 'completed')
-  if (!keepE2EWindowInBackground) {
-    mainWindow.show()
-    mainWindow.focus()
-    mainWindow.webContents.focus()
-  }
-  logStartupStep('main-shell-show', 'completed')
   logStartupStep('windows-create', 'completed')
 }
 
@@ -1575,7 +1568,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           completeSystemDragDrop: async payload => {
             pendingSystemDrops.push(payload)
-            await showPopoutWindow('inactive')
+            await showPopoutWindow()
           },
           dismissPopout: () => popoutWindow?.hide(),
           dismissSystemDragPanel: () => systemDragWindow?.hide(),
