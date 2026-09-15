@@ -19,10 +19,12 @@ from knowledge_engine.storage.errors import (
 )
 from knowledge_engine.storage.milvus_backend import MilvusBackend
 from knowledge_engine.storage.milvus_native import (
+    ANALYZER_TYPE,
     DISPLAY_TEXT_FIELD,
-    METADATA_JSON_FIELD,
+    METADATA_FIELD,
     PUBLISHED_FIELD,
     RETRIEVAL_TEXT_FIELD,
+    SCHEMA_VERSION,
     SOURCE_FILE_FIELD,
 )
 from shared.models import RetrievalScope
@@ -47,17 +49,46 @@ class FakeEmbedModel:
         return list(self.vectors[0])
 
 
+class FakeBinding:
+    """Stored index contract handed back by the fake store."""
+
+    schema_version = SCHEMA_VERSION
+    analyzer = ANALYZER_TYPE
+
+
+def _legacy_binding(*, analyzer=ANALYZER_TYPE, schema_version=SCHEMA_VERSION):
+    class LegacyBinding:
+        pass
+
+    LegacyBinding.analyzer = analyzer
+    LegacyBinding.schema_version = schema_version
+    return LegacyBinding()
+
+
 class FakeStore:
     """Records the storage-layer calls the adapter makes."""
 
-    def __init__(self, *, collection_exists=True, rows=None, binding="bound"):
+    def __init__(
+        self,
+        *,
+        collection_exists=True,
+        rows=None,
+        binding=None,
+        has_contract=True,
+        sparse_hits=None,
+    ):
         self.collection_exists = collection_exists
         self.rows = list(rows or [])
-        self.binding = binding if collection_exists else None
+        if not collection_exists or not has_contract:
+            self.binding = None
+        else:
+            self.binding = binding or FakeBinding()
         self.calls: list[tuple] = []
         self.deleted_filters: list[str] = []
         self.queries: list[dict] = []
         self.searches: list[dict] = []
+        self.sparse_searches: list[dict] = []
+        self.sparse_hits: list[dict] = list(sparse_hits or [])
         self.clients_created = 0
 
     @contextmanager
@@ -89,6 +120,21 @@ class FakeStore:
         if self.binding is None:
             raise IndexContractIncompatibleError(
                 collection_name, "the collection has no stored index contract"
+            )
+        return self.binding
+
+    def verify_keyword_index(self, client, collection_name):
+        self.calls.append(("verify_keyword_index", collection_name))
+        if not self.collection_exists:
+            return None
+        if self.binding is None:
+            raise IndexContractIncompatibleError(
+                collection_name, "the collection has no stored index contract"
+            )
+        if not self.binding.analyzer:
+            raise IndexContractIncompatibleError(
+                collection_name,
+                "the bound index was created without a keyword analyzer",
             )
         return self.binding
 
@@ -148,6 +194,26 @@ class FakeStore:
         self.searches.append({"filter": filter_expr, "limit": limit})
         return self.rows[:limit]
 
+    def sparse_search(
+        self,
+        client,
+        collection_name,
+        *,
+        query_text,
+        filter_expr,
+        limit,
+        output_fields=None,
+    ):
+        self.sparse_searches.append(
+            {
+                "query_text": query_text,
+                "filter": filter_expr,
+                "limit": limit,
+                "fields": output_fields,
+            }
+        )
+        return self.sparse_hits[:limit]
+
     @staticmethod
     def _filter_matches(row, filter_expr):
         if "published == true" in filter_expr and not row.get(PUBLISHED_FIELD):
@@ -203,11 +269,11 @@ def _nodes(count=2):
     ]
 
 
-def test_init_has_no_default_dimension_and_supports_vector_only():
+def test_init_has_no_default_dimension_and_supports_vector_and_keyword():
     backend = _backend()
 
     assert backend.dim is None
-    assert backend.SUPPORTED_RETRIEVAL_METHODS == ["vector"]
+    assert backend.SUPPORTED_RETRIEVAL_METHODS == ["vector", "keyword"]
     assert backend.supports_retrieval_scope is True
     assert backend.db_name == "default"
     assert backend.base_url == "http://localhost:19530"
@@ -415,7 +481,7 @@ def test_retrieve_returns_raw_cosine_scores_above_threshold():
                 "source_file": "doc.txt",
                 "chunk_index": 0,
                 DISPLAY_TEXT_FIELD: "display",
-                METADATA_JSON_FIELD: '{"knowledge_id": "1", "doc_ref": "42"}',
+                METADATA_FIELD: {"knowledge_id": "1", "doc_ref": "42"},
                 PUBLISHED_FIELD: True,
                 "__score__": 0.42,
             },
@@ -426,7 +492,7 @@ def test_retrieve_returns_raw_cosine_scores_above_threshold():
                 "source_file": "doc.txt",
                 "chunk_index": 1,
                 DISPLAY_TEXT_FIELD: "display low",
-                METADATA_JSON_FIELD: "{}",
+                METADATA_FIELD: {},
                 PUBLISHED_FIELD: True,
                 "__score__": 0.11,
             },
@@ -468,10 +534,6 @@ def test_retrieve_missing_index_does_not_call_the_embedding_provider():
     backend = _backend()
     backend._store = FakeStore(collection_exists=False)
 
-    class ExplodingEmbedModel:
-        def get_query_embedding(self, query):
-            raise AssertionError("embedding provider must not be called")
-
     result = backend.retrieve(
         knowledge_id="1",
         query="q",
@@ -482,7 +544,7 @@ def test_retrieve_missing_index_does_not_call_the_embedding_provider():
     assert result == {"records": []}
 
 
-@pytest.mark.parametrize("mode", ["keyword", "hybrid"])
+@pytest.mark.parametrize("mode", ["hybrid"])
 def test_retrieve_unsupported_modes_fail_loudly(mode):
     with pytest.raises(UnsupportedStorageCapabilityError):
         _backend().retrieve(
@@ -491,6 +553,168 @@ def test_retrieve_unsupported_modes_fail_loudly(mode):
             embed_model=FakeEmbedModel([[1.0, 0.0]]),
             retrieval_setting={"retrieval_mode": mode},
         )
+
+
+class ExplodingEmbedModel:
+    """Fails the test if keyword retrieval even asks for a vector."""
+
+    def get_query_embedding(self, query):
+        raise AssertionError("embedding provider must not be called")
+
+    def get_text_embedding_batch(self, texts, **kwargs):
+        raise AssertionError("embedding provider must not be called")
+
+
+def test_keyword_retrieve_uses_planned_sparse_query_without_embedding():
+    """Keyword hits come from server-side BM25 over the retrieved text."""
+    backend = _backend()
+    store = FakeStore(
+        sparse_hits=[
+            {
+                "id": "a",
+                "doc_ref": "42",
+                SOURCE_FILE_FIELD: "doc.txt",
+                DISPLAY_TEXT_FIELD: "展示正文",
+                METADATA_FIELD: {"knowledge_id": "1", "doc_ref": "42"},
+                "__score__": 3.0,
+            }
+        ]
+    )
+    backend._store = store
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="用户信息",
+        embed_model=ExplodingEmbedModel(),
+        retrieval_setting={
+            "retrieval_mode": "keyword",
+            "top_k": 5,
+            "score_threshold": 0.0,
+            "search_hints": {
+                "semantic_query": "用户 信息",
+                "keywords": ["get_user_by_id"],
+            },
+        },
+    )
+
+    assert store.sparse_searches[0]["query_text"] == "get_user_by_id"
+    assert 'knowledge_id == "1"' in store.sparse_searches[0]["filter"]
+    assert [record["content"] for record in result["records"]] == ["展示正文"]
+    assert result["records"][0]["score"] == pytest.approx(0.75)
+
+
+def test_keyword_retrieve_applies_the_existing_threshold_to_the_mapped_score():
+    backend = _backend()
+    store = FakeStore(
+        sparse_hits=[
+            {
+                "id": "a",
+                DISPLAY_TEXT_FIELD: "relevant",
+                METADATA_FIELD: {},
+                "__score__": 3.0,
+            },
+            {
+                "id": "b",
+                DISPLAY_TEXT_FIELD: "weak",
+                METADATA_FIELD: {},
+                "__score__": 0.5,
+            },
+        ]
+    )
+    backend._store = store
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=ExplodingEmbedModel(),
+        retrieval_setting={
+            "retrieval_mode": "keyword",
+            "top_k": 5,
+            "score_threshold": 0.7,
+        },
+    )
+
+    assert [record["content"] for record in result["records"]] == ["relevant"]
+
+
+def test_keyword_retrieve_keeps_scope_and_metadata_filters():
+    backend = _backend()
+    store = FakeStore(sparse_hits=[])
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=ExplodingEmbedModel(),
+        retrieval_setting={"retrieval_mode": "keyword", "score_threshold": 0.0},
+        scope=RetrievalScope(document_ids=[7, 8]),
+        metadata_condition={
+            "operator": "and",
+            "conditions": [{"key": "category", "operator": "eq", "value": "tech"}],
+        },
+    )
+
+    expression = store.sparse_searches[0]["filter"]
+    assert 'knowledge_id == "1"' in expression
+    assert 'doc_ref in ["7", "8"]' in expression
+    assert 'metadata["category"] == "tech"' in expression
+    assert "published == true" in expression
+
+
+def test_keyword_retrieve_of_a_missing_index_returns_empty_without_embedding():
+    backend = _backend()
+    backend._store = FakeStore(collection_exists=False)
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=ExplodingEmbedModel(),
+        retrieval_setting={"retrieval_mode": "keyword", "score_threshold": 0.0},
+    )
+
+    assert result == {"records": []}
+
+
+def test_keyword_retrieve_rejects_an_index_without_the_keyword_capability():
+    backend = _backend()
+    store = FakeStore(has_contract=False)
+    backend._store = store
+
+    with pytest.raises(IndexContractIncompatibleError):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=ExplodingEmbedModel(),
+            retrieval_setting={"retrieval_mode": "keyword", "score_threshold": 0.0},
+        )
+
+
+def test_keyword_retrieve_rejects_a_contract_without_an_analyzer():
+    backend = _backend()
+    backend._store = FakeStore(binding=_legacy_binding(analyzer=""))
+
+    with pytest.raises(IndexContractIncompatibleError):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=ExplodingEmbedModel(),
+            retrieval_setting={"retrieval_mode": "keyword", "score_threshold": 0.0},
+        )
+
+
+def test_reads_reject_a_contract_from_an_older_schema():
+    """An index an older schema wrote is rebuilt, never read as empty."""
+    backend = _backend()
+    backend._store = FakeStore(
+        binding=_legacy_binding(schema_version=SCHEMA_VERSION - 1)
+    )
+
+    with pytest.raises(IndexContractIncompatibleError):
+        backend.get_document("1", "42")
+    with pytest.raises(IndexContractIncompatibleError):
+        backend.list_documents("1")
+    with pytest.raises(IndexContractIncompatibleError):
+        backend.get_all_chunks("1")
 
 
 def test_retrieve_applies_document_scope_natively():
@@ -549,11 +773,110 @@ def test_retrieve_compiles_supported_metadata_conditions():
     assert '(source_file == "a.txt" or chunk_index >= 3)' in expression
 
 
-def test_retrieve_rejects_unsupported_metadata_fields():
+def test_retrieve_filters_user_metadata_through_the_native_json_column():
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"score_threshold": 0.0},
+        metadata_condition={
+            "operator": "and",
+            "conditions": [
+                {"key": "category", "operator": "eq", "value": "x"},
+                {"key": "year", "operator": "gte", "value": 2024},
+                {"key": "archived", "operator": "eq", "value": False},
+            ],
+        },
+    )
+
+    expression = store.searches[0]["filter"]
+    assert 'metadata["category"] == "x"' in expression
+    assert 'metadata["year"] >= 2024' in expression
+    assert 'metadata["archived"] == false' in expression
+
+
+def test_retrieve_accepts_numeric_lists_without_scalar_validation():
+    """A list value on a numeric field is a list comparison, not a scalar."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"score_threshold": 0.0},
+        metadata_condition={
+            "operator": "and",
+            "conditions": [
+                {"key": "generation", "operator": "in", "value": [0, 1]},
+                {"key": "chunk_index", "operator": "nin", "value": [7]},
+            ],
+        },
+    )
+
+    expression = store.searches[0]["filter"]
+    assert "generation in [0, 1]" in expression
+    assert "chunk_index not in [7]" in expression
+
+
+def test_retrieve_escapes_quotes_and_backslashes_in_metadata_conditions():
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"score_threshold": 0.0},
+        metadata_condition={
+            "operator": "and",
+            "conditions": [
+                {"key": "category", "operator": "eq", "value": 'a"b\\c'},
+            ],
+        },
+    )
+
+    assert 'metadata["category"] == "a\\"b\\\\c"' in store.searches[0]["filter"]
+
+
+def test_retrieve_compiles_text_conditions_against_json_and_arrays():
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"score_threshold": 0.0},
+        metadata_condition={
+            "operator": "or",
+            "conditions": [
+                {"key": "tags", "operator": "contains", "value": "alpha"},
+                {"key": "source_file", "operator": "text_match", "value": "doc"},
+            ],
+        },
+    )
+
+    expression = store.searches[0]["filter"]
+    assert (
+        '(json_contains(metadata["tags"], "alpha") '
+        'or metadata["tags"] like "%alpha%")' in expression
+    )
+    assert 'source_file like "%doc%"' in expression
+
+
+def test_retrieve_rejects_nested_metadata_conditions():
     backend = _backend()
     backend._store = FakeStore(rows=[])
 
-    with pytest.raises(UnsupportedStorageCapabilityError):
+    with pytest.raises(ValueError):
         backend.retrieve(
             knowledge_id="1",
             query="q",
@@ -561,7 +884,70 @@ def test_retrieve_rejects_unsupported_metadata_fields():
             retrieval_setting={"score_threshold": 0.0},
             metadata_condition={
                 "operator": "and",
-                "conditions": [{"key": "category", "operator": "eq", "value": "x"}],
+                "conditions": [
+                    {
+                        "operator": "or",
+                        "conditions": [{"key": "category", "operator": "eq"}],
+                    }
+                ],
+            },
+        )
+
+
+def test_retrieve_rejects_non_scalar_values_outside_in_nin():
+    """A list value is only meaningful for in/nin; anything else fails."""
+    backend = _backend()
+    backend._store = FakeStore(rows=[])
+
+    with pytest.raises(ValueError):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=FakeEmbedModel([[1.0, 0.0]]),
+            retrieval_setting={"score_threshold": 0.0},
+            metadata_condition={
+                "operator": "and",
+                "conditions": [
+                    {"key": "category", "operator": "eq", "value": ["a", "b"]},
+                ],
+            },
+        )
+
+
+def test_retrieve_skips_null_value_conditions_like_elasticsearch():
+    """A condition with no value carries no constraint in the shared contract."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"score_threshold": 0.0},
+        metadata_condition={
+            "operator": "and",
+            "conditions": [{"key": "category", "operator": "eq", "value": None}],
+        },
+    )
+
+    assert "metadata[" not in store.searches[0]["filter"]
+
+
+@pytest.mark.parametrize("key", ["published", "id"])
+def test_retrieve_rejects_internal_identity_metadata_conditions(key):
+    backend = _backend()
+    backend._store = FakeStore(rows=[])
+
+    with pytest.raises(ValueError):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=FakeEmbedModel([[1.0, 0.0]]),
+            retrieval_setting={"score_threshold": 0.0},
+            metadata_condition={
+                "operator": "and",
+                "conditions": [{"key": key, "operator": "eq", "value": "x"}],
             },
         )
 
@@ -611,7 +997,7 @@ def test_get_document_missing_raises_without_creating():
 
 def test_reads_reject_a_collection_without_a_contract():
     backend = _backend()
-    backend._store = FakeStore(binding=None)
+    backend._store = FakeStore(has_contract=False)
     backend._store.rows = [
         {"doc_ref": "42", PUBLISHED_FIELD: True, DISPLAY_TEXT_FIELD: "x"}
     ]
@@ -629,7 +1015,7 @@ def test_get_all_chunks_only_returns_published_rows():
                 "chunk_index": 1,
                 DISPLAY_TEXT_FIELD: "second",
                 SOURCE_FILE_FIELD: "doc.txt",
-                METADATA_JSON_FIELD: "{}",
+                METADATA_FIELD: {},
                 PUBLISHED_FIELD: True,
             },
             {
@@ -637,7 +1023,7 @@ def test_get_all_chunks_only_returns_published_rows():
                 "chunk_index": 0,
                 DISPLAY_TEXT_FIELD: "first",
                 SOURCE_FILE_FIELD: "doc.txt",
-                METADATA_JSON_FIELD: "{}",
+                METADATA_FIELD: {},
                 PUBLISHED_FIELD: True,
             },
             {
@@ -645,7 +1031,7 @@ def test_get_all_chunks_only_returns_published_rows():
                 "chunk_index": 2,
                 DISPLAY_TEXT_FIELD: "unpublished",
                 SOURCE_FILE_FIELD: "doc.txt",
-                METADATA_JSON_FIELD: "{}",
+                METADATA_FIELD: {},
                 PUBLISHED_FIELD: False,
             },
         ]

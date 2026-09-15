@@ -13,7 +13,6 @@ shapes - and they never skip when the service is unavailable.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import threading
 
 import pytest
@@ -32,34 +31,9 @@ from knowledge_engine.storage.errors import (
 )
 from shared.models import RetrievalScope
 
-from .conftest import MilvusContractEnv
+from .conftest import DeterministicEmbedding, MilvusContractEnv
 
 pytestmark = pytest.mark.milvus
-
-
-class DeterministicEmbedding:
-    """Deterministic, provider-free vectors for contract tests."""
-
-    def __init__(self, dimension: int, *, model_name: str = "contract-model"):
-        self.dimension = dimension
-        self.model_name = model_name
-        self._configured_dimension = dimension
-
-    def _vector(self, text: str) -> list[float]:
-        vector = [0.0] * self.dimension
-        for token in text.lower().split():
-            digest = hashlib.sha256(token.encode("utf-8")).digest()
-            index = int.from_bytes(digest[:4], "big") % self.dimension
-            vector[index] += 1.0
-        if not any(vector):
-            vector[0] = 1.0
-        return vector
-
-    def get_text_embedding_batch(self, texts, **kwargs):
-        return [self._vector(text) for text in texts]
-
-    def get_query_embedding(self, query: str) -> list[float]:
-        return self._vector(query)
 
 
 def _index_document(

@@ -11,6 +11,7 @@ green while proving nothing.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -22,6 +23,31 @@ from knowledge_engine.storage.milvus_backend import MilvusBackend
 from knowledge_engine.storage.milvus_native import INDEX_BINDING_COLLECTION
 
 CONTRACT_URI_ENV = "MILVUS_CONTRACT_URI"
+
+
+class DeterministicEmbedding:
+    """Deterministic, provider-free vectors shared by the contract tests."""
+
+    def __init__(self, dimension: int, *, model_name: str = "contract-model"):
+        self.dimension = dimension
+        self.model_name = model_name
+        self._configured_dimension = dimension
+
+    def _vector(self, text: str) -> list[float]:
+        vector = [0.0] * self.dimension
+        for token in text.lower().split():
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            index = int.from_bytes(digest[:4], "big") % self.dimension
+            vector[index] += 1.0
+        if not any(vector):
+            vector[0] = 1.0
+        return vector
+
+    def get_text_embedding_batch(self, texts, **kwargs):
+        return [self._vector(text) for text in texts]
+
+    def get_query_embedding(self, query: str) -> list[float]:
+        return self._vector(query)
 
 
 def is_milvus_lite(uri: str) -> bool:

@@ -4,21 +4,25 @@
 
 """Milvus storage backend built directly on the official synchronous PyMilvus.
 
-Task 01 scope: dense vector write, retrieval and delete for ordinary
-documents, plus the server-maintained index contract that binds a collection
-to its embedding space and schema. Collections are created only by the
+Scope: dense vector write, retrieval and delete for ordinary documents, plus
+the server-maintained index contract that binds a collection to its embedding
+space, schema and keyword analyzer. Collections are created only by the
 explicit index write path; queries, reads and deletes never create resources.
 
-Keyword (server-side BM25) and weighted hybrid retrieval are a later slice.
-They raise an explicit unsupported-capability error instead of silently
-degrading to a different scoring mode, and the embedding space contract makes
-a same-dimension model swap an explicit failure rather than a silent quality
-regression.
+Two retrieval modes are served from one physical collection: ``vector`` uses
+the stored dense vectors with their raw COSINE score, and ``keyword`` uses the
+server-side BM25 sparse field built over the analyzed retrieval text, so it
+never asks the embedding provider for a query vector. Weighted ``hybrid``
+retrieval is a later slice and raises an explicit unsupported-capability error
+instead of silently degrading to a different scoring mode. The embedding space
+contract makes a same-dimension model swap an explicit failure rather than a
+silent quality regression.
 """
 
 import json
 import logging
-from typing import Any, ClassVar, Dict, List, Optional, Sequence
+import math
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Sequence
 
 from llama_index.core.schema import BaseNode
 from pymilvus import MilvusClient
@@ -39,13 +43,16 @@ from knowledge_engine.storage.base import (
 )
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import (
+    IndexContractIncompatibleError,
     IndexMissingError,
     IndexRollbackError,
     StorageBackendError,
     UnsupportedStorageCapabilityError,
 )
+from knowledge_engine.storage.milvus_filters import compile_metadata_conditions
 from knowledge_engine.storage.milvus_native import (
     ATTEMPT_ID_FIELD,
+    CHUNK_FIELDS_FOR_FILTERING,
     CHUNK_INDEX_FIELD,
     CREATED_AT_FIELD,
     DENSE_VECTOR_FIELD,
@@ -54,11 +61,12 @@ from knowledge_engine.storage.milvus_native import (
     GENERATION_FIELD,
     ID_FIELD,
     KNOWLEDGE_ID_FIELD,
-    METADATA_JSON_FIELD,
+    METADATA_FIELD,
     NODE_KIND_CHUNK,
     NODE_KIND_FIELD,
     PUBLISHED_FIELD,
     RETRIEVAL_TEXT_FIELD,
+    SCHEMA_VERSION,
     SOURCE_FILE_FIELD,
     MilvusDocumentStore,
     build_scope_filter,
@@ -72,35 +80,28 @@ from shared.models import RetrievalScope
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 20
+DEFAULT_SCORE_THRESHOLD = 0.7
 MAX_QUERY_LIMIT = 10000
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_ATTEMPT_PREFIX = "gen"
 
-CHUNK_FIELDS_FOR_FILTERING = (
-    KNOWLEDGE_ID_FIELD,
-    DOC_REF_FIELD,
-    SOURCE_FILE_FIELD,
-    GENERATION_FIELD,
-    ATTEMPT_ID_FIELD,
-    NODE_KIND_FIELD,
-    CHUNK_INDEX_FIELD,
-    CREATED_AT_FIELD,
-)
-TEXT_FILTER_FIELDS = {
-    KNOWLEDGE_ID_FIELD,
-    DOC_REF_FIELD,
-    SOURCE_FILE_FIELD,
-    ATTEMPT_ID_FIELD,
-    NODE_KIND_FIELD,
-    CREATED_AT_FIELD,
-}
-NUMERIC_FILTER_FIELDS = {GENERATION_FIELD, CHUNK_INDEX_FIELD}
+
+def keyword_relevance_score(raw_score: float) -> float:
+    """Map a non-negative BM25 score onto the shared 0..1 relevance scale.
+
+    The mapping is fixed and monotonic (``score / (1 + score)``) instead of
+    being derived from the candidate set, so the same document keeps the same
+    score regardless of which other documents matched.
+    """
+    if not math.isfinite(raw_score) or raw_score <= 0.0:
+        return 0.0
+    return raw_score / (1.0 + raw_score)
 
 
 class MilvusBackend(BaseStorageBackend):
     """Dense Milvus storage backend using the official synchronous SDK."""
 
-    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector"]
+    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector", "keyword"]
     supports_retrieval_scope: ClassVar[bool] = True
     INDEX_PREFIX: ClassVar[str] = "collection"
 
@@ -423,7 +424,7 @@ class MilvusBackend(BaseStorageBackend):
             CHUNK_INDEX_FIELD: chunk_index,
             RETRIEVAL_TEXT_FIELD: self.get_node_embedding_text(node),
             DISPLAY_TEXT_FIELD: self.get_node_display_text(node),
-            METADATA_JSON_FIELD: json.dumps(metadata, ensure_ascii=False, default=str),
+            METADATA_FIELD: _json_metadata(metadata),
             CREATED_AT_FIELD: str(metadata.get("created_at") or ""),
             PUBLISHED_FIELD: False,
             DENSE_VECTOR_FIELD: [float(value) for value in vector],
@@ -489,29 +490,31 @@ class MilvusBackend(BaseStorageBackend):
         metadata_condition: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Dict:
-        """Retrieve published chunks with raw COSINE scores.
+        """Retrieve published chunks in scope for one retrieval mode.
 
-        The score is the database similarity for this candidate; there is no
-        candidate-set re-normalization. ``score_threshold`` is compared with
-        ``>=`` against that raw score.
+        ``vector`` returns raw COSINE similarity: the score is the database
+        similarity for this candidate with no candidate-set re-normalization.
+        ``keyword`` runs server-side BM25 over the analyzed retrieval text and
+        maps the raw BM25 score onto the shared relevance scale with the fixed
+        ``s / (1 + s)`` mapping. Both modes apply the same knowledge base,
+        document and metadata filters inside the database before ``top_k``, and
+        both compare the resulting score with ``>=`` against ``score_threshold``.
         """
         retrieval_mode = str(retrieval_setting.get("retrieval_mode") or "vector")
-        if retrieval_mode != "vector":
+        if retrieval_mode not in self.SUPPORTED_RETRIEVAL_METHODS:
             raise UnsupportedStorageCapabilityError(
                 f"{retrieval_mode} retrieval mode", backend="milvus"
             )
 
         collection_name = self.get_index_name(knowledge_id, **kwargs)
         top_k = int(retrieval_setting.get("top_k") or DEFAULT_TOP_K)
-        configured_threshold = retrieval_setting.get("score_threshold")
-        score_threshold = (
-            float(configured_threshold) if configured_threshold is not None else 0.7
-        )
+        score_threshold = self._resolve_score_threshold(retrieval_setting)
         filter_expr = build_scope_filter(
             knowledge_id=knowledge_id,
             doc_refs=self._scope_doc_refs(scope),
-            extra_conditions=self._metadata_conditions(metadata_condition),
+            extra_conditions=compile_metadata_conditions(metadata_condition),
         )
+        resolved_queries = resolve_search_queries(query, retrieval_setting)
 
         # An empty knowledge base answers empty without calling the embedding
         # provider: only a real index justifies a provider request.
@@ -519,7 +522,15 @@ class MilvusBackend(BaseStorageBackend):
             if self._index_is_absent(client, collection_name):
                 return {"records": []}
 
-        resolved_queries = resolve_search_queries(query, retrieval_setting)
+        if retrieval_mode == "keyword":
+            return self._keyword_retrieve(
+                collection_name=collection_name,
+                sparse_query=resolved_queries.sparse_query,
+                filter_expr=filter_expr,
+                top_k=top_k,
+                score_threshold=score_threshold,
+            )
+
         query_vector = prepare_query_vector(embed_model, resolved_queries.dense_query)
 
         with self._store.client() as client:
@@ -544,99 +555,63 @@ class MilvusBackend(BaseStorageBackend):
 
         return self._process_hits(hits, score_threshold)
 
+    def _keyword_retrieve(
+        self,
+        *,
+        collection_name: str,
+        sparse_query: str,
+        filter_expr: str,
+        top_k: int,
+        score_threshold: float,
+    ) -> Dict:
+        """Answer a keyword query from the BM25 index alone.
+
+        The embedding provider is not consulted: the retrieval text was
+        analyzed and indexed by the server when the document was written.
+        """
+        with self._store.client() as client:
+            binding = self._store.verify_keyword_index(client, collection_name)
+            if binding is None:
+                raise IndexMissingError(
+                    collection_name,
+                    "the bound collection disappeared during the query",
+                )
+            hits = self._store.sparse_search(
+                client,
+                collection_name,
+                query_text=sparse_query,
+                filter_expr=filter_expr,
+                limit=top_k,
+            )
+
+        return self._process_hits(
+            hits, score_threshold, score_mapper=keyword_relevance_score
+        )
+
+    @staticmethod
+    def _resolve_score_threshold(retrieval_setting: Dict[str, Any]) -> float:
+        configured_threshold = retrieval_setting.get("score_threshold")
+        if configured_threshold is None:
+            return DEFAULT_SCORE_THRESHOLD
+        return float(configured_threshold)
+
     @staticmethod
     def _scope_doc_refs(scope: Optional[RetrievalScope]) -> Optional[List[str]]:
         if not scope or not scope.document_ids:
             return None
         return [str(document_id) for document_id in scope.document_ids]
 
-    def _metadata_conditions(
-        self, metadata_condition: Optional[Dict[str, Any]]
-    ) -> List[str]:
-        """Compile the supported flat metadata condition into Milvus filters.
-
-        Only physical scalar columns can be filtered natively. Arbitrary user
-        metadata is stored as JSON and is not silently post-filtered after the
-        candidate cut; it fails loudly until the scoped-retrieval slice lands.
-        """
-        if not metadata_condition:
-            return []
-
-        operator = str(metadata_condition.get("operator") or "and").strip().lower()
-        if operator not in {"and", "or"}:
-            raise ValueError(
-                f"metadata_condition operator '{operator}' is not supported."
-            )
-
-        terms = [
-            self._compile_metadata_condition(condition)
-            for condition in metadata_condition.get("conditions") or []
-            if condition.get("key") and condition.get("value") is not None
-        ]
-        if not terms:
-            return []
-        if len(terms) == 1:
-            return terms
-        joined = " or ".join(terms) if operator == "or" else " and ".join(terms)
-        return [f"({joined})"]
-
-    def _compile_metadata_condition(self, condition: Dict[str, Any]) -> str:
-        key = str(condition.get("key"))
-        if key == DOC_REF_FIELD:
-            raise ValueError(
-                "Document scope must use document_ids or "
-                "RetrievalScope.document_ids, not metadata_condition doc_ref."
-            )
-        if key not in CHUNK_FIELDS_FOR_FILTERING:
-            raise UnsupportedStorageCapabilityError(
-                f"metadata filter on '{key}'", backend="milvus"
-            )
-
-        operator = str(condition.get("operator") or "eq").strip().lower()
-        operator = {"==": "eq", "!=": "ne"}.get(operator, operator)
-        value = condition.get("value")
-        literal = self._filter_literal(key, value)
-
-        if operator == "eq":
-            return f"{key} == {literal}"
-        if operator == "ne":
-            return f"{key} != {literal}"
-        comparison_operators = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
-        if operator in comparison_operators:
-            return f"{key} {comparison_operators[operator]} {literal}"
-        if operator in {"in", "nin"}:
-            if not isinstance(value, (list, tuple, set)):
-                raise ValueError(
-                    f"metadata_condition '{operator}' requires a list value."
-                )
-            items = ", ".join(self._filter_literal(key, item) for item in value)
-            keyword = "in" if operator == "in" else "not in"
-            return f"{key} {keyword} [{items}]"
-        if operator in {"contains", "text_match"}:
-            if key not in TEXT_FILTER_FIELDS:
-                raise UnsupportedStorageCapabilityError(
-                    f"'{operator}' metadata filter on '{key}'", backend="milvus"
-                )
-            pattern = sanitize_filter_value(value).replace("%", "\\%")
-            return f'{key} like "%{pattern}%"'
-        raise ValueError(f"metadata_condition operator '{operator}' is not supported.")
-
-    @staticmethod
-    def _filter_literal(key: str, value: Any) -> str:
-        if key in NUMERIC_FILTER_FIELDS:
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise ValueError(
-                    f"metadata_condition '{key}' requires a numeric value."
-                )
-            return str(value)
-        return f'"{sanitize_filter_value(value)}"'
-
     def _process_hits(
-        self, hits: Sequence[Dict[str, Any]], score_threshold: float
+        self,
+        hits: Sequence[Dict[str, Any]],
+        score_threshold: float,
+        *,
+        score_mapper: Optional[Callable[[float], float]] = None,
     ) -> Dict:
         records = []
         for hit in hits:
-            score = float(hit.get("__score__", 0.0))
+            raw_score = float(hit.get("__score__", 0.0))
+            score = score_mapper(raw_score) if score_mapper else raw_score
             if score < score_threshold:
                 continue
             metadata = self._row_metadata(hit)
@@ -654,22 +629,16 @@ class MilvusBackend(BaseStorageBackend):
         return {"records": records}
 
     def _row_metadata(self, hit: Dict[str, Any]) -> Dict[str, Any]:
-        raw = hit.get(METADATA_JSON_FIELD)
-        metadata: Dict[str, Any] = {}
-        if isinstance(raw, str) and raw:
-            try:
-                parsed = json.loads(raw)
-            except ValueError as exc:
-                raise StorageBackendError(
-                    "Stored Milvus metadata is not readable JSON.",
-                    details={"row_id": hit.get(ID_FIELD)},
-                ) from exc
-            if not isinstance(parsed, dict):
-                raise StorageBackendError(
-                    "Stored Milvus metadata is not a JSON object.",
-                    details={"row_id": hit.get(ID_FIELD)},
-                )
-            metadata = parsed
+        raw = hit.get(METADATA_FIELD)
+        if raw is None:
+            metadata: Dict[str, Any] = {}
+        elif isinstance(raw, dict):
+            metadata = dict(raw)
+        else:
+            raise StorageBackendError(
+                "Stored Milvus metadata is not a JSON object.",
+                details={"row_id": hit.get(ID_FIELD)},
+            )
         for field in CHUNK_FIELDS_FOR_FILTERING:
             if field in hit:
                 metadata.setdefault(field, hit[field])
@@ -920,6 +889,11 @@ class MilvusBackend(BaseStorageBackend):
         No stored contract and no collection means the knowledge base was
         never indexed, which is a valid empty result. A stored contract whose
         collection is gone is a service fault and must not degrade into empty.
+
+        A contract an older schema wrote is also a fault: the current code can
+        neither read its columns nor serve its capabilities, and answering with
+        whatever the old layout happens to contain would hide that. Only an
+        explicit operator rebuild moves such a collection forward.
         """
         binding = self._store.read_binding(client, collection_name)
         exists = self._store.has_collection(client, collection_name)
@@ -934,7 +908,16 @@ class MilvusBackend(BaseStorageBackend):
                 collection_name,
                 "a confirmed index contract exists but its collection is gone",
             )
-        self._store.require_bound(client, collection_name)
+        bound = self._store.require_bound(client, collection_name)
+        if bound is not None and bound.schema_version != SCHEMA_VERSION:
+            raise IndexContractIncompatibleError(
+                collection_name,
+                "the stored index contract was written by an older schema",
+                details={
+                    "bound_schema_version": bound.schema_version,
+                    "schema_version": SCHEMA_VERSION,
+                },
+            )
         return False
 
     def delete_parent_nodes(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
@@ -955,3 +938,8 @@ class MilvusBackend(BaseStorageBackend):
         **kwargs,
     ) -> Dict[str, Dict[str, Any]]:
         return self._parent_store.get(knowledge_id, parent_node_ids, **kwargs)
+
+
+def _json_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Coerce chunk metadata into the JSON types the Milvus column accepts."""
+    return json.loads(json.dumps(metadata, ensure_ascii=False, default=str))

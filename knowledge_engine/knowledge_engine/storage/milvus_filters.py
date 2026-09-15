@@ -1,0 +1,170 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Compile the shared metadata condition contract into Milvus expressions.
+
+The adapter above this module owns retrieval modes; this module owns one
+concern: turning the flat Dify-style ``and``/``or`` condition tree shared with
+the other backends into a Milvus filter expression. Known chunk fields compile
+against their typed physical column; every other key compiles against the
+native JSON metadata column, so the server applies the condition before the
+``top_k`` cut instead of the adapter dropping candidates afterwards.
+
+Recorded semantics of the compiled contract:
+
+- A missing JSON key matches nothing for ``eq``/``gt``/``gte``/``lt``/``lte``/
+  ``contains``/``text_match`` and satisfies ``ne``/``nin``, which is what the
+  Elasticsearch backend does for an absent field.
+- ``contains`` and ``text_match`` are both case-sensitive substring matches:
+  Milvus 2.5.4 cannot run an analyzed ``TEXT_MATCH`` against a JSON path. For a
+  JSON key an array value also matches by element. ``%`` and ``_`` act as the
+  Milvus ``like`` wildcards and cannot be escaped; the Elasticsearch backend has
+  the same class of limitation with its ``*``/``?`` wildcard query.
+- A condition without a key or with a null value carries no constraint in the
+  shared contract and is skipped, exactly as the Elasticsearch backend does.
+- A nested condition, an unsupported operator, a non-scalar value outside
+  ``in``/``nin``, or a condition on an internal identity field fails loudly.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Any, Dict, List, Literal, Tuple
+
+from knowledge_engine.retrieval.filters import (
+    iter_valid_conditions,
+    normalize_metadata_operator,
+    validate_metadata_condition,
+)
+from knowledge_engine.storage.milvus_native import (
+    CHUNK_FIELDS_FOR_FILTERING,
+    DOC_REF_FIELD,
+    ID_FIELD,
+    METADATA_FIELD,
+    NUMERIC_FILTER_FIELDS,
+    PUBLISHED_FIELD,
+    sanitize_filter_value,
+)
+
+# Row identity and publication state are owned by the write path. They are
+# never readable as metadata conditions, so a caller cannot pin or fake them.
+INTERNAL_FILTER_FIELDS = frozenset({ID_FIELD, PUBLISHED_FIELD})
+
+LiteralKind = Literal["numeric", "text", "json"]
+
+
+def compile_metadata_conditions(
+    metadata_condition: Dict[str, Any] | None,
+) -> List[str]:
+    """Compile the supported flat metadata condition into Milvus filters.
+
+    The result is composed with the mandatory scope filter by the caller, so a
+    metadata condition can only narrow the knowledge base, document and
+    publication scope - never widen it.
+    """
+    if not metadata_condition:
+        return []
+
+    validate_metadata_condition(metadata_condition, reject_document_scope=True)
+    operator = str(metadata_condition.get("operator") or "and").strip().lower()
+    if operator not in {"and", "or"}:
+        raise ValueError(f"metadata_condition operator '{operator}' is not supported.")
+
+    terms = [
+        _compile_condition(condition)
+        for condition in iter_valid_conditions(metadata_condition)
+    ]
+    if not terms:
+        return []
+    if len(terms) == 1:
+        return terms
+    joined = " or ".join(terms) if operator == "or" else " and ".join(terms)
+    return [f"({joined})"]
+
+
+def _compile_condition(condition: Dict[str, Any]) -> str:
+    key = str(condition.get("key"))
+    field, literal_kind = _condition_target(key)
+    operator = normalize_metadata_operator(condition.get("operator"))
+    value = condition.get("value")
+
+    if operator in {"eq", "ne"}:
+        comparison = "==" if operator == "eq" else "!="
+        return f"{field} {comparison} {_literal(key, literal_kind, value)}"
+    comparisons = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
+    if operator in comparisons:
+        literal = _literal(key, literal_kind, value)
+        return f"{field} {comparisons[operator]} {literal}"
+    if operator in {"in", "nin"}:
+        if not isinstance(value, (list, tuple, set)):
+            raise ValueError(f"metadata_condition '{operator}' requires a list value.")
+        items = ", ".join(_literal(key, literal_kind, item) for item in value)
+        keyword = "in" if operator == "in" else "not in"
+        return f"{field} {keyword} [{items}]"
+    if operator in {"contains", "text_match"}:
+        return _compile_text_condition(key, field, literal_kind, value)
+    raise ValueError(f"metadata_condition operator '{operator}' is not supported.")
+
+
+def _condition_target(key: str) -> Tuple[str, LiteralKind]:
+    """Resolve one condition key to its field expression and literal type."""
+    if key == DOC_REF_FIELD:
+        raise ValueError(
+            "Document scope must use document_ids or "
+            "RetrievalScope.document_ids, not metadata_condition doc_ref."
+        )
+    if key in INTERNAL_FILTER_FIELDS:
+        raise ValueError(
+            f"metadata_condition must not filter the internal field '{key}'."
+        )
+    if key in CHUNK_FIELDS_FOR_FILTERING:
+        kind: LiteralKind = "numeric" if key in NUMERIC_FILTER_FIELDS else "text"
+        return key, kind
+    return f'{METADATA_FIELD}["{sanitize_filter_value(key)}"]', "json"
+
+
+def _literal(key: str, literal_kind: LiteralKind, value: Any) -> str:
+    """Encode one comparison value by the type of the field it is compared to."""
+    if literal_kind == "numeric":
+        return _numeric_literal(key, value)
+    if literal_kind == "text":
+        return f'"{sanitize_filter_value(_scalar_value(key, value))}"'
+    return _json_literal(key, value)
+
+
+def _compile_text_condition(
+    key: str, field: str, literal_kind: LiteralKind, value: Any
+) -> str:
+    """Compile a substring condition, including JSON array membership."""
+    pattern = sanitize_filter_value(_scalar_value(key, value))
+    substring = f'{field} like "%{pattern}%"'
+    if literal_kind != "json":
+        return substring
+    return f'(json_contains({field}, "{pattern}") or {substring})'
+
+
+def _scalar_value(key: str, value: Any) -> Any:
+    if isinstance(value, (list, tuple, set, dict)):
+        raise ValueError(
+            f"metadata_condition '{key}' requires a scalar value; only the "
+            "in/nin operators accept a list."
+        )
+    return value
+
+
+def _numeric_literal(key: str, value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"metadata_condition '{key}' requires a numeric value.")
+    if not math.isfinite(float(value)):
+        raise ValueError(f"metadata_condition '{key}' requires a finite numeric value.")
+    return str(value)
+
+
+def _json_literal(key: str, value: Any) -> str:
+    """Encode one JSON-column comparison value by its Python type."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return _numeric_literal(key, value)
+    return f'"{sanitize_filter_value(_scalar_value(key, value))}"'

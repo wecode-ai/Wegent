@@ -4,15 +4,24 @@
 
 """Unit tests for the native Milvus contract and schema layer (no server)."""
 
+import json
+
 import pytest
+from pymilvus import DataType, FunctionType
 
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
 )
 from knowledge_engine.storage.milvus_native import (
+    ANALYZER_TYPE,
+    BM25_FUNCTION_NAME,
     DENSE_VECTOR_FIELD,
+    METADATA_FIELD,
     METRIC_TYPE,
+    RETRIEVAL_TEXT_FIELD,
+    SCHEMA_VERSION,
+    SPARSE_VECTOR_FIELD,
     MilvusDocumentStore,
     MilvusIndexBinding,
     build_collection_schema,
@@ -28,11 +37,12 @@ def _binding(**overrides):
         "collection_name": "wegent_kb_1",
         "connection": "http://milvus.test:19530",
         "database": "default",
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "embedding_space": "sha256:abc",
         "dimension": 1536,
         "metric_type": METRIC_TYPE,
         "index_type": "AUTOINDEX",
+        "analyzer": ANALYZER_TYPE,
     }
     payload.update(overrides)
     return MilvusIndexBinding(**payload)
@@ -57,7 +67,9 @@ def test_binding_row_without_contract_payload_is_rejected():
         {"dimension": 4096},
         {"embedding_space": "sha256:other"},
         {"metric_type": "L2"},
-        {"schema_version": 2},
+        {"schema_version": SCHEMA_VERSION - 1},
+        {"analyzer": ""},
+        {"analyzer": "standard"},
         {"database": "other_db"},
         {"connection": "http://other:19530"},
     ],
@@ -125,12 +137,44 @@ def test_collection_schema_declares_required_fields_and_dimension():
         "chunk_index",
         "retrieval_text",
         "display_text",
-        "metadata_json",
         "published",
     ):
         assert name in fields
     assert contract_token_field("sha256:space") in fields
     assert fields["id"].is_primary
+
+
+def test_collection_schema_declares_server_side_bm25_over_analyzed_retrieval_text():
+    """Keyword retrieval is a physical capability of the collection schema."""
+    schema = build_collection_schema(1536, "sha256:space")
+    fields = {field.name: field for field in schema.fields}
+
+    text_field = fields[RETRIEVAL_TEXT_FIELD]
+    assert str(text_field.params.get("enable_analyzer")).lower() == "true"
+    assert json.loads(text_field.params.get("analyzer_params")) == {
+        "type": ANALYZER_TYPE
+    }
+    assert fields[SPARSE_VECTOR_FIELD].dtype == DataType.SPARSE_FLOAT_VECTOR
+    assert fields[METADATA_FIELD].dtype == DataType.JSON
+
+    [function] = schema.functions
+    assert function.name == BM25_FUNCTION_NAME
+    assert function.type == FunctionType.BM25
+    assert function.input_field_names == [RETRIEVAL_TEXT_FIELD]
+    assert function.output_field_names == [SPARSE_VECTOR_FIELD]
+
+
+def test_binding_pins_the_keyword_analyzer_and_schema_version():
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    binding = store.build_binding(
+        "wegent_kb_1",
+        dimension=1536,
+        embedding_space="sha256:abc",
+    )
+
+    assert binding.analyzer == ANALYZER_TYPE
+    assert binding.schema_version == SCHEMA_VERSION
 
 
 def test_collection_schema_separates_embedding_spaces():
@@ -208,6 +252,84 @@ def test_client_is_closed_when_the_operation_raises():
             raise RuntimeError("boom")
 
     assert created[0].closed is True
+
+
+class _SparseSearchClient:
+    """Records the search request the store sends for a keyword query."""
+
+    def __init__(self, *, exists: bool = True) -> None:
+        self.exists = exists
+        self.searches: list[dict] = []
+
+    def has_collection(self, collection_name: str) -> bool:
+        return self.exists
+
+    def search(self, **kwargs):
+        self.searches.append(kwargs)
+        return [
+            [
+                {
+                    "entity": {"id": "row-1", "display_text": "展示正文"},
+                    "distance": 2.5,
+                }
+            ]
+        ]
+
+
+def test_keyword_search_uses_the_sparse_bm25_field_not_a_query_vector():
+    """A keyword query sends retrieval text; no dense vector is ever built."""
+    client = _SparseSearchClient()
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    hits = store.sparse_search(
+        client,
+        "wegent_kb_1",
+        query_text="中文 标识符",
+        filter_expr='knowledge_id == "1"',
+        limit=5,
+    )
+
+    [request] = client.searches
+    assert request["data"] == ["中文 标识符"]
+    assert request["anns_field"] == SPARSE_VECTOR_FIELD
+    assert request["search_params"] == {"metric_type": "BM25", "params": {}}
+    assert request["filter"] == 'knowledge_id == "1"'
+    assert request["limit"] == 5
+    assert hits == [{"id": "row-1", "display_text": "展示正文", "__score__": 2.5}]
+
+
+def test_keyword_search_on_a_missing_collection_returns_nothing():
+    client = _SparseSearchClient(exists=False)
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    hits = store.sparse_search(
+        client,
+        "wegent_kb_1",
+        query_text="q",
+        filter_expr="",
+        limit=5,
+    )
+
+    assert hits == []
+    assert client.searches == []
+
+
+def test_keyword_contract_read_is_read_only_and_analyzer_bound():
+    """A read-only keyword check never creates a collection."""
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    assert store.verify_keyword_index(_SparseSearchClient(exists=False), "kb") is None
+
+    store.read_binding = lambda client, name: None
+    with pytest.raises(IndexContractIncompatibleError):
+        store.verify_keyword_index(_SparseSearchClient(), "kb")
+
+    store.read_binding = lambda client, name: _binding()
+    assert store.verify_keyword_index(_SparseSearchClient(), "kb") == _binding()
+
+    store.read_binding = lambda client, name: _binding(analyzer="")
+    with pytest.raises(IndexContractIncompatibleError):
+        store.verify_keyword_index(_SparseSearchClient(), "kb")
 
 
 class _CollectionClient:

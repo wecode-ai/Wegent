@@ -21,7 +21,14 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Sequence
 
-from pymilvus import CollectionSchema, DataType, FieldSchema, MilvusClient
+from pymilvus import (
+    CollectionSchema,
+    DataType,
+    FieldSchema,
+    Function,
+    FunctionType,
+    MilvusClient,
+)
 
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
@@ -32,9 +39,16 @@ from knowledge_engine.storage.errors import (
 logger = logging.getLogger(__name__)
 
 # Bump when the physical row layout changes in a way that requires rebuilding.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 METRIC_TYPE = "COSINE"
 INDEX_TYPE = "AUTOINDEX"
+SPARSE_METRIC_TYPE = "BM25"
+SPARSE_INDEX_TYPE = "SPARSE_INVERTED_INDEX"
+# The keyword capability is a property of the collection: the analyzer decides
+# which tokens BM25 indexes, so it is part of the stored index contract.
+ANALYZER_TYPE = "chinese"
+ANALYZER_PARAMS: Dict[str, Any] = {"type": ANALYZER_TYPE}
+BM25_FUNCTION_NAME = "retrieval_text_bm25"
 
 MAX_ID_LENGTH = 128
 MAX_KEY_LENGTH = 512
@@ -51,12 +65,28 @@ NODE_KIND_FIELD = "node_kind"
 CHUNK_INDEX_FIELD = "chunk_index"
 RETRIEVAL_TEXT_FIELD = "retrieval_text"
 DISPLAY_TEXT_FIELD = "display_text"
-METADATA_JSON_FIELD = "metadata_json"
+METADATA_FIELD = "metadata"
 CREATED_AT_FIELD = "created_at"
 PUBLISHED_FIELD = "published"
 DENSE_VECTOR_FIELD = "dense_vector"
+SPARSE_VECTOR_FIELD = "sparse_vector"
 
 NODE_KIND_CHUNK = "chunk"
+
+# Physical scalar columns that a metadata condition may be compiled against.
+# Row identity and publication state are deliberately absent: the write path
+# owns them, so a query condition can never pin or fake them.
+CHUNK_FIELDS_FOR_FILTERING: List[str] = [
+    KNOWLEDGE_ID_FIELD,
+    DOC_REF_FIELD,
+    SOURCE_FILE_FIELD,
+    GENERATION_FIELD,
+    ATTEMPT_ID_FIELD,
+    NODE_KIND_FIELD,
+    CHUNK_INDEX_FIELD,
+    CREATED_AT_FIELD,
+]
+NUMERIC_FILTER_FIELDS = frozenset({GENERATION_FIELD, CHUNK_INDEX_FIELD})
 
 ROW_OUTPUT_FIELDS: List[str] = [
     ID_FIELD,
@@ -69,7 +99,7 @@ ROW_OUTPUT_FIELDS: List[str] = [
     CHUNK_INDEX_FIELD,
     RETRIEVAL_TEXT_FIELD,
     DISPLAY_TEXT_FIELD,
-    METADATA_JSON_FIELD,
+    METADATA_FIELD,
     CREATED_AT_FIELD,
     PUBLISHED_FIELD,
 ]
@@ -100,7 +130,9 @@ class MilvusIndexBinding:
     dimension: int
     metric_type: str
     index_type: str
-    # Reserved for the analyzer-backed sparse slice; empty for dense-only.
+    # Analyzer that tokenizes the BM25 keyword index. An empty value marks a
+    # contract written before the keyword slice, which cannot serve keyword
+    # retrieval and is rejected instead of answering with empty results.
     analyzer: str = ""
 
     def to_payload(self) -> Dict[str, Any]:
@@ -225,7 +257,13 @@ def contract_token_field(embedding_space: str) -> str:
 
 
 def build_collection_schema(dimension: int, embedding_space: str) -> CollectionSchema:
-    """Build the physical row layout for a dense Milvus index."""
+    """Build the physical row layout for one Milvus knowledge index.
+
+    The collection carries both retrieval paths: a dense vector for semantic
+    search and a server-maintained sparse vector whose terms come from the
+    BM25 function over the analyzed retrieval text. Filterable metadata is a
+    native JSON column so it is applied by the server before ``top_k``.
+    """
     if dimension <= 0:
         raise ValueError("dimension must be a positive integer")
     fields = _scalar_row_fields() + [
@@ -239,13 +277,27 @@ def build_collection_schema(dimension: int, embedding_space: str) -> CollectionS
             dtype=DataType.FLOAT_VECTOR,
             dim=dimension,
         ),
+        FieldSchema(
+            name=SPARSE_VECTOR_FIELD,
+            dtype=DataType.SPARSE_FLOAT_VECTOR,
+        ),
     ]
-    return CollectionSchema(
+    schema = CollectionSchema(
         fields=fields,
         auto_id=False,
         enable_dynamic_field=False,
         description=f"wegent knowledge index schema v{SCHEMA_VERSION}",
     )
+    schema.add_function(
+        Function(
+            name=BM25_FUNCTION_NAME,
+            function_type=FunctionType.BM25,
+            input_field_names=[RETRIEVAL_TEXT_FIELD],
+            output_field_names=[SPARSE_VECTOR_FIELD],
+            params={},
+        )
+    )
+    return schema
 
 
 def _scalar_row_fields() -> List[FieldSchema]:
@@ -288,17 +340,18 @@ def _scalar_row_fields() -> List[FieldSchema]:
             name=RETRIEVAL_TEXT_FIELD,
             dtype=DataType.VARCHAR,
             max_length=MAX_TEXT_LENGTH,
+            # The analyzer must be declared on the field itself: a
+            # collection-level analyzer does not tokenize BM25 queries in
+            # Milvus 2.5.4, which silently returns no Chinese hits.
+            enable_analyzer=True,
+            analyzer_params=dict(ANALYZER_PARAMS),
         ),
         FieldSchema(
             name=DISPLAY_TEXT_FIELD,
             dtype=DataType.VARCHAR,
             max_length=MAX_TEXT_LENGTH,
         ),
-        FieldSchema(
-            name=METADATA_JSON_FIELD,
-            dtype=DataType.VARCHAR,
-            max_length=MAX_TEXT_LENGTH,
-        ),
+        FieldSchema(name=METADATA_FIELD, dtype=DataType.JSON, nullable=True),
         FieldSchema(
             name=CREATED_AT_FIELD,
             dtype=DataType.VARCHAR,
@@ -448,6 +501,7 @@ class MilvusDocumentStore:
             dimension=dimension,
             metric_type=METRIC_TYPE,
             index_type=INDEX_TYPE,
+            analyzer=ANALYZER_TYPE,
         )
 
     def read_binding(
@@ -596,6 +650,35 @@ class MilvusDocumentStore:
         )
         return self._verify_existing(client, requested)
 
+    def verify_keyword_index(
+        self,
+        client: MilvusClient,
+        collection_name: str,
+    ) -> MilvusIndexBinding | None:
+        """Read-only keyword capability check; None means no index exists.
+
+        Keyword retrieval never consults the embedding model, so this reads the
+        stored contract instead of rebuilding the requested one. A collection
+        whose contract predates the BM25 analyzer fails explicitly: an index
+        without the keyword capability must not answer keyword queries with an
+        empty result set.
+        """
+        if not client.has_collection(collection_name):
+            return None
+        bound = self.read_binding(client, collection_name)
+        if bound is None:
+            raise IndexContractIncompatibleError(
+                collection_name,
+                "the collection has no stored index contract",
+            )
+        if not bound.analyzer:
+            raise IndexContractIncompatibleError(
+                collection_name,
+                "the bound index was created without a keyword analyzer",
+                details={"analyzer": bound.analyzer},
+            )
+        return bound
+
     def require_bound(
         self, client: MilvusClient, collection_name: str
     ) -> MilvusIndexBinding | None:
@@ -622,6 +705,11 @@ class MilvusDocumentStore:
             field_name=DENSE_VECTOR_FIELD,
             index_type=binding.index_type,
             metric_type=binding.metric_type,
+        )
+        index_params.add_index(
+            field_name=SPARSE_VECTOR_FIELD,
+            index_type=SPARSE_INDEX_TYPE,
+            metric_type=SPARSE_METRIC_TYPE,
         )
         try:
             client.create_collection(
@@ -751,6 +839,7 @@ class MilvusDocumentStore:
         limit: int,
         output_fields: Sequence[str] | None = None,
     ) -> List[Dict[str, Any]]:
+        """Dense vector search returning raw database similarity scores."""
         if not client.has_collection(collection_name):
             return []
         results = client.search(
@@ -763,6 +852,41 @@ class MilvusDocumentStore:
             search_params={"metric_type": METRIC_TYPE, "params": {}},
             consistency_level="Strong",
         )
+        return self._hits_from_results(results)
+
+    def sparse_search(
+        self,
+        client: MilvusClient,
+        collection_name: str,
+        *,
+        query_text: str,
+        filter_expr: str,
+        limit: int,
+        output_fields: Sequence[str] | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Server-side BM25 keyword search over the analyzed retrieval text.
+
+        The query is plain text: Milvus analyzes it with the collection's
+        analyzer and scores it against the sparse terms it indexed. No
+        embedding provider is involved.
+        """
+        if not client.has_collection(collection_name):
+            return []
+        results = client.search(
+            collection_name=collection_name,
+            data=[query_text],
+            anns_field=SPARSE_VECTOR_FIELD,
+            filter=filter_expr,
+            limit=limit,
+            output_fields=list(output_fields or ROW_OUTPUT_FIELDS),
+            search_params={"metric_type": SPARSE_METRIC_TYPE, "params": {}},
+            consistency_level="Strong",
+        )
+        return self._hits_from_results(results)
+
+    @staticmethod
+    def _hits_from_results(results: Sequence[Any]) -> List[Dict[str, Any]]:
+        """Normalize SDK hits into row dictionaries carrying ``__score__``."""
         hits: List[Dict[str, Any]] = []
         for hit in results[0] if results else []:
             entity = dict(hit.get("entity") or {})

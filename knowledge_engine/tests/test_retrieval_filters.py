@@ -12,8 +12,42 @@ from llama_index.core.vector_stores import (
 from knowledge_engine.retrieval.filters import (
     build_elasticsearch_filters,
     filter_chunk_records,
+    iter_valid_conditions,
+    normalize_metadata_operator,
     parse_metadata_filters,
 )
+
+
+@pytest.mark.parametrize(
+    ("raw_operator", "expected"),
+    [
+        (None, "eq"),
+        ("EQ", "eq"),
+        ("==", "eq"),
+        ("!=", "ne"),
+        (" text_match ", "text_match"),
+    ],
+)
+def test_normalize_metadata_operator_is_shared_by_every_backend(
+    raw_operator, expected
+) -> None:
+    assert normalize_metadata_operator(raw_operator) == expected
+
+
+def test_iter_valid_conditions_skips_conditions_without_a_constraint() -> None:
+    """A missing key or a null value carries no constraint on any backend."""
+    conditions = iter_valid_conditions(
+        {
+            "operator": "and",
+            "conditions": [
+                {"key": "category", "operator": "eq", "value": "tech"},
+                {"key": "category", "operator": "eq", "value": None},
+                {"operator": "eq", "value": "orphan"},
+            ],
+        }
+    )
+
+    assert conditions == [{"key": "category", "operator": "eq", "value": "tech"}]
 
 
 def test_build_elasticsearch_filters_normalizes_mixed_case_operators() -> None:

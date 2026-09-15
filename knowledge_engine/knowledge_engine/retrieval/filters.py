@@ -105,7 +105,7 @@ def build_elasticsearch_filters(
         condition_filter
         for condition_filter in (
             _build_elasticsearch_condition_filter(condition)
-            for condition in _iter_valid_conditions(metadata_condition)
+            for condition in iter_valid_conditions(metadata_condition)
         )
         if condition_filter is not None
     ]
@@ -139,7 +139,7 @@ def chunk_matches_metadata_condition(
     if not metadata_condition or "conditions" not in metadata_condition:
         return True
 
-    conditions = _iter_valid_conditions(metadata_condition)
+    conditions = iter_valid_conditions(metadata_condition)
     if not conditions:
         return True
 
@@ -180,7 +180,7 @@ def _evaluate_single_condition(
     if not key:
         return True
 
-    operator = _normalize_operator(condition.get("operator"))
+    operator = normalize_metadata_operator(condition.get("operator"))
     value = condition.get("value")
     actual = metadata.get(key)
 
@@ -213,7 +213,8 @@ def _evaluate_single_condition(
     return actual == value
 
 
-def _normalize_operator(raw_operator: Any) -> str:
+def normalize_metadata_operator(raw_operator: Any) -> str:
+    """Normalize one condition operator shared by every storage backend."""
     operator = "eq" if raw_operator is None else str(raw_operator).strip().lower()
     return {"==": "eq", "!=": "ne"}.get(operator, operator)
 
@@ -233,7 +234,7 @@ def _build_user_metadata_filters(
 
     filters = [
         _build_metadata_filter(condition)
-        for condition in _iter_valid_conditions(metadata_condition)
+        for condition in iter_valid_conditions(metadata_condition)
     ]
     if not filters:
         return None
@@ -246,7 +247,7 @@ def _build_user_metadata_filters(
 
 def _build_metadata_filter(condition: Dict[str, Any]) -> MetadataFilter:
     filter_op = OPERATOR_MAP.get(
-        _normalize_operator(condition.get("operator")),
+        normalize_metadata_operator(condition.get("operator")),
         FilterOperator.EQ,
     )
     return MetadataFilter(
@@ -260,7 +261,7 @@ def _build_elasticsearch_condition_filter(
     condition: Dict[str, Any],
 ) -> Dict[str, Any] | None:
     key = condition.get("key")
-    operator = _normalize_operator(condition.get("operator"))
+    operator = normalize_metadata_operator(condition.get("operator"))
     value = condition.get("value")
     field_name = f"metadata.{key}.keyword"
     raw_field_name = f"metadata.{key}"
@@ -311,7 +312,15 @@ def _normalize_condition_operator(raw_condition: Any) -> str:
     return "and" if raw_condition is None else str(raw_condition).strip().lower()
 
 
-def _iter_valid_conditions(metadata_condition: Dict[str, Any]) -> List[Dict[str, Any]]:
+def iter_valid_conditions(
+    metadata_condition: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Return the conditions that carry a constraint.
+
+    A condition without a key or with a null value expresses no constraint in
+    the shared flat-condition contract, so every backend skips it identically
+    instead of inventing a per-backend meaning for it.
+    """
     conditions = metadata_condition.get("conditions") or []
     return [
         condition
