@@ -791,6 +791,27 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
+  test('does not take a re-layout as the reader own position when a click lands first', () => {
+    const harness = createAnchorHarness()
+    try {
+      const { scroller, model } = harness
+      const anchorBefore = model.anchorTopPx()
+      model.sample()
+
+      // Clicking a file link opens a panel beside the conversation. The pointer down marks input intent, and
+      // the re-layout that follows moves the offset before its scroll event is read; taking that as the
+      // position the reader chose is what left the paragraph they were reading above the pane's top edge.
+      model.apply({ aboveViewportGrowthPx: -332, coalesceScrollEvent: true })
+      fireEvent.pointerDown(scroller)
+      fireEvent.scroll(scroller)
+      harness.flushResizeObservers()
+
+      expect(model.anchorTopPx()).toBe(anchorBefore)
+    } finally {
+      harness.dispose()
+    }
+  })
+
   test('keeps the reader own scrolling while the streaming response below it grows', () => {
     const harness = createAnchorHarness()
     try {

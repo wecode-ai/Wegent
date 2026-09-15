@@ -1445,14 +1445,15 @@ function ScrollableMessagePaneContent({
       restoredScrollSnapshotRef.current = null
 
       const nativeEvent = event && 'nativeEvent' in event ? event.nativeEvent : event
-      if (!nativeEvent || !('deltaY' in nativeEvent) || Number(nativeEvent.deltaY) >= 0) return
-
-      clearScheduledScrolls()
-      explicitBottomFollowRef.current = false
-      userScrollPausedAutoFollowRef.current = true
-      // The reader is taking the viewport back. A row that re-measured since the last sample may already
-      // have rewritten the offset, so that shift is given back before this position is adopted as the
-      // one the reader is looking at — the wheel's own scrolling is applied on top of it afterwards.
+      if (nativeEvent && 'deltaY' in nativeEvent && Number(nativeEvent.deltaY) < 0) {
+        clearScheduledScrolls()
+        explicitBottomFollowRef.current = false
+        userScrollPausedAutoFollowRef.current = true
+      }
+      // The reader's position, sampled from their own input and before that input moves the viewport. Only
+      // input may take a position as theirs: a panel opening beside the conversation moves the offset too,
+      // and that movement has to stay with the layout so a correction can give it back. Whatever layout
+      // was still moving is put right first, so the reader is not handed a position taken mid-reflow.
       restoreReaderPositionIfOwned()
       captureUserViewportAnchor()
     },
@@ -1502,13 +1503,11 @@ function ScrollableMessagePaneContent({
       return
     }
     updateScrollState({ forceSave: true })
-    if (userScrollPausedAutoFollowRef.current) {
-      captureUserViewportAnchor()
-    }
+    // No sample is taken here: the reader's input already took one before it moved the viewport, and an
+    // offset that moved for the layout's own reasons must not be adopted as a position of theirs.
   }, [
     autoScrollSuspended,
     bottomOrigin,
-    captureUserViewportAnchor,
     currentScrollKey,
     followStreamingToBottom,
     isTurnNavigationAutoScrollSuspended,
