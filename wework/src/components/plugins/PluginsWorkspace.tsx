@@ -1,5 +1,4 @@
 import { usePluginRefreshReconciliation } from './hooks/usePluginRefreshReconciliation'
-import { clearPluginMarketplaceCache } from '@/features/plugins/pluginMarketplaceCache'
 import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
 import { RefreshCw, Settings2 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
@@ -1576,7 +1575,6 @@ export function PluginsWorkspace({
       readCloud: async () => (await pluginApi.listInstalledPlugins(currentDeviceId)).items,
       invalidate: () => {
         clearLocalCodexPluginsReadStateCache()
-        clearPluginMarketplaceCache()
       },
     },
     onComplete: () => {
@@ -3454,9 +3452,11 @@ export function PluginsWorkspace({
 
     void runPluginAutoUpdate({
       updateBatch: () => pluginApi.autoUpdateInstalledPlugins(),
+      syncPlugin: installedPluginId =>
+        pluginApi.syncInstalledPluginToDevice(installedPluginId, deviceId),
       syncDevice: () => pluginApi.syncInstalledPluginsToDevice(deviceId),
       syncWhenNoUpdates: marketplaceNeedsDeviceSync(pluginMarketplaceState.items),
-      onProgress: ({ updatedCount, remainingCount }) => {
+      onProgress: ({ processedCount, remainingCount }) => {
         if (currentDeviceIdRef.current !== deviceId) return
         setPluginOperationNotice({
           id: `plugin-auto-update-${deviceId}`,
@@ -3464,19 +3464,60 @@ export function PluginsWorkspace({
           message: t(
             'workbench.plugins_auto_update_progress',
             '正在自动更新插件：已处理 {{updated}} 个，剩余 {{remaining}} 个',
-            { updated: updatedCount, remaining: remainingCount }
+            { updated: processedCount, remaining: remainingCount }
           ),
         })
       },
     })
-      .then(updatedCount => {
+      .then(result => {
         if (currentDeviceIdRef.current !== deviceId) return
-        if (updatedCount > 0) {
+        if (result.failedCount > 0) {
+          const stageLabels: Record<string, string> = {
+            local_state: t('workbench.plugins_auto_update_stage_local_state', '读取本地插件状态'),
+            download: t('workbench.plugins_auto_update_stage_download', '下载插件包'),
+            checksum: t('workbench.plugins_auto_update_stage_checksum', '校验插件包'),
+            prepare: t('workbench.plugins_auto_update_stage_prepare', '准备本地插件目录'),
+            extract: t('workbench.plugins_auto_update_stage_extract', '解压插件包'),
+            codex_config: t('workbench.plugins_auto_update_stage_codex_config', '写入 Codex 配置'),
+            runtime_metadata: t(
+              'workbench.plugins_auto_update_stage_runtime_metadata',
+              '写入插件运行时配置'
+            ),
+            package: t('workbench.plugins_auto_update_stage_package', '检查本地插件包'),
+          }
+          const error = result.failures
+            .map(failure => {
+              const stage = failure.stage ? ` (${stageLabels[failure.stage] || failure.stage})` : ''
+              return `${failure.pluginName}${stage}: ${failure.message}`
+            })
+            .join('; ')
+          setPluginOperationNotice({
+            id: `plugin-auto-update-error-${deviceId}`,
+            kind: 'error',
+            message:
+              result.updatedCount > 0
+                ? t(
+                    'workbench.plugins_auto_update_partial',
+                    '已自动更新 {{updated}} 个插件，{{failed}} 个失败：{{error}}',
+                    {
+                      updated: result.updatedCount,
+                      failed: result.failedCount,
+                      error,
+                    }
+                  )
+                : t(
+                    'workbench.plugins_auto_update_failed',
+                    '插件自动更新失败，当前设备继续使用原版本：{{error}}',
+                    { error }
+                  ),
+          })
+          track('operation_failed', { operation: 'plugin_auto_update' })
+        } else if (result.updatedCount > 0) {
           setPluginOperationNotice({
             id: `plugin-auto-update-complete-${deviceId}`,
             kind: 'success',
             message: t('workbench.plugins_auto_update_complete', '已自动更新 {{count}} 个插件', {
-              count: updatedCount,
+              count: result.updatedCount,
             }),
           })
         } else {
