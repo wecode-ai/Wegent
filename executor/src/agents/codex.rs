@@ -3251,6 +3251,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
         user_developer_instructions: read_wework_codex_user_instructions(&wework_codex_home())?,
         effort: reasoning.effort.clone(),
         summary: reasoning.summary.clone(),
+        env: runtime_proxy_env(&request.model_config),
         ..CodexLaunchConfig::default()
     };
     launch_config
@@ -3834,6 +3835,20 @@ fn use_user_runtime_config(model_config: &Value) -> bool {
         bool_value(config.get("use_user_config")).unwrap_or(false)
             && bool_value(config.get("configured")).unwrap_or(true)
     })
+}
+
+fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
+    let Some(runtime_config) = runtime_config(model_config) else {
+        return BTreeMap::new();
+    };
+    if !bool_value(runtime_config.get("use_proxy")).unwrap_or(false) {
+        return BTreeMap::new();
+    }
+    let Some(proxy_url) = runtime_proxy_url(model_config) else {
+        return BTreeMap::new();
+    };
+
+    proxy_environment(Some(proxy_url))
 }
 
 fn proxy_environment(proxy_url: Option<&str>) -> BTreeMap<String, String> {

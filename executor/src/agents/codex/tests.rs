@@ -1708,7 +1708,7 @@ fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
 }
 
 #[test]
-fn codex_launch_config_leaves_proxy_ownership_to_runtime_configuration() {
+fn codex_launch_config_forwards_runtime_proxy_to_standalone_engine() {
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -1728,9 +1728,18 @@ fn codex_launch_config_leaves_proxy_ownership_to_runtime_configuration() {
     let launch_config =
         build_codex_launch_config(&request).expect("Codex launch config should be built");
 
-    assert!(!launch_config.env.contains_key("HTTP_PROXY"));
-    assert!(!launch_config.env.contains_key("HTTPS_PROXY"));
-    assert!(!launch_config.env.contains_key("ALL_PROXY"));
+    assert_eq!(
+        launch_config.env.get("HTTP_PROXY").map(String::as_str),
+        Some("http://127.0.0.1:7890")
+    );
+    assert_eq!(
+        launch_config.env.get("HTTPS_PROXY").map(String::as_str),
+        Some("http://127.0.0.1:7890")
+    );
+    assert_eq!(
+        launch_config.env.get("ALL_PROXY").map(String::as_str),
+        Some("http://127.0.0.1:7890")
+    );
 }
 
 #[test]
