@@ -227,11 +227,8 @@ describe('ElectronEmbeddedBrowserView', () => {
     const previousWebview = host.querySelector('webview')
     const previousPartition = previousWebview?.getAttribute('partition')
     const destroy = vi.fn(() => {
-      const connectedWebviews = host.querySelectorAll('webview')
-      expect(connectedWebviews).toHaveLength(2)
-      expect(connectedWebviews[0]).toBe(previousWebview)
-      expect(connectedWebviews[1]).not.toBe(previousWebview)
-      expect(connectedWebviews[1].isConnected).toBe(true)
+      expect(host.querySelectorAll('webview')).toHaveLength(1)
+      expect(host.querySelector('webview')).toBe(previousWebview)
     })
     Object.assign(previousWebview as HTMLElement, { destroy })
 
@@ -242,12 +239,19 @@ describe('ElectronEmbeddedBrowserView', () => {
       })
     })
 
+    expect(host.querySelectorAll('webview')).toHaveLength(0)
+    expect(destroy).toHaveBeenCalledOnce()
+    expect(previousWebview?.isConnected).toBe(false)
+
+    await act(async () => {
+      vi.advanceTimersByTime(0)
+    })
+
     const nextWebview = host.querySelector('webview')
     expect(nextWebview).not.toBe(previousWebview)
     expect(host.querySelectorAll('webview')).toHaveLength(1)
     expect(nextWebview?.getAttribute('partition')).not.toBe(previousPartition)
-    expect(destroy).toHaveBeenCalledOnce()
-    expect(previousWebview?.isConnected).toBe(false)
+    expect(nextWebview?.isConnected).toBe(true)
     expect(host.style.visibility).toBe('visible')
     expect(host.style.pointerEvents).toBe('auto')
   })
