@@ -4,6 +4,8 @@ import {
   applyModelContextWindowOverride,
   findModelForSelection,
   modelContextWindowFromConfig,
+  modelInputTokenBudget,
+  modelMaxOutputTokensFromConfig,
 } from './runtimeContextUsage'
 
 const baseUsage: RuntimeContextUsage = {
@@ -48,6 +50,36 @@ describe('runtimeContextUsage', () => {
       applyModelContextWindowOverride(baseUsage, model({ model_context_window: 1_000_000 }))
         .modelContextWindow
     ).toBe(1_000_000)
+  })
+
+  test('reads max output tokens from supported model config keys', () => {
+    expect(modelMaxOutputTokensFromConfig(model({ max_output_tokens: 384_000 }))).toBe(384_000)
+    expect(modelMaxOutputTokensFromConfig(model({ maxOutputTokens: '384000' }))).toBe(384_000)
+    expect(modelMaxOutputTokensFromConfig(model({ max_output_tokens: 0 }))).toBeNull()
+  })
+
+  test('reserves the configured output budget from the input token budget', () => {
+    expect(
+      modelInputTokenBudget(model({ context_window: 1_000_000, max_output_tokens: 384_000 }))
+    ).toBe(616_000)
+  })
+
+  test('keeps the full context window when no output budget is reserved', () => {
+    expect(modelInputTokenBudget(model({ context_window: 1_000_000 }))).toBe(1_000_000)
+    expect(
+      modelInputTokenBudget(model({ context_window: 1_000_000, max_output_tokens: 1_000_000 }))
+    ).toBe(1_000_000)
+    expect(modelInputTokenBudget(model({ max_output_tokens: 384_000 }))).toBeNull()
+    expect(modelInputTokenBudget(null)).toBeNull()
+  })
+
+  test('measures reported usage against the reserved input token budget', () => {
+    expect(
+      applyModelContextWindowOverride(
+        baseUsage,
+        model({ context_window: 1_000_000, max_output_tokens: 384_000 })
+      ).modelContextWindow
+    ).toBe(616_000)
   })
 
   test('finds selected model by name and type', () => {

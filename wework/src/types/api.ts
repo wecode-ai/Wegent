@@ -331,6 +331,7 @@ export interface NormalizedRuntimeMessage {
 
 export interface RuntimeTurnNavigationItem {
   id: string
+  turnId?: string | null
   turnIndex: number
   messageIndex: number
   cursor?: string | null
@@ -384,6 +385,7 @@ export interface RuntimeTaskSummary {
   status?: string | null
   queuePosition?: number | null
   goalStatus?: RuntimeGoalStatus | null
+  goalExecutionStatus?: RuntimeGoalExecutionStatus | null
   optimistic?: boolean
   cachedProjection?: boolean
   error?: string | null
@@ -646,6 +648,7 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeTranscriptTurn {
   id: string
   items: RuntimeTranscriptTurnItem[]
+  itemMerge?: 'prepend'
   messageIndex?: number | null
   status?: string
   runtimeStatus?: string | null
@@ -682,6 +685,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   afterCursor?: string | null
   refresh?: boolean
   includeFullContent?: boolean
+  navigationOnly?: boolean
 }
 
 export interface RuntimeSendRequest {
@@ -731,6 +735,8 @@ export interface RequestUserInputResponse {
 export interface RuntimeSendResponse {
   accepted: boolean
   taskId: string
+  status?: 'queued' | 'running'
+  queuePosition?: number | null
   turnId?: string
   turn_id?: string
   compactionItemId?: string
@@ -769,6 +775,8 @@ export type RuntimeGoalStatus =
   | 'usageLimited'
   | 'budgetLimited'
   | 'complete'
+
+export type RuntimeGoalExecutionStatus = 'running' | 'recovering' | 'needsAttention'
 
 export interface RuntimeGoal {
   threadId: string
@@ -809,6 +817,7 @@ export interface RuntimeGoalSetResponse {
   accepted: boolean
   taskId: string
   goal: RuntimeGoal
+  resumed?: boolean
   error?: string | null
 }
 
@@ -1309,6 +1318,7 @@ export interface RuntimeTaskExecutionConfig {
 
 export interface RuntimeTaskCreateRequest {
   schemaVersion?: 1 | 2 | 3
+  forceStart?: boolean
   wegentTeamId?: number
   newSession?: boolean
   projectId?: number
@@ -1779,6 +1789,7 @@ export interface RuntimeTokenUsageBreakdown {
 export interface RuntimeContextUsage {
   total: RuntimeTokenUsageBreakdown
   last: RuntimeTokenUsageBreakdown
+  /** Context window the reported usage is measured against, excluding the model's output budget. */
   modelContextWindow: number
 }
 
@@ -2145,6 +2156,8 @@ export interface InstalledPluginComponents {
   mcps: PluginMCPComponent[]
   connectors?: Array<{
     slug: string
+    displayName?: string | null
+    authorizationGroup?: { id: string; displayName: string } | null
     authPolicy: 'on_install' | 'on_use' | 'optional'
     localAuth?: PluginLocalAuthDefinition | null
     accountAuth?: {
@@ -2385,6 +2398,7 @@ export interface PluginMarketplaceInstallResponse {
 }
 
 export interface PluginDeviceSyncResponse {
+  reconciled?: boolean
   deviceId: string
   pendingCount: number
   sync: DeviceCapabilitySyncResponse
@@ -2682,6 +2696,7 @@ export type ChatBlockType =
   | 'plan'
   | 'error'
   | 'guidance'
+  | 'subagent'
   | 'file_changes'
 
 export interface ChatBlock {
@@ -2696,6 +2711,23 @@ export interface ChatBlock {
   tool_output?: unknown
   tool_output_truncated?: boolean
   tool_output_original_bytes?: number
+  parent_tool_use_id?: string
+  parentToolUseId?: string
+  agent_type?: string
+  agentType?: string
+  agent_id?: string
+  agentId?: string
+  agent_thread_id?: string
+  agentThreadId?: string
+  agent_path?: string
+  agentPath?: string
+  agent_status?: 'running' | 'done' | 'interrupted'
+  agentStatus?: 'running' | 'done' | 'interrupted'
+  title?: string
+  description?: string
+  output?: string
+  summary?: string
+  children?: ChatBlock[]
   render_payload?: unknown
   renderPayload?: unknown
   file_changes?: TurnFileChangesSummary
@@ -2731,6 +2763,10 @@ export interface ChatBlockUpdatedPayload {
   toolInput?: Record<string, unknown>
   renderPayload?: unknown
   fileChanges?: TurnFileChangesSummary
+  output?: string
+  summary?: string
+  parentToolUseId?: string
+  agentStatus?: 'running' | 'done' | 'interrupted'
   status?: ChatBlock['status'] | 'running'
   completedAt?: number
   durationMs?: number

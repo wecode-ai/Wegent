@@ -124,6 +124,9 @@
   "storyboard_page_no_task_error": "Cannot send message, missing task info",
   "storyboard_page_loading": "Loading storyboard...",
   "storyboard_page_back": "Back",
+  "highlightActions": {
+    "renderRequest": "Regenerate the final video using the latest edits saved in the timeline editor"
+  },
   "highlight_result": {
     "title": "AI Highlight Editing",
     "completed": "3 highlight videos edited for you",
@@ -230,8 +233,16 @@
       "keepAudio": "Keep source audio",
       "subtitle": "Subtitle {{index}}",
       "musicPrompt": "Background music {{index}}",
-      "openCut": "Refine in OpenCut",
-      "openCutTitle": "OpenCut timeline editor",
+      "openCut": "Edit",
+      "saveAndRender": "Save and render video",
+      "saving": "Saving...",
+      "savingAndRendering": "Saving and rendering...",
+      "hostNotReady": "Waiting for the timeline editor to connect...",
+      "saveCancelled": "The timeline editor was closed or changed",
+      "saveTimeout": "Saving the timeline timed out. Check your connection and try again.",
+      "renderSubmitFailed": "Timeline saved, but rendering could not be submitted. Please try again.",
+      "savedAndRendering": "Timeline saved. Submitting rendering.",
+      "openCutTitle": "Timeline editor",
       "openCutDescription": "Refine and save the video timeline in OpenCut",
       "openCutLoading": "Loading OpenCut...",
       "openCutLoadFailed": "Failed to load the OpenCut timeline. Try again later.",

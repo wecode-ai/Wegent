@@ -97,8 +97,11 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
                 db,
                 skill_name=skill_name,
                 namespace=requested_ref["namespace"],
+                skill_id=requested_ref.get("skill_id"),
                 is_public=requested_ref["is_public"],
-                user_id=team_owner_id,
+                user_id=(
+                    task_owner_id if requested_ref.get("skill_id") else team_owner_id
+                ),
                 team_namespace=team_namespace or "default",
             )
             if skill:
@@ -260,8 +263,11 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
                 db,
                 skill_name=skill_name,
                 namespace=requested_ref["namespace"],
+                skill_id=requested_ref.get("skill_id"),
                 is_public=requested_ref["is_public"],
-                user_id=team_owner_id,
+                user_id=(
+                    task_owner_id if requested_ref.get("skill_id") else team_owner_id
+                ),
                 team_namespace=team.namespace or "default",
             )
             if skill:

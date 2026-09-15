@@ -34,11 +34,16 @@ use crate::{
 };
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
+const DOWNLOAD_ATTEMPTS: usize = 3;
 const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
 
 pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> ExecutionRequest {
-    if request.extra.get("interactive_form_answer").is_some() {
+    if request
+        .extra
+        .get("interactive_form_answer")
+        .is_some_and(|answer| !answer.is_null())
+    {
         return request;
     }
     let attachments = attachment_records(&request);
@@ -1171,13 +1176,12 @@ async fn download_skill(
         path.push_str(&format!("&task_id={task_id}"));
     }
     let local_hash = installed_skill_hash(&plan.skills_dir, skill_name);
-    let download = get_skill_archive(
+    let download = download_skill_archive_with_retry(
         client,
         &plan.auth_token,
         api_base_url,
         &path,
         local_hash.as_deref(),
-        DOWNLOAD_TIMEOUT,
     )
     .await?;
     match download {
@@ -1250,6 +1254,58 @@ enum SkillArchiveResponse {
         bytes: Vec<u8>,
         content_hash: Option<String>,
     },
+}
+
+/// Download a skill archive with bounded retries for transient failures.
+///
+/// Transient errors (timeouts, connection failures, aborted body reads) are
+/// retried up to [`DOWNLOAD_ATTEMPTS`] times; each retry is logged with a
+/// sanitized reason. Non-retryable errors fail immediately.
+async fn download_skill_archive_with_retry(
+    client: &reqwest::Client,
+    auth_token: &str,
+    api_base_url: &str,
+    path: &str,
+    local_hash: Option<&str>,
+) -> Result<SkillArchiveResponse, String> {
+    let mut last_error = String::new();
+    for attempt in 1..=DOWNLOAD_ATTEMPTS {
+        match get_skill_archive(
+            client,
+            auth_token,
+            api_base_url,
+            path,
+            local_hash,
+            DOWNLOAD_TIMEOUT,
+        )
+        .await
+        {
+            Ok(response) => return Ok(response),
+            Err(error) if attempt < DOWNLOAD_ATTEMPTS => {
+                if is_retryable_download_error(&error) {
+                    log_executor_event(
+                        "skill archive download retry",
+                        &[
+                            ("attempt", attempt.to_string()),
+                            ("reason", safe_skill_deployment_reason(&error)),
+                        ],
+                    );
+                    last_error = error;
+                    continue;
+                }
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error)
+}
+
+fn is_retryable_download_error(error: &str) -> bool {
+    error.starts_with("backend download timed out")
+        || error.starts_with("backend download connection failed")
+        || error.starts_with("backend download request failed")
+        || error.starts_with("backend download body read failed")
 }
 
 async fn get_skill_archive(
@@ -1576,10 +1632,7 @@ fn attachment_record(value: &Value) -> Option<AttachmentRecord> {
         subtask_id: value
             .get("subtask_id")
             .or_else(|| value.get("subtaskId"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned),
+            .and_then(value_id_string),
         error: value
             .get("error")
             .and_then(|value| value_string(Some(value))),
@@ -1640,10 +1693,7 @@ fn attachment_subtask_id(attachments: &[AttachmentRecord], request: &ExecutionRe
                 .extra
                 .get("user_subtask_id")
                 .or_else(|| request.extra.get("userSubtaskId"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
+                .and_then(value_id_string)
         })
         .unwrap_or_else(|| request.subtask_id.clone())
 }
@@ -2321,6 +2371,17 @@ fn value_string(value: Option<&Value>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn value_id_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => {
+            let value = value.trim();
+            (!value.is_empty()).then(|| value.to_owned())
+        }
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
 fn toml_key_path(segments: &[&str]) -> String {
     segments
         .iter()
@@ -2564,6 +2625,102 @@ mod tests {
         assert_eq!(payload["attachments"][0]["local_path"], "/workspace/a.txt");
         assert_eq!(payload["attachments"][1]["status"], "failed");
         assert_eq!(payload["attachments"][1]["error"], "HTTP 404");
+    }
+
+    #[test]
+    fn null_interactive_form_answer_keeps_claude_attachment_processing() {
+        let _lock = crate::test_env::lock();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let temp = env::temp_dir().join(format!(
+                "claude-null-interactive-attachment-{}",
+                std::process::id()
+            ));
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buffer = vec![0; 8192];
+                let read = stream.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..read]);
+                assert!(request.starts_with("GET /api/attachments/1/executor-download "));
+                assert!(request.contains("authorization: Bearer test-token\r\n"));
+                let body = b"image-bytes";
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(header.as_bytes()).await.unwrap();
+                stream.write_all(body).await.unwrap();
+            });
+            let _workspace = EnvGuard::set("WORKSPACE_ROOT", temp.to_str().unwrap());
+            let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
+            let _task_api = EnvGuard::remove("TASK_API_DOMAIN");
+            let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+            let request: ExecutionRequest = serde_json::from_value(json!({
+                "task_id": 72,
+                "subtask_id": 204,
+                "prompt": "Read /home/user/72:executor:attachments/203/image.png",
+                "auth_token": "test-token",
+                "backend_url": format!("http://{address}"),
+                "interactive_form_answer": null,
+                "attachments": [{
+                    "id": 1,
+                    "original_filename": "image.png",
+                    "file_size": 12,
+                    "mime_type": "image/png",
+                    "subtask_id": 203
+                }]
+            }))
+            .unwrap();
+
+            let prepared = prepare_claude_execution_request(request).await;
+            let prompt = prepared.prompt.as_str().unwrap();
+            let downloaded = temp
+                .join("72")
+                .join("72:executor:attachments")
+                .join("203")
+                .join("image.png");
+
+            tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .expect("mock attachment server timed out")
+                .unwrap();
+            assert_eq!(fs::read(&downloaded).unwrap(), b"image-bytes");
+            assert!(prompt.contains(downloaded.to_str().unwrap()));
+            assert!(!prompt.contains("/home/user/72:executor:attachments/203/image.png"));
+            let _ = fs::remove_dir_all(temp);
+        });
+    }
+
+    #[tokio::test]
+    async fn populated_interactive_form_answer_skips_claude_attachment_processing() {
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "task_id": 72,
+            "subtask_id": 204,
+            "prompt": "Read /home/user/72:executor:attachments/203/image.png",
+            "interactive_form_answer": {"tool_use_id": "tool-1", "answers": {}},
+            "attachments": [{
+                "id": 1,
+                "original_filename": "image.png",
+                "status": "success",
+                "local_path": "/workspace/image.png",
+                "file_size": 12,
+                "mime_type": "image/png",
+                "subtask_id": 203
+            }]
+        }))
+        .unwrap();
+
+        let prepared = prepare_claude_execution_request(request).await;
+
+        assert_eq!(
+            prepared.prompt,
+            Value::String("Read /home/user/72:executor:attachments/203/image.png".to_owned())
+        );
     }
 
     #[test]

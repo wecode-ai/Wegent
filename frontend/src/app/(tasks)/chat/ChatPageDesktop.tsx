@@ -80,7 +80,7 @@ export function ChatPageDesktop() {
   const router = useRouter()
 
   // Team state from context (centralized to avoid duplicate API calls)
-  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
+  const { teams, isTeamsLoading, loadError, refreshTeams } = useTeamContext()
 
   // Task context for refreshing task list
   const {
@@ -496,6 +496,8 @@ export function ChatPageDesktop() {
             <ChatArea
               teams={visibleTeams}
               isTeamsLoading={isTeamsLoading}
+              loadError={teams.length === 0 ? loadError : null}
+              rawTeamsEmpty={teams.length === 0}
               selectedTeamForNewTask={_selectedTeamForNewTask}
               showRepositorySelector={showRepositorySelector}
               taskType={taskType}

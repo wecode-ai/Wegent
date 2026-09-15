@@ -258,7 +258,26 @@ class ProjectAutomationExecution:
             if adopt_existing_workflow
             else instantiate_workflow(definition)
         )
+        if workflow.advancement_policy == "ai" and (
+            workflow.execution_config is None
+            or not workflow.execution_config.is_complete()
+        ):
+            from app.services.issue_execution_configuration import (
+                project_automation_execution_config,
+            )
+
+            workflow.execution_config = project_automation_execution_config(
+                db,
+                rule,
+                issue_creator_user_id=int(item.created_by_user_id or owner.id),
+            )
         workflow_snapshot = workflow.model_dump(mode="json")
+        if workflow.advancement_policy == "ai":
+            from app.services.issue_execution_configuration import (
+                require_coordinator_execution_config,
+            )
+
+            require_coordinator_execution_config(workflow.execution_config)
         item_metadata["workflow"] = workflow_snapshot
         item_metadata["workflow_automation"] = {
             "rule_id": str(rule.id),
@@ -1777,6 +1796,9 @@ class ProjectAutomationProcessor:
                 item=loop_item,
                 user_id=event.actor_user_id or 0,
             )
+            from app.tasks.robot_queue_tasks import consume_queues_background
+
+            await consume_queues_background()
             return []
         matching_rules = self.matching_rules(db, event, automation_id=automation_id)
         logger.info(

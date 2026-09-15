@@ -1,6 +1,6 @@
 import '@/i18n'
 
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { RequestUserInputCard } from './RequestUserInputCard'
@@ -52,6 +52,27 @@ describe('RequestUserInputCard', () => {
       },
     })
     expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  test('ignores duplicate submissions while the runtime request is in flight', async () => {
+    let resolveSubmit: ((accepted: boolean) => void) | undefined
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveSubmit = resolve
+        })
+    )
+    render(<RequestUserInputCard payload={payload} onSubmit={onSubmit} />)
+
+    const option = screen.getByTestId('request-user-input-option-goal-1')
+    fireEvent.click(option)
+    fireEvent.click(option)
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveSubmit?.(true)
+    })
   })
 
   test('wraps long option text and scrolls an oversized question list', () => {

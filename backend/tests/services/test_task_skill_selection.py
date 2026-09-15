@@ -4,10 +4,24 @@
 
 import json
 
+import pytest
+
 from app.services.task_skill_selection import (
     build_task_skill_labels,
     parse_requested_skill_refs_from_labels,
 )
+
+
+@pytest.mark.parametrize("skill_id", [0, -1, "invalid", True, 1.5, None])
+def test_invalid_optional_skill_id_is_omitted_from_persisted_refs(skill_id):
+    labels = build_task_skill_labels([{"name": "pdf", "skill_id": skill_id}])
+    refs = parse_requested_skill_refs_from_labels(labels)
+    assert refs == [{"name": "pdf", "namespace": "default", "is_public": False}]
+
+
+def test_positive_skill_id_survives_label_round_trip():
+    labels = build_task_skill_labels([{"name": "pdf", "skill_id": 42}])
+    assert parse_requested_skill_refs_from_labels(labels)[0]["skill_id"] == 42
 
 
 def test_build_task_skill_labels_persists_requested_refs_and_names():

@@ -9,7 +9,15 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { forwardRef, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  forwardRef,
+  useContext,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import type { TFunction } from 'i18next'
 import { Button } from '@/components/ui/button'
@@ -26,6 +34,7 @@ import type {
   ProjectWithTasks,
   RuntimeContextUsage,
   RuntimeGoal,
+  RuntimeGoalExecutionStatus,
   RuntimePlanEventPayload,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
@@ -59,6 +68,7 @@ import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
 import type { ModelSelectorCloseReason } from './composer/model-selector-types'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { QuickPhrase } from '@/desktop/appPreferences'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -169,6 +179,7 @@ export interface ChatInputProps {
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeComments?: CodeCommentContext[]
   onCancelQueuedMessage?: (id: string) => void
+  onForceStartQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
   onInterruptAndSendQueuedMessage?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
@@ -205,6 +216,7 @@ export interface ChatInputProps {
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
   goalContinuing?: boolean
+  goalExecutionStatus?: RuntimeGoalExecutionStatus | null
   taskPlan?: RuntimePlanEventPayload | null
   goalDraftActive?: boolean
   onSetGoal?: () => void
@@ -580,6 +592,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     guidanceMessages = [],
     codeComments = [],
     onCancelQueuedMessage,
+    onForceStartQueuedMessage,
     onSendQueuedAsGuidance,
     onInterruptAndSendQueuedMessage,
     onEditQueuedMessage,
@@ -613,6 +626,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onCompactContext,
     goal,
     goalContinuing = false,
+    goalExecutionStatus = null,
     taskPlan,
     goalDraftActive = false,
     onSetGoal,
@@ -629,6 +643,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
 ) {
   const { t } = useTranslation('common')
   const { t: tChat } = useTranslation('chat')
+  const workbench = useContext(WorkbenchContext)
+  const sendKey = workbench?.state?.user?.preferences?.send_key ?? 'enter'
   const [pendingQueuedSend, setPendingQueuedSend] = useState<PendingQueuedSend | null>(null)
   const [pendingModelSelection, setPendingModelSelection] = useState<PendingModelSelection | null>(
     null
@@ -830,6 +846,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     cloudSpaceEnabled,
     onSelectExternalMention,
     onSelectCloudProject,
+    sendKey,
   }
   const errorBanner = error ? (
     <div
@@ -845,6 +862,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       queuedMessages={queuedMessages}
       guidanceMessages={guidanceMessages}
       onCancelQueuedMessage={onCancelQueuedMessage}
+      onForceStartQueuedMessage={onForceStartQueuedMessage}
       onSendQueuedAsGuidance={onSendQueuedAsGuidance}
       onInterruptAndSendQueuedMessage={onInterruptAndSendQueuedMessage}
       onEditQueuedMessage={onEditQueuedMessage ? handleEditQueuedMessage : undefined}
@@ -917,6 +935,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 integrated
                 goal={displayedGoal}
                 continuing={goalContinuing}
+                executionStatus={goalExecutionStatus}
                 onEditGoal={onEditGoal}
                 onPauseGoal={onPauseGoal}
                 onResumeGoal={onResumeGoal}
@@ -1036,6 +1055,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         <GoalStatusBar
           goal={displayedGoal}
           continuing={goalContinuing}
+          executionStatus={goalExecutionStatus}
           onEditGoal={onEditGoal}
           onPauseGoal={onPauseGoal}
           onResumeGoal={onResumeGoal}

@@ -64,6 +64,37 @@ def test_cancel_task_forwards_subtask_id_to_executor(mocker):
     response.raise_for_status.assert_called_once_with()
 
 
+def test_initial_dispatch_defaults_to_one_attempt_with_30_second_timeout(
+    mocker, monkeypatch
+):
+    monkeypatch.delenv("EXECUTOR_INITIAL_DISPATCH_MAX_RETRIES", raising=False)
+    monkeypatch.delenv("EXECUTOR_INITIAL_DISPATCH_RETRY_INTERVAL", raising=False)
+    monkeypatch.delenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", raising=False)
+    executor = object.__new__(K8sExecutor)
+    response = mocker.MagicMock(status_code=200)
+    response.json.return_value = {}
+    send_task = mocker.patch.object(
+        executor,
+        "_send_task_to_container",
+        return_value=response,
+    )
+
+    result = executor._dispatch_initial_task_to_instance(
+        {"task_id": 123},
+        "executor-1",
+        "10.0.0.8",
+        8080,
+    )
+
+    assert result == {"status": "success", "error_msg": ""}
+    send_task.assert_called_once_with(
+        {"task_id": 123},
+        "10.0.0.8",
+        8080,
+        timeout=30.0,
+    )
+
+
 def test_warm_pool_template_uses_dynamic_runtime_binding_metadata():
     pod = build_warm_pool_pod_config(
         executor_name="warmpool-test",

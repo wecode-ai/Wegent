@@ -581,6 +581,10 @@ async def submit_workflow_plan(
                 "Workflow plan execution scheduling failed execution_id=%s",
                 execution_id,
             )
+    if execution_ids:
+        from app.tasks.robot_queue_tasks import consume_queues_background
+
+        await consume_queues_background()
     return result
 
 
@@ -618,7 +622,7 @@ async def report_workflow_outcome(
             user_id=token_info.user_id,
             values=values,
         )
-        if values.verdict == "needs_rework" and view.status == "planning":
+        if view.status == "planning":
             parent = db.get(LoopItem, view.issue_id)
             if parent is None:
                 raise ValueError("Workflow parent Issue is unavailable")

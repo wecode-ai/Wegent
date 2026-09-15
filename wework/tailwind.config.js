@@ -7,6 +7,7 @@ export default {
     './dsh/*/client.js',
     './dsh/*/src/**/*.{ts,tsx}',
     './wecode/**/*.{ts,tsx}',
+    '../packages/collaboration/src/**/*.{ts,tsx}',
     './node_modules/streamdown/dist/*.js',
   ],
   theme: {

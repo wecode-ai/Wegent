@@ -318,6 +318,9 @@ impl RuntimeWorkRpcHandler {
         } else {
             "codex".to_owned()
         };
+        let force_start = bool_field(&payload, "forceStart")
+            .or_else(|| bool_field(&payload, "force_start"))
+            .unwrap_or(false);
         let local_task_id = id_field(&payload, "taskId")
             .or_else(|| id_field(&payload, "task_id"))
             .unwrap_or_else(|| format!("{runtime}-local-{}", now_ms()));
@@ -383,6 +386,25 @@ impl RuntimeWorkRpcHandler {
             .get("workspaceSourceTask")
             .or_else(|| payload.get("workspace_source_task"))
             .and_then(Value::as_object);
+        let mut side_source = side_source_thread(&payload)?;
+        let side_source_workspace_path = side_source
+            .as_ref()
+            .map(|source| source.workspace_path.clone());
+        if let Some(source_workspace_path) = side_source_workspace_path.as_deref() {
+            for requested_workspace_path in [payload_workspace_path.as_deref(), request.cwd()]
+                .into_iter()
+                .flatten()
+            {
+                if normalize_workspace_path(requested_workspace_path)
+                    != normalize_workspace_path(source_workspace_path)
+                {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "sideSource workspacePath conflicts with the requested workspace",
+                    ));
+                }
+            }
+        }
         let inherited_workspace_path = if let Some(source) = workspace_source_task {
             let source_device_id = source
                 .get("deviceId")
@@ -417,7 +439,8 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
-        let source_workspace_path = payload_workspace_path
+        let source_workspace_path = side_source_workspace_path
+            .or(payload_workspace_path)
             .or(inherited_workspace_path)
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| {
@@ -464,7 +487,9 @@ impl RuntimeWorkRpcHandler {
                 );
                 AppIpcError::new("bad_request", "workspacePath is required")
             })?;
-        let workspace_path = if request.workspace_source.as_deref() == Some("git_worktree") {
+        let workspace_path = if side_source.is_none()
+            && request.workspace_source.as_deref() == Some("git_worktree")
+        {
             let git_ref = payload
                 .get("execution")
                 .and_then(|execution| execution.get("workspace"))
@@ -607,13 +632,15 @@ impl RuntimeWorkRpcHandler {
         self.schedule_worktree_prune();
         if is_claude_runtime(&runtime) {
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
-            if let Err(error) = self.spawn_claude_turn(local_task_id.clone(), request).await {
+            if let Err(error) = self
+                .spawn_claude_turn(local_task_id.clone(), request, force_start)
+                .await
+            {
                 self.retain_failed_runtime_task(&local_task_id, &error);
                 return Err(error);
             }
         } else {
             let initial_thread_goal = initial_thread_goal_from_payload(&payload);
-            let mut side_source = side_source_thread(&payload);
             if let Some(source) = &mut side_source {
                 self.wait_for_running_side_source_turn(&source.thread_id)
                     .await;
@@ -621,19 +648,22 @@ impl RuntimeWorkRpcHandler {
                     source.thread_path = self.thread_path_for_id(&source.thread_id).await;
                 }
             }
-            if let Err(error) = self
-                .spawn_turn(SpawnTurnRequest {
-                    local_task_id: local_task_id.clone(),
-                    runtime: "codex".to_owned(),
-                    request,
-                    direct_thread_id: None,
-                    fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
-                    fork_thread_path: side_source.and_then(|source| source.thread_path),
-                    resume_thread_id: None,
-                    initial_thread_goal,
-                })
-                .await
-            {
+            let turn = SpawnTurnRequest {
+                local_task_id: local_task_id.clone(),
+                runtime: "codex".to_owned(),
+                request,
+                direct_thread_id: None,
+                fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
+                fork_thread_path: side_source.and_then(|source| source.thread_path),
+                resume_thread_id: None,
+                initial_thread_goal,
+            };
+            let spawn_result = if force_start {
+                self.spawn_forced_turn(turn).await
+            } else {
+                self.spawn_turn(turn).await
+            };
+            if let Err(error) = spawn_result {
                 self.retain_failed_runtime_task(&local_task_id, &error);
                 self.supervisor_model_configs
                     .lock()
@@ -911,7 +941,7 @@ impl RuntimeWorkRpcHandler {
             }
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
             self.prepare_claude_send(&local_task_id, &workspace_path, &request, &payload);
-            self.spawn_claude_turn(local_task_id.clone(), request)
+            self.spawn_claude_turn(local_task_id.clone(), request, false)
                 .await?;
             let queue_position = self
                 .queued_local_task_position(&local_task_id)

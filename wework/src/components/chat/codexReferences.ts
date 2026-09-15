@@ -1,7 +1,9 @@
 import type { CodexReference, TurnFileChangesSummary } from '@/types/api'
-import { classifyMarkdownLink, splitMarkdownFileLineSuffix } from './assistantMarkdownLinks'
-
-const MARKDOWN_LINK_PATTERN = /\[([^\]]+)]\((<[^>]+>|[^)\s]+)(?:\s+["'][^"']*["'])?\)/g
+import {
+  classifyMarkdownLink,
+  extractMarkdownLinks,
+  splitMarkdownFileLineSuffix,
+} from './assistantMarkdownLinks'
 const CODEX_REFERENCE_DOCUMENT_EXTENSIONS = new Set([
   'doc',
   'docx',
@@ -39,9 +41,9 @@ export function getDisplayCodexReferences(references: CodexReference[]): CodexRe
 
 function extractAssistantFileReferences(content: string): CodexReference[] {
   const references: CodexReference[] = []
-  for (const match of content.matchAll(MARKDOWN_LINK_PATTERN)) {
-    const title = match[1]?.trim()
-    const href = unwrapMarkdownHref(match[2])
+  for (const link of extractMarkdownLinks(content)) {
+    const title = link.title
+    const href = link.href
     const target = classifyMarkdownLink(href)
     if (target.kind !== 'file') continue
     if (!isCodexDocumentReferencePath(target.path)) continue
@@ -66,13 +68,6 @@ function extractFileChangeReferences(
       path: file.path,
       title: basename(file.path),
     }))
-}
-
-function unwrapMarkdownHref(rawHref: string | undefined): string | undefined {
-  const value = rawHref?.trim()
-  if (!value) return undefined
-  if (value.startsWith('<') && value.endsWith('>')) return value.slice(1, -1)
-  return value
 }
 
 function normalizeCodexReference(reference: CodexReference): CodexReference | null {

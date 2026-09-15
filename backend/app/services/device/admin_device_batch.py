@@ -319,7 +319,7 @@ class AdminDeviceBatchManager:
         ]
         if not keys:
             return {}
-        return await cache_manager.mget(keys)
+        return await cache_manager.mget_or_raise(keys)
 
     async def _run_local_upgrade_item(
         self,

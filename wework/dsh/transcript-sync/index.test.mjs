@@ -312,6 +312,59 @@ test('branches deterministically when the cloud causal head changed', async () =
   assert.equal(source.calls.at(-1).options.snapshot, true)
 })
 
+test('branches from the available cloud head when the cached causal base is newer', async () => {
+  const source = await segmentSource()
+  const pending = turn({
+    transcriptId: 'shared',
+    taskId: 'local-task',
+    sequence: 16,
+    turnId: 'turn-b',
+    baseSequence: 15,
+    cloudSequence: 16,
+  })
+  const outbox = new MemorySyncOutbox([pending])
+  const leases = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'device-b',
+    outbox,
+    source,
+    state: state(),
+    target: { async acknowledge() {} },
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          if (request.path.endsWith('/lease')) {
+            leases.push(request)
+            return {
+              status: 200,
+              body: {
+                fencingToken: 9,
+                currentSequence: request.path.includes('/shared/') ? 11 : 0,
+              },
+            }
+          }
+          if (request.path.endsWith('/encryption-key')) {
+            return {
+              status: 200,
+              body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          return { status: 200, body: {} }
+        },
+      },
+    },
+  })
+
+  await sync.flushPending()
+
+  assert.equal(outbox.count(), 0)
+  const branchLease = leases.find(request => request.path.includes('/fork-'))
+  assert.equal(branchLease.body.parentTranscriptId, 'shared')
+  assert.equal(branchLease.body.forkedAtSequence, 11)
+  assert.equal(source.calls.at(-1).options.snapshot, true)
+})
+
 test('discards an orphaned session and continues uploading healthy sessions', async () => {
   const source = await segmentSource()
   const summarize = source.summarize.bind(source)

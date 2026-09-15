@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
-import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
+import { WEWORK_HOST_SERVICES } from '@/features/dsh-runtime/conversationHostServices'
+import { hasMatchingConversationSummaryHostService } from '@/features/dsh-runtime/conversationSummarySurface'
+import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
   getChangeRequestMonitor,
   runtimeTaskChangeRequestTarget,
   useTaskChangeRequest,
 } from '@/features/workbench/changeRequestMonitor'
-import type { ProjectWithTasks } from '@/types/api'
+import type { ProjectWithTasks, RuntimeDeviceWorkspace } from '@/types/api'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import type { EnvironmentDiffMode } from '@/api/environment'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -39,6 +41,7 @@ export interface WorkbenchPaneEnvironment {
   workspaceTarget: WorkspaceTarget | null
   workspaceTargetError: string | null
   environmentInfo: EnvironmentInfo
+  conversationSummaryIsGitRepository: boolean | undefined
   projectWork: ProjectWorkControls
   refreshEnvironmentInfo: () => Promise<void>
   commitEnvironmentChanges: (message: string) => Promise<void>
@@ -51,6 +54,61 @@ export interface WorkbenchPaneEnvironment {
   listEnvironmentBranches: () => Promise<string[]>
   checkoutEnvironmentBranch: (branchName: string) => Promise<void>
   createEnvironmentBranch: (branchName: string) => Promise<void>
+}
+
+export function resolveConversationSummaryIsGitRepository({
+  activeWorkspacePath,
+  environmentInfo,
+  project,
+  projectWorkspace,
+}: {
+  activeWorkspacePath?: string | null
+  environmentInfo: EnvironmentInfo
+  project: ProjectWithTasks | null
+  projectWorkspace: Pick<
+    RuntimeDeviceWorkspace,
+    'repoRootFingerprint' | 'repoUrl' | 'workspacePath'
+  > | null
+}): boolean | undefined {
+  const rawEnvironmentWorkspacePath = environmentInfo.workspacePath
+  const environmentWorkspacePath = rawEnvironmentWorkspacePath
+    ? normalizeRuntimeWorkspacePath(rawEnvironmentWorkspacePath)
+    : ''
+  const normalizedActiveWorkspacePath = activeWorkspacePath
+    ? normalizeRuntimeWorkspacePath(activeWorkspacePath)
+    : ''
+  if (
+    environmentInfo.isGitRepository !== undefined &&
+    environmentWorkspacePath &&
+    environmentWorkspacePath === normalizedActiveWorkspacePath
+  ) {
+    return environmentInfo.isGitRepository
+  }
+  if (project?.config?.workspace?.source === 'git') return true
+  if (
+    Boolean(environmentInfo.branchName?.trim()) ||
+    Boolean(environmentInfo.additions || environmentInfo.deletions)
+  ) {
+    return true
+  }
+  const projectWorkspacePaths = [
+    project?.config?.workspace?.localPath,
+    projectWorkspace?.workspacePath,
+  ].flatMap(path => (path ? [normalizeRuntimeWorkspacePath(path)] : []))
+  if (
+    environmentInfo.isGitRepository !== undefined &&
+    environmentWorkspacePath &&
+    projectWorkspacePaths.includes(environmentWorkspacePath)
+  ) {
+    return environmentInfo.isGitRepository
+  }
+  if (projectWorkspace) {
+    if (projectWorkspace.repoRootFingerprint?.trim() || projectWorkspace.repoUrl?.trim()) {
+      return true
+    }
+    return environmentInfo.isGitRepository === undefined ? undefined : false
+  }
+  return environmentInfo.isGitRepository
 }
 
 export function resolveSelectedWorkspaceProject({
@@ -123,10 +181,9 @@ export function useWorkbenchPaneEnvironment({
   } = useWorkbenchPaneContext()
   const runtimeWorkApi = services?.runtimeWorkApi
   const { t } = useTranslation('common')
-  const environmentExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.environmentSection)
-  const preferences = useAppPreferencesState()
-  const changeRequestStatusEnabled =
-    environmentExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
+  const conversationSummaryEntries = useDshSlotEntries<WeworkDshSlotEntry>(
+    WEWORK_DSH_SLOTS.conversationSummary
+  )
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '',
     deletions: '',
@@ -157,14 +214,6 @@ export function useWorkbenchPaneEnvironment({
     })
     return source ? runtimeTaskChangeRequestTarget(source.workspace, source.task) : null
   }, [currentRuntimeTask, state.runtimeWork])
-  const changeRequestMonitor = useMemo(
-    () => (services?.deviceApi ? getChangeRequestMonitor(services.deviceApi) : null),
-    [services?.deviceApi]
-  )
-  const sharedChangeRequestSnapshot = useTaskChangeRequest(
-    changeRequestStatusEnabled ? changeRequestMonitor : null,
-    changeRequestStatusEnabled ? currentChangeRequestTarget : null
-  )
   const activeConversationProject = currentProject ?? runtimeWorkspaceContext?.project ?? null
   const selectedWorkspaceProject = resolveSelectedWorkspaceProject({
     currentProject: projectWork.currentProject,
@@ -184,6 +233,31 @@ export function useWorkbenchPaneEnvironment({
     }
     return workspaces.length === 1 ? workspaces[0] : null
   }, [projectWork.selectedDeviceWorkspaceId, selectedWorkspaceProject, state.runtimeWork?.projects])
+  const conversationSummaryIsGitRepository = resolveConversationSummaryIsGitRepository({
+    activeWorkspacePath: runtimeWorkspaceContext?.workspaceTarget?.path,
+    environmentInfo,
+    project: selectedWorkspaceProject ?? activeConversationProject,
+    projectWorkspace: selectedProjectDeviceWorkspace,
+  })
+  const conversationSummaryContext = {
+    'workspace.isGitRepository': conversationSummaryIsGitRepository,
+  }
+  const environmentExtensionsAvailable = hasMatchingConversationSummaryHostService(
+    conversationSummaryEntries,
+    conversationSummaryContext,
+    WEWORK_HOST_SERVICES.environment
+  )
+  const preferences = useAppPreferencesState()
+  const changeRequestStatusEnabled =
+    environmentExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
+  const changeRequestMonitor = useMemo(
+    () => (services?.deviceApi ? getChangeRequestMonitor(services.deviceApi) : null),
+    [services?.deviceApi]
+  )
+  const sharedChangeRequestSnapshot = useTaskChangeRequest(
+    changeRequestStatusEnabled ? changeRequestMonitor : null,
+    changeRequestStatusEnabled ? currentChangeRequestTarget : null
+  )
   const selectedWorktreeDeviceId = worktreeWorkspaceDeviceId(selectedProjectDeviceWorkspace)
   const selectedWorktreeDevice = findWorkbenchDevice(state.devices, selectedWorktreeDeviceId)
   const projectedWorktreeAvailability = useMemo(
@@ -216,6 +290,7 @@ export function useWorkbenchPaneEnvironment({
   useEffect(() => {
     if (
       !environmentExtensionsAvailable ||
+      conversationSummaryIsGitRepository !== true ||
       currentRuntimeTask ||
       !selectedWorkspaceProject ||
       !selectedProjectDeviceWorkspace ||
@@ -244,6 +319,7 @@ export function useWorkbenchPaneEnvironment({
       cancelled = true
     }
   }, [
+    conversationSummaryIsGitRepository,
     currentRuntimeTask,
     environmentExtensionsAvailable,
     projectWork.worktreeBranch,
@@ -439,19 +515,6 @@ export function useWorkbenchPaneEnvironment({
         environmentWorkspaceReady,
       })
 
-      if (!environmentExtensionsAvailable) {
-        setEnvironmentInfo({
-          additions: '',
-          deletions: '',
-          executionTarget: 'local',
-          isGitRepository: false,
-          loading: false,
-          branchLoading: false,
-        })
-        logLoad('extension_unavailable')
-        return
-      }
-
       if (workspaceTargetResolving) {
         if (showLoading) {
           setEnvironmentInfo(info => ({ ...info, loading: true, branchLoading: true }))
@@ -584,7 +647,6 @@ export function useWorkbenchPaneEnvironment({
       changeRequestStatusEnabled,
       currentRuntimeTask,
       environmentWorkspaceReady,
-      environmentExtensionsAvailable,
       loadEnvironmentInfo,
       workspaceRoots,
       workspaceTargetError,
@@ -602,7 +664,9 @@ export function useWorkbenchPaneEnvironment({
   }, [changeRequestMonitor, changeRequestStatusEnabled, loadCurrentEnvironmentInfo])
 
   useEffect(() => {
-    if (!activeConversationProjectKey && !currentRuntimeTaskKey) return
+    if (!activeConversationProjectKey && !currentRuntimeTaskKey) {
+      return
+    }
     void loadCurrentEnvironmentInfo({ force: false, showLoading: true })
   }, [
     activeConversationProjectKey,
@@ -614,9 +678,10 @@ export function useWorkbenchPaneEnvironment({
 
   useEffect(() => {
     const wasRefreshActive = previousEnvironmentRefreshActive.current
-    previousEnvironmentRefreshActive.current = environmentRefreshActive
+    const shouldRefreshEnvironment = environmentRefreshActive
+    previousEnvironmentRefreshActive.current = shouldRefreshEnvironment
 
-    if (!environmentRefreshActive) {
+    if (!shouldRefreshEnvironment) {
       if (wasRefreshActive) {
         void loadCurrentEnvironmentInfo({ force: true, showLoading: false })
       }
@@ -742,6 +807,7 @@ export function useWorkbenchPaneEnvironment({
     workspaceTarget: activeWorkspaceTarget,
     workspaceTargetError,
     environmentInfo: sharedEnvironmentInfo,
+    conversationSummaryIsGitRepository,
     projectWork: {
       ...projectWork,
       worktreeAvailability,

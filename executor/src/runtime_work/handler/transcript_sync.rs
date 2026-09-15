@@ -4,8 +4,8 @@
 
 use super::*;
 use crate::runtime_work::native_transcript::{
-    export_segment, remove_restored_transcript, restore_segments, ExportRequest, RestoreSegment,
-    RestoredTranscript,
+    export_segment, prepare_workspace_paths, remove_restored_transcript, restore_segments,
+    ExportRequest, RestoreSegment, RestoredTranscript, WorkspaceSnapshot,
 };
 
 const CLOUD_TRANSCRIPT_HANDLE_KEY: &str = "cloudTranscript";
@@ -105,11 +105,28 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| {
                 AppIpcError::new("bad_request", "transcript encryptionKey is required")
             })?;
+        let workspace_path = Path::new(&link.workspace_path).to_path_buf();
+        let workspace_paths = if workspace_path.is_dir() {
+            prepare_workspace_paths(&workspace_path)
+                .await
+                .map_err(|error| AppIpcError::new("transcript_export_failed", error))?
+        } else {
+            None
+        };
+        let workspace_snapshot =
+            self.worktrees
+                .snapshot_source_for(&workspace_path)
+                .map(|snapshot| WorkspaceSnapshot {
+                    git_common_dir: snapshot.git_common_dir,
+                    reference: snapshot.reference,
+                });
         let request = ExportRequest {
             transcript_id,
             task_id,
             title: link.title.clone(),
-            workspace_path: Path::new(&link.workspace_path).to_path_buf(),
+            workspace_path,
+            workspace_paths,
+            workspace_snapshot,
             thread_id,
             sequence,
             base_sequence,

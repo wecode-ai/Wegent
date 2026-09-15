@@ -42,6 +42,28 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test('keeps runtime content truncation invisible while rendering the retained content', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-truncated-content',
+            role: 'assistant',
+            content: '这是截断后保留的最新回复',
+            contentTruncated: true,
+            contentOriginalChars: 200_001,
+            status: 'streaming',
+            createdAt: '2026-09-14T08:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('这是截断后保留的最新回复')).toBeInTheDocument()
+    expect(screen.queryByText(/早期内容.*卸载/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/加载完整输出/)).not.toBeInTheDocument()
+  })
+
   test('lets complete user and assistant message regions inherit the UI weight', () => {
     render(
       <MessageList
@@ -732,6 +754,8 @@ describe('MessageList', () => {
 
     const { container } = render(
       <MessageList
+        onRetryFailedMessage={vi.fn()}
+        onSwitchModelForFailedMessage={vi.fn()}
         messages={[
           {
             id: 'assistant-streaming-windowed',
@@ -2355,6 +2379,66 @@ describe('MessageList', () => {
     expect(processContent.closest('[data-testid="message-assistant"]')).not.toHaveClass(
       'font-medium'
     )
+  })
+
+  test('keeps merged subagent activity anchored before later parent output', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-subagent-anchor',
+            role: 'assistant',
+            content: '父代理继续处理。',
+            status: 'streaming',
+            blocks: [
+              {
+                id: 'spawn-1',
+                subtaskId: 'turn-1',
+                type: 'tool',
+                toolName: 'spawnAgent',
+                toolInput: { prompt: '检查实现' },
+                toolOutput: { agentId: 'agent-1' },
+                status: 'done',
+                createdAt: 1770000000000,
+              },
+              {
+                id: 'subagent-agent-1',
+                subtaskId: 'turn-1',
+                type: 'subagent',
+                agentThreadId: 'agent-1',
+                title: 'Explorer',
+                status: 'streaming',
+                createdAt: 1770000002000,
+              },
+            ],
+            runtimeDisplayItems: [
+              {
+                id: 'spawn-1',
+                type: 'block',
+              },
+              {
+                id: 'assistant-text',
+                type: 'assistant_text',
+                content: '父代理继续处理。',
+              },
+              {
+                id: 'subagent-agent-1',
+                type: 'block',
+              },
+            ],
+            createdAt: '2026-02-03T02:40:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const subagentActivity = screen.getByTestId('subagent-activity-inline-group')
+    const assistantContent = screen.getByText('父代理继续处理。')
+
+    expect(
+      subagentActivity.compareDocumentPosition(assistantContent) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(screen.getAllByTestId('subagent-activity-inline-group')).toHaveLength(1)
   })
 
   test('does not restore hidden failed content from runtime display order', () => {
@@ -5020,6 +5104,8 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
+        onRetryFailedMessage={vi.fn()}
+        onSwitchModelForFailedMessage={vi.fn()}
       />
     )
 
@@ -5240,8 +5326,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
-  test('collapses tool rows without trailing generic thinking once final text is visible', () => {
-    const runningBlock: ProcessingBlock = {
+  test('keeps the processing layout stable while final text is streaming', () => {
+    const completedBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
       type: 'tool',
@@ -5251,16 +5337,19 @@ describe('MessageList', () => {
       createdAt: 1770000000000,
     }
 
-    render(
+    const streamingMessage = {
+      id: '2',
+      role: 'assistant' as const,
+      content: 'Let me explore the repo structure for you.',
+      status: 'streaming' as const,
+      createdAt: '2026-05-25T18:46:00.000+08:00',
+    }
+    const { rerender } = render(
       <MessageList
         messages={[
           {
-            id: '2',
-            role: 'assistant',
-            content: 'Let me explore the repo structure for you.',
-            status: 'streaming',
-            createdAt: '2026-05-25T18:46:00.000+08:00',
-            blocks: [runningBlock],
+            ...streamingMessage,
+            blocks: [completedBlock],
           },
         ]}
       />
@@ -5269,6 +5358,56 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('tool-block-thinking')).not.toBeInTheDocument()
     expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('已处理')
+    const content = screen.getByTestId('assistant-message-content')
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...streamingMessage,
+            content: `${streamingMessage.content} More text.`,
+            blocks: [{ ...completedBlock, status: 'streaming' }],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-message-content')).toBe(content)
+
+    rerender(
+      <MessageList
+        isWaitingForAssistant
+        messages={[
+          {
+            ...streamingMessage,
+            content: `${streamingMessage.content} More text. Done.`,
+            status: 'done',
+            blocks: [completedBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-message-content')).toBe(content)
+    expect(screen.getByTestId('message-assistant-waiting')).toBeInTheDocument()
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...streamingMessage,
+            content: `${streamingMessage.content} More text. Done.`,
+            status: 'done',
+            blocks: [completedBlock],
+          },
+        ]}
+      />
+    )
+
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
   })
 
@@ -5561,6 +5700,8 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
+        onRetryFailedMessage={vi.fn()}
+        onSwitchModelForFailedMessage={vi.fn()}
       />
     )
 

@@ -21,6 +21,7 @@ import { resetLocalExecutorStateForTests } from '@/desktop/localExecutor'
 import type { PluginMarketplaceItem, PluginPublicationRequestItem } from '@/types/api'
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
+import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
 
 const telemetryMocks = vi.hoisted(() => ({
   track: vi.fn(),
@@ -213,6 +214,7 @@ function mockCodexAppServerInvoke(
     wegentStorePlugins?: Array<{
       name: string
       packageId: string
+      installedPluginId?: number | null
       marketplace: string
       version?: string | null
       enabled: boolean
@@ -2773,6 +2775,41 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test('does not transfer a pending manual reconciliation to a different account', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch()
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const reconcile = vi
+      .spyOn(refreshReconciliation, 'reconcilePluginRefresh')
+      .mockResolvedValue(undefined)
+    try {
+      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      let finish: (() => void) | undefined
+      let holdNext = true
+      vi.mocked(fetch).mockImplementation(async (...args) => {
+        if (holdNext && String(args[0]).includes('/plugins/marketplace')) {
+          holdNext = false
+          await new Promise<void>(resolve => {
+            finish = resolve
+          })
+        }
+        return originalFetch(...args)
+      })
+      await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+      await waitFor(() => expect(finish).toBeDefined())
+      view.rerender(
+        <PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="different-account-token" />
+      )
+      await act(async () => finish!())
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+      expect(reconcile).not.toHaveBeenCalled()
+    } finally {
+      reconcile.mockRestore()
+    }
+  })
+
   test('automatically updates cloud plugins in bounded serial batches', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     const marketplace = mockSystemSkillsFetch({
@@ -3134,6 +3171,25 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
       '此插件通过对话授权 GitHub，请在聊天中按提示完成登录。'
     )
+  })
+
+  test('does not route accountAuth-only connectors to the cloud OAuth catalog', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceConnectorSlug: 'tianhe',
+      marketplaceConnectorAccountAuth: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    await userEvent.click(await screen.findByTestId('plugin-connection-manage-connector:tianhe'))
+    expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+      '此连接尚未提供页面登录入口'
+    )
+    expect(listWegentConnectorApps).not.toHaveBeenCalled()
+    expect(authorizeWegentConnector).not.toHaveBeenCalled()
   })
 
   test('authorizes Wegent OAuth when managing a cloud plugin GitHub connector', async () => {
@@ -4419,6 +4475,101 @@ describe('PluginsWorkspace', () => {
     await waitFor(() =>
       expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_uninstalled', { source: 'local' })
     )
+  })
+
+  test('uninstalls a manifest-backed Wegent package through its cloud account record', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceVisibility: 'workspace',
+      marketplaceSourceProvider: 'wegent',
+      marketplaceName: 'weibo-miniapp-h5-develop-agent',
+      marketplaceDisplayName: '微博小程序H5开发助手',
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [],
+      wegentStorePlugins: [
+        {
+          name: 'weibo-miniapp-h5-develop-agent',
+          packageId: '101-wegent-weibo-miniapp-h5-develop-agent-2.1.0',
+          installedPluginId: 101,
+          marketplace: 'wegent',
+          version: '2.1.0',
+          enabled: true,
+          displayName: '微博小程序H5开发助手',
+          pluginPath:
+            '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins/101-wegent-weibo-miniapp-h5-develop-agent-2.1.0',
+        },
+      ],
+    })
+    const previousInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()
+    vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
+      const cloudUninstallCompleted = vi
+        .mocked(fetch)
+        .mock.calls.some(
+          ([input, init]) =>
+            String(input).includes('/api/plugins/installed/101') && init?.method === 'DELETE'
+        )
+      if (command === 'executor.plugins.store.list' && cloudUninstallCompleted) {
+        return Promise.resolve({
+          storePath: '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins',
+          plugins: [],
+        })
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('微博小程序H5开发助手')).toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-actions-101'))
+    await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-101'))
+    await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/installed/101?device_id=current-device',
+        expect.objectContaining({ method: 'DELETE' })
+      )
+    )
+    expectCodexAppServerRequestNotCalled('plugin/uninstall')
+    expect(await screen.findByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
+  })
+
+  test('loads grouped connectors when opening a personal installed summary', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockEmptyCloudPluginApis()
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [{ id: 'documents-local-id', name: 'documents', displayName: 'Documents' }],
+        },
+      ],
+      installedPluginNames: ['documents'],
+    })
+    const previous = vi.mocked(requestLocalExecutor).getMockImplementation()
+    vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'executor.plugins.manifest.read')
+        return Promise.resolve({
+          connectors: [
+            {
+              slug: 'site-a',
+              displayName: 'example.test',
+              authorizationGroup: { id: 'sites', displayName: 'Example account' },
+              authPolicy: 'optional',
+            },
+          ],
+        })
+      return previous?.(command, args) as Promise<unknown>
+    })
+    render(<PluginsWorkspace />)
+    await userEvent.click(
+      await screen.findByTestId('plugins-installed-strip-item-documents-local-id')
+    )
+    expect(await screen.findByTestId('plugin-connection-manage-group:sites')).toBeInTheDocument()
+    expectCodexAppServerRequest('plugin/read', { pluginName: 'documents' })
   })
 
   test('keeps local uninstall settled when cloud-link cleanup fails', async () => {

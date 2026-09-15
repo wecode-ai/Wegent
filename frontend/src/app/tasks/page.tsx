@@ -23,6 +23,7 @@ import { UserProvider } from '@/features/common/UserContext'
 import { TaskSessionProvider } from '@/features/tasks/session/TaskSession'
 import { SocketProvider } from '@/contexts/SocketContext'
 import { DeviceProvider } from '@/contexts/DeviceContext'
+import { ProjectProvider } from '@/features/projects/contexts/projectContext'
 
 const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea'), {
   ssr: false,
@@ -30,7 +31,7 @@ const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea
 
 function TasksPageContent() {
   // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
+  const { teams, isTeamsLoading, loadError, refreshTeams } = teamService.useTeams()
 
   // Mobile detection
   const isMobile = useIsMobile()
@@ -74,8 +75,11 @@ function TasksPageContent() {
           <ChatArea
             teams={teams}
             isTeamsLoading={isTeamsLoading}
+            loadError={teams.length === 0 ? loadError : null}
+            rawTeamsEmpty={teams.length === 0}
             selectedTeamForNewTask={null}
             taskType="code"
+            onRefreshTeams={handleRefreshTeams}
           />
         </div>
       </div>
@@ -88,9 +92,11 @@ export default function TasksPage() {
     <UserProvider>
       <SocketProvider>
         <DeviceProvider>
-          <TaskSessionProvider>
-            <TasksPageContent />
-          </TaskSessionProvider>
+          <ProjectProvider>
+            <TaskSessionProvider>
+              <TasksPageContent />
+            </TaskSessionProvider>
+          </ProjectProvider>
         </DeviceProvider>
       </SocketProvider>
     </UserProvider>

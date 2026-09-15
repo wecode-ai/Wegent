@@ -136,6 +136,7 @@ upload_artifacts() {
 verify_uploaded_artifacts() {
   local electron_channel="$CHANNEL"
   local component_manifest="components-$CHANNEL-windows-x64.json"
+  local release_urls
   if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/$component_manifest"; then
     echo "Published component manifest is not publicly readable: $UPDATE_BASE_URL/$component_manifest" >&2
     exit 1
@@ -147,12 +148,18 @@ verify_uploaded_artifacts() {
     return
   fi
   [ "$CHANNEL" = "stable" ] && electron_channel="latest"
-  for url in \
-    "$UPDATE_BASE_URL/WeWork_${VERSION}_windows-x64-setup.exe" \
-    "$UPDATE_BASE_URL/WeWork_${VERSION}_windows-x64-setup.exe.blockmap" \
-    "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_windows-x64-setup.exe" \
-    "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_windows-x64-setup.exe.blockmap" \
-    "$UPDATE_BASE_URL/$electron_channel.yml"; do
+  release_urls=(
+    "$UPDATE_BASE_URL/WeWork_${VERSION}_windows-x64-setup.exe"
+    "$UPDATE_BASE_URL/WeWork_${VERSION}_windows-x64-setup.exe.blockmap"
+    "$UPDATE_BASE_URL/$electron_channel.yml"
+  )
+  if [ "$COMPONENTIZED_HOST_UPDATE" = "true" ]; then
+    release_urls+=(
+      "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_windows-x64-setup.exe"
+      "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_windows-x64-setup.exe.blockmap"
+    )
+  fi
+  for url in "${release_urls[@]}"; do
     if ! curl -fsSI -o /dev/null "$url"; then
       echo "Published release file is not publicly readable: $url" >&2
       exit 1

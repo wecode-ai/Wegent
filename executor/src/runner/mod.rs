@@ -12,10 +12,10 @@ use std::{
 use tokio::{sync::oneshot, task::JoinHandle};
 
 use crate::{
-    claude_session,
+    agent_session,
     emitter::{EventEnvelope, ResponsesEventBuilder},
     logging::{log_executor_event, task_fields},
-    protocol::{AgentKind, ExecutionRequest, TaskStatus},
+    protocol::{ExecutionRequest, TaskStatus},
     server::{RunnerResult, TaskRunner},
 };
 
@@ -230,9 +230,7 @@ async fn run_in_background<E, S>(
     let outcome = engine
         .run_with_events(request, sink.clone(), builder.clone())
         .await;
-    let executor_session = (session_request.resolved_agent_kind() == AgentKind::ClaudeCode)
-        .then(|| claude_session::saved_executor_session(&session_request))
-        .flatten();
+    let executor_session = agent_session::saved_executor_session(&session_request);
     let builder = builder.with_executor_session(executor_session);
     let mut outcome_fields = fields.clone();
     outcome_fields.push(("outcome", outcome_name(&outcome).to_owned()));

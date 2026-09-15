@@ -40,6 +40,7 @@ import { DesktopHostEventBroker } from './host/desktop-host-events.js'
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
 import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
+import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
 import {
@@ -57,6 +58,7 @@ import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
 import { ComputerUseService } from './host/computer-use-service.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
+import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions } from './host/window-layout.js'
@@ -603,6 +605,25 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     await contents.loadURL(targetUrl.toString(), {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
+    void desktopRuntime
+      .listCoreDshPlugins()
+      .then(plugins =>
+        detectCoreDshStartupPluginFailure(
+          contents,
+          plugins.filter(plugin => plugin.enabled && plugin.canToggle).map(plugin => plugin.name)
+        )
+      )
+      .then(pluginName => {
+        if (!pluginName || quitting || contents.isDestroyed()) return
+        runtimeError = `Core DSH plugin failed to load: ${pluginName}`
+        rendererHealth.failed('plugin_load_failed')
+        logStartupStep('core-dsh-plugin-load', 'failed', { plugin: pluginName })
+        notifyRuntimeChanged()
+        return startupSplash?.showError(pluginName)
+      })
+      .catch(error => {
+        console.error('[startup] failed to inspect Core DSH plugin loading', error)
+      })
   } catch (error) {
     primaryDshLoaded = false
     rendererHealth.failed('renderer_load_failed')
@@ -999,6 +1020,12 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   logStartupStep('main-shell-load', 'started')
   await mainShellLoading
   logStartupStep('main-shell-load', 'completed')
+  if (!keepE2EWindowInBackground) {
+    mainWindow.show()
+    mainWindow.focus()
+    mainWindow.webContents.focus()
+  }
+  logStartupStep('main-shell-show', 'completed')
   logStartupStep('windows-create', 'completed')
 }
 
@@ -1072,10 +1099,10 @@ async function reactivateMainWindow(): Promise<void> {
     app.setActivationPolicy('regular')
   }
   await setDockVisible(true)
-  await loadPrimaryDshView()
   if (target.isMinimized()) target.restore()
   target.show()
   target.focus()
+  await loadPrimaryDshView()
 }
 
 function dispatchTrayAction(action: TrayAction): void {
@@ -1126,6 +1153,11 @@ function installIpc(): void {
     assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
     logStartupStep('startup-recovery-app-state', 'started')
     return requiredStartupRecovery().run('app-state')
+  })
+  ipcMain.handle('startup-recovery:disable-plugin', (event, name: unknown) => {
+    assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
+    if (typeof name !== 'string' || !name.trim()) throw new Error('Plugin name is required')
+    return requiredStartupRecovery().disablePlugin(name)
   })
   ipcMain.handle('cloud-credentials:get-device-public-key', () =>
     requiredCloudCredentials().devicePublicKey()
@@ -1279,6 +1311,18 @@ function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
   }
 }
 
+function downloadsDirectory(): string {
+  return resolveDownloadsDirectory(
+    name => app.getPath(name),
+    (error, fallbackPath) => {
+      console.warn(
+        `[downloads] system Downloads folder is unavailable; using ${fallbackPath}`,
+        error
+      )
+    }
+  )
+}
+
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
@@ -1311,7 +1355,7 @@ async function configureDesktopRuntime(): Promise<void> {
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
     cacheDirectory: join(app.getPath('userData'), 'cache'),
-    downloadsDirectory: app.getPath('downloads'),
+    downloadsDirectory,
     logDirectories: [app.getPath('logs')],
   })
   const vncAssets = app.isPackaged
@@ -1337,6 +1381,7 @@ async function configureDesktopRuntime(): Promise<void> {
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
   environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
+  Object.assign(environment, embeddedBrowserBridge.environment())
   desktopControlBridge = new WeworkDesktopControlBridge({
     instanceId: desktopControlInstanceId(),
     instanceKind: pluginDevelopmentInstance ? 'core-dsh-plugin-development' : 'main',
@@ -1357,7 +1402,7 @@ async function configureDesktopRuntime(): Promise<void> {
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
       dataDirectory: app.getPath('userData'),
-      downloadsDirectory: app.getPath('downloads'),
+      downloadsDirectory,
       logDirectory: app.getPath('logs'),
       runtimeRoot,
       environment,
@@ -1377,6 +1422,7 @@ async function configureDesktopRuntime(): Promise<void> {
     environment,
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
+    onStartupStep: logStartupStep,
     readWorkbenchMode: async () =>
       normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
     createWorkbenchHostPipe: tabId => {
@@ -1523,6 +1569,9 @@ async function configureDesktopRuntime(): Promise<void> {
             visible: Boolean(
               popoutWindow && !popoutWindow.isDestroyed() && popoutWindow.isVisible()
             ),
+            windowId: popoutWindow && !popoutWindow.isDestroyed() ? popoutWindow.id : null,
+            webContentsId:
+              popoutWindow && !popoutWindow.isDestroyed() ? popoutWindow.webContents.id : null,
           }),
           capturePopout: async () => {
             const target = await ensureAuxiliaryWindow('popout-window')
@@ -1715,6 +1764,10 @@ if (hasSingleInstanceLock) {
         session.defaultSession.clearStorageData({
           storages: ['serviceworkers', 'cachestorage'],
         }),
+      disablePlugin: async name => {
+        if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
+        await desktopRuntime.setCoreDshPluginEnabled(name, false)
+      },
       log: logStartupStep,
       relaunch: () => app.relaunch(),
       shutdown: () => requestApplicationShutdown(() => app.exit(0)),
@@ -1750,9 +1803,15 @@ if (hasSingleInstanceLock) {
     } catch (error) {
       console.warn('[popout-window] failed to register global shortcut', error)
     }
-    await createWindow(
-      resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
-    )
+    await Promise.all([
+      createWindow(
+        resolveStartupSplashTheme(
+          startupPreferences.appearanceMode,
+          nativeTheme.shouldUseDarkColors
+        )
+      ),
+      configureDesktopRuntime(),
+    ])
     void startDesktopRuntime()
   })
 }

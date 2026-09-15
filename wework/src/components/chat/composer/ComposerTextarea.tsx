@@ -154,6 +154,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       onSelectModel,
       onBlockedModelSelect,
       isModelSelectionReady = true,
+      sendKey = 'enter',
     },
     ref
   ) {
@@ -1469,11 +1470,18 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
             event.stopPropagation()
             return true
           }
-          if (event.shiftKey && !event.metaKey && !event.ctrlKey) return false
+          const modifierPressed = event.metaKey || event.ctrlKey
+          if (sendKey === 'cmd_enter') {
+            if (!modifierPressed) {
+              event.preventDefault()
+              return editorRef.current?.insertLineBreak() ?? false
+            }
+          } else if (event.shiftKey && !modifierPressed) {
+            return false
+          }
 
           event.preventDefault()
           if (snapshot.value.trim().length > 0 || canSend) {
-            const modifierPressed = event.metaKey || event.ctrlKey
             onSubmit(
               snapshot.value,
               modifierPressed
@@ -1519,6 +1527,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         moveHighlightedIndex,
         onKeyDown,
         onSubmit,
+        sendKey,
       ]
     )
 
@@ -1662,7 +1671,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
               skillLoadingLabel={t('workbench.loading_slash_command_skills')}
               skillLoadErrorLabel={t('workbench.slash_command_skills_error')}
               skillRetryLabel={t('workbench.retry_local_skills')}
-              onSelectCommand={command => selectSlashCommand(command)}
+              onSelectCommand={command => selectSlashCommand(command, activeMenu?.trigger)}
               onHighlightCommand={setSelectedIndex}
               onRetrySkills={() => loadLocalMentions({ force: true })}
             />

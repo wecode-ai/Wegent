@@ -187,8 +187,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: String,
         request: ExecutionRequest,
+        force_start: bool,
     ) -> Result<(), AppIpcError> {
-        self.spawn_turn(SpawnTurnRequest {
+        let turn = SpawnTurnRequest {
             local_task_id,
             runtime: "claude_code".to_owned(),
             request,
@@ -197,8 +198,12 @@ impl RuntimeWorkRpcHandler {
             fork_thread_path: None,
             resume_thread_id: None,
             initial_thread_goal: None,
-        })
-        .await
+        };
+        if force_start {
+            self.spawn_forced_turn(turn).await
+        } else {
+            self.spawn_turn(turn).await
+        }
     }
 
     pub(super) fn start_claude_turn(

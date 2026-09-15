@@ -196,6 +196,8 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        weworkCloudModelNativeToolSearch: 'true',
+        weworkCloudModelNativeNamespaceTools: 'true',
         weworkCloudVisionSidecar:
           '{"modelName":"cloud-vision","modelType":"user","namespace":"default","resourceUserId":42,"apiFormat":"openai-responses"}',
       },
@@ -260,8 +262,8 @@ describe('runtimeModelSelection', () => {
     )
   })
 
-  test.each(['gpt-5.6-sol', 'gpt-6-astra'])(
-    'enables native Responses tools for supported GPT cloud model %s',
+  test.each(['gpt-5.6-sol', 'gpt-6-astra', 'custom-responses-model'])(
+    'enables native Codex tools by default for Responses cloud model %s',
     modelId => {
       const cloudModel: UnifiedModel = {
         name: 'shared-gpt-model',
@@ -315,7 +317,7 @@ describe('runtimeModelSelection', () => {
 
       const modelOptions = selectedModelExecutionFields(cloudModel, {}).modelOptions
 
-      expect(modelOptions).not.toHaveProperty(disabledOption)
+      expect(modelOptions).toHaveProperty(disabledOption, 'false')
       expect(modelOptions).toHaveProperty(inferredOption, 'true')
     }
   )

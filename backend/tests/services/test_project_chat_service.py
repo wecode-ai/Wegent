@@ -43,6 +43,8 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBinding,
 )
 from app.schemas.runtime_work import DeviceWorkspaceUpsert
+from app.services.loop_item_executions.profile import WeworkExecutionProfile
+from app.services.loop_item_executions.service import TaskContext
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service
 from app.services.runtime_work_service import upsert_device_workspace
@@ -112,8 +114,23 @@ def make_code_project(db: Session, user: User, name: str = "Code project") -> Pr
 def test_cloud_robot_persists_exact_workspace_binding_in_metadata(
     test_db: Session, test_user: User
 ) -> None:
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+    from app.schemas.base_role import BaseRole
+
     project = create_project(test_db, test_user)
-    make_device(test_db, test_user, "cloud-dev-binding", "cloud")
+    device = make_device(test_db, test_user, "cloud-dev-binding", "cloud")
+    test_db.add(
+        ResourceMember(
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
     code_project = make_code_project(test_db, test_user)
     workspace = upsert_device_workspace(
         db=test_db,
@@ -165,6 +182,80 @@ def test_cloud_robot_persists_exact_workspace_binding_in_metadata(
     assert created.local_project_id == code_project.id
     assert created.workspace_policy == "git_worktree"
     assert [plugin.id for plugin in created.plugins] == ["github@openai"]
+
+
+@pytest.mark.parametrize("environment", ["local", "cloud"])
+def test_project_agent_without_code_project_can_save_and_build_execution(
+    test_db: Session, test_user: User, environment: str
+) -> None:
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+    from app.schemas.base_role import BaseRole
+
+    project = create_project(test_db, test_user)
+    device_id = f"{environment}-project-agent"
+    device = make_device(test_db, test_user, device_id, environment)
+    test_db.add(
+        ResourceMember(
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+    assert test_db.query(Project).count() == 0
+
+    created = project_chat_service.create_agent(
+        test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+        request=ProjectChatAgentCreate.model_validate(
+            {
+                "name": "codex工程师",
+                "runtime": "codex",
+                "capabilityDescription": "支持issue描述的内容",
+                "systemPrompt": "支持issue描述的内容",
+                "executionDeviceId": device_id,
+                "executionEnvironment": environment,
+                "workspaceBinding": {"type": "standalone"},
+            }
+        ),
+    )
+    agents = project_chat_service.list_agents(
+        test_db, user_id=test_user.id, project_id=project.id
+    )
+    saved = next(agent for agent in agents if agent.id == created.id)
+    assert saved.project_id == str(project.id)
+    assert saved.workspace_binding.type == "standalone"
+    assert saved.workspace_binding.status == "ready"
+    assert saved.local_project_id is None
+
+    row = test_db.get(ProjectChatAgent, created.id)
+    request = WeworkExecutionProfile.for_project_robot(row).build_runtime_request(
+        test_db,
+        execution_id=92,
+        runtime_task_id="project-agent-workspace-regression",
+        task=TaskContext(
+            id="issue-workspace-regression",
+            cloud_project_id=str(project.id),
+            title="Implement the issue",
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={},
+        execution_device_id=device_id,
+    )
+    assert request.cloud_project_id == str(project.id)
+    assert request.device_id == device_id
+    assert request.standalone_chat_workspace is True
+    assert request.project_id is None
+    assert request.device_workspace_id is None
+    assert request.runtime_project_key is None
 
 
 def test_legacy_cloud_project_binding_requires_rebind_when_not_unique(
@@ -1065,6 +1156,104 @@ def _running_ai_task(
     assert message.status == "streaming"
     assert (task.metadata_json or {})["ai_state"]["status"] == "running"
     return task, message
+
+
+@pytest.mark.parametrize("unset_value", [None, EPOCH_TIME])
+def test_running_ai_state_clears_completed_at_using_schema_contract(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    unset_value: datetime | None,
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Restart completed task",
+        description="",
+        status="todo",
+        completed_at=datetime(2026, 9, 10, 12),
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id="12",
+        sender_name="Code Reviewer",
+        metadata_json={"run_id": str(uuid.uuid4())},
+    )
+    contract_calls: list[tuple[object, str]] = []
+
+    def unset_for_connection(connection: object, attribute: str) -> datetime | None:
+        contract_calls.append((connection, attribute))
+        return unset_value
+
+    monkeypatch.setattr(
+        "app.services.project_chat.service.loop_unset_datetime_for_connection",
+        unset_for_connection,
+    )
+
+    project_chat_service._set_task_ai_state(
+        test_db,
+        row=row,
+        trigger=None,
+        agent=None,
+        status_value="running",
+    )
+
+    assert task.status == "in_progress"
+    assert task.completed_at == unset_value
+    assert len(contract_calls) == 1
+    assert contract_calls[0][1] == "completed_at"
+
+
+@pytest.mark.parametrize("unset_value", [None, EPOCH_TIME])
+def test_advance_to_review_clears_completed_at_using_schema_contract(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    unset_value: datetime | None,
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Review completed task",
+        description="",
+        status="in_progress",
+        completed_at=datetime(2026, 9, 10, 12),
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id="12",
+    )
+    contract_calls: list[tuple[object, str]] = []
+
+    def unset_for_connection(connection: object, attribute: str) -> datetime | None:
+        contract_calls.append((connection, attribute))
+        return unset_value
+
+    monkeypatch.setattr(
+        "app.services.project_chat.service.loop_unset_datetime_for_connection",
+        unset_for_connection,
+    )
+
+    project_chat_service._advance_task_to_review(test_db, row)
+
+    assert task.status == "in_review"
+    assert task.completed_at == unset_value
+    assert len(contract_calls) == 1
+    assert contract_calls[0][1] == "completed_at"
 
 
 def _expire_ai_lease(

@@ -745,6 +745,11 @@ async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
             "updatedAt": "2026-06-21T01:06:00Z",
             "status": "done",
             "content": "Implemented from native Codex",
+            "modelSelection": {
+                "modelName": "deepseek-v4-pro-responses(public)",
+                "modelType": "public",
+                "options": {"reasoning": "medium"},
+            },
         },
     )
 
@@ -753,6 +758,11 @@ async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
     assert notifications[0]["address"] == {
         "deviceId": "device-1",
         "localTaskId": "codex-thread-1",
+        "modelSelection": {
+            "modelName": "deepseek-v4-pro-responses(public)",
+            "modelType": "public",
+            "options": {"reasoning": "medium"},
+        },
     }
     assert notifications[0]["source"] == "codex_watcher"
     assert notifications[0]["title"] == "Native Codex task"

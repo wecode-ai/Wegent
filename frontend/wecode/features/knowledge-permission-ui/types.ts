@@ -25,7 +25,6 @@ export interface SearchResultItem {
     email?: string | null
     employeeId?: string | null
     departmentName?: string | null
-    memberCount?: number | null
     visibility?: string
     level?: string | null
     label?: string

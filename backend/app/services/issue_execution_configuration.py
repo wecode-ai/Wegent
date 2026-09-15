@@ -5,6 +5,7 @@
 
 from typing import Any
 
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.delivery import ProjectAutomationRule, ProjectChatAgent, RuntimeProfile
@@ -13,6 +14,32 @@ from app.schemas.project_chat import ProjectChatWorkspaceBinding
 from app.services.project_automation_domain import manager_type, runtime_config
 from app.services.project_chat.service import bot_config
 from app.services.project_chat.workspace_binding import read_agent_workspace_binding
+
+
+def require_coordinator_execution_config(
+    config: WorkflowExecutionConfig | None,
+) -> None:
+    """Reject incomplete custom coordinator settings before creating work."""
+    if config is None or config.is_complete():
+        return
+    missing = []
+    if not (config.agent_id or config.execution_device_id):
+        missing.append("device")
+    if not config.model:
+        missing.append("model")
+    if not config.workspace_binding:
+        missing.append("workspace")
+    raise HTTPException(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        {
+            "error_code": "COORDINATOR_EXECUTION_CONFIG_INCOMPLETE",
+            "missing_fields": missing,
+            "message": "AI coordinator execution configuration is incomplete: "
+            + ", ".join(missing)
+            + ". Configure My default execution settings in "
+            "Project settings > Assignment and dispatch.",
+        },
+    )
 
 
 def project_robot_execution_config(

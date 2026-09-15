@@ -5,6 +5,7 @@
 use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_selection_changed};
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
+use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
@@ -1326,6 +1327,144 @@ fn codex_cached_transcripts_never_expose_offset_pagination() {
 }
 
 #[test]
+fn latest_codex_transcript_prefers_completed_notification_cache() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    append_completed_transcript_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({
+            "id": "assistant-turn-1",
+            "role": "assistant",
+            "content": "Final answer",
+            "status": "done",
+            "turnId": "turn-1",
+            "subtaskId": "turn-1",
+        })],
+    );
+    let mut messages = vec![
+        json!({
+            "id": "user-1",
+            "role": "user",
+            "content": "Open the browser",
+            "status": "done",
+            "turnId": "turn-1",
+        }),
+        json!({
+            "id": "assistant-turn-1",
+            "role": "assistant",
+            "content": "",
+            "status": "cancelled",
+            "turnId": "turn-1",
+            "subtaskId": "turn-1",
+        }),
+    ];
+
+    merge_latest_completed_transcript_messages(&mut messages, &link, None, None);
+
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[1]["content"], "Final answer");
+    assert_eq!(messages[1]["status"], "done");
+}
+
+#[test]
+fn latest_codex_transcript_preserves_provider_processing_timeline() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    append_completed_transcript_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({
+            "id": "assistant-turn-1",
+            "role": "assistant",
+            "content": "Final answer",
+            "status": "done",
+            "turnId": "turn-1",
+            "subtaskId": "turn-1",
+            "blocks": [],
+            "runtimeItems": [{
+                "id": "final-text",
+                "type": "assistant_text",
+                "content": "Final answer",
+            }],
+        })],
+    );
+    let mut messages = vec![json!({
+        "id": "assistant-turn-1",
+        "role": "assistant",
+        "content": "",
+        "status": "cancelled",
+        "turnId": "turn-1",
+        "subtaskId": "turn-1",
+        "blocks": [{
+            "id": "tool-1",
+            "type": "tool",
+            "tool_name": "exec_command",
+            "status": "done",
+        }],
+        "runtimeItems": [{
+            "id": "tool-1",
+            "type": "block",
+        }],
+        "fileChanges": {
+            "files": [{"path": "verification.txt"}],
+        },
+    })];
+
+    merge_latest_completed_transcript_messages(&mut messages, &link, None, None);
+
+    assert_eq!(messages[0]["content"], "Final answer");
+    assert_eq!(messages[0]["status"], "done");
+    assert_eq!(messages[0]["blocks"][0]["id"], "tool-1");
+    assert_eq!(messages[0]["runtimeItems"][0]["id"], "tool-1");
+    assert_eq!(
+        messages[0]["fileChanges"]["files"][0]["path"],
+        "verification.txt"
+    );
+}
+
+#[test]
+fn paginated_codex_transcript_does_not_append_latest_completed_cache() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    append_completed_transcript_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({
+            "id": "assistant-latest",
+            "role": "assistant",
+            "content": "Latest answer",
+            "status": "done",
+            "turnId": "turn-latest",
+        })],
+    );
+    let mut messages = vec![json!({
+        "id": "assistant-old",
+        "role": "assistant",
+        "content": "Older answer",
+        "status": "done",
+        "turnId": "turn-old",
+    })];
+
+    merge_latest_completed_transcript_messages(&mut messages, &link, Some("older-page"), None);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["content"], "Older answer");
+}
+
+#[test]
 fn active_codex_items_replace_stale_paginated_items() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
@@ -1400,6 +1539,91 @@ fn active_codex_items_replace_stale_paginated_items() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["status"], "streaming");
     assert_eq!(messages[0]["blocks"][0]["type"], "file_changes");
+}
+
+#[test]
+fn active_codex_plan_deltas_restore_complete_streaming_content() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "plan-1",
+                "delta": "# Plan\n"
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "plan-1",
+                "delta": "\n- Inspect the repo."
+            }
+        }),
+    );
+
+    let messages = handler.active_codex_transcript_messages("task-1");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["status"], "streaming");
+    assert_eq!(messages[0]["blocks"][0]["id"], "plan-plan-1");
+    assert_eq!(messages[0]["blocks"][0]["type"], "plan");
+    assert_eq!(
+        messages[0]["blocks"][0]["content"],
+        "# Plan\n\n- Inspect the repo."
+    );
+    assert_eq!(messages[0]["blocks"][0]["status"], "streaming");
+}
+
+#[test]
+fn completed_codex_plan_replaces_active_delta_snapshot() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "itemId": "plan-1",
+                "delta": "# Plan\n"
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "plan-1",
+                    "type": "plan",
+                    "text": "# Plan\n\n- Inspect the repo."
+                }
+            }
+        }),
+    );
+
+    let messages = handler.active_codex_transcript_messages("task-1");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["blocks"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        messages[0]["blocks"][0]["content"],
+        "# Plan\n\n- Inspect the repo."
+    );
+    assert_eq!(messages[0]["blocks"][0]["status"], "done");
 }
 
 #[test]
@@ -1534,6 +1758,32 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
             }
         }),
     );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-live",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-live",
+                "itemId": "plan-live",
+                "delta": "# Quicksort plan\n"
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-live",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-live",
+                "itemId": "plan-live",
+                "delta": "\n- Partition the input."
+            }
+        }),
+    );
 
     let transcript = handler
         .handle_runtime_rpc(json!({
@@ -1562,6 +1812,19 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
         transcript["messages"][4]["blocks"][0]["content"],
         "Writing quicksort"
     );
+    let plan = transcript["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|message| message["blocks"].as_array().into_iter().flatten())
+        .find(|block| block["id"] == "plan-plan-live")
+        .expect("running transcript should include the active plan");
+    assert_eq!(plan["type"], "plan");
+    assert_eq!(
+        plan["content"],
+        "# Quicksort plan\n\n- Partition the input."
+    );
+    assert_eq!(plan["status"], "streaming");
     let _ = fs::remove_dir_all(root);
 }
 
@@ -3579,19 +3842,124 @@ fn transcript_presentation_matches_a_complete_reference_token() {
 
 #[test]
 fn transcript_navigation_uses_client_user_message_id_for_live_message_matching() {
-    let navigation = transcript_turn_navigation(
-        &[json!({
-            "id": "provider-user",
-            "clientUserMessageId": "runtime-local-pane-1",
-            "role": "user",
-            "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
-        })],
-        false,
-    );
+    let navigation = transcript_turn_navigation(&[json!({
+        "id": "provider-user",
+        "clientUserMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
+    })]);
 
     assert_eq!(navigation.len(), 1);
     assert_eq!(navigation[0]["id"], "runtime-local-pane-1");
     assert_eq!(navigation[0]["promptPreview"], "Fix the sidebar");
+}
+
+#[test]
+fn codex_transcript_navigation_uses_lightweight_turn_skeletons() {
+    let navigation = transcript_navigation_from_codex_turns(CodexTranscriptNavigation {
+        turns: vec![
+            CodexTranscriptNavigationTurn {
+                turn_id: "turn-old".to_owned(),
+                cursor: Some("opaque-old".to_owned()),
+            },
+            CodexTranscriptNavigationTurn {
+                turn_id: "turn-new".to_owned(),
+                cursor: Some("opaque-new".to_owned()),
+            },
+        ],
+        complete: true,
+    });
+
+    assert_eq!(
+        Value::Array(navigation),
+        json!([
+            {
+                "id": "turn-old",
+                "turnId": "turn-old",
+                "turnIndex": 0,
+                "messageIndex": 0,
+                "promptPreview": "",
+                "responsePreview": "",
+                "cursor": "opaque-old",
+            },
+            {
+                "id": "turn-new",
+                "turnId": "turn-new",
+                "turnIndex": 1,
+                "messageIndex": 1,
+                "promptPreview": "",
+                "responsePreview": "",
+                "cursor": "opaque-new",
+            },
+        ])
+    );
+}
+
+#[test]
+fn incomplete_codex_transcript_navigation_is_hidden() {
+    let navigation = transcript_navigation_from_codex_turns(CodexTranscriptNavigation {
+        turns: vec![CodexTranscriptNavigationTurn {
+            turn_id: "turn-1".to_owned(),
+            cursor: Some("opaque".to_owned()),
+        }],
+        complete: false,
+    });
+
+    assert!(navigation.is_empty());
+}
+
+#[test]
+fn transcript_navigation_is_not_limited_to_the_visible_message_page() {
+    let messages = vec![
+        json!({
+            "id": "user-old",
+            "turnId": "turn-old",
+            "role": "user",
+            "content": "old prompt",
+        }),
+        json!({
+            "id": "assistant-old",
+            "turnId": "turn-old",
+            "role": "assistant",
+            "content": "old answer",
+        }),
+        json!({
+            "id": "user-new",
+            "turnId": "turn-new",
+            "role": "user",
+            "content": "new prompt",
+        }),
+        json!({
+            "id": "assistant-new",
+            "turnId": "turn-new",
+            "role": "assistant",
+            "content": "new answer",
+        }),
+    ];
+    let turn_navigation = transcript_turn_navigation(&messages);
+
+    let response = transcript_response(TranscriptResponseInput {
+        local_task_id: "task-1".to_owned(),
+        workspace_path: "/tmp/project".to_owned(),
+        runtime: "claude_code".to_owned(),
+        messages,
+        context_usage: None,
+        running: false,
+        pagination: TranscriptPagination::Offset {
+            limit: Some(2),
+            before_cursor: None,
+            after_cursor: None,
+        },
+        full_content: false,
+        turn_item_source: TranscriptTurnItemSource::CachedMessages,
+        turn_navigation,
+    });
+
+    assert_eq!(response["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(response["messages"][0]["content"], "new prompt");
+    assert_eq!(response["turnNavigation"].as_array().unwrap().len(), 2);
+    assert_eq!(response["turnNavigation"][0]["promptPreview"], "old prompt");
+    assert_eq!(response["turnNavigation"][1]["promptPreview"], "new prompt");
 }
 
 #[test]
@@ -4057,6 +4425,486 @@ fn pending_thread_event_route_promotes_on_thread_started() {
 }
 
 #[test]
+fn spawned_child_thread_inherits_parent_event_route_and_mapper() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("spawned-child-thread-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "turn-root".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-root".to_owned());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route("thread-root", local_task_id.to_owned(), request, false);
+
+    handler.route_codex_notification(json!({
+        "method": "thread/started",
+        "params": {
+            "thread": {"id": "thread-root"},
+            "threadId": "thread-root"
+        }
+    }));
+    handler.route_codex_notification(json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-root",
+            "turnId": "turn-root",
+            "item": {
+                "id": "spawn-call",
+                "type": "collabAgentToolCall",
+                "tool": "spawnAgent",
+                "prompt": "Inspect the child route",
+                "receiverThreadIds": ["thread-child"],
+                "agentsStates": {
+                    "thread-child": {
+                        "status": "pendingInit",
+                        "message": null
+                    }
+                },
+                "status": "completed"
+            }
+        }
+    }));
+
+    assert!(handler.thread_event_route_exists("thread-child"));
+    assert_eq!(
+        event_rx.try_recv().unwrap()["event"],
+        "response.subagent.activity"
+    );
+    assert_eq!(
+        event_rx.try_recv().unwrap()["event"],
+        "response.block.created"
+    );
+
+    handler.route_codex_notification(json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "item": {
+                "id": "child-message",
+                "type": "agentMessage",
+                "phase": "final_answer",
+                "text": ""
+            }
+        }
+    }));
+    handler.route_codex_notification(json!({
+        "method": "item/agentMessage/delta",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "itemId": "child-message",
+            "delta": "child output"
+        }
+    }));
+
+    let child_event = event_rx
+        .try_recv()
+        .expect("child output should use the inherited route");
+    assert_eq!(child_event["event"], "response.block.created");
+    assert_eq!(child_event["payload"]["taskId"], local_task_id);
+    assert_eq!(child_event["payload"]["subtaskId"], "turn-root");
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["parent_tool_use_id"],
+        "subagent-thread-child"
+    );
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["content"],
+        "child output"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn spawned_child_notifications_wait_for_parent_route_registration() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("pending-spawned-child-thread-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "turn-root".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-root".to_owned());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route("thread-root", local_task_id.to_owned(), request, false);
+
+    handler.route_codex_notification(json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "item": {
+                "id": "child-message",
+                "type": "agentMessage",
+                "phase": "final_answer",
+                "text": ""
+            }
+        }
+    }));
+    handler.route_codex_notification(json!({
+        "method": "item/agentMessage/delta",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "itemId": "child-message",
+            "delta": "child output before parent spawn completion"
+        }
+    }));
+
+    assert!(!handler.thread_event_route_exists("thread-child"));
+    assert!(event_rx.try_recv().is_err());
+
+    handler.route_codex_notification(json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-root",
+            "turnId": "turn-root",
+            "item": {
+                "id": "spawn-call",
+                "type": "collabAgentToolCall",
+                "tool": "spawnAgent",
+                "prompt": "Inspect the child route",
+                "receiverThreadIds": ["thread-child"],
+                "agentsStates": {
+                    "thread-child": {
+                        "status": "pendingInit",
+                        "message": null
+                    }
+                },
+                "status": "completed"
+            }
+        }
+    }));
+
+    assert!(handler.thread_event_route_exists("thread-child"));
+    assert_eq!(
+        event_rx.try_recv().unwrap()["event"],
+        "response.subagent.activity"
+    );
+    assert_eq!(
+        event_rx.try_recv().unwrap()["event"],
+        "response.block.created"
+    );
+    let child_event = event_rx
+        .try_recv()
+        .expect("pending child output should replay through the inherited route");
+    assert_eq!(child_event["event"], "response.block.created");
+    assert_eq!(child_event["payload"]["taskId"], local_task_id);
+    assert_eq!(child_event["payload"]["subtaskId"], "turn-root");
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["parent_tool_use_id"],
+        "subagent-thread-child"
+    );
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["content"],
+        "child output before parent spawn completion"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn child_notifications_remain_ordered_while_pending_notifications_replay() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("replaying-spawned-child-thread-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "turn-root".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-root".to_owned());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route("thread-root", local_task_id.to_owned(), request, false);
+    handler.route_codex_notification(json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-root",
+            "turnId": "turn-root",
+            "item": {
+                "id": "spawn-call",
+                "type": "collabAgentToolCall",
+                "tool": "spawnAgent",
+                "receiverThreadIds": ["thread-child"],
+                "status": "completed"
+            }
+        }
+    }));
+    while event_rx.try_recv().is_ok() {}
+
+    let child_started = json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "item": {
+                "id": "child-message",
+                "type": "agentMessage",
+                "phase": "final_answer",
+                "text": ""
+            }
+        }
+    });
+    let pending_replay = {
+        let mut routing = handler
+            .thread_event_routing
+            .lock()
+            .expect("thread event routing lock should not be poisoned");
+        let generation = routing
+            .routes
+            .get("thread-child")
+            .expect("child route should exist")
+            .generation;
+        assert!(routing
+            .replaying_route_generations
+            .insert("thread-child".to_owned(), generation)
+            .is_none());
+        Some(PendingCodexNotificationReplay {
+            route_generations: HashMap::from([("thread-child".to_owned(), generation)]),
+            notifications: vec![PendingCodexNotification {
+                thread_id: "thread-child".to_owned(),
+                message: child_started,
+            }],
+        })
+    };
+
+    handler.route_codex_notification(json!({
+        "method": "item/agentMessage/delta",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "itemId": "child-message",
+            "delta": "ordered child output"
+        }
+    }));
+    assert!(event_rx.try_recv().is_err());
+
+    handler.replay_codex_notifications(pending_replay);
+
+    let child_event = event_rx
+        .try_recv()
+        .expect("child delta should follow its pending start notification");
+    assert_eq!(child_event["event"], "response.block.created");
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["content"],
+        "ordered child output"
+    );
+    assert!(event_rx.try_recv().is_err());
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn pending_notifications_do_not_cross_thread_route_generations() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("replaced-child-thread-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let old_task_id = "runtime-task-old";
+    let new_task_id = "runtime-task-new";
+    for local_task_id in [old_task_id, new_task_id] {
+        let mut link = RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some("thread-child".to_owned());
+        handler.upsert_local_task(link);
+    }
+    handler.register_thread_event_route(
+        "thread-child",
+        old_task_id.to_owned(),
+        ExecutionRequest {
+            task_id: old_task_id.to_owned(),
+            subtask_id: "turn-old".to_owned(),
+            ..ExecutionRequest::default()
+        },
+        false,
+    );
+
+    let old_replay = {
+        let mut routing = handler
+            .thread_event_routing
+            .lock()
+            .expect("thread event routing lock should not be poisoned");
+        let generation = routing
+            .routes
+            .get("thread-child")
+            .expect("old route should exist")
+            .generation;
+        routing
+            .replaying_route_generations
+            .insert("thread-child".to_owned(), generation);
+        Some(PendingCodexNotificationReplay {
+            route_generations: HashMap::from([("thread-child".to_owned(), generation)]),
+            notifications: vec![PendingCodexNotification {
+                thread_id: "thread-child".to_owned(),
+                message: json!({
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": "thread-child",
+                        "turnId": "turn-old",
+                        "itemId": "child-message",
+                        "delta": "stale child output"
+                    }
+                }),
+            }],
+        })
+    };
+
+    handler.register_thread_event_route(
+        "thread-child",
+        new_task_id.to_owned(),
+        ExecutionRequest {
+            task_id: new_task_id.to_owned(),
+            subtask_id: "turn-new".to_owned(),
+            ..ExecutionRequest::default()
+        },
+        false,
+    );
+    handler.replay_codex_notifications(old_replay);
+
+    assert!(
+        event_rx.try_recv().is_err(),
+        "old replay must not reach the replacement route"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn active_parent_registers_child_route_before_skipping_its_own_notification() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("active-spawned-child-thread-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "turn-root".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-root".to_owned());
+    handler.upsert_local_task(link);
+    let execution_id = start_test_execution(&handler, local_task_id);
+    handler.register_thread_event_route(
+        "thread-root",
+        local_task_id.to_owned(),
+        ExecutionRequest {
+            task_id: local_task_id.to_owned(),
+            subtask_id: format!("{local_task_id}-context-compact"),
+            ..ExecutionRequest::default()
+        },
+        false,
+    );
+    handler.register_thread_event_route("thread-root", local_task_id.to_owned(), request, true);
+    handler.register_thread_event_route(
+        "thread-root",
+        local_task_id.to_owned(),
+        ExecutionRequest {
+            task_id: local_task_id.to_owned(),
+            subtask_id: format!("{local_task_id}-context-compact"),
+            ..ExecutionRequest::default()
+        },
+        false,
+    );
+    handler.record_active_codex_turn(
+        local_task_id,
+        execution_id,
+        "thread-root".to_owned(),
+        "turn-root".to_owned(),
+    );
+
+    handler.route_codex_notification(json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-root",
+            "turnId": "turn-root",
+            "item": {
+                "id": "spawn-call",
+                "type": "collabAgentToolCall",
+                "tool": "spawnAgent",
+                "prompt": "Inspect the child route",
+                "receiverThreadIds": ["thread-child"],
+                "status": "completed"
+            }
+        }
+    }));
+
+    assert!(handler.thread_event_route_exists("thread-child"));
+    assert!(event_rx.try_recv().is_err());
+
+    handler.route_codex_notification(json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "item": {
+                "id": "child-message",
+                "type": "agentMessage",
+                "phase": "final_answer",
+                "text": ""
+            }
+        }
+    }));
+    handler.route_codex_notification(json!({
+        "method": "item/agentMessage/delta",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "itemId": "child-message",
+            "delta": "child output"
+        }
+    }));
+
+    let child_event = event_rx
+        .try_recv()
+        .expect("active child output should use the inherited route");
+    assert_eq!(child_event["event"], "response.block.created");
+    assert_eq!(child_event["payload"]["subtaskId"], "turn-root");
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["parent_tool_use_id"],
+        "subagent-thread-child"
+    );
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["content"],
+        "child output"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn cached_codex_link_stays_visible_until_provider_thread_is_discovered() {
     let mut link = RuntimeTaskLink::new_pending(
         "local-task-1".to_owned(),
@@ -4071,6 +4919,37 @@ fn cached_codex_link_stays_visible_until_provider_thread_is_discovered() {
 
     let discovered_thread_ids = HashSet::from(["thread-1".to_owned()]);
     assert!(is_cached_codex_link_hidden(&link, &discovered_thread_ids));
+}
+
+#[tokio::test]
+async fn cached_task_list_uses_the_existing_runtime_work_store() {
+    let (handler, root) = isolated_runtime_work_handler("cached-task-list");
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "local-task-1".to_owned(),
+        runtime: "claude".to_owned(),
+        workspace_path: "/tmp/cached-project".to_owned(),
+        title: "Cached task".to_owned(),
+        status: "active".to_owned(),
+        ..RuntimeTaskLink::default()
+    });
+
+    let response = handler
+        .list_tasks(&json!({ "preferCached": true }))
+        .await
+        .expect("cached task list should be available");
+    let tasks = response["workspaces"]
+        .as_array()
+        .expect("workspaces should be an array")
+        .iter()
+        .filter_map(|workspace| workspace["tasks"].as_array())
+        .flatten()
+        .collect::<Vec<_>>();
+
+    assert!(tasks
+        .iter()
+        .any(|task| { task["taskId"] == "local-task-1" && task["title"] == "Cached task" }));
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -4686,6 +5565,68 @@ async fn execution_mapper_drops_notifications_after_stop_is_requested() {
             .is_empty(),
         "notifications arriving after cancellation must not enter the transcript"
     );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn execution_mapper_keeps_same_turn_subagent_text_out_of_root_conversation() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("execution-mapper-subagent-text");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "runtime-subtask-1".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+    let execution_id = start_test_execution(&handler, local_task_id);
+    handler.begin_active_codex_transcript(local_task_id, "thread-root", "turn-1");
+    let active_turn = ActiveCodexTurn {
+        execution_id,
+        thread_id: "thread-root".to_owned(),
+        turn_id: "turn-1".to_owned(),
+    };
+    let mut execution_mapper = CodexNotificationEventMapper::default();
+
+    handler
+        .map_execution_codex_notification(
+            local_task_id,
+            execution_id,
+            &request,
+            Some(active_turn),
+            &mut execution_mapper,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": "thread-child",
+                    "turnId": "turn-1",
+                    "itemId": "message-child",
+                    "delta": "Child agent output"
+                }
+            }),
+        )
+        .await;
+
+    let event = event_rx
+        .try_recv()
+        .expect("the child message should be emitted as a nested block");
+    assert_eq!(event["event"], "response.block.created");
+    assert_eq!(
+        event["payload"]["data"]["block"]["parent_tool_use_id"],
+        "subagent-thread-child"
+    );
+    assert_eq!(
+        event["payload"]["data"]["block"]["content"],
+        "Child agent output"
+    );
+    assert!(event_rx.try_recv().is_err());
 
     let _ = fs::remove_file(index_path);
 }

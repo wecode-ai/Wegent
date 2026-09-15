@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
-import { clearImagePreviewCache } from './imagePreviewCache'
+import { clearImagePreviewCache, isCurrentImageLoadError } from './imagePreviewCache'
 import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
 
 const runtimeMock = vi.hoisted(() => ({
@@ -360,5 +360,11 @@ describe('AttachmentImagePreview', () => {
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
     expect(URL.revokeObjectURL).not.toHaveBeenCalled()
     second.unmount()
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+  })
+
+  test('ignores an image error emitted for a released preview URL', () => {
+    expect(isCurrentImageLoadError('blob:released-preview', 'blob:active-preview')).toBe(false)
+    expect(isCurrentImageLoadError('blob:active-preview', 'blob:active-preview')).toBe(true)
   })
 })

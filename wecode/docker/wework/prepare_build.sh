@@ -9,6 +9,7 @@ rm -rf wework packages patches shared package.json pnpm-lock.yaml pnpm-workspace
 cp -R ../../../wework ./wework
 mkdir -p ./packages
 cp -R ../../../packages/chat-core ./packages/chat-core
+cp -R ../../../packages/collaboration ./packages/collaboration
 cp -R ../../../patches ./patches
 mkdir -p ./shared
 cp -R ../../../shared/assets ./shared/assets
@@ -19,4 +20,5 @@ rm -rf \
   ./wework/dist \
   ./wework/.vite \
   ./wework/coverage \
-  ./packages/chat-core/node_modules
+  ./packages/chat-core/node_modules \
+  ./packages/collaboration/node_modules

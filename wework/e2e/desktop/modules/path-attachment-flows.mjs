@@ -324,7 +324,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
   )
   assert.equal(
     await control.command('getValue', composerSelector),
-    SELECTED_TEXT_FILE_CONTENT.trim(),
+    SELECTED_TEXT_FILE_CONTENT,
     'Dragging selected workspace editor text did not insert it into the composer'
   )
   assert.equal(

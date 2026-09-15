@@ -44,6 +44,7 @@ export class RuntimeTaskLifecycleStore {
   private readonly machines = new Map<string, RuntimeTaskMachine>()
   private readonly deviceAliases = new Map<string, string>()
   private readonly previousRunningTaskKeys: Set<string>
+  private readonly deferredGoalUnreadTaskKeys = new Set<string>()
   private readonly listeners = new Set<Listener>()
   private readonly unreadStorageKey: string
   private readonly runningStorageKey: string
@@ -214,6 +215,10 @@ export class RuntimeTaskLifecycleStore {
     this.dispatch(address, { type: 'send_accepted' })
   }
 
+  sendQueued(address: RuntimeTaskAddress, queuePosition?: number | null): void {
+    this.dispatch(address, { type: 'send_queued', queuePosition })
+  }
+
   sendRejected(address: RuntimeTaskAddress): void {
     this.dispatch(address, { type: 'send_rejected' })
   }
@@ -297,6 +302,7 @@ export class RuntimeTaskLifecycleStore {
     const key = getRuntimeTaskLifecycleKey(canonicalAddress)
     const deleted = this.machines.delete(key)
     this.previousRunningTaskKeys.delete(key)
+    this.deferredGoalUnreadTaskKeys.delete(key)
     if (deleted) this.publish()
   }
 
@@ -351,18 +357,28 @@ export class RuntimeTaskLifecycleStore {
         executorSnapshotRunning: previous.task.running,
       })
     }
-    if (
+    const becameBackgroundIdle =
       wasRunning &&
+      !next.derived.isRunning &&
+      !next.derived.isQueued &&
+      next.key !== this.currentTaskKey
+    if (becameBackgroundIdle && next.goalStatus === 'active') {
+      this.deferredGoalUnreadTaskKeys.add(key)
+    }
+    if (
+      (becameBackgroundIdle || this.deferredGoalUnreadTaskKeys.has(key)) &&
       !next.derived.isRunning &&
       !next.derived.isQueued &&
       next.goalStatus !== 'active' &&
       next.key !== this.currentTaskKey
     ) {
       changed = machine.dispatch({ type: 'marked_unread' }) || changed
+      this.deferredGoalUnreadTaskKeys.delete(key)
     }
     if (next.derived.isRunning) this.previousRunningTaskKeys.add(key)
     else this.previousRunningTaskKeys.delete(key)
     if (next.derived.isRunning || next.key === this.currentTaskKey) {
+      this.deferredGoalUnreadTaskKeys.delete(key)
       changed = machine.dispatch({ type: 'marked_read' }) || changed
     }
     return changed
@@ -440,7 +456,7 @@ export class RuntimeTaskLifecycleStore {
         task: previousTask ?? emptyRuntimeTaskSummary(nextAddress),
       })
     }
-    if (previousState.goalStatus !== null) {
+    if (previousState.hasAuthoritativeGoalStatus) {
       nextMachine.dispatch({
         type: 'goal_status_received',
         goalStatus: previousState.goalStatus,
@@ -473,6 +489,9 @@ export class RuntimeTaskLifecycleStore {
     if (previousState.unread) nextMachine.dispatch({ type: 'marked_unread' })
     if (this.previousRunningTaskKeys.delete(previousKey)) {
       this.previousRunningTaskKeys.add(nextKey)
+    }
+    if (this.deferredGoalUnreadTaskKeys.delete(previousKey)) {
+      this.deferredGoalUnreadTaskKeys.add(nextKey)
     }
     this.machines.delete(previousKey)
     if (this.currentTaskKey === previousKey) this.currentTaskKey = nextKey

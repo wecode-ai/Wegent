@@ -87,4 +87,23 @@ describe('CloudDeviceSection', () => {
       expect.stringContaining('OpenClaw Device'),
     ])
   })
+
+  it('highlights the machine containing the requested device', () => {
+    render(
+      <CloudDeviceSection
+        cloudDevices={[openClaw, executor]}
+        highlightedDeviceId={openClaw.id}
+        {...handlers}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-machine-card-sandbox-1')).toHaveAttribute(
+      'data-highlighted',
+      'true'
+    )
+    expect(screen.getByTestId('cloud-runtime-row-openclaw-openclaw-device')).toHaveAttribute(
+      'data-device-record-id',
+      String(openClaw.id)
+    )
+  })
 })

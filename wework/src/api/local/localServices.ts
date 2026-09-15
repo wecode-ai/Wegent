@@ -12,6 +12,7 @@ import {
 import { reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import type { RuntimeWorkListRequestOptions } from '@/api/runtimeWork'
 import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
 import i18n from '@/i18n'
 import type {
@@ -113,6 +114,7 @@ import type {
 } from '@/types/automation'
 import type { WorkspaceTextFileResponse, WorkspaceTreeResponse } from '@/types/workspace-files'
 import {
+  ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
   requestLocalExecutor,
   subscribeLocalExecutorEvents,
@@ -370,6 +372,7 @@ type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>
 type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
 interface LocalAppServicesDeps {
+  available?: () => Promise<LocalExecutorStatus>
   ensure?: () => Promise<LocalExecutorStatus>
   request?: LocalExecutorRequest
   subscribe?: LocalExecutorSubscribe
@@ -797,7 +800,14 @@ function normalizeRuntimeTaskSummary(
   const modelSelection =
     modelSelectionValue(taskRecord.modelSelection ?? taskRecord.model_selection) ??
     modelSelectionValue(runtimeHandle.modelSelection ?? runtimeHandle.model_selection)
-  const goalStatus = runtimeGoalStatusValue(taskRecord.goalStatus ?? taskRecord.goal_status)
+  const rawGoalStatus = Object.hasOwn(taskRecord, 'goalStatus')
+    ? taskRecord.goalStatus
+    : taskRecord.goal_status
+  const goalStatus = rawGoalStatus === null ? null : runtimeGoalStatusValue(rawGoalStatus)
+  const hasGoalStatus = rawGoalStatus === null || goalStatus !== undefined
+  const goalExecutionStatus = runtimeGoalExecutionStatusValue(
+    taskRecord.goalExecutionStatus ?? taskRecord.goal_execution_status
+  )
   const threadStatus = stringValue(taskRecord.threadStatus ?? taskRecord.thread_status)
   const turnStatus = stringValue(taskRecord.turnStatus ?? taskRecord.turn_status)
   const continuableValue = taskRecord.continuable
@@ -825,7 +835,8 @@ function normalizeRuntimeTaskSummary(
     ...(gitInfo !== undefined ? { gitInfo } : {}),
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
     ...(modelSelection ? { modelSelection } : {}),
-    ...(goalStatus ? { goalStatus } : {}),
+    ...(hasGoalStatus ? { goalStatus } : {}),
+    ...(goalExecutionStatus ? { goalExecutionStatus } : {}),
     ...(threadStatus ? { threadStatus } : {}),
     ...(turnStatus ? { turnStatus } : {}),
     ...(continuable !== undefined ? { continuable } : {}),
@@ -842,6 +853,14 @@ function runtimeGoalStatusValue(value: unknown): RuntimeGoalStatus | undefined {
     value === 'complete' ||
     value === 'usageLimited' ||
     value === 'budgetLimited'
+    ? value
+    : undefined
+}
+
+function runtimeGoalExecutionStatusValue(
+  value: unknown
+): RuntimeTaskSummary['goalExecutionStatus'] | undefined {
+  return value === 'running' || value === 'recovering' || value === 'needsAttention'
     ? value
     : undefined
 }
@@ -1042,6 +1061,9 @@ function localRuntimeModelConfig(
     const visionSidecar = localVisionSidecarConfig(localModel)
     const primaryCodexCatalogModelId =
       localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID
+    const nativeCodexTools =
+      localModel.apiFormat === 'openai-responses' &&
+      localModel.codexToolCompatibility !== 'standard'
     return {
       model: 'openai',
       model_id: localModel.modelId,
@@ -1049,6 +1071,8 @@ function localRuntimeModelConfig(
       codex_catalog_model_id: primaryCodexCatalogModelId,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: localModel.apiFormat,
+      native_tool_search: nativeCodexTools,
+      native_namespace_tools: nativeCodexTools,
       tool_profile: localModel.toolProfile,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: localModel.baseUrl,
@@ -1095,10 +1119,15 @@ function localRuntimeModelConfig(
     const maxOutputTokens = Number(modelOptions?.[CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION])
     const upstreamApiFormat =
       modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
+    const nativeByDefault = upstreamApiFormat === 'openai-responses'
     const nativeToolSearch =
-      modelOptions?.[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION]?.trim().toLowerCase() === 'true'
+      modelOptions?.[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION] == null
+        ? nativeByDefault
+        : modelOptions[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION]?.trim().toLowerCase() === 'true'
     const nativeNamespaceTools =
-      modelOptions?.[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
+      modelOptions?.[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION] == null
+        ? nativeByDefault
+        : modelOptions[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
     const visionSidecar = cloudVisionSidecarConfig(runtime, modelOptions, cloudModelGateway)
     const primaryCodexCatalogModelId =
       modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
@@ -1188,6 +1217,13 @@ function harnessProxyUpstream(
   if (!baseUrl || !apiFormat || !apiKey) {
     throw new Error('Harness model proxy configuration is incomplete')
   }
+  const nativeByDefault = apiFormat === 'openai-responses'
+  const nativeToolSearch =
+    typeof config.native_tool_search === 'boolean' ? config.native_tool_search : nativeByDefault
+  const nativeNamespaceTools =
+    typeof config.native_namespace_tools === 'boolean'
+      ? config.native_namespace_tools
+      : nativeByDefault
   const headers =
     config.default_headers &&
     typeof config.default_headers === 'object' &&
@@ -1201,8 +1237,8 @@ function harnessProxyUpstream(
     request_url: recordString(config.responses_url) ?? `${baseUrl.replace(/\/+$/, '')}/responses`,
     api_format: apiFormat,
     convert_custom_tools: config.tool_profile === 'function',
-    native_tool_search: false,
-    native_namespace_tools: false,
+    native_tool_search: nativeToolSearch,
+    native_namespace_tools: nativeNamespaceTools,
     api_key: apiKey,
     default_headers: headers,
     proxy_url: getLocalProxyUrl() || null,
@@ -2565,11 +2601,17 @@ export function createRuntimeWorkApiFromIpc(
 
   return {
     prepareRuntimeModel,
-    async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
+    async listRuntimeWork(
+      requestOptions?: RuntimeWorkListRequestOptions
+    ): Promise<RuntimeWorkListResponse> {
       const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()
       try {
-        const response = await request('runtime.tasks.list', {}, localDeviceId)
+        const response = await request(
+          'runtime.tasks.list',
+          requestOptions?.preferCached ? { preferCached: true } : {},
+          localDeviceId
+        )
         const runtimeWork = adaptListResponse(response, localDeviceId)
         return runtimeWork
       } catch (error) {
@@ -3404,6 +3446,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       return buildProjectPluginCatalog(installed, apps)
     },
   }
+  const available = deps.available ?? deps.ensure ?? ensureLocalExecutorAvailable
   const ensure = deps.ensure ?? ensureLocalExecutorStarted
   const request = deps.request ?? requestLocalExecutor
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
@@ -3411,7 +3454,22 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const readWorkspaceFileChunk = deps.readWorkspaceFileChunk ?? readLocalWorkspaceFileChunk
   const listWorkspaceEntries = deps.listWorkspaceEntries ?? listLocalWorkspaceEntries
   let lastStatus: LocalExecutorStatus | null = null
+  let availablePromise: Promise<LocalExecutorStatus> | null = null
   let ensurePromise: Promise<LocalExecutorStatus> | null = null
+
+  const availableStatus = async () => {
+    if (!availablePromise) {
+      availablePromise = available()
+        .then(status => {
+          lastStatus = status
+          return status
+        })
+        .finally(() => {
+          availablePromise = null
+        })
+    }
+    return availablePromise
+  }
 
   const ensureStatus = async () => {
     if (!ensurePromise) {
@@ -3429,9 +3487,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     return ensurePromise
   }
 
-  const getLocalDeviceId = async () => localDeviceIdFromStatus(await ensureStatus())
+  const bootstrapStatus = deps.available || !deps.ensure ? availableStatus : ensureStatus
+  const getLocalDeviceId = async () => localDeviceIdFromStatus(await bootstrapStatus())
   const getDeviceCommandLocalDeviceId = async () =>
-    localDeviceIdFromStatus(lastStatus ?? (await ensureStatus()))
+    localDeviceIdFromStatus(lastStatus ?? (await bootstrapStatus()))
 
   const executeCommand = async (
     deviceId: string,
@@ -3454,7 +3513,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const deviceApi: WorkbenchServices['deviceApi'] = {
     async listDevices() {
       try {
-        return [localDeviceFromStatus(await ensureStatus())]
+        return [localDeviceFromStatus(await bootstrapStatus())]
       } catch (error) {
         const fallback = {
           ...localExecutorErrorStatus(error),

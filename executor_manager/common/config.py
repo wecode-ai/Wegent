@@ -56,6 +56,22 @@ def _get_redis_protocol() -> int:
     return protocol
 
 
+def _get_positive_int_env(name: str, default: int) -> int:
+    """Read a positive integer environment variable."""
+    value = int(os.getenv(name, str(default)))
+    if value < 1:
+        raise ValueError(f"{name} must be greater than 0")
+    return value
+
+
+def _get_positive_float_env(name: str, default: float) -> float:
+    """Read a positive floating-point environment variable."""
+    value = float(os.getenv(name, str(default)))
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than 0")
+    return value
+
+
 @dataclass(frozen=True)
 class RedisConfig:
     """Redis connection configuration."""
@@ -66,8 +82,28 @@ class RedisConfig:
     # socket_timeout must be larger than BRPOP timeout to avoid timeout conflicts
     # BRPOP blocks for up to TASK_QUEUE_DEQUEUE_TIMEOUT (default 5s), so socket_timeout
     # should be significantly larger to account for the blocking operation plus buffer
-    socket_timeout: float = 30.0
-    connect_timeout: float = 5.0
+    socket_timeout: float = field(
+        default_factory=lambda: _get_positive_float_env("REDIS_SOCKET_TIMEOUT", 30.0)
+    )
+    async_socket_timeout: float = field(
+        default_factory=lambda: _get_positive_float_env(
+            "REDIS_ASYNC_SOCKET_TIMEOUT", 5.0
+        )
+    )
+    connect_timeout: float = field(
+        default_factory=lambda: _get_positive_float_env("REDIS_CONNECT_TIMEOUT", 3.0)
+    )
+    sync_max_connections: int = field(
+        default_factory=lambda: _get_positive_int_env("REDIS_SYNC_MAX_CONNECTIONS", 100)
+    )
+    async_max_connections: int = field(
+        default_factory=lambda: _get_positive_int_env(
+            "REDIS_ASYNC_MAX_CONNECTIONS", 200
+        )
+    )
+    pool_wait_timeout: float = field(
+        default_factory=lambda: _get_positive_float_env("REDIS_POOL_WAIT_TIMEOUT", 2.0)
+    )
     encoding: str = "utf-8"
     decode_responses: bool = True
     # RESP2 avoids the HELLO handshake and remains compatible with older

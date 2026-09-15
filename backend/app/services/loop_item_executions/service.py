@@ -36,6 +36,7 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage, project_chat_message_key
 from app.models.user import User
+from app.schemas.plugin_config import validate_non_secret_plugin_configs
 from app.schemas.runtime_work import RuntimeTaskCreateRequest
 from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
@@ -47,6 +48,7 @@ from app.services.project_automation_domain import (
     assignment_mode,
     manager_type,
 )
+from app.services.workspaces.storage import workspace_id_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -163,10 +165,37 @@ def runtime_device_identity_ids(
     return list(dict.fromkeys([submitted, *device_identity_ids(device)]))
 
 
+def _same_runtime_device(
+    db: Session,
+    *,
+    owner_user_id: int,
+    left_device_id: str,
+    right_device_id: str,
+) -> bool:
+    """Return whether two authenticated Runtime identities name one device."""
+
+    left_ids = set(
+        runtime_device_identity_ids(
+            db,
+            left_device_id,
+            owner_user_id=owner_user_id,
+        )
+    )
+    right_ids = set(
+        runtime_device_identity_ids(
+            db,
+            right_device_id,
+            owner_user_id=owner_user_id,
+        )
+    )
+    return bool(left_ids.intersection(right_ids))
+
+
 def runtime_configuration_complete(
     *,
     execution_device_id: str | None,
     model: object,
+    require_model: bool = True,
     workspace_binding_required: bool = False,
     workspace_binding: object = None,
 ) -> bool:
@@ -174,8 +203,7 @@ def runtime_configuration_complete(
 
     return bool(
         execution_device_id
-        and isinstance(model, str)
-        and model.strip()
+        and (not require_model or (isinstance(model, str) and bool(model.strip())))
         and (not workspace_binding_required or isinstance(workspace_binding, dict))
     )
 
@@ -779,6 +807,7 @@ class LoopItemExecutionService:
         waiting_runtime = not runtime_configuration_complete(
             execution_device_id=device_id,
             model=selected_model,
+            require_model=False,
             workspace_binding_required=workspace_binding_required,
             workspace_binding=automation_context.get("workspace_binding"),
         )
@@ -949,6 +978,18 @@ class LoopItemExecutionService:
         origin_context: dict[str, Any],
         runtime_request: dict[str, Any] | None = None,
     ) -> str:
+        validate_non_secret_plugin_configs(
+            origin_context.get("project_plugins"),
+            field_name="origin_context.project_plugins",
+        )
+        if runtime_request is not None:
+            validate_non_secret_plugin_configs(
+                runtime_request.get(
+                    "projectPlugins",
+                    runtime_request.get("project_plugins"),
+                ),
+                field_name="runtime_request.projectPlugins",
+            )
         value: dict[str, Any] = {
             "schema_version": 2,
             "runtime_selection": runtime_selection,
@@ -1042,6 +1083,7 @@ class LoopItemExecutionService:
         needs_runtime = not row.team_id and not runtime_configuration_complete(
             execution_device_id=row.execution_device_id,
             model=row.runtime_selection.get("model"),
+            require_model=row.executor_type != "generic_robot",
             workspace_binding_required="workspace_binding" in origin_context,
             workspace_binding=origin_context.get("workspace_binding"),
         )
@@ -3486,14 +3528,21 @@ class LoopItemExecutionService:
                 )
             )
             if execution_target_id:
-                if request.device_id != execution_target_id:
+                if not _same_runtime_device(
+                    db,
+                    owner_user_id=execution.executor_owner_user_id,
+                    left_device_id=request.device_id,
+                    right_device_id=execution_target_id,
+                ):
                     raise WeworkExecutionProfileError(
                         "Execution request target does not match the claimed queue"
                     )
                 workspace_source_task = request.workspace_source_task
-                if (
-                    workspace_source_task is not None
-                    and workspace_source_task.device_id != execution_target_id
+                if workspace_source_task is not None and not _same_runtime_device(
+                    db,
+                    owner_user_id=execution.executor_owner_user_id,
+                    left_device_id=workspace_source_task.device_id,
+                    right_device_id=execution_target_id,
                 ):
                     raise WeworkExecutionProfileError(
                         "Inherited workflow workspace belongs to a different "
@@ -3900,6 +3949,9 @@ class LoopItemExecutionService:
         return [
             {
                 "id": execution.id,
+                "workspace_id": workspace_id_for_project(
+                    db, execution.cloud_project_id
+                ),
                 "loop_item_id": execution.loop_item_id,
                 "cloud_project_id": execution.cloud_project_id,
                 "task_title": None,

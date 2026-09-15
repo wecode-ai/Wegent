@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict'
-import { createHmac } from 'node:crypto'
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
+
+import {
+  assistantMessage,
+  createSse,
+  responseCompleted,
+  responseCreated,
+} from '../modules/response-protocol.mjs'
 
 const PROJECT_NAME = '外部事件源矩阵验收'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const CLOUD_MODEL_NAME = 'desktop-e2e-public-model'
+const GITHUB_HANDLER_PROMPT = '处理 GitHub pull request 的 CI 失败。'
+const GITLAB_HANDLER_PROMPT = '处理 GitLab merge request 的新评论。'
+const triggerPrompt = sourceType =>
+  `Report the failed ${sourceType} checks for this change request.`
 const GITHUB_EVENT_TYPES = [
   'change_request.checks_failed',
   'change_request.merge_conflict',
@@ -330,7 +340,11 @@ function gitlabMergeRequest(eventType, sequence) {
     sha: `gitlab-head-${sequence}`,
   }
   if (eventType === 'change_request.merge_conflict') {
-    return { ...mergeRequest, detailed_merge_status: 'cannot_be_merged' }
+    return {
+      ...mergeRequest,
+      state: 'opened',
+      detailed_merge_status: 'cannot_be_merged',
+    }
   }
   if (eventType === 'change_request.merged') {
     return {
@@ -403,12 +417,15 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   let upstreamRequests = []
   let currentGithubFixture = null
   let currentGitlabFixture = null
+  let modelRequestCount = 0
+  const workflowModelRequests = []
 
   const request = (pathname, options) => requestJson(backendUrl, token, pathname, options)
 
   function withDatabase(action) {
     const database = new DatabaseSync(databasePath)
     try {
+      database.exec('PRAGMA busy_timeout = 30000')
       return action(database)
     } finally {
       database.close()
@@ -477,7 +494,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       method: 'POST',
       body: JSON.stringify({
         name: `External ${sourceType} trigger ${hook.id}`,
-        prompt: `Report the failed ${sourceType} checks for this change request.`,
+        prompt: triggerPrompt(sourceType),
         triggerType: 'event',
         eventType: 'change_request.checks_failed',
         eventConfig: {
@@ -498,8 +515,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       database
         .prepare(
           `select metadata
-             from project_automation_runs
-            where task_id = ?
+             from loop_items
+            where resource_type = 'automation_run'
+              and task_id = ?
             order by created_at, id`
         )
         .all(itemId)
@@ -604,6 +622,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
               loop_state: 'active',
               attempts: 0,
               activated_at: activatedAt,
+              catch_up_done: true,
               depends_on: ['start'],
               body_node_ids: ['loop-start', 'event-branch', 'github-handler', 'gitlab-handler'],
               loop_config: { max_attempts: 2 },
@@ -622,7 +641,6 @@ export function createDesktopScenario({ uiTimeoutMs }) {
               node_type: 'branch',
               loop_id: 'repair-loop',
               status: 'waiting',
-              catch_up_done: true,
               depends_on: ['loop-start'],
               event_wait: {
                 subject_source: 'upstream_pull_request',
@@ -702,6 +720,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       uiTimeoutMs * 3
     )
     assert.deepEqual(workflowHandlerRunNodeIds(issue.id), ['github-handler'])
+    assert.deepEqual(workflowModelRequests, ['github-handler'])
     const githubBranch = afterGithub.workflow.nodes.find(node => node.id === 'event-branch')
     assert.equal(githubBranch.collectors.github.collector_id, githubHook.id)
     assert.equal(githubBranch.collectors.gitlab.collector_id, gitlabHook.id)
@@ -721,6 +740,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       uiTimeoutMs * 3
     )
     assert.deepEqual(workflowHandlerRunNodeIds(issue.id), ['github-handler', 'gitlab-handler'])
+    assert.deepEqual(workflowModelRequests, ['github-handler', 'gitlab-handler'])
     assert.equal(
       completed.workflow.nodes.every(node => node.status === 'completed'),
       true
@@ -786,12 +806,25 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     })
   }
 
-  async function waitForProcessedEvents(hookId, count) {
+  function normalizedChangeRequestTypes(events) {
+    return new Set(
+      events
+        .flatMap(event => event.normalizedEvents.map(item => item.event_type ?? item.eventType))
+        .filter(eventType => eventType?.startsWith('change_request.'))
+    )
+  }
+
+  async function waitForProcessedEvents(hookId, expectedTypes) {
     return waitForValue(
       () =>
         request(`/api/v1/cloud-projects/${project.id}/incoming-hooks/${hookId}/events?limit=200`),
-      events => events.filter(event => event.status === 'processed').length >= count,
-      `Subscription ${hookId} did not process ${count} events`,
+      events => {
+        const actual = normalizedChangeRequestTypes(
+          events.filter(event => event.status === 'processed')
+        )
+        return expectedTypes.every(eventType => actual.has(eventType))
+      },
+      `Subscription ${hookId} did not process every expected event type`,
       uiTimeoutMs * 3
     )
   }
@@ -803,16 +836,12 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         .run(hook.id)
       database.prepare("update loop_items set status='active' where id = ?").run(hook.id)
     })
-    const processed = await waitForProcessedEvents(hook.id, expectedTypes.length)
+    const processed = await waitForProcessedEvents(hook.id, expectedTypes)
     assertEventTypeCoverage(processed, sourceType, expectedTypes, 'poll')
   }
 
   function assertEventTypeCoverage(events, sourceType, expectedTypes, mode) {
-    const actual = new Set(
-      events
-        .flatMap(event => event.normalizedEvents.map(item => item.event_type ?? item.eventType))
-        .filter(eventType => eventType?.startsWith('change_request.'))
-    )
+    const actual = normalizedChangeRequestTypes(events)
     assert.deepEqual(
       [...actual].sort(),
       [...expectedTypes].sort(),
@@ -860,13 +889,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     if (sourceType === 'github') {
       headers['X-GitHub-Event'] = generated.event
       headers['X-GitHub-Delivery'] = `${sourceType}-webhook-${sequence}`
-      headers['X-Hub-Signature-256'] = `sha256=${createHmac('sha256', hook.webhookSecret)
-        .update(body)
-        .digest('hex')}`
     } else {
       headers['X-Gitlab-Event'] = generated.event
       headers['X-Gitlab-Event-UUID'] = `${sourceType}-webhook-${sequence}`
-      headers['X-Gitlab-Token'] = hook.webhookSecret
     }
     const response = await fetch(hook.webhookUrl, { method: 'POST', headers, body })
     const text = await response.text()
@@ -877,6 +902,52 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   return {
     requiresCloudEnvironment: true,
 
+    async handleHttp(incomingRequest, response, url) {
+      if (
+        incomingRequest.method !== 'POST' ||
+        !['/responses', '/v1/responses'].includes(url.pathname)
+      ) {
+        return false
+      }
+      const chunks = []
+      for await (const chunk of incomingRequest) chunks.push(chunk)
+      const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const serialized = JSON.stringify(payload)
+      const responseId = `project-event-sources-${++modelRequestCount}`
+      // Codex can send its first prewarm before tools or request metadata exist.
+      if (
+        serialized.includes('"request_kind":"prewarm"') ||
+        (modelRequestCount === 1 && !payload.tools?.length)
+      ) {
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(createSse([responseCreated(responseId), responseCompleted(responseId)]))
+        return true
+      }
+
+      const nodeId = serialized.includes(GITHUB_HANDLER_PROMPT)
+        ? 'github-handler'
+        : serialized.includes(GITLAB_HANDLER_PROMPT)
+          ? 'gitlab-handler'
+          : null
+      const triggerSource = ['github', 'gitlab'].find(sourceType =>
+        serialized.includes(triggerPrompt(sourceType))
+      )
+      assert.ok(
+        nodeId || triggerSource,
+        'The external event scenario sent an unexpected model request'
+      )
+      if (nodeId) workflowModelRequests.push(nodeId)
+      response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      response.end(
+        createSse([
+          responseCreated(responseId),
+          assistantMessage(nodeId ? `${nodeId} completed` : `${triggerSource} trigger completed`),
+          responseCompleted(responseId),
+        ])
+      )
+      return true
+    },
+
     async prepareCloud({
       authToken,
       backendUrl: cloudBackendUrl,
@@ -885,7 +956,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       backendUrl = cloudBackendUrl
       token = authToken
       databasePath = cloudDatabasePath ?? ''
-      const projects = await request('/api/v1/cloud-projects')
+      const { items: projects } = await request('/api/v1/cloud-projects')
       project =
         projects.find(item => item.name === PROJECT_NAME) ??
         (await request('/api/v1/cloud-projects', {
@@ -1031,7 +1102,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           sequence += 1
           await deliverWebhook(webhook, sourceType, eventType, sequence)
         }
-        const processed = await waitForProcessedEvents(webhook.id, expectedTypes.length)
+        const processed = await waitForProcessedEvents(webhook.id, expectedTypes)
         assertEventTypeCoverage(processed, sourceType, expectedTypes, 'webhook')
         if (sourceType === 'github') {
           sequence += 1

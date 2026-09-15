@@ -1,5 +1,6 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { defaultRangeExtractor } from '@tanstack/react-virtual'
+import { nestWorkbenchProcessingBlocks, projectWorkbenchSubagentActivity } from '@wegent/chat-core'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import type {
   CSSProperties,
@@ -37,6 +38,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type {
   ProcessingBlock,
   RuntimeAssistantDisplayItem,
+  SubagentBlock,
   WorkbenchMessage,
 } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
@@ -124,14 +126,13 @@ interface MessageListProps {
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
+  onOpenSubagent?: (block: SubagentBlock) => void
   onEditLastUserMessage?: (
     message: WorkbenchMessage,
     content: string
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
   onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
@@ -221,11 +222,10 @@ export const MessageList = memo(function MessageList({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
+  onOpenSubagent,
   onEditLastUserMessage,
   canEditLastUserMessage = false,
   onForkMessage,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
@@ -625,6 +625,7 @@ export const MessageList = memo(function MessageList({
               <AssistantMessage
                 message={message}
                 conversationKey={conversationKey}
+                isActiveTurn={isWaitingForAssistant && index === visibleMessages.length - 1}
                 devices={devices}
                 onRetryFailedMessage={onRetryFailedMessage}
                 onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
@@ -636,8 +637,7 @@ export const MessageList = memo(function MessageList({
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
-                onLoadFullTranscript={onLoadFullTranscript}
-                loadingFullTranscript={loadingFullTranscript}
+                onOpenSubagent={onOpenSubagent}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 onFork={onForkMessage && message.turnId ? () => onForkMessage(message) : undefined}
@@ -762,13 +762,12 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'onRequestUserInputIgnore'
       : null,
     previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
+    previous.onOpenSubagent !== next.onOpenSubagent ? 'onOpenSubagent' : null,
     previous.onEditLastUserMessage !== next.onEditLastUserMessage ? 'onEditLastUserMessage' : null,
     previous.canEditLastUserMessage !== next.canEditLastUserMessage
       ? 'canEditLastUserMessage'
       : null,
     previous.onForkMessage !== next.onForkMessage ? 'onForkMessage' : null,
-    previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
-    previous.loadingFullTranscript !== next.loadingFullTranscript ? 'loadingFullTranscript' : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
       ? 'hideRequestUserInputBlocks'
       : null,
@@ -1436,7 +1435,7 @@ function MessageTextAttachment({
   const attachmentPath = openableAttachmentPath(attachment)
   const clickable = Boolean(attachmentPath)
   const className =
-    'inline-flex h-9 max-w-[360px] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm'
+    'inline-flex h-9 max-w-[min(360px,100%)] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm'
   const content = (
     <>
       <FileText
@@ -1898,19 +1897,23 @@ function getDisplayProcessingBlocks(
 ): ProcessingBlock[] {
   if (!blocks?.length) return []
 
-  return blocks
-    .map(block =>
-      settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
-        ? { ...block, status: 'done' as const }
-        : block
-    )
-    .filter(block => {
-      if (block.type === 'thinking') return false
-      if (block.type !== 'text') return true
+  return nestWorkbenchProcessingBlocks(
+    projectWorkbenchSubagentActivity(
+      blocks
+        .map(block =>
+          settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
+            ? { ...block, status: 'done' as const }
+            : block
+        )
+        .filter(block => {
+          if (block.type === 'thinking') return false
+          if (block.type !== 'text') return true
 
-      const content = block.content.trim()
-      return Boolean(content) && content !== finalContent.trim()
-    })
+          const content = block.content.trim()
+          return Boolean(content) && content !== finalContent.trim()
+        })
+    )
+  )
 }
 
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
@@ -1923,6 +1926,7 @@ function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
 export function AssistantMessage({
   message,
   conversationKey,
+  isActiveTurn = false,
   devices,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
@@ -1934,14 +1938,14 @@ export function AssistantMessage({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
-  onLoadFullTranscript,
-  loadingFullTranscript,
+  onOpenSubagent,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   onFork,
 }: {
   message: WorkbenchMessage
   conversationKey?: string | number | null
+  isActiveTurn?: boolean
   devices: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
@@ -1965,8 +1969,7 @@ export function AssistantMessage({
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
+  onOpenSubagent?: (block: SubagentBlock) => void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onFork?: () => Promise<void> | void
@@ -2027,6 +2030,8 @@ export function AssistantMessage({
   const usesFinalProcessingShell =
     hasBlocks &&
     !hasPlanResponse &&
+    !isStreaming &&
+    !isActiveTurn &&
     !hasRunningBlocks &&
     !isCancelled &&
     !hasProcessingAfterContent &&
@@ -2050,13 +2055,15 @@ export function AssistantMessage({
   )
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
-  const openFileFromLink = (path: string, options?: WorkspaceFileOpenOptions) => {
-    if (options) {
-      onOpenWorkspaceFile?.(path, options)
-      return
-    }
-    onOpenWorkspaceFile?.(path)
-  }
+  const openFileFromLink = onOpenWorkspaceFile
+    ? (path: string, options?: WorkspaceFileOpenOptions) => {
+        if (options) {
+          onOpenWorkspaceFile(path, options)
+          return
+        }
+        onOpenWorkspaceFile(path)
+      }
+    : undefined
   const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
   const processingTimeline = shouldShowProcessingSummary
     ? processingSegments.map((segment, index) => (
@@ -2087,8 +2094,7 @@ export function AssistantMessage({
           onRequestUserInputSubmit={onRequestUserInputSubmit}
           onRequestUserInputIgnore={onRequestUserInputIgnore}
           onOpenAssistantPlan={onOpenAssistantPlan}
-          onLoadFullTranscript={onLoadFullTranscript}
-          loadingFullTranscript={loadingFullTranscript}
+          onOpenSubagent={onOpenSubagent}
           hideRequestUserInputBlocks={hideRequestUserInputBlocks}
           hiddenRequestUserInputIds={hiddenRequestUserInputIds}
         />
@@ -2144,8 +2150,7 @@ export function AssistantMessage({
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
-                onLoadFullTranscript={onLoadFullTranscript}
-                loadingFullTranscript={loadingFullTranscript}
+                onOpenSubagent={onOpenSubagent}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
               />
@@ -2213,13 +2218,6 @@ export function AssistantMessage({
             <AssistantThinkingIndicator content={activeThinkingContent} />
           )}
           {generatedImages.length > 0 ? <GeneratedImageGallery images={generatedImages} /> : null}
-          {message.contentTruncated ? (
-            <ContentTruncatedNotice
-              originalChars={message.contentOriginalChars}
-              onLoadFullTranscript={onLoadFullTranscript}
-              loadingFullTranscript={loadingFullTranscript}
-            />
-          ) : null}
           {hasVisibleContent && !hasProcessingAfterContent ? (
             <div data-message-selectable-text data-testid="assistant-message-content">
               <AssistantMarkdown
@@ -2236,7 +2234,7 @@ export function AssistantMessage({
           {canShowFinalArtifacts && memoryCitations.length > 0 && (
             <CodexMemoryCitations citations={memoryCitations} onOpenFile={onOpenWorkspaceFile} />
           )}
-          {canShowFinalArtifacts && references.length > 0 && (
+          {canShowFinalArtifacts && references.length > 0 && openFileFromLink && (
             <CodexReferenceList references={references} onOpenFile={openFileFromLink} />
           )}
           {message.status === 'failed' && (
@@ -2453,36 +2451,6 @@ function GeneratedImagePreview({
   )
 }
 
-function ContentTruncatedNotice({
-  originalChars,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
-}: {
-  originalChars?: number
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
-}) {
-  return (
-    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-muted">
-      <span>
-        早期内容已从当前视图卸载
-        {typeof originalChars === 'number' ? `，原始约 ${originalChars.toLocaleString()} 字` : ''}。
-      </span>
-      {onLoadFullTranscript ? (
-        <button
-          type="button"
-          data-testid="load-full-runtime-transcript-button"
-          onClick={() => void onLoadFullTranscript()}
-          disabled={loadingFullTranscript}
-          className="h-8 rounded border border-border bg-base px-2 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
-        >
-          {loadingFullTranscript ? '正在加载完整输出' : '加载完整输出'}
-        </button>
-      ) : null}
-    </div>
-  )
-}
-
 function getMessageDisplayStateKey(
   conversationKey: string | number | null | undefined,
   message: WorkbenchMessage
@@ -2517,6 +2485,14 @@ function getOrderedRuntimeDisplaySegments(
   if (!items?.length) return []
 
   const blocksById = new Map(displayBlocks.map(block => [block.id, block]))
+  const subagentsByAnchorId = new Map(
+    displayBlocks.flatMap(block =>
+      block.type === 'subagent' && block.anchorBlockId
+        ? [[block.anchorBlockId, block] as const]
+        : []
+    )
+  )
+  const renderedAnchoredSubagentIds = new Set<string>()
   const segments: RuntimeDisplaySegment[] = []
 
   items.forEach(item => {
@@ -2531,8 +2507,12 @@ function getOrderedRuntimeDisplaySegments(
       return
     }
 
-    const block = blocksById.get(item.id)
+    const block = subagentsByAnchorId.get(item.id) ?? blocksById.get(item.id)
     if (!block) return
+    if (block.type === 'subagent' && block.anchorBlockId) {
+      if (renderedAnchoredSubagentIds.has(block.id)) return
+      renderedAnchoredSubagentIds.add(block.id)
+    }
     const previous = segments.at(-1)
     if (previous?.kind === 'processing') {
       previous.blocks.push(block)
@@ -2659,22 +2639,26 @@ function AssistantErrorCard({
         <p className="text-sm font-semibold leading-5 text-text-primary">{title}</p>
         <p className="mt-0.5 text-xs leading-[18px] text-text-secondary">{description}</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            data-testid="assistant-error-switch-model-retry"
-            onClick={() => onSwitchModel?.(message)}
-            className="h-8 rounded-lg border border-text-primary bg-text-primary px-3 text-xs font-semibold text-background hover:bg-text-primary/90"
-          >
-            {t('assistant_error.actions.switch_model_retry', '切换模型并重试')}
-          </button>
-          <button
-            type="button"
-            data-testid="assistant-error-retry"
-            onClick={() => onRetry?.(message)}
-            className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
-          >
-            {t('assistant_error.actions.retry', '重试')}
-          </button>
+          {onSwitchModel ? (
+            <button
+              type="button"
+              data-testid="assistant-error-switch-model-retry"
+              onClick={() => onSwitchModel(message)}
+              className="h-8 rounded-lg border border-text-primary bg-text-primary px-3 text-xs font-semibold text-background hover:bg-text-primary/90"
+            >
+              {t('assistant_error.actions.switch_model_retry', '切换模型并重试')}
+            </button>
+          ) : null}
+          {onRetry ? (
+            <button
+              type="button"
+              data-testid="assistant-error-retry"
+              onClick={() => onRetry(message)}
+              className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
+            >
+              {t('assistant_error.actions.retry', '重试')}
+            </button>
+          ) : null}
           {hasErrorDetails && (
             <button
               type="button"

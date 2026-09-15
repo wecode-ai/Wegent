@@ -9,13 +9,13 @@ import re
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.provider_credentials import store_provider_config
 from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem, ProjectAutomationRun, loop_datetime_is_unset
+from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -28,8 +28,20 @@ from app.schemas.cloud_project import (
     CloudProjectUpdate,
     normalize_provider_config,
 )
+from app.services.cloud_project_visibility import accessible_cloud_projects
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_item_status_history import write_status_change
+from app.services.workspaces import workspace_service
+from app.services.workspaces.access import require_workspace_role
+from app.services.workspaces.environment_status import execution_environment_statuses
+from app.services.workspaces.resource_mapping import execution_environment_values
+from app.services.workspaces.storage import (
+    ensure_resource_grant,
+    project_ids_for_workspace,
+    resource_grant,
+    workspace_id_for_project,
+)
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +110,15 @@ class CloudProjectService:
     def create(
         self, db: Session, user_id: int, values: CloudProjectCreate
     ) -> CloudProject:
+        if values.workspace_id is None:
+            workspace = workspace_service.get_or_create_default(db, user_id)
+        else:
+            workspace = require_workspace_role(
+                db,
+                int(values.workspace_id),
+                user_id,
+                BaseRole.Developer,
+            ).workspace
         public_id = str(uuid.uuid4())
         try:
             provider_config = store_provider_config(
@@ -125,6 +146,12 @@ class CloudProjectService:
         db.add(project)
         try:
             db.flush()
+            workspace_service.ensure_human_member(
+                db,
+                workspace_id=workspace.id,
+                user_id=user_id,
+                role=BaseRole.Developer,
+            )
             db.add(
                 ResourceMember.create(
                     resource_type=ResourceType.CLOUD_PROJECT.value,
@@ -133,6 +160,14 @@ class CloudProjectService:
                     role=BaseRole.Owner.value,
                     status=MemberStatus.APPROVED.value,
                 )
+            )
+            ensure_resource_grant(
+                db,
+                workspace_id=workspace.id,
+                resource_type=ResourceType.CLOUD_PROJECT.value,
+                resource_id=int(project.id),
+                added_by_user_id=user_id,
+                role=BaseRole.Owner,
             )
             db.commit()
         except IntegrityError as exc:
@@ -144,26 +179,21 @@ class CloudProjectService:
         db.refresh(project)
         return project
 
-    def list_accessible(self, db: Session, user_id: int) -> list[CloudProject]:
-        member_project_ids = select(ResourceMember.resource_id).where(
-            ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED.value,
-        )
-        return (
-            db.query(CloudProject)
-            .filter(
-                CloudProject.status == "active",
-                or_(
-                    CloudProject.created_by_user_id == user_id,
-                    CloudProject.id.in_(member_project_ids),
-                    CloudProject.metadata_json["visibility"].as_string() == "public",
-                ),
+    def list_accessible(
+        self,
+        db: Session,
+        user_id: int,
+        *,
+        workspace_id: int | None = None,
+    ) -> list[CloudProject]:
+        if workspace_id is not None:
+            require_workspace_role(db, workspace_id, user_id)
+        query = accessible_cloud_projects(db, user_id)
+        if workspace_id is not None:
+            query = query.filter(
+                CloudProject.id.in_(project_ids_for_workspace(db, workspace_id))
             )
-            .order_by(CloudProject.updated_at.desc())
-            .all()
-        )
+        return query.order_by(CloudProject.updated_at.desc()).all()
 
     def get(self, db: Session, project_id: int, user_id: int) -> CloudProject:
         return require_cloud_project_role(
@@ -528,6 +558,139 @@ class CloudProjectService:
         member, _ = self._get_member(db, cloud_project_id, member_user_id)
         self._set_member_capability(project, member_user_id, "")
         db.delete(member)
+        db.commit()
+
+    @trace_async("project.list_execution_environments", tracer_name="backend")
+    async def list_execution_environments(
+        self, db: Session, cloud_project_id: int, user_id: int
+    ) -> list[dict[str, object]]:
+        require_cloud_project_role(db, cloud_project_id, user_id)
+        workspace_id = workspace_id_for_project(db, cloud_project_id)
+        if workspace_id is None:
+            return []
+        rows = (
+            db.query(ResourceMember, Kind)
+            .join(Kind, Kind.id == ResourceMember.resource_id)
+            .filter(
+                ResourceMember.resource_type == ResourceType.DEVICE.value,
+                ResourceMember.entity_type == "project",
+                ResourceMember.entity_id == str(cloud_project_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+                Kind.kind == "Device",
+                Kind.is_active.is_(True),
+            )
+            .order_by(ResourceMember.created_at, ResourceMember.id)
+            .all()
+        )
+        connection_statuses = await execution_environment_statuses(
+            [device for _, device in rows]
+        )
+        return [
+            execution_environment_values(
+                db,
+                grant,
+                device,
+                connection_status=connection_statuses[device.id],
+                workspace_id=str(workspace_id),
+            )
+            for grant, device in rows
+        ]
+
+    @trace_async("project.add_execution_environment", tracer_name="backend")
+    async def add_execution_environment(
+        self,
+        db: Session,
+        cloud_project_id: int,
+        device_id: int,
+        user_id: int,
+    ) -> dict[str, object]:
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
+        workspace_id = workspace_id_for_project(db, cloud_project_id)
+        if workspace_id is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Project is not attached to a Workspace",
+            )
+        existing = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.DEVICE.value,
+                ResourceMember.resource_id == device_id,
+                ResourceMember.entity_type == "project",
+                ResourceMember.entity_id == str(cloud_project_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+        )
+        if existing is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Execution environment is already available in this Project",
+            )
+        device = db.get(Kind, device_id)
+        if device is None or device.kind != "Device" or not device.is_active:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "Execution environment not found"
+            )
+        workspace_grant = resource_grant(
+            db,
+            workspace_id=workspace_id,
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device_id,
+        )
+        owned_by_user = int(device.user_id) == user_id
+        shared_with_workspace = workspace_grant is not None
+        if not owned_by_user and not shared_with_workspace:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Execution environment is not available to this Project",
+            )
+        connection_statuses = await execution_environment_statuses([device])
+        grant = ResourceMember.create(
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device_id,
+            entity_type="project",
+            entity_id=str(cloud_project_id),
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=user_id,
+        )
+        db.add(grant)
+        db.commit()
+        db.refresh(grant)
+        return execution_environment_values(
+            db,
+            grant,
+            device,
+            connection_status=connection_statuses[device.id],
+            workspace_id=str(workspace_id),
+        )
+
+    def remove_execution_environment(
+        self,
+        db: Session,
+        cloud_project_id: int,
+        device_id: int,
+        user_id: int,
+    ) -> None:
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
+        grant = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.DEVICE.value,
+                ResourceMember.resource_id == device_id,
+                ResourceMember.entity_type == "project",
+                ResourceMember.entity_id == str(cloud_project_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+        )
+        if grant is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "Project execution environment not found",
+            )
+        db.delete(grant)
         db.commit()
 
     @staticmethod

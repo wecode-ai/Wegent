@@ -10,10 +10,14 @@ export type {
   TeamDisplayConfig,
 } from './api-types'
 export { nestMessageBlocks } from './message-blocks'
+export { fetchAllPages } from './pagination'
 export type { CardBlock, MessageBlock, MessageBlockStatus } from './message-blocks'
 export {
   getLatestThinkingContent,
   isGenericTaskStatusError,
+  limitWorkbenchProcessingBlock,
+  nestWorkbenchProcessingBlocks,
+  projectWorkbenchSubagentActivity,
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
   resolveStreamingThinkingContent
@@ -27,6 +31,7 @@ export type {
   WorkbenchFileChangesBlock,
   WorkbenchPlanBlock,
   WorkbenchProcessingBlock,
+  WorkbenchSubagentBlock,
   WorkbenchThinkingBlock,
   WorkbenchTextBlock,
   WorkbenchToolBlock,

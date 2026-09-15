@@ -15,6 +15,11 @@ import { createPortal } from 'react-dom'
 
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
+import {
+  WEWORK_HOST_SERVICES,
+  type EnvironmentHostService,
+} from '@/features/dsh-runtime/conversationHostServices'
+import type { ConversationSummarySurfaceProps } from '@/features/dsh-runtime/conversationSummarySurface'
 import { changeRequestVisualStatus } from '@/features/workbench/changeRequestStatus'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
@@ -40,7 +45,101 @@ interface GitEnvironmentSectionProps {
 
 type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
 
-export default function GitEnvironmentSection({
+export default function GitConversationSummary({
+  context,
+  docked,
+  onClose,
+  services,
+}: ConversationSummarySurfaceProps) {
+  const environment = services
+    .getService<EnvironmentHostService>(WEWORK_HOST_SERVICES.environment)
+    ?.read()
+  if (!environment) return null
+  const info = environment.info
+  const branchNameSource =
+    typeof context['conversation.title'] === 'string' ? context['conversation.title'] : undefined
+  const canExecute = (command: string) => services.canExecuteCommand(command)
+
+  return (
+    <GitEnvironmentSectionContent
+      branchNameSource={branchNameSource}
+      docked={docked}
+      info={info}
+      onCheckoutBranch={
+        canExecute('git.checkout-branch')
+          ? async branchName => {
+              await services.executeCommand('git.checkout-branch', { branchName })
+            }
+          : undefined
+      }
+      onClose={onClose}
+      onCommitAndPushChanges={
+        canExecute('git.commit-and-push')
+          ? async message => {
+              await services.executeCommand('git.commit-and-push', { message })
+            }
+          : undefined
+      }
+      onCommitChanges={
+        canExecute('git.commit')
+          ? async message => {
+              await services.executeCommand('git.commit', { message })
+            }
+          : undefined
+      }
+      onCreateBranch={
+        canExecute('git.create-branch')
+          ? async branchName => {
+              await services.executeCommand('git.create-branch', { branchName })
+            }
+          : undefined
+      }
+      onGenerateBranchName={
+        canExecute('git.generate-branch-name')
+          ? async sourceText => {
+              const result = await services.executeCommand('git.generate-branch-name', {
+                sourceText,
+              })
+              return typeof result === 'string' ? result : ''
+            }
+          : undefined
+      }
+      onListBranches={
+        canExecute('git.list-branches')
+          ? async () => {
+              const result = await services.executeCommand('git.list-branches')
+              return Array.isArray(result)
+                ? result.filter((branch): branch is string => typeof branch === 'string')
+                : []
+            }
+          : undefined
+      }
+      onOpenChangesReview={
+        canExecute('git.open-changes-review')
+          ? () => {
+              void services.executeCommand('git.open-changes-review')
+            }
+          : undefined
+      }
+      onPushChanges={
+        canExecute('git.push')
+          ? async () => {
+              await services.executeCommand('git.push')
+            }
+          : undefined
+      }
+      onRefresh={
+        canExecute('environment.refresh')
+          ? async () => {
+              await services.executeCommand('environment.refresh')
+            }
+          : undefined
+      }
+    />
+  )
+}
+
+function GitEnvironmentSectionContent({
   branchNameSource,
   docked = true,
   info,

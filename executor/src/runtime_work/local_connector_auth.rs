@@ -22,6 +22,7 @@ use crate::local::app_ipc::AppIpcError;
 use super::util::string_field;
 use tools::{parse_tool_spec, resolve_auth_tool, LocalAuthToolSpec};
 
+mod diagnostics;
 mod tools;
 
 #[derive(Debug, Clone)]
@@ -728,6 +729,20 @@ async fn run_plugin_command(
     tool: Option<&Path>,
     timeout_seconds: u64,
 ) -> Result<Value, AppIpcError> {
+    let mut invocation = diagnostics::Invocation::new(plugin_root);
+    let result =
+        run_plugin_command_inner(plugin_root, args, tool, timeout_seconds, &invocation).await;
+    invocation.finish(result.as_ref().err().map(|error| error.code.as_str()));
+    result
+}
+
+async fn run_plugin_command_inner(
+    plugin_root: &Path,
+    args: &[String],
+    tool: Option<&Path>,
+    timeout_seconds: u64,
+    invocation: &diagnostics::Invocation,
+) -> Result<Value, AppIpcError> {
     if args.is_empty() {
         return Err(AppIpcError::new(
             "local_auth_invalid",
@@ -747,11 +762,35 @@ async fn run_plugin_command(
     if let Some(tool) = tool {
         command.env("WEGENT_LOCAL_AUTH_TOOL", tool);
     }
-    let output = tokio::time::timeout(Duration::from_secs(timeout_seconds), command.output())
+    let mut child = command
+        .spawn()
+        .map_err(|error| AppIpcError::new("local_auth_failed", error.to_string()))?;
+    let mut stdout_pipe = child.stdout.take().expect("piped stdout");
+    let stderr_pipe = child.stderr.take().expect("piped stderr");
+    let collect = async {
+        use tokio::io::AsyncReadExt;
+        let stdout = async {
+            let mut bytes = Vec::new();
+            stdout_pipe.read_to_end(&mut bytes).await?;
+            Ok(bytes)
+        };
+        let (stdout, stderr, status) = tokio::try_join!(
+            stdout,
+            diagnostics::read_stderr(stderr_pipe, |event| invocation.emit(event)),
+            child.wait()
+        )?;
+        Ok::<_, std::io::Error>(std::process::Output {
+            stdout,
+            stderr,
+            status,
+        })
+    };
+    let output = tokio::time::timeout(Duration::from_secs(timeout_seconds), collect)
         .await
         .map_err(|_| AppIpcError::new("local_auth_timeout", "localAuth command timed out"))?
         .map_err(|error| AppIpcError::new("local_auth_failed", error.to_string()))?;
 
+    invocation.emit(json!({"stage": "process_exit", "status": if output.status.success() { "ok" } else { "failed" }, "exit_code": output.status.code()}));
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     if stdout.is_empty() {

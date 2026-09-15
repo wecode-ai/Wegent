@@ -15,9 +15,11 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
+from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.device import DeviceConnectionMode, DeviceType
+from app.services.device.identity import device_connection_route_id
 from app.services.device.local_provider import (
     LocalDeviceProvider,
     runtime_capacity_slot_values,
@@ -61,7 +63,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
         if spec.get("deviceType") != DeviceType.CLOUD.value:
             return None
 
-        runtime_device_id = self._resolve_runtime_device_id(device_kind)
+        runtime_device_id = device_connection_route_id(device_kind)
         online_info = await self._get_online_info(user_id, runtime_device_id)
         slot_info = await self.get_slot_usage(db, user_id, runtime_device_id)
 
@@ -137,9 +139,9 @@ class CloudDeviceProvider(LocalDeviceProvider):
             return []
 
         # Batch fetch online info from Redis using mget
-        device_ids = [self._resolve_runtime_device_id(d) for d in cloud_devices]
+        device_ids = [device_connection_route_id(d) for d in cloud_devices]
         redis_keys = [self.generate_online_key(user_id, did) for did in device_ids]
-        online_info_map = await cache_manager.mget(redis_keys)
+        online_info_map = await cache_manager.mget_or_raise(redis_keys)
 
         # Build result list
         result = []
@@ -212,9 +214,3 @@ class CloudDeviceProvider(LocalDeviceProvider):
             )
 
         return result
-
-    def _resolve_runtime_device_id(self, device_kind: Kind) -> str:
-        """Return the WebSocket device ID used for Redis online tracking."""
-        spec = device_kind.json.get("spec", {})
-        cloud_config = spec.get("cloudConfig") or {}
-        return spec.get("deviceId") or cloud_config.get("deviceId") or device_kind.name

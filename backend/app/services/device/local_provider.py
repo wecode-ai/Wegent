@@ -187,7 +187,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "runtime_instance_id": runtime_instance_id,
             "runtime_features": runtime_features,
         }
-        result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
+        result = await cache_manager.set_or_raise(key, data, expire=DEVICE_ONLINE_TTL)
         logger.info(f"[LocalDeviceProvider] set_online: key={key}, result={result}")
         return result
 
@@ -199,7 +199,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
     ) -> bool:
         """Unregister device (remove from Redis online state)."""
         key = self.generate_online_key(user_id, device_id)
-        result = await cache_manager.delete(key)
+        result = await cache_manager.delete_or_raise(key)
         logger.info(f"[LocalDeviceProvider] unregister: key={key}, result={result}")
         return result
 
@@ -285,7 +285,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
     ) -> Optional[Dict[str, Any]]:
         """Get device online info from Redis."""
         key = self.generate_online_key(user_id, device_id)
-        result = await cache_manager.get(key)
+        result = await cache_manager.get_or_raise(key)
         logger.debug(
             f"[LocalDeviceProvider] get_online_info: key={key}, found={result is not None}"
         )
@@ -346,7 +346,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         # Batch fetch online info from Redis using mget
         device_ids = [record_route_id(d) for d in local_devices]
         redis_keys = [self.generate_online_key(user_id, did) for did in device_ids]
-        online_info_map = await cache_manager.mget(redis_keys)
+        online_info_map = await cache_manager.mget_or_raise(redis_keys)
 
         # Build result list
         result = []
@@ -443,7 +443,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
     ) -> bool:
         """Refresh device heartbeat in Redis."""
         key = self.generate_online_key(user_id, device_id)
-        data = await cache_manager.get(key)
+        data = await cache_manager.get_or_raise(key)
         if data:
             data["last_heartbeat"] = datetime.now().isoformat()
             if running_task_ids is not None:
@@ -458,7 +458,9 @@ class LocalDeviceProvider(BaseDeviceProvider):
             data["runtime_instance_id"] = runtime_instance_id
             data["runtime_capacity"] = runtime_capacity
             data["runtime_features"] = runtime_features
-            result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
+            result = await cache_manager.set_or_raise(
+                key, data, expire=DEVICE_ONLINE_TTL
+            )
             logger.debug(
                 f"[LocalDeviceProvider] refresh_heartbeat: key={key}, "
                 f"running_tasks={len(running_task_ids) if running_task_ids else 0}"
@@ -550,7 +552,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         device_id: str,
     ) -> Dict[str, Any]:
         """Get slot usage information for sync callers."""
-        device_info = cache_manager.get_sync(
+        device_info = cache_manager.get_sync_or_raise(
             self.generate_online_key(user_id, device_id)
         )
 
@@ -568,11 +570,13 @@ class LocalDeviceProvider(BaseDeviceProvider):
     ) -> bool:
         """Update device status in Redis."""
         key = self.generate_online_key(user_id, device_id)
-        data = await cache_manager.get(key)
+        data = await cache_manager.get_or_raise(key)
         if data:
             data["status"] = status
             data["last_heartbeat"] = datetime.now().isoformat()
-            result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
+            result = await cache_manager.set_or_raise(
+                key, data, expire=DEVICE_ONLINE_TTL
+            )
             logger.debug(
                 f"[LocalDeviceProvider] update_status: key={key}, status={status}"
             )

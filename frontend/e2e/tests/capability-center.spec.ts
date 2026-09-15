@@ -256,13 +256,18 @@ test.describe('Capability Center', () => {
           response.request().method() === 'POST'
       )
       await clickListingAction(page, listing!.id)
-      expect((await installResponse).ok()).toBe(true)
+      const installed = await installResponse
+      expect(installed.ok()).toBe(true)
+      const installation = await installed.json()
+      expect(installation.installed_reference.skill_id).toBeGreaterThan(0)
       await expect(page).toHaveURL(/\/resource-library/)
 
       await page.getByTestId('resource-library-team-current-button').click()
       await expect(page).toHaveURL(url => url.searchParams.get('teamAction') === null)
-      await expect(page.getByTestId('installed-resources-grid')).toBeVisible()
-      await expect(page.getByTestId(`resource-listing-card-${listing!.id}`)).toBeVisible()
+      await expect(page.getByTestId('team-skill-resources')).toBeVisible()
+      await expect(
+        page.getByTestId(`skill-library-item-${installation.installed_reference.skill_id}`)
+      ).toBeVisible()
     } finally {
       await apiClient.deleteGroup(group.name)
     }

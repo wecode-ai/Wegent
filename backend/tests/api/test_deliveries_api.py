@@ -214,6 +214,104 @@ def test_external_loop_items_forward_assignee_filters(
     assert captured == {"assignee_type": "user", "assignee_id": str(test_user.id)}
 
 
+def test_external_loop_item_comments_reject_unauthorized_private_project_access(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.loop_items.external_provider import external_loop_item_provider
+
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="PRIVATECOMMENTS",
+        name="Private external comments",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={
+            "visibility": "private",
+            "task_provider": "github",
+            "provider_config": {"repository": "octo/private"},
+        },
+    )
+    unauthorized_user = User(
+        user_name="external-comments-outsider",
+        password_hash=get_password_hash("outsider-password"),
+        email="external-comments-outsider@example.com",
+        is_active=True,
+    )
+    test_db.add_all([project, unauthorized_user])
+    test_db.commit()
+
+    issue_loader = MagicMock()
+    monkeypatch.setattr(external_loop_item_provider, "_get_issue", issue_loader)
+    token = create_access_token(data={"sub": unauthorized_user.user_name})
+
+    response = test_client.get(
+        "/api/v1/loop-items/PRIVATECOMMENTS-7/comments",
+        headers=_auth(token),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Cloud project not found"
+    issue_loader.assert_not_called()
+
+
+def test_external_loop_item_comments_return_empty_list_for_authorized_user(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.loop_items.external_provider import external_loop_item_provider
+
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="EMPTYCOMMENTS",
+        name="Empty external comments",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={
+            "visibility": "private",
+            "task_provider": "github",
+            "provider_config": {"repository": "octo/empty"},
+        },
+    )
+    test_db.add(project)
+    test_db.commit()
+
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_get_issue",
+        MagicMock(return_value={"number": 7}),
+    )
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_response",
+        MagicMock(return_value={"can_view_detail": True}),
+    )
+    comment_loader = MagicMock(return_value=[])
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_list_comments",
+        comment_loader,
+    )
+
+    response = test_client.get(
+        "/api/v1/loop-items/EMPTYCOMMENTS-7/comments",
+        headers=_auth(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+    comment_loader.assert_called_once_with(project, 7)
+
+
 def test_loop_items_support_unbounded_hierarchy_and_reject_cycles(
     test_client: TestClient,
     test_token: str,
@@ -844,7 +942,7 @@ def test_crossing_processing_boundary_starts_orchestrated_issue_workflow(
     dispatch.assert_awaited_once()
 
 
-def test_ai_issue_created_in_pending_waits_for_configuration_then_starts(
+def test_ai_issue_creation_rejects_missing_configuration_before_persisting(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
@@ -892,34 +990,38 @@ def test_ai_issue_created_in_pending_waits_for_configuration_then_starts(
         json={"title": "Configure before AI planning", "status": "pending"},
     )
 
-    assert created_response.status_code == 201
-    created = created_response.json()
-    assert created["status"] == "pending"
-    assert created["workflow"]["execution_config"]["model"] is None
+    assert created_response.status_code == 422
+    detail = created_response.json()["detail"]
+    assert detail["error_code"] == "COORDINATOR_EXECUTION_CONFIG_INCOMPLETE"
+    assert detail["missing_fields"] == ["device", "model"]
+    assert test_db.query(LoopItem).count() == 0
     assert test_db.query(ProjectAutomationRun).count() == 0
     dispatch.assert_not_awaited()
 
-    workflow = created["workflow"]
-    workflow["execution_config"] = {
-        "agent_id": None,
-        "runtime_profile_id": None,
-        "execution_device_id": "local-device",
-        "model": "gpt-5-codex",
-        "model_type": "runtime",
-        "model_options": {},
-        "workspace_binding": {"type": "standalone"},
+    workflow = {
+        **delivery_project.metadata_json["workflow_definition"],
+        "execution_config": {
+            "agent_id": None,
+            "runtime_profile_id": None,
+            "execution_device_id": "local-device",
+            "model": "gpt-5-codex",
+            "model_type": "runtime",
+            "model_options": {},
+            "workspace_binding": {"type": "standalone"},
+        },
     }
-    started_response = test_client.patch(
-        f"/api/v1/loop-items/{created['id']}",
+    started_response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
         json={
-            "version": created["version"],
+            "title": "Configured AI planning",
             "status": "pending",
             "workflow": workflow,
         },
     )
 
-    assert started_response.status_code == 200
+    assert started_response.status_code == 201, started_response.text
+    created = started_response.json()
     run = test_db.query(ProjectAutomationRun).one()
     assert run.task_id == created["id"]
     assert (run.metadata_json or {})["workflow_execution_config"]["model"] == (

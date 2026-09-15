@@ -58,7 +58,12 @@ export function reduceRuntimeTaskLifecycle(
         executionPhase,
         turnPhase,
         activeTurnId,
-        goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
+        goalStatus:
+          event.task.goalStatus === undefined || state.hasAuthoritativeGoalStatus
+            ? state.goalStatus
+            : event.task.goalStatus,
+        hasAuthoritativeGoalStatus:
+          state.hasAuthoritativeGoalStatus || event.task.goalStatus === null,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
           snapshotRunning !== null && event.task.optimistic !== true ? null : expectedRunning,
@@ -89,6 +94,35 @@ export function reduceRuntimeTaskLifecycle(
             expectedExecutorRunning: true,
           }
         : state
+
+    case 'send_queued': {
+      const executorAlreadyActive = state.task?.running === true || state.activeTurnId !== null
+      if (executorAlreadyActive) {
+        return {
+          ...state,
+          executionPhase: 'running',
+          turnPhase: state.activeTurnId ? 'streaming' : state.turnPhase,
+          expectedExecutorRunning: true,
+        }
+      }
+      return {
+        ...state,
+        task: state.task
+          ? {
+              ...state.task,
+              running: false,
+              status: 'queued',
+              ...(event.queuePosition === undefined
+                ? {}
+                : { queuePosition: event.queuePosition ?? undefined }),
+            }
+          : state.task,
+        executionPhase: 'queued',
+        turnPhase: 'idle',
+        activeTurnId: null,
+        expectedExecutorRunning: false,
+      }
+    }
 
     case 'send_rejected': {
       const executorAlreadyConfirmed =
@@ -178,20 +212,28 @@ export function reduceRuntimeTaskLifecycle(
           }
         : state
 
-    case 'goal_status_received':
-      return event.goalStatus !== null && event.goalStatus !== 'active'
+    case 'goal_status_received': {
+      const goalJustSettled =
+        state.goalStatus === 'active' &&
+        event.goalStatus !== null &&
+        event.goalStatus !== 'active' &&
+        (event.goalStatus !== 'complete' || state.turnPhase === 'idle')
+      return goalJustSettled
         ? {
             ...state,
             executionPhase: 'idle',
             turnPhase: 'idle',
             activeTurnId: null,
             goalStatus: event.goalStatus,
+            hasAuthoritativeGoalStatus: true,
             expectedExecutorRunning: false,
           }
         : {
             ...state,
             goalStatus: event.goalStatus,
+            hasAuthoritativeGoalStatus: true,
           }
+    }
 
     case 'marked_read':
       return state.unread ? { ...state, unread: false } : state

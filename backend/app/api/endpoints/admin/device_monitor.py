@@ -254,7 +254,7 @@ async def _get_devices_redis_status(
         redis_keys.append(redis_key)
 
     # Batch get all Redis status (single round-trip)
-    return await cache_manager.mget(redis_keys)
+    return await cache_manager.mget_or_raise(redis_keys)
 
 
 def _build_device_info(
@@ -566,7 +566,7 @@ async def get_device_stats(
         device_metadata.append({"type": device_type_val, "shell": bind_shell_val})
 
     # Batch get all Redis status (single round-trip for all devices)
-    online_info_map = await cache_manager.mget(redis_keys)
+    online_info_map = await cache_manager.mget_or_raise(redis_keys)
 
     # Count by status
     for i, metadata in enumerate(device_metadata):

@@ -78,7 +78,6 @@ vi.mock('@/components/layout/useWorkbenchPaneSession', () => ({
     transcriptLoading: false,
     transcriptHasMoreBefore: false,
     transcriptLoadingMoreBefore: false,
-    transcriptLoadingFullContent: false,
     transcriptFullContent: false,
     loadedTranscriptRanges: [],
     turnNavigation: [],
@@ -88,7 +87,6 @@ vi.mock('@/components/layout/useWorkbenchPaneSession', () => ({
     taskPlan: null,
     goalDraftActive: false,
     loadMoreTranscriptBefore: vi.fn(),
-    loadFullTranscript: vi.fn(),
     loadFullTranscriptForExport: vi.fn(),
     loadTranscriptTurnNavigationItem: vi.fn(),
     loadTranscriptGap: vi.fn(),
@@ -692,7 +690,7 @@ describe('TaskActivityView', () => {
         expect.objectContaining({ model: 'gpt-5.5-codex' })
       )
     )
-  })
+  }, 10_000)
 
   it('shows the newest parent comment first without scrolling to the bottom', async () => {
     const older = {

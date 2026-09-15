@@ -9,6 +9,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.plugin_config import validate_non_secret_plugin_configs
+
 RuntimeName = Literal["codex", "claude_code"]
 RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
 RuntimeWorkspaceSource = Literal["local", "remote"]
@@ -589,8 +591,12 @@ class RuntimeSendRequest(BaseModel):
 class RuntimeSendResponse(BaseModel):
     """Acknowledgement from the runtime send RPC."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     accepted: bool
     local_task_id: str = Field(..., alias="taskId")
+    status: Optional[Literal["queued", "running"]] = None
+    queue_position: Optional[int] = Field(default=None, alias="queuePosition")
     error: Optional[str] = None
 
 
@@ -882,6 +888,7 @@ class RuntimeTaskCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     schema_version: Literal[1, 2, 3] = Field(default=1, alias="schemaVersion")
+    force_start: Optional[bool] = Field(default=None, alias="forceStart")
     wegent_team_id: Optional[int] = Field(
         default=None,
         alias="wegentTeamId",
@@ -997,6 +1004,10 @@ class RuntimeTaskCreateRequest(BaseModel):
     def validate_versioned_intent_boundary(self) -> "RuntimeTaskCreateRequest":
         """Validate fields introduced by versioned producer contracts."""
 
+        validate_non_secret_plugin_configs(
+            self.project_plugins,
+            field_name="projectPlugins",
+        )
         if self.schema_version >= 2 and self.runtime_model_config is not None:
             raise ValueError(
                 "RuntimeTaskCreateRequest V2+ cannot carry materialized modelConfig"
@@ -1018,6 +1029,7 @@ class RuntimeTaskCreatePayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     schema_version: Literal[1, 2] = Field(default=1, alias="schemaVersion")
+    force_start: Optional[bool] = Field(default=None, alias="forceStart")
     runtime: RuntimeName
     message: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1)

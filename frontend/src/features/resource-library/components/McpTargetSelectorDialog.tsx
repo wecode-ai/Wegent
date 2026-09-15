@@ -7,6 +7,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Bot as BotIcon, Check, Loader2, Package, Search, X } from 'lucide-react'
 
+import { fetchAllPages } from '@wegent/chat-core'
+
 import { botApis } from '@/apis/bots'
 import type { MCPServer } from '@/apis/mcpProviders'
 import { teamApis } from '@/apis/team'
@@ -67,8 +69,8 @@ export function McpTargetSelectorDialog({
     setSelectedBotIds(new Set())
 
     Promise.all([
-      teamApis.getTeams({ page: 1, limit: 100 }, 'personal'),
-      botApis.getBots({ page: 1, limit: 100 }, 'personal'),
+      teamApis.getAllTeams('personal'),
+      fetchAllPages((page, limit) => botApis.getBots({ page, limit }, 'personal')),
     ])
       .then(([teamResponse, botResponse]) => {
         if (!active) return

@@ -25,8 +25,8 @@ use crate::{
     agents::{
         codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
         AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexRequestUserInputReceiver,
-        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexAuthMutationError,
+        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
@@ -48,6 +48,8 @@ const WORKTREE_RECONCILIATION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_RESTORE_STARTUP_CONCURRENCY: usize = 2;
 const RESTORE_STARTUP_CONCURRENCY_ENV: &str = "WEGENT_RUNTIME_RESTORE_CONCURRENCY";
 const RESTORED_TURN_MARKER: &str = "wegent_restore_after_restart";
+const RESUME_GOAL_ONLY_MARKER: &str = "wegent_resume_goal_only";
+const GOAL_NEEDS_ATTENTION_MARKER: &str = "wegent_goal_needs_attention";
 const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
 enum RestoreStartupState {
@@ -111,6 +113,7 @@ impl RestoreStartupGate {
 mod archives;
 mod automation_rpc;
 mod claude_turns;
+mod codex_accounts;
 mod codex_config;
 mod collection;
 mod fork_transfer;
@@ -142,8 +145,8 @@ use super::{
     codex_notifications::{codex_notification, is_root_codex_turn_event},
     codex_rollout::rollout_context_usage,
     codex_transcript_page::{
-        load_codex_transcript, CodexTranscriptDirection, CodexTranscriptPage,
-        CodexTranscriptRequest,
+        load_codex_transcript, load_codex_transcript_navigation, CodexTranscriptDirection,
+        CodexTranscriptNavigation, CodexTranscriptPage, CodexTranscriptRequest,
     },
     connectors::ConnectorRuntime,
     events::{
@@ -176,8 +179,8 @@ use super::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
         item_type, normalize_device_id, normalize_runtime_goal_timestamps,
-        normalize_workspace_path, now_ms, prompt_text, restore_cloud_project_id, restore_origin,
-        runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
+        normalize_workspace_path, now_ms, prompt_text, raw_string_field, restore_cloud_project_id,
+        restore_origin, runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
         timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
@@ -190,6 +193,8 @@ const PENDING_THREAD_EVENT_ROUTE_PREFIX: &str = "pending:";
 const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
 const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const CODEX_TRANSCRIPT_PAGE_SIZE: usize = 40;
+const CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL: Duration = Duration::from_secs(30);
+const CODEX_TRANSCRIPT_NAVIGATION_CACHE_MAX_ENTRIES: usize = 64;
 const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(500);
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
 const CONTEXT_COMPACTION_WAIT_ATTEMPTS: usize = 600;
@@ -209,6 +214,7 @@ const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
 const MIN_MAX_CONCURRENT_TASKS: usize = 1;
 const MAX_MAX_CONCURRENT_TASKS: usize = 20;
+const MAX_PENDING_CODEX_NOTIFICATIONS: usize = 256;
 
 fn restore_startup_concurrency(max_concurrent_tasks: usize) -> usize {
     let configured = env::var(RESTORE_STARTUP_CONCURRENCY_ENV)
@@ -286,6 +292,12 @@ impl RuntimeTurnScheduler {
         self.active_tasks += 1;
         self.active_task_ids.insert(turn.local_task_id.clone());
         Some(turn)
+    }
+
+    fn enqueue_forced(&mut self, turn: SpawnTurnRequest) -> SpawnTurnRequest {
+        self.active_tasks += 1;
+        self.active_task_ids.insert(turn.local_task_id.clone());
+        turn
     }
 
     fn queued_position(&self, local_task_id: &str) -> Option<usize> {
@@ -548,16 +560,18 @@ pub struct RuntimeWorkRpcHandler {
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
+    active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
     restore_startup_semaphore: Arc<Semaphore>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
     active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
+    codex_transcript_navigation_cache: Arc<Mutex<HashMap<String, CachedCodexTranscriptNavigation>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
-    thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
+    thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     automation_store: AutomationStore,
@@ -631,11 +645,37 @@ struct ActiveCodexTranscriptItems {
     items: Vec<Value>,
 }
 
+#[derive(Clone)]
+struct CachedCodexTranscriptNavigation {
+    cached_at: Instant,
+    navigation: CodexTranscriptNavigation,
+}
+
 struct RuntimeThreadEventRoute {
     local_task_id: String,
     request: ExecutionRequest,
-    event_mapper: CodexNotificationEventMapper,
+    event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,
     active: bool,
+    nested: bool,
+    generation: u64,
+}
+
+#[derive(Default)]
+struct RuntimeThreadEventRouting {
+    routes: HashMap<String, RuntimeThreadEventRoute>,
+    pending_notifications: VecDeque<PendingCodexNotification>,
+    replaying_route_generations: HashMap<String, u64>,
+    next_route_generation: u64,
+}
+
+struct PendingCodexNotification {
+    thread_id: String,
+    message: Value,
+}
+
+struct PendingCodexNotificationReplay {
+    route_generations: HashMap<String, u64>,
+    notifications: Vec<PendingCodexNotification>,
 }
 
 struct ScheduledTurnGuard {
@@ -687,15 +727,23 @@ impl Drop for ScheduledTurnGuard {
 struct SideSourceThread {
     thread_id: String,
     thread_path: Option<String>,
+    workspace_path: String,
 }
 
 impl RuntimeThreadEventRoute {
-    fn new(local_task_id: String, request: ExecutionRequest, active: bool) -> Self {
+    fn new(
+        local_task_id: String,
+        request: ExecutionRequest,
+        active: bool,
+        generation: u64,
+    ) -> Self {
         Self {
             local_task_id,
             request,
-            event_mapper: CodexNotificationEventMapper::default(),
+            event_mapper: Arc::new(Mutex::new(CodexNotificationEventMapper::default())),
             active,
+            nested: false,
+            generation,
         }
     }
 }
@@ -710,11 +758,32 @@ impl RuntimeWorkRpcHandler {
         let store = RuntimeWorkStore::from_env();
         let worktrees = WorktreeManager::from_env(&device_id);
         let turn_queue_path = turns::runtime_turn_queue_path();
-        let mut queued_turns =
-            turns::read_runtime_turn_queue(&turn_queue_path).unwrap_or_else(|error| {
+        let mut persisted_turns =
+            turns::read_runtime_turn_state(&turn_queue_path).unwrap_or_else(|error| {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
-                VecDeque::new()
+                turns::RuntimeTurnQueueState::default()
             });
+        let active_goal_turns = persisted_turns.active_goal_turns.clone();
+        for turn in persisted_turns.active_goal_turns.values_mut() {
+            turn.initial_thread_goal = None;
+            turn.request.prompt = Value::String(String::new());
+            turn.request
+                .extra
+                .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
+        }
+        let mut queued_turns = persisted_turns.queued_turns;
+        queued_turns.extend(
+            persisted_turns
+                .active_goal_turns
+                .into_values()
+                .filter(|turn| {
+                    turn.request
+                        .extra
+                        .get(GOAL_NEEDS_ATTENTION_MARKER)
+                        .and_then(Value::as_bool)
+                        != Some(true)
+                }),
+        );
         for turn in &mut queued_turns {
             turn.request
                 .extra
@@ -759,16 +828,18 @@ impl RuntimeWorkRpcHandler {
                 runtime_settings.max_concurrent_tasks,
                 queued_turns,
             ))),
+            active_goal_turns: Arc::new(Mutex::new(active_goal_turns)),
             restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
             active_local_executions: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
+            codex_transcript_navigation_cache: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
-            thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
+            thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
             automation_store: AutomationStore::from_env(),
@@ -783,6 +854,27 @@ impl RuntimeWorkRpcHandler {
             hook_service: HookService::from_env(),
             backend_connection: Arc::new(Mutex::new(None)),
         };
+        for (local_task_id, turn) in handler
+            .active_goal_turns
+            .lock()
+            .expect("active Goal turn map lock should not be poisoned")
+            .iter()
+        {
+            handler.set_goal_execution_status(
+                local_task_id,
+                if turn
+                    .request
+                    .extra
+                    .get(GOAL_NEEDS_ATTENTION_MARKER)
+                    .and_then(Value::as_bool)
+                    == Some(true)
+                {
+                    Some("needsAttention")
+                } else {
+                    Some("recovering")
+                },
+            );
+        }
         handler.spawn_archived_delete_worker(archived_delete_rx);
         handler
     }
@@ -871,7 +963,7 @@ impl RuntimeWorkRpcHandler {
             self.resume_persisted_turns().await;
         }
         match method {
-            "runtime.tasks.list" => self.list_tasks().await,
+            "runtime.tasks.list" => self.list_tasks(&payload).await,
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
@@ -928,6 +1020,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.ensure_started" => self.ensure_codex_started().await,
             "runtime.codex.auth.read" => self.read_codex_account().await,
+            "runtime.codex.accounts.list" => self.list_codex_accounts().await,
+            "runtime.codex.accounts.switch" => self.switch_codex_account(payload).await,
             "runtime.codex.auth.login.start" => self.start_codex_login().await,
             "runtime.codex.auth.login.cancel" => self.cancel_codex_login(payload).await,
             "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,
