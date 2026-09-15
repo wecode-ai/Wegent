@@ -1017,6 +1017,7 @@ impl RuntimeWorkRpcHandler {
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
             let _scheduled_turn_guard =
                 ScheduledTurnGuard::new(handler.clone(), turn_local_task_id.clone());
+            crate::agents::runtime_capabilities::prepare_codex_runtime(&request).await;
             handler.ensure_notification_router().await;
             let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
             let mapper_handler = handler.clone();
