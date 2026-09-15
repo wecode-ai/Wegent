@@ -245,7 +245,7 @@ export class EmbeddedBrowserBridge {
         this.browser.reload(label)
         return { ok: true }
       case 'close':
-        await this.browser.requestClose(label)
+        await this.browser.requestClose(label, baseLabel)
         return { ok: true }
       case 'back':
         this.browser.goBack(label)

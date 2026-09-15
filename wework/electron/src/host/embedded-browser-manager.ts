@@ -935,8 +935,13 @@ export class EmbeddedBrowserManager {
     this.emit('open-request', payload)
   }
 
-  async requestClose(label: string): Promise<void> {
-    const normalizedLabel = requiredLabel(label)
+  async requestClose(label: string, baseLabel = label): Promise<void> {
+    const requestedLabel = requiredLabel(label)
+    const normalizedBaseLabel = requiredLabel(baseLabel)
+    const normalizedLabel = this.entries.has(requestedLabel)
+      ? requestedLabel
+      : this.liveBrowserLabel(normalizedBaseLabel)
+    if (!normalizedLabel) return
     const entry = this.entries.get(normalizedLabel)
     if (!entry) return
     this.closedBrowserLayouts.set(normalizedLabel, {
@@ -949,6 +954,19 @@ export class EmbeddedBrowserManager {
     })
     this.close(normalizedLabel, entry.nativeLabel, true)
     await this.waitForAttachedContents(normalizedLabel)
+  }
+
+  private liveBrowserLabel(baseLabel: string): string | null {
+    const activeLabel = this.activeTabs.get(baseLabel)
+    if (activeLabel && this.entries.has(activeLabel)) return activeLabel
+    const prefixes = [`${baseLabel}:`, `${baseLabel}-`]
+    const scopedEntries = [...this.entries.values()].filter(
+      entry => entry.label === baseLabel || prefixes.some(prefix => entry.label.startsWith(prefix))
+    )
+    return (
+      scopedEntries.find(entry => entry.visible)?.label ??
+      (scopedEntries.length === 1 ? (scopedEntries[0]?.label ?? null) : null)
+    )
   }
 
   close(label: string, expectedNativeLabel?: string | null, preserveActiveRoute = false): void {

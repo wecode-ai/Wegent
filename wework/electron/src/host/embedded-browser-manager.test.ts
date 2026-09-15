@@ -923,6 +923,33 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
+  test('closes the sole live browser when the active bridge route is stale', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser-runtime-live', contents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser-runtime-live',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: false,
+      navigateExisting: true,
+    })
+    manager.setActiveTab('workspace-browser', 'workspace-browser-runtime-removed')
+
+    const close = manager.requestClose('workspace-browser-runtime-removed', 'workspace-browser')
+    await Promise.resolve()
+
+    expect(contents.close).toHaveBeenCalledOnce()
+    const replacement = new FakeWebContents()
+    manager.attach('workspace-browser-runtime-live', replacement as unknown as WebContents)
+    await close
+    await rm(directory, { recursive: true, force: true })
+  })
+
   test('settles a pending target open when relabeling an attached browser', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)
