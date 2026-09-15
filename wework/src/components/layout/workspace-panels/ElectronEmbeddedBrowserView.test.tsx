@@ -215,17 +215,11 @@ describe('ElectronEmbeddedBrowserView', () => {
     const host = screen.getByTestId('workspace-browser-electron-webview')
     const previousWebview = host.querySelector('webview')
     const previousPartition = previousWebview?.getAttribute('partition')
-    const destroy = vi.fn(() => {
-      expect(host.querySelectorAll('webview')).toHaveLength(1)
-      expect(host.querySelector('webview')).toBe(previousWebview)
-    })
-    Object.assign(previousWebview as HTMLElement, { destroy })
 
     act(() => {
       resetElectronEmbeddedBrowserView('workspace-browser')
     })
 
-    expect(destroy).toHaveBeenCalledOnce()
     expect(previousWebview?.isConnected).toBe(false)
 
     const nextWebview = host.querySelector('webview')

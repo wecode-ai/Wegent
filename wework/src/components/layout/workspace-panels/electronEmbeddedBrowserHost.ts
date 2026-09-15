@@ -1,6 +1,4 @@
-interface ElectronWebviewElement extends HTMLElement {
-  destroy?: () => void
-}
+type ElectronWebviewElement = HTMLElement
 
 interface HostedElectronWebviewClaim {
   active: boolean
@@ -137,7 +135,6 @@ function retainHostedWebview(host: HostedElectronWebview) {
 }
 
 function destroyElectronWebview(webview: ElectronWebviewElement): void {
-  if (typeof webview.destroy === 'function') webview.destroy()
   webview.remove()
 }
 
