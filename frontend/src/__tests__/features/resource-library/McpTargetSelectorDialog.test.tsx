@@ -289,7 +289,7 @@ describe('McpTargetSelectorDialog', () => {
         await waitFor(() =>
           expect(mockedBotApis.updateBot).toHaveBeenCalledWith(20, {
             mcp_servers: {
-              '%40community%2Fsearch': {
+              search: {
                 type: 'streamable-http',
                 url: 'https://example.test/mcp',
               },
