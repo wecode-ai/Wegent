@@ -5,7 +5,7 @@ description: Send Wework in-app notifications when a user requests an alert, gre
 
 # Wework notifications
 
-Use `wework_space.send_notification` to create a persistent user notification. It also attempts delivery to the recipient's connected IM sessions. An authenticated Backend connection is required; a project or board is not required to notify yourself.
+Use `wework_notifications.send_notification` to create a persistent user notification. It also attempts delivery to the recipient's connected IM sessions. An authenticated Backend connection is required; a project or board is not required to notify yourself.
 
 - For an ordinary request such as “给我发个通知，说你好”, call `send_notification` with a concise title and `body: "你好"`. Do not require a project, create a board, or search for an Issue first.
 - `space_id` and `item_id` are optional source context. Backend project conversations can use their bound context; ordinary and local-project conversations can send without it. Supply source IDs only when the notification relates to that accessible Backend project or Issue.

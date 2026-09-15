@@ -2787,6 +2787,7 @@ class LoopItemService:
                 team=team,
                 assigner_user_id=user_id,
                 priority=priority,
+                automation_context=automation_context,
             )
         return cancelled_runs
 

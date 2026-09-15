@@ -286,6 +286,27 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
   })
 
+  test.each(['desktop', 'compact'] as const)(
+    'keeps the %s send action disabled until model selection is ready',
+    async variant => {
+      const onSubmit = vi.fn()
+      render(
+        <ChatInput
+          value="new task"
+          onChange={vi.fn()}
+          onSubmit={onSubmit}
+          disabled={false}
+          variant={variant}
+          projectChat={projectChatControls({ isModelSelectionReady: false })}
+        />
+      )
+
+      expect(screen.getByTestId('send-message-button')).toBeDisabled()
+      await userEvent.click(screen.getByTestId('send-message-button'))
+      expect(onSubmit).not.toHaveBeenCalled()
+    }
+  )
+
   test('does not move selection when an unfocused composer syncs its value', async () => {
     const renderComposers = (backgroundValue?: string) => (
       <>

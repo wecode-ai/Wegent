@@ -58,6 +58,7 @@ export function ProjectManageView<
   host,
   project,
   boardCardDisplay,
+  embedded = false,
   section = "all",
   renderProviderSettings,
   onProjectUpdated,
@@ -66,6 +67,7 @@ export function ProjectManageView<
   host: ProjectManageHost;
   project: Project;
   boardCardDisplay?: ProjectManageCardDisplay;
+  embedded?: boolean;
   section?: "all" | "overview" | "members" | "agents" | "board";
   renderProviderSettings?(
     context: ProjectManageExtensionContext<Project>,
@@ -666,43 +668,49 @@ export function ProjectManageView<
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-8 py-7">
-      <div className="mx-auto max-w-[900px]">
-        <header className="pb-7">
-          <h1 className="text-heading-lg font-semibold">
-            {section === "members"
-              ? host.translate("todo.project_members", "项目成员")
-              : section === "agents"
-                ? host.translate("todo.project_agents", "智能体")
-                : section === "board"
-                  ? host.translate("todo.board_settings", "看板设置")
-                  : host.translate(
-                      "todo.project_basic_information",
-                      "基本信息",
-                    )}
-          </h1>
-          <p className="mt-1 text-sm text-text-muted">
-            {section === "members"
-              ? host.translate(
-                  "todo.project_members_description",
-                  "成员可以访问项目任务和共享文件。",
-                )
-              : section === "agents"
+    <div
+      className={
+        embedded ? "min-h-0" : "min-h-0 flex-1 overflow-y-auto px-8 py-7"
+      }
+    >
+      <div className={embedded ? "" : "mx-auto max-w-[900px]"}>
+        {!embedded ? (
+          <header className="pb-7">
+            <h1 className="text-heading-lg font-semibold">
+              {section === "members"
+                ? host.translate("todo.project_members", "项目成员")
+                : section === "agents"
+                  ? host.translate("todo.project_agents", "智能体")
+                  : section === "board"
+                    ? host.translate("todo.board_settings", "看板设置")
+                    : host.translate(
+                        "todo.project_basic_information",
+                        "基本信息",
+                      )}
+            </h1>
+            <p className="mt-1 text-sm text-text-muted">
+              {section === "members"
                 ? host.translate(
-                    "todo.project_agents_description",
-                    "管理当前项目可以分配和调度的智能体。",
+                    "todo.project_members_description",
+                    "成员可以访问项目任务和共享文件。",
                   )
-                : section === "board"
+                : section === "agents"
                   ? host.translate(
-                      "todo.board_layout_edit_description",
-                      "调整状态顺序和任务卡展示字段。",
+                      "todo.project_agents_description",
+                      "管理当前项目可以分配和调度的智能体。",
                     )
-                  : host.translate(
-                      "todo.project_basic_information_description",
-                      "管理项目属性、标签与任务来源。",
-                    )}
-          </p>
-        </header>
+                  : section === "board"
+                    ? host.translate(
+                        "todo.board_layout_edit_description",
+                        "调整状态顺序和任务卡展示字段。",
+                      )
+                    : host.translate(
+                        "todo.project_basic_information_description",
+                        "管理项目属性、标签与任务来源。",
+                      )}
+            </p>
+          </header>
+        ) : null}
 
         {(section === "all" || section === "overview") && (
           <section className="border-t border-border py-6">
@@ -784,7 +792,7 @@ export function ProjectManageView<
         >
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-heading-md font-semibold">
+              <h2 className="heading-subsection text-text-primary">
                 {host.translate("todo.project_members", "项目成员")}
               </h2>
               <p className="mt-1 text-sm text-text-muted">
@@ -798,7 +806,7 @@ export function ProjectManageView<
               type="button"
               data-testid="cloud-project-members-toggle"
               onClick={() => setMembersOpen((open) => !open)}
-              className="h-8 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted"
+              className="h-8 rounded-lg px-2.5 text-sm font-medium text-text-secondary hover:bg-muted"
             >
               {membersOpen
                 ? host.translate("todo.collapse_management", "收起管理")
@@ -810,7 +818,7 @@ export function ProjectManageView<
             <button
               type="button"
               onClick={() => setMembersOpen(true)}
-              className="mt-4 flex h-12 w-full items-center rounded-xl bg-muted px-3 text-left hover:bg-muted/80"
+              className="mt-4 flex h-12 w-full items-center rounded-xl bg-muted px-3 text-left text-sm font-normal hover:bg-muted/80"
             >
               <span>
                 {host.translate("todo.member_count", "{{count}} 位成员", {

@@ -158,6 +158,7 @@ interface ProjectBoardAdapterProps {
   statuses: CollaborationStatus[];
   taskBindings: WorkspaceTaskBinding[];
   onCreateIssue(): void;
+  onOpenBoardSettings?(): void;
   onGroupByChange(groupBy: ProjectBoardGroupBy): Promise<void>;
   onOpen(issue: CollaborationIssue): void;
   onMove(
@@ -192,6 +193,7 @@ export function ProjectBoardAdapter({
   labels,
   members,
   onCreateIssue,
+  onOpenBoardSettings,
   onGroupByChange,
   onMove,
   onOpen,
@@ -402,6 +404,20 @@ export function ProjectBoardAdapter({
             </select>
           </label>
         )}
+        renderBoardSettingsAction={
+          onOpenBoardSettings
+            ? () => (
+                <button
+                  type="button"
+                  className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                  data-testid="collaboration-board-settings"
+                  onClick={onOpenBoardSettings}
+                >
+                  看板设置
+                </button>
+              )
+            : undefined
+        }
         renderItem={(issue, column) => {
           const nativeContainerProps: ProjectBoardIssueCardRenderContext["nativeContainerProps"] =
             {

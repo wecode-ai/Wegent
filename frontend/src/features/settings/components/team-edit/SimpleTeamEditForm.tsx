@@ -4,7 +4,7 @@
 
 'use client'
 
-import { type ReactNode, useId, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ChevronDown, Lock, LockKeyholeOpen, SettingsIcon, Wand2, XIcon } from 'lucide-react'
 
 import type { SkillRefMeta } from '@/apis/bots'
@@ -13,6 +13,7 @@ import type { UnifiedShell } from '@/apis/shells'
 import type { UnifiedSkill } from '@/apis/skills'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import {
   GroupedModelSelect,
@@ -33,7 +34,7 @@ import type { KnowledgeBaseDefaultRef, TaskType, TeamInputPlaceholder } from '@/
 
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import ExecutorModeSelector from './ExecutorModeSelector'
-import { SimpleConfigGroup, SimpleConfigRow } from './SimpleConfigLayout'
+import { SimpleConfigGroup, SimpleConfigRow, SimpleConfigSection } from './SimpleConfigLayout'
 import QuickPhraseEditor from './QuickPhraseEditor'
 import InputPlaceholderEditor from './InputPlaceholderEditor'
 import TeamBindModeCards from './TeamBindModeCards'
@@ -54,6 +55,7 @@ interface SimpleTeamEditFormProps {
   inputPlaceholder: TeamInputPlaceholder
   onInputPlaceholderChange: (value: TeamInputPlaceholder) => void
   bindMode: TaskType[]
+  effectiveBindMode: TaskType[]
   setBindMode: (value: TaskType[]) => void
   icon: string | null
   setIcon: (value: string | null) => void
@@ -96,46 +98,6 @@ interface SimpleTeamEditFormProps {
   groupName?: string
 }
 
-function SimpleSection({
-  title,
-  sectionId,
-  children,
-}: {
-  title: string
-  sectionId: string
-  children: ReactNode
-}) {
-  const [isExpanded, setIsExpanded] = useState(true)
-  const contentId = useId()
-
-  return (
-    <section className="space-y-4">
-      <button
-        type="button"
-        aria-controls={contentId}
-        aria-expanded={isExpanded}
-        data-testid={`simple-section-${sectionId}-trigger`}
-        onClick={() => setIsExpanded(current => !current)}
-        className="group flex w-full items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-      >
-        <h3 className="shrink-0 text-sm font-semibold text-text-primary">{title}</h3>
-        <div className="h-px flex-1 bg-border transition-colors group-hover:bg-primary/40" />
-        <ChevronDown
-          className={cn(
-            'h-4 w-4 shrink-0 text-text-muted transition-transform duration-200',
-            !isExpanded && '-rotate-90'
-          )}
-        />
-      </button>
-      {isExpanded && (
-        <div id={contentId} className="space-y-4">
-          {children}
-        </div>
-      )}
-    </section>
-  )
-}
-
 export default function SimpleTeamEditForm({
   name,
   setName,
@@ -150,6 +112,7 @@ export default function SimpleTeamEditForm({
   inputPlaceholder,
   onInputPlaceholderChange,
   bindMode,
+  effectiveBindMode,
   setBindMode,
   icon,
   setIcon,
@@ -194,7 +157,19 @@ export default function SimpleTeamEditForm({
   const { t } = useTranslation()
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
-  const showRequiresWorkspace = bindMode.includes('code')
+  const [availableModulesOpen, setAvailableModulesOpen] = useState(false)
+  const showRequiresWorkspace = effectiveBindMode.includes('code')
+  const bindModeSummary = useMemo(() => {
+    const labelKey =
+      bindMode.length === 0
+        ? 'settings:team.simple.bind_mode.automatic'
+        : 'settings:team.simple.bind_mode.selected'
+    const modeLabels = effectiveBindMode
+      .map(mode => t(`settings:team.simple.bind_mode.${mode}.title`))
+      .join(t('settings:team.simple.bind_mode.summary_separator'))
+
+    return `${t(labelKey)} · ${modeLabels}`
+  }, [bindMode.length, effectiveBindMode, t])
   const selectedModel = useMemo(
     () => resolveSelectedModel(models, modelName, modelType, modelNamespace),
     [modelName, modelNamespace, modelType, models]
@@ -244,7 +219,10 @@ export default function SimpleTeamEditForm({
 
   return (
     <div className="space-y-5">
-      <SimpleSection title={t('settings:team.simple.sections.basic')} sectionId="basic">
+      <SimpleConfigSection
+        title={t('settings:team.simple.sections.basic')}
+        testId="simple-section-basic"
+      >
         <SimpleConfigGroup>
           <SimpleConfigRow
             label={
@@ -353,33 +331,13 @@ export default function SimpleTeamEditForm({
             />
           </SimpleConfigRow>
         </SimpleConfigGroup>
-      </SimpleSection>
+      </SimpleConfigSection>
 
-      <SimpleSection title={t('settings:team.simple.sections.execution')} sectionId="execution">
+      <SimpleConfigSection
+        title={t('settings:team.simple.sections.execution')}
+        testId="simple-section-execution"
+      >
         <SimpleConfigGroup>
-          <SimpleConfigRow
-            label={t('common:team.bind_mode')}
-            description={t('settings:team.simple.execution.bind_mode_description')}
-            align="start"
-          >
-            <TeamBindModeCards value={bindMode} onChange={setBindMode} />
-          </SimpleConfigRow>
-
-          {showRequiresWorkspace && (
-            <SimpleConfigRow
-              label={t('common:team.requires_workspace')}
-              description={t('settings:team.simple.execution.requires_workspace_description')}
-            >
-              <div className="flex justify-end">
-                <Switch
-                  id="requiresWorkspace"
-                  checked={requiresWorkspace === true}
-                  onCheckedChange={checked => setRequiresWorkspace(checked)}
-                />
-              </div>
-            </SimpleConfigRow>
-          )}
-
           <SimpleConfigRow
             label={t('settings:team.simple.executor.title')}
             description={t('settings:team.simple.execution.executor_description')}
@@ -398,10 +356,72 @@ export default function SimpleTeamEditForm({
               hideLabel
             />
           </SimpleConfigRow>
-        </SimpleConfigGroup>
-      </SimpleSection>
 
-      <SimpleSection title={t('settings:team.simple.sections.prompt')} sectionId="prompt">
+          {showRequiresWorkspace && (
+            <SimpleConfigRow
+              label={t('common:team.requires_workspace')}
+              description={t('settings:team.simple.execution.requires_workspace_description')}
+            >
+              <div className="flex justify-end">
+                <Switch
+                  id="requiresWorkspace"
+                  checked={requiresWorkspace === true}
+                  onCheckedChange={checked => setRequiresWorkspace(checked)}
+                />
+              </div>
+            </SimpleConfigRow>
+          )}
+
+          <Collapsible open={availableModulesOpen} onOpenChange={setAvailableModulesOpen}>
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-surface"
+                data-testid="simple-bind-mode-settings-toggle"
+              >
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-text-primary">
+                    {t('settings:team.simple.bind_mode.advanced_title')}
+                  </div>
+                  <div
+                    className="mt-0.5 truncate text-xs text-text-secondary"
+                    data-testid="simple-bind-mode-summary"
+                  >
+                    {bindModeSummary}
+                  </div>
+                </div>
+                <ChevronDown
+                  className={cn(
+                    'h-4 w-4 shrink-0 text-text-muted transition-transform',
+                    availableModulesOpen && 'rotate-180'
+                  )}
+                />
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div
+                className="border-t border-border px-4 py-4"
+                data-testid="simple-bind-mode-settings-content"
+              >
+                <div className="mb-3">
+                  <div className="text-sm font-medium text-text-primary">
+                    {t('settings:team.simple.bind_mode.available_modules')}
+                  </div>
+                  <p className="mt-0.5 text-xs leading-5 text-text-secondary">
+                    {t('settings:team.simple.bind_mode.automatic_hint')}
+                  </p>
+                </div>
+                <TeamBindModeCards value={bindMode} onChange={setBindMode} />
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        </SimpleConfigGroup>
+      </SimpleConfigSection>
+
+      <SimpleConfigSection
+        title={t('settings:team.simple.sections.prompt')}
+        testId="simple-section-prompt"
+      >
         <SimpleConfigGroup>
           <div className="space-y-2">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -430,9 +450,12 @@ export default function SimpleTeamEditForm({
             />
           </div>
         </SimpleConfigGroup>
-      </SimpleSection>
+      </SimpleConfigSection>
 
-      <SimpleSection title={t('settings:team.simple.sections.capability')} sectionId="capability">
+      <SimpleConfigSection
+        title={t('settings:team.simple.sections.capability')}
+        testId="simple-section-capability"
+      >
         <SimpleConfigGroup>
           <SimpleConfigRow
             label={t('common:skills.skills_section')}
@@ -569,7 +592,7 @@ export default function SimpleTeamEditForm({
             />
           </SimpleConfigRow>
         </SimpleConfigGroup>
-      </SimpleSection>
+      </SimpleConfigSection>
 
       <SkillManagementModal
         open={skillManagementModalOpen}

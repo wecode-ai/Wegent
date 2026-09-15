@@ -359,14 +359,25 @@ fn debug_unrouted_codex_notification(message: &Value, reason: &str) {
 }
 
 fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
-    let mut request = ExecutionRequest {
-        task_id: link.local_task_id.clone(),
-        subtask_id: format!("{}-context-compact", link.local_task_id),
-        project_workspace_path: Some(link.workspace_path.clone()),
-        prompt: Value::String(link.title.clone()),
-        ..ExecutionRequest::default()
-    };
+    let mut request = link
+        .runtime_handle
+        .get("executionRequest")
+        .or_else(|| link.runtime_handle.get("execution_request"))
+        .cloned()
+        .and_then(|value| serde_json::from_value::<ExecutionRequest>(value).ok())
+        .unwrap_or_default();
+    request.task_id = link.local_task_id.clone();
+    request.subtask_id = format!("{}-context-compact", link.local_task_id);
+    request.project_workspace_path = Some(link.workspace_path.clone());
+    request.prompt = Value::String(link.title.clone());
+    request.history.clear();
+    request.message_id = None;
+    request.auth_token = None;
+    request.runtime_auth_token = None;
+    request.skill_identity_token = None;
     set_runtime_task_title(&mut request, &link.title);
+    restore_cloud_project_id(&mut request, &link.runtime_handle);
+    restore_origin(&mut request, &link.runtime_handle);
     if !link.project_plugin_ids.is_empty() {
         request.extra.insert(
             "project_plugin_ids".to_owned(),
@@ -396,6 +407,93 @@ fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
         );
     }
     request
+}
+
+fn store_runtime_execution_request(runtime_handle: &mut Value, request: &ExecutionRequest) {
+    let mut persisted = request.clone();
+    persisted.task_id.clear();
+    persisted.subtask_id.clear();
+    persisted.prompt = Value::String(String::new());
+    persisted.history.clear();
+    persisted.new_session = false;
+    persisted.message_id = None;
+    persisted.backend_url = None;
+    persisted.auth_token = None;
+    persisted.runtime_auth_token = None;
+    persisted.skill_identity_token = None;
+    redact_execution_profile_secrets(&mut persisted.bot);
+    redact_execution_profile_secrets(&mut persisted.model_config);
+    for server in &mut persisted.mcp_servers {
+        redact_execution_profile_secrets(server);
+    }
+    redact_execution_profile_secrets(&mut persisted.validation_params);
+    persisted.extra.retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "additional_skills"
+                | "additionalSkills"
+                | "cloudProjectId"
+                | "cloud_project_id"
+                | "collaboration_mode"
+                | "modelSelection"
+                | "model_selection"
+                | "origin"
+                | "preload_skills"
+                | "projectId"
+                | "project_plugin_ids"
+                | "projectPluginIds"
+                | "runtime_permission_profile"
+                | "runtimePermissionProfile"
+                | "skill_names"
+                | "standaloneChatWorkspace"
+                | "user_selected_skills"
+        )
+    });
+    for value in persisted.extra.values_mut() {
+        redact_execution_profile_secrets(value);
+    }
+    if !runtime_handle.is_object() {
+        *runtime_handle = json!({});
+    }
+    if let Some(runtime_handle) = runtime_handle.as_object_mut() {
+        runtime_handle.insert(
+            "executionRequest".to_owned(),
+            serde_json::to_value(persisted).unwrap_or_else(|_| json!({})),
+        );
+    }
+}
+
+fn redact_execution_profile_secrets(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.retain(|key, _| {
+                let normalized = key.to_ascii_lowercase().replace(['-', '_'], "");
+                ![
+                    "apikey",
+                    "authorization",
+                    "cookie",
+                    "defaultheaders",
+                    "envhttpheaders",
+                    "httpheaders",
+                    "password",
+                    "privatekey",
+                    "secret",
+                    "token",
+                ]
+                .iter()
+                .any(|secret| normalized.contains(secret))
+            });
+            for value in object.values_mut() {
+                redact_execution_profile_secrets(value);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                redact_execution_profile_secrets(value);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn runtime_project_workspace_path(

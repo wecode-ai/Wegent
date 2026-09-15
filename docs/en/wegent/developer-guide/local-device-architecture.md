@@ -240,6 +240,19 @@ Device CRDs use `spec.deviceType` to separate lifecycle ownership and frontend c
 
 After a remote Docker device starts, it sends `device:register` with `device_type=remote`, which updates the matching Device CRD. Online state still uses the Redis device-online key, so task routing, slot accounting, and terminal/code-server session RPC use the same protocol as local devices. The frontend does not expose cloud lifecycle actions for `remote` devices; users stop, restart, or remove the container on the Docker host.
 
+### Project device authorization pool and claiming
+
+By default, any available device owned by the project owner may claim a Run. Once devices are granted to a project through the existing `ResourceMember` `kind + resource` authorization relationship, those grants become the project's device allowlist. No dedicated mapping table is introduced.
+
+Neither automatic-processing rules nor manual assignments require the user to select a device. A human target only changes the assignee. An Agent or collaboration-group target creates a queued Run without a bound device. Claiming then verifies, in order:
+
+1. the device belongs to the Run owner;
+2. the device is allowed by the project device pool;
+3. if the same Issue previously ran on a device, the new Run keeps that device affinity;
+4. the device and Agent still have available capacity.
+
+A successful claim atomically writes the canonical device ID, execution environment, lease, and runtime request through the same conditional update so two devices cannot claim the Run. A project with no explicit device grants remains open to the owner's devices; after the first grant, only allowlisted devices are eligible. Presence affects whether a device can claim now, but does not prevent an administrator from pre-authorizing an offline device.
+
 ---
 
 ## 📡 WebSocket Protocol

@@ -11,11 +11,44 @@ use std::{
 use serde_json::{json, Value};
 
 use crate::{
+    agents::request_backend_url,
+    config::device::ConnectionConfig,
     emitter::{EventEnvelope, ResponsesEventBuilder},
     runner::{AgentEngine, EventSink, ExecutionOutcome},
 };
 
 use super::*;
+
+const CLOUD_MODEL_TYPES: [&str; 3] = ["public", "user", "group"];
+const CLOUD_MODEL_NAMESPACE_OPTION: &str = "weworkCloudModelNamespace";
+const CLOUD_MODEL_RESOURCE_USER_ID_OPTION: &str = "weworkCloudModelResourceUserId";
+const CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION: &str = "weworkCloudModelUpstreamApiFormat";
+const CLOUD_MODEL_GATEWAY_PATH: &str = "runtime-work/llm-responses-proxy";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BackendSessionCredentials {
+    backend_url: String,
+    session_token: String,
+}
+
+impl TryFrom<&ConnectionConfig> for BackendSessionCredentials {
+    type Error = String;
+
+    fn try_from(connection: &ConnectionConfig) -> Result<Self, Self::Error> {
+        let backend_url = connection.backend_url.trim();
+        if backend_url.is_empty() {
+            return Err("Claude Code cloud model backend URL is required".to_owned());
+        }
+        let session_token = connection.auth_token.trim();
+        if session_token.is_empty() {
+            return Err("Claude Code cloud model backend token is required".to_owned());
+        }
+        Ok(Self {
+            backend_url: backend_url.to_owned(),
+            session_token: session_token.to_owned(),
+        })
+    }
+}
 
 #[derive(Clone)]
 struct ClaudeRuntimeEventSink {
@@ -209,9 +242,39 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn start_claude_turn(
         &self,
         local_task_id: String,
-        request: ExecutionRequest,
+        mut request: ExecutionRequest,
         restore_startup: Option<Arc<RestoreStartupGate>>,
     ) {
+        let backend_connection = match self.backend_connection_snapshot() {
+            Ok(connection) => connection,
+            Err(error) => {
+                self.fail_local_task_execution_start(&local_task_id, &error);
+                return;
+            }
+        };
+        let backend_credentials = match backend_connection
+            .as_ref()
+            .map(BackendSessionCredentials::try_from)
+            .transpose()
+        {
+            Ok(credentials) => credentials,
+            Err(message) => {
+                self.fail_local_task_execution_start(
+                    &local_task_id,
+                    &AppIpcError::new("invalid_model_configuration", message),
+                );
+                return;
+            }
+        };
+        if let Err(message) =
+            prepare_claude_cloud_model_route(&mut request, backend_credentials.as_ref())
+        {
+            self.fail_local_task_execution_start(
+                &local_task_id,
+                &AppIpcError::new("invalid_model_configuration", message),
+            );
+            return;
+        }
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
         let execution_id = match self.start_local_task_execution(
@@ -397,6 +460,7 @@ impl RuntimeWorkRpcHandler {
                 "data": data,
                 "deviceId": self.device_id,
                 "runtime": "claude_code",
+                "eventSeq": next_runtime_event_sequence(),
             },
         });
         if let Some(client_user_message_id) = request
@@ -557,13 +621,390 @@ fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionReques
         "api_key".to_owned(),
         Value::String(local_model_proxy::API_KEY.to_owned()),
     );
+    apply_claude_proxy_environment(
+        model_config,
+        &format!("{loopback}/v1/harness-router/{token}"),
+    );
     (request, Some(token))
+}
+
+fn apply_claude_proxy_environment(model_config: &mut serde_json::Map<String, Value>, url: &str) {
+    let env = model_config
+        .entry("env".to_owned())
+        .or_insert_with(|| Value::Object(Default::default()));
+    if !env.is_object() {
+        *env = Value::Object(Default::default());
+    }
+    let env = env
+        .as_object_mut()
+        .expect("Claude model environment should be an object");
+    for (key, value) in [
+        ("ANTHROPIC_API_KEY", local_model_proxy::API_KEY),
+        ("ANTHROPIC_AUTH_TOKEN", local_model_proxy::API_KEY),
+        ("ANTHROPIC_BASE_URL", url),
+        ("CLAUDE_CODE_USE_BEDROCK", "0"),
+        ("CLAUDE_CODE_USE_FOUNDRY", "0"),
+        ("CLAUDE_CODE_USE_VERTEX", "0"),
+    ] {
+        env.insert(key.to_owned(), Value::String(value.to_owned()));
+    }
+}
+
+fn prepare_claude_cloud_model_route(
+    request: &mut ExecutionRequest,
+    backend_credentials: Option<&BackendSessionCredentials>,
+) -> Result<(), String> {
+    let Some(selection) = request
+        .extra
+        .get("modelSelection")
+        .or_else(|| request.extra.get("model_selection"))
+        .filter(|value| value.is_object())
+    else {
+        return Ok(());
+    };
+    let model_type = string_field(selection, "modelType")
+        .or_else(|| string_field(selection, "model_type"))
+        .unwrap_or_default();
+    if !CLOUD_MODEL_TYPES.contains(&model_type.as_str()) {
+        return Ok(());
+    }
+
+    let model_name = string_field(selection, "modelName")
+        .or_else(|| string_field(selection, "model_name"))
+        .or_else(|| string_field(selection, "model"))
+        .ok_or_else(|| "Claude Code cloud model name is required".to_owned())?;
+    let options = selection
+        .get("options")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Claude Code cloud model options are required".to_owned())?;
+    let namespace = options
+        .get(CLOUD_MODEL_NAMESPACE_OPTION)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "Claude Code cloud model namespace is required".to_owned())?;
+    let resource_user_id = options
+        .get(CLOUD_MODEL_RESOURCE_USER_ID_OPTION)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Claude Code cloud model resource user ID is required".to_owned())?;
+    let resource_user_id = resource_user_id
+        .parse::<i64>()
+        .ok()
+        .filter(|value| *value >= 0)
+        .map(|value| value.to_string())
+        .ok_or_else(|| {
+            "Claude Code cloud model resource user ID must be a non-negative integer".to_owned()
+        })?;
+    let upstream_api_format = options
+        .get(CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("openai-responses")
+        .to_owned();
+    let backend_url = backend_credentials
+        .map(|credentials| credentials.backend_url.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| request_backend_url(request))
+        .ok_or_else(|| "Claude Code cloud model backend URL is required".to_owned())?;
+    let auth_token = backend_credentials
+        .map(|credentials| credentials.session_token.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "Claude Code cloud model backend token is required".to_owned())?;
+
+    let model_config = request
+        .model_config
+        .as_object_mut()
+        .ok_or_else(|| "Claude Code model configuration must be an object".to_owned())?;
+    for (key, value) in [
+        ("model", Value::String("openai".to_owned())),
+        ("model_id", Value::String(model_name)),
+        ("api_format", Value::String("responses".to_owned())),
+        ("protocol", Value::String("openai-responses".to_owned())),
+        ("upstream_api_format", Value::String(upstream_api_format)),
+        (
+            "base_url",
+            Value::String(cloud_model_gateway_base_url(&backend_url)),
+        ),
+        ("api_key", Value::String(auth_token)),
+    ] {
+        model_config.insert(key.to_owned(), value);
+    }
+    let default_headers = model_config
+        .entry("default_headers".to_owned())
+        .or_insert_with(|| Value::Object(Default::default()));
+    if !default_headers.is_object() {
+        *default_headers = Value::Object(Default::default());
+    }
+    let default_headers = default_headers
+        .as_object_mut()
+        .expect("Claude model default headers should be an object");
+    for (key, value) in [
+        ("X-Wegent-Model-Type", model_type),
+        ("X-Wegent-Model-Namespace", namespace),
+        ("X-Wegent-Model-User-Id", resource_user_id),
+        (
+            "X-Wegent-Upstream-Header-wecode-executor",
+            "claudecode".to_owned(),
+        ),
+        (
+            "X-Wegent-Upstream-Header-wecode-source",
+            "wegent-agent".to_owned(),
+        ),
+    ] {
+        default_headers.insert(key.to_owned(), Value::String(value));
+    }
+    Ok(())
+}
+
+fn cloud_model_gateway_base_url(backend_url: &str) -> String {
+    let base_url = backend_url.trim().trim_end_matches('/');
+    if base_url.ends_with("/api") {
+        format!("{base_url}/{CLOUD_MODEL_GATEWAY_PATH}")
+    } else {
+        format!("{base_url}/api/{CLOUD_MODEL_GATEWAY_PATH}")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio::sync::broadcast::error::TryRecvError;
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn cloud_model_selection_materializes_claude_gateway_route() {
+        let _lock = crate::test_env::lock();
+        let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "https://wegent.example/api");
+        let mut request = ExecutionRequest {
+            auth_token: Some("task-token".to_owned()),
+            model_config: json!({
+                "base_url": "https://local-claude.invalid",
+                "api_key": "local-credential",
+                "custom_option": "preserved",
+                "default_headers": {
+                    "X-Custom-Header": "preserved",
+                },
+            }),
+            extra: serde_json::Map::from_iter([(
+                "modelSelection".to_owned(),
+                json!({
+                    "modelName": "public-review-model",
+                    "modelType": "public",
+                    "options": {
+                        "weworkCloudModelNamespace": "default",
+                        "weworkCloudModelResourceUserId": "0",
+                        "weworkCloudModelUpstreamApiFormat": "openai-responses",
+                    },
+                }),
+            )]),
+            ..ExecutionRequest::default()
+        };
+
+        let backend_connection = ConnectionConfig {
+            backend_url: "https://wegent.example/api".to_owned(),
+            socket_url: "https://wegent.example/api".to_owned(),
+            auth_token: "backend-token".to_owned(),
+            runtime_auth_token: String::new(),
+        };
+        let backend_credentials = BackendSessionCredentials::try_from(&backend_connection).unwrap();
+
+        prepare_claude_cloud_model_route(&mut request, Some(&backend_credentials))
+            .expect("cloud model selection should materialize");
+
+        assert_eq!(
+            request.model_config["base_url"],
+            "https://wegent.example/api/runtime-work/llm-responses-proxy"
+        );
+        assert_eq!(request.model_config["api_key"], "backend-token");
+        assert_eq!(request.model_config["model_id"], "public-review-model");
+        assert_eq!(
+            request.model_config["default_headers"]["X-Wegent-Model-Type"],
+            "public"
+        );
+        assert_eq!(
+            request.model_config["default_headers"]["X-Wegent-Upstream-Header-wecode-executor"],
+            "claudecode"
+        );
+        assert_eq!(request.model_config["custom_option"], "preserved");
+        assert_eq!(
+            request.model_config["default_headers"]["X-Custom-Header"],
+            "preserved"
+        );
+        assert_ne!(
+            request.model_config["base_url"],
+            "https://local-claude.invalid"
+        );
+        assert_ne!(request.model_config["api_key"], "local-credential");
+    }
+
+    #[test]
+    fn cloud_model_selection_fails_closed_without_backend_token() {
+        let _lock = crate::test_env::lock();
+        let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "https://wegent.example");
+        let mut request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([(
+                "modelSelection".to_owned(),
+                json!({
+                    "modelName": "public-review-model",
+                    "modelType": "public",
+                    "options": {
+                        "weworkCloudModelNamespace": "default",
+                        "weworkCloudModelResourceUserId": "0",
+                    },
+                }),
+            )]),
+            ..ExecutionRequest::default()
+        };
+
+        let error = prepare_claude_cloud_model_route(&mut request, None)
+            .expect_err("cloud model must not fall back to local Claude login");
+
+        assert_eq!(error, "Claude Code cloud model backend token is required");
+        assert!(request.model_config.as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cloud_model_selection_rejects_invalid_resource_user_id() {
+        let mut request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([(
+                "modelSelection".to_owned(),
+                json!({
+                    "modelName": "public-review-model",
+                    "modelType": "public",
+                    "options": {
+                        "weworkCloudModelNamespace": "default",
+                        "weworkCloudModelResourceUserId": "-1",
+                    },
+                }),
+            )]),
+            ..ExecutionRequest::default()
+        };
+        let backend_credentials = BackendSessionCredentials {
+            backend_url: "https://wegent.example".to_owned(),
+            session_token: "backend-token".to_owned(),
+        };
+
+        let error =
+            prepare_claude_cloud_model_route(&mut request, Some(&backend_credentials)).unwrap_err();
+
+        assert_eq!(
+            error,
+            "Claude Code cloud model resource user ID must be a non-negative integer"
+        );
+    }
+
+    #[test]
+    fn non_cloud_model_selection_leaves_model_configuration_unchanged() {
+        let original = json!({
+            "base_url": "https://local-claude.example",
+            "api_key": "local-token",
+            "env": {"HTTPS_PROXY": "http://proxy.example"},
+        });
+        let mut request = ExecutionRequest {
+            model_config: original.clone(),
+            extra: serde_json::Map::from_iter([(
+                "modelSelection".to_owned(),
+                json!({
+                    "modelName": "local-claude",
+                    "modelType": "runtime",
+                    "options": {},
+                }),
+            )]),
+            ..ExecutionRequest::default()
+        };
+
+        prepare_claude_cloud_model_route(&mut request, None).unwrap();
+
+        assert_eq!(request.model_config, original);
+    }
+
+    #[test]
+    fn local_harness_route_overrides_claude_provider_and_login_environment() {
+        let mut model_config = serde_json::Map::from_iter([(
+            "env".to_owned(),
+            json!({
+                "HTTPS_PROXY": "http://proxy.example",
+                "ANTHROPIC_API_KEY": "stale-token",
+            }),
+        )]);
+        let proxy_url = "http://127.0.0.1:19090/v1/harness-router/token";
+
+        apply_claude_proxy_environment(&mut model_config, proxy_url);
+
+        assert_eq!(model_config["env"]["HTTPS_PROXY"], "http://proxy.example");
+        assert_eq!(model_config["env"]["ANTHROPIC_BASE_URL"], proxy_url);
+        assert_eq!(
+            model_config["env"]["ANTHROPIC_API_KEY"],
+            local_model_proxy::API_KEY
+        );
+        assert_eq!(
+            model_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+            local_model_proxy::API_KEY
+        );
+        assert_eq!(model_config["env"]["CLAUDE_CODE_USE_BEDROCK"], "0");
+        assert_eq!(model_config["env"]["CLAUDE_CODE_USE_FOUNDRY"], "0");
+        assert_eq!(model_config["env"]["CLAUDE_CODE_USE_VERTEX"], "0");
+
+        let request = ExecutionRequest {
+            bot: json!([{
+                "shell_type": "ClaudeCode",
+                "agent_config": {
+                    "env": {
+                        "ANTHROPIC_API_KEY": "local-api-key",
+                        "ANTHROPIC_AUTH_TOKEN": "local-auth-token",
+                        "ANTHROPIC_BASE_URL": "https://local-claude.invalid",
+                        "CLAUDE_CODE_USE_BEDROCK": "1",
+                        "CLAUDE_CODE_USE_FOUNDRY": "1",
+                        "CLAUDE_CODE_USE_VERTEX": "1",
+                    },
+                },
+            }]),
+            model_config: Value::Object(model_config),
+            ..ExecutionRequest::default()
+        };
+        let command = crate::agents::build_claude_command(&request, "claude");
+
+        assert_eq!(command.envs()["ANTHROPIC_BASE_URL"], proxy_url);
+        assert_eq!(
+            command.envs()["ANTHROPIC_API_KEY"],
+            local_model_proxy::API_KEY
+        );
+        assert_eq!(
+            command.envs()["ANTHROPIC_AUTH_TOKEN"],
+            local_model_proxy::API_KEY
+        );
+        assert_eq!(command.envs()["CLAUDE_CODE_USE_BEDROCK"], "0");
+        assert_eq!(command.envs()["CLAUDE_CODE_USE_FOUNDRY"], "0");
+        assert_eq!(command.envs()["CLAUDE_CODE_USE_VERTEX"], "0");
+    }
 
     fn block_created_event(id: &str) -> EventEnvelope {
         EventEnvelope {
@@ -635,6 +1076,39 @@ mod tests {
                 "output": "done",
             })]
         );
+    }
+
+    #[tokio::test]
+    async fn claude_runtime_events_include_monotonic_event_sequence() {
+        let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(4);
+        let handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+        let request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            subtask_id: "turn-1".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        handler.emit_claude_runtime_event("task-1", &request, "response.created", json!({}));
+        handler.emit_claude_runtime_event(
+            "task-1",
+            &request,
+            "error",
+            json!({"message": "failed"}),
+        );
+
+        let first = event_rx.recv().await.expect("first Claude runtime event");
+        let second = event_rx.recv().await.expect("second Claude runtime event");
+        let first_sequence = first["payload"]["eventSeq"]
+            .as_u64()
+            .expect("first event sequence");
+        let second_sequence = second["payload"]["eventSeq"]
+            .as_u64()
+            .expect("second event sequence");
+
+        assert!(first_sequence > 0);
+        assert!(second_sequence > first_sequence);
+        assert_eq!(first["payload"]["runtime"], "claude_code");
+        assert_eq!(second["payload"]["runtime"], "claude_code");
     }
 
     #[tokio::test]

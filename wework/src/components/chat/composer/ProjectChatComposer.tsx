@@ -237,7 +237,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
     )
     const textareaRef = useAutoResizeTextarea(value, 112)
     const canSend =
-      (hasText || attachments.length > 0 || codeComments.length > 0) && !disabled && !submitDisabled
+      (hasText || attachments.length > 0 || codeComments.length > 0) &&
+      isModelSelectionReady &&
+      !disabled &&
+      !submitDisabled
     const canCollapseInShortPane =
       attachments.length === 0 &&
       uploadingFiles.size === 0 &&

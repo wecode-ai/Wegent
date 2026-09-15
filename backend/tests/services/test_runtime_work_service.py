@@ -2846,6 +2846,48 @@ def test_team_create_v3_keeps_executor_wire_protocol_at_v2(
     assert "wegentTeamId" not in payload
 
 
+def test_runtime_create_payload_preserves_additional_skill_refs(
+    test_db,
+    test_user,
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    additional_skills = [
+        {
+            "name": "wework-plugin-creator",
+            "namespace": "codex",
+            "is_public": False,
+        }
+    ]
+    payload = runtime_work_service._runtime_task_create_payload(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=2,
+            deviceId="cloud-device-1",
+            workspacePath="/srv/workspaces/Wegent",
+            runtime="claude_code",
+            message="Review the implementation",
+            additionalSkills=additional_skills,
+        ),
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="cloud-device-1",
+            workspace_path="/srv/workspaces/Wegent",
+        ),
+        execution_request=SimpleNamespace(
+            team_id=0,
+            system_prompt="",
+            attachments=[],
+            to_dict=lambda: {"team_id": 0},
+        ),
+    )
+
+    assert payload["additionalSkills"] == additional_skills
+    assert "preload_skills" not in payload["executionRequest"]
+    assert "user_selected_skills" not in payload["executionRequest"]
+
+
 def test_materialize_runtime_task_requires_team_intent(
     test_db,
     test_user,
@@ -5274,6 +5316,13 @@ def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path
     assert execution_request.team_id == 0
     assert execution_request.bot == []
     assert execution_request.model_config["model_id"] == "doubao-seed-2.0-lite"
+    from app.services.auth import verify_skill_identity_token
+
+    skill_identity = verify_skill_identity_token(execution_request.skill_identity_token)
+    assert skill_identity is not None
+    assert skill_identity.user_id == test_user.id
+    assert skill_identity.runtime_type == "executor"
+    assert skill_identity.runtime_name.startswith("wework-runtime-")
 
 
 def test_runtime_address_team_binding_is_additive() -> None:

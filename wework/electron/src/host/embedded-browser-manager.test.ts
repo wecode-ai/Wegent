@@ -85,6 +85,7 @@ class FakeWebContents extends EventEmitter {
   })
   capturePage = vi.fn()
   reload = vi.fn()
+  reloadIgnoringCache = vi.fn()
   sendInputEvent = vi.fn()
   setWindowOpenHandler = vi.fn()
   setUserAgent = vi.fn((userAgent: string) => {
@@ -298,6 +299,47 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     manager.relabel('workspace-browser', 'workspace-browser-task-1')
 
     await expect(arrival).resolves.toBe(false)
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('preserves the attached webview across a logical bridge close', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+
+    await manager.clearData(['cache'])
+    manager.requestClose('workspace-browser')
+
+    expect(manager.has('workspace-browser')).toBe(false)
+    expect(contents.close).not.toHaveBeenCalled()
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'close-request',
+        payload: expect.objectContaining({ label: 'workspace-browser' }),
+      })
+    )
+
+    const reopened = await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    expect(reopened.url).toBe('https://example.test/')
+    expect(contents.reloadIgnoringCache).toHaveBeenCalledOnce()
     await rm(directory, { recursive: true, force: true })
   })
 

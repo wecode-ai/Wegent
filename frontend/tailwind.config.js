@@ -17,26 +17,22 @@ export default {
     '../packages/collaboration/src/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
+    fontSize: {
+      xs: ['var(--text-xs)', { lineHeight: '1.333333' }],
+      sm: ['var(--text-sm)', { lineHeight: '1.428571' }],
+      base: ['var(--text-base)', { lineHeight: '1.5' }],
+      lg: ['var(--text-lg)', { lineHeight: '1.555556' }],
+      xl: ['var(--text-xl)', { lineHeight: '1.4' }],
+      '2xl': ['var(--text-2xl)', { lineHeight: '1.333333' }],
+      '3xl': ['var(--text-3xl)', { lineHeight: '1.2' }],
+      '4xl': ['var(--text-4xl)', { lineHeight: '1.111111' }],
+      'heading-sm': ['var(--text-heading-sm)', { lineHeight: '1.33' }],
+      'heading-md': ['var(--text-heading-md)', { lineHeight: '1.33' }],
+      'heading-lg': ['var(--text-heading-lg)', { lineHeight: '1.2' }],
+    },
     extend: {
       fontFamily: {
-        sans: [
-          '"Google Sans Flex"',
-          '"Google Sans"',
-          '-apple-system',
-          'BlinkMacSystemFont',
-          '"Segoe UI"',
-          'Roboto',
-          '"Helvetica Neue"',
-          'Arial',
-          '"PingFang SC"',
-          '"Hiragino Sans GB"',
-          '"Microsoft YaHei"',
-          'sans-serif',
-          '"Apple Color Emoji"',
-          '"Segoe UI Emoji"',
-          '"Segoe UI Symbol"',
-          '"Noto Color Emoji"',
-        ],
+        sans: ['var(--font-ui)'],
         mono: [
           'ui-monospace',
           'SFMono-Regular',
@@ -64,6 +60,7 @@ export default {
         'text-inverted': withOpacity('--color-text-inverted'),
         primary: withOpacity('--color-primary'),
         'primary-contrast': withOpacity('--color-primary-contrast'),
+        focus: withOpacity('--color-focus'),
         success: withOpacity('--color-success'),
         error: withOpacity('--color-error'),
         warning: 'rgb(245 158 11)', // Tailwind orange-500

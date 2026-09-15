@@ -1405,6 +1405,7 @@ export interface RuntimeTaskForkResponse {
   source: RuntimeTaskAddress
   target: RuntimeTaskAddress
   runtime: RuntimeName
+  transcript: RuntimeTranscriptResponse
   error?: string | null
 }
 

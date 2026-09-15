@@ -430,7 +430,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "shared collaboration package selects its desktop checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-agent-automation-chain"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "packages/collaboration/src/CollaborationApp.tsx"
@@ -438,7 +438,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "collaboration execution environment changes select onboarding and lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"remote-device-onboarding"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"remote-device-onboarding"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-agent-automation-chain"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"cloud-device-lifecycle"}]}
 wework_desktop_other_e2e=false
@@ -575,12 +575,16 @@ wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}
 wework_desktop_macos_inspector_e2e=true'
 full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll\"}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,local-project-automation-chain\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-agent-automation-chain\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,board-focus-view\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view\"}"
 
 assert_desktop_case "runner-only changes retain full coverage" \
   "$full_desktop_expected" \
   "wework/e2e/desktop/task-flow.e2e.mjs"
+
+assert_desktop_case "collaboration executor runtime changes retain full coverage including the automation chain" \
+  "$full_desktop_expected" \
+  "executor/src/runtime_work/handler/claude_turns.rs"
 
 assert_desktop_case "workbench mode changes select their desktop regression" \
   'wework_desktop_e2e=true
@@ -725,13 +729,21 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/project-automation.scenario.mjs"
 
-assert_desktop_case "local project automation chain changes select local chain coverage" \
+assert_desktop_case "collaboration automation chain scenario selects its core shard" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"local-project-automation-chain"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-agent-automation-chain"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/local-project-automation-chain.scenario.mjs"
+  "wework/e2e/desktop/scenarios/collaboration-agent-automation-chain.scenario.mjs"
+
+assert_desktop_case "collaboration backend automation changes select the agent automation chain" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-agent-automation-chain"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "backend/app/services/project_automation_execution.py"
 
 assert_desktop_case "project assignment notification E2E changes select assignment coverage" \
   'wework_desktop_e2e=true

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     env, fs,
     io::Write,
     path::{Path, PathBuf},
@@ -27,9 +27,11 @@ use super::{
 };
 
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
+pub const NOTIFICATIONS_MCP_SERVER_NAME: &str = "wework_notifications";
 const SPACE_MCP_LOG_FILE: &str = "space-mcp.log";
 pub const SPACE_CONTEXT_GRANT_ENV: &str = "WEWORK_SPACE_CONTEXT_GRANT";
 const SPACE_CONTEXT_GRANT_TTL_SECONDS: i64 = 60 * 60;
+pub(crate) const SPACE_MCP_TOOL_TIMEOUT_SECONDS: u64 = 60;
 static SPACE_MCP_LOG_WRITE_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
 #[cfg(not(test))]
 static ACTIVE_SPACE_CONTEXT_GRANT: OnceLock<Option<SpaceContextGrant>> = OnceLock::new();
@@ -51,6 +53,21 @@ pub(crate) struct SpaceMcpRequestContext {
     grant: Option<SpaceContextGrant>,
     backend_url: Option<String>,
     auth_token: Option<String>,
+    surface: WeworkMcpSurface,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum WeworkMcpSurface {
+    #[default]
+    ProjectSpace,
+    Notifications,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SpaceMcpClientConfig {
+    pub(crate) url: String,
+    pub(crate) headers: BTreeMap<String, String>,
+    pub(crate) context_bound: bool,
 }
 
 impl SpaceMcpRequestContext {
@@ -63,6 +80,16 @@ impl SpaceMcpRequestContext {
             grant,
             backend_url,
             auth_token,
+            surface: WeworkMcpSurface::ProjectSpace,
+        }
+    }
+
+    pub(crate) fn notifications(backend_url: Option<String>, auth_token: Option<String>) -> Self {
+        Self {
+            grant: None,
+            backend_url,
+            auth_token,
+            surface: WeworkMcpSurface::Notifications,
         }
     }
 
@@ -77,6 +104,92 @@ impl SpaceMcpRequestContext {
     fn grant(&self) -> Option<&SpaceContextGrant> {
         self.grant.as_ref()
     }
+
+    pub(crate) fn surface(&self) -> WeworkMcpSurface {
+        self.surface
+    }
+
+    fn server_name(&self) -> &'static str {
+        match self.surface {
+            WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
+            WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
+        }
+    }
+}
+
+pub(crate) fn space_mcp_client_config(
+    request: &ExecutionRequest,
+) -> Result<SpaceMcpClientConfig, String> {
+    let grant = encoded_space_context_grant(request);
+    let context = SpaceMcpRequestContext::new(
+        grant.as_deref().and_then(decode_space_context_grant),
+        request
+            .backend_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| env::var("WEGENT_BACKEND_URL").ok())
+            .filter(|value| !value.trim().is_empty()),
+        request
+            .auth_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| env::var("WEGENT_AUTH_TOKEN").ok())
+            .filter(|value| !value.trim().is_empty()),
+    );
+    let registered = super::mcp_http::register_space_mcp_context(context)?;
+    Ok(SpaceMcpClientConfig {
+        url: registered.endpoint.url,
+        headers: BTreeMap::from([
+            (
+                "Authorization".to_owned(),
+                format!("Bearer {}", registered.endpoint.token),
+            ),
+            ("X-Wework-Mcp-Context".to_owned(), registered.context_handle),
+        ]),
+        context_bound: grant.is_some(),
+    })
+}
+
+pub(crate) fn notifications_mcp_client_config(
+    request: &ExecutionRequest,
+) -> Result<Option<SpaceMcpClientConfig>, String> {
+    let Some(backend_url) = request
+        .backend_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let Some(auth_token) = request
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let registered =
+        super::mcp_http::register_space_mcp_context(SpaceMcpRequestContext::notifications(
+            Some(backend_url.to_owned()),
+            Some(auth_token.to_owned()),
+        ))?;
+    let base_url = registered.endpoint.url.trim_end_matches("/mcp");
+    Ok(Some(SpaceMcpClientConfig {
+        url: format!("{base_url}/notifications/mcp"),
+        headers: BTreeMap::from([
+            (
+                "Authorization".to_owned(),
+                format!("Bearer {}", registered.endpoint.token),
+            ),
+            ("X-Wework-Mcp-Context".to_owned(), registered.context_handle),
+        ]),
+        context_bound: false,
+    }))
 }
 
 pub fn is_space_mcp_command() -> bool {
@@ -290,7 +403,7 @@ pub(crate) async fn handle_request_with_context(
                     "protocolVersion": protocol_version,
                     "capabilities": {"tools": {"listChanged": false}},
                     "serverInfo": {
-                        "name": SPACE_MCP_SERVER_NAME,
+                        "name": context.server_name(),
                         "version": env!("CARGO_PKG_VERSION")
                     }
                 }),
@@ -660,6 +773,12 @@ async fn call_tool_with_context(
     arguments: Value,
     context: &SpaceMcpRequestContext,
 ) -> Value {
+    if context.surface == WeworkMcpSurface::Notifications && name != "send_notification" {
+        return text_result(
+            format!("Unknown {NOTIFICATIONS_MCP_SERVER_NAME} tool: {name}"),
+            true,
+        );
+    }
     call_tool_with_runtime_context(
         runtime,
         name,
@@ -2820,6 +2939,12 @@ fn tools() -> Vec<Value> {
 }
 
 fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec<Value> {
+    if context.surface == WeworkMcpSurface::Notifications {
+        return tools()
+            .into_iter()
+            .filter(|tool| tool["name"] == "send_notification")
+            .collect();
+    }
     if is_automation_manager(context.grant()) {
         return tools()
             .into_iter()

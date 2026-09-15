@@ -13,15 +13,6 @@ if (typeof globalThis.structuredClone !== 'function') {
   })
 }
 
-jest.mock('@xyflow/react', () => ({
-  Background: () => null,
-  Controls: () => null,
-  Handle: () => null,
-  MarkerType: { ArrowClosed: 'arrowclosed' },
-  Position: { Left: 'left', Right: 'right' },
-  ReactFlow: () => <div data-testid="mock-workflow-flow" />,
-}))
-
 import {
   IssueCreate,
   IssueDetail,
@@ -361,24 +352,19 @@ describe('shared IssueDetail', () => {
         tags: [],
       })
     )
-    fireEvent.click(screen.getByTestId('collaboration-issue-mention-trigger'))
-    fireEvent.click(screen.getByTestId(`collaboration-issue-mention-member-${member.user_id}`))
-    fireEvent.change(screen.getByTestId('collaboration-issue-comment'), {
-      target: { value: `@${member.user_name} ${assignmentComment.body}` },
-    })
-    fireEvent.click(screen.getByTestId('collaboration-issue-comment-submit'))
+    fireEvent.click(screen.getByTestId('collaboration-issue-assignment-trigger'))
+    fireEvent.click(screen.getByTestId(`collaboration-issue-assign-member-${member.user_id}`))
 
     await waitFor(() =>
       expect(createAssignment).toHaveBeenCalledWith(issue.id, {
         targetType: 'human',
         targetId: '5',
         workflowStep: null,
-        commentBody: `@${member.user_name} ${assignmentComment.body}`,
         notifyTarget: true,
       })
     )
     expect(onAssignmentsChange).toHaveBeenCalledWith([assignment])
-    expect(onCommentsChange).toHaveBeenCalledWith([assignmentComment])
+    expect(onCommentsChange).not.toHaveBeenCalled()
     expect(onChange).toHaveBeenCalledWith(updated)
     expect(api.issues.assign).not.toHaveBeenCalled()
   })

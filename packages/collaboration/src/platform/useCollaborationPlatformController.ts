@@ -6,7 +6,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
+  CollaborationGroupCreateInput,
+  CollaborationGroupUpdateInput,
+} from "../ports/SharedWorkspaceApi";
+import type {
+  CollaborationGroup,
   CollaborationExecutionEnvironment,
+  CollaborationExecution,
   CollaborationMember,
   CollaborationOwnedAgent,
   CollaborationPlatformResources,
@@ -16,6 +22,7 @@ import type {
   CollaborationWorkspace,
   CollaborationWorkspaceNavigationContext,
 } from "../types";
+import type { WorkspaceMyWorkItem } from "../ports/SharedWorkspaceApi";
 import type { CollaborationPlatformLocation } from "./types";
 import type { WorkspaceProjectIssuesSnapshot } from "./workspaceOperations";
 
@@ -26,8 +33,14 @@ export interface CollaborationPlatformState {
   navigationProjects: CollaborationProject[];
   projects: CollaborationProject[];
   projectIssues: Record<string, WorkspaceProjectIssuesSnapshot>;
+  myWork: WorkspaceMyWorkItem[];
+  executions: Array<{
+    project: CollaborationProject;
+    execution: CollaborationExecution;
+  }>;
   members: CollaborationMember[];
   agents: CollaborationOwnedAgent[];
+  collaborationGroups: CollaborationGroup[];
   executionEnvironments: CollaborationExecutionEnvironment[];
   resources: CollaborationPlatformResources;
   loading: boolean;
@@ -58,6 +71,42 @@ function updateCurrentWorkspace(
   };
 }
 
+async function loadRootMyWork(
+  api: SharedWorkspaceApi,
+): Promise<WorkspaceMyWorkItem[]> {
+  try {
+    return (await api.myWork?.list()) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+async function loadRootExecutions(
+  api: SharedWorkspaceApi,
+  projects: CollaborationProject[],
+): Promise<CollaborationPlatformState["executions"]> {
+  const entries = await Promise.all(
+    projects.map(async (project) => {
+      try {
+        const projectExecutions = await api.executions.list(project.id, {
+          includeTerminal: true,
+        });
+        return projectExecutions.map((execution) => ({
+          project,
+          execution,
+        }));
+      } catch {
+        return [];
+      }
+    }),
+  );
+  return entries
+    .flat()
+    .sort((left, right) =>
+      right.execution.updated_at.localeCompare(left.execution.updated_at),
+    );
+}
+
 export function useCollaborationPlatformController({
   api,
   location,
@@ -74,8 +123,11 @@ export function useCollaborationPlatformController({
     navigationProjects: [],
     projects: [],
     projectIssues: {},
+    myWork: [],
+    executions: [],
     members: [],
     agents: [],
+    collaborationGroups: [],
     executionEnvironments: [],
     resources: emptyResources,
     loading: true,
@@ -108,6 +160,13 @@ export function useCollaborationPlatformController({
       ]);
       if (revision !== loadRevisionRef.current) return;
       if (!location.workspaceId) {
+        const [myWork, executions] = await Promise.all([
+          loadRootMyWork(api),
+          location.rootView === "runs"
+            ? loadRootExecutions(api, navigationProjects)
+            : Promise.resolve([]),
+        ]);
+        if (revision !== loadRevisionRef.current) return;
         setState((current) => ({
           ...current,
           workspaces,
@@ -116,8 +175,11 @@ export function useCollaborationPlatformController({
           navigationProjects,
           projects: navigationProjects,
           projectIssues: {},
+          myWork,
+          executions,
           members: [],
           agents: [],
+          collaborationGroups: [],
           executionEnvironments: [],
           resources: emptyResources,
           loading: false,
@@ -144,8 +206,11 @@ export function useCollaborationPlatformController({
             (project) => project.workspace_id === location.workspaceId,
           ),
           projectIssues: {},
+          myWork: [],
+          executions: [],
           members: [],
           agents: [],
+          collaborationGroups: [],
           executionEnvironments: [],
           resources: emptyResources,
           loading: false,
@@ -159,6 +224,7 @@ export function useCollaborationPlatformController({
         workspace,
         members,
         agents,
+        collaborationGroups,
         executionEnvironments,
         resources,
         projectSnapshots,
@@ -166,6 +232,7 @@ export function useCollaborationPlatformController({
         api.workspaces.get(location.workspaceId),
         api.workspaces.listMembers(location.workspaceId),
         api.workspaces.listAgents(location.workspaceId),
+        api.workspaces.listCollaborationGroups(location.workspaceId),
         api.workspaces.listExecutionEnvironments(location.workspaceId),
         api.resources ? api.resources.list() : emptyResources,
         location.workspaceView === "home"
@@ -205,8 +272,11 @@ export function useCollaborationPlatformController({
         projectIssues: Object.fromEntries(
           projectSnapshots.map(({ projectId, value }) => [projectId, value]),
         ),
+        myWork: [],
+        executions: [],
         members,
         agents,
+        collaborationGroups,
         executionEnvironments,
         resources,
         loading: false,
@@ -223,6 +293,7 @@ export function useCollaborationPlatformController({
     api,
     loadFailedMessage,
     location.projectId,
+    location.rootView,
     location.workspaceId,
     location.workspaceView,
   ]);
@@ -417,6 +488,55 @@ export function useCollaborationPlatformController({
             ...workspace,
             agent_count: Math.max(0, workspace.agent_count - 1),
           })),
+        }));
+      },
+      async createCollaborationGroup(input: CollaborationGroupCreateInput) {
+        if (!api.workspaces || !location.workspaceId) {
+          throw new Error("Workspace API is unavailable");
+        }
+        const group = await api.workspaces.createCollaborationGroup(
+          location.workspaceId,
+          input,
+        );
+        setState((current) => ({
+          ...current,
+          collaborationGroups: [...current.collaborationGroups, group],
+        }));
+        return group;
+      },
+      async updateCollaborationGroup(
+        groupId: string,
+        input: CollaborationGroupUpdateInput,
+      ) {
+        if (!api.workspaces || !location.workspaceId) {
+          throw new Error("Workspace API is unavailable");
+        }
+        const group = await api.workspaces.updateCollaborationGroup(
+          location.workspaceId,
+          groupId,
+          input,
+        );
+        setState((current) => ({
+          ...current,
+          collaborationGroups: current.collaborationGroups.map((candidate) =>
+            candidate.id === group.id ? group : candidate,
+          ),
+        }));
+        return group;
+      },
+      async removeCollaborationGroup(groupId: string) {
+        if (!api.workspaces || !location.workspaceId) {
+          throw new Error("Workspace API is unavailable");
+        }
+        await api.workspaces.removeCollaborationGroup(
+          location.workspaceId,
+          groupId,
+        );
+        setState((current) => ({
+          ...current,
+          collaborationGroups: current.collaborationGroups.filter(
+            (group) => group.id !== groupId,
+          ),
         }));
       },
       async addExecutionEnvironment(

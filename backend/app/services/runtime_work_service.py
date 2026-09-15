@@ -1511,6 +1511,8 @@ def _runtime_task_create_payload(
         payload["runtimeWorkspaceRoots"] = request.runtime_workspace_roots
     if request.project_plugins:
         payload["projectPlugins"] = request.project_plugins
+    if request.additional_skills:
+        payload["additionalSkills"] = request.additional_skills
     if request.bot:
         payload["bot"] = request.bot
     compiled_attachments = list(getattr(execution_request, "attachments", []) or [])
@@ -4220,7 +4222,7 @@ def _build_direct_wework_runtime_execution_request(
 ) -> ExecutionRequest:
     """Build a direct Wework execution without resolving a Wegent Team."""
 
-    from app.services.auth import create_task_token
+    from app.services.auth import create_skill_identity_token, create_task_token
 
     user = _get_user(db, user_id)
     task_id = request.local_task_id or str(_runtime_execution_ids()[0])
@@ -4266,12 +4268,19 @@ def _build_direct_wework_runtime_execution_request(
         collaboration_model="single",
         mode="code",
         task_mode="code",
+        preload_skills=list(request.additional_skills),
         attachments=[],
         auth_token=create_task_token(
             task_id=0,
             subtask_id=0,
             user_id=user.id,
             user_name=user.user_name,
+        ),
+        skill_identity_token=create_skill_identity_token(
+            user_id=user.id,
+            user_name=user.user_name,
+            runtime_type="executor",
+            runtime_name=f"wework-runtime-{task_id}",
         ),
         runtime_permission_profile=":danger-full-access",
     )
