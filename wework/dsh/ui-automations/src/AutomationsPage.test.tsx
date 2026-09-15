@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import type { DeviceInfo } from '@/types/api'
 import type { Automation } from '@/types/automation'
+import type { AutomationDraft } from '@/features/automations/automationDraft'
 import { AutomationsPage } from './AutomationsPage'
 
 const automation: Automation = {
@@ -27,12 +29,20 @@ const automationApi = {
 }
 const setRuntimeTaskPinned = vi.fn().mockResolvedValue(undefined)
 let desktopSidebarProps: Record<string, unknown> | null = null
+let automationDetailProps: {
+  draft: AutomationDraft
+  devices: DeviceInfo[]
+  cloudAvailable: boolean
+  onClose: () => void
+  onSave: () => void
+  onSourceChange: (source: 'local' | 'cloud') => void
+} | null = null
 
 const workbenchMock = {
   state: {
     user: { id: 1, user_name: 'alice', preferences: {} },
     projects: [],
-    devices: [],
+    devices: [] as DeviceInfo[],
     runtimeWork: { projects: [], chats: [], totalTasks: 0 },
     currentProject: null,
     currentRuntimeTask: null,
@@ -86,16 +96,19 @@ vi.mock('@/components/layout/WorkbenchSearchDialog', () => ({
 }))
 
 vi.mock('@/features/automations/AutomationDetailWorkspace', () => ({
-  AutomationDetailWorkspace: ({ onClose, onSave }: { onClose: () => void; onSave: () => void }) => (
-    <section data-testid="automation-detail-panel">
-      <button type="button" data-testid="automation-detail-close" onClick={onClose}>
-        Close
-      </button>
-      <button type="button" data-testid="automation-detail-save" onClick={onSave}>
-        Save
-      </button>
-    </section>
-  ),
+  AutomationDetailWorkspace: (props: NonNullable<typeof automationDetailProps>) => {
+    automationDetailProps = props
+    return (
+      <section data-testid="automation-detail-panel">
+        <button type="button" data-testid="automation-detail-close" onClick={props.onClose}>
+          Close
+        </button>
+        <button type="button" data-testid="automation-detail-save" onClick={props.onSave}>
+          Save
+        </button>
+      </section>
+    )
+  },
 }))
 
 describe('AutomationsPage', () => {
@@ -104,7 +117,9 @@ describe('AutomationsPage', () => {
     automationApi.listAutomations.mockResolvedValue({ items: [automation] })
     automationApi.listAutomationRuns.mockResolvedValue({ items: [] })
     workbenchMock.state.defaultTeam = null
+    workbenchMock.state.devices = []
     desktopSidebarProps = null
+    automationDetailProps = null
   })
 
   test('keeps runtime task pinning available from the automations route sidebar', async () => {
@@ -188,6 +203,70 @@ describe('AutomationsPage', () => {
           }),
         })
       )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('classifies Remote Docker as cloud and selects only compatible devices', async () => {
+    vi.useFakeTimers()
+    try {
+      automationApi.listAutomations.mockResolvedValue({ items: [] })
+      workbenchMock.state.devices = [
+        {
+          id: 1,
+          device_id: 'local-offline',
+          name: 'Local Offline',
+          status: 'offline',
+          is_default: false,
+          device_type: 'app',
+          bind_shell: 'claudecode',
+          executor_version: '1.8.5',
+        },
+        {
+          id: 2,
+          device_id: 'local-online',
+          name: 'Local Online',
+          status: 'online',
+          is_default: true,
+          device_type: 'app',
+          bind_shell: 'claudecode',
+          executor_version: '1.8.5',
+        },
+        {
+          id: 3,
+          device_id: 'remote-offline',
+          name: 'Remote Offline',
+          status: 'offline',
+          is_default: false,
+          device_type: 'remote',
+          bind_shell: 'claudecode',
+          executor_version: '1.8.5',
+        },
+        {
+          id: 4,
+          device_id: 'remote-online',
+          name: 'Remote Online',
+          status: 'online',
+          is_default: false,
+          device_type: 'remote',
+          bind_shell: 'claudecode',
+          executor_version: '1.8.5',
+        },
+      ]
+
+      render(<AutomationsPage />)
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      fireEvent.click(screen.getByTestId('create-automation-button'))
+
+      expect(automationDetailProps?.draft.deviceId).toBe('local-online')
+      expect(automationDetailProps?.devices).toEqual(workbenchMock.state.devices)
+      expect(automationDetailProps?.cloudAvailable).toBe(true)
+
+      act(() => automationDetailProps?.onSourceChange('cloud'))
+
+      expect(automationDetailProps?.draft.source).toBe('cloud')
+      expect(automationDetailProps?.draft.deviceId).toBe('remote-online')
     } finally {
       vi.useRealTimers()
     }
