@@ -111,11 +111,6 @@ export function CollaboratorSearchInput({
             >
               <div className="flex-1 min-w-0 truncate">
                 <span>{item.name}</span>
-                {item.type === 'department' && item.metadata?.memberCount != null && (
-                  <span className="ml-2 text-[11px] text-text-muted">
-                    {t('document.permission.memberCount', { count: item.metadata.memberCount })}
-                  </span>
-                )}
                 {item.type === 'user' &&
                   (item.metadata?.employeeId || item.metadata?.departmentName) && (
                     <span className="ml-2 text-[11px] text-text-muted">
