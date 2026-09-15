@@ -351,6 +351,13 @@ export function createElectronCapabilityRouter(
   router.register('browser.navigate', params =>
     browser.navigate(stringParam(params, 'label'), stringParam(params, 'url'))
   )
+  router.register('browser.notifyCloseRequestHandled', params =>
+    browser.notifyCloseRequestHandled(
+      stringParam(params, 'requestId'),
+      stringParam(params, 'label'),
+      stringParam(params, 'nativeLabel')
+    )
+  )
   router.register('browser.reload', params => browser.reload(stringParam(params, 'label')))
   router.register('browser.goBack', params => browser.goBack(stringParam(params, 'label')))
   router.register('browser.goForward', params => browser.goForward(stringParam(params, 'label')))

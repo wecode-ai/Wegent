@@ -85,6 +85,14 @@ export interface BrowserHostEvent {
   payload: Record<string, unknown>
 }
 
+interface BrowserCloseRequestWaiter {
+  label: string
+  nativeLabel: string
+  resolve: () => void
+  reject: (error: Error) => void
+  timeout: NodeJS.Timeout
+}
+
 interface BrowserAgentApproval {
   label: string
   signature: string
@@ -162,6 +170,7 @@ export class EmbeddedBrowserManager {
       timeout: NodeJS.Timeout
     }>
   >()
+  private readonly closeRequestWaiters = new Map<string, BrowserCloseRequestWaiter>()
   private readonly activeTabs = new Map<string, string>()
   private readonly downloads = new Map<string, BrowserDownload>()
   private readonly agentControlPaused = new Set<string>()
@@ -902,16 +911,45 @@ export class EmbeddedBrowserManager {
     this.emit('open-request', payload)
   }
 
-  requestClose(label: string): void {
+  async requestClose(label: string): Promise<void> {
     const normalizedLabel = requiredLabel(label)
     const entry = this.entries.get(normalizedLabel)
-    this.close(normalizedLabel)
-    if (entry) {
-      this.emit('close-request', {
+    if (!entry) return
+    const requestId = randomUUID()
+    const handled = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.closeRequestWaiters.delete(requestId)
+        reject(
+          new Error(`Timed out waiting for embedded browser close request: ${normalizedLabel}`)
+        )
+      }, 5_000)
+      this.closeRequestWaiters.set(requestId, {
         label: normalizedLabel,
         nativeLabel: entry.nativeLabel,
+        resolve,
+        reject,
+        timeout,
       })
+    })
+    this.close(normalizedLabel)
+    this.emit('close-request', {
+      requestId,
+      label: normalizedLabel,
+      nativeLabel: entry.nativeLabel,
+    })
+    await handled
+  }
+
+  notifyCloseRequestHandled(requestId: string, label: string, nativeLabel: string): void {
+    const waiter = this.closeRequestWaiters.get(requestId)
+    if (!waiter) return
+    const normalizedLabel = requiredLabel(label)
+    if (waiter.label !== normalizedLabel || waiter.nativeLabel !== nativeLabel) {
+      throw new Error('Embedded browser close acknowledgement does not match its request')
     }
+    this.closeRequestWaiters.delete(requestId)
+    clearTimeout(waiter.timeout)
+    waiter.resolve()
   }
 
   close(label: string, expectedNativeLabel?: string | null): void {
@@ -1126,6 +1164,13 @@ export class EmbeddedBrowserManager {
       }
     }
     this.attachmentWaiters.clear()
+    for (const [requestId, waiter] of this.closeRequestWaiters) {
+      clearTimeout(waiter.timeout)
+      waiter.reject(
+        new Error(`Embedded browser stopped before close request completed: ${waiter.label}`)
+      )
+      this.closeRequestWaiters.delete(requestId)
+    }
   }
 
   private required(label: string): BrowserEntry {

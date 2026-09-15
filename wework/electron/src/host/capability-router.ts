@@ -30,6 +30,7 @@ export const HOST_CAPABILITIES = [
   'browser.navigateBackgroundPage',
   'browser.setBackgroundPageUserAgent',
   'browser.navigate',
+  'browser.notifyCloseRequestHandled',
   'browser.notifyAgentCursorArrived',
   'browser.open',
   'browser.pageState',

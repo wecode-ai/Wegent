@@ -822,6 +822,48 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
+  test('waits for the renderer to handle a requested close', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    const state = await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+
+    let settled = false
+    const close = manager.requestClose('workspace-browser').then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+
+    expect(settled).toBe(false)
+    expect(manager.has('workspace-browser')).toBe(false)
+    const request = events.find(event => event.type === 'close-request')?.payload
+    expect(request).toMatchObject({
+      requestId: expect.any(String),
+      label: 'workspace-browser',
+      nativeLabel: state.nativeLabel,
+    })
+
+    manager.notifyCloseRequestHandled(
+      String(request?.requestId),
+      'workspace-browser',
+      state.nativeLabel
+    )
+    await close
+    expect(settled).toBe(true)
+    await rm(directory, { recursive: true, force: true })
+  })
+
   test('settles a pending target open when relabeling an attached browser', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)

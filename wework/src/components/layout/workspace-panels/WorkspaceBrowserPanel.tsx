@@ -33,6 +33,7 @@ import {
   listenEmbeddedBrowserAgentState,
   listenEmbeddedBrowserAnnotationRequests,
   listenEmbeddedBrowserCloseRequests,
+  notifyEmbeddedBrowserCloseRequestHandled,
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
   EMBEDDED_BROWSER_OCCLUSION_EVENT,
   evalEmbeddedBrowserJson,
@@ -723,6 +724,11 @@ export function WorkspaceBrowserTabPanel({
   useEffect(() => {
     const listener = listenEmbeddedBrowserCloseRequests(event => {
       if (event.label !== currentLabelRef.current) return
+      const acknowledgeCloseRequest = () => {
+        void notifyEmbeddedBrowserCloseRequestHandled(event).catch(error => {
+          console.error('Failed to acknowledge embedded browser close request:', error)
+        })
+      }
       if (event.nativeLabel !== nativeLabelRef.current) {
         console.info(
           '[Wework] Embedded browser close ignored',
@@ -732,6 +738,7 @@ export function WorkspaceBrowserTabPanel({
             label: event.label,
           })
         )
+        acknowledgeCloseRequest()
         return
       }
       console.info(
@@ -768,6 +775,7 @@ export function WorkspaceBrowserTabPanel({
       setAgentCursor(null)
       onTitleChange?.(null)
       onFaviconChange?.(null)
+      acknowledgeCloseRequest()
     })
     if (!listener) return undefined
     let disposed = false

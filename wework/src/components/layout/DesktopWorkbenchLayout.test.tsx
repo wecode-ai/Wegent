@@ -12570,6 +12570,105 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('reopens the same task browser when close and open events arrive together', async () => {
+    runtimeMocks.electron = true
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 400,
+      height: 300,
+      left: 0,
+      right: 400,
+      top: 100,
+      width: 400,
+      x: 0,
+      y: 100,
+      toJSON: () => ({}),
+    })
+    const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+    render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    act(() => {
+      desktopHostMocks.emit({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 1,
+          type: 'open-request',
+          payload: {
+            id: 'agent-open-before-close',
+            baseLabel: 'workspace-browser-runtime-a',
+            source: 'agent',
+            disposition: 'current-tab',
+            targetLabel: 'workspace-browser-runtime-a',
+            label: 'workspace-browser-runtime-a',
+            url: 'https://example.com/',
+          },
+        },
+      })
+    })
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-runtime-a',
+          url: 'about:blank',
+        })
+      )
+    })
+    desktopHostMocks.invoke.mockClear()
+
+    act(() => {
+      desktopHostMocks.emit({
+        sequence: 2,
+        type: 'browser.event',
+        payload: {
+          sequence: 2,
+          type: 'close-request',
+          payload: {
+            requestId: 'close-before-reopen',
+            label: 'workspace-browser-runtime-a',
+            nativeLabel: 'embedded-browser-native-test',
+          },
+        },
+      })
+      desktopHostMocks.emit({
+        sequence: 3,
+        type: 'browser.event',
+        payload: {
+          sequence: 3,
+          type: 'open-request',
+          payload: {
+            id: 'agent-open-after-close',
+            baseLabel: 'workspace-browser-runtime-a',
+            source: 'agent',
+            disposition: 'current-tab',
+            targetLabel: 'workspace-browser-runtime-a',
+            label: 'workspace-browser-runtime-a',
+            url: 'https://example.com/',
+          },
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-runtime-a',
+          url: 'about:blank',
+        })
+      )
+    })
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith(
+      'browser.reload',
+      expect.objectContaining({ label: 'workspace-browser-runtime-a' })
+    )
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('browser.notifyCloseRequestHandled', {
+      requestId: 'close-before-reopen',
+      label: 'workspace-browser-runtime-a',
+      nativeLabel: 'embedded-browser-native-test',
+    })
+  })
+
   test('opens a task-scoped browser request in its hidden owning workbench', async () => {
     runtimeMocks.electron = true
     const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()

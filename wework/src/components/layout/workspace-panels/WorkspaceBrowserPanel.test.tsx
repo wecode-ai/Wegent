@@ -40,6 +40,7 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   listenEmbeddedBrowserAnnotationState: vi.fn(),
   listenEmbeddedBrowserAnnotationRequests: vi.fn(),
   listenEmbeddedBrowserCloseRequests: vi.fn(),
+  notifyEmbeddedBrowserCloseRequestHandled: vi.fn(),
   listenEmbeddedBrowserDownloads: vi.fn(),
   listenEmbeddedBrowserInvalidTlsCertificates: vi.fn(),
   listenEmbeddedBrowserLocalFilePreview: vi.fn(),
@@ -202,6 +203,7 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.listenEmbeddedBrowserAnnotationRequests.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserAgentCursor.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockReturnValue(null)
+    embeddedBrowserMocks.notifyEmbeddedBrowserCloseRequestHandled.mockResolvedValue(undefined)
     embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserInvalidTlsCertificates.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserLocalFilePreview.mockReturnValue(null)
@@ -1171,6 +1173,7 @@ describe('WorkspaceBrowserPanel', () => {
 
     act(() => {
       handleClose({
+        requestId: 'close-agent-cursor-1',
         label: 'workspace-browser',
         nativeLabel: 'workspace-browser-native-1',
       })
@@ -2014,6 +2017,7 @@ describe('WorkspaceBrowserPanel', () => {
     await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1))
     act(() => {
       handleClose({
+        requestId: 'close-before-submitted-reopen',
         label: 'workspace-browser',
         nativeLabel: 'workspace-browser-native-1',
       })
@@ -2069,6 +2073,7 @@ describe('WorkspaceBrowserPanel', () => {
     view.rerender(<WorkspaceBrowserPanel active={false} openRequest={firstRequest} />)
     act(() => {
       handleClose({
+        requestId: 'close-while-inactive-1',
         label: 'workspace-browser',
         nativeLabel: 'workspace-browser-native-1',
       })
@@ -2082,6 +2087,11 @@ describe('WorkspaceBrowserPanel', () => {
 
     await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(2))
     expect(embeddedBrowserMocks.reloadEmbeddedBrowser).not.toHaveBeenCalled()
+    expect(embeddedBrowserMocks.notifyEmbeddedBrowserCloseRequestHandled).toHaveBeenCalledWith({
+      requestId: 'close-while-inactive-1',
+      label: 'workspace-browser',
+      nativeLabel: 'workspace-browser-native-1',
+    })
   })
 
   test('opens hidden immediately when the active browser host is not measurable yet', async () => {

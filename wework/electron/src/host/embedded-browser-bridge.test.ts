@@ -68,6 +68,43 @@ describe('EmbeddedBrowserBridge', () => {
     })
   })
 
+  test('does not complete a close before the renderer handles it', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const browser = fakeBrowser()
+    browser.has.mockReturnValue(true)
+    let handleClose!: () => void
+    const closeHandled = new Promise<void>(resolve => {
+      handleClose = resolve
+    })
+    const requestClose = vi.fn(() => closeHandled)
+    Object.assign(browser.manager, { requestClose })
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    const runtimePath = await bridge.start()
+    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
+      address: string
+      token: string
+    }
+
+    let responseSettled = false
+    const response = fetch(`http://${identity.address}/browser`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${identity.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ action: 'close' }),
+    }).then(async result => {
+      responseSettled = true
+      return result.json()
+    })
+    await vi.waitFor(() => expect(requestClose).toHaveBeenCalledWith('workspace-browser'))
+    expect(responseSettled).toBe(false)
+
+    handleClose()
+    await expect(response).resolves.toEqual({ ok: true, data: { ok: true } })
+  })
+
   test('routes opens through the frontend request and active browser label', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
     const browser = fakeBrowser()
