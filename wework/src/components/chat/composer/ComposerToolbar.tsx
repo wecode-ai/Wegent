@@ -290,7 +290,7 @@ export function ComposerToolbar({
                   icon: Clock3,
                   testId: 'send-after-turn-option',
                   onSelect: () => onSubmit(),
-                  shortcut: sendKey === 'enter' ? 'Enter' : undefined,
+                  shortcut: sendKey === 'enter' ? 'Enter' : 'Command+Enter',
                 },
                 {
                   label:

@@ -1,4 +1,5 @@
 import { act, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ComposerToolbar } from './ComposerToolbar'
 
@@ -189,5 +190,30 @@ describe('ComposerToolbar', () => {
     expect(actions).toHaveClass('ml-auto', 'shrink-0')
     expect(goalPill).toHaveClass('min-w-8', 'max-w-full', 'shrink', 'overflow-hidden')
     expect(goalPill.querySelector('span')).toHaveClass('min-w-0', 'truncate')
+  })
+
+  it('shows the configured send shortcut while streaming', async () => {
+    render(
+      <ComposerToolbar
+        canSend
+        isStreaming
+        sendKey="cmd_enter"
+        models={[]}
+        selectedModel={null}
+        selectedModelOptions={{}}
+        isModelSelectionReady
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+        onFileSelect={vi.fn()}
+        onQuickPhraseSelect={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('send-mode-menu-button'))
+
+    const sendAfterTurnOption = screen.getByTestId('send-after-turn-option')
+    expect(sendAfterTurnOption).toHaveTextContent('⌘')
+    expect(sendAfterTurnOption.querySelector('.lucide-corner-down-left')).toBeInTheDocument()
   })
 })
