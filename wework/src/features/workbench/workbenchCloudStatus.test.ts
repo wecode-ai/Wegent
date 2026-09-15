@@ -981,7 +981,7 @@ describe('cloud runtime sync state', () => {
       'Local B',
     ])
     expect(merged.projects[1].project).toMatchObject({
-      id: 202,
+      id: 101,
       key: '/srv/repo',
       sidebarStateKey: 'remote-project-id',
       stateDeviceId: 'local-device',
@@ -1004,7 +1004,6 @@ describe('cloud runtime sync state', () => {
     const workspacePath = '/srv/repo'
     const remoteProject = {
       project: {
-        id: 202,
         key: workspacePath,
         name: 'Remote executor project',
         stateDeviceId: 'remote-device',
@@ -1022,7 +1021,6 @@ describe('cloud runtime sync state', () => {
       projects: [
         {
           project: {
-            id: 101,
             key: 'wegent-remote:remote-device:%2Fsrv%2Frepo',
             sidebarStateKey: 'wegent-remote:remote-device:%2Fsrv%2Frepo',
             name: 'Remote',
