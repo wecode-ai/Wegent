@@ -2320,7 +2320,10 @@ function adaptRuntimeWorkListResponse(
       project: {
         key: projectKey,
         ...(projectSource === 'remote_project' ? { sidebarStateKey: projectKey } : {}),
-        id: stableLocalId(`${localDeviceId}\0${projectKey}`),
+        id:
+          projectSource === 'remote_project'
+            ? deviceWorkspace.id
+            : stableLocalId(`${localDeviceId}\0${projectKey}`),
         name: label,
         kind: projectKind,
         source: projectSource,
