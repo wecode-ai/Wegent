@@ -87,6 +87,48 @@ def _mask_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return masked
 
 
+def _validate_dingtalk_task_team(
+    db: Session,
+    *,
+    channel_type: str,
+    team_id: int,
+    required: bool = False,
+) -> None:
+    """Reject a DingTalk Task Team that cannot run through ClaudeCode."""
+
+    if channel_type != "dingtalk":
+        return
+    if not team_id:
+        if required:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A DingTalk Task agent is required",
+            )
+        return
+    team = (
+        db.query(Kind)
+        .filter(
+            Kind.id == team_id,
+            Kind.kind == "Team",
+            Kind.is_active.is_(True),
+        )
+        .first()
+    )
+    if team is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The DingTalk Task agent does not exist or is inactive",
+        )
+
+    from app.services.channels.team_selection import team_uses_only_shell_type
+
+    if not team_uses_only_shell_type(db, team, "ClaudeCode"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The DingTalk Task agent must use ClaudeCode for every bot",
+        )
+
+
 def _kind_to_response(kind: Kind) -> IMChannelResponse:
     """Convert Kind model to IMChannelResponse."""
     spec = kind.json.get("spec", {})
@@ -100,6 +142,7 @@ def _kind_to_response(kind: Kind) -> IMChannelResponse:
         is_enabled=spec.get("isEnabled", True),
         config=_mask_config(config),  # Mask sensitive fields
         default_team_id=spec.get("defaultTeamId", 0),
+        default_task_team_id=spec.get("defaultTaskTeamId", 0),
         default_model_name=spec.get("defaultModelName", ""),
         created_at=kind.created_at,
         updated_at=kind.updated_at,
@@ -113,6 +156,7 @@ def _create_messager_json(
     is_enabled: bool,
     config: Dict[str, Any],
     default_team_id: int,
+    default_task_team_id: int,
     default_model_name: str,
 ) -> Dict[str, Any]:
     """Create Messager CRD JSON structure with encrypted config."""
@@ -128,6 +172,7 @@ def _create_messager_json(
             "isEnabled": is_enabled,
             "config": _encrypt_config(config),  # Encrypt sensitive fields
             "defaultTeamId": default_team_id,
+            "defaultTaskTeamId": default_task_team_id,
             "defaultModelName": default_model_name,
         },
     }
@@ -146,6 +191,7 @@ class IMChannelAdapter:
         # Decrypt config for actual use
         self.config = _decrypt_config(spec.get("config", {}))
         self.default_team_id = spec.get("defaultTeamId", 0)
+        self.default_task_team_id = spec.get("defaultTaskTeamId", 0)
         self.default_model_name = spec.get("defaultModelName", "")
 
     def __repr__(self) -> str:
@@ -256,6 +302,13 @@ async def create_im_channel(
             detail=f"IM channel '{channel_data.name}' already exists in namespace '{channel_data.namespace}'",
         )
 
+    _validate_dingtalk_task_team(
+        db,
+        channel_type=channel_data.channel_type,
+        team_id=channel_data.default_task_team_id or 0,
+        required=True,
+    )
+
     # Create Messager CRD
     messager_json = _create_messager_json(
         name=channel_data.name,
@@ -264,6 +317,7 @@ async def create_im_channel(
         is_enabled=channel_data.is_enabled,
         config=channel_data.config,
         default_team_id=channel_data.default_team_id or 0,
+        default_task_team_id=channel_data.default_task_team_id or 0,
         default_model_name=channel_data.default_model_name or "",
     )
 
@@ -347,6 +401,14 @@ async def update_im_channel(
         spec["isEnabled"] = channel_data.is_enabled
     if channel_data.default_team_id is not None:
         spec["defaultTeamId"] = channel_data.default_team_id
+        needs_restart = True
+    if channel_data.default_task_team_id is not None:
+        _validate_dingtalk_task_team(
+            db,
+            channel_type=spec.get("channelType", "dingtalk"),
+            team_id=channel_data.default_task_team_id,
+        )
+        spec["defaultTaskTeamId"] = channel_data.default_task_team_id
         needs_restart = True
     if channel_data.default_model_name is not None:
         spec["defaultModelName"] = channel_data.default_model_name

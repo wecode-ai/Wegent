@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.im_session import IMSessionMode
+from app.models.im_session import IMPrivateSession, IMSessionMode
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.user import User
@@ -43,7 +43,6 @@ from app.services.channels.commands import (
     AGENTS_EMPTY,
     AGENTS_FOOTER,
     AGENTS_HEADER,
-    DEVICE_ITEM_TEMPLATE,
     DEVICES_EMPTY,
     DEVICES_FOOTER,
     DEVICES_HEADER,
@@ -64,14 +63,12 @@ from app.services.channels.device_selection import (
 )
 from app.services.channels.emitter import SyncResponseEmitter
 from app.services.channels.model_selection import (
-    ModelSelection,
     is_claude_provider,
     model_selection_manager,
 )
 from app.services.chat.wework_task_defaults import extract_task_device_id
 from app.services.im import task_continuation_service as im_task_continuation_service
 from app.services.im.session_service import im_session_service
-from app.services.readers.kinds import KindType, kindReader
 from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
@@ -138,6 +135,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         channel_type: ChannelType,
         channel_id: int,
         get_default_team_id: Optional[Callable[[], Optional[int]]] = None,
+        get_default_task_team_id: Optional[Callable[[], Optional[int]]] = None,
         get_default_model_name: Optional[Callable[[], Optional[str]]] = None,
         get_user_mapping_config: Optional[Callable[[], Dict[str, Any]]] = None,
     ):
@@ -146,13 +144,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Args:
             channel_type: The type of channel this handler processes
             channel_id: The channel ID for callback purposes
-            get_default_team_id: Callback to get current default_team_id dynamically
+            get_default_team_id: Callback to get current Chat Team dynamically
+            get_default_task_team_id: Callback to get current Task Team dynamically
             get_default_model_name: Callback to get current default_model_name dynamically
             get_user_mapping_config: Callback to get user mapping configuration dynamically
         """
         self._channel_type = channel_type
         self._channel_id = channel_id
         self._get_default_team_id = get_default_team_id
+        self._get_default_task_team_id = get_default_task_team_id
         self._get_default_model_name = get_default_model_name
         self._get_user_mapping_config = get_user_mapping_config
         self.logger = logging.getLogger(f"{__name__}.{channel_type.value}")
@@ -169,9 +169,16 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     @property
     def default_team_id(self) -> Optional[int]:
-        """Get the current default team ID."""
+        """Get the current default Chat Team ID."""
         if self._get_default_team_id is not None:
             return self._get_default_team_id()
+        return None
+
+    @property
+    def default_task_team_id(self) -> Optional[int]:
+        """Get the current default Task Team ID."""
+        if self._get_default_task_team_id is not None:
+            return self._get_default_task_team_id()
         return None
 
     @property
@@ -191,6 +198,57 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 config=config.get("config"),
             )
         return UserMappingConfig(mode="select_user")
+
+    def _selection_scope(
+        self,
+        user_id: int,
+        message_context: MessageContext,
+    ) -> str | None:
+        """Return a provider-specific selection scope, if the provider needs one."""
+
+        del user_id, message_context
+        return None
+
+    async def _selection_profile(
+        self,
+        user: User,
+        message_context: MessageContext,
+        im_session: Optional[IMPrivateSession] = None,
+    ) -> str:
+        """Choose the Chat or Task profile for controls in this conversation."""
+
+        from app.services.channels.selection_scope import CHAT_PROFILE, TASK_PROFILE
+
+        if im_session is not None and im_session.mode == IMSessionMode.TASK:
+            return TASK_PROFILE
+        device = await device_selection_manager.get_selection(
+            user.id,
+            scope=self._selection_scope(user.id, message_context),
+        )
+        if device.device_type == DeviceType.LOCAL:
+            return TASK_PROFILE
+        if device.device_type == DeviceType.CLOUD:
+            return self._cloud_mode_profile()
+        return CHAT_PROFILE
+
+    def _cloud_mode_profile(self) -> str:
+        """Return the model and agent selection profile used by cloud mode."""
+
+        from app.services.channels.selection_scope import TASK_PROFILE
+
+        return TASK_PROFILE
+
+    def _profile_scope(
+        self,
+        user_id: int,
+        message_context: MessageContext,
+        profile: str,
+    ) -> str | None:
+        from app.services.channels.selection_scope import profile_selection_scope
+
+        return profile_selection_scope(
+            self._selection_scope(user_id, message_context), profile
+        )
 
     def _build_message_source_metadata(self) -> Dict[str, Any]:
         """Build provider-level source metadata for messages from IM channels."""
@@ -410,7 +468,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     # ==================== Common Methods ====================
 
     async def _get_conversation_task_id(
-        self, conversation_id: str, user_id: int
+        self,
+        conversation_id: str,
+        user_id: int,
+        *,
+        scope: str | None = None,
     ) -> tuple[Optional[int], bool]:
         """Get cached task_id for a conversation and user from Redis.
 
@@ -432,7 +494,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         if not conversation_id:
             return None, False
 
-        key = f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
+        suffix = f":{scope}" if scope else ""
+        key = (
+            f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:"
+            f"{conversation_id}:{user_id}{suffix}"
+        )
         cached_task_id = await cache_manager.get(key)
 
         if cached_task_id is None:
@@ -464,7 +530,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         return task_id, False
 
     async def _set_conversation_task_id(
-        self, conversation_id: str, user_id: int, task_id: int
+        self,
+        conversation_id: str,
+        user_id: int,
+        task_id: int,
+        *,
+        scope: str | None = None,
     ) -> None:
         """Cache task_id for a conversation and user in Redis.
 
@@ -475,11 +546,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         """
         if not conversation_id:
             return
-        key = f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
+        suffix = f":{scope}" if scope else ""
+        key = (
+            f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:"
+            f"{conversation_id}:{user_id}{suffix}"
+        )
         await cache_manager.set(key, task_id, expire=CHANNEL_CONV_TASK_TTL)
 
     async def _delete_conversation_task_id(
-        self, conversation_id: str, user_id: int
+        self,
+        conversation_id: str,
+        user_id: int,
+        *,
+        scope: str | None = None,
     ) -> None:
         """Delete cached task_id for a conversation and user from Redis.
 
@@ -489,13 +568,29 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         """
         if not conversation_id:
             return
-        key = f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
+        suffix = f":{scope}" if scope else ""
+        key = (
+            f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:"
+            f"{conversation_id}:{user_id}{suffix}"
+        )
         await cache_manager.delete(key)
 
     async def delete_conversation_task_id(
-        self, conversation_id: str, user_id: int
+        self,
+        conversation_id: str,
+        user_id: int,
+        message_context: Optional[MessageContext] = None,
     ) -> None:
-        await self._delete_conversation_task_id(conversation_id, user_id)
+        scope = (
+            self._selection_scope(user_id, message_context)
+            if message_context is not None
+            else None
+        )
+        await self._delete_conversation_task_id(
+            conversation_id,
+            user_id,
+            scope=scope,
+        )
 
     def _get_default_team(self, db: Session, user_id: int) -> Optional[Kind]:
         """Get the default team for this channel.
@@ -545,33 +640,46 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Returns:
             Team Kind object or None
         """
-        config_value = settings.DEFAULT_TEAM_TASK
-        if not config_value or not config_value.strip():
-            return self._get_default_team(db, user_id)
+        from app.services.channels.team_selection import resolve_task_mode_team
 
-        parts = config_value.strip().split("#", 1)
-        name = parts[0].strip()
-        namespace = parts[1].strip() if len(parts) > 1 else "default"
-
-        if not name:
-            return self._get_default_team(db, user_id)
-
-        team = kindReader.get_by_name_and_namespace(
-            db, user_id, KindType.TEAM, namespace, name
+        return resolve_task_mode_team(
+            db,
+            user_id,
+            default_team_id=self.default_team_id,
         )
 
-        if not team:
-            self.logger.warning(
-                f"[{self._channel_type.value}Handler] Task mode team not found: "
-                f"name={name}, namespace={namespace}, user_id={user_id}. "
-                f"Falling back to channel default team."
-            )
-            return self._get_default_team(db, user_id)
+    async def _resolve_new_task_team(
+        self,
+        db: Session,
+        user_id: int,
+        message_context: Optional[MessageContext] = None,
+    ) -> Optional[Kind]:
+        """Resolve the Team used when this channel creates a new Task."""
 
-        return team
+        del message_context
+        return self._get_task_mode_team(db, user_id)
+
+    async def _resolve_cloud_mode_team(
+        self,
+        db: Session,
+        user_id: int,
+        message_context: MessageContext,
+    ) -> Optional[Kind]:
+        """Resolve the Team used by the provider's cloud execution mode."""
+
+        from app.services.channels.selection_scope import CHAT_PROFILE
+
+        if self._cloud_mode_profile() == CHAT_PROFILE:
+            return await self._get_selected_or_default_team(
+                db, user_id, message_context
+            )
+        return await self._resolve_new_task_team(db, user_id, message_context)
 
     async def _get_selected_or_default_team(
-        self, db: Session, user_id: int
+        self,
+        db: Session,
+        user_id: int,
+        message_context: Optional[MessageContext] = None,
     ) -> Optional[Kind]:
         """Get user's selected team or fall back to default team.
 
@@ -586,38 +694,31 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Returns:
             Team Kind object or None
         """
-        from app.services.channels.team_selection import team_selection_manager
+        from app.services.channels.selection_scope import CHAT_PROFILE
+        from app.services.channels.team_selection import resolve_selected_team
 
-        # Check if user has a manually selected team
-        selection = await team_selection_manager.get_selection(user_id)
-        if selection:
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == selection.team_id,
-                    Kind.kind == "Team",
-                    Kind.is_active == True,
-                )
-                .first()
+        scope = (
+            self._profile_scope(user_id, message_context, CHAT_PROFILE)
+            if message_context is not None
+            else None
+        )
+        team = await resolve_selected_team(db, user_id, scope=scope)
+        if team is not None:
+            self.logger.info(
+                f"[{self._channel_type.value}Handler] Using user-selected team: "
+                f"{team.name} (id={team.id})"
             )
-            if team:
-                self.logger.info(
-                    f"[{self._channel_type.value}Handler] Using user-selected team: "
-                    f"{team.name} (id={team.id})"
-                )
-                return team
-            else:
-                self.logger.warning(
-                    f"[{self._channel_type.value}Handler] User-selected team not found "
-                    f"or inactive: id={selection.team_id}, clearing selection"
-                )
-                await team_selection_manager.clear_selection(user_id)
+            return team
 
         # Fall back to default team
         return self._get_default_team(db, user_id)
 
     async def _get_user_model_override(
-        self, user_id: int
+        self,
+        user_id: int,
+        *,
+        scope: str | None = None,
+        include_channel_default: bool = True,
     ) -> tuple[Optional[str], Optional[str]]:
         """Get user's model selection for override.
 
@@ -630,12 +731,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Returns:
             Tuple of (model_name, model_type) or (None, None) if no override
         """
-        model_selection = await model_selection_manager.get_selection(user_id)
+        model_selection = await model_selection_manager.get_selection(
+            user_id, scope=scope
+        )
         if model_selection:
             return model_selection.model_name, model_selection.model_type
 
         # Fall back to channel's default model
-        if self.default_model_name:
+        if include_channel_default and self.default_model_name:
             return self.default_model_name, None
 
         return None, None
@@ -665,7 +768,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         return None
 
     async def _get_device_mode_model_override(
-        self, db: Session, user: User
+        self,
+        db: Session,
+        user: User,
+        *,
+        scope: str | None = None,
     ) -> tuple[Optional[str], Optional[str]]:
         """Get model override for device mode.
 
@@ -682,7 +789,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         from app.core.config import settings
         from app.services.model_aggregation_service import model_aggregation_service
 
-        model_selection = await model_selection_manager.get_selection(user.id)
+        model_selection = await model_selection_manager.get_selection(
+            user.id, scope=scope
+        )
 
         # Get all available models to check provider accurately
         all_models = model_aggregation_service.list_available_models(
@@ -770,6 +879,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 )
                 return False
 
+            message_context.extra_data["resolved_user_id"] = user.id
+
             im_session = None
             if self._is_private_conversation(message_context):
                 im_session = await im_session_service.get_or_create_private_session(
@@ -783,6 +894,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     display_name=message_context.sender_name or "",
                 )
 
+            if im_session is not None:
                 if await self._route_private_im_session(
                     db=db,
                     user=user,
@@ -799,6 +911,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     user=user,
                     command=parsed_cmd,
                     message_context=message_context,
+                    im_session=im_session,
                 )
                 return True
         except Exception as e:
@@ -828,6 +941,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         user: User,
         command: Any,
         message_context: MessageContext,
+        im_session: Optional[IMPrivateSession] = None,
     ) -> None:
         """Handle slash commands.
 
@@ -843,7 +957,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if command.command == CommandType.NEW:
             await self._delete_conversation_task_id(
-                message_context.conversation_id, user.id
+                message_context.conversation_id,
+                user.id,
+                scope=self._selection_scope(user.id, message_context),
             )
             await self.send_text_reply(
                 message_context, "✅ 已开始新对话，请发送您的消息"
@@ -861,16 +977,29 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             await self._handle_use_command(db, user, command.argument, message_context)
 
         elif command.command == CommandType.STATUS:
-            await self._handle_status_command(db, user, message_context)
+            await self._handle_status_command(
+                db,
+                user,
+                message_context,
+                im_session=im_session,
+            )
 
         elif command.command == CommandType.MODELS:
             await self._handle_model_command(
-                db, user, command.argument, message_context
+                db,
+                user,
+                command.argument,
+                message_context,
+                im_session=im_session,
             )
 
         elif command.command == CommandType.AGENTS:
             await self._handle_agent_command(
-                db, user, command.argument, message_context
+                db,
+                user,
+                command.argument,
+                message_context,
+                im_session=im_session,
             )
 
         elif command.command in {
@@ -904,6 +1033,18 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             im_session=im_session,
             message_context=message_context,
             port=self,
+        )
+
+    async def set_private_im_chat_mode(
+        self,
+        user_id: int,
+        message_context: MessageContext,
+    ) -> None:
+        """Persist Chat routing in the provider's selection scope."""
+
+        await device_selection_manager.set_chat_mode(
+            user_id,
+            scope=self._selection_scope(user_id, message_context),
         )
 
     async def execute_private_im_bind_task(
@@ -1337,7 +1478,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     ) -> None:
         from app.services.chat.storage.task_manager import create_chat_task
 
-        team = self._get_task_mode_team(db, user.id)
+        team = await self._resolve_new_task_team(db, user.id, message_context)
         if not team:
             await self.send_text_reply(message_context, "配置错误: 未配置默认智能体")
             return
@@ -1352,6 +1493,32 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message_source=message_source,
             inherit_wework_model_selection=(self._channel_type != ChannelType.DINGTALK),
         )
+        if self._channel_type == ChannelType.DINGTALK:
+            from app.services.channels.selection_scope import TASK_PROFILE
+
+            task_scope = self._profile_scope(user.id, message_context, TASK_PROFILE)
+            override_model_name, override_model_type = (
+                await self._get_user_model_override(
+                    user.id,
+                    scope=task_scope,
+                    include_channel_default=False,
+                )
+            )
+            if override_model_name:
+                compatible = await self._is_claude_compatible_override(
+                    db, user, override_model_name
+                )
+                if compatible is False:
+                    await self.send_text_reply(
+                        message_context,
+                        f"⚠️ 当前 Task 模型 **{override_model_name}** 不支持 "
+                        "ClaudeCode\n\n请使用 `/models` 切换到 Claude 模型，"
+                        "或使用 `/models inherit` 跟随 Task 智能体。",
+                    )
+                    return
+                params.model_id = override_model_name
+                params.force_override_bot_model = True
+                params.force_override_bot_model_type = override_model_type
         result = await create_chat_task(
             db=db,
             user=user,
@@ -1594,171 +1761,84 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message_context: MessageContext,
     ) -> None:
         """Handle /devices command - list devices or switch to a device."""
-        from app.services.channels.device_selection import (
-            get_device_execution_target_id,
+        from app.services.channels.selection_scope import TASK_PROFILE
+        from app.services.channels.selection_service import (
+            SelectionError,
+            channel_selection_service,
+            resolve_text_choice,
         )
-        from app.services.device_service import device_service
 
-        devices = await device_service.get_all_devices(db, user.id)
-        online_devices = [d for d in devices if d["status"] != "offline"]
+        selection_scope = self._selection_scope(user.id, message_context)
+        task_model_scope = self._profile_scope(user.id, message_context, TASK_PROFILE)
+        options = await channel_selection_service.list_devices(
+            db, user, selection_scope=selection_scope
+        )
+        if not options:
+            await self.send_text_reply(message_context, DEVICES_HEADER + DEVICES_EMPTY)
+            return
 
-        # With argument - switch to specified device
         if argument:
-            argument = argument.strip()
-
-            if not devices:
-                await self.send_text_reply(
-                    message_context,
-                    "❌ 暂无可用设备\n\n💡 在本地运行 Executor 后设备会自动出现",
-                )
-                return
-
-            matched_device = None
-
-            # Check if argument is a number (device index)
-            if argument.isdigit():
-                device_index = int(argument)
-                if 1 <= device_index <= len(online_devices):
-                    matched_device = online_devices[device_index - 1]
-                else:
-                    await self.send_text_reply(
-                        message_context,
-                        f"❌ 无效的设备序号: {argument}\n\n"
-                        f"当前有 {len(online_devices)} 个在线设备，请使用 `/devices` 查看列表",
-                    )
-                    return
-            else:
-                # Match by name or device_id prefix
-                argument_lower = argument.lower()
-                for device in devices:
-                    if device["name"].lower() == argument_lower or device[
-                        "device_id"
-                    ].lower().startswith(argument_lower):
-                        matched_device = device
-                        break
-
-            if not matched_device:
+            selectable_options = [
+                option for option in options if not option.is_disabled
+            ]
+            option = resolve_text_choice(
+                selectable_options if argument.strip().isdigit() else options,
+                argument,
+            )
+            if option is None:
                 await self.send_text_reply(
                     message_context,
                     f"❌ 未找到设备: {argument}\n\n使用 `/devices` 查看可用设备列表",
                 )
                 return
-
-            if matched_device["status"] == "offline":
-                await self.send_text_reply(
-                    message_context,
-                    f"❌ 设备 **{matched_device['name']}** 已离线\n\n请选择其他设备或等待设备上线",
+            try:
+                result = await channel_selection_service.apply_device(
+                    db,
+                    user,
+                    option.value,
+                    selection_scope=selection_scope,
+                    task_model_scope=task_model_scope,
                 )
+            except SelectionError as exc:
+                await self.send_text_reply(message_context, f"❌ {exc}")
                 return
-
-            # Get model for device mode (uses default Claude if user hasn't selected one)
-            override_model_name, _ = await self._get_device_mode_model_override(
-                db, user
-            )
-
-            # Check if we have a valid Claude model for device mode
-            if not override_model_name:
-                model_selection = await model_selection_manager.get_selection(user.id)
-                if model_selection and not model_selection.is_claude_model():
-                    model_display = (
-                        model_selection.display_name or model_selection.model_name
-                    )
-                    await self.send_text_reply(
-                        message_context,
-                        f"⚠️ 当前模型 **{model_display}** 不支持设备模式\n\n"
-                        "设备模式仅支持 Claude 模型，请先使用 `/models` 切换到 Claude 模型",
-                    )
-                    return
-
-            # Get display name for the model
-            from app.services.model_aggregation_service import model_aggregation_service
-
-            model_display_name = override_model_name or "默认模型"
-            if override_model_name:
-                all_models = model_aggregation_service.list_available_models(
-                    db=db,
-                    current_user=user,
-                    shell_type=None,
-                    include_config=False,
-                    scope="personal",
-                    model_category_type="llm",
-                )
-                for m in all_models:
-                    if m.get("name") == override_model_name:
-                        model_display_name = m.get("displayName") or override_model_name
-                        break
-
-            # Store the record-scoped route for app devices. Their logical ID is
-            # display metadata and does not own the Runtime heartbeat/socket.
-            execution_target_id = get_device_execution_target_id(matched_device)
-
-            # Clear conversation cache if switching mode or device
-            current_selection = await device_selection_manager.get_selection(user.id)
-            if (
-                current_selection.device_type != DeviceType.LOCAL
-                or current_selection.device_id != execution_target_id
-            ):
+            if result.changed:
                 await self._delete_conversation_task_id(
-                    message_context.conversation_id, user.id
+                    message_context.conversation_id,
+                    user.id,
+                    scope=selection_scope,
                 )
-
-            await device_selection_manager.set_local_device(
-                user.id,
-                execution_target_id,
-                matched_device["name"],
+            await self._reset_private_im_session_for_execution_mode(
+                db=db,
+                user=user,
+                message_context=message_context,
             )
-
             await self.send_text_reply(
                 message_context,
-                f"✅ 已切换到设备 **{matched_device['name']}**\n\n"
-                f"当前模型: **{model_display_name}**\n"
-                "现在的消息将在该设备上执行",
+                f"✅ 已切换到设备 **{result.selected_label}**\n\n"
+                f"{result.detail}\n现在的消息将在该设备上执行",
             )
             return
 
-        # No argument - list devices
-        if not devices:
-            await self.send_text_reply(message_context, DEVICES_HEADER + DEVICES_EMPTY)
-            return
-
-        # Get current device selection
-        current_selection = await device_selection_manager.get_selection(user.id)
-        current_device_id = (
-            current_selection.device_id
-            if current_selection.device_type == DeviceType.LOCAL
-            else None
+        online_options = [option for option in options if not option.is_disabled]
+        offline_options = [option for option in options if option.is_disabled]
+        lines = [DEVICES_HEADER]
+        if online_options:
+            lines.append("**在线设备:**")
+            for index, option in enumerate(online_options, start=1):
+                status = " - ⭐ 当前" if option.is_current else ""
+                if option.description == "忙碌":
+                    status = " - 🔴 忙碌"
+                lines.append(f"{index}. **{option.label}**{status}")
+        if offline_options:
+            lines.append("\n**离线设备:**")
+            lines.extend(f"• ~~{option.label}~~ (离线)" for option in offline_options)
+        lines.append(
+            DEVICES_FOOTER
+            if online_options
+            else "\n💡 在本地运行 Executor 后设备会自动上线"
         )
-
-        message = DEVICES_HEADER + "\n"
-        offline_devices = [d for d in devices if d["status"] == "offline"]
-
-        if online_devices:
-            message += "**在线设备:**\n"
-            for idx, device in enumerate(online_devices, start=1):
-                status_str = ""
-                if get_device_execution_target_id(device) == current_device_id:
-                    status_str = " - ⭐ 当前"
-                elif device["status"] == "busy":
-                    status_str = " - 🔴 忙碌"
-                message += DEVICE_ITEM_TEMPLATE.format(
-                    index=idx,
-                    name=device["name"],
-                    device_id=device["device_id"][:8],
-                    status=status_str,
-                )
-
-        if offline_devices:
-            message += "\n**离线设备:**\n"
-            for device in offline_devices:
-                message += f"• ~~{device['name']}~~ (离线)\n"
-
-        # Only show switch hint if there are online devices
-        if online_devices:
-            message += DEVICES_FOOTER
-        else:
-            message += "\n💡 在本地运行 Executor 后设备会自动上线"
-
-        await self.send_text_reply(message_context, message)
+        await self.send_text_reply(message_context, "\n".join(lines))
 
     async def _handle_use_command(
         self,
@@ -1768,6 +1848,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message_context: MessageContext,
     ) -> None:
         """Handle /use command - show status or switch execution mode."""
+        from app.services.channels.selection_scope import CHAT_PROFILE, TASK_PROFILE
+
+        selection_scope = self._selection_scope(user.id, message_context)
         # No argument - show current status with mode switching tips
         if not argument:
             await self._handle_status_command(db, user, message_context)
@@ -1777,7 +1860,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         # Check if mode is changing; if so, clear conversation cache
         # so the next message creates a new task with the correct team
-        current_selection = await device_selection_manager.get_selection(user.id)
+        current_selection = await device_selection_manager.get_selection(
+            user.id, scope=selection_scope
+        )
         current_mode = current_selection.device_type
         target_mode_map = {
             "chat": DeviceType.CHAT,
@@ -1787,20 +1872,32 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         target_mode = target_mode_map.get(argument)
         if target_mode and target_mode != current_mode:
             await self._delete_conversation_task_id(
-                message_context.conversation_id, user.id
+                message_context.conversation_id,
+                user.id,
+                scope=selection_scope,
             )
 
         # Helper to get current model display name
-        async def get_model_display() -> str:
-            model_selection = await model_selection_manager.get_selection(user.id)
+        async def get_model_display(profile: str) -> str:
+            model_selection = await model_selection_manager.get_selection(
+                user.id,
+                scope=self._profile_scope(user.id, message_context, profile),
+            )
             if model_selection:
                 return model_selection.display_name or model_selection.model_name
-            return self.default_model_name or "默认模型"
+            if profile == CHAT_PROFILE:
+                return self.default_model_name or "跟随 Chat 智能体"
+            return "跟随 Task 智能体"
 
         # Chat mode
         if argument == "chat":
-            await device_selection_manager.set_chat_mode(user.id)
-            model_name = await get_model_display()
+            await device_selection_manager.set_chat_mode(user.id, scope=selection_scope)
+            await self._reset_private_im_session_for_execution_mode(
+                db=db,
+                user=user,
+                message_context=message_context,
+            )
+            model_name = await get_model_display(CHAT_PROFILE)
             await self.send_text_reply(
                 message_context,
                 f"✅ 已切换到**对话模式**\n\n"
@@ -1811,13 +1908,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         # Cloud executor
         if argument == "cloud":
-            await self._reset_private_im_session_for_cloud_mode(
+            await device_selection_manager.set_cloud_executor(
+                user.id, scope=selection_scope
+            )
+            await self._reset_private_im_session_for_execution_mode(
                 db=db,
                 user=user,
                 message_context=message_context,
             )
-            await device_selection_manager.set_cloud_executor(user.id)
-            model_name = await get_model_display()
+            model_name = await get_model_display(self._cloud_mode_profile())
             await self.send_text_reply(
                 message_context,
                 f"✅ 已切换到**云端执行模式**\n\n"
@@ -1841,14 +1940,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             "• `/use device` - 设备模式",
         )
 
-    async def _reset_private_im_session_for_cloud_mode(
+    async def _reset_private_im_session_for_execution_mode(
         self,
         *,
         db: Session,
         user: User,
         message_context: MessageContext,
     ) -> None:
-        """Leave a bound DingTalk private task before entering cloud mode."""
+        """Leave a bound DingTalk Task before using a direct execution mode."""
         if (
             self._channel_type != ChannelType.DINGTALK
             or not self._is_private_conversation(message_context)
@@ -1882,6 +1981,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         from app.services.channels.device_selection import (
             get_device_execution_target_id,
         )
+        from app.services.channels.selection_scope import TASK_PROFILE
         from app.services.device.runtime_route import (
             RuntimeRouteError,
             runtime_route_resolver,
@@ -1889,8 +1989,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         from app.services.device_service import device_service
         from app.services.model_aggregation_service import model_aggregation_service
 
+        selection_scope = self._selection_scope(user.id, message_context)
+        task_model_scope = self._profile_scope(user.id, message_context, TASK_PROFILE)
+
         # Check if current model is Claude (required for device mode)
-        model_selection = await model_selection_manager.get_selection(user.id)
+        model_selection = await model_selection_manager.get_selection(
+            user.id, scope=task_model_scope
+        )
         is_claude = model_selection and model_selection.is_claude_model()
 
         # Model to display in success message
@@ -1902,7 +2007,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             current_model_display = (
                 model_selection.display_name or model_selection.model_name
                 if model_selection
-                else self.default_model_name or "默认模型"
+                else "跟随 Task 智能体"
             )
 
             # Check if there's a default device mode model configured
@@ -1992,7 +2097,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             model_name = "默认模型"
 
         # Check if user has a previously selected device
-        selection = await device_selection_manager.get_selection(user.id)
+        selection = await device_selection_manager.get_selection(
+            user.id, scope=selection_scope
+        )
 
         if selection.device_type == DeviceType.LOCAL and selection.device_id:
             # Verify device is still online
@@ -2009,7 +2116,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                         user.id,
                         route.runtime_device_id,
                         selection.device_name or route.logical_device_id,
+                        scope=selection_scope,
                     )
+                await self._reset_private_im_session_for_execution_mode(
+                    db=db,
+                    user=user,
+                    message_context=message_context,
+                )
                 await self.send_text_reply(
                     message_context,
                     f"✅ 已切换到**设备模式**\n\n"
@@ -2036,6 +2149,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 user.id,
                 get_device_execution_target_id(device),
                 device["name"],
+                scope=selection_scope,
+            )
+            await self._reset_private_im_session_for_execution_mode(
+                db=db,
+                user=user,
+                message_context=message_context,
             )
             await self.send_text_reply(
                 message_context,
@@ -2064,14 +2183,21 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         db: Session,
         user: User,
         message_context: MessageContext,
+        im_session: Optional[IMPrivateSession] = None,
     ) -> None:
         """Handle /status command - show current status."""
+        from app.services.channels.selection_scope import CHAT_PROFILE
         from app.services.device.runtime_route import (
             RuntimeRouteError,
             runtime_route_resolver,
         )
 
-        selection = await device_selection_manager.get_selection(user.id)
+        selection_scope = self._selection_scope(user.id, message_context)
+        profile = await self._selection_profile(user, message_context, im_session)
+        model_scope = self._profile_scope(user.id, message_context, profile)
+        selection = await device_selection_manager.get_selection(
+            user.id, scope=selection_scope
+        )
 
         if selection.device_type == DeviceType.CHAT:
             mode = "💬 对话模式"
@@ -2096,6 +2222,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                             user.id,
                             route.runtime_device_id,
                             selection.device_name or route.logical_device_id,
+                            scope=selection_scope,
                         )
                     online_info = route.online_info
                     status_icon = "🟢" if online_info.get("status") != "busy" else "🔴"
@@ -2108,51 +2235,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             mode = "☁️ 云端执行模式"
             device_info = ""
 
-        # Get team - prioritize user selection over default
-        from app.services.channels.team_selection import team_selection_manager
-
-        team_selection = await team_selection_manager.get_selection(user.id)
-        if team_selection:
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == team_selection.team_id,
-                    Kind.kind == "Team",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-            if team:
-                team_json = team.json or {}
-                team_spec = team_json.get("spec", {})
-                display = team_spec.get("displayName") or team.name
-                team_name = f"{display} (用户选择)"
-            else:
-                # Selected team no longer exists, clear it
-                await team_selection_manager.clear_selection(user.id)
-                team = self._get_default_team(db, user.id)
-                if team:
-                    team_json = team.json or {}
-                    team_spec = team_json.get("spec", {})
-                    team_name = team_spec.get("displayName") or team.name
-                else:
-                    team_name = "未配置"
-        else:
-            team = self._get_default_team(db, user.id)
-            if team:
-                team_json = team.json or {}
-                team_spec = team_json.get("spec", {})
-                team_name = team_spec.get("displayName") or team.name
-            else:
-                team_name = "未配置"
+        team_info = await self._get_status_team_info(
+            db, user, im_session, message_context
+        )
 
         # Get model selection
         # For device mode, show the actual model that will be used (may be default device model)
-        model_selection = await model_selection_manager.get_selection(user.id)
+        model_selection = await model_selection_manager.get_selection(
+            user.id, scope=model_scope
+        )
         if selection.device_type == DeviceType.LOCAL:
             # In device mode, use _get_device_mode_model_override to get the actual model
             override_model_name, _ = await self._get_device_mode_model_override(
-                db, user
+                db, user, scope=model_scope
             )
             if override_model_name:
                 # Find the display name for this model
@@ -2179,17 +2274,46 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 model_name = self.default_model_name or "默认模型"
         elif model_selection:
             model_name = model_selection.display_name or model_selection.model_name
+        elif profile != CHAT_PROFILE:
+            model_name = "跟随 Task 智能体"
         else:
-            model_name = self.default_model_name or "默认模型"
+            model_name = self.default_model_name or "跟随 Chat 智能体"
 
         message = STATUS_TEMPLATE.format(
+            team_info=team_info,
             mode=mode,
             device_info=device_info,
             model_name=model_name,
-            team_name=team_name,
         )
 
         await self.send_text_reply(message_context, message)
+
+    async def _get_status_team_info(
+        self,
+        db: Session,
+        user: User,
+        im_session: Optional[IMPrivateSession],
+        message_context: Optional[MessageContext] = None,
+    ) -> str:
+        """Return the provider-neutral Team section for status output."""
+
+        del im_session
+        from app.services.channels.selection_scope import CHAT_PROFILE
+        from app.services.channels.team_selection import (
+            get_team_display_name,
+            resolve_selected_team,
+        )
+
+        scope = (
+            self._profile_scope(user.id, message_context, CHAT_PROFILE)
+            if message_context is not None
+            else None
+        )
+        team = await resolve_selected_team(db, user.id, scope=scope)
+        selected = team is not None
+        team = team or self._get_default_team(db, user.id)
+        suffix = " (用户选择)" if selected else ""
+        return f"**当前智能体**: {get_team_display_name(team)}{suffix}"
 
     async def _handle_model_command(
         self,
@@ -2197,157 +2321,101 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         user: User,
         argument: Optional[str],
         message_context: MessageContext,
+        im_session: Optional[IMPrivateSession] = None,
     ) -> None:
-        """Handle /models command - list/switch models.
-
-        In device mode, only Claude models are shown since device execution
-        requires Claude Code which only supports Claude/Anthropic models.
-        """
-        from app.services.model_aggregation_service import model_aggregation_service
-
-        # Check current execution mode
-        selection = await device_selection_manager.get_selection(user.id)
-        is_device_mode = selection.device_type == DeviceType.LOCAL
-
-        # Get available models
-        all_models = model_aggregation_service.list_available_models(
-            db=db,
-            current_user=user,
-            shell_type=None,  # No shell type filter for IM channels
-            include_config=False,
-            scope="personal",
-            model_category_type="llm",  # Only list LLM models
+        """Handle /models using the provider-neutral selection service."""
+        from app.services.channels.selection_scope import CHAT_PROFILE, TASK_PROFILE
+        from app.services.channels.selection_service import (
+            SelectionError,
+            SelectionOption,
+            channel_selection_service,
+            resolve_text_choice,
         )
 
-        if not all_models:
+        profile = await self._selection_profile(user, message_context, im_session)
+        selection_scope = self._profile_scope(user.id, message_context, profile)
+        device_scope = self._selection_scope(user.id, message_context)
+        task_profile = profile == TASK_PROFILE
+
+        options = await channel_selection_service.list_models(
+            db,
+            user,
+            default_model_name=(
+                self.default_model_name if profile == CHAT_PROFILE else None
+            ),
+            selection_scope=selection_scope,
+            device_scope=device_scope,
+            claude_only=task_profile,
+            include_inherit=self._channel_type == ChannelType.DINGTALK,
+            inherit_label=f"跟随 {profile.title()} 智能体",
+        )
+        if not options:
             await self.send_text_reply(message_context, MODELS_HEADER + MODELS_EMPTY)
             return
 
-        # Check if there are available models for current mode
-        if is_device_mode:
-            claude_models = [
-                m for m in all_models if is_claude_provider(m.get("provider"))
-            ]
-            if not claude_models:
+        if not argument:
+            visible_options = [option for option in options if not option.is_disabled]
+            if not visible_options:
                 await self.send_text_reply(
                     message_context,
                     MODELS_HEADER + "\n暂无可用的 Claude 模型\n\n"
                     "💡 设备模式仅支持 Claude 模型，请联系管理员配置",
                 )
                 return
-            mode_hint = "\n\n⚠️ 设备模式仅支持 Claude 模型"
-        else:
-            mode_hint = ""
-
-        # No argument - list models
-        if not argument:
-            message = MODELS_HEADER + mode_hint + "\n\n"
-
-            # Get current selection to mark it
-            current_selection = await model_selection_manager.get_selection(user.id)
-            current_model_name = (
-                current_selection.model_name if current_selection else None
+            mode_hint = (
+                "\n⚠️ 设备模式仅支持 Claude 模型\n"
+                if len(visible_options) != len(options)
+                else ""
             )
-
-            # In device mode, show real index from full list for consistency
-            # In other modes, show sequential index
-            for idx, model in enumerate(all_models, start=1):
-                # In device mode, skip non-Claude models
-                if is_device_mode and not is_claude_provider(model.get("provider")):
+            lines = [MODELS_HEADER, mode_hint]
+            for index, option in enumerate(options, start=1):
+                if option.is_disabled:
                     continue
-
-                model_name = model.get("name", "")
-                display_name = model.get("displayName") or model_name
-                provider = model.get("provider", "")
-                model_type = model.get("type", "")
-
-                # Mark current selection
-                status_str = ""
-                if model_name == current_model_name:
-                    status_str = " - ⭐ 当前"
-                elif model_type == "public":
-                    status_str = " [公共]"
-                elif model_type == "group":
-                    status_str = " [群组]"
-
-                message += MODEL_ITEM_TEMPLATE.format(
-                    index=idx,
-                    name=display_name,
-                    provider=provider or "未知",
-                    status=status_str,
+                status = " - ⭐ 当前" if option.is_current else ""
+                lines.append(
+                    MODEL_ITEM_TEMPLATE.format(
+                        index=index,
+                        name=option.label,
+                        provider=option.description,
+                        status=status,
+                    ).rstrip()
                 )
-
-            message += MODELS_FOOTER
-            await self.send_text_reply(message_context, message)
+            lines.append(MODELS_FOOTER)
+            await self.send_text_reply(message_context, "\n".join(lines))
             return
 
-        # With argument - select model
-        argument = argument.strip()
-        matched_model = None
-
-        # Check if argument is a number (model index)
-        # Always use full list index for consistency
-        if argument.isdigit():
-            model_index = int(argument)
-            if 1 <= model_index <= len(all_models):
-                selected = all_models[model_index - 1]
-                # In device mode, verify it's a Claude model
-                if is_device_mode and not is_claude_provider(selected.get("provider")):
-                    await self.send_text_reply(
-                        message_context,
-                        f"❌ 模型 **{selected.get('displayName') or selected.get('name')}** "
-                        "不支持设备模式\n\n设备模式仅支持 Claude 模型，请选择其他模型",
-                    )
-                    return
-                matched_model = selected
-            else:
-                await self.send_text_reply(
-                    message_context,
-                    f"❌ 无效的模型序号: {argument}\n\n"
-                    f"当前有 {len(all_models)} 个模型，请使用 `/models` 查看列表",
-                )
-                return
-        else:
-            # Match by name (case-insensitive) - search in full list
-            argument_lower = argument.lower()
-            for model in all_models:
-                model_name = model.get("name", "")
-                display_name = model.get("displayName") or ""
-                if (
-                    model_name.lower() == argument_lower
-                    or display_name.lower() == argument_lower
-                ):
-                    # In device mode, verify it's a Claude model
-                    if is_device_mode and not is_claude_provider(model.get("provider")):
-                        await self.send_text_reply(
-                            message_context,
-                            f"❌ 模型 **{display_name or model_name}** 不支持设备模式\n\n"
-                            "设备模式仅支持 Claude 模型，请选择其他模型",
-                        )
-                        return
-                    matched_model = model
-                    break
-
-        if not matched_model:
+        normalized_argument = argument.strip().lower()
+        option = (
+            SelectionOption(value="inherit", label="跟随智能体")
+            if normalized_argument in {"default", "inherit"}
+            else resolve_text_choice(options, argument)
+        )
+        if option is None:
             await self.send_text_reply(
                 message_context,
                 f"❌ 未找到模型: {argument}\n\n使用 `/models` 查看可用模型列表",
             )
             return
-
-        # Save selection to Redis
-        new_selection = ModelSelection(
-            model_name=matched_model.get("name", ""),
-            model_type=matched_model.get("type", "public"),
-            display_name=matched_model.get("displayName"),
-            provider=matched_model.get("provider"),
-        )
-        await model_selection_manager.set_selection(user.id, new_selection)
-
-        display_name = new_selection.display_name or new_selection.model_name
+        try:
+            result = await channel_selection_service.apply_model(
+                db,
+                user,
+                option.value,
+                default_model_name=(
+                    self.default_model_name if profile == CHAT_PROFILE else None
+                ),
+                selection_scope=selection_scope,
+                device_scope=device_scope,
+                claude_only=task_profile,
+                inherit_label=f"跟随 {profile.title()} 智能体",
+            )
+        except SelectionError as exc:
+            await self.send_text_reply(message_context, f"❌ {exc}")
+            return
         await self.send_text_reply(
             message_context,
-            f"✅ 已切换到模型 **{display_name}**\n\n现在的对话将使用该模型",
+            f"✅ 已切换到模型 **{result.selected_label}**\n\n"
+            f"现在的 {profile.title()} 对话将使用该模型",
         )
 
     async def _handle_agent_command(
@@ -2356,33 +2424,72 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         user: User,
         argument: Optional[str],
         message_context: MessageContext,
+        im_session: Optional[IMPrivateSession] = None,
     ) -> None:
-        """Handle /agents command - list teams or switch to a team.
+        """Handle /agents using the shared selection service."""
 
-        This command allows users to view and select from their available
-        teams/agents. Users can switch between personal teams, shared teams,
-        and system teams at any time during the conversation.
-
-        Args:
-            db: Database session
-            user: Wegent user
-            argument: Optional argument (team index, name, or 'default')
-            message_context: Message context
-        """
-        from app.services.adapters.team_kinds import team_kinds_service
-        from app.services.channels.team_selection import (
-            TeamSelection,
-            team_selection_manager,
+        from app.services.channels.selection_scope import TASK_PROFILE
+        from app.services.channels.selection_service import (
+            SelectionError,
+            channel_selection_service,
+            resolve_text_choice,
         )
 
-        # Get all user's teams (personal + shared + system)
-        teams = team_kinds_service.get_user_teams(
-            db=db,
-            user_id=user.id,
-            scope="all",
+        profile = await self._selection_profile(user, message_context, im_session)
+        uses_task_default = profile == TASK_PROFILE
+        selection_scope = self._profile_scope(user.id, message_context, profile)
+        required_shell_type = "ClaudeCode" if uses_task_default else None
+        default_team = (
+            self._get_task_mode_team(db, user.id)
+            if uses_task_default
+            else self._get_default_team(db, user.id)
+        )
+        normalized_argument = (argument or "").strip()
+
+        if normalized_argument.lower() == "default":
+            try:
+                result = await channel_selection_service.apply_agent(
+                    db,
+                    user,
+                    "default",
+                    default_team=default_team,
+                    selection_scope=selection_scope,
+                    model_selection_scope=selection_scope,
+                    required_shell_type=required_shell_type,
+                )
+            except SelectionError as exc:
+                await self.send_text_reply(message_context, f"❌ {exc}")
+                return
+            await self._delete_conversation_task_id(
+                message_context.conversation_id,
+                user.id,
+                scope=self._selection_scope(user.id, message_context),
+            )
+            task_unbound = (
+                await self._after_agent_selection_changed(db, im_session)
+                if uses_task_default
+                else False
+            )
+            await self.send_text_reply(
+                message_context,
+                self._agent_selection_reply(
+                    selected_label=result.selected_label,
+                    namespace=None,
+                    restored_default=True,
+                    task_mode_default=uses_task_default,
+                    task_unbound=task_unbound,
+                ),
+            )
+            return
+
+        options = await channel_selection_service.list_agents(
+            db,
+            user,
+            selection_scope=selection_scope,
+            required_shell_type=required_shell_type,
         )
 
-        if not teams:
+        if not options:
             await self.send_text_reply(
                 message_context,
                 AGENTS_HEADER
@@ -2391,125 +2498,104 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             return
 
-        # With argument - switch to specified team
-        if argument:
-            argument = argument.strip().lower()
-
-            # Support "default" to revert to system default
-            if argument == "default":
-                await team_selection_manager.clear_selection(user.id)
-                await self._delete_conversation_task_id(
-                    message_context.conversation_id, user.id
-                )
-
-                default_team = self._get_default_team(db, user.id)
-                if default_team:
-                    team_json = default_team.json or {}
-                    team_spec = team_json.get("spec", {})
-                    display_name = team_spec.get("displayName") or default_team.name
-                    await self.send_text_reply(
-                        message_context,
-                        f"✅ 已恢复使用系统默认智能体: **{display_name}**\n\n"
-                        "💡 现在开始使用系统配置的智能体进行对话",
-                    )
-                else:
-                    await self.send_text_reply(
-                        message_context,
-                        "✅ 已清除智能体选择\n\n"
-                        "⚠️ 注意: 系统未配置默认智能体，请先使用 `/agents <序号>` 选择智能体",
-                    )
-                return
-
-            matched_team = None
-
-            # Check if argument is a number (team index)
-            if argument.isdigit():
-                team_index = int(argument)
-                if 1 <= team_index <= len(teams):
-                    matched_team = teams[team_index - 1]
-                else:
-                    await self.send_text_reply(
-                        message_context,
-                        f"❌ 无效的智能体序号: {argument}\n\n"
-                        f"当前有 {len(teams)} 个智能体，请使用 `/agents` 查看列表",
-                    )
-                    return
-            else:
-                # Match by name (case-insensitive)
-                argument_lower = argument.lower()
-                for team in teams:
-                    team_name = team.get("name", "").lower()
-                    if team_name == argument_lower:
-                        matched_team = team
-                        break
-
-            if not matched_team:
+        if normalized_argument:
+            option = resolve_text_choice(options, normalized_argument)
+            if option is None:
                 await self.send_text_reply(
                     message_context,
-                    f"❌ 未找到智能体: `{argument}`\n\n使用 `/agents` 查看可用智能体列表",
+                    f"❌ 未找到智能体: `{normalized_argument}`\n\n"
+                    "使用 `/agents` 查看可用智能体列表",
                 )
                 return
-
-            # Save selection to Redis
-            # matched_team is a dictionary from team_kinds_service.get_user_teams()
-            display_name = matched_team.get("name") or "Unnamed"
-            matched_team_id = matched_team.get("id")
-            matched_team_name = matched_team.get("name") or "Unnamed"
-            matched_team_namespace = matched_team.get("namespace") or "default"
-
-            await team_selection_manager.set_selection(
-                user.id,
-                TeamSelection(
-                    team_id=matched_team_id,
-                    team_name=matched_team_name,
-                    team_namespace=matched_team_namespace,
-                    display_name=display_name,
-                ),
-            )
-
-            # Clear conversation cache to start fresh with new team
+            try:
+                result = await channel_selection_service.apply_agent(
+                    db,
+                    user,
+                    option.value,
+                    selection_scope=selection_scope,
+                    model_selection_scope=selection_scope,
+                    required_shell_type=required_shell_type,
+                )
+            except SelectionError as exc:
+                await self.send_text_reply(message_context, f"❌ {exc}")
+                return
             await self._delete_conversation_task_id(
-                message_context.conversation_id, user.id
+                message_context.conversation_id,
+                user.id,
+                scope=self._selection_scope(user.id, message_context),
             )
-
+            task_unbound = (
+                await self._after_agent_selection_changed(db, im_session)
+                if uses_task_default
+                else False
+            )
             await self.send_text_reply(
                 message_context,
-                f"✅ 已切换到智能体: **{display_name}**\n\n"
-                f"命名空间: `{matched_team_namespace}`\n"
-                f"💡 现在开始使用新智能体进行对话",
+                self._agent_selection_reply(
+                    selected_label=result.selected_label,
+                    namespace=result.detail,
+                    restored_default=False,
+                    task_mode_default=uses_task_default,
+                    task_unbound=task_unbound,
+                ),
             )
             return
 
-        # No argument - list teams
-        current_selection = await team_selection_manager.get_selection(user.id)
-        current_team_id = current_selection.team_id if current_selection else None
-
         message = AGENTS_HEADER + "\n"
-
-        for idx, team in enumerate(teams, start=1):
-            # team is a dictionary from team_kinds_service.get_user_teams()
-            display_name = team.get("name") or "Unnamed"
-            namespace = team.get("namespace") or "default"
-            team_id = team.get("id")
-
-            # Build status string
+        default_value = f"team:{default_team.id}" if default_team is not None else ""
+        for idx, option in enumerate(options, start=1):
             status_parts = []
-            if team_id == current_team_id:
+            if option.is_current:
                 status_parts.append("⭐ 当前")
-            if team_id == self.default_team_id:
+            if option.value == default_value:
                 status_parts.append("系统默认")
-
             status_str = " - " + ", ".join(status_parts) if status_parts else ""
-
             message += AGENT_ITEM_TEMPLATE.format(
                 index=idx,
-                name=display_name,
-                namespace=namespace,
+                name=option.label,
+                namespace=option.description.removeprefix("命名空间："),
                 status=status_str,
             )
-
         message += AGENTS_FOOTER
         await self.send_text_reply(message_context, message)
+
+    async def _after_agent_selection_changed(
+        self,
+        db: Session,
+        im_session: Optional[IMPrivateSession],
+    ) -> bool:
+        """Apply provider-specific session behavior after an agent change."""
+
+        del db, im_session
+        return False
+
+    def _agent_selection_reply(
+        self,
+        *,
+        selected_label: str,
+        namespace: Optional[str],
+        restored_default: bool,
+        task_mode_default: bool,
+        task_unbound: bool,
+    ) -> str:
+        action = "已选择智能体"
+        if restored_default:
+            action = (
+                "已恢复任务模式默认智能体"
+                if task_mode_default
+                else "已恢复系统默认智能体"
+            )
+        message = f"✅ {action}: **{selected_label}**"
+        if namespace:
+            message += f"\n\n命名空间: `{namespace}`"
+        if task_unbound:
+            return (
+                f"{message}\n\n当前任务不会更换智能体；下一条消息将进入新任务"
+                "创建流程，并使用该智能体。可通过 `/switch` 返回原任务。"
+            )
+        if restored_default:
+            return f"{message}\n\n💡 后续对话将使用系统配置的智能体"
+        return f"{message}\n\n💡 后续对话将使用该智能体"
 
     async def _process_chat_message(
         self,
@@ -2525,7 +2611,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             user: Wegent user
             message_context: Message context
         """
-        selection = await device_selection_manager.get_selection(user.id)
+        selection = await device_selection_manager.get_selection(
+            user.id,
+            scope=self._selection_scope(user.id, message_context),
+        )
 
         if selection.device_type == DeviceType.CHAT:
             await self._process_chat_mode(user, message_context)
@@ -2587,12 +2676,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 user.id,
                 device_id,
                 device_selection.device_name or route.logical_device_id,
+                scope=self._selection_scope(user.id, message_context),
             )
 
         # Use short-lived db session for database operations
         db = SessionLocal()
         try:
-            team = self._get_task_mode_team(db, user.id)
+            team = await self._resolve_new_task_team(db, user.id, message_context)
             if not team:
                 await self.send_text_reply(
                     message_context, "配置错误: 未配置默认智能体"
@@ -2621,7 +2711,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Use short-lived db session for database operations
         db = SessionLocal()
         try:
-            team = self._get_task_mode_team(db, user.id)
+            team = await self._resolve_cloud_mode_team(db, user.id, message_context)
             if not team:
                 await self.send_text_reply(
                     message_context, "配置错误: 未配置默认智能体"
@@ -2897,7 +2987,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         display_text = self._get_display_text(message_context)
 
         # Get user's model selection (type not needed for chat mode)
-        override_model_name, _ = await self._get_user_model_override(user.id)
+        from app.services.channels.selection_scope import CHAT_PROFILE
+
+        chat_scope = self._profile_scope(user.id, message_context, CHAT_PROFILE)
+        conversation_scope = self._selection_scope(user.id, message_context)
+        override_model_name, _ = await self._get_user_model_override(
+            user.id, scope=chat_scope
+        )
 
         params = TaskCreationParams(
             message=display_text,
@@ -2918,7 +3014,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         auto_new_conversation = False
         if conversation_id:
             existing_task_id, auto_new_conversation = (
-                await self._get_conversation_task_id(conversation_id, user.id)
+                await self._get_conversation_task_id(
+                    conversation_id,
+                    user.id,
+                    scope=conversation_scope,
+                )
             )
 
         # Use short-lived db session for database operations only
@@ -2926,7 +3026,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Prevent attribute expiration after commit so ORM objects remain usable
         db.expire_on_commit = False
         try:
-            team = await self._get_selected_or_default_team(db, user.id)
+            team = await self._get_selected_or_default_team(
+                db, user.id, message_context
+            )
             if not team:
                 return "配置错误: 未配置默认智能体"
 
@@ -2948,7 +3050,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
             if conversation_id:
                 await self._set_conversation_task_id(
-                    conversation_id, user.id, result.task.id
+                    conversation_id,
+                    user.id,
+                    result.task.id,
+                    scope=conversation_scope,
                 )
 
             self.logger.info(
@@ -3157,8 +3262,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         display_text = self._get_display_text(message_context)
 
         # Get model for device mode (uses default Claude if user hasn't selected one)
+        from app.services.channels.selection_scope import TASK_PROFILE
+
+        task_scope = self._profile_scope(user.id, message_context, TASK_PROFILE)
+        conversation_scope = self._selection_scope(user.id, message_context)
         override_model_name, override_model_type = (
-            await self._get_device_mode_model_override(db, user)
+            await self._get_device_mode_model_override(db, user, scope=task_scope)
         )
 
         params = TaskCreationParams(
@@ -3180,7 +3289,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         auto_new_conversation = False
         if conversation_id:
             existing_task_id, auto_new_conversation = (
-                await self._get_conversation_task_id(conversation_id, user.id)
+                await self._get_conversation_task_id(
+                    conversation_id,
+                    user.id,
+                    scope=conversation_scope,
+                )
             )
 
         result = await create_task_and_subtasks(
@@ -3217,7 +3330,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if conversation_id:
             await self._set_conversation_task_id(
-                conversation_id, user.id, result.task.id
+                conversation_id,
+                user.id,
+                result.task.id,
+                scope=conversation_scope,
             )
 
         await self._broadcast_user_message_to_web(
@@ -3319,14 +3435,23 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         display_text = self._get_display_text(message_context)
 
         # Get user's model selection
+        from app.services.channels.selection_scope import CHAT_PROFILE, TASK_PROFILE
+
+        cloud_profile = self._cloud_mode_profile()
+        model_scope = self._profile_scope(user.id, message_context, cloud_profile)
+        conversation_scope = self._selection_scope(user.id, message_context)
         override_model_name, override_model_type = await self._get_user_model_override(
-            user.id
+            user.id,
+            scope=model_scope,
+            include_channel_default=(
+                cloud_profile == CHAT_PROFILE
+                or self._channel_type != ChannelType.DINGTALK
+            ),
         )
 
-        # Cloud executor runs Claude Code, which only accepts Claude models.
-        # Reject an incompatible override up front; otherwise the task fails deep
-        # inside the executor with a card that shows no content.
-        if override_model_name:
+        # Task-profile cloud execution uses Claude Code. Reject an incompatible
+        # override before dispatch; Chat-profile cloud execution follows its Agent.
+        if cloud_profile == TASK_PROFILE and override_model_name:
             compatible = await self._is_claude_compatible_override(
                 db, user, override_model_name
             )
@@ -3346,7 +3471,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 else f"{self._channel_type.value}: {display_text}"
             ),
             is_group_chat=False,
-            task_type="task",
+            task_type="chat" if cloud_profile == CHAT_PROFILE else "task",
             force_override_bot_model=override_model_name is not None,
             force_override_bot_model_type=override_model_type,
             model_id=override_model_name,
@@ -3357,7 +3482,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         auto_new_conversation = False
         if conversation_id:
             existing_task_id, auto_new_conversation = (
-                await self._get_conversation_task_id(conversation_id, user.id)
+                await self._get_conversation_task_id(
+                    conversation_id,
+                    user.id,
+                    scope=conversation_scope,
+                )
             )
 
         result = await create_task_and_subtasks(
@@ -3393,7 +3522,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if conversation_id:
             await self._set_conversation_task_id(
-                conversation_id, user.id, result.task.id
+                conversation_id,
+                user.id,
+                result.task.id,
+                scope=conversation_scope,
             )
 
         await self._broadcast_user_message_to_web(
@@ -3420,11 +3552,16 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # open so that streaming events from the executor can update it.
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
+            shell_type = "ClaudeCode"
+            if cloud_profile == CHAT_PROFILE:
+                from app.services.chat.config import get_team_first_bot_shell_type
+
+                shell_type = get_team_first_bot_shell_type(db, team) or "Chat"
             self._prepare_streaming_emitter(result.task.id, streaming_emitter)
             await streaming_emitter.emit_start(
                 task_id=result.task.id,
                 subtask_id=result.assistant_subtask.id,
-                shell_type="ClaudeCode",
+                shell_type=shell_type,
             )
             await self._emit_initial_stream_content(
                 streaming_emitter,

@@ -21,6 +21,7 @@ from app.services.channels.base import BaseChannelProvider
 from app.services.channels.dingtalk.handler import WegentChatbotHandler
 from app.services.channels.messager_config import (
     get_channel_default_model_name,
+    get_channel_default_task_team_id,
     get_channel_default_team_id,
     get_channel_user_mapping_config,
 )
@@ -113,6 +114,9 @@ class DingTalkChannelProvider(BaseChannelProvider):
                 dingtalk_client=self._client,
                 use_ai_card=self.use_ai_card,
                 get_default_team_id=lambda: get_channel_default_team_id(channel_id),
+                get_default_task_team_id=lambda: get_channel_default_task_team_id(
+                    channel_id
+                ),
                 get_default_model_name=lambda: get_channel_default_model_name(
                     channel_id
                 ),
@@ -258,5 +262,6 @@ class DingTalkChannelProvider(BaseChannelProvider):
             "client_id": f"{self.client_id[:8]}..." if self.client_id else None,
             "use_ai_card": self.use_ai_card,
             "default_team_id": self.default_team_id,
+            "default_task_team_id": self.default_task_team_id,
         }
         return status

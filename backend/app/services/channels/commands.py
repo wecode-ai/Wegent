@@ -178,7 +178,7 @@ HELP_MESSAGE = """📋 **可用命令**
 # Status message template
 STATUS_TEMPLATE = """📊 **当前状态**
 
-**当前智能体**: {team_name}
+{team_info}
 **执行模式**: {mode}
 {device_info}**当前模型**: {model_name}
 

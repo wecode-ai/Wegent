@@ -700,8 +700,9 @@ export interface IMChannel {
   channel_type: IMChannelType
   is_enabled: boolean
   config: Record<string, unknown>
-  default_team_id: number // 0 means no default team
-  default_model_name: string // empty string means use bot's default model
+  default_team_id: number // Chat agent; 0 means none
+  default_task_team_id: number // DingTalk Task agent; 0 means global fallback
+  default_model_name: string // Chat-only override; empty means use bot's model
   created_at: string
   updated_at: string
   created_by: number // 0 means system
@@ -718,7 +719,8 @@ export interface IMChannelCreate {
   config: Record<string, unknown>
   is_enabled?: boolean
   default_team_id?: number // 0 or undefined means no default team
-  default_model_name?: string // undefined or empty means use bot's default model
+  default_task_team_id?: number // DingTalk ClaudeCode Task agent
+  default_model_name?: string // Chat-only override
 }
 
 export interface IMChannelUpdate {
@@ -726,7 +728,8 @@ export interface IMChannelUpdate {
   is_enabled?: boolean
   config?: Record<string, unknown>
   default_team_id?: number // 0 means no default team
-  default_model_name?: string // empty string means clear the override
+  default_task_team_id?: number // 0 means use global Task agent fallback
+  default_model_name?: string // empty string clears the Chat override
 }
 
 export interface IMChannelStatus {

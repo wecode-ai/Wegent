@@ -52,14 +52,17 @@ Before setting up DingTalk integration, ensure you have:
 Enable the following permissions for your application:
 
 **Robot Permissions:**
+
 - `qyapi_robot_sendmsg` - Send robot messages
 - `qyapi_chat_manage` - Manage group chats
 
 **AI Card Permissions (for streaming responses):**
+
 - `Card.Instance.Write` - Create and update AI card instances
 - `Card.Streaming.Write` - Stream write AI card content
 
 **User Information Permissions:**
+
 - `Contact.User.Read` - Read user information
 - `Contact.User.mobile` - Access user mobile (optional)
 
@@ -93,15 +96,16 @@ Enable the following permissions for your application:
 3. Click **Add Channel**
 4. Fill in the configuration:
 
-| Field | Description | Example |
-|-------|-------------|---------|
-| **Channel Name** | Display name for this channel | "DingTalk Bot" |
-| **Channel Type** | Select platform | DingTalk |
-| **Client ID** | From Step 3 | `dingxxxxxxxx` |
-| **Client Secret** | From Step 3 | `xxxxxxxxxxxxxxxx` |
-| **Default Agent** | Agent to handle messages | Select from list |
-| **Default Model** | Override model (optional) | Leave empty to use agent's default |
-| **Enable AI Card** | Use streaming AI Card | ✅ Recommended |
+| Field                  | Description                                          | Example                          |
+| ---------------------- | ---------------------------------------------------- | -------------------------------- |
+| **Channel Name**       | Display name for this channel                        | "DingTalk Bot"                   |
+| **Channel Type**       | Select platform                                      | DingTalk                         |
+| **Client ID**          | From Step 3                                          | `dingxxxxxxxx`                   |
+| **Client Secret**      | From Step 3                                          | `xxxxxxxxxxxxxxxx`               |
+| **Chat Agent**         | Handles `/chat`, `/use chat`, and managed cloud mode | Select from list                 |
+| **Task Agent**         | Handles `/task` and device execution                 | Select a ClaudeCode agent        |
+| **Default Chat Model** | Optional Chat model override                         | Leave empty to follow Chat Agent |
+| **Enable AI Card**     | Use streaming AI Card                                | ✅ Recommended                   |
 
 5. Click **Save** to create the channel
 6. Toggle **Enable** to activate the channel
@@ -154,6 +158,15 @@ DingTalk AI Cards provide a rich streaming response experience:
 - Code block syntax highlighting
 - Collapsible long content
 
+### Agent and model selection
+
+- `/status` shows the current Chat Agent, next-new-Task Agent, Agent bound to the current Task, execution mode, and model.
+- `/agents`, `/models`, `/devices`, and direct-message `/switch` use text lists; commands can include an option number or name.
+- Chat and Task keep separate Agent and model selections. Task lists only Claude models and also offers “Follow Task Agent”.
+- `/chat`, `/use chat`, and `/use cloud` use the Chat Agent and its model selection. `/use cloud` maps to the managed cloud execution target in the web UI and permits OpenAI models.
+- `/task` and `/use device` use the Task Agent, whose Bots must all use ClaudeCode.
+- Selecting an agent never mutates an existing Task. In Task mode it detaches the current binding, so the next message enters the new-Task flow; `/switch` can bind the old Task again.
+
 ---
 
 ## ❓ Troubleshooting
@@ -163,11 +176,13 @@ DingTalk AI Cards provide a rich streaming response experience:
 #### Channel shows "Disconnected"
 
 **Possible causes:**
+
 1. Invalid Client ID or Client Secret
 2. Network connectivity issues
 3. DingTalk API service disruption
 
 **Solutions:**
+
 1. Verify credentials in DingTalk Open Platform
 2. Check network connectivity from Wegent server
 3. Try restarting the channel
@@ -176,11 +191,13 @@ DingTalk AI Cards provide a rich streaming response experience:
 #### Messages not being received
 
 **Possible causes:**
+
 1. Stream mode not enabled in DingTalk
 2. Robot permissions not configured
 3. Channel not enabled in Wegent
 
 **Solutions:**
+
 1. Verify Stream Mode is enabled in DingTalk app settings
 2. Check all required permissions are granted
 3. Ensure channel is enabled (toggle is on)
@@ -190,23 +207,27 @@ DingTalk AI Cards provide a rich streaming response experience:
 #### Bot not responding
 
 **Possible causes:**
-1. Default Agent not configured
+
+1. Chat Agent or Task Agent not configured
 2. Agent has no model assigned
 3. Rate limiting
 
 **Solutions:**
-1. Verify a default Agent is selected for the channel
-2. Ensure the Agent has a working model configuration
+
+1. Verify that the channel has both a Chat Agent and a ClaudeCode Task Agent
+2. Ensure the corresponding Agent has a working model configuration
 3. Check for rate limit errors in channel status
 
 #### Slow or incomplete responses
 
 **Possible causes:**
+
 1. AI Card streaming issues
 2. Network latency
 3. Large response content
 
 **Solutions:**
+
 1. Try disabling AI Card streaming temporarily
 2. Check network connectivity
 3. The system will fall back to sync mode if streaming fails
@@ -216,10 +237,12 @@ DingTalk AI Cards provide a rich streaming response experience:
 #### User not recognized
 
 **Possible causes:**
+
 1. User mapping configuration issues
 2. DingTalk user info not accessible
 
 **Solutions:**
+
 1. Check user permissions in DingTalk app
 2. Verify user mapping configuration
 3. Contact administrator for enterprise user mapping
@@ -227,10 +250,12 @@ DingTalk AI Cards provide a rich streaming response experience:
 #### User creation failed
 
 **Possible causes:**
+
 1. Missing `Contact.User.Read` permission
 2. Failed to retrieve DingTalk staff ID
 
 **Solutions:**
+
 1. Ensure permission to read user information is granted
 2. Re-authorize application permissions
 3. Check if DingTalk user is in the enterprise organization
@@ -240,17 +265,20 @@ DingTalk AI Cards provide a rich streaming response experience:
 ## 🔗 Related Resources
 
 ### Wegent Documentation
+
 - [IM Channel Integration Overview](./im-channel-integration.md) - General IM integration concepts and features
 - [Agent Settings](../settings/agent-settings.md) - Configure agents for IM channels
 - [Configuring Models](../settings/configuring-models.md) - Set up AI models
 
 ### DingTalk Official Resources
+
 - [DingTalk Open Platform Documentation](https://open.dingtalk.com/document/)
 - [DingTalk Stream Mode Guide](https://open.dingtalk.com/document/orgapp/receive-message)
 - [DingTalk Robot Development Guide](https://open.dingtalk.com/document/robots/develop-robots)
 - [Enterprise Application Development Guide](https://open.dingtalk.com/document/isvapp-server/create-an-application)
 
 ### Get Help
+
 - 📖 Check [Wegent FAQ](../../faq.md)
 - 🐛 Submit [GitHub Issue](https://github.com/wecode-ai/wegent/issues)
 - 💬 DingTalk Open Platform Technical Support

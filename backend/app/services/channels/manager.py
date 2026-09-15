@@ -41,6 +41,7 @@ class ChannelLike(Protocol):
     is_enabled: bool
     config: Dict[str, Any]
     default_team_id: int
+    default_task_team_id: int
     default_model_name: str
 
 

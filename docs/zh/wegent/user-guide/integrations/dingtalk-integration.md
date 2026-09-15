@@ -52,14 +52,17 @@ sidebar_position: 2
 为您的应用启用以下权限：
 
 **机器人权限：**
+
 - `qyapi_robot_sendmsg` - 发送机器人消息
 - `qyapi_chat_manage` - 管理群聊
 
 **AI 卡片权限（用于流式响应）：**
+
 - `Card.Instance.Write` - 创建和更新 AI 卡片实例
 - `Card.Streaming.Write` - 流式写入 AI 卡片内容
 
 **用户信息权限：**
+
 - `Contact.User.Read` - 读取用户信息
 - `Contact.User.mobile` - 访问用户手机号（可选）
 
@@ -93,15 +96,16 @@ sidebar_position: 2
 3. 点击 **添加渠道**
 4. 填写配置：
 
-| 字段 | 描述 | 示例 |
-|------|------|------|
-| **通道名称** | 此通道的显示名称 | "钉钉机器人" |
-| **通道类型** | 选择平台 | 钉钉 |
-| **Client ID** | 来自步骤 3 | `dingxxxxxxxx` |
-| **Client Secret** | 来自步骤 3 | `xxxxxxxxxxxxxxxx` |
-| **默认智能体** | 处理消息的智能体 | 从列表中选择 |
-| **默认模型** | 覆盖模型（可选） | 留空使用智能体默认模型 |
-| **启用 AI 卡片** | 使用流式 AI 卡片 | ✅ 推荐启用 |
+| 字段              | 描述                                     | 示例                   |
+| ----------------- | ---------------------------------------- | ---------------------- |
+| **通道名称**      | 此通道的显示名称                         | "钉钉机器人"           |
+| **通道类型**      | 选择平台                                 | 钉钉                   |
+| **Client ID**     | 来自步骤 3                               | `dingxxxxxxxx`         |
+| **Client Secret** | 来自步骤 3                               | `xxxxxxxxxxxxxxxx`     |
+| **Chat 智能体**   | 处理 `/chat`、`/use chat` 和云端公共模式 | 从列表中选择           |
+| **Task 智能体**   | 处理 `/task` 和设备执行                  | 选择 ClaudeCode 智能体 |
+| **Chat 默认模型** | 覆盖 Chat 模型（可选）                   | 留空跟随 Chat 智能体   |
+| **启用 AI 卡片**  | 使用流式 AI 卡片                         | ✅ 推荐启用            |
 
 5. 点击 **保存** 创建通道
 6. 切换 **启用** 开关激活通道
@@ -154,6 +158,15 @@ sidebar_position: 2
 - 代码块语法高亮
 - 可折叠的长内容
 
+### 智能体与模型切换
+
+- `/status` 查看当前 Chat 智能体、下一新 Task 智能体、当前绑定 Task 智能体、执行模式和模型。
+- `/agents`、`/models`、`/devices` 和私聊 `/switch` 使用文本列表完成选择；命令可直接携带编号或名称。
+- Chat 与 Task 分别保存智能体和模型选择；Task 只列出 Claude 模型，也可以选择“跟随 Task 智能体”。
+- `/chat`、`/use chat` 和 `/use cloud` 使用 Chat 智能体及其模型选择；`/use cloud` 对应页面的云端公共执行目标，并允许使用 OpenAI 模型。
+- `/task` 和 `/use device` 使用 Task 智能体，该智能体中的所有机器人都必须使用 ClaudeCode。
+- 切换智能体不会修改已创建 Task；Task 模式下会解除当前绑定，下一条消息进入新 Task 创建流程，用户仍可通过 `/switch` 返回旧 Task。
+
 ---
 
 ## ❓ 常见问题
@@ -163,11 +176,13 @@ sidebar_position: 2
 #### 通道显示"已断开"
 
 **可能原因：**
+
 1. Client ID 或 Client Secret 无效
 2. 网络连接问题
 3. 钉钉 API 服务中断
 
 **解决方案：**
+
 1. 在钉钉开放平台验证凭证
 2. 检查 Wegent 服务器的网络连接
 3. 尝试重启通道
@@ -176,11 +191,13 @@ sidebar_position: 2
 #### 消息未被接收
 
 **可能原因：**
+
 1. 钉钉中未启用 Stream 模式
 2. 机器人权限未配置
 3. Wegent 中通道未启用
 
 **解决方案：**
+
 1. 验证钉钉应用设置中已启用 Stream 模式
 2. 检查所有必需权限已授予
 3. 确保通道已启用（开关已打开）
@@ -190,23 +207,27 @@ sidebar_position: 2
 #### 机器人无响应
 
 **可能原因：**
-1. 默认智能体未配置
+
+1. Chat 智能体或 Task 智能体未配置
 2. 智能体未分配模型
 3. 速率限制
 
 **解决方案：**
-1. 验证通道已选择默认智能体
-2. 确保智能体有可用的模型配置
+
+1. 验证通道已分别选择 Chat 智能体和 ClaudeCode Task 智能体
+2. 确保对应智能体有可用的模型配置
 3. 检查通道状态中的速率限制错误
 
 #### 响应缓慢或不完整
 
 **可能原因：**
+
 1. AI 卡片流式传输问题
 2. 网络延迟
 3. 响应内容过大
 
 **解决方案：**
+
 1. 尝试临时禁用 AI 卡片流式传输
 2. 检查网络连接
 3. 系统会在流式传输失败时回退到同步模式
@@ -216,10 +237,12 @@ sidebar_position: 2
 #### 用户未被识别
 
 **可能原因：**
+
 1. 用户映射配置问题
 2. 钉钉用户信息不可访问
 
 **解决方案：**
+
 1. 检查钉钉应用中的用户权限
 2. 验证用户映射配置
 3. 联系管理员配置企业用户映射
@@ -227,10 +250,12 @@ sidebar_position: 2
 #### 用户创建失败
 
 **可能原因：**
+
 1. 缺少 `Contact.User.Read` 权限
 2. 钉钉员工 ID 获取失败
 
 **解决方案：**
+
 1. 确保已授予读取用户信息的权限
 2. 重新授权应用权限
 3. 检查钉钉用户是否在企业组织架构中
@@ -240,17 +265,20 @@ sidebar_position: 2
 ## 🔗 相关资源
 
 ### Wegent 文档
+
 - [IM 通道集成概述](./im-channel-integration.md) - 通用 IM 集成概念和功能
 - [智能体设置](../settings/agent-settings.md) - 为 IM 通道配置智能体
 - [配置模型](../settings/configuring-models.md) - 设置 AI 模型
 
 ### 钉钉官方资源
+
 - [钉钉开放平台文档](https://open.dingtalk.com/document/)
 - [钉钉 Stream 模式指南](https://open.dingtalk.com/document/orgapp/receive-message)
 - [钉钉机器人开发指南](https://open.dingtalk.com/document/robots/develop-robots)
 - [企业内部应用开发指南](https://open.dingtalk.com/document/isvapp-server/create-an-application)
 
 ### 获取帮助
+
 - 📖 查看 [Wegent 常见问题](../../faq.md)
 - 🐛 提交 [GitHub Issue](https://github.com/wecode-ai/wegent/issues)
 - 💬 钉钉开放平台技术支持

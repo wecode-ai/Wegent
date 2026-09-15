@@ -93,6 +93,7 @@ const IMChannelList: React.FC = () => {
     channel_type: IMChannelType
     is_enabled: boolean
     default_team_id: number
+    default_task_team_id: number
     default_model_name: string
     client_id: string
     client_secret: string
@@ -109,6 +110,7 @@ const IMChannelList: React.FC = () => {
     channel_type: 'dingtalk',
     is_enabled: true,
     default_team_id: 0,
+    default_task_team_id: 0,
     default_model_name: '',
     client_id: '',
     client_secret: '',
@@ -173,11 +175,7 @@ const IMChannelList: React.FC = () => {
   const fetchTeams = useCallback(async () => {
     try {
       const response = await teamApis.getTeams({ page: 1, limit: 100 }, 'all')
-      setTeams(
-        response.items.filter(
-          team => team.is_active && (!team.bind_mode || team.bind_mode.includes('chat'))
-        )
-      )
+      setTeams(response.items.filter(team => team.is_active))
     } catch {
       // Silently fail, teams are optional
     }
@@ -213,6 +211,11 @@ const IMChannelList: React.FC = () => {
       )
     },
     [teams]
+  )
+  const chatTeams = teams.filter(team => !team.bind_mode || team.bind_mode.includes('chat'))
+  const taskTeams = teams.filter(
+    team =>
+      team.bots.length > 0 && team.bots.every(teamBot => teamBot.bot?.shell_type === 'ClaudeCode')
   )
 
   useEffect(() => {
@@ -267,6 +270,13 @@ const IMChannelList: React.FC = () => {
       })
       return
     }
+    if (formData.channel_type === 'dingtalk' && !formData.default_task_team_id) {
+      toast({
+        variant: 'destructive',
+        title: t('admin:im_channels.errors.task_team_required'),
+      })
+      return
+    }
 
     // Validate: if select_user mode, must select a target user
     if (formData.user_mapping_mode === 'select_user' && !formData.target_user_id) {
@@ -304,7 +314,6 @@ const IMChannelList: React.FC = () => {
       if (formData.card_template_id.trim()) {
         config.card_template_id = formData.card_template_id.trim()
       }
-
       // Add user_mapping_config if select_user mode
       if (formData.user_mapping_mode === 'select_user' && formData.target_user_id) {
         config.user_mapping_config = {
@@ -317,6 +326,8 @@ const IMChannelList: React.FC = () => {
         channel_type: formData.channel_type,
         is_enabled: formData.is_enabled,
         default_team_id: formData.default_team_id,
+        default_task_team_id:
+          formData.channel_type === 'dingtalk' ? formData.default_task_team_id : undefined,
         default_model_name: formData.default_model_name || undefined,
         config,
       }
@@ -347,6 +358,13 @@ const IMChannelList: React.FC = () => {
       })
       return
     }
+    if (selectedChannel.channel_type === 'dingtalk' && !formData.default_task_team_id) {
+      toast({
+        variant: 'destructive',
+        title: t('admin:im_channels.errors.task_team_required'),
+      })
+      return
+    }
 
     // Validate: if select_user mode, must select a target user
     if (formData.user_mapping_mode === 'select_user' && !formData.target_user_id) {
@@ -368,6 +386,9 @@ const IMChannelList: React.FC = () => {
       }
       if (formData.default_team_id !== selectedChannel.default_team_id) {
         updateData.default_team_id = formData.default_team_id
+      }
+      if (formData.default_task_team_id !== (selectedChannel.default_task_team_id || 0)) {
+        updateData.default_task_team_id = formData.default_task_team_id
       }
       if (formData.default_model_name !== (selectedChannel.default_model_name || '')) {
         updateData.default_model_name = formData.default_model_name
@@ -408,7 +429,6 @@ const IMChannelList: React.FC = () => {
       if (formData.card_template_id.trim()) {
         newConfig.card_template_id = formData.card_template_id.trim()
       }
-
       // Add user_mapping_config if select_user mode
       if (formData.user_mapping_mode === 'select_user' && formData.target_user_id) {
         newConfig.user_mapping_config = {
@@ -493,6 +513,7 @@ const IMChannelList: React.FC = () => {
       channel_type: 'dingtalk',
       is_enabled: true,
       default_team_id: 0,
+      default_task_team_id: 0,
       default_model_name: '',
       client_id: '',
       client_secret: '',
@@ -522,6 +543,7 @@ const IMChannelList: React.FC = () => {
       channel_type: channel.channel_type,
       is_enabled: channel.is_enabled,
       default_team_id: channel.default_team_id || 0,
+      default_task_team_id: channel.default_task_team_id || 0,
       default_model_name: channel.default_model_name || '',
       client_id: (channel.config?.client_id as string) || '',
       client_secret: '', // Don't show existing secret
@@ -714,9 +736,18 @@ const IMChannelList: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-2 mt-1 text-xs text-text-muted">
                           <span>
-                            {t('admin:im_channels.default_team')}:{' '}
+                            {t('admin:im_channels.chat_team')}:{' '}
                             {getTeamName(channel.default_team_id)}
                           </span>
+                          {channel.channel_type === 'dingtalk' && (
+                            <>
+                              <span>•</span>
+                              <span>
+                                {t('admin:im_channels.task_team')}:{' '}
+                                {getTeamName(channel.default_task_team_id)}
+                              </span>
+                            </>
+                          )}
                           {status?.last_error && (
                             <>
                               <span>•</span>
@@ -878,7 +909,7 @@ const IMChannelList: React.FC = () => {
               </>
             )}
             <div className="space-y-2">
-              <Label htmlFor="default_team">{t('admin:im_channels.form.default_team')} *</Label>
+              <Label htmlFor="default_team">{t('admin:im_channels.form.chat_team')} *</Label>
               <Select
                 value={formData.default_team_id ? formData.default_team_id.toString() : ''}
                 onValueChange={value =>
@@ -889,7 +920,7 @@ const IMChannelList: React.FC = () => {
                   <SelectValue placeholder={t('admin:im_channels.form.default_team_placeholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  {teams.map(team => (
+                  {chatTeams.map(team => (
                     <SelectItem key={team.id} value={team.id.toString()}>
                       {team.displayName || team.name}
                     </SelectItem>
@@ -902,6 +933,33 @@ const IMChannelList: React.FC = () => {
                 </p>
               )}
             </div>
+            {formData.channel_type === 'dingtalk' && (
+              <div className="space-y-2">
+                <Label htmlFor="default_task_team">{t('admin:im_channels.form.task_team')} *</Label>
+                <Select
+                  value={
+                    formData.default_task_team_id ? formData.default_task_team_id.toString() : ''
+                  }
+                  onValueChange={value =>
+                    setFormData({ ...formData, default_task_team_id: parseInt(value) })
+                  }
+                >
+                  <SelectTrigger data-testid="im-channel-task-team-select">
+                    <SelectValue placeholder={t('admin:im_channels.form.task_team_placeholder')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {taskTeams.map(team => (
+                      <SelectItem key={team.id} value={team.id.toString()}>
+                        {team.displayName || team.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-text-muted">
+                  {t('admin:im_channels.form.task_team_help')}
+                </p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="default_model">{t('admin:im_channels.form.default_model')}</Label>
               <Select
@@ -1095,9 +1153,7 @@ const IMChannelList: React.FC = () => {
               </>
             )}
             <div className="space-y-2">
-              <Label htmlFor="edit-default_team">
-                {t('admin:im_channels.form.default_team')} *
-              </Label>
+              <Label htmlFor="edit-default_team">{t('admin:im_channels.form.chat_team')} *</Label>
               <Select
                 value={formData.default_team_id ? formData.default_team_id.toString() : ''}
                 onValueChange={value =>
@@ -1108,7 +1164,7 @@ const IMChannelList: React.FC = () => {
                   <SelectValue placeholder={t('admin:im_channels.form.default_team_placeholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  {teams.map(team => (
+                  {chatTeams.map(team => (
                     <SelectItem key={team.id} value={team.id.toString()}>
                       {team.displayName || team.name}
                     </SelectItem>
@@ -1121,6 +1177,35 @@ const IMChannelList: React.FC = () => {
                 </p>
               )}
             </div>
+            {selectedChannel?.channel_type === 'dingtalk' && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-default_task_team">
+                  {t('admin:im_channels.form.task_team')} *
+                </Label>
+                <Select
+                  value={
+                    formData.default_task_team_id ? formData.default_task_team_id.toString() : ''
+                  }
+                  onValueChange={value =>
+                    setFormData({ ...formData, default_task_team_id: parseInt(value) })
+                  }
+                >
+                  <SelectTrigger data-testid="edit-im-channel-task-team-select">
+                    <SelectValue placeholder={t('admin:im_channels.form.task_team_placeholder')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {taskTeams.map(team => (
+                      <SelectItem key={team.id} value={team.id.toString()}>
+                        {team.displayName || team.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-text-muted">
+                  {t('admin:im_channels.form.task_team_help')}
+                </p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="edit-default_model">
                 {t('admin:im_channels.form.default_model')}

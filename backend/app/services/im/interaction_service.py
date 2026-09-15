@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from app.models.im_session import IMPrivateSession, IMSessionMode
 from app.models.user import User
 from app.services.channels.commands import parse_command
-from app.services.channels.device_selection import device_selection_manager
 from app.services.channels.handler import MessageContext
 from app.services.im import task_continuation_service as im_task_continuation_service
 from app.services.im.command_router import IMCommandAction, im_command_router
@@ -31,6 +30,13 @@ class PrivateIMInteractionPort(Protocol):
         self,
         conversation_id: str,
         user_id: int,
+        message_context: MessageContext | None = None,
+    ) -> None: ...
+
+    async def set_private_im_chat_mode(
+        self,
+        user_id: int,
+        message_context: MessageContext,
     ) -> None: ...
 
     async def execute_private_im_bind_task(
@@ -138,10 +144,11 @@ class IMInteractionService:
             return True
 
         if result.action == IMCommandAction.START_CHAT:
-            await device_selection_manager.set_chat_mode(user.id)
+            await port.set_private_im_chat_mode(user.id, message_context)
             await port.delete_conversation_task_id(
                 message_context.conversation_id,
                 user.id,
+                message_context,
             )
             if result.reply:
                 await port.send_text_reply(message_context, result.reply)

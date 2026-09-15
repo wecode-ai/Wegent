@@ -2,13 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""CI E2E coverage for DingTalk private-chat runtime conversations.
+"""CI E2E coverage for DingTalk private-chat runtime and AI Cards.
 
 The test uses the migrated CI database and real Redis-backed session/callback
 state. DingTalk transport and the local runtime are the only substituted
-boundaries, so the production command router, runtime event parser, callback
-registry, cross-worker reconstruction, quoted-notification routing, and AI Card
-emitter run together.
+boundaries, so production command routing, runtime event parsing, callback
+reconstruction, quoted notifications, and AI Card projection run together.
 """
 
 from __future__ import annotations
@@ -42,6 +41,9 @@ from app.services.channels.dingtalk import card as card_module
 from app.services.channels.dingtalk.callback import dingtalk_callback_service
 from app.services.channels.dingtalk.handler import DingTalkChannelHandler
 from app.services.channels.handler import CHANNEL_CONV_TASK_PREFIX, MessageContext
+from app.services.channels.selection_scope import (
+    build_conversation_selection_scope,
+)
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.im.notification_dispatcher import IMNotificationDispatcher
 from app.services.im.session_service import (
@@ -79,6 +81,12 @@ class CardRecord:
     updates: list[str]
     finished: list[str]
     failed: bool = False
+
+
+@dataclass(frozen=True)
+class CacheSnapshot:
+    value: Any
+    ttl: int
 
 
 class FakeAICardInstance:
@@ -148,7 +156,10 @@ class DingTalkConversationHarness(DingTalkChannelHandler):
         user: User,
         message_context: MessageContext,
     ) -> None:
-        selection = await device_selection_manager.get_selection(user.id)
+        selection = await device_selection_manager.get_selection(
+            user.id,
+            scope=self._selection_scope(user.id, message_context),
+        )
         assert selection.device_type == DeviceType.CHAT
         assert self._turns, "Received an unexpected DingTalk chat turn"
         turn = self._turns.pop(0)
@@ -298,7 +309,7 @@ async def _cleanup(
     session_key: str,
     conversation_cache_key: str,
     callback_keys: list[str],
-    cache_snapshots: dict[str, tuple[Any | None, int]],
+    cache_snapshots: dict[str, CacheSnapshot],
 ) -> None:
     for callback_key in callback_keys:
         emitter = dingtalk_callback_service._active_emitters.pop(callback_key, None)
@@ -327,20 +338,8 @@ async def _cleanup(
     finally:
         await client.aclose()
 
-    for key, (value, ttl) in cache_snapshots.items():
-        if value is None:
-            continue
-        await cache_manager.set(key, value, expire=ttl if ttl > 0 else None)
-
-
-async def _cache_snapshot(key: str) -> tuple[Any | None, int]:
-    value = await cache_manager.get(key)
-    client = await cache_manager._get_client()
-    try:
-        ttl = await client.ttl(key)
-    finally:
-        await client.aclose()
-    return value, ttl
+    for key, snapshot in cache_snapshots.items():
+        await _restore_cache_snapshot(key, snapshot)
 
 
 async def run() -> None:
@@ -359,9 +358,6 @@ async def run() -> None:
         channel_type="dingtalk",
         channel_id=CHANNEL_ID,
         conversation_id=conversation_id,
-    )
-    conversation_cache_key = (
-        f"{CHANNEL_CONV_TASK_PREFIX}dingtalk:{conversation_id}:{user_id}"
     )
     turns = [
         TurnSpec(
@@ -391,7 +387,18 @@ async def run() -> None:
         ),
     ]
     handler = DingTalkConversationHarness(user_id, turns)
-    device_selection_key = f"{CHANNEL_USER_DEVICE_PREFIX}{user_id}"
+    selection_scope = build_conversation_selection_scope(
+        channel_type="dingtalk",
+        channel_id=CHANNEL_ID,
+        conversation_id=conversation_id,
+        actor_id=sender_id,
+        user_id=user_id,
+    )
+    conversation_cache_key = (
+        f"{CHANNEL_CONV_TASK_PREFIX}dingtalk:{conversation_id}:"
+        f"{user_id}:{selection_scope}"
+    )
+    device_selection_key = f"{CHANNEL_USER_DEVICE_PREFIX}{user_id}:{selection_scope}"
     global_notification_key = f"{USER_GLOBAL_NOTIFICATION_PREFIX}{user_id}"
     runtime_subscriptions_key = f"{USER_RUNTIME_TASK_SUBSCRIPTIONS_PREFIX}{user_id}"
     cache_snapshots = {
@@ -426,9 +433,11 @@ async def run() -> None:
     runtime_work_service.send_runtime_message = fake_send_runtime_message
 
     try:
-        await device_selection_manager.set_cloud_executor(user_id)
+        await device_selection_manager.set_cloud_executor(
+            user_id, scope=selection_scope
+        )
         assert (
-            await device_selection_manager.get_selection(user_id)
+            await device_selection_manager.get_selection(user_id, scope=selection_scope)
         ).device_type == DeviceType.CLOUD
         await cache_manager.set(conversation_cache_key, 999999, expire=60)
         assert await handler.handle_message(
@@ -437,7 +446,7 @@ async def run() -> None:
         assert await handler.handle_message(_message("1", conversation_id, sender_id))
         assert await cache_manager.get(conversation_cache_key) is None
         assert (
-            await device_selection_manager.get_selection(user_id)
+            await device_selection_manager.get_selection(user_id, scope=selection_scope)
         ).device_type == DeviceType.CHAT
 
         session = await im_session_service.get_session(session_key)
@@ -585,6 +594,7 @@ async def run() -> None:
         assert session is not None
         assert session.mode == IMSessionMode.TASK
         assert session.active_runtime_task == notified_runtime_task
+
     finally:
         card_module.DingTalkMarkdownCard = original_card_class
         channel_manager_module.get_channel_manager = original_get_channel_manager
@@ -600,4 +610,4 @@ async def run() -> None:
 
 if __name__ == "__main__":
     asyncio.run(run())
-    print("DingTalk private-chat runtime conversation E2E passed")
+    print("DingTalk private-chat runtime and AI Card E2E passed")

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import { adminApis } from '@/apis/admin'
 import { teamApis } from '@/apis/team'
@@ -128,7 +128,7 @@ describe('IMChannelList channel config', () => {
 
     mockedAdminApis.getIMChannels.mockResolvedValue({ total: 0, items: [] })
     mockedTeamApis.getTeams.mockResolvedValue({
-      total: 1,
+      total: 2,
       items: [
         {
           id: 10,
@@ -143,6 +143,29 @@ describe('IMChannelList channel config', () => {
           created_at: '',
           updated_at: '',
           bind_mode: ['chat'],
+        },
+        {
+          id: 11,
+          name: 'task-agent',
+          namespace: 'default',
+          displayName: 'Task Agent',
+          description: '',
+          bots: [
+            {
+              bot_id: 101,
+              bot_prompt: '',
+              bot: {
+                shell_type: 'ClaudeCode',
+                agent_config: {},
+              },
+            },
+          ],
+          workflow: {},
+          is_active: true,
+          user_id: 1,
+          created_at: '',
+          updated_at: '',
+          bind_mode: ['code'],
         },
       ],
     })
@@ -217,9 +240,9 @@ describe('IMChannelList channel config', () => {
     })
   })
 
-  test('shows accessible chat agents and excludes code-only agents', async () => {
+  test('separates Chat agents from ClaudeCode-only Task agents', async () => {
     mockedTeamApis.getTeams.mockResolvedValue({
-      total: 2,
+      total: 3,
       items: [
         {
           id: 10,
@@ -237,11 +260,37 @@ describe('IMChannelList channel config', () => {
         },
         {
           id: 11,
-          name: 'code-only-agent',
+          name: 'claude-task-agent',
           namespace: 'default',
-          displayName: 'Code Only Agent',
+          displayName: 'Claude Task Agent',
           description: '',
-          bots: [],
+          bots: [
+            {
+              bot_id: 101,
+              bot_prompt: '',
+              bot: { shell_type: 'ClaudeCode', agent_config: {} },
+            },
+          ],
+          workflow: {},
+          is_active: true,
+          user_id: 1,
+          created_at: '',
+          updated_at: '',
+          bind_mode: ['code'],
+        },
+        {
+          id: 12,
+          name: 'non-claude-code-agent',
+          namespace: 'default',
+          displayName: 'Non-Claude Code Agent',
+          description: '',
+          bots: [
+            {
+              bot_id: 102,
+              bot_prompt: '',
+              bot: { shell_type: 'Agno', agent_config: {} },
+            },
+          ],
           workflow: {},
           is_active: true,
           user_id: 1,
@@ -259,8 +308,15 @@ describe('IMChannelList channel config', () => {
     })
     fireEvent.click(await screen.findByText('admin:im_channels.create_channel'))
 
-    expect(screen.getByRole('option', { name: 'Personal Chat Agent' })).toBeInTheDocument()
-    expect(screen.queryByRole('option', { name: 'Code Only Agent' })).not.toBeInTheDocument()
+    const selects = screen.getAllByRole('combobox')
+    expect(
+      within(selects[1]).getByRole('option', { name: 'Personal Chat Agent' })
+    ).toBeInTheDocument()
+    expect(within(selects[1]).queryByRole('option', { name: 'Claude Task Agent' })).toBeNull()
+    expect(
+      within(selects[2]).getByRole('option', { name: 'Claude Task Agent' })
+    ).toBeInTheDocument()
+    expect(within(selects[2]).queryByRole('option', { name: 'Non-Claude Code Agent' })).toBeNull()
   })
 
   test('creates a Weibo channel with Open IM credentials', async () => {
@@ -356,6 +412,7 @@ describe('IMChannelList channel config', () => {
             },
           },
           default_team_id: 10,
+          default_task_team_id: 0,
           default_model_name: '',
           created_at: '',
           updated_at: '',

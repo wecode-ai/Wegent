@@ -5,6 +5,7 @@
 import json
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
@@ -17,6 +18,7 @@ from app.models.user import User
 from app.services.channels.callback import BaseCallbackInfo, ChannelType
 from app.services.channels.commands import IM_CHANNEL_CONTEXT_HINT
 from app.services.channels.device_selection import DeviceSelection, DeviceType
+from app.services.channels.dingtalk.handler import DingTalkChannelHandler
 from app.services.channels.handler import BaseChannelHandler, MessageContext
 from app.services.im.session_service import im_session_service
 
@@ -173,24 +175,138 @@ def _create_wework_task(
     return task
 
 
-def _create_team(test_db: Session, test_user: User) -> Kind:
+def _create_team(
+    test_db: Session,
+    test_user: User,
+    *,
+    name: str = "wegent-wework",
+    display_name: str = "Wegent Wework",
+) -> Kind:
     team = Kind(
         user_id=test_user.id,
         kind="Team",
-        name="wegent-wework",
+        name=name,
         namespace="default",
         is_active=True,
         json={
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Team",
-            "metadata": {"name": "wegent-wework", "namespace": "default"},
-            "spec": {"displayName": "Wegent Wework", "members": []},
+            "metadata": {
+                "name": name,
+                "namespace": "default",
+                "displayName": display_name,
+            },
+            "spec": {"collaborationModel": "pipeline", "members": []},
         },
     )
     test_db.add(team)
     test_db.commit()
     test_db.refresh(team)
     return team
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_agent_change_starts_new_task_with_selected_team(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+    fake_im_session_cache,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.channels.team_selection.team_uses_only_shell_type",
+        lambda _db, _team, shell_type: shell_type == "ClaudeCode",
+    )
+    monkeypatch.setattr(
+        "app.services.channels.team_selection.cache_manager",
+        fake_im_session_cache,
+    )
+    old_team = _create_team(test_db, test_user)
+    selected_team = _create_team(
+        test_db,
+        test_user,
+        name="selected-agent",
+        display_name="Selected Agent",
+    )
+    old_task = _create_wework_task(test_db, test_user, title="保留旧智能体")
+    old_task_json = json.loads(json.dumps(old_task.json))
+    handler = DingTalkChannelHandler(channel_id=77)
+    replies: list[str] = []
+
+    handler.parse_message = lambda raw: MessageContext(
+        content=raw["content"],
+        sender_id="staff-a",
+        sender_name="Alice",
+        conversation_id="conv-private",
+        conversation_type="private",
+        is_mention=False,
+        raw_message=raw,
+        extra_data={},
+    )
+
+    async def resolve_user(_db: Session, _context: MessageContext) -> User:
+        return test_user
+
+    async def send_text_reply(_context: MessageContext, text: str) -> bool:
+        replies.append(text)
+        return True
+
+    handler.resolve_user = resolve_user
+    handler.send_text_reply = send_text_reply
+
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+    )
+    await im_session_service.bind_active_task(
+        test_db,
+        session=session,
+        task_id=old_task.id,
+    )
+
+    assert await handler.handle_message(_message("/agents selected-agent"))
+
+    refreshed = await _private_session(test_db, test_user)
+    assert refreshed is not None
+    assert refreshed.mode == IMSessionMode.TASK
+    assert refreshed.active_task_id is None
+    test_db.expire_all()
+    assert test_db.get(TaskResource, old_task.id).json == old_task_json
+    assert any("当前任务不会更换智能体" in reply for reply in replies)
+
+    assert await handler.handle_message(_message("使用新的智能体处理需求"))
+    refreshed = await _private_session(test_db, test_user)
+    assert refreshed is not None
+    assert refreshed.state == IMSessionState.PENDING_TASK_CREATION
+    assert refreshed.pending_payload["first_message"] == "使用新的智能体处理需求"
+
+    calls: dict[str, Any] = {}
+
+    async def fake_create_chat_task(**kwargs):
+        calls.update(kwargs)
+        return SimpleNamespace(
+            task=SimpleNamespace(id=9901),
+            user_subtask=SimpleNamespace(id=9902),
+            assistant_subtask=SimpleNamespace(id=9903),
+        )
+
+    monkeypatch.setattr(
+        "app.services.chat.storage.task_manager.create_chat_task",
+        fake_create_chat_task,
+    )
+    handler._trigger_private_im_task_response = AsyncMock()
+
+    assert await handler.handle_message(_message("0"))
+
+    assert calls["team"].id == selected_team.id
+    assert calls["team"].id != old_team.id
+    assert calls["message"] == "使用新的智能体处理需求"
+    test_db.expire_all()
+    assert test_db.get(TaskResource, old_task.id).json == old_task_json
 
 
 @pytest.mark.asyncio
@@ -323,20 +439,33 @@ async def test_private_new_choice_chat_is_consumed_and_clears_cached_task(
     async def fake_delete_conversation_task_id(
         conversation_id: str,
         user_id: int,
+        *,
+        scope: str | None = None,
     ) -> None:
         calls["delete_cache"] = {
             "conversation_id": conversation_id,
             "user_id": user_id,
+            "scope": scope,
         }
 
-    async def fake_set_chat_mode(user_id: int) -> bool:
+    async def fake_set_chat_mode(
+        user_id: int,
+        *,
+        scope: str | None = None,
+    ) -> bool:
         nonlocal current_selection
         calls["chat_mode_user_id"] = user_id
+        calls["chat_mode_scope"] = scope
         current_selection = DeviceSelection(device_type=DeviceType.CHAT)
         return True
 
-    async def fake_get_selection(user_id: int) -> DeviceSelection:
+    async def fake_get_selection(
+        user_id: int,
+        *,
+        scope: str | None = None,
+    ) -> DeviceSelection:
         assert user_id == test_user.id
+        assert scope is None
         return current_selection
 
     async def fake_process_chat_mode(
@@ -363,7 +492,7 @@ async def test_private_new_choice_chat_is_consumed_and_clears_cached_task(
         fake_delete_conversation_task_id,
     )
     monkeypatch.setattr(
-        "app.services.im.interaction_service.device_selection_manager.set_chat_mode",
+        "app.services.channels.handler.device_selection_manager.set_chat_mode",
         fake_set_chat_mode,
     )
     monkeypatch.setattr(
@@ -388,9 +517,11 @@ async def test_private_new_choice_chat_is_consumed_and_clears_cached_task(
     assert session.pending_payload == {}
     assert calls == {
         "chat_mode_user_id": test_user.id,
+        "chat_mode_scope": None,
         "delete_cache": {
             "conversation_id": "conv-private",
             "user_id": test_user.id,
+            "scope": None,
         },
         "chat": {
             "user_id": test_user.id,
@@ -433,13 +564,23 @@ async def test_private_use_cloud_clears_bound_runtime_task(
     )
     calls: dict[str, Any] = {}
 
-    async def fake_get_selection(user_id: int) -> DeviceSelection:
+    async def fake_get_selection(
+        user_id: int,
+        *,
+        scope: str | None = None,
+    ) -> DeviceSelection:
         assert user_id == test_user.id
+        assert scope is None
         return selection
 
-    async def fake_set_cloud_executor(user_id: int) -> bool:
+    async def fake_set_cloud_executor(
+        user_id: int,
+        *,
+        scope: str | None = None,
+    ) -> bool:
         nonlocal selection
         assert user_id == test_user.id
+        assert scope is None
         selection = DeviceSelection(device_type=DeviceType.CLOUD)
         return True
 
