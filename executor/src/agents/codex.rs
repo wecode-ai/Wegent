@@ -373,6 +373,7 @@ impl CodexAppServerClient {
                 return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
             }
             replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
+            state.process_environment.clear();
             state.process.take()
         };
         if let Some(process) = process {
@@ -425,7 +426,11 @@ impl CodexAppServerClient {
     }
 
     pub async fn restart(&self) {
-        let process = self.state.lock().await.process.take();
+        let process = {
+            let mut state = self.state.lock().await;
+            state.process_environment.clear();
+            state.process.take()
+        };
         let Some(process) = process else {
             return;
         };
@@ -447,6 +452,7 @@ impl CodexAppServerClient {
             if pending_request_count > 0 {
                 return Err(pending_request_count);
             }
+            state.process_environment.clear();
             state.process.take()
         };
         if let Some(process) = process {
@@ -475,6 +481,7 @@ impl CodexAppServerClient {
             mutation().map_err(CodexAuthMutationError::Update)?;
             state.thread_generations.clear();
             state.idle_thread_generations.clear();
+            state.process_environment.clear();
             state.process.take()
         };
         drop(process);
@@ -505,6 +512,7 @@ impl CodexAppServerClient {
                 .thread_generations
                 .retain(|thread_id, _| thread_id == active_thread_id);
             state.idle_thread_generations.clear();
+            state.process_environment.clear();
             state.process.take()
         };
         if let Some(process) = process {
@@ -521,6 +529,7 @@ impl CodexAppServerClient {
             {
                 return false;
             }
+            state.process_environment.clear();
             state.process.take()
         };
         let Some(process) = process else {
@@ -607,6 +616,8 @@ impl CodexAppServerClient {
         ),
         String,
     > {
+        ensure_codex_mcp_endpoints().await?;
+        let base_process_environment = codex_base_process_environment();
         let mut state = self.state.lock().await;
         if state
             .process
@@ -614,10 +625,22 @@ impl CodexAppServerClient {
             .is_some_and(|process| process.has_exited())
         {
             state.process = None;
+            state.process_environment.clear();
+        }
+        let process_environment =
+            merged_process_environment(&state.runtime_proxy_env, &base_process_environment);
+        if state.process.is_some() && state.process_environment != process_environment {
+            if !state.active_threads.is_empty() {
+                return Err(
+                    "cannot change Codex app-server environment while a turn is active".to_owned(),
+                );
+            }
+            state.process = None;
+            state.process_environment.clear();
         }
         if state.process.is_none() {
             let launch_config = CodexLaunchConfig {
-                env: state.runtime_proxy_env.clone(),
+                env: process_environment.clone(),
                 ..CodexLaunchConfig::default()
             };
             if !start_if_missing {
@@ -627,6 +650,7 @@ impl CodexAppServerClient {
                 start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
                     .await?;
             state.process = Some(process);
+            state.process_environment = process_environment;
             state.next_id = next_id;
         }
 
@@ -678,6 +702,7 @@ impl CodexAppServerClient {
             .is_some_and(|process| process.has_exited())
         {
             state.process = None;
+            state.process_environment.clear();
         }
         Ok(state
             .process
@@ -885,6 +910,8 @@ impl CodexAppServerClient {
     async fn ensure_process_with_startup(
         &self,
     ) -> Result<(CodexAppServerHandle, Option<Duration>), String> {
+        ensure_codex_mcp_endpoints().await?;
+        let base_process_environment = codex_base_process_environment();
         let mut state = self.state.lock().await;
         if state
             .process
@@ -892,11 +919,23 @@ impl CodexAppServerClient {
             .is_some_and(|process| process.has_exited())
         {
             state.process = None;
+            state.process_environment.clear();
         }
         let mut initialize_elapsed = None;
+        let process_environment =
+            merged_process_environment(&state.runtime_proxy_env, &base_process_environment);
+        if state.process.is_some() && state.process_environment != process_environment {
+            if !state.active_threads.is_empty() {
+                return Err(
+                    "cannot change Codex app-server environment while a turn is active".to_owned(),
+                );
+            }
+            state.process = None;
+            state.process_environment.clear();
+        }
         if state.process.is_none() {
             let launch_config = CodexLaunchConfig {
-                env: state.runtime_proxy_env.clone(),
+                env: process_environment.clone(),
                 ..CodexLaunchConfig::default()
             };
             let initialize_started_at = Instant::now();
@@ -905,6 +944,7 @@ impl CodexAppServerClient {
                     .await?;
             initialize_elapsed = Some(initialize_started_at.elapsed());
             state.process = Some(process);
+            state.process_environment = process_environment;
             state.next_id = next_id;
         }
         Ok((
@@ -928,19 +968,20 @@ impl CodexAppServerClient {
             .is_some_and(|process| process.has_exited())
         {
             state.process = None;
+            state.process_environment.clear();
         }
-        if !launch_config.env.is_empty()
-            && !persistent_process_environment_matches(&state.runtime_proxy_env, &launch_config.env)
-        {
+        let process_environment =
+            merged_process_environment(&state.runtime_proxy_env, &launch_config.env);
+        if state.process.is_some() && state.process_environment != process_environment {
             if !state.active_threads.is_empty() {
                 return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
             }
-            state.runtime_proxy_env = launch_config.env.clone();
             state.process = None;
+            state.process_environment.clear();
         }
         if state.process.is_none() {
             let mut process_launch_config = launch_config.clone();
-            process_launch_config.env = state.runtime_proxy_env.clone();
+            process_launch_config.env = process_environment.clone();
             let (process, next_id) = start_persistent_codex_app_server(
                 &self.binary,
                 state.next_id,
@@ -948,6 +989,7 @@ impl CodexAppServerClient {
             )
             .await?;
             state.process = Some(process);
+            state.process_environment = process_environment;
             state.next_id = next_id;
         }
         Ok(state
@@ -1053,6 +1095,7 @@ struct CodexAppServerSharedState {
     next_thread_generation: u64,
     thread_lifecycle_gates: HashMap<String, Weak<Mutex<()>>>,
     runtime_proxy_env: BTreeMap<String, String>,
+    process_environment: BTreeMap<String, String>,
 }
 
 impl Default for CodexAppServerSharedState {
@@ -1066,6 +1109,7 @@ impl Default for CodexAppServerSharedState {
             next_thread_generation: 1,
             thread_lifecycle_gates: HashMap::new(),
             runtime_proxy_env: BTreeMap::new(),
+            process_environment: BTreeMap::new(),
         }
     }
 }
@@ -3207,7 +3251,6 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
         user_developer_instructions: read_wework_codex_user_instructions(&wework_codex_home())?,
         effort: reasoning.effort.clone(),
         summary: reasoning.summary.clone(),
-        env: runtime_proxy_env(&request.model_config),
         ..CodexLaunchConfig::default()
     };
     launch_config
@@ -3536,6 +3579,15 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
     overrides.push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned());
+    overrides.push(format!(
+        "shell_environment_policy.exclude={}",
+        toml_json_value(&json!([
+            "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION",
+            "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION",
+            "WEWORK_COMPUTER_USE_BRIDGE_URL",
+            "WEWORK_COMPUTER_USE_BRIDGE_TOKEN",
+        ]))
+    ));
     overrides
 }
 
@@ -3784,20 +3836,6 @@ fn use_user_runtime_config(model_config: &Value) -> bool {
     })
 }
 
-fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
-    let Some(runtime_config) = runtime_config(model_config) else {
-        return BTreeMap::new();
-    };
-    if !bool_value(runtime_config.get("use_proxy")).unwrap_or(false) {
-        return BTreeMap::new();
-    }
-    let Some(proxy_url) = runtime_proxy_url(model_config) else {
-        return BTreeMap::new();
-    };
-
-    proxy_environment(Some(proxy_url))
-}
-
 fn proxy_environment(proxy_url: Option<&str>) -> BTreeMap<String, String> {
     let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
         return BTreeMap::new();
@@ -3829,13 +3867,13 @@ fn runtime_proxy_endpoint_matches(
     current.get("ALL_PROXY") == requested.get("ALL_PROXY")
 }
 
-fn persistent_process_environment_matches(
-    current: &BTreeMap<String, String>,
-    requested: &BTreeMap<String, String>,
-) -> bool {
-    runtime_proxy_endpoint_matches(current, requested)
-        && current.get("WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION")
-            == requested.get("WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION")
+fn merged_process_environment(
+    runtime_proxy_env: &BTreeMap<String, String>,
+    launch_env: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut environment = launch_env.clone();
+    replace_proxy_environment(&mut environment, runtime_proxy_env.clone());
+    environment
 }
 
 fn replace_proxy_environment(
@@ -4205,7 +4243,7 @@ fn cdp_browser_mcp_config_overrides(
     let endpoint = crate::browser_mcp::http::browser_mcp_http_endpoint()
         .ok_or_else(|| "browser MCP endpoint is not ready".to_owned())?;
     let auth_env_name = "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION";
-    let mut env = BTreeMap::from([(
+    let env = BTreeMap::from([(
         auth_env_name.to_owned(),
         format!("Bearer {}", endpoint.token),
     )]);
@@ -4230,20 +4268,38 @@ fn cdp_browser_mcp_config_overrides(
     ]);
 
     if let Some(label) = embedded_browser_label(request) {
-        let label_env_name = "WEGENT_CODEX_BROWSER_MCP_LABEL";
-        env.insert(label_env_name.to_owned(), label);
         overrides.push(format!(
             "{}={}",
             toml_key_path(&[
                 "mcp_servers",
                 server_name,
-                "env_http_headers",
+                "http_headers",
                 "X-Wework-Browser-Label"
             ]),
-            toml_value(label_env_name)
+            toml_value(&label)
         ));
     }
     Ok((overrides, env))
+}
+
+fn codex_base_process_environment() -> BTreeMap<String, String> {
+    let mut environment = BTreeMap::new();
+    if crate::browser_mcp::bridge_is_available() {
+        if let Some(endpoint) = crate::browser_mcp::http::browser_mcp_http_endpoint() {
+            environment.insert(
+                "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION".to_owned(),
+                format!("Bearer {}", endpoint.token),
+            );
+        }
+    }
+    if let Some(endpoint) = crate::task_runtime::mcp_http::space_mcp_http_endpoint() {
+        environment.insert(
+            "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
+            format!("Bearer {}", endpoint.token),
+        );
+    }
+    environment.extend(computer_use_mcp_config_overrides().1);
+    environment
 }
 
 fn computer_use_mcp_config_overrides() -> (Vec<String>, BTreeMap<String, String>) {

@@ -1708,7 +1708,7 @@ fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
 }
 
 #[test]
-fn codex_launch_config_forwards_runtime_proxy_env() {
+fn codex_launch_config_leaves_proxy_ownership_to_runtime_configuration() {
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -1728,18 +1728,9 @@ fn codex_launch_config_forwards_runtime_proxy_env() {
     let launch_config =
         build_codex_launch_config(&request).expect("Codex launch config should be built");
 
-    assert_eq!(
-        launch_config.env.get("HTTP_PROXY").map(String::as_str),
-        Some("http://127.0.0.1:7890")
-    );
-    assert_eq!(
-        launch_config.env.get("HTTPS_PROXY").map(String::as_str),
-        Some("http://127.0.0.1:7890")
-    );
-    assert_eq!(
-        launch_config.env.get("ALL_PROXY").map(String::as_str),
-        Some("http://127.0.0.1:7890")
-    );
+    assert!(!launch_config.env.contains_key("HTTP_PROXY"));
+    assert!(!launch_config.env.contains_key("HTTPS_PROXY"));
+    assert!(!launch_config.env.contains_key("ALL_PROXY"));
 }
 
 #[test]
@@ -1772,22 +1763,21 @@ fn runtime_proxy_identity_ignores_no_proxy_drift() {
 }
 
 #[test]
-fn persistent_process_environment_requires_stable_local_mcp_auth() {
-    let mut current = proxy_environment(Some("http://127.0.0.1:7890"));
-    let mut requested = current.clone();
-    requested.insert(
+fn process_environment_merges_runtime_proxy_and_stable_mcp_auth() {
+    let proxy = proxy_environment(Some("http://127.0.0.1:7890"));
+    let mut launch = proxy_environment(Some("http://127.0.0.1:7891"));
+    launch.insert(
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
         "Bearer stable-token".to_owned(),
     );
+    let merged = merged_process_environment(&proxy, &launch);
 
-    assert!(!persistent_process_environment_matches(
-        &current, &requested
-    ));
-    current.insert(
-        "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
-        "Bearer stable-token".to_owned(),
+    assert_eq!(proxy["ALL_PROXY"], "http://127.0.0.1:7890");
+    assert_eq!(merged["ALL_PROXY"], "http://127.0.0.1:7890");
+    assert_eq!(
+        merged["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
+        "Bearer stable-token"
     );
-    assert!(persistent_process_environment_matches(&current, &requested));
 }
 
 #[test]
@@ -3276,6 +3266,15 @@ fn codex_thread_launch_enables_user_input_in_default_mode() {
             params["config"]["features.default_mode_request_user_input"],
             true
         );
+        assert_eq!(
+            params["config"]["shell_environment_policy.exclude"],
+            json!([
+                "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION",
+                "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION",
+                "WEWORK_COMPUTER_USE_BRIDGE_URL",
+                "WEWORK_COMPUTER_USE_BRIDGE_TOKEN",
+            ])
+        );
     }
 }
 
@@ -3597,13 +3596,12 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         "approve"
     );
     assert_eq!(
-        config["mcp_servers.wework_browser.env_http_headers.X-Wework-Browser-Label"],
-        "WEGENT_CODEX_BROWSER_MCP_LABEL"
-    );
-    assert_eq!(
-        launch_config.env["WEGENT_CODEX_BROWSER_MCP_LABEL"],
+        config["mcp_servers.wework_browser.http_headers.X-Wework-Browser-Label"],
         "workspace-browser-task-123"
     );
+    assert!(!launch_config
+        .env
+        .contains_key("WEGENT_CODEX_BROWSER_MCP_LABEL"));
 
     if let Some(value) = old_url {
         env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL", value);
