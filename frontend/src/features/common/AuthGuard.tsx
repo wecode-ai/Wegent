@@ -26,6 +26,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     const loginPath = paths.auth.login.getHref()
     const allowedPaths = [
       loginPath,
+      paths.wework.open.getHref(),
       '/login/oidc',
       paths.home.getHref(),
       paths.auth.password_login.getHref(),
