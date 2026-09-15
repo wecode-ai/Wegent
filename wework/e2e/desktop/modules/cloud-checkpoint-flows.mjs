@@ -606,6 +606,10 @@ async function verifyCloudCheckpoint({
     setPhase('cloud-plugin-auto-update-fixtures')
     await cloudEnvironment.seedPluginAutoUpdateFixtures(6)
     setPhase('cloud-plugin-auto-update-release-push')
+    console.log(
+      '[plugin-auto-update] scheduling',
+      JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).idleTasks
+    )
     const completionDeadline = Date.now() + WORKBENCH_READY_TIMEOUT_MS
     let completionError = null
     while (Date.now() < completionDeadline) {
@@ -619,6 +623,10 @@ async function verifyCloudCheckpoint({
       await new Promise(resolve => setTimeout(resolve, 100))
     }
     if (completionError) {
+      console.log(
+        '[plugin-auto-update] scheduling at failure',
+        JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).idleTasks
+      )
       throw new Error(
         'Published release events did not auto-update plugins outside the plugin page',
         { cause: completionError }

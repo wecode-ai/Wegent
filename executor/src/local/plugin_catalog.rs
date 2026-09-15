@@ -55,6 +55,7 @@ pub struct WegentStorePluginSummary {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WegentStoreListResult {
+    supports_plugin_reconciliation: bool,
     store_path: String,
     plugins: Vec<WegentStorePluginSummary>,
 }
@@ -87,6 +88,7 @@ fn list_wegent_store_plugins_at(executor_home: &Path) -> Result<WegentStoreListR
     let manifest_path = capabilities_root.join("manifest.json");
     if !manifest_path.is_file() {
         return Ok(WegentStoreListResult {
+            supports_plugin_reconciliation: true,
             store_path,
             plugins: Vec::new(),
         });
@@ -115,6 +117,7 @@ fn list_wegent_store_plugins_at(executor_home: &Path) -> Result<WegentStoreListR
         })?;
     let Ok(canonical_store_root) = store_root.canonicalize() else {
         return Ok(WegentStoreListResult {
+            supports_plugin_reconciliation: true,
             store_path,
             plugins: Vec::new(),
         });
@@ -149,6 +152,7 @@ fn list_wegent_store_plugins_at(executor_home: &Path) -> Result<WegentStoreListR
             .then_with(|| left.name.cmp(&right.name))
     });
     Ok(WegentStoreListResult {
+        supports_plugin_reconciliation: true,
         store_path,
         plugins,
     })

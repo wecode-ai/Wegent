@@ -3755,7 +3755,12 @@
     "plugin_connector_source_hint": "选择你使用的认证站点，连接一个账号即可。",
     "plugin_connector_optional": "可选应用连接",
     "plugin_connector_chat_login": "此连接尚未提供页面登录入口，请在插件对话中按提示完成本机登录。",
-    "plugin_connector_required": "安装和使用此插件需要授权"
+    "plugin_connector_required": "安装和使用此插件需要授权",
+    "plugins_reconciliation_complete": "插件安装状态已核对并同步",
+    "plugins_reconciliation_failed": "安装状态检查未完成：{{error}}",
+    "plugins_reconciliation_incomplete": "插件数据未完整加载，本次未执行状态修复，请重试刷新",
+    "plugins_reconciliation_checking": "正在检查安装状态…",
+    "plugins_reconciliation_busy": "正在检查安装状态，请完成后再操作"
   },
   "delivery": {
     "action": "交付",

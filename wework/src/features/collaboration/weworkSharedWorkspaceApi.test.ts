@@ -916,6 +916,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
 
     expect(Object.keys(api).sort()).toEqual(
       [
+        'automationExecutionCatalog',
         'workspaces',
         'resources',
         'projects',

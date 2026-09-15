@@ -28,6 +28,9 @@ const DEFAULT_PLUGIN_MARKETPLACE: &str = "wegent";
 const LOCAL_USER_SOURCE: &str = "local_user";
 const WEGENT_SOURCE: &str = "wegent";
 const CLOUD_MANAGED_PLUGIN_MARKETPLACES: [&str; 2] = ["wegent", "wework"];
+const PERSONAL_SHARED_PLUGIN_MARKETPLACE: &str = "wework-personal";
+const RECONCILABLE_PLUGIN_MARKETPLACES: [&str; 3] =
+    ["wegent", "wework", PERSONAL_SHARED_PLUGIN_MARKETPLACE];
 
 fn replace_codex_config(path: &Path, content: &str) -> Result<(), CapabilitySyncError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
@@ -1301,6 +1304,17 @@ where
 
     pub async fn apply_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
         let _sync_guard = self.sync_lock.lock().await;
+        let plugins_only = payload.get("scope").and_then(Value::as_str) == Some("plugins");
+        if plugins_only
+            && (payload.get("plugins").and_then(Value::as_array).is_none()
+                || payload.get("skills").is_some()
+                || payload.get("mcps").is_some())
+        {
+            return Err(CapabilitySyncError::invalid_payload(
+                "Plugin reconciliation requires a complete plugins array and no other capabilities"
+                    .to_owned(),
+            ));
+        }
         let mode = payload
             .get("mode")
             .and_then(Value::as_str)
@@ -1319,7 +1333,7 @@ where
             self.store.load_manifest_with_plugin_store_migration()?
         };
 
-        if mode == "replace" {
+        if mode == "replace" || plugins_only {
             let desired_skills = skill_specs
                 .iter()
                 .map(|spec| spec.name.clone())
@@ -1328,8 +1342,10 @@ where
                 .iter()
                 .map(|spec| spec.key.clone())
                 .collect::<BTreeSet<_>>();
-            self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
-            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest)?;
+            if !plugins_only {
+                self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
+            }
+            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest, plugins_only)?;
         }
 
         let mut skill_results = Vec::with_capacity(skill_specs.len());
@@ -1340,7 +1356,9 @@ where
         for spec in &plugin_specs {
             plugin_results.push(self.sync_plugin(spec, &mut manifest).await);
         }
-        self.record_mcps(payload.get("mcps"), mode, &mut manifest)?;
+        if !plugins_only {
+            self.record_mcps(payload.get("mcps"), mode, &mut manifest)?;
+        }
         self.store
             .garbage_collect_unreferenced_managed_plugins(&manifest)?;
         self.store.manifest.save_with_revision_bump(manifest)?;
@@ -1351,6 +1369,7 @@ where
 
         Ok(json!({
             "success": success,
+            "scope": if plugins_only { "plugins" } else { "all" },
             "skills": skill_results,
             "plugins": plugin_results,
         }))
@@ -1563,6 +1582,7 @@ where
         &self,
         desired: &BTreeSet<String>,
         manifest: &mut Value,
+        cloud_only: bool,
     ) -> Result<(), CapabilitySyncError> {
         let stale = object_map(manifest.get("plugins"))
             .unwrap_or_default()
@@ -1570,6 +1590,17 @@ where
             .filter(|(key, plugin)| {
                 !desired.contains(key)
                     && plugin.get("managed").and_then(Value::as_bool) != Some(false)
+                    && (!cloud_only
+                        || (plugin.get("managed").and_then(Value::as_bool) == Some(true)
+                            && plugin
+                                .get("installed_plugin_id")
+                                .and_then(Value::as_i64)
+                                .is_some()
+                            && RECONCILABLE_PLUGIN_MARKETPLACES.contains(
+                                &PluginSyncSpec::from_manifest_entry(key, plugin)
+                                    .marketplace
+                                    .as_str(),
+                            )))
             })
             .collect::<Vec<_>>();
         if stale.is_empty() {
@@ -1582,13 +1613,16 @@ where
             .collect::<BTreeSet<_>>();
         let stale_marketplaces = stale
             .iter()
-            .map(|(key, plugin)| {
-                value_string(plugin.get("marketplace"))
+            .filter_map(|(key, plugin)| {
+                let marketplace = value_string(plugin.get("marketplace"))
                     .or_else(|| {
                         key.split_once('@')
                             .map(|(_, marketplace)| marketplace.to_owned())
                     })
-                    .unwrap_or_else(|| DEFAULT_PLUGIN_MARKETPLACE.to_owned())
+                    .unwrap_or_else(|| DEFAULT_PLUGIN_MARKETPLACE.to_owned());
+                CLOUD_MANAGED_PLUGIN_MARKETPLACES
+                    .contains(&marketplace.as_str())
+                    .then_some(marketplace)
             })
             .collect::<BTreeSet<_>>();
         let desired_marketplaces = desired
@@ -1626,7 +1660,7 @@ where
                 moved_paths.push(store_path);
             }
         }
-        let file_paths = [
+        let mut file_paths = vec![
             self.store.plugins_dir.join("installed_plugins.json"),
             self.store
                 .plugins_dir
@@ -1639,10 +1673,18 @@ where
                 .unwrap_or_else(|| Path::new("."))
                 .join("config.toml"),
         ];
+        for (key, plugin) in &stale {
+            let spec = PluginSyncSpec::from_manifest_entry(key, plugin);
+            if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE {
+                file_paths.extend(self.personal_shared_marketplace_manifest_paths());
+                moved_paths.extend(self.personal_shared_marketplace_plugin_paths(&spec));
+            }
+        }
         let original_manifest = manifest.clone();
         let mut transaction = LocalPluginStateTransaction::begin(file_paths, moved_paths)?;
         let result = (|| {
             for (key, plugin) in stale {
+                let spec = PluginSyncSpec::from_manifest_entry(&key, &plugin);
                 ensure_object_field(&mut installed, "plugins").remove(&key);
                 if let Some(runtime) = plugin.get("runtime") {
                     if let Some(path) = value_string(runtime.get("claude_link")) {
@@ -1655,6 +1697,9 @@ where
                 if let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from)
                 {
                     remove_existing_path(&store_path)?;
+                }
+                if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE {
+                    self.remove_personal_shared_marketplace_plugin(&spec)?;
                 }
                 ensure_object_field(manifest, "plugins").remove(&key);
             }
@@ -1679,6 +1724,54 @@ where
                 Err(transaction.add_rollback_context(error))
             }
         }
+    }
+
+    fn personal_shared_marketplace_manifest_paths(&self) -> Vec<PathBuf> {
+        let claude = self
+            .store
+            .plugins_dir
+            .join("marketplaces")
+            .join(PERSONAL_SHARED_PLUGIN_MARKETPLACE);
+        let codex = self
+            .store
+            .codex_plugins_dir
+            .join("marketplaces")
+            .join(PERSONAL_SHARED_PLUGIN_MARKETPLACE);
+        vec![
+            claude.join(".claude-plugin/marketplace.json"),
+            claude.join(".agents/plugins/marketplace.json"),
+            codex.join(".agents/plugins/marketplace.json"),
+        ]
+    }
+
+    fn personal_shared_marketplace_plugin_paths(&self, spec: &PluginSyncSpec) -> Vec<PathBuf> {
+        vec![
+            self.store
+                .plugins_dir
+                .join("marketplaces")
+                .join(PERSONAL_SHARED_PLUGIN_MARKETPLACE)
+                .join("plugins")
+                .join(plugin_codex_link_name(spec)),
+            self.store
+                .codex_plugins_dir
+                .join("marketplaces")
+                .join(PERSONAL_SHARED_PLUGIN_MARKETPLACE)
+                .join("plugins")
+                .join(&spec.name),
+        ]
+    }
+
+    fn remove_personal_shared_marketplace_plugin(
+        &self,
+        spec: &PluginSyncSpec,
+    ) -> Result<(), CapabilitySyncError> {
+        for path in self.personal_shared_marketplace_plugin_paths(spec) {
+            remove_existing_path(&path)?;
+        }
+        for path in self.personal_shared_marketplace_manifest_paths() {
+            remove_marketplace_plugin_entry(&path, &spec.name)?;
+        }
+        Ok(())
     }
 
     fn record_mcps(
@@ -1826,6 +1919,25 @@ fn prune_unreferenced_marketplace_plugins(
             .and_then(Value::as_str)
             .is_some_and(|name| desired_names.contains(name))
     });
+    if plugins.len() != previous_len {
+        write_json(manifest_path, &marketplace)?;
+    }
+    Ok(())
+}
+
+fn remove_marketplace_plugin_entry(
+    manifest_path: &Path,
+    plugin_name: &str,
+) -> Result<(), CapabilitySyncError> {
+    if !manifest_path.is_file() {
+        return Ok(());
+    }
+    let mut marketplace = read_json_or_default(manifest_path, || json!({}))?;
+    let Some(plugins) = marketplace.get_mut("plugins").and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+    let previous_len = plugins.len();
+    plugins.retain(|plugin| plugin.get("name").and_then(Value::as_str) != Some(plugin_name));
     if plugins.len() != previous_len {
         write_json(manifest_path, &marketplace)?;
     }

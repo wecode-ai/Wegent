@@ -16,6 +16,8 @@ let nextRuntimeChatStreamSubscriptionId = 1
 let activeRuntimeChatStreamSubscriptions = 0
 const RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-runtime-chat-stream'
 const STREAM_EVENT_BATCH_INTERVAL_MS = 16
+export const E2E_DROPPED_RUNTIME_EVENTS_KEY = '__WEWORK_E2E_DROPPED_RUNTIME_EVENTS__'
+export const E2E_RUNTIME_EVENT_DISPATCHERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_DISPATCHERS__'
 
 export function isRuntimeChatStreamDebugEnabled(): boolean {
   return (
@@ -48,6 +50,7 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
   let streamEventFlushTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 
   function processNativeEvent(event: LocalExecutorEvent): void {
+    if (shouldDropRuntimeEventForE2E(event.event)) return
     if (import.meta.env.DEV && event.event === 'runtime.plan.updated') {
       console.warn('[Wework] Runtime task plan event received', {
         taskId: stringField(asRecord(event.payload), 'taskId') ?? null,
@@ -169,6 +172,14 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       })
   }
 
+  if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+    const root = globalThis as typeof globalThis & {
+      [E2E_RUNTIME_EVENT_DISPATCHERS_KEY]?: Set<(event: LocalExecutorEvent) => void>
+    }
+    root[E2E_RUNTIME_EVENT_DISPATCHERS_KEY] ??= new Set()
+    root[E2E_RUNTIME_EVENT_DISPATCHERS_KEY].add(processNativeEvent)
+  }
+
   // Start listening before a task pane exists. Local task creation and the
   // first tool event can otherwise race the pane's asynchronous subscription.
   ensureNativeListener()
@@ -223,6 +234,18 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       }
     },
   }
+}
+
+function shouldDropRuntimeEventForE2E(eventName: string): boolean {
+  if (import.meta.env.VITE_WEWORK_E2E !== 'true') return false
+  const root = globalThis as typeof globalThis & {
+    [E2E_DROPPED_RUNTIME_EVENTS_KEY]?: string[]
+  }
+  const droppedEvents = root[E2E_DROPPED_RUNTIME_EVENTS_KEY]
+  const index = droppedEvents?.indexOf(eventName) ?? -1
+  if (!droppedEvents || index < 0) return false
+  droppedEvents.splice(index, 1)
+  return true
 }
 
 function logRuntimeChatTerminalEvent(

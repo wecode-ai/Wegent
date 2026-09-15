@@ -1789,6 +1789,7 @@ export interface RuntimeTokenUsageBreakdown {
 export interface RuntimeContextUsage {
   total: RuntimeTokenUsageBreakdown
   last: RuntimeTokenUsageBreakdown
+  /** Context window the reported usage is measured against, excluding the model's output budget. */
   modelContextWindow: number
 }
 
@@ -2398,6 +2399,7 @@ export interface PluginMarketplaceInstallResponse {
 }
 
 export interface PluginDeviceSyncResponse {
+  reconciled?: boolean
   deviceId: string
   pendingCount: number
   sync: DeviceCapabilitySyncResponse

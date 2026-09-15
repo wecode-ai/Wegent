@@ -9,6 +9,7 @@ import type { CollaborationTranslate } from "../i18n";
 
 export function ProjectDispatchSettings({
   automationContent,
+  runtimeContent,
   canManage,
   managerName,
   onConfigureAgents,
@@ -16,6 +17,7 @@ export function ProjectDispatchSettings({
   translate,
 }: {
   automationContent?: ReactNode;
+  runtimeContent?: ReactNode;
   canManage: boolean;
   managerName: string;
   onConfigureAgents(): void;
@@ -62,6 +64,7 @@ export function ProjectDispatchSettings({
             )}
           </p>
         </section>
+        {runtimeContent}
         {automationContent ? (
           <section
             className="mt-6 border-t border-border pt-5"

@@ -21,6 +21,7 @@ import { resetLocalExecutorStateForTests } from '@/desktop/localExecutor'
 import type { PluginMarketplaceItem, PluginPublicationRequestItem } from '@/types/api'
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
+import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
 
 const telemetryMocks = vi.hoisted(() => ({
   track: vi.fn(),
@@ -2772,6 +2773,41 @@ describe('PluginsWorkspace', () => {
     await waitFor(() =>
       expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('更新')
     )
+  })
+
+  test('does not transfer a pending manual reconciliation to a different account', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch()
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const reconcile = vi
+      .spyOn(refreshReconciliation, 'reconcilePluginRefresh')
+      .mockResolvedValue(undefined)
+    try {
+      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      let finish: (() => void) | undefined
+      let holdNext = true
+      vi.mocked(fetch).mockImplementation(async (...args) => {
+        if (holdNext && String(args[0]).includes('/plugins/marketplace')) {
+          holdNext = false
+          await new Promise<void>(resolve => {
+            finish = resolve
+          })
+        }
+        return originalFetch(...args)
+      })
+      await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+      await waitFor(() => expect(finish).toBeDefined())
+      view.rerender(
+        <PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="different-account-token" />
+      )
+      await act(async () => finish!())
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+      expect(reconcile).not.toHaveBeenCalled()
+    } finally {
+      reconcile.mockRestore()
+    }
   })
 
   test('automatically updates cloud plugins in bounded serial batches', async () => {

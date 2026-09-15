@@ -1459,6 +1459,26 @@ function ProjectSendProbe({
       <button
         type="button"
         onClick={() => {
+          const project =
+            workbench.state.currentProject ??
+            workbench.state.projects.find(candidate => candidate.id === 7)
+          if (!project) return
+          void workbench.createTemporaryRuntimeTask('临时侧边对话', {
+            project,
+            source: {
+              deviceId: 'device-1',
+              taskId: 'main-thread-task',
+              threadId: 'main-thread',
+              workspacePath: '/workspace/worktrees/main-thread',
+            },
+          })
+        }}
+      >
+        send temporary side chat
+      </button>
+      <button
+        type="button"
+        onClick={() => {
           const address = {
             deviceId: 'device-1',
             taskId: 'runtime-b',
@@ -6191,7 +6211,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     ).toEqual(['user:修复 CI'])
   })
 
-  test('keeps project sidebar chats in the main workspace when worktree mode is selected', async () => {
+  test('keeps sidebar chats out of new worktrees when worktree mode is selected', async () => {
     const prepareWorktree = vi.fn()
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
@@ -6260,6 +6280,25 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     )
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0].execution).toBeUndefined()
+    await userEvent.click(screen.getByText('send temporary side chat'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(2))
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[1][0]
+    expect(request).toEqual(
+      expect.objectContaining({
+        deviceId: 'device-1',
+        workspacePath: '/workspace/worktrees/main-thread',
+        message: '临时侧边对话',
+        ephemeral: true,
+        sideSource: expect.objectContaining({
+          deviceId: 'device-1',
+          taskId: 'main-thread-task',
+          threadId: 'main-thread',
+          workspacePath: '/workspace/worktrees/main-thread',
+        }),
+      })
+    )
+    expect(request.execution).toBeUndefined()
     expect(prepareWorktree).not.toHaveBeenCalled()
   })
 
@@ -6944,6 +6983,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         config: {
           weworkModelKind: 'model-interface',
           model_context_window: 1_000_000,
+          max_output_tokens: 384_000,
           ui: { family: 'model-interface', controls: ['collaborationMode'] },
         },
         runtime: { family: 'openai.openai-responses' },
@@ -7054,7 +7094,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     await waitFor(() =>
-      expect(screen.getByTestId('runtime-context-window')).toHaveTextContent('1000000')
+      expect(screen.getByTestId('runtime-context-window')).toHaveTextContent('616000')
     )
   })
 
@@ -13143,7 +13183,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('reconciles a completed Claude goal from the executor snapshot after the turn settles', async () => {
+  test('clears a missing Claude goal from the executor snapshot after the turn settles', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -13157,7 +13197,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
       .mockResolvedValue({
         accepted: true,
-        goal: createRuntimeGoal({ objective: '完成 Claude 目标', status: 'complete' }),
+        goal: null,
       })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(

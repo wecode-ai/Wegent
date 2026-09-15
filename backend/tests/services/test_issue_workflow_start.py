@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, ProjectAutomationRun
@@ -358,7 +359,7 @@ async def test_start_dispatches_ai_coordinator_once(
 
 
 @pytest.mark.asyncio
-async def test_start_keeps_ai_coordinator_waiting_for_issue_runtime_configuration(
+async def test_start_rejects_incomplete_ai_coordinator_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     process = AsyncMock(return_value=1)
@@ -378,14 +379,17 @@ async def test_start_keeps_ai_coordinator_waiting_for_issue_runtime_configuratio
         metadata_json={"workflow": snapshot},
     )
 
-    started = await issue_workflow_start_service.start(
-        SimpleNamespace(),
-        item=item,
-        project=SimpleNamespace(id=11, task_provider="local"),
-        user_id=7,
-    )
+    with pytest.raises(HTTPException) as error:
+        await issue_workflow_start_service.start(
+            SimpleNamespace(),
+            item=item,
+            project=SimpleNamespace(id=11, task_provider="local"),
+            user_id=7,
+        )
 
-    assert started == 0
+    assert error.value.status_code == 422
+    assert error.value.detail["missing_fields"] == ["model"]
+    assert "Project settings" in error.value.detail["message"]
     ensure_run.assert_not_called()
     process.assert_not_awaited()
 

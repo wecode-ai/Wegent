@@ -357,6 +357,8 @@ class PluginMarketplaceInstallResponse(BaseModel):
 class PluginDeviceSyncResponse(BaseModel):
     """Result of syncing account-installed plugins onto one device."""
 
+    reconciled: bool = False
+
     deviceId: str
     pendingCount: int = 0
     sync: DeviceCapabilitySyncResponse
