@@ -345,7 +345,7 @@ export class EmbeddedBrowserManager {
     const normalizedLabel = requiredLabel(label)
     const existing = this.entries.get(normalizedLabel)
     if (existing && existing.contents.id !== contents.id) {
-      this.close(normalizedLabel, existing.nativeLabel)
+      this.close(normalizedLabel, existing.nativeLabel, true)
     }
     const previous = this.attachedContents.get(normalizedLabel)
     if (previous && previous.id !== contents.id && !previous.isDestroyed()) previous.close()
@@ -707,24 +707,7 @@ export class EmbeddedBrowserManager {
 
   activeLabel(baseLabel: string): string {
     const normalizedBaseLabel = requiredLabel(baseLabel)
-    const activeLabel = this.activeTabs.get(normalizedBaseLabel)
-    if (activeLabel && (this.entries.has(activeLabel) || this.hasAttached(activeLabel))) {
-      return activeLabel
-    }
-    if (activeLabel) this.activeTabs.delete(normalizedBaseLabel)
-
-    const prefixes = [`${normalizedBaseLabel}:`, `${normalizedBaseLabel}-`]
-    const scopedEntries = [...this.entries.values()].filter(
-      entry =>
-        entry.label === normalizedBaseLabel ||
-        prefixes.some(prefix => entry.label.startsWith(prefix))
-    )
-    const fallbackEntry =
-      scopedEntries.find(entry => entry.visible) ??
-      (scopedEntries.length === 1 ? scopedEntries[0] : null)
-    if (!fallbackEntry) return normalizedBaseLabel
-    this.activeTabs.set(normalizedBaseLabel, fallbackEntry.label)
-    return fallbackEntry.label
+    return this.activeTabs.get(normalizedBaseLabel) ?? normalizedBaseLabel
   }
 
   has(label: string): boolean {
@@ -961,17 +944,34 @@ export class EmbeddedBrowserManager {
       label: normalizedLabel,
       nativeLabel: entry.nativeLabel,
     })
-    this.close(normalizedLabel, entry.nativeLabel)
+    this.close(normalizedLabel, entry.nativeLabel, true)
     await this.waitForAttachedContents(normalizedLabel)
   }
 
-  close(label: string, expectedNativeLabel?: string | null): void {
+  close(label: string, expectedNativeLabel?: string | null, preserveActiveRoute = false): void {
     const entry = this.entries.get(label)
     if (!entry) return
     if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
     this.entries.delete(label)
+    if (!preserveActiveRoute) this.remapActiveRoutes(label)
     this.clearLabelScopedState(label)
     if (!entry.contents.isDestroyed()) entry.contents.close()
+  }
+
+  private remapActiveRoutes(closedLabel: string): void {
+    for (const [baseLabel, activeLabel] of this.activeTabs) {
+      if (activeLabel !== closedLabel) continue
+      const prefixes = [`${baseLabel}:`, `${baseLabel}-`]
+      const scopedEntries = [...this.entries.values()].filter(
+        entry =>
+          entry.label === baseLabel || prefixes.some(prefix => entry.label.startsWith(prefix))
+      )
+      const replacement =
+        scopedEntries.find(entry => entry.visible) ??
+        (scopedEntries.length === 1 ? scopedEntries[0] : null)
+      if (replacement) this.activeTabs.set(baseLabel, replacement.label)
+      else this.activeTabs.delete(baseLabel)
+    }
   }
 
   private clearLabelScopedState(label: string): void {
