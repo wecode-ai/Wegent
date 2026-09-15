@@ -85,7 +85,6 @@ class FakeWebContents extends EventEmitter {
   })
   capturePage = vi.fn()
   reload = vi.fn()
-  reloadIgnoringCache = vi.fn()
   sendInputEvent = vi.fn()
   setWindowOpenHandler = vi.fn()
   setUserAgent = vi.fn((userAgent: string) => {
@@ -302,7 +301,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
-  test('preserves the attached webview across a logical bridge close', async () => {
+  test('waits for a replacement webview before completing a close request', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const events: BrowserHostEvent[] = []
     const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
@@ -319,11 +318,14 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       navigateExisting: true,
     })
 
-    await manager.clearData(['cache'])
-    manager.requestClose('workspace-browser')
+    let closeCompleted = false
+    const closeRequest = manager.requestClose('workspace-browser').then(() => {
+      closeCompleted = true
+    })
+    await Promise.resolve()
 
-    expect(manager.has('workspace-browser')).toBe(false)
-    expect(contents.close).not.toHaveBeenCalled()
+    expect(closeCompleted).toBe(false)
+    expect(contents.close).toHaveBeenCalledOnce()
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'close-request',
@@ -331,15 +333,11 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       })
     )
 
-    const reopened = await manager.open({
-      label: 'workspace-browser',
-      url: 'https://example.test/',
-      bounds: { x: 0, y: 0, width: 800, height: 600 },
-      visible: true,
-      navigateExisting: true,
-    })
-    expect(reopened.url).toBe('https://example.test/')
-    expect(contents.reloadIgnoringCache).toHaveBeenCalledOnce()
+    const replacement = new FakeWebContents()
+    manager.attach('workspace-browser', replacement as unknown as WebContents)
+    await closeRequest
+
+    expect(closeCompleted).toBe(true)
     await rm(directory, { recursive: true, force: true })
   })
 
@@ -861,6 +859,31 @@ describe('EmbeddedBrowserManager lifecycle', () => {
 
     contents.close()
     expect(manager.has(taskLabel)).toBe(false)
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('removes active tab routes that point to a closed browser', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    const firstTaskLabel = 'workspace-browser-task-1'
+    const secondTaskLabel = 'workspace-browser-task-2'
+    manager.attach(secondTaskLabel, contents as unknown as WebContents)
+    await manager.open({
+      label: secondTaskLabel,
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    manager.setActiveTab(firstTaskLabel, secondTaskLabel)
+
+    manager.close(secondTaskLabel)
+
+    expect(manager.activeLabel(firstTaskLabel)).toBe(firstTaskLabel)
     await rm(directory, { recursive: true, force: true })
   })
 

@@ -7279,6 +7279,20 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-browser-loading')).not.toBeInTheDocument()
   })
 
+  test('does not close an ordinary browser when its workbench surface is disposed', async () => {
+    runtimeMocks.electron = true
+    const { unmount } = renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    expect(screen.getByTestId('right-workspace-browser-tab-1')).toBeInTheDocument()
+    embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
+
+    unmount()
+
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
+  })
+
   test('adds browser pages from the right workspace new tab menu', async () => {
     renderWorkspacePanelLayout()
 

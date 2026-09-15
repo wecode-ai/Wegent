@@ -117,6 +117,7 @@ import type { BrowserAnnotationCommand } from '@/types/browser-annotation'
 import { browserAnnotationStateToContexts } from '@/lib/browser-annotation-context'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
+import { resetElectronEmbeddedBrowserView } from './electronEmbeddedBrowserHost'
 
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
 const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
@@ -727,6 +728,7 @@ export function WorkspaceBrowserTabPanel({
         '[Wework] Embedded browser close consumed',
         JSON.stringify({ label: event.label, nativeLabel: event.nativeLabel })
       )
+      resetElectronEmbeddedBrowserView(event.label)
       nativeBrowserOpenRef.current = false
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
@@ -2925,20 +2927,19 @@ export function WorkspaceBrowserTabPanel({
             className="h-full w-full border-0 bg-background"
           />
         )}
-        {embeddedBrowserAvailable && (currentUrl || electronRuntime) && (
+        {currentUrl && embeddedBrowserAvailable && (
           <div
             ref={browserHostRef}
-            data-testid={currentUrl ? 'workspace-browser-native-view' : undefined}
+            data-testid="workspace-browser-native-view"
             className={cn(
-              'absolute inset-0 min-h-0 w-full overflow-hidden',
-              deviceToolbar.isEnabled ? 'bg-neutral-700' : 'bg-background',
-              !currentUrl && 'invisible pointer-events-none'
+              'relative h-full min-h-0 w-full overflow-hidden',
+              deviceToolbar.isEnabled ? 'bg-neutral-700' : 'bg-background'
             )}
             aria-label={t('workbench.browser')}
           >
             {electronRuntime ? (
               <ElectronEmbeddedBrowserView
-                active={Boolean(currentUrl) && active}
+                active={active}
                 cursor={agentCursor}
                 cursorScale={
                   deviceToolbar.isEnabled
