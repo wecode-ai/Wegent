@@ -857,10 +857,30 @@ fn home_dir() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use std::process::Command as StdCommand;
+    use std::process::{Command as StdCommand, Output};
 
     use super::*;
     use serde_json::json;
+
+    fn run_test_git(command: &mut StdCommand) -> Output {
+        command
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .output()
+            .unwrap()
+    }
+
+    fn assert_test_git_success(description: &str, command: &mut StdCommand) {
+        let output = run_test_git(command);
+        assert!(
+            output.status.success(),
+            "{description} failed with status {}:\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
 
     fn create_local_repository(
         root: &Path,
@@ -870,24 +890,21 @@ mod tests {
     ) -> PathBuf {
         let repository = root.join(name);
         fs::create_dir_all(&repository).unwrap();
-        assert!(StdCommand::new("git")
-            .arg("init")
-            .arg(&repository)
-            .status()
-            .unwrap()
-            .success());
+        assert_test_git_success(
+            "git init",
+            StdCommand::new("git").arg("init").arg(&repository),
+        );
         fs::write(repository.join(file_name), contents).unwrap();
-        assert!(StdCommand::new("git")
-            .arg("-C")
-            .arg(&repository)
-            .args(["add", "."])
-            .status()
-            .unwrap()
-            .success());
-        assert!(StdCommand::new("git")
-            .arg("-C")
-            .arg(&repository)
-            .args([
+        assert_test_git_success(
+            "git add",
+            StdCommand::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(["add", "."]),
+        );
+        assert_test_git_success(
+            "git commit",
+            StdCommand::new("git").arg("-C").arg(&repository).args([
                 "-c",
                 "user.name=Wegent Test",
                 "-c",
@@ -895,10 +912,8 @@ mod tests {
                 "commit",
                 "-m",
                 "initial",
-            ])
-            .status()
-            .unwrap()
-            .success());
+            ]),
+        );
         repository
     }
 
