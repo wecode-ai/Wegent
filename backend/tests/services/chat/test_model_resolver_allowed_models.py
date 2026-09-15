@@ -17,7 +17,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.services.chat.config.model_resolver import _resolve_model_for_bot
+from app.services.chat.config.model_resolver import (
+    _resolve_model_for_bot,
+    allowed_model_names_for_bot,
+    allowed_model_names_for_team,
+)
+from app.services.readers import kindReader
 
 
 def _make_bot(agent_config: dict) -> MagicMock:
@@ -314,3 +319,186 @@ class TestAllowedModelsWithWhitelist:
                 override_model_name="gpt-4o",
                 force_override=True,
             )
+
+    def test_model_not_in_agent_config_bound_model_whitelist_raises(self):
+        """A whitelist carried by the agent_config bound model must be enforced."""
+        bot = _make_bot({"bind_model": "pointer-model"})
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace"
+        ) as mock_find:
+            mock_find.return_value = (
+                MagicMock(),
+                {"modelConfig": {"allowed_models": [{"name": "gpt-4o"}]}},
+            )
+            with pytest.raises(ValueError) as exc_info:
+                _resolve_model_for_bot(
+                    db=MagicMock(),
+                    bot=bot,
+                    user_id=1,
+                    override_model_name="forbidden-model",
+                    force_override=True,
+                )
+
+        assert "forbidden-model" in str(exc_info.value)
+        assert "test-bot" in str(exc_info.value)
+
+
+def _make_team(bot_names: list[str]) -> MagicMock:
+    """Create a mock Team Kind object referencing the given bots."""
+    team = MagicMock()
+    team.user_id = 7
+    team.json = {
+        "apiVersion": "agent.wecode.io/v1",
+        "kind": "Team",
+        "metadata": {"name": "test-team", "namespace": "default"},
+        "spec": {
+            "members": [
+                {
+                    "botRef": {"name": name, "namespace": "default"},
+                    "role": "worker",
+                }
+                for name in bot_names
+            ],
+            "collaborationModel": "solo",
+        },
+    }
+    return team
+
+
+class TestAllowedModelNamesForBot:
+    """Tests for the shared allowed_models resolution helper."""
+
+    def test_returns_none_without_whitelist(self):
+        """A bot without allowed_models does not restrict any model."""
+        bot = _make_bot({"bind_model": "gpt-4o"})
+
+        assert allowed_model_names_for_bot(MagicMock(), bot, 1) is None
+
+    def test_returns_names_from_agent_config(self):
+        """The bot's own allowed_models whitelist is returned as a name set."""
+        bot = _make_bot(
+            {
+                "bind_model": "gpt-4o",
+                "allowed_models": [
+                    {"name": "gpt-4o", "type": "public", "namespace": "default"},
+                    {"name": "claude-3-5-sonnet", "type": "user"},
+                ],
+            }
+        )
+
+        assert allowed_model_names_for_bot(MagicMock(), bot, 1) == {
+            "gpt-4o",
+            "claude-3-5-sonnet",
+        }
+
+    def test_falls_back_to_bound_model_whitelist(self):
+        """A Bot that binds a whitelist-only Model must still restrict models."""
+        bot = _make_bot({"bind_model": "pointer-model"})
+        bot.json["spec"]["modelRef"] = {
+            "name": "pointer-model",
+            "namespace": "default",
+        }
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace"
+        ) as mock_find:
+            mock_find.return_value = (
+                MagicMock(),
+                {"modelConfig": {"allowed_models": [{"name": "gpt-4o"}]}},
+            )
+            allowed_names = allowed_model_names_for_bot(MagicMock(), bot, 1)
+
+        assert allowed_names == {"gpt-4o"}
+
+    def test_falls_back_to_agent_config_bound_model_whitelist(self):
+        """The agent_config bound model is read before the legacy modelRef."""
+        db = MagicMock()
+        bot = _make_bot({"bind_model": "pointer-model"})
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace"
+        ) as mock_find:
+            mock_find.return_value = (
+                MagicMock(),
+                {"modelConfig": {"allowed_models": [{"name": "gpt-4o"}]}},
+            )
+            allowed_names = allowed_model_names_for_bot(db, bot, 1)
+
+        assert allowed_names == {"gpt-4o"}
+        mock_find.assert_called_once_with(db, "pointer-model", 1)
+
+    def test_prefers_bind_model_whitelist_over_model_ref(self):
+        """The bound model of the bot wins over the legacy modelRef reference."""
+        db = MagicMock()
+        bot = _make_bot({"bind_model": "bind-model"})
+        bot.json["spec"]["modelRef"] = {"name": "legacy-model", "namespace": "default"}
+
+        def _fake_find(_db, model_name, _user_id):
+            if model_name == "bind-model":
+                return MagicMock(), {
+                    "modelConfig": {"allowed_models": [{"name": "bind-model"}]}
+                }
+            return MagicMock(), {
+                "modelConfig": {"allowed_models": [{"name": "legacy-model"}]}
+            }
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            side_effect=_fake_find,
+        ) as mock_find:
+            allowed_names = allowed_model_names_for_bot(db, bot, 1)
+
+        assert allowed_names == {"bind-model"}
+        mock_find.assert_called_once_with(db, "bind-model", 1)
+
+    def test_malformed_entries_return_empty_set(self):
+        """Malformed whitelist entries keep the restriction but allow nothing."""
+        bot = _make_bot({"allowed_models": ["not-a-dict", None]})
+
+        assert allowed_model_names_for_bot(MagicMock(), bot, 1) == set()
+
+    def test_unrestricted_bot_entries_ignored(self):
+        """Non-list allowed_models values do not restrict models."""
+        bot = _make_bot({"allowed_models": {"name": "gpt-4o"}})
+
+        assert allowed_model_names_for_bot(MagicMock(), bot, 1) is None
+
+
+class TestAllowedModelNamesForTeam:
+    """Tests for team-level model restriction aggregation."""
+
+    def test_returns_none_when_no_bot_restricts_models(self):
+        """A team of unrestricted bots allows every model."""
+        team = _make_team(["bot-a"])
+
+        with patch.object(
+            kindReader,
+            "get_by_name_and_namespace",
+            return_value=_make_bot({"bind_model": "gpt-4o"}),
+        ):
+            assert allowed_model_names_for_team(MagicMock(), team, 1) is None
+
+    def test_intersects_bot_whitelists(self):
+        """A model override must satisfy every restricted bot of the team."""
+        team = _make_team(["bot-a", "bot-b"])
+        bots = [
+            _make_bot({"allowed_models": [{"name": "gpt-4o"}, {"name": "o3"}]}),
+            _make_bot({"allowed_models": [{"name": "gpt-4o"}]}),
+        ]
+
+        with patch.object(
+            kindReader,
+            "get_by_name_and_namespace",
+            side_effect=bots,
+        ):
+            allowed_names = allowed_model_names_for_team(MagicMock(), team, 1)
+
+        assert allowed_names == {"gpt-4o"}
+
+    def test_ignores_team_without_json(self):
+        """Teams without parseable JSON metadata cannot be evaluated."""
+        team = MagicMock()
+        team.json = None
+
+        assert allowed_model_names_for_team(MagicMock(), team, 1) is None
