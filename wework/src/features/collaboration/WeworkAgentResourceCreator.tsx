@@ -94,6 +94,10 @@ export function WeworkAgentResourceCreator({
       setError(t('workbench.agent_creator_name_required', '请输入资源名称'))
       return
     }
+    if (!selectedModel) {
+      setError(t('workbench.agent_creator_model_required', '请选择模型'))
+      return
+    }
 
     let mcpServers: Record<string, unknown>
     try {
@@ -111,13 +115,11 @@ export function WeworkAgentResourceCreator({
         displayName,
         namespace,
         runtime,
-        model: selectedModel
-          ? {
-              name: selectedModel.name,
-              type: selectedModel.type,
-              namespace: selectedModel.namespace,
-            }
-          : undefined,
+        model: {
+          name: selectedModel.name,
+          type: selectedModel.type,
+          namespace: selectedModel.namespace,
+        },
         systemPrompt,
         skills: availableSkills
           .filter(skill => selectedSkillSet.has(skill.id))
@@ -251,8 +253,8 @@ export function WeworkAgentResourceCreator({
                 onChange={event => setSelectedModelIndex(event.target.value)}
                 value={selectedModelIndex}
               >
-                <option value="">
-                  {t('workbench.agent_creator_runtime_default_model', '使用运行时默认模型')}
+                <option disabled value="">
+                  {t('workbench.agent_creator_model_placeholder', '请选择模型')}
                 </option>
                 {models.map((model, index) => (
                   <option
@@ -366,7 +368,7 @@ export function WeworkAgentResourceCreator({
             </Button>
             <Button
               data-testid="wework-agent-resource-create"
-              disabled={saving}
+              disabled={saving || loadingCapabilities || !selectedModel}
               onClick={() => void createAgent()}
               type="button"
               variant="primary"

@@ -135,6 +135,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
 
     await waitFor(() => expect(screen.getByText('Codex Review')).toBeInTheDocument())
     expect(screen.queryByText('Claude Review')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-agent-resource-create')).toBeDisabled()
 
     fireEvent.change(screen.getByTestId('wework-agent-runtime'), {
       target: { value: 'ClaudeCode' },
@@ -151,6 +152,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
     fireEvent.change(screen.getByTestId('wework-agent-model'), {
       target: { value: '0' },
     })
+    expect(screen.getByTestId('wework-agent-resource-create')).toBeEnabled()
     fireEvent.click(screen.getByTestId('wework-agent-skill-8'))
     fireEvent.change(screen.getByTestId('wework-agent-system-prompt'), {
       target: { value: 'Review the implementation.' },

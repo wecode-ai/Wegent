@@ -86,10 +86,10 @@ async function createGroup(control, { name, leader }) {
   })
 }
 
-async function createAgentGroup(control, { name, agentId }) {
+async function createAgentGroup(control, { name, agentResourceId }) {
   await createGroup(control, {
     name,
-    leader: `agent:${agentId}`,
+    leader: `agent:${agentResourceId}`,
   })
 }
 
@@ -306,17 +306,26 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('select', '[data-testid="wework-agent-runtime"]', {
           value: 'Codex',
         })
+        const modelCatalog = await request(
+          '/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
+        )
+        const selectableModels = (modelCatalog.data ?? []).filter(
+          model => model.isActive !== false && !model.compatibilityDisabled
+        )
+        assert.ok(
+          selectableModels.length > 0,
+          'No executable model is available for Agent creation'
+        )
+        await control.command('select', '[data-testid="wework-agent-model"]', {
+          value: '0',
+        })
         await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
           value: '负责 Issue 分解、委派与交付验收。按项目约束完成任务并给出可验证证据。',
         })
         await control.command('fill', '[data-testid="wework-agent-mcp"]', { value: '{}' })
-        await control.command(
-          'clickWhenEnabled',
-          '[data-testid="wework-agent-resource-create"]',
-          {
-            timeoutMs: uiTimeoutMs,
-          }
-        )
+        await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
+          timeoutMs: uiTimeoutMs,
+        })
         const projectAgent = await waitForApiValue(
           () => request(`/api/v1/cloud-projects/${project.id}/chat-agents`),
           response => response.find(candidate => candidate.name === PROJECT_AGENT_NAME) ?? null,
@@ -353,7 +362,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
         await createAgentGroup(control, {
           name: PROJECT_GROUP_NAME,
-          agentId: projectAgent.id,
+          agentResourceId: projectAgent.wegentTeamId,
         })
         const projectGroup = await waitForApiValue(
           () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),
@@ -364,7 +373,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         )
         assert.equal(projectGroup.owner_type, 'project')
         assert.equal(projectGroup.leader.kind, 'agent')
-        assert.equal(projectGroup.leader.id, String(projectAgent.id))
+        assert.equal(projectGroup.leader.id, String(projectAgent.wegentTeamId))
         await control.command(
           'waitFor',
           scoped(`[data-testid="collaboration-group-detail-${projectGroup.id}"]`),

@@ -15,7 +15,7 @@ export interface UnifiedAgentSpec {
   displayName: string
   namespace: string
   runtime: UnifiedAgentRuntime
-  model?: {
+  model: {
     name: string
     type?: ModelType
     namespace?: string
@@ -37,7 +37,6 @@ export interface CreatedAgentResource {
 }
 
 function agentConfig(spec: UnifiedAgentSpec): Record<string, unknown> {
-  if (!spec.model?.name.trim()) return {}
   return {
     bind_model: spec.model.name,
     ...(spec.model.type ? { bind_model_type: spec.model.type } : {}),

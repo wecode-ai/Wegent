@@ -21,6 +21,11 @@ describe('createAgentResourceApi', () => {
       displayName: 'Review Agent',
       namespace: 'workspace-alpha',
       runtime: 'ClaudeCode',
+      model: {
+        name: 'claude-sonnet',
+        type: 'public',
+        namespace: 'default',
+      },
       systemPrompt: 'Review the implementation.',
       skills: [
         {
@@ -41,7 +46,10 @@ describe('createAgentResourceApi', () => {
     expect(client.post).toHaveBeenNthCalledWith(1, '/bots', {
       name: 'review-agent-bot',
       shell_name: 'ClaudeCode',
-      agent_config: {},
+      agent_config: {
+        bind_model: 'claude-sonnet',
+        bind_model_type: 'public',
+      },
       system_prompt: 'Review the implementation.',
       mcp_servers: {
         browser: {

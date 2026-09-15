@@ -512,10 +512,10 @@ function CollaborationPlatformNavigation({
             type="button"
             aria-label={messages.createWorkspace}
             title={messages.createWorkspace}
-            data-testid="collaboration-workspace-sidebar-create"
+            data-testid="collaboration-workspace-create"
             onClick={onCreateWorkspace}
           >
-            <span data-testid="collaboration-workspace-create">
+            <span data-testid="collaboration-workspace-sidebar-create">
               <FolderPlus aria-hidden="true" />
             </span>
           </button>
