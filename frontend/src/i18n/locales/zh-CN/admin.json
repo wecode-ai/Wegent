@@ -1439,7 +1439,7 @@
       "chat_team": "Chat 智能体",
       "task_team": "Task 智能体",
       "task_team_placeholder": "选择 ClaudeCode 智能体",
-      "task_team_help": "用于 /task、云端执行和设备执行；智能体中的所有机器人必须使用 ClaudeCode。",
+      "task_team_help": "用于 /task 和设备执行；智能体中的所有机器人必须使用 ClaudeCode。云端公共模式使用 Chat 智能体。",
       "default_model": "Chat 默认模型",
       "default_model_placeholder": "选择 Chat 默认模型",
       "no_default_model": "跟随 Chat 智能体",

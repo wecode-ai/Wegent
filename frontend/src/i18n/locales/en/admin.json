@@ -1439,7 +1439,7 @@
       "chat_team": "Chat Agent",
       "task_team": "Task Agent",
       "task_team_placeholder": "Select a ClaudeCode agent",
-      "task_team_help": "Used by /task, cloud execution, and device execution. Every bot in this agent must use ClaudeCode.",
+      "task_team_help": "Used by /task and device execution. Every bot in this agent must use ClaudeCode. Managed cloud mode uses the Chat Agent.",
       "default_model": "Default Chat Model",
       "default_model_placeholder": "Select default Chat model",
       "no_default_model": "Follow the Chat agent",

@@ -96,16 +96,16 @@ sidebar_position: 2
 3. 点击 **添加渠道**
 4. 填写配置：
 
-| 字段              | 描述                             | 示例                   |
-| ----------------- | -------------------------------- | ---------------------- |
-| **通道名称**      | 此通道的显示名称                 | "钉钉机器人"           |
-| **通道类型**      | 选择平台                         | 钉钉                   |
-| **Client ID**     | 来自步骤 3                       | `dingxxxxxxxx`         |
-| **Client Secret** | 来自步骤 3                       | `xxxxxxxxxxxxxxxx`     |
-| **Chat 智能体**   | 处理 `/chat` 和 `/use chat` 对话 | 从列表中选择           |
-| **Task 智能体**   | 处理 `/task`、云端执行和设备执行 | 选择 ClaudeCode 智能体 |
-| **Chat 默认模型** | 覆盖 Chat 模型（可选）           | 留空跟随 Chat 智能体   |
-| **启用 AI 卡片**  | 使用流式 AI 卡片                 | ✅ 推荐启用            |
+| 字段              | 描述                                     | 示例                   |
+| ----------------- | ---------------------------------------- | ---------------------- |
+| **通道名称**      | 此通道的显示名称                         | "钉钉机器人"           |
+| **通道类型**      | 选择平台                                 | 钉钉                   |
+| **Client ID**     | 来自步骤 3                               | `dingxxxxxxxx`         |
+| **Client Secret** | 来自步骤 3                               | `xxxxxxxxxxxxxxxx`     |
+| **Chat 智能体**   | 处理 `/chat`、`/use chat` 和云端公共模式 | 从列表中选择           |
+| **Task 智能体**   | 处理 `/task` 和设备执行                  | 选择 ClaudeCode 智能体 |
+| **Chat 默认模型** | 覆盖 Chat 模型（可选）                   | 留空跟随 Chat 智能体   |
+| **启用 AI 卡片**  | 使用流式 AI 卡片                         | ✅ 推荐启用            |
 
 5. 点击 **保存** 创建通道
 6. 切换 **启用** 开关激活通道
@@ -163,7 +163,8 @@ sidebar_position: 2
 - `/status` 查看当前 Chat 智能体、下一新 Task 智能体、当前绑定 Task 智能体、执行模式和模型。
 - `/agents`、`/models`、`/devices` 和私聊 `/switch` 使用文本列表完成选择；命令可直接携带编号或名称。
 - Chat 与 Task 分别保存智能体和模型选择；Task 只列出 Claude 模型，也可以选择“跟随 Task 智能体”。
-- `/task`、`/use cloud` 和 `/use device` 始终使用 Task 智能体，该智能体中的所有机器人都必须使用 ClaudeCode；`/chat` 和 `/use chat` 使用 Chat 智能体。
+- `/chat`、`/use chat` 和 `/use cloud` 使用 Chat 智能体及其模型选择；`/use cloud` 对应页面的云端公共执行目标，并允许使用 OpenAI 模型。
+- `/task` 和 `/use device` 使用 Task 智能体，该智能体中的所有机器人都必须使用 ClaudeCode。
 - 切换智能体不会修改已创建 Task；Task 模式下会解除当前绑定，下一条消息进入新 Task 创建流程，用户仍可通过 `/switch` 返回旧 Task。
 
 ---

@@ -96,16 +96,16 @@ Enable the following permissions for your application:
 3. Click **Add Channel**
 4. Fill in the configuration:
 
-| Field                  | Description                                            | Example                          |
-| ---------------------- | ------------------------------------------------------ | -------------------------------- |
-| **Channel Name**       | Display name for this channel                          | "DingTalk Bot"                   |
-| **Channel Type**       | Select platform                                        | DingTalk                         |
-| **Client ID**          | From Step 3                                            | `dingxxxxxxxx`                   |
-| **Client Secret**      | From Step 3                                            | `xxxxxxxxxxxxxxxx`               |
-| **Chat Agent**         | Handles `/chat` and `/use chat`                        | Select from list                 |
-| **Task Agent**         | Handles `/task`, cloud execution, and device execution | Select a ClaudeCode agent        |
-| **Default Chat Model** | Optional Chat model override                           | Leave empty to follow Chat Agent |
-| **Enable AI Card**     | Use streaming AI Card                                  | ✅ Recommended                   |
+| Field                  | Description                                          | Example                          |
+| ---------------------- | ---------------------------------------------------- | -------------------------------- |
+| **Channel Name**       | Display name for this channel                        | "DingTalk Bot"                   |
+| **Channel Type**       | Select platform                                      | DingTalk                         |
+| **Client ID**          | From Step 3                                          | `dingxxxxxxxx`                   |
+| **Client Secret**      | From Step 3                                          | `xxxxxxxxxxxxxxxx`               |
+| **Chat Agent**         | Handles `/chat`, `/use chat`, and managed cloud mode | Select from list                 |
+| **Task Agent**         | Handles `/task` and device execution                 | Select a ClaudeCode agent        |
+| **Default Chat Model** | Optional Chat model override                         | Leave empty to follow Chat Agent |
+| **Enable AI Card**     | Use streaming AI Card                                | ✅ Recommended                   |
 
 5. Click **Save** to create the channel
 6. Toggle **Enable** to activate the channel
@@ -163,7 +163,8 @@ DingTalk AI Cards provide a rich streaming response experience:
 - `/status` shows the current Chat Agent, next-new-Task Agent, Agent bound to the current Task, execution mode, and model.
 - `/agents`, `/models`, `/devices`, and direct-message `/switch` use text lists; commands can include an option number or name.
 - Chat and Task keep separate Agent and model selections. Task lists only Claude models and also offers “Follow Task Agent”.
-- `/task`, `/use cloud`, and `/use device` always use the Task Agent, whose Bots must all use ClaudeCode. `/chat` and `/use chat` use the Chat Agent.
+- `/chat`, `/use chat`, and `/use cloud` use the Chat Agent and its model selection. `/use cloud` maps to the managed cloud execution target in the web UI and permits OpenAI models.
+- `/task` and `/use device` use the Task Agent, whose Bots must all use ClaudeCode.
 - Selecting an agent never mutates an existing Task. In Task mode it detaches the current binding, so the next message enters the new-Task flow; `/switch` can bind the old Task again.
 
 ---

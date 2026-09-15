@@ -149,6 +149,13 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             user_id=user_id,
         )
 
+    def _cloud_mode_profile(self) -> str:
+        """Use Chat selections for managed cloud execution in DingTalk."""
+
+        from app.services.channels.selection_scope import CHAT_PROFILE
+
+        return CHAT_PROFILE
+
     def _get_task_mode_team(self, db: Session, user_id: int) -> Optional[Kind]:
         """Prefer this DingTalk channel's Task Team, then the global fallback."""
 

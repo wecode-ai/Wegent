@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -429,7 +429,7 @@ async def test_conversation_task_cache_isolated_by_actor_scope(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_device_mode_uses_task_selection_profile(monkeypatch) -> None:
+async def test_cloud_mode_uses_chat_selection_profile(monkeypatch) -> None:
     handler = DingTalkChannelHandler(channel_id=77)
     monkeypatch.setattr(
         "app.services.channels.handler.device_selection_manager.get_selection",
@@ -442,7 +442,85 @@ async def test_device_mode_uses_task_selection_profile(monkeypatch) -> None:
         SimpleNamespace(mode=IMSessionMode.CHAT),
     )
 
+    assert profile == "chat"
+
+
+@pytest.mark.asyncio
+async def test_device_mode_uses_task_selection_profile(monkeypatch) -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    monkeypatch.setattr(
+        "app.services.channels.handler.device_selection_manager.get_selection",
+        AsyncMock(return_value=DeviceSelection(device_type=DeviceType.LOCAL)),
+    )
+
+    profile = await handler._selection_profile(
+        SimpleNamespace(id=7),
+        _message_context(),
+        SimpleNamespace(mode=IMSessionMode.CHAT),
+    )
+
     assert profile == "task"
+
+
+@pytest.mark.asyncio
+async def test_cloud_mode_resolves_chat_agent() -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    chat_team = SimpleNamespace(id=11)
+    db = object()
+    handler._get_selected_or_default_team = AsyncMock(return_value=chat_team)
+    handler._resolve_new_task_team = AsyncMock()
+    message_context = _message_context()
+
+    team = await handler._resolve_cloud_mode_team(db, 7, message_context)
+
+    assert team is chat_team
+    handler._get_selected_or_default_team.assert_awaited_once_with(
+        db, 7, message_context
+    )
+    handler._resolve_new_task_team.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cloud_mode_accepts_chat_profile_openai_model() -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    user = SimpleNamespace(id=7)
+    team = SimpleNamespace(id=11)
+    db = MagicMock()
+    message_context = _message_context()
+    result = SimpleNamespace(
+        task=SimpleNamespace(id=41),
+        user_subtask=SimpleNamespace(id=42),
+        assistant_subtask=SimpleNamespace(id=43),
+    )
+    handler._get_user_model_override = AsyncMock(return_value=("openai-gpt", "public"))
+    handler._is_claude_compatible_override = AsyncMock(return_value=False)
+    handler._get_conversation_task_id = AsyncMock(return_value=(None, False))
+    handler._set_conversation_task_id = AsyncMock()
+    handler._broadcast_user_message_to_web = AsyncMock()
+    handler.create_streaming_emitter = AsyncMock(return_value=None)
+
+    with (
+        patch(
+            "app.services.chat.storage.task_manager.create_task_and_subtasks",
+            new=AsyncMock(return_value=result),
+        ) as create_task,
+        patch("app.services.execution.schedule_dispatch") as schedule_dispatch,
+    ):
+        response = await handler._create_and_process_cloud_task(
+            db=db,
+            user=user,
+            team=team,
+            message_context=message_context,
+        )
+
+    assert response is not None
+    assert "任务已提交到云端执行队列" in response
+    handler._is_claude_compatible_override.assert_not_awaited()
+    params = create_task.await_args.kwargs["params"]
+    assert params.task_type == "chat"
+    assert params.model_id == "openai-gpt"
+    assert params.force_override_bot_model is True
+    schedule_dispatch.assert_called_once_with(41)
 
 
 @pytest.mark.asyncio

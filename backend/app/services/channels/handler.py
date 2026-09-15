@@ -225,7 +225,18 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             user.id,
             scope=self._selection_scope(user.id, message_context),
         )
-        return TASK_PROFILE if device.device_type != DeviceType.CHAT else CHAT_PROFILE
+        if device.device_type == DeviceType.LOCAL:
+            return TASK_PROFILE
+        if device.device_type == DeviceType.CLOUD:
+            return self._cloud_mode_profile()
+        return CHAT_PROFILE
+
+    def _cloud_mode_profile(self) -> str:
+        """Return the model and agent selection profile used by cloud mode."""
+
+        from app.services.channels.selection_scope import TASK_PROFILE
+
+        return TASK_PROFILE
 
     def _profile_scope(
         self,
@@ -647,6 +658,22 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         del message_context
         return self._get_task_mode_team(db, user_id)
+
+    async def _resolve_cloud_mode_team(
+        self,
+        db: Session,
+        user_id: int,
+        message_context: MessageContext,
+    ) -> Optional[Kind]:
+        """Resolve the Team used by the provider's cloud execution mode."""
+
+        from app.services.channels.selection_scope import CHAT_PROFILE
+
+        if self._cloud_mode_profile() == CHAT_PROFILE:
+            return await self._get_selected_or_default_team(
+                db, user_id, message_context
+            )
+        return await self._resolve_new_task_team(db, user_id, message_context)
 
     async def _get_selected_or_default_team(
         self,
@@ -1889,7 +1916,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 user=user,
                 message_context=message_context,
             )
-            model_name = await get_model_display(TASK_PROFILE)
+            model_name = await get_model_display(self._cloud_mode_profile())
             await self.send_text_reply(
                 message_context,
                 f"✅ 已切换到**云端执行模式**\n\n"
@@ -2684,7 +2711,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Use short-lived db session for database operations
         db = SessionLocal()
         try:
-            team = await self._resolve_new_task_team(db, user.id, message_context)
+            team = await self._resolve_cloud_mode_team(db, user.id, message_context)
             if not team:
                 await self.send_text_reply(
                     message_context, "配置错误: 未配置默认智能体"
@@ -3408,20 +3435,23 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         display_text = self._get_display_text(message_context)
 
         # Get user's model selection
-        from app.services.channels.selection_scope import TASK_PROFILE
+        from app.services.channels.selection_scope import CHAT_PROFILE, TASK_PROFILE
 
-        task_scope = self._profile_scope(user.id, message_context, TASK_PROFILE)
+        cloud_profile = self._cloud_mode_profile()
+        model_scope = self._profile_scope(user.id, message_context, cloud_profile)
         conversation_scope = self._selection_scope(user.id, message_context)
         override_model_name, override_model_type = await self._get_user_model_override(
             user.id,
-            scope=task_scope,
-            include_channel_default=self._channel_type != ChannelType.DINGTALK,
+            scope=model_scope,
+            include_channel_default=(
+                cloud_profile == CHAT_PROFILE
+                or self._channel_type != ChannelType.DINGTALK
+            ),
         )
 
-        # Cloud executor runs Claude Code, which only accepts Claude models.
-        # Reject an incompatible override up front; otherwise the task fails deep
-        # inside the executor with a card that shows no content.
-        if override_model_name:
+        # Task-profile cloud execution uses Claude Code. Reject an incompatible
+        # override before dispatch; Chat-profile cloud execution follows its Agent.
+        if cloud_profile == TASK_PROFILE and override_model_name:
             compatible = await self._is_claude_compatible_override(
                 db, user, override_model_name
             )
@@ -3441,7 +3471,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 else f"{self._channel_type.value}: {display_text}"
             ),
             is_group_chat=False,
-            task_type="task",
+            task_type="chat" if cloud_profile == CHAT_PROFILE else "task",
             force_override_bot_model=override_model_name is not None,
             force_override_bot_model_type=override_model_type,
             model_id=override_model_name,
@@ -3522,11 +3552,16 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # open so that streaming events from the executor can update it.
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
+            shell_type = "ClaudeCode"
+            if cloud_profile == CHAT_PROFILE:
+                from app.services.chat.config import get_team_first_bot_shell_type
+
+                shell_type = get_team_first_bot_shell_type(db, team) or "Chat"
             self._prepare_streaming_emitter(result.task.id, streaming_emitter)
             await streaming_emitter.emit_start(
                 task_id=result.task.id,
                 subtask_id=result.assistant_subtask.id,
-                shell_type="ClaudeCode",
+                shell_type=shell_type,
             )
             await self._emit_initial_stream_content(
                 streaming_emitter,
