@@ -850,7 +850,7 @@ async function createAuxiliaryWindow(
       popoutWindow = auxiliaryWindow
       readinessPromise = waitForRendererSelector(
         auxiliaryWindow.webContents,
-        '[data-testid="popout-workbench-page"]'
+        '[data-testid="popout-workbench-page"] [data-testid="chat-message-input"]'
       )
       popoutWindowReadyPromise = readinessPromise
       void readinessPromise.catch(error => {
@@ -885,7 +885,7 @@ async function showSystemDragPanel(): Promise<void> {
   target.moveTop()
 }
 
-async function showPopoutWindow(): Promise<void> {
+async function showPopoutWindow(activation: 'focus' | 'inactive' = 'focus'): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
   await popoutWindowReadyPromise
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
@@ -893,7 +893,8 @@ async function showPopoutWindow(): Promise<void> {
     Math.round(display.workArea.x + (display.workArea.width - 470) / 2),
     Math.round(display.workArea.y + (display.workArea.height - 112) / 2)
   )
-  presentWindow(target)
+  if (activation === 'inactive' && process.platform === 'darwin' && app.isHidden()) app.show()
+  presentWindow(target, activation)
 }
 
 function resolvePopoutShortcut(preferenceRecord: Record<string, unknown>): string | null {
@@ -1574,7 +1575,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           completeSystemDragDrop: async payload => {
             pendingSystemDrops.push(payload)
-            await showPopoutWindow()
+            await showPopoutWindow('inactive')
           },
           dismissPopout: () => popoutWindow?.hide(),
           dismissSystemDragPanel: () => systemDragWindow?.hide(),
