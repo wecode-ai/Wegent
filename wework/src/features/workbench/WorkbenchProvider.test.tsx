@@ -11779,6 +11779,121 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('browser-annotation-command')).toHaveTextContent('1:send_success')
   })
 
+  test('clears browser annotations when a busy follow-up is queued or sent as guidance', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    const guideRuntimeTask = vi.fn().mockResolvedValue({
+      accepted: true,
+      success: true,
+      taskId: 'runtime-a',
+      guidanceId: 'browser-annotation-guidance',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: true,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [
+          { id: 'runtime-a:user:1', role: 'user', content: 'first message' },
+          {
+            id: 'runtime-a:assistant:1',
+            role: 'assistant',
+            content: 'working',
+            status: 'streaming',
+          },
+        ],
+      }),
+      sendRuntimeMessage,
+      guideRuntimeTask,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: { subscribe } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Chat',
+        deviceId: 'device-1',
+      })
+    })
+
+    await userEvent.click(screen.getByTestId('follow-up-add-browser-annotation'))
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:')
+    expect(screen.getByTestId('code-comment-context-count')).toHaveTextContent('0')
+    expect(screen.getByTestId('browser-annotation-command')).toHaveTextContent('1:send_success')
+
+    await userEvent.click(screen.getByTestId('follow-up-add-browser-annotation'))
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByTestId('capture-idle-follow-up-send'))
+    await userEvent.click(screen.getByText('send follow-up as guidance'))
+
+    await waitFor(() => expect(guideRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(guideRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('Use a clearer label'),
+      })
+    )
+    expect(screen.getByTestId('code-comment-context-count')).toHaveTextContent('0')
+    expect(screen.getByTestId('browser-annotation-command')).toHaveTextContent('2:send_success')
+    expect(sendRuntimeMessage).not.toHaveBeenCalled()
+  })
+
   test('shows the runtime rejection in the active pane when a follow-up send fails', async () => {
     const sendRuntimeMessage = vi.fn().mockResolvedValue({
       accepted: false,
