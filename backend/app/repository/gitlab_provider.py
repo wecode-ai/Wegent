@@ -139,8 +139,9 @@ class GitLabProvider(RepositoryProvider):
                 response.raise_for_status()
                 return response
         except requests.exceptions.RequestException as e:
-            response = getattr(e, "response", None)
-            if response is None or response.status_code != 401:
+            if not (
+                hasattr(e, "response") and e.response and e.response.status_code == 401
+            ):
                 raise
 
         # If 401, retry with Private-Token (for Personal Access Tokens)
@@ -185,8 +186,9 @@ class GitLabProvider(RepositoryProvider):
                 response.raise_for_status()
                 return response
         except requests.exceptions.RequestException as e:
-            response = getattr(e, "response", None)
-            if response is None or response.status_code != 401:
+            if not (
+                hasattr(e, "response") and e.response and e.response.status_code == 401
+            ):
                 raise
 
         # If 401, retry with Private-Token (for Personal Access Tokens)
@@ -421,8 +423,7 @@ class GitLabProvider(RepositoryProvider):
         except requests.exceptions.RequestException as e:
             self.logger.error(f"GitLab API request failed: {str(e)}")
             # If both auth methods failed with 401, token is invalid
-            response = getattr(e, "response", None)
-            if response is not None and response.status_code == 401:
+            if hasattr(e, "response") and e.response and e.response.status_code == 401:
                 self.logger.warning(
                     f"GitLab token validation failed: 401 Unauthorized, git_domain: {git_domain}"
                 )

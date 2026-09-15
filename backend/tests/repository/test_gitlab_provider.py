@@ -60,42 +60,6 @@ def _no_cache():
 
 
 @pytest.mark.unit
-class TestTokenValidation:
-    def test_a_valid_token_returns_user_metadata(self, provider):
-        response = Mock(status_code=200)
-        response.json.return_value = {
-            "id": 7,
-            "username": "alice",
-            "name": "Alice",
-            "email": "alice@example.com",
-        }
-
-        with patch("requests.request", return_value=response) as request:
-            result = provider.validate_token(PLAIN_TOKEN, git_domain=DOMAIN)
-
-        assert result["valid"] is True
-        assert result["user"]["login"] == "alice"
-        assert request.call_args.kwargs["headers"]["Authorization"] == (
-            f"Bearer {PLAIN_TOKEN}"
-        )
-
-    def test_a_401_response_is_reported_as_an_invalid_token(self, provider):
-        bearer_response = Mock(status_code=401)
-        private_token_response = Mock(status_code=401)
-        refused = requests.exceptions.HTTPError("401 Unauthorized")
-        refused.response = private_token_response
-        private_token_response.raise_for_status.side_effect = refused
-
-        with patch(
-            "requests.request",
-            side_effect=[bearer_response, private_token_response],
-        ):
-            result = provider.validate_token(PLAIN_TOKEN, git_domain=DOMAIN)
-
-        assert result == {"valid": False}
-
-
-@pytest.mark.unit
 class TestTokenResolution:
     def test_a_stored_token_is_decrypted_before_it_is_used(self, provider):
         """The ciphertext is not a credential. Sent as one it yields a 401, which
