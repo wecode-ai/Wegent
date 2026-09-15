@@ -824,13 +824,23 @@ impl CodexNotificationEventMapper {
         if let Some((block_id, mut updates)) = tool_update_from_notification(params) {
             let had_streamed_output = self.tool_output_deltas.remove(&block_id).is_some();
             normalize_tool_done_updates(&mut updates, had_streamed_output);
-            let block = workbench_block_from_notification(
+            let mut block = workbench_block_from_notification(
                 params,
                 &emit_context.request.subtask_id,
                 emit_context.device_id,
                 emit_context.request.cwd().unwrap_or_default(),
                 Some("done"),
             );
+            if let (Some(block), Some(parent_tool_use_id)) =
+                (block.as_mut(), self.subagent_parent_block_id(params))
+            {
+                if let Some(object) = block.as_object_mut() {
+                    object.insert(
+                        "parent_tool_use_id".to_owned(),
+                        Value::String(parent_tool_use_id),
+                    );
+                }
+            }
             if let Some(render_payload) = block
                 .as_ref()
                 .filter(|block| {
@@ -3937,9 +3947,32 @@ mod tests {
                     "turnId": "child-turn",
                     "item": {
                         "id": "call-child",
+                        "callId": "call-child",
                         "type": "commandExecution",
                         "command": "rg child",
                         "status": "inProgress"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "threadId": "child-thread",
+                    "turnId": "child-turn",
+                    "item": {
+                        "id": "call-child",
+                        "callId": "call-child",
+                        "type": "commandExecution",
+                        "command": "rg child",
+                        "aggregatedOutput": "child result",
+                        "status": "completed",
+                        "exitCode": 0
                     }
                 }
             }),
@@ -3998,6 +4031,14 @@ mod tests {
         assert_eq!(child_tool["event"], "response.block.created");
         assert_eq!(
             child_tool["payload"]["data"]["block"]["parent_tool_use_id"],
+            "subagent-child-thread"
+        );
+        let child_tool_completed = event_rx
+            .try_recv()
+            .expect("completed child tool should be emitted");
+        assert_eq!(child_tool_completed["event"], "response.block.updated");
+        assert_eq!(
+            child_tool_completed["payload"]["data"]["block"]["parent_tool_use_id"],
             "subagent-child-thread"
         );
         let child_text = event_rx.try_recv().expect("child text should be emitted");
