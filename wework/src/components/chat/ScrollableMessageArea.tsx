@@ -57,6 +57,11 @@ interface UserViewportAnchor {
   textOffset: number | null
   /** Scroll offset the anchor offset belongs to. */
   scrollTopPx: number
+  /** Scrollable range (`scrollHeight - clientHeight`) that offset belongs to. */
+  maximumOffsetPx: number
+  /** Size of the scroller's own box that offset belongs to. */
+  clientWidthPx: number
+  clientHeightPx: number
 }
 
 interface PendingLayoutScrollPosition {
@@ -317,15 +322,12 @@ function ScrollableMessagePaneContent({
   const userScrollPausedAutoFollowRef = useRef(false)
   const userScrollIntentRef = useRef(false)
   const userViewportAnchorRef = useRef<UserViewportAnchor | null>(null)
-  // Scroll offset the virtualizer wrote by itself since the anchor was sampled. That write is ours,
-  // not the reader's, so the correction has to leave it out of the reader's scrolling.
+  // Offset this rule wrote by itself since the anchor was sampled. That write is ours, not the
+  // reader's, so the next correction has to leave it out of the reader's scrolling.
   const selfScrollOffsetRef = useRef(0)
   const clearUserViewportAnchor = useCallback(() => {
     userViewportAnchorRef.current = null
     selfScrollOffsetRef.current = 0
-  }, [])
-  const handleScrollOffsetWrite = useCallback((amount: number) => {
-    selfScrollOffsetRef.current += amount
   }, [])
   const lastScrollPositionRef = useRef<number | null>(null)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
@@ -1194,6 +1196,46 @@ function ScrollableMessagePaneContent({
   }, [])
 
   /**
+   * How far the reader scrolled since the sample, with everything the layout did to the offset on its
+   * own left out of it:
+   *
+   * - the writes this rule made, which `selfScrollOffsetRef` records as they happen;
+   * - the offset rewrite a content height change performs. With scroll anchoring switched off nothing
+   *   scrolls the reader but that height change, and a scroller holds on to the offset of the content
+   *   start across it. Under a bottom scroll origin that hold moves `scrollTop` back against the range
+   *   change, which would otherwise read exactly like the reader scrolling towards the bottom and make
+   *   the correction below cancel itself out. A re-layout of the scroller's own box takes the plain
+   *   pixel offset instead, so that rewrite does not happen there.
+   */
+  const readReaderScrollOffsetSinceAnchor = useCallback(
+    (scroller: HTMLElement, maximumOffset: number): number => {
+      const anchor = userViewportAnchorRef.current
+      if (!anchor) return scroller.scrollTop
+      // A scroller holds on to the offset of the content start across a content change, but it keeps
+      // the pixel offset it was given when its own box is re-laid out — a narrower conversation pane,
+      // for example. Reading the wrong one of those as the reader's own scrolling is what turns a
+      // re-measure or a reflow into the viewport sliding away from the text they were reading.
+      const scrollerBoxResized =
+        scroller.clientWidth !== anchor.clientWidthPx ||
+        scroller.clientHeight !== anchor.clientHeightPx
+      const believedScrollTop =
+        anchor.scrollTopPx +
+        selfScrollOffsetRef.current +
+        (bottomOrigin && !scrollerBoxResized ? anchor.maximumOffsetPx - maximumOffset : 0)
+      // A shrinking layout also removes offsets the sample used to have: the clamp is the layout's
+      // own doing exactly like the height change, so the belief is moved with it rather than counted
+      // as the reader's scrolling, which would make the next correction ask for an offset that does
+      // not exist.
+      const clampedScrollTop = bottomOrigin
+        ? Math.min(0, Math.max(-maximumOffset, believedScrollTop))
+        : Math.min(maximumOffset, Math.max(0, believedScrollTop))
+      selfScrollOffsetRef.current += clampedScrollTop - believedScrollTop
+      return scroller.scrollTop - clampedScrollTop
+    },
+    [bottomOrigin]
+  )
+
+  /**
    * Puts the text the reader is looking at back where it belongs after a layout change.
    *
    * The browser's own scroll anchoring is switched off for this scroller (`[overflow-anchor:none]`),
@@ -1201,14 +1243,15 @@ function ScrollableMessagePaneContent({
    * just happened. That makes the correction measurable without assuming anything about how the
    * browser reacts to content height changes:
    *
-   *   correction = ΔanchorOffset + ΔscrollTop
+   *   correction = ΔanchorOffset + ΔreaderScrollTop
    *
-   * `ΔanchorOffset` is how far the sampled text moved on screen; `ΔscrollTop` is how far the reader
-   * scrolled. A pure reader scroll moves the text by exactly `-ΔscrollTop`, so it cancels to zero and
-   * their scrolling is never taken back; whatever is left is the layout change's own effect, and
-   * writing it back is what keeps a reflow, a re-measured row above the viewport, and a streaming
-   * response growing underneath from dragging the text away — all cases the browser used to handle
-   * for us with a rule that turned out to depend on where the content changed.
+   * `ΔanchorOffset` is how far the sampled text moved on screen; the second term is how far the reader
+   * scrolled, as read back by `readReaderScrollOffsetSinceAnchor`. A pure reader scroll moves the text
+   * by exactly the negative of their scrolling, so it cancels to zero and their scrolling is never
+   * taken back; whatever is left is the layout change's own effect, and writing it back is what keeps
+   * a reflow, a re-measured row above the viewport, and a streaming response growing underneath from
+   * dragging the text away — all cases the browser used to handle for us with a rule that turned out
+   * to depend on where the content changed.
    *
    * Both signs work out because moving `scrollTop` by `x` moves the text by `-x` in every scroll
    * origin the chat list is rendered with.
@@ -1235,18 +1278,10 @@ function ScrollableMessagePaneContent({
           anchorElement.getBoundingClientRect())
 
     const anchorOffset = anchorRect.top - scroller.getBoundingClientRect().top
-    // The offset this rule believes it left the scroller at: the sample plus every write it made
-    // since. Only what the reader moved beyond that is their own scrolling.
-    const believedScrollTop = anchor.scrollTopPx + selfScrollOffsetRef.current
-    // A shrinking layout also removes offsets: the browser clamps the offset to the new maximum, and
-    // that clamp is the layout's own doing exactly like the height change. Counting it as the
-    // reader's scrolling would make the next correction ask for an offset that does not exist.
-    const maximumOffset = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-    const clampedScrollTop = bottomOrigin
-      ? Math.min(0, Math.max(-maximumOffset, believedScrollTop))
-      : Math.min(maximumOffset, Math.max(0, believedScrollTop))
-    selfScrollOffsetRef.current += clampedScrollTop - believedScrollTop
-    const readerScrollTop = scroller.scrollTop - clampedScrollTop
+    const readerScrollTop = readReaderScrollOffsetSinceAnchor(
+      scroller,
+      getMaximumScrollOffset(scroller)
+    )
     const correction = anchorOffset - anchor.offsetFromScrollerTop + readerScrollTop
     if (Math.abs(correction) < 1) {
       // The sampled text is already back where it was, so the sample describes the settled layout.
@@ -1268,7 +1303,7 @@ function ScrollableMessagePaneContent({
       // measure from here rather than from a baseline that already includes this correction.
       captureUserViewportAnchor()
     }
-  }, [bottomOrigin, captureUserViewportAnchor])
+  }, [bottomOrigin, captureUserViewportAnchor, readReaderScrollOffsetSinceAnchor])
 
   const handleContentLayoutChange = useCallback(() => {
     if (virtualInitialPositionOwnerRef.current?.key === currentScrollKey) {
@@ -1410,6 +1445,20 @@ function ScrollableMessagePaneContent({
         pending.distanceFromBottomPx = getDistanceFromBottom(scroller, bottomOrigin)
       }
     }
+    // The reader owns the viewport, so their text has to stay where they left it. The rule leaves the
+    // reader's own scrolling alone and re-samples where nothing had to be corrected, so running it
+    // here keeps the sample fresh and takes back the offset rewrite a content height change performs —
+    // before this event can be read as a new position and the shift it carries can be adopted as one.
+    if (
+      userScrollPausedAutoFollowRef.current &&
+      pendingLayoutScrollPositionRef.current === null &&
+      !preserveLatestUserTurnRef.current &&
+      restoredScrollSnapshotRef.current?.key !== currentScrollKey
+    ) {
+      // Run before the scroll state is read below: a rewrite that got as far as the end of the history
+      // would otherwise look like the reader arriving back at the bottom and release their pause.
+      restoreReaderPositionFromLayout()
+    }
     if (!userInitiated) {
       if (streamingFollowOwnedRef.current) {
         setShowScrollButton(false)
@@ -1444,6 +1493,7 @@ function ScrollableMessagePaneContent({
     currentScrollKey,
     followStreamingToBottom,
     isTurnNavigationAutoScrollSuspended,
+    restoreReaderPositionFromLayout,
     setScrollToBottom,
     streamingFollowActive,
     updateScrollState,
@@ -1599,7 +1649,7 @@ function ScrollableMessagePaneContent({
                 onAddSelectionToConversation={onAddSelectionToConversation}
                 onAskSelectionInSidebar={onAskSelectionInSidebar}
                 virtualAnchorToEnd={!showScrollButton}
-                onScrollOffsetWrite={handleScrollOffsetWrite}
+                onItemSizeChange={handleContentLayoutChange}
                 bottomOrigin={bottomOrigin}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}
               />
@@ -1690,7 +1740,14 @@ function createUserViewportAnchor(
       (textPosition?.rect.top ?? visibleAnchor.getBoundingClientRect().top) - scrollerRect.top,
     textOffset: textPosition?.offset ?? null,
     scrollTopPx: scroller.scrollTop,
+    maximumOffsetPx: getMaximumScrollOffset(scroller),
+    clientWidthPx: scroller.clientWidth,
+    clientHeightPx: scroller.clientHeight,
   }
+}
+
+function getMaximumScrollOffset(element: HTMLElement): number {
+  return Math.max(0, element.scrollHeight - element.clientHeight)
 }
 
 function findUserViewportAnchor(

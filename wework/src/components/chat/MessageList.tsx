@@ -140,8 +140,8 @@ interface MessageListProps {
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   virtualAnchorToEnd?: boolean
-  /** Reports a scroll offset the virtualizer wrote by itself, so the reader's own scroll stays separable. */
-  onScrollOffsetWrite?: (amount: number) => void
+  /** Reports a re-measured row, which changes the content under the reader without resizing the scroller. */
+  onItemSizeChange?: () => void
   bottomOrigin?: boolean
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
@@ -237,7 +237,7 @@ export const MessageList = memo(function MessageList({
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   virtualAnchorToEnd = true,
-  onScrollOffsetWrite,
+  onItemSizeChange,
   bottomOrigin = false,
   renderGapAfterMessage,
 }: MessageListProps) {
@@ -344,7 +344,7 @@ export const MessageList = memo(function MessageList({
     initialContentHeightPx: initialVirtualContentHeight,
     initialDistanceFromBottomPx,
     positionKey: conversationKey,
-    onScrollOffsetWrite,
+    onItemSizeChange,
     scrollElementRef,
     shouldAdjustScrollPositionOnItemSizeChange: bottomOrigin
       ? undefined
@@ -792,7 +792,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'onAskSelectionInSidebar'
       : null,
     previous.virtualAnchorToEnd !== next.virtualAnchorToEnd ? 'virtualAnchorToEnd' : null,
-    previous.onScrollOffsetWrite !== next.onScrollOffsetWrite ? 'onScrollOffsetWrite' : null,
+    previous.onItemSizeChange !== next.onItemSizeChange ? 'onItemSizeChange' : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
 

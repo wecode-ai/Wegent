@@ -53,18 +53,24 @@ interface ReaderLayoutModel {
   sample: () => void
   /**
    * Applies one layout change under the rule the scroll area now relies on: the browser's own scroll
-   * anchoring is switched off for this list, so the only things that move the reader are their own
-   * scrolling and the layout change itself.
+   * anchoring is switched off for this list, so nothing but the reader and the layout change itself
+   * moves the reader. The layout change does move them: a scroller holds on to the offset of the
+   * content start across a height change, which under a bottom scroll origin rewrites `scrollTop` by
+   * however much the scrollable range changed — unless the scroller's own box is re-laid out, in
+   * which case it holds on to the pixel offset instead.
    *
    * - `aboveViewportGrowthPx` moves the anchor down the content (positive) or up it (negative), which
    *   is what a re-measured row above the viewport or a whole-list reflow does;
    * - `belowViewportGrowthPx` only makes the content taller underneath the anchor;
-   * - `readerScrollPx` is the reader's own scrolling, the one thing that moves `scrollTop`.
+   * - `readerScrollPx` is the reader's own scrolling;
+   * - `scrollerWidthPx` re-lays out the scroller's own box, as opening a panel beside the conversation
+   *   does.
    */
   apply: (change: {
     aboveViewportGrowthPx?: number
     belowViewportGrowthPx?: number
     readerScrollPx?: number
+    scrollerWidthPx?: number
   }) => void
   /** Where the sampled text sits on screen right now. */
   anchorTopPx: () => number
@@ -119,10 +125,15 @@ function createAnchorHarness(): AnchorHarness {
   const scroller = externalScrollRef.current!
   const anchor = screen.getByText(HARNESS_TEXT).closest('[data-scroll-anchor]')!
   const layout = {
+    clientWidthPx: 607,
     contentHeightPx: 10_000,
     distanceFromBottomPx: 4_000,
     anchorContentTopPx: 5_850,
   }
+  Object.defineProperty(scroller, 'clientWidth', {
+    configurable: true,
+    get: () => layout.clientWidthPx,
+  })
   Object.defineProperty(scroller, 'clientHeight', { value: CLIENT_HEIGHT, configurable: true })
   Object.defineProperty(scroller, 'scrollHeight', {
     configurable: true,
@@ -166,11 +177,21 @@ function createAnchorHarness(): AnchorHarness {
       apply: change => {
         const above = change.aboveViewportGrowthPx ?? 0
         const below = change.belowViewportGrowthPx ?? 0
+        const previousContentHeightPx = layout.contentHeightPx
         layout.contentHeightPx += above + below
         layout.anchorContentTopPx += above
-        // Scroll anchoring is off, so only the reader moves the offset.
-        layout.distanceFromBottomPx += change.readerScrollPx ?? 0
-        scroller.scrollTop = -layout.distanceFromBottomPx
+        const rangeChangePx = layout.contentHeightPx - previousContentHeightPx
+        const scrollerBoxResized =
+          change.scrollerWidthPx !== undefined && change.scrollerWidthPx !== layout.clientWidthPx
+        if (change.scrollerWidthPx !== undefined) {
+          layout.clientWidthPx = change.scrollerWidthPx
+        }
+        layout.distanceFromBottomPx +=
+          (scrollerBoxResized ? 0 : rangeChangePx) + (change.readerScrollPx ?? 0)
+        const maximumOffsetPx = Math.max(0, layout.contentHeightPx - CLIENT_HEIGHT)
+        scroller.scrollTop = Math.min(0, Math.max(-maximumOffsetPx, -layout.distanceFromBottomPx))
+        layout.distanceFromBottomPx = -scroller.scrollTop
+        fireEvent.scroll(scroller)
       },
       anchorTopPx: () => anchor.getBoundingClientRect().top,
     },
@@ -677,6 +698,47 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
+  test('does not let a re-measured row above the viewport drag the reader towards the bottom', () => {
+    const harness = createAnchorHarness()
+    try {
+      const { scroller, model } = harness
+      const anchorBefore = model.anchorTopPx()
+      const scrollBefore = scroller.scrollTop
+      model.sample()
+
+      // Measured from a reported trace: a row the reader had already scrolled past came back 2393px
+      // shorter and the reader's offset moved 2269px back towards the bottom with it. That rewrite
+      // belongs to the layout, not to the reader, so the sampled text has to end up exactly where the
+      // reader left it.
+      model.apply({ aboveViewportGrowthPx: -2_393 })
+      harness.flushResizeObservers()
+
+      expect(model.anchorTopPx()).toBe(anchorBefore)
+      expect(scroller.scrollTop).toBe(scrollBefore)
+    } finally {
+      harness.dispose()
+    }
+  })
+
+  test('keeps the text in place when the scroller box is re-laid out and the content grows with it', () => {
+    const harness = createAnchorHarness()
+    try {
+      const { model } = harness
+      const anchorBefore = model.anchorTopPx()
+      model.sample()
+
+      // Opening a panel beside the conversation narrows the scroller and every paragraph below the
+      // reader re-wraps. The scroller keeps its pixel offset across that, so the text slides up the
+      // screen unless the growth that landed under the reader is measured and given back.
+      model.apply({ belowViewportGrowthPx: 240, scrollerWidthPx: 520 })
+      harness.flushResizeObservers()
+
+      expect(model.anchorTopPx()).toBe(anchorBefore)
+    } finally {
+      harness.dispose()
+    }
+  })
+
   test('keeps the reader own scrolling while the streaming response below it grows', () => {
     const harness = createAnchorHarness()
     try {
@@ -729,8 +791,9 @@ describe('ScrollableMessageArea', () => {
       harness.flushResizeObservers()
 
       // Nothing from the sample can be measured any more, so the layout change stays unattributed
-      // instead of being guessed at; the next sample is taken from where the reader is now.
-      expect(scroller.scrollTop).toBe(scrollBefore)
+      // instead of being guessed at: the offset is left on the height change's own rewrite and the
+      // next sample is taken from where the reader is now.
+      expect(scroller.scrollTop).toBe(scrollBefore - 2_600)
     } finally {
       harness.dispose()
     }
