@@ -62,4 +62,5 @@ export interface ComposerTextareaProps {
   onSelectModel?: (model: UnifiedModel | null) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   isModelSelectionReady?: boolean
+  sendKey?: 'enter' | 'cmd_enter'
 }

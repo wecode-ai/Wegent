@@ -1391,12 +1391,20 @@ async function openProjectWorkspaceTab(control, existingBoardTabIds) {
 async function waitForAttribute(control, selector, name, expected, message) {
   const startedAt = Date.now()
   let actual = null
+  let lookupError = null
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    actual = await control.command('getAttribute', selector, { value: name })
+    try {
+      actual = await control.command('getAttribute', selector, { value: name })
+      lookupError = null
+    } catch (error) {
+      if (!String(error).includes('Unable to find selector')) throw error
+      lookupError = error
+    }
     if (actual === expected) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(`${message}: expected ${name}=${expected}, received ${actual}`)
+  const received = lookupError ? String(lookupError) : actual
+  throw new Error(`${message}: expected ${name}=${expected}, received ${received}`)
 }
 
 async function verifyWorkspaceTabIsolation(control) {
@@ -1518,11 +1526,14 @@ async function verifyWorkspaceTabIsolation(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', firstWorkspaceParticipants)
-  await control.command('waitFor', `${firstWorkspaceParticipants}[aria-current="page"]`, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await control.command('clickWhenEnabled', firstWorkspaceParticipants)
+  await waitForAttribute(
+    control,
+    firstWorkspaceParticipants,
+    'aria-current',
+    'page',
+    'The first project-space tab did not retain its Participants section'
+  )
 
   const { boardContentSelector: secondBoardContent } = await openProjectWorkspaceTab(control, [
     ...initialBoardIds,
@@ -1543,10 +1554,10 @@ async function verifyWorkspaceTabIsolation(control) {
     0,
     'A new project-space tab inherited the first tab workspace settings view'
   )
-  assert.equal(
-    await control.command('getAttribute', firstWorkspaceParticipants, {
-      value: 'aria-current',
-    }),
+  await waitForAttribute(
+    control,
+    firstWorkspaceParticipants,
+    'aria-current',
     'page',
     'Opening a second project-space tab reset the first tab workspace section'
   )

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 
+import { verifyTeamCatalogPagination } from '../modules/team-catalog-pagination.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -109,6 +110,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     async verify(control) {
       try {
         await ensureExperimentalFeaturesEnabled(control)
+        const catalog = await request('/api/teams?page=1&limit=100')
+        const sourceTeam = catalog.items?.[0]
+        assert.ok(sourceTeam?.id, 'Team catalog pagination requires a real Team fixture')
+        await verifyTeamCatalogPagination(control, request, sourceTeam)
         await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
           timeoutMs: workbenchReadyTimeoutMs,
         })

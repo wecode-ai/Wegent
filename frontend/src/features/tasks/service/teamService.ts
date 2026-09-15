@@ -32,8 +32,8 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener('abort', onAbort, { once: true })
   })
 
-const fetchTeams = async (signal?: AbortSignal): Promise<Team[]> => {
-  const response = await teamApis.getTeams({ page: 1, limit: 100 }, 'all', undefined, { signal })
+const fetchTeams = async (signal?: AbortSignal, refresh = false): Promise<Team[]> => {
+  const response = await teamApis.getAllTeams('all', undefined, refresh, { signal })
   const items = Array.isArray(response.items) ? response.items : []
   return sortTeamsByUpdatedAt(items)
 }
@@ -55,19 +55,19 @@ export const teamService = {
    * Get team list
    */
   async getTeams(): Promise<TeamListResponse> {
-    return teamApis.getTeams({ page: 1, limit: 100 }, 'all')
+    return teamApis.getAllTeams('all')
   },
 
   /**
    * Fetch the accessible team list, retrying transient failures with backoff.
    * A single failed request must never surface as "no agents available".
    */
-  async fetchTeamsWithRetry(signal?: AbortSignal): Promise<Team[]> {
+  async fetchTeamsWithRetry(signal?: AbortSignal, refresh = false): Promise<Team[]> {
     let lastError: unknown
 
     for (let attempt = 0; attempt <= TEAM_FETCH_RETRY_DELAYS_MS.length; attempt += 1) {
       try {
-        return await fetchTeams(signal)
+        return await fetchTeams(signal, refresh)
       } catch (error) {
         if (signal?.aborted) {
           throw new DOMException('Aborted', 'AbortError')

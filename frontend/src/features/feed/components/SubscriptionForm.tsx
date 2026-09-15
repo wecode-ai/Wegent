@@ -430,7 +430,7 @@ export function SubscriptionForm({
       setTeamsLoading(true)
       setTeamsLoaded(false)
       try {
-        const response = await teamApis.getTeams({ page: 1, limit: 100 })
+        const response = await teamApis.getAllTeams()
         const loadedTeams = response.items || []
         setTeams(loadedTeams)
 
