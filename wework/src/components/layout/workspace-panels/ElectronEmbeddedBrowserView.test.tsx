@@ -214,8 +214,8 @@ describe('ElectronEmbeddedBrowserView', () => {
     expect(screen.queryByTestId('workspace-browser-electron-webview')).not.toBeInTheDocument()
   })
 
-  test('replaces a closed webview before the same route is reopened', async () => {
-    render(
+  test('retains a replacement webview until the same route reopens', async () => {
+    const view = render(
       <ElectronEmbeddedBrowserView
         active
         interactionBlocked={false}
@@ -239,6 +239,23 @@ describe('ElectronEmbeddedBrowserView', () => {
     expect(host.querySelectorAll('webview')).toHaveLength(1)
     expect(nextWebview?.getAttribute('partition')).not.toBe(previousPartition)
     expect(previousWebview?.isConnected).toBe(false)
+
+    view.unmount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId('workspace-browser-electron-webview')).toBe(host)
+
+    render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser"
+        visualRect={null}
+      />
+    )
+    expect(screen.getByTestId('workspace-browser-electron-webview')).toBe(host)
+    expect(host.querySelector('webview')).toBe(nextWebview)
     expect(host.style.visibility).toBe('visible')
     expect(host.style.pointerEvents).toBe('auto')
   })

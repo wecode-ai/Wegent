@@ -12,6 +12,7 @@ import {
   relabelElectronEmbeddedBrowserView,
   releaseElectronEmbeddedBrowserView,
   resetElectronEmbeddedBrowserView,
+  retainElectronEmbeddedBrowserView,
   syncElectronEmbeddedBrowserView,
   type HostedElectronWebview,
 } from './electronEmbeddedBrowserHost'
@@ -131,6 +132,7 @@ export function ElectronEmbeddedBrowserView({
       const host = hostRef.current
       if (!host) return
       resetElectronEmbeddedBrowserView(host, ownerRef.current)
+      retainElectronEmbeddedBrowserView(event.label)
     })
     if (!listener) return undefined
     let disposed = false

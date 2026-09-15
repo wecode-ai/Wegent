@@ -245,7 +245,7 @@ export class EmbeddedBrowserBridge {
         this.browser.reload(label)
         return { ok: true }
       case 'close':
-        this.browser.requestClose(label)
+        await this.browser.requestClose(label, baseLabel)
         return { ok: true }
       case 'back':
         this.browser.goBack(label)
@@ -316,7 +316,12 @@ export class EmbeddedBrowserBridge {
     const url = requiredString(request.url, 'url')
     let resolvedLabel = label
     if (!this.browser.has(resolvedLabel)) {
-      this.browser.requestOpen({
+      console.log('[embedded-browser] bridge open resolving host', {
+        baseLabel,
+        requestedLabel: label,
+        attached: this.browser.hasAttached(resolvedLabel),
+      })
+      const openRequest = {
         id: `agent-open-${Date.now()}-${randomBytes(6).toString('hex')}`,
         url,
         baseLabel,
@@ -325,15 +330,21 @@ export class EmbeddedBrowserBridge {
         targetLabel: label,
         parentLabel: null,
         browserSessionId: request.browserSessionId ?? null,
-      })
-      await waitFor(() => {
-        const activeLabel = this.browser.activeLabel(baseLabel)
-        if (this.browser.has(activeLabel)) {
-          resolvedLabel = activeLabel
-          return true
-        }
-        return this.browser.has(resolvedLabel)
-      }, request.timeoutMs ?? OPEN_TIMEOUT_MS)
+      }
+      if (this.browser.hasAttached(resolvedLabel)) {
+        await this.browser.openAttached(resolvedLabel, url)
+        this.browser.requestOpen(openRequest)
+      } else {
+        this.browser.requestOpen(openRequest)
+        await waitFor(() => {
+          const activeLabel = this.browser.activeLabel(baseLabel)
+          if (this.browser.has(activeLabel)) {
+            resolvedLabel = activeLabel
+            return true
+          }
+          return this.browser.has(resolvedLabel)
+        }, request.timeoutMs ?? OPEN_TIMEOUT_MS)
+      }
     }
     const state = this.browser.state(resolvedLabel)
     if (state.url !== url) await this.browser.navigate(resolvedLabel, url)

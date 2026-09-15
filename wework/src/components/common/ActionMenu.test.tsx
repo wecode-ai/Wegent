@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Database, Trash2 } from 'lucide-react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ActionMenu } from './ActionMenu'
 
 function mockMenuBounds() {
@@ -21,6 +21,53 @@ describe('ActionMenu', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     mockMenuBounds()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  test('shows the shared tooltip for an icon-only trigger', () => {
+    vi.useFakeTimers()
+    render(
+      <ActionMenu
+        ariaLabel="More actions"
+        testId="more-actions"
+        items={[
+          {
+            label: 'Delete',
+            testId: 'delete',
+            onSelect: vi.fn(),
+          },
+        ]}
+      />
+    )
+
+    const trigger = screen.getByTestId('more-actions')
+    expect(trigger).not.toHaveAttribute('title')
+
+    fireEvent.pointerEnter(trigger.parentElement as HTMLElement)
+    act(() => vi.advanceTimersByTime(700))
+
+    expect(screen.getByTestId('more-actions-tooltip')).toHaveTextContent('More actions')
+  })
+
+  test('does not add a layout wrapper when the trigger tooltip is disabled', () => {
+    render(
+      <ActionMenu
+        ariaLabel="Context actions"
+        testId="context-actions"
+        triggerClassName="hidden"
+        showTriggerTooltip={false}
+        items={[]}
+      />
+    )
+
+    const trigger = screen.getByTestId('context-actions')
+    expect(trigger).toHaveClass('hidden')
+    expect(trigger.parentElement?.children).toHaveLength(1)
+    expect(trigger.parentElement?.firstElementChild).toBe(trigger)
+    expect(screen.queryByTestId('context-actions-tooltip')).not.toBeInTheDocument()
   })
 
   test('opens a first-level submenu and selects its action', async () => {
