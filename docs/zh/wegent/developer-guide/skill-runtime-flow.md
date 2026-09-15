@@ -181,6 +181,8 @@ Claude Code 侧的 `build_skill_emphasis_prompt()` 只消费这组字段，用�
 
 运行时由 backend 打标：`mcp_deferred` 表示技能可用但不挂载 MCP；需要保留 MCP 的注入技能在引用里显式声明 `mcp_active`。
 
+技能可能在解析时只是“可用”，却在之后被本次请求激活，例如用户选中了该技能提供的知识库/文档，或协作成员 Bot 声明了该技能。这类技能会被提升为激活状态（清掉 `mcp_deferred`）并重新挂载 MCP server，避免复用已有配置时丢失激活契约。
+
 ## 兼容策略
 
 当前实现保留以下兼容行为：

@@ -916,6 +916,110 @@ class TestAvailableSkillMcpDeferral:
         assert preloads == ["demo-skill"]
 
 
+class TestClaimedSkillMcpReattachment:
+    """Skills claimed after resolution must get their MCP servers back."""
+
+    @staticmethod
+    def _deferred_skill_config(name: str = "demo-skill") -> dict:
+        return {
+            "name": name,
+            "mcp_deferred": True,
+            "mcpServers": {
+                name: {"type": "streamable-http", "url": f"https://mcp.test/{name}"}
+            },
+        }
+
+    @staticmethod
+    def _claude_request(params: dict) -> ExecutionRequest:
+        return ExecutionRequest(
+            bot=[{"shell_type": "ClaudeCode", "mcp_servers": []}],
+            **params,
+        )
+
+    def test_claimed_available_skill_reattaches_mcp(self):
+        request = self._claude_request(
+            {
+                "skill_names": ["demo-skill"],
+                "skill_configs": [self._deferred_skill_config()],
+            }
+        )
+
+        TaskRequestBuilder.activate_claimed_skill_mcp(request, ["demo-skill"])
+
+        assert "mcp_deferred" not in request.skill_configs[0]
+        assert [server["name"] for server in request.bot[0]["mcp_servers"]] == [
+            "demo-skill"
+        ]
+        assert request.bot[0]["mcp_servers"][0]["type"] == "http"
+
+    def test_reattached_mcp_is_not_mounted_twice(self):
+        request = self._claude_request(
+            {
+                "skill_names": ["demo-skill"],
+                "skill_configs": [self._deferred_skill_config()],
+            }
+        )
+
+        TaskRequestBuilder.activate_claimed_skill_mcp(request, ["demo-skill"])
+        TaskRequestBuilder.activate_claimed_skill_mcp(request, ["demo-skill"])
+
+        assert [server["name"] for server in request.bot[0]["mcp_servers"]] == [
+            "demo-skill"
+        ]
+
+    def test_unclaimed_available_skill_keeps_mcp_detached(self):
+        request = self._claude_request(
+            {
+                "skill_names": ["demo-skill"],
+                "skill_configs": [self._deferred_skill_config()],
+            }
+        )
+
+        TaskRequestBuilder.activate_claimed_skill_mcp(request, ["other-skill"])
+
+        assert request.skill_configs[0]["mcp_deferred"] is True
+        assert request.bot[0]["mcp_servers"] == []
+
+    def test_requested_skill_reattaches_mcp_without_rebuild(self):
+        request = self._claude_request(
+            {
+                "skill_names": ["demo-skill"],
+                "skill_configs": [self._deferred_skill_config()],
+                "preload_skills": ["demo-skill"],
+            }
+        )
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+
+        builder.resolve_request_preload_skills(
+            request=request,
+            bot=SimpleNamespace(),
+            team=SimpleNamespace(),
+            user=SimpleNamespace(),
+        )
+
+        assert "mcp_deferred" not in request.skill_configs[0]
+        assert [server["name"] for server in request.bot[0]["mcp_servers"]] == [
+            "demo-skill"
+        ]
+
+    def test_member_bot_claimed_skill_reattaches_mcp(self):
+        resolved_skills = [self._deferred_skill_config()]
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+
+        builder._extend_resolved_skills_from_bot_configs(
+            bot_configs=[
+                {"shell_type": "ClaudeCode", "skills": ["demo-skill"]},
+                {"shell_type": "ClaudeCode", "skills": ["demo-skill"]},
+            ],
+            resolved_skills=resolved_skills,
+            skill_refs={},
+            team=SimpleNamespace(namespace="default", user_id=0),
+            user=SimpleNamespace(id=7),
+        )
+
+        assert "mcp_deferred" not in resolved_skills[0]
+
+
 class TestInjectedSkillMcpActivation:
     """Functionally injected Skills must keep their MCP tools reachable."""
 

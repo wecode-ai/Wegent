@@ -185,6 +185,8 @@ Available-only Skills are still deployed to the runtime and stay visible in `ski
 
 Backend marks this at request-build time: `mcp_deferred` means the Skill is available but keeps its MCP servers detached, while injected Skills that need their MCP tools declare `mcp_active`.
 
+A Skill may be resolved as available-only and then be activated by this request, for example when the user selects the knowledge source it provides or when a collaborating member Bot declares it. Such a Skill is promoted (its `mcp_deferred` flag is cleared) and its MCP servers are attached again, so reusing an existing config never drops the activation contract.
+
 ## Compatibility
 
 The current implementation keeps these compatibility guarantees:

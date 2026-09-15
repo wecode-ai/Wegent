@@ -12,7 +12,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 
 import json
 import logging
-from typing import Any, List, Optional, Union
+from typing import Any, Iterable, List, Optional, Union
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -698,6 +698,10 @@ class TaskRequestBuilder:
 
         if not requested_skill_names:
             return request
+
+        # Requesting a Skill activates it, so a config resolved as available-only
+        # must drop its deferred MCP flag before the request is finalized.
+        self.activate_claimed_skill_mcp(request, requested_skill_names)
 
         existing_skill_names = {
             skill_name
@@ -2438,9 +2442,8 @@ Response template:
     # Claude Code MCP Processing
     # =========================================================================
 
-    def _prepare_mcp_for_claude_code(
-        self, bot_config: dict, skill_configs: list
-    ) -> None:
+    @staticmethod
+    def _prepare_mcp_for_claude_code(bot_config: dict, skill_configs: list) -> None:
         """Prepare MCP servers for Claude Code executor.
 
         For ClaudeCode shell type, this method:
@@ -2469,7 +2472,7 @@ Response template:
             )
 
         # Step 1: Extract skill MCP servers and merge
-        skill_mcp = self._extract_skill_mcp_to_list(skill_configs)
+        skill_mcp = TaskRequestBuilder._extract_skill_mcp_to_list(skill_configs)
         if skill_mcp:
             bot_config.setdefault("mcp_servers", []).extend(skill_mcp)
             logger.info(
@@ -2483,12 +2486,64 @@ Response template:
             return
 
         # Step 2: Normalize types (streamable-http -> http)
-        self._normalize_mcp_types_for_claude_code(mcp_list)
+        TaskRequestBuilder._normalize_mcp_types_for_claude_code(mcp_list)
 
         # Step 3: Filter out unreachable servers
-        bot_config["mcp_servers"] = self._filter_reachable_mcp_servers(mcp_list)
+        bot_config["mcp_servers"] = TaskRequestBuilder._filter_reachable_mcp_servers(
+            mcp_list
+        )
         if not bot_config["mcp_servers"]:
             logger.warning("[MCP-CLAUDE] All MCP servers unreachable, removed")
+
+    @staticmethod
+    def _promote_deferred_skill_configs(
+        skill_configs: list, claimed_names: set[str]
+    ) -> list[dict]:
+        """Clear ``mcp_deferred`` on claimed Skills and return those promoted."""
+        promoted: list[dict] = []
+        for skill_config in skill_configs:
+            if not isinstance(skill_config, dict):
+                continue
+            if skill_config.get("name") not in claimed_names:
+                continue
+            if not skill_config.pop("mcp_deferred", None):
+                continue
+            promoted.append(skill_config)
+        return promoted
+
+    @staticmethod
+    def activate_claimed_skill_mcp(
+        request: ExecutionRequest,
+        claimed_skill_names: Iterable[str],
+    ) -> None:
+        """Attach MCP servers of Skills that this request activates.
+
+        Skills resolved as available-only carry ``mcp_deferred`` and stay without
+        MCP servers. When a later stage claims them for this request - an explicit
+        selection, a member Bot declaration, or a selected knowledge source - the
+        existing config is promoted and its MCP servers are attached again.
+        """
+        claimed_names = {name for name in claimed_skill_names if isinstance(name, str)}
+        if not claimed_names:
+            return
+
+        promoted = TaskRequestBuilder._promote_deferred_skill_configs(
+            request.skill_configs or [], claimed_names
+        )
+        if not promoted:
+            return
+
+        bot_config = (
+            request.bot[0] if request.bot and isinstance(request.bot[0], dict) else None
+        )
+        if not bot_config or bot_config.get("shell_type") != "ClaudeCode":
+            return
+
+        TaskRequestBuilder._prepare_mcp_for_claude_code(bot_config, promoted)
+        logger.info(
+            "[MCP-CLAUDE] Reattached MCP servers of claimed skill(s): %s",
+            [skill.get("name") for skill in promoted],
+        )
 
     @staticmethod
     def _merge_coordinate_capabilities_into_leader(bot_configs: list[dict]) -> None:
@@ -2538,6 +2593,18 @@ Response template:
             for skill in resolved_skills
             if isinstance(skill, dict) and skill.get("name")
         }
+
+        # A member Bot declaring a Skill activates it, so an available-only config
+        # resolved earlier for the leader must get its MCP servers back.
+        member_claimed_skill_names = {
+            skill_name
+            for bot_config in bot_configs[1:]
+            for skill_name in (bot_config.get("skills") or [])
+            if isinstance(skill_name, str)
+        }
+        self._promote_deferred_skill_configs(
+            resolved_skills, member_claimed_skill_names
+        )
 
         for bot_config in bot_configs:
             for skill_name in bot_config.get("skills", []) or []:
@@ -2649,7 +2716,8 @@ Response template:
 
         return True
 
-    def _filter_reachable_mcp_servers(self, mcp_servers: list) -> list:
+    @staticmethod
+    def _filter_reachable_mcp_servers(mcp_servers: list) -> list:
         """Filter out unreachable MCP servers.
 
         Args:
@@ -2666,7 +2734,7 @@ Response template:
 
         for server in mcp_servers:
             name = server.get("name", "?")
-            if self._check_mcp_server_reachable(server):
+            if TaskRequestBuilder._check_mcp_server_reachable(server):
                 reachable.append(server)
                 logger.info("[MCP-CHECK] '%s' is reachable", name)
             else:
