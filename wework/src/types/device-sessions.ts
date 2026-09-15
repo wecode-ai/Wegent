@@ -1,3 +1,3 @@
-export type DeviceSessionType = 'terminal' | 'code_server'
+export type DeviceSessionType = 'terminal' | 'code_server' | 'vnc'
 
-export type DeviceSessionTransport = 'url' | 'socketio'
+export type DeviceSessionTransport = 'url' | 'socketio' | 'websocket'

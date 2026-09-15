@@ -5,7 +5,8 @@
 use std::{
     collections::VecDeque,
     future::Future,
-    io::Read,
+    io::{Read, Write},
+    net::TcpListener,
     pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
@@ -91,7 +92,7 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["client_ip"], "192.0.2.10");
     assert_eq!(calls[0].payload["runtime_transfer_host"], "192.0.2.10");
-    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 3);
+    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 4);
     assert_eq!(
         calls[0].payload["runtime_features"]["interactiveSessions"],
         json!({"codeServer": true, "terminal": true})
@@ -108,6 +109,7 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
         calls[0].payload["runtime_features"]["runtimeTaskCreate"]["features"]["supervisor"],
         true
     );
+    assert!(calls[0].payload["runtime_features"]["desktop"].is_null());
     assert_eq!(
         calls[0].payload["runtime_features"]["worktrees"]["version"],
         1
@@ -174,7 +176,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["capabilities"]["revision"], 0);
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
-    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 3);
+    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 4);
     assert_eq!(
         calls[0].payload["runtime_features"]["interactiveSessions"],
         json!({"codeServer": true, "terminal": true})
@@ -187,6 +189,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
         calls[0].payload["runtime_features"]["worktrees"]["version"],
         1
     );
+    assert!(calls[0].payload["runtime_features"]["desktop"].is_null());
     assert_eq!(
         calls[0].payload["runtime_features"]["worktrees"]["managed"],
         true
@@ -207,6 +210,59 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(emits.len(), 1);
     assert_eq!(emits[0].event, "device:heartbeat");
     assert_eq!(emits[0].payload, calls[0].payload);
+}
+
+#[tokio::test]
+async fn local_backend_heartbeat_reports_vnc_desktop_only_after_rfb_probe_passes() {
+    let _lock = ENV_LOCK.lock().await;
+    let rfb_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let rfb_port = rfb_listener.local_addr().unwrap().port();
+    let _vnc_enabled = EnvGuard::set("DEVICE_VNC_DESKTOP_ENABLED", "1");
+    let _rfb_addr = EnvGuard::set("DEVICE_VNC_RFB_ADDR", &format!("127.0.0.1:{rfb_port}"));
+    let _clipboard = EnvGuard::set("DEVICE_VNC_CLIPBOARD_MODE", "text");
+    let rfb_task = std::thread::spawn(move || {
+        let (mut stream, _) = rfb_listener.accept().unwrap();
+        stream.write_all(b"RFB 003.008\n").unwrap();
+        let mut version = [0_u8; 12];
+        stream.read_exact(&mut version).unwrap();
+        assert_eq!(&version, b"RFB 003.008\n");
+        stream.write_all(&[1, 1]).unwrap();
+        let mut selected_security = [0_u8; 1];
+        stream.read_exact(&mut selected_security).unwrap();
+        assert_eq!(selected_security, [1]);
+        stream.write_all(&0_u32.to_be_bytes()).unwrap();
+        let mut shared = [0_u8; 1];
+        stream.read_exact(&mut shared).unwrap();
+        assert_eq!(shared, [1]);
+        let mut server_init = vec![0_u8; 24];
+        server_init[0..2].copy_from_slice(&1280_u16.to_be_bytes());
+        server_init[2..4].copy_from_slice(&800_u16.to_be_bytes());
+        stream.write_all(&server_init).unwrap();
+    });
+
+    let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
+    let client = LocalBackendClient::with_capability_reporter(
+        local_backend_config(),
+        transport.clone(),
+        StaticCapabilityReporter,
+    );
+
+    let accepted = client.send_heartbeat(Duration::from_secs(2)).await.unwrap();
+
+    assert!(accepted);
+    let calls = transport.calls();
+    assert_eq!(
+        calls[0].payload["runtime_features"]["desktop"],
+        json!({
+            "version": 1,
+            "available": true,
+            "protocol": "rfb",
+            "transport": "websocket",
+            "clipboard": "text",
+        })
+    );
+
+    rfb_task.join().unwrap();
 }
 
 #[tokio::test]

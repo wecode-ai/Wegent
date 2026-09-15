@@ -283,6 +283,8 @@ function installDefaultDshUiTestModules() {
   window.__WEWORK_DSH_UI_MODULES__ = {
     'plugins/wework-ui-cloud-work-sidebar.js': () =>
       import('../../dsh/ui-cloud-work/src/sidebar-navigation'),
+    'plugins/wework-ui-device-desktop.js': () =>
+      import('../../dsh/ui-cloud-work/src/device-desktop-route'),
     'plugins/wework-ui-core-settings.js': () =>
       import('../../dsh/ui-core-settings/src/settings-page'),
     'plugins/wework-ui-core-apps.js': () => import('../../dsh/ui-core-apps/src/app-surface'),

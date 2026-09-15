@@ -10,6 +10,7 @@ import {
   supportsLocalTerminalLaunch,
   supportsRemoteCodeServerSessions,
   supportsRemoteTerminalSessions,
+  supportsVncDesktop,
 } from './device-capabilities'
 
 describe('device-capabilities', () => {
@@ -163,5 +164,35 @@ describe('device-capabilities', () => {
       })
     ).toBe(false)
     expect(supportsRemoteCodeServerSessions({ ...remoteDevice, status: 'offline' })).toBe(false)
+  })
+
+  test('reports VNC capability independently from the current device status', () => {
+    const remoteDevice = {
+      device_type: 'remote',
+      bind_shell: 'claudecode',
+      status: 'online',
+      runtime_features: {
+        schemaVersion: 4,
+        desktop: {
+          version: 1,
+          available: true,
+          protocol: 'rfb',
+          transport: 'websocket',
+          clipboard: 'extended-text',
+        },
+      },
+    } as const
+
+    expect(supportsVncDesktop(remoteDevice)).toBe(true)
+    expect(supportsVncDesktop({ ...remoteDevice, status: 'offline' })).toBe(true)
+    expect(
+      supportsVncDesktop({
+        ...remoteDevice,
+        runtime_features: {
+          ...remoteDevice.runtime_features,
+          desktop: { ...remoteDevice.runtime_features.desktop, available: false },
+        },
+      })
+    ).toBe(false)
   })
 })

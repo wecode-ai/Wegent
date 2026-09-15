@@ -178,6 +178,18 @@ export function supportsRemoteTerminalSessions(
     : isCloudDevice(device) || isRemoteDevice(device)
 }
 
+export function supportsVncDesktop(device: DeviceLike, deviceId?: string | null): boolean {
+  const desktop = device.runtime_features?.desktop
+  return Boolean(
+    isClaudeCodeDevice(device) &&
+    (supportsCloudSessions(device, deviceId) || supportsRemoteSessions(device, deviceId)) &&
+    desktop?.available === true &&
+    desktop.protocol === 'rfb' &&
+    desktop.transport === 'websocket' &&
+    desktop.version >= 1
+  )
+}
+
 export function supportsLocalTerminalLaunch(device: DeviceLike): boolean {
   return !isCloudDevice(device) && !isRemoteDevice(device) && isClaudeCodeDevice(device)
 }

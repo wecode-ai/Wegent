@@ -585,6 +585,116 @@ async def test_local_device_session_service_rejects_disabled_interactive_session
 
 
 @pytest.mark.asyncio
+async def test_local_device_session_service_rejects_vnc_without_live_desktop_capability(
+    monkeypatch,
+):
+    from app.services.device import session_service
+
+    _patch_session_runtime_identity(monkeypatch, session_service)
+    mock_sio = AsyncMock()
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_online_info",
+        AsyncMock(
+            return_value={
+                "socket_id": "socket-123",
+                "runtime_features": {"schemaVersion": 4},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+
+    with pytest.raises(
+        session_service.DeviceSessionError,
+        match="VNC desktop sessions are unavailable on this device",
+    ):
+        await session_service.local_device_session_service.start_session(
+            db=object(),
+            user_id=7,
+            device_id="device-abc",
+            project_id=123,
+            session_type="vnc",
+            path="",
+        )
+
+    mock_sio.call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_local_device_session_service_starts_vnc_websocket_session(monkeypatch):
+    from app.services.device import session_service
+
+    _patch_session_runtime_identity(
+        monkeypatch,
+        session_service,
+        runtime_device_id="runtime-device-abc",
+    )
+    monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "secret")
+    mock_sio = AsyncMock()
+    mock_sio.call.return_value = {
+        "success": True,
+        "session_id": "vnc-session",
+        "url": "ws://localhost:17888/s/vnc-session/websockify",
+        "device_id": "device-abc",
+        "type": "vnc",
+        "transport": "websocket",
+    }
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_online_info",
+        AsyncMock(
+            return_value={
+                "socket_id": "socket-123",
+                "runtime_features": {
+                    "schemaVersion": 4,
+                    "desktop": {
+                        "version": 1,
+                        "available": True,
+                        "protocol": "rfb",
+                        "transport": "websocket",
+                        "clipboard": "extended-text",
+                    },
+                },
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+
+    result = await session_service.local_device_session_service.start_session(
+        db=object(),
+        user_id=7,
+        device_id="device-abc",
+        project_id=123,
+        session_type="vnc",
+        path="",
+    )
+
+    assert result["type"] == "vnc"
+    assert result["transport"] == "websocket"
+    assert result["url"] == "ws://localhost:17888/s/vnc-session/websockify?token=secret"
+    payload = mock_sio.call.await_args.args[1]
+    assert payload["type"] == "vnc"
+    assert payload["session_id"].startswith("vnc-123-")
+    assert payload["path"] == ""
+    assert payload["access_token"] == "secret"
+    assert mock_sio.call.await_args.args[0] == "device:start_vnc_session"
+    session_service.device_service.get_device_online_info.assert_awaited_once_with(
+        7,
+        "runtime-device-abc",
+    )
+
+
+@pytest.mark.asyncio
 async def test_local_device_session_service_keeps_legacy_session_defaults(monkeypatch):
     from app.services.device import session_service
 
