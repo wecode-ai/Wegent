@@ -938,9 +938,18 @@ export class EmbeddedBrowserManager {
   async requestClose(label: string, baseLabel = label): Promise<void> {
     const requestedLabel = requiredLabel(label)
     const normalizedBaseLabel = requiredLabel(baseLabel)
-    const normalizedLabel = this.entries.has(requestedLabel)
-      ? requestedLabel
-      : this.liveBrowserLabel(normalizedBaseLabel)
+    const activeLabel = this.activeTabs.get(normalizedBaseLabel) ?? null
+    const liveLabel = this.liveBrowserLabel(normalizedBaseLabel)
+    const normalizedLabel = this.entries.has(requestedLabel) ? requestedLabel : liveLabel
+    console.log('[embedded-browser] bridge close resolved', {
+      requestedLabel,
+      baseLabel: normalizedBaseLabel,
+      activeLabel,
+      liveLabel,
+      resolvedLabel: normalizedLabel,
+      entryLabels: [...this.entries.keys()],
+      attachedLabels: [...this.attachedContents.keys()],
+    })
     if (!normalizedLabel) return
     const entry = this.entries.get(normalizedLabel)
     if (!entry) return

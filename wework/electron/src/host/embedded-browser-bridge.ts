@@ -316,6 +316,11 @@ export class EmbeddedBrowserBridge {
     const url = requiredString(request.url, 'url')
     let resolvedLabel = label
     if (!this.browser.has(resolvedLabel)) {
+      console.log('[embedded-browser] bridge open resolving host', {
+        baseLabel,
+        requestedLabel: label,
+        attached: this.browser.hasAttached(resolvedLabel),
+      })
       const openRequest = {
         id: `agent-open-${Date.now()}-${randomBytes(6).toString('hex')}`,
         url,
