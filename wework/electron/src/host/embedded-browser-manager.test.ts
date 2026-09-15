@@ -876,6 +876,46 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
+  test('falls back from a stale global route to the remaining visible browser', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const firstContents = new FakeWebContents()
+    const secondContents = new FakeWebContents()
+    firstContents.loadURL.mockImplementation(async url => {
+      firstContents.commitUrl(url)
+    })
+    secondContents.loadURL.mockImplementation(async url => {
+      secondContents.commitUrl(url)
+    })
+    manager.attach('workspace-browser-runtime-first', firstContents as unknown as WebContents)
+    manager.attach('workspace-browser-runtime-second', secondContents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser-runtime-first',
+      url: 'https://first.example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: false,
+      navigateExisting: true,
+    })
+    await manager.open({
+      label: 'workspace-browser-runtime-second',
+      url: 'https://second.example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    manager.setActiveTab('workspace-browser', 'workspace-browser-runtime-second')
+
+    manager.close('workspace-browser-runtime-second')
+    manager.setBounds(
+      'workspace-browser-runtime-first',
+      { x: 0, y: 0, width: 800, height: 600 },
+      true
+    )
+
+    expect(manager.activeLabel('workspace-browser')).toBe('workspace-browser-runtime-first')
+    await rm(directory, { recursive: true, force: true })
+  })
+
   test('settles a pending target open when relabeling an attached browser', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)

@@ -707,7 +707,22 @@ export class EmbeddedBrowserManager {
 
   activeLabel(baseLabel: string): string {
     const normalizedBaseLabel = requiredLabel(baseLabel)
-    return this.activeTabs.get(normalizedBaseLabel) ?? normalizedBaseLabel
+    const activeLabel = this.activeTabs.get(normalizedBaseLabel)
+    if (activeLabel && (this.entries.has(activeLabel) || this.hasAttached(activeLabel))) {
+      return activeLabel
+    }
+    if (activeLabel) this.activeTabs.delete(normalizedBaseLabel)
+
+    const prefixes = [`${normalizedBaseLabel}:`, `${normalizedBaseLabel}-`]
+    const visibleEntry = [...this.entries.values()].find(
+      entry =>
+        entry.visible &&
+        (entry.label === normalizedBaseLabel ||
+          prefixes.some(prefix => entry.label.startsWith(prefix)))
+    )
+    if (!visibleEntry) return normalizedBaseLabel
+    this.activeTabs.set(normalizedBaseLabel, visibleEntry.label)
+    return visibleEntry.label
   }
 
   has(label: string): boolean {
