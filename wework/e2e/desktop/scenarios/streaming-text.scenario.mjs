@@ -2550,6 +2550,7 @@ export function createDesktopScenario({
         distanceFromBottom(sweepStart)
       )
       let sweepDistanceFromBottom = distanceFromBottom(sweepStart)
+      let previousSweepFraction = 0
       for (const fraction of [0.25, 0.5, 0.75, 1]) {
         await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
           value: String(Math.round(sweepMaximum * fraction)),
@@ -2561,11 +2562,16 @@ export function createDesktopScenario({
           `The completed conversation after fast upward sweep step ${fraction}`
         )
         const stepDistanceFromBottom = distanceFromBottom(sweepStep)
+        // Re-measured rows above the viewport keep the reader's text still, so the distance from the
+        // bottom legitimately lands short of the requested position. What must hold is that the sweep
+        // moves the reader further up the history instead of leaving the viewport near the bottom.
+        const requestedStepDistance = Math.round(sweepMaximum * (fraction - previousSweepFraction))
         assert.ok(
-          stepDistanceFromBottom >= sweepDistanceFromBottom - 8,
-          `The fast upward scroll retreated toward the bottom (${Math.round(sweepDistanceFromBottom)}px -> ${Math.round(stepDistanceFromBottom)}px from the bottom)`
+          stepDistanceFromBottom >= sweepDistanceFromBottom + requestedStepDistance / 2,
+          `The fast upward sweep did not advance (${Math.round(sweepDistanceFromBottom)}px -> ${Math.round(stepDistanceFromBottom)}px from the bottom)`
         )
         sweepDistanceFromBottom = stepDistanceFromBottom
+        previousSweepFraction = fraction
       }
       await capture(control, 'streaming-text-19-fast-up-scroll-stable.png')
       assert.ok(
