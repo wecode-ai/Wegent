@@ -3612,6 +3612,73 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
   })
 
+  test('shows a queued active Goal recovery as running while preserving queue actions', async () => {
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                tasks: [
+                  {
+                    taskId: 'recovering-goal',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Recover active Goal',
+                    runtime: 'codex',
+                    running: false,
+                    status: 'queued',
+                    queuePosition: 2,
+                    goalStatus: 'active',
+                    completedAt: 1_789_484_915_000,
+                    updatedAt: '2026-09-15T15:08:35Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(screen.getByTestId('runtime-local-task-running-recovering-goal')).toHaveAttribute(
+      'aria-label',
+      '运行中，有目标'
+    )
+    expect(
+      screen.queryByTestId('runtime-local-task-queued-recovering-goal')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-queue-down-recovering-goal')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-force-start-recovering-goal')).toBeInTheDocument()
+
+    act(() => {
+      cacheRuntimeConversationQueuePaused(
+        {
+          deviceId: 'local-device',
+          taskId: 'recovering-goal',
+          workspacePath: '/repo/Wegent',
+        },
+        true
+      )
+    })
+
+    expect(screen.getByTestId('runtime-local-task-running-recovering-goal')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('runtime-local-task-queue-paused-recovering-goal')
+    ).not.toBeInTheDocument()
+  })
+
   test('shows a paused status when a running task has a paused follow-up queue', async () => {
     renderSidebar({
       runtimeWork: {
