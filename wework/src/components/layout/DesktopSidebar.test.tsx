@@ -1521,22 +1521,24 @@ describe('DesktopSidebar', () => {
     )
 
     const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
-    expect(scrollContainer).toHaveClass('mt-0.5', 'mb-2')
+    expect(screen.getByTestId('sidebar-worklists-scroll-area')).toHaveClass('mt-0.5', 'mb-2')
     expect(scrollContainer).not.toHaveClass('my-2', 'pt-1')
-    expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
-    expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
+    expect(scrollContainer).toHaveClass('border-transparent')
+    expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-none', 'scrollbar-soft')
+    expect(scrollContainer).toHaveStyle({ overflowY: 'scroll' })
 
     fireEvent.scroll(scrollContainer, { target: { scrollTop: 24 } })
 
     expect(scrollContainer).toHaveAttribute('data-scrolled', 'true')
-    expect(scrollContainer).toHaveClass('border-border', 'scrollbar-soft')
+    expect(scrollContainer).toHaveClass('border-border')
     expect(scrollContainer).not.toHaveClass('border-transparent', 'scrollbar-none')
 
     fireEvent.scroll(scrollContainer, { target: { scrollTop: 0 } })
 
     expect(scrollContainer).toHaveAttribute('data-scrolled', 'false')
-    expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
+    expect(scrollContainer).toHaveClass('border-transparent')
     expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
+    expect(scrollContainer).toHaveStyle({ overflowY: 'scroll' })
 
     expect(searchButton.parentElement?.parentElement).toHaveClass('h-9', 'justify-between')
     expect(pluginsButton.parentElement).toHaveClass('space-y-0.5')
@@ -1565,7 +1567,7 @@ describe('DesktopSidebar', () => {
       fireEvent.pointerMove(window, { clientX: 600, clientY: 680 })
     })
 
-    expect(scrollContainer).toHaveClass('overflow-y-hidden')
+    expect(scrollContainer).toHaveStyle({ overflowY: 'hidden' })
     scrollContainer.scrollTop = 240
     fireEvent.scroll(scrollContainer)
     expect(scrollContainer.scrollTop).toBe(120)
@@ -1573,7 +1575,7 @@ describe('DesktopSidebar', () => {
     act(() => {
       fireEvent.pointerMove(window, { clientX: 120, clientY: 680 })
     })
-    expect(scrollContainer).toHaveClass('overflow-y-auto')
+    expect(scrollContainer).toHaveStyle({ overflowY: 'scroll' })
 
     act(() => {
       dispatchWorkbenchSidebarPaneDragCancel()
@@ -2815,7 +2817,7 @@ describe('DesktopSidebar', () => {
     expect(secondSortable).toHaveAttribute('tabindex', '0')
 
     const firstActivator = screen.getByTestId('runtime-local-task-drag-activator-chat-1')
-    const firstTitleSpace = firstActivator.parentElement as HTMLElement
+    const firstTitleSpace = screen.getByTestId('runtime-local-task-title-chat-1')
     const firstTrailing = screen.getByTestId('runtime-local-task-trailing-chat-1')
     const firstActions = screen.getByTestId('runtime-local-task-hover-actions-chat-1')
     mockSidebarSortableRect(firstSortable, 0)
@@ -4258,7 +4260,7 @@ describe('DesktopSidebar', () => {
     )
   })
 
-  test('reserves runtime task hover actions without padding the truncated title', async () => {
+  test('overlays task actions without resizing the full task title', async () => {
     const user = userEvent.setup()
     const taskTitle = '修复进行中任务未显示 tool 调用'
 
@@ -4297,13 +4299,17 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('project-item-button'))
 
     const titleActivator = screen.getByText(taskTitle)
-    const title = titleActivator.parentElement as HTMLElement
+    const title = screen.getByTestId('runtime-local-task-title-codex-1')
     const trailing = screen.getByTestId('runtime-local-task-trailing-codex-1')
     const hoverActions = screen.getByTestId('runtime-local-task-hover-actions-codex-1')
 
-    expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate')
+    expect(title).toHaveClass('min-w-0', 'flex-1')
+    expect(title).not.toHaveClass('truncate')
+    expect(titleActivator).toHaveTextContent(taskTitle)
     expect(title).not.toHaveClass('group-hover/task:pr-20')
-    expect(trailing).toHaveClass('min-w-[30px]', 'group-hover/task:w-[68px]')
+    expect(trailing).toHaveClass('min-w-[30px]')
+    expect(trailing).not.toHaveClass('group-hover/task:w-[68px]')
+    expect(hoverActions).toHaveAttribute('data-sidebar-title-actions')
     expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[72px]')
   })
 
