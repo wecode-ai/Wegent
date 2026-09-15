@@ -899,7 +899,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     ]
   )
   useEffect(() => {
-    const listener = listenEmbeddedBrowserOpenRequests(request => {
+    const unlisten = listenEmbeddedBrowserOpenRequests(request => {
       const paneKey = resolveBrowserOpenRequestPaneKey(request)
       if (!paneKey) return
       setPendingBrowserOpenRequests(current => ({
@@ -907,9 +907,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         [paneKey]: request,
       }))
     })
-    return () => {
-      void listener?.then(unlisten => unlisten())
-    }
+    return () => unlisten?.()
   }, [resolveBrowserOpenRequestPaneKey])
   const markBrowserOpenRequestHandled = useCallback((paneKey: string, requestId: string) => {
     setPendingBrowserOpenRequests(current => {

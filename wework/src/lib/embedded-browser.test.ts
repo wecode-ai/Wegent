@@ -319,6 +319,36 @@ describe('embedded-browser', () => {
     release?.()
   })
 
+  test('stops dispatching open requests synchronously when a listener is released', () => {
+    let hostListener: ((event: unknown) => void) | undefined
+    desktopHostMocks.subscribe.mockImplementation(listener => {
+      hostListener = listener
+      return () => {}
+    })
+    const handler = vi.fn()
+
+    const release = listenEmbeddedBrowserOpenRequests(handler)
+    release?.()
+
+    expect(requestEmbeddedBrowserOpen('http://localhost:3000')).toBe(false)
+    hostListener?.({
+      sequence: 1,
+      type: 'browser.event',
+      payload: {
+        sequence: 1,
+        type: 'open-request',
+        payload: {
+          id: 'released-agent-open',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
+          url: 'https://example.test/',
+        },
+      },
+    })
+    expect(handler).not.toHaveBeenCalled()
+  })
+
   test('dispatches Electron open request events', async () => {
     desktopHostMocks.subscribe.mockImplementation(handler => {
       handler({
