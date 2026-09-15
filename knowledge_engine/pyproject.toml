@@ -71,7 +71,11 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+markers = [
+    "milvus: requires a real Milvus service (set MILVUS_CONTRACT_URI)",
+]
+# Contract tests need a real Milvus service and run in their own CI job.
+addopts = "-v --tb=short -m 'not milvus'"
 
 [build-system]
 requires = ["hatchling"]

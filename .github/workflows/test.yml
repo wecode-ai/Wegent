@@ -333,6 +333,60 @@ jobs:
           flags: knowledge-engine
           name: knowledge-engine-coverage
 
+  test-knowledge-engine-milvus:
+    name: Test Knowledge Engine (real Milvus)
+    needs: changes
+    if: needs.changes.outputs.knowledge_engine == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12 and uv
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: ./knowledge_engine
+        run: uv sync --dev
+
+      - name: Start pinned Milvus standalone
+        working-directory: ./knowledge_engine
+        run: docker compose -f tests/contract/docker-compose.milvus.yml up -d --wait
+
+      - name: Record service and SDK versions
+        working-directory: ./knowledge_engine
+        env:
+          MILVUS_CONTRACT_URI: http://localhost:19530
+        run: |
+          uv run python -c "import pymilvus; print('pymilvus', pymilvus.__version__)"
+          uv run python -c "
+          from pymilvus import MilvusClient
+          client = MilvusClient(uri='http://localhost:19530')
+          print('milvus server', client.get_server_version())
+          client.close()
+          "
+
+      - name: Run real Milvus contract tests
+        working-directory: ./knowledge_engine
+        env:
+          MILVUS_CONTRACT_URI: http://localhost:19530
+          PYTHONUNBUFFERED: "1"
+          PYTHONFAULTHANDLER: "1"
+        run: uv run pytest tests/contract -m milvus -v
+
+      - name: Dump Milvus logs on failure
+        if: failure()
+        working-directory: ./knowledge_engine
+        run: docker compose -f tests/contract/docker-compose.milvus.yml logs --tail=300
+
+      - name: Stop Milvus
+        if: always()
+        working-directory: ./knowledge_engine
+        run: docker compose -f tests/contract/docker-compose.milvus.yml down -v
+
   test-frontend:
     name: Test Frontend
     needs: changes
@@ -546,6 +600,7 @@ jobs:
         test-executor-manager,
         test-shared,
         test-knowledge-engine,
+        test-knowledge-engine-milvus,
         test-frontend,
         test-wework,
         test-wegent-cli,
@@ -575,6 +630,7 @@ jobs:
           assert_result "${{ needs.changes.outputs.executor_manager }}" "${{ needs.test-executor-manager.result }}" "Executor Manager tests"
           assert_result "${{ needs.changes.outputs.shared }}" "${{ needs.test-shared.result }}" "Shared tests"
           assert_result "${{ needs.changes.outputs.knowledge_engine }}" "${{ needs.test-knowledge-engine.result }}" "Knowledge Engine tests"
+          assert_result "${{ needs.changes.outputs.knowledge_engine }}" "${{ needs.test-knowledge-engine-milvus.result }}" "Knowledge Engine real Milvus contract tests"
           assert_result "${{ needs.changes.outputs.frontend }}" "${{ needs.test-frontend.result }}" "Frontend tests"
           assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.test-wework.result }}" "Wework tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli.result }}" "wegent CLI tests"

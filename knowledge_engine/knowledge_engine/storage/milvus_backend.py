@@ -2,149 +2,106 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Milvus storage backend implementation.
+"""Milvus storage backend built directly on the official synchronous PyMilvus.
 
-Supported retrieval modes:
-- vector: Pure vector similarity search using embeddings (VectorStoreQueryMode.DEFAULT)
-- keyword: BM25 keyword search (VectorStoreQueryMode.TEXT_SEARCH)
-- hybrid: Combined vector + BM25 search with RRF ranking (VectorStoreQueryMode.HYBRID)
+Task 01 scope: dense vector write, retrieval and delete for ordinary
+documents, plus the server-maintained index contract that binds a collection
+to its embedding space and schema. Collections are created only by the
+explicit index write path; queries, reads and deletes never create resources.
 
-Note: Requires Milvus 2.5+ for keyword and hybrid search support.
+Keyword (server-side BM25) and weighted hybrid retrieval are a later slice.
+They raise an explicit unsupported-capability error instead of silently
+degrading to a different scoring mode, and the embedding space contract makes
+a same-dimension model swap an explicit failure rather than a silent quality
+regression.
 """
 
 import json
 import logging
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional, Sequence
 
-from llama_index.core import StorageContext, VectorStoreIndex
-from llama_index.core.base.embeddings.base import BaseEmbedding
 from llama_index.core.schema import BaseNode
-from llama_index.core.vector_stores import MetadataFilter, MetadataFilters
-from llama_index.core.vector_stores.types import (
-    FilterOperator,
-    VectorStoreQuery,
-    VectorStoreQueryMode,
-)
-from llama_index.vector_stores.milvus import MilvusVectorStore
-from llama_index.vector_stores.milvus.base import IndexManagement, _to_milvus_filter
-from pymilvus import AsyncMilvusClient, MilvusClient
+from pymilvus import MilvusClient
 
-from knowledge_engine.retrieval.filters import (
-    filter_chunk_records,
-    parse_metadata_filters,
+from knowledge_engine.embedding.space import compute_embedding_space
+from knowledge_engine.embedding.vectors import (
+    EmptyIndexableContentError,
+    prepare_query_vector,
+    prepare_text_vectors,
+    read_model_name,
+    validate_vectors,
 )
+from knowledge_engine.retrieval.filters import filter_chunk_records
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
-from knowledge_engine.storage.base import BaseStorageBackend
+from knowledge_engine.storage.base import (
+    DISPLAY_TEXT_METADATA_KEY,
+    BaseStorageBackend,
+)
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.storage.errors import (
+    StorageBackendError,
+    UnsupportedStorageCapabilityError,
+)
+from knowledge_engine.storage.milvus_native import (
+    ATTEMPT_ID_FIELD,
+    CHUNK_INDEX_FIELD,
+    CREATED_AT_FIELD,
+    DENSE_VECTOR_FIELD,
+    DISPLAY_TEXT_FIELD,
+    DOC_REF_FIELD,
+    GENERATION_FIELD,
+    ID_FIELD,
+    KNOWLEDGE_ID_FIELD,
+    METADATA_JSON_FIELD,
+    NODE_KIND_CHUNK,
+    NODE_KIND_FIELD,
+    PUBLISHED_FIELD,
+    RETRIEVAL_TEXT_FIELD,
+    SOURCE_FILE_FIELD,
+    MilvusDocumentStore,
+    build_scope_filter,
+    node_row_id,
+    sanitize_filter_value,
+)
 from shared.models import RetrievalScope
 
 logger = logging.getLogger(__name__)
 
-# Named constants for magic numbers
-DEFAULT_EMBEDDING_DIM = 1024  # Default vector dimension (OpenAI text-embedding-ada-002)
-MAX_QUERY_LIMIT = 10000  # Maximum records to fetch for aggregation queries
-DEFAULT_TOP_K = 20  # Default top_k for retrieval
+DEFAULT_TOP_K = 20
+MAX_QUERY_LIMIT = 10000
+DEFAULT_TIMEOUT_SECONDS = 10.0
+DEFAULT_ATTEMPT_PREFIX = "gen"
 
-
-class LazyAsyncMilvusVectorStore(MilvusVectorStore):
-    """
-    MilvusVectorStore subclass with lazy AsyncMilvusClient initialization.
-
-    The original MilvusVectorStore creates AsyncMilvusClient in __init__,
-    which requires an event loop. This causes issues when running in
-    thread pools (e.g., Celery tasks via asyncio.to_thread).
-
-    This subclass defers AsyncMilvusClient creation to first access,
-    allowing synchronous operations to work without an event loop.
-
-    See: https://github.com/run-llama/llama_index/issues/20313
-    See: https://github.com/run-llama/llama_index/pull/20695
-    """
-
-    # Store config for lazy async client creation
-    _milvusclient_config: Dict[str, Any] = {}
-
-    def __init__(self, **kwargs: Any) -> None:
-        """
-        Initialize without creating AsyncMilvusClient.
-
-        Stores connection params for lazy initialization and patches
-        the parent class to skip AsyncMilvusClient creation.
-        """
-        import llama_index.vector_stores.milvus.base as milvus_base
-
-        # Store the original AsyncMilvusClient class
-        original_async_client = milvus_base.AsyncMilvusClient
-
-        # Replace AsyncMilvusClient with a dummy that does nothing
-        # This prevents the parent __init__ from creating the async client
-        milvus_base.AsyncMilvusClient = lambda **kw: None  # type: ignore
-
-        try:
-            # Call parent __init__ - it will use our dummy AsyncMilvusClient
-            super().__init__(**kwargs)
-        finally:
-            # Restore the original AsyncMilvusClient
-            milvus_base.AsyncMilvusClient = original_async_client
-
-        # Store connection params for lazy async client creation
-        # Following the pattern from PR #20695
-        uri = kwargs.get("uri", "./milvus_llamaindex.db")
-        token = kwargs.get("token", "")
-        # Filter out 'alias' as pymilvus sets it internally
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "alias"}
-
-        self._milvusclient_config = {
-            "uri": uri,
-            "token": token,
-            "kwargs": filtered_kwargs,
-        }
-
-        # Set _async_milvusclient to None for lazy initialization
-        self._async_milvusclient = None  # type: ignore
-
-    @property
-    def aclient(self) -> AsyncMilvusClient:
-        """
-        Get async client (lazily created on first access).
-
-        This property creates the AsyncMilvusClient only when needed,
-        allowing synchronous operations to work without an event loop.
-        """
-        if self._async_milvusclient is None:
-            self._async_milvusclient = AsyncMilvusClient(
-                uri=self._milvusclient_config["uri"],
-                token=self._milvusclient_config["token"],
-                **self._milvusclient_config["kwargs"],
-            )
-        return self._async_milvusclient
+CHUNK_FIELDS_FOR_FILTERING = (
+    KNOWLEDGE_ID_FIELD,
+    DOC_REF_FIELD,
+    SOURCE_FILE_FIELD,
+    GENERATION_FIELD,
+    ATTEMPT_ID_FIELD,
+    NODE_KIND_FIELD,
+    CHUNK_INDEX_FIELD,
+    CREATED_AT_FIELD,
+)
+TEXT_FILTER_FIELDS = {
+    KNOWLEDGE_ID_FIELD,
+    DOC_REF_FIELD,
+    SOURCE_FILE_FIELD,
+    ATTEMPT_ID_FIELD,
+    NODE_KIND_FIELD,
+    CREATED_AT_FIELD,
+}
+NUMERIC_FILTER_FIELDS = {GENERATION_FIELD, CHUNK_INDEX_FIELD}
 
 
 class MilvusBackend(BaseStorageBackend):
-    """
-    Milvus storage backend implementation.
+    """Dense Milvus storage backend using the official synchronous SDK."""
 
-    Supported retrieval modes:
-    - vector: Pure vector similarity search (default)
-    - keyword: Pure BM25 keyword search
-    - hybrid: Combined vector + BM25 search with RRF ranking
-
-    Class Attributes:
-        SUPPORTED_RETRIEVAL_METHODS: List of supported retrieval method names
-        INDEX_PREFIX: Prefix for collection names
-    """
-
-    # Milvus supports vector, keyword (BM25), and hybrid search
-    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector", "keyword", "hybrid"]
+    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector"]
     supports_retrieval_scope: ClassVar[bool] = True
-
-    # Override INDEX_PREFIX for Milvus collections
     INDEX_PREFIX: ClassVar[str] = "collection"
 
     def __init__(self, config: Dict):
-        """
-        Initialize Milvus backend.
+        """Initialize the backend from a resolved retriever storage config.
 
         Args:
             config: Storage configuration dict containing:
@@ -153,201 +110,61 @@ class MilvusBackend(BaseStorageBackend):
                 - username: Optional username for authentication
                 - password: Optional password for authentication
                 - indexStrategy: Index/collection naming strategy
-                - ext: Additional config (e.g., dim for vector dimension, db_name)
-
-        Authentication:
-            If both username and password are provided, they are concatenated
-            as "{username}:{password}" to form the token.
-
-        Database Name:
-            The db_name can be specified in three ways (in order of priority):
-            1. ext.db_name - explicit db_name in ext config
-            2. URL path - e.g., "http://localhost:19530/mydb"
-            3. Default - "default" if not specified
+                - ext: Additional config (e.g., dim, db_name, timeout)
         """
         super().__init__(config)
 
-        # Get vector dimension from ext (default: 1536 for OpenAI embeddings)
-        self.dim = self.ext.get("dim", DEFAULT_EMBEDDING_DIM)
+        # The dimension is a validation input only; the first real vector
+        # decides the physical schema and there is no default dimension.
+        self.dim = self.ext.get("dim")
 
-        # Build token for authentication: username:password
         if self.username and self.password:
             self.token = f"{self.username}:{self.password}"
         else:
             self.token = ""
 
-        # Parse db_name from URL or ext config
-        # pymilvus requires db_name as a separate parameter, not in URL path
         self.db_name, self.base_url = self._parse_db_name_from_url(self.url)
+        self._store = MilvusDocumentStore(
+            uri=self.base_url,
+            token=self.token,
+            db_name=self.db_name,
+            timeout=float(self.ext.get("timeout") or DEFAULT_TIMEOUT_SECONDS),
+        )
 
-    def _parse_db_name_from_url(self, url: str) -> tuple:
-        """
-        Parse db_name from URL path and return base URL without db_name.
-
-        Milvus requires db_name as a separate parameter, not in the URL path.
-        This method extracts db_name from URL like "http://host:port/dbname"
-        and returns the base URL "http://host:port".
+    def _parse_db_name_from_url(self, url: str) -> tuple[str, str]:
+        """Split the database name out of the connection URL.
 
         Priority for db_name:
         1. ext.db_name - explicit config takes highest priority
         2. URL path - extracted from URL if present
         3. Default - "default" if not specified
-
-        Args:
-            url: Milvus connection URL (e.g., "http://localhost:19530/mydb")
-
-        Returns:
-            Tuple of (db_name, base_url)
         """
         from urllib.parse import urlparse, urlunparse
 
-        # Priority 1: Check ext.db_name first
         if self.ext.get("db_name"):
             return self.ext["db_name"], url
 
-        # Priority 2: Parse from URL path
         if not url:
             return "default", url
 
         parsed = urlparse(url)
-
-        # Extract db_name from path (e.g., "/mydb" -> "mydb")
+        # A local Milvus Lite path (``/tmp/contract.db``) is a URI without a
+        # scheme; its path is the database file, not a database name.
+        if not parsed.scheme:
+            return "default", url
         path = parsed.path.strip("/")
-
         if path:
-            # Has path component - use it as db_name
-            db_name = path
-            # Rebuild URL without the path
             base_url = urlunparse(
                 (parsed.scheme, parsed.netloc, "", parsed.params, parsed.query, "")
             )
-            return db_name, base_url
-        else:
-            # No path - use default db_name
-            return "default", url
+            return path, base_url
+        return "default", url
 
-    @staticmethod
-    def _sanitize_filter_value(value: str) -> str:
-        """
-        Sanitize a string value for use in Milvus filter expressions.
-
-        Escapes backslashes and double quotes to prevent expression injection.
-
-        Args:
-            value: The string value to sanitize
-
-        Returns:
-            Sanitized string safe for use in filter expressions
-        """
-        return value.replace("\\", "\\\\").replace('"', '\\"')
-
-    def _get_client(self) -> MilvusClient:
-        """
-        Create a MilvusClient instance.
-
-        Uses base_url (without db_name path) and passes db_name as separate parameter.
-
-        Returns:
-            MilvusClient instance for direct Milvus operations
-        """
-        return MilvusClient(uri=self.base_url, token=self.token, db_name=self.db_name)
-
-    def _resolve_hybrid_ranker(self) -> str:
-        """
-        Resolve the hybrid ranker with WeightedRanker as the default.
-
-        RRFRanker remains available as an explicit compatibility opt-out.
-        """
-        configured_ranker = self.ext.get("hybrid_ranker")
-        if configured_ranker == "RRFRanker":
-            return configured_ranker
-        if configured_ranker == "WeightedRanker":
-            return configured_ranker
-        return "WeightedRanker"
-
-    def _resolve_hybrid_ranker_params(
-        self,
-        retrieval_setting: Optional[Dict[str, Any]] = None,
-        *,
-        configured_ranker: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        configured_ranker = configured_ranker or self._resolve_hybrid_ranker()
-        configured_params = dict(self.ext.get("hybrid_ranker_params") or {})
-
-        if configured_ranker != "WeightedRanker":
-            return configured_params
-
-        vector_weight = (
-            retrieval_setting.get("vector_weight")
-            if retrieval_setting is not None
-            else None
-        )
-        keyword_weight = (
-            retrieval_setting.get("keyword_weight")
-            if retrieval_setting is not None
-            else None
-        )
-        if vector_weight is not None and keyword_weight is not None:
-            total = vector_weight + keyword_weight
-            if total > 0:
-                normalized_weights = [
-                    float(vector_weight) / float(total),
-                    float(keyword_weight) / float(total),
-                ]
-                logger.info(
-                    "[Milvus] Using WeightedRanker params from retrieval weights: weights=%s",
-                    normalized_weights,
-                )
-                return {"weights": normalized_weights}
-
-        return configured_params
-
-    def create_vector_store(
-        self,
-        collection_name: str,
-        retrieval_mode: str = "vector",
-        dim: Optional[int] = None,
-        retrieval_setting: Optional[Dict[str, Any]] = None,
-    ) -> MilvusVectorStore:
-        """
-        Create Milvus vector store instance.
-
-        Uses base_url (without db_name path) and passes db_name as separate parameter.
-
-        Args:
-            collection_name: Name of the collection
-            retrieval_mode: Retrieval mode - 'vector', 'keyword', or 'hybrid'
-            dim: Optional embedding dimension. If provided, overrides self.dim.
-                 This allows dynamic dimension based on the actual embedding model.
-
-        Returns:
-            MilvusVectorStore instance
-        """
-        # Use provided dim if available, otherwise fall back to configured dim
-        effective_dim = dim if dim is not None else self.dim
-
-        logger.info(
-            f"[Milvus] create_vector_store: collection={collection_name}, "
-            f"dim_param={dim}, self.dim={self.dim}, effective_dim={effective_dim}"
-        )
-
-        hybrid_ranker = self._resolve_hybrid_ranker()
-        hybrid_ranker_params = self._resolve_hybrid_ranker_params(
-            retrieval_setting,
-            configured_ranker=hybrid_ranker,
-        )
-
-        return LazyAsyncMilvusVectorStore(
-            uri=self.base_url,
-            token=self.token,
-            db_name=self.db_name,
-            collection_name=collection_name,
-            dim=effective_dim,
-            upsert_mode=True,
-            overwrite=False,  # Do not overwrite existing collection
-            enable_sparse=True,  # Enable sparse vector for keyword/hybrid search
-            hybrid_ranker=hybrid_ranker,
-            hybrid_ranker_params=hybrid_ranker_params,
+    def create_vector_store(self, collection_name: str, **kwargs) -> Any:
+        """Milvus no longer exposes a LlamaIndex vector store."""
+        del collection_name, kwargs
+        raise UnsupportedStorageCapabilityError(
+            "llama_index vector store", backend="milvus"
         )
 
     def index_with_metadata(
@@ -357,59 +174,690 @@ class MilvusBackend(BaseStorageBackend):
         embed_model,
         **kwargs,
     ) -> Dict:
+        """Write and publish one document execution into Milvus.
+
+        Rows are written unpublished, verified through an independent client
+        and only then published. A failure anywhere leaves the document
+        invisible instead of exposing a half-written index.
         """
-        Index nodes into Milvus.
+        materialized = [node for node in nodes if self._node_has_content(node)]
+        if not materialized:
+            raise EmptyIndexableContentError()
 
-        Note: Metadata is already applied to nodes by the indexer layer via
-        chunk_metadata.apply_to_nodes() before calling this method.
+        knowledge_id = chunk_metadata.knowledge_id
+        doc_ref = chunk_metadata.doc_ref
+        generation = self._resolve_generation(kwargs)
+        attempt_id = self._resolve_attempt_id(kwargs, generation)
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
 
-        This method automatically uses the embedding dimension from the embed_model
-        if available (via _dimension attribute set from Model CRD's embeddingConfig).
-        This ensures the Milvus collection schema matches the actual embedding vectors.
+        vectors = self._resolve_node_vectors(materialized, embed_model)
+        dimension = len(vectors[0])
+        embedding_space = compute_embedding_space(embed_model)
 
-        Args:
-            nodes: List of nodes to index (metadata already applied)
-            chunk_metadata: ChunkMetadata instance containing document metadata
-            embed_model: Embedding model (may have _dimension attribute from Model CRD)
-            **kwargs: Additional parameters (e.g., user_id for per_user strategy)
+        rows = [
+            self._build_row(
+                node,
+                vector,
+                knowledge_id=knowledge_id,
+                doc_ref=doc_ref,
+                generation=generation,
+                attempt_id=attempt_id,
+            )
+            for node, vector in zip(materialized, vectors)
+        ]
 
-        Returns:
-            Indexing result dict
-        """
-        # Get collection name
-        collection_name = self.get_index_name(chunk_metadata.knowledge_id, **kwargs)
-
-        # Get embedding dimension from embed_model if available
-        # CustomEmbedding stores dimension in _dimension attribute (set from Model CRD)
-        embed_dim = getattr(embed_model, "_dimension", None)
-        if embed_dim:
-            logger.info(f"[Milvus] Using embedding dimension from model: {embed_dim}")
-
-        # Create vector store with detected dimension (or fall back to configured dim)
-        vector_store = self.create_vector_store(collection_name, dim=embed_dim)
-
-        # Index nodes using LlamaIndex
-        storage_context = StorageContext.from_defaults(vector_store=vector_store)
-
-        nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
-        VectorStoreIndex(
-            nodes_for_embedding,
-            storage_context=storage_context,
-            embed_model=embed_model,
-            show_progress=True,
+        self._write_unpublished(
+            collection_name,
+            rows,
+            dimension=dimension,
+            embedding_space=embedding_space,
+            execution_filter=self._execution_filter(
+                knowledge_id, doc_ref, attempt_id, published=False
+            ),
+        )
+        self._publish_rows(
+            collection_name,
+            rows,
+            published_filter=self._execution_filter(
+                knowledge_id, doc_ref, attempt_id, published=True
+            ),
         )
 
+        logger.info(
+            "[Milvus] Published document: collection=%s, doc_ref=%s, generation=%s, "
+            "attempt=%s, chunks=%d, dimension=%d",
+            collection_name,
+            doc_ref,
+            generation,
+            attempt_id,
+            len(rows),
+            dimension,
+        )
         return {
-            "indexed_count": len(nodes),
+            "indexed_count": len(rows),
             "index_name": collection_name,
             "status": "success",
+            "dimension": dimension,
+            "embedding_space": embedding_space,
+        }
+
+    def _write_unpublished(
+        self,
+        collection_name: str,
+        rows: List[Dict[str, Any]],
+        *,
+        dimension: int,
+        embedding_space: str,
+        execution_filter: str,
+    ) -> None:
+        """Create the index if needed and stage every row unpublished."""
+        with self._store.client() as client:
+            self._store.ensure_index(
+                client,
+                collection_name,
+                dimension=dimension,
+                embedding_space=embedding_space,
+            )
+            self._store.upsert_rows(
+                client, collection_name, self._with_publication(rows, published=False)
+            )
+            self._store.flush(client, collection_name)
+        self._assert_visible_row_count(
+            collection_name, execution_filter, expected=len(rows), stage="write"
+        )
+
+    def _publish_rows(
+        self,
+        collection_name: str,
+        rows: List[Dict[str, Any]],
+        *,
+        published_filter: str,
+    ) -> None:
+        """Publish a fully written execution and verify its visibility."""
+        with self._store.client() as client:
+            self._store.upsert_rows(
+                client, collection_name, self._with_publication(rows, published=True)
+            )
+            self._store.flush(client, collection_name)
+        self._assert_visible_row_count(
+            collection_name, published_filter, expected=len(rows), stage="publish"
+        )
+
+    def _resolve_generation(self, kwargs: Dict[str, Any]) -> int:
+        generation = kwargs.get("index_generation")
+        if generation is None:
+            return 0
+        return int(generation)
+
+    def _node_has_content(self, node: BaseNode) -> bool:
+        """A chunk with neither retrieval nor display text is not indexable."""
+        retrieval_text = self.get_node_embedding_text(node)
+        display_text = self.get_node_display_text(node)
+        return bool(retrieval_text.strip() or display_text.strip())
+
+    def _resolve_attempt_id(self, kwargs: Dict[str, Any], generation: int) -> str:
+        attempt_id = kwargs.get("attempt_id")
+        if attempt_id:
+            return str(attempt_id)
+        # Task 01 callers have no persisted attempt yet. A stable value keeps a
+        # re-sent batch on the same primary keys, so it overwrites instead of
+        # duplicating. Task 02 supplies the persisted execution identity.
+        return f"{DEFAULT_ATTEMPT_PREFIX}{generation}"
+
+    def _resolve_node_vectors(
+        self,
+        nodes: Sequence[BaseNode],
+        embed_model,
+    ) -> List[List[float]]:
+        """Reuse existing node vectors and embed only the missing ones."""
+        vectors: List[Optional[List[float]]] = [None] * len(nodes)
+        missing_indexes: List[int] = []
+        missing_texts: List[str] = []
+
+        for index, node in enumerate(nodes):
+            existing = getattr(node, "embedding", None)
+            if existing:
+                vectors[index] = [float(value) for value in existing]
+            else:
+                missing_indexes.append(index)
+                missing_texts.append(self.get_node_embedding_text(node))
+
+        if missing_indexes:
+            prepared = prepare_text_vectors(embed_model, missing_texts)
+            for index, vector in zip(missing_indexes, prepared):
+                vectors[index] = vector
+
+        resolved = [vector for vector in vectors if vector is not None]
+        validate_vectors(
+            resolved,
+            expected_count=len(nodes),
+            expected_dimension=self.dim,
+            model_name=read_model_name(embed_model),
+        )
+        return [vector for vector in vectors if vector is not None]
+
+    def _build_row(
+        self,
+        node: BaseNode,
+        vector: Sequence[float],
+        *,
+        knowledge_id: str,
+        doc_ref: str,
+        generation: int,
+        attempt_id: str,
+    ) -> Dict[str, Any]:
+        metadata = dict(node.metadata or {})
+        chunk_index = int(metadata.get("chunk_index") or 0)
+        return {
+            ID_FIELD: node_row_id(
+                knowledge_id=knowledge_id,
+                doc_ref=doc_ref,
+                generation=generation,
+                attempt_id=attempt_id,
+                node_kind=NODE_KIND_CHUNK,
+                chunk_index=chunk_index,
+            ),
+            KNOWLEDGE_ID_FIELD: knowledge_id,
+            DOC_REF_FIELD: doc_ref,
+            SOURCE_FILE_FIELD: str(metadata.get("source_file") or ""),
+            GENERATION_FIELD: generation,
+            ATTEMPT_ID_FIELD: attempt_id,
+            NODE_KIND_FIELD: NODE_KIND_CHUNK,
+            CHUNK_INDEX_FIELD: chunk_index,
+            RETRIEVAL_TEXT_FIELD: self.get_node_embedding_text(node),
+            DISPLAY_TEXT_FIELD: self.get_node_display_text(node),
+            METADATA_JSON_FIELD: json.dumps(metadata, ensure_ascii=False, default=str),
+            CREATED_AT_FIELD: str(metadata.get("created_at") or ""),
+            PUBLISHED_FIELD: False,
+            DENSE_VECTOR_FIELD: [float(value) for value in vector],
         }
 
     @staticmethod
+    def _with_publication(
+        rows: Sequence[Dict[str, Any]], *, published: bool
+    ) -> List[Dict[str, Any]]:
+        return [{**row, PUBLISHED_FIELD: published} for row in rows]
+
+    @staticmethod
+    def _attempt_condition(attempt_id: str) -> str:
+        return f'attempt_id == "{sanitize_filter_value(attempt_id)}"'
+
+    def _execution_filter(
+        self,
+        knowledge_id: str,
+        doc_ref: str,
+        attempt_id: str,
+        *,
+        published: bool,
+    ) -> str:
+        return build_scope_filter(
+            knowledge_id=knowledge_id,
+            doc_refs=[doc_ref],
+            extra_conditions=[self._attempt_condition(attempt_id)],
+            published=published,
+        )
+
+    def _assert_visible_row_count(
+        self,
+        collection_name: str,
+        filter_expr: str,
+        *,
+        expected: int,
+        stage: str,
+    ) -> None:
+        """Verify row count through a separate client before publishing."""
+        with self._store.client() as reader:
+            actual = self._store.count_rows(reader, collection_name, filter_expr)
+        if actual != expected:
+            raise StorageBackendError(
+                f"Milvus {stage} verification failed: expected {expected} rows "
+                f"but an independent client observed {actual}.",
+                details={
+                    "collection_name": collection_name,
+                    "stage": stage,
+                    "expected": expected,
+                    "actual": actual,
+                },
+            )
+
+    def retrieve(
+        self,
+        knowledge_id: str,
+        query: str,
+        embed_model,
+        retrieval_setting: Dict[str, Any],
+        scope: Optional[RetrievalScope] = None,
+        metadata_condition: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> Dict:
+        """Retrieve published chunks with raw COSINE scores.
+
+        The score is the database similarity for this candidate; there is no
+        candidate-set re-normalization. ``score_threshold`` is compared with
+        ``>=`` against that raw score.
+        """
+        retrieval_mode = str(retrieval_setting.get("retrieval_mode") or "vector")
+        if retrieval_mode != "vector":
+            raise UnsupportedStorageCapabilityError(
+                f"{retrieval_mode} retrieval mode", backend="milvus"
+            )
+
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        top_k = int(retrieval_setting.get("top_k") or DEFAULT_TOP_K)
+        configured_threshold = retrieval_setting.get("score_threshold")
+        score_threshold = (
+            float(configured_threshold) if configured_threshold is not None else 0.7
+        )
+        filter_expr = build_scope_filter(
+            knowledge_id=knowledge_id,
+            doc_refs=self._scope_doc_refs(scope),
+            extra_conditions=self._metadata_conditions(metadata_condition),
+        )
+
+        # An empty knowledge base answers empty without calling the embedding
+        # provider: only a real index justifies a provider request.
+        with self._store.client() as client:
+            if self._store.require_bound(client, collection_name) is None:
+                logger.info(
+                    "[Milvus] Query on missing index returns empty: collection=%s",
+                    collection_name,
+                )
+                return {"records": []}
+
+        resolved_queries = resolve_search_queries(query, retrieval_setting)
+        query_vector = prepare_query_vector(embed_model, resolved_queries.dense_query)
+
+        with self._store.client() as client:
+            binding = self._store.verify_index(
+                client,
+                collection_name,
+                dimension=len(query_vector),
+                embedding_space=compute_embedding_space(embed_model),
+            )
+            if binding is None:
+                return {"records": []}
+            hits = self._store.search(
+                client,
+                collection_name,
+                query_vector=query_vector,
+                filter_expr=filter_expr,
+                limit=top_k,
+            )
+
+        return self._process_hits(hits, score_threshold)
+
+    @staticmethod
+    def _scope_doc_refs(scope: Optional[RetrievalScope]) -> Optional[List[str]]:
+        if not scope or not scope.document_ids:
+            return None
+        return [str(document_id) for document_id in scope.document_ids]
+
+    def _metadata_conditions(
+        self, metadata_condition: Optional[Dict[str, Any]]
+    ) -> List[str]:
+        """Compile the supported flat metadata condition into Milvus filters.
+
+        Only physical scalar columns can be filtered natively. Arbitrary user
+        metadata is stored as JSON and is not silently post-filtered after the
+        candidate cut; it fails loudly until the scoped-retrieval slice lands.
+        """
+        if not metadata_condition:
+            return []
+
+        operator = str(metadata_condition.get("operator") or "and").strip().lower()
+        if operator not in {"and", "or"}:
+            raise ValueError(
+                f"metadata_condition operator '{operator}' is not supported."
+            )
+
+        terms = [
+            self._compile_metadata_condition(condition)
+            for condition in metadata_condition.get("conditions") or []
+            if condition.get("key") and condition.get("value") is not None
+        ]
+        if not terms:
+            return []
+        if len(terms) == 1:
+            return terms
+        joined = " or ".join(terms) if operator == "or" else " and ".join(terms)
+        return [f"({joined})"]
+
+    def _compile_metadata_condition(self, condition: Dict[str, Any]) -> str:
+        key = str(condition.get("key"))
+        if key == DOC_REF_FIELD:
+            raise ValueError(
+                "Document scope must use document_ids or "
+                "RetrievalScope.document_ids, not metadata_condition doc_ref."
+            )
+        if key not in CHUNK_FIELDS_FOR_FILTERING:
+            raise UnsupportedStorageCapabilityError(
+                f"metadata filter on '{key}'", backend="milvus"
+            )
+
+        operator = str(condition.get("operator") or "eq").strip().lower()
+        operator = {"==": "eq", "!=": "ne"}.get(operator, operator)
+        value = condition.get("value")
+        literal = self._filter_literal(key, value)
+
+        if operator == "eq":
+            return f"{key} == {literal}"
+        if operator == "ne":
+            return f"{key} != {literal}"
+        comparison_operators = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
+        if operator in comparison_operators:
+            return f"{key} {comparison_operators[operator]} {literal}"
+        if operator in {"in", "nin"}:
+            if not isinstance(value, (list, tuple, set)):
+                raise ValueError(
+                    f"metadata_condition '{operator}' requires a list value."
+                )
+            items = ", ".join(self._filter_literal(key, item) for item in value)
+            keyword = "in" if operator == "in" else "not in"
+            return f"{key} {keyword} [{items}]"
+        if operator in {"contains", "text_match"}:
+            if key not in TEXT_FILTER_FIELDS:
+                raise UnsupportedStorageCapabilityError(
+                    f"'{operator}' metadata filter on '{key}'", backend="milvus"
+                )
+            pattern = sanitize_filter_value(value).replace("%", "\\%")
+            return f'{key} like "%{pattern}%"'
+        raise ValueError(f"metadata_condition operator '{operator}' is not supported.")
+
+    @staticmethod
+    def _filter_literal(key: str, value: Any) -> str:
+        if key in NUMERIC_FILTER_FIELDS:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"metadata_condition '{key}' requires a numeric value."
+                )
+            return str(value)
+        return f'"{sanitize_filter_value(value)}"'
+
+    def _process_hits(
+        self, hits: Sequence[Dict[str, Any]], score_threshold: float
+    ) -> Dict:
+        records = []
+        for hit in hits:
+            score = float(hit.get("__score__", 0.0))
+            if score < score_threshold:
+                continue
+            metadata = self._row_metadata(hit)
+            records.append(
+                {
+                    "content": hit.get(DISPLAY_TEXT_FIELD)
+                    or metadata.get(DISPLAY_TEXT_METADATA_KEY)
+                    or "",
+                    "score": score,
+                    "title": hit.get(SOURCE_FILE_FIELD)
+                    or metadata.get("source_file", ""),
+                    "metadata": metadata,
+                }
+            )
+        return {"records": records}
+
+    def _row_metadata(self, hit: Dict[str, Any]) -> Dict[str, Any]:
+        raw = hit.get(METADATA_JSON_FIELD)
+        metadata: Dict[str, Any] = {}
+        if isinstance(raw, str) and raw:
+            try:
+                parsed = json.loads(raw)
+            except ValueError as exc:
+                raise StorageBackendError(
+                    "Stored Milvus metadata is not readable JSON.",
+                    details={"row_id": hit.get(ID_FIELD)},
+                ) from exc
+            if not isinstance(parsed, dict):
+                raise StorageBackendError(
+                    "Stored Milvus metadata is not a JSON object.",
+                    details={"row_id": hit.get(ID_FIELD)},
+                )
+            metadata = parsed
+        for field in CHUNK_FIELDS_FOR_FILTERING:
+            if field in hit:
+                metadata.setdefault(field, hit[field])
+        if RETRIEVAL_TEXT_FIELD in hit:
+            metadata.setdefault(RETRIEVAL_TEXT_FIELD, hit[RETRIEVAL_TEXT_FIELD])
+        if DISPLAY_TEXT_FIELD in hit:
+            metadata.setdefault(DISPLAY_TEXT_FIELD, hit[DISPLAY_TEXT_FIELD])
+        return metadata
+
+    def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
+        """Delete one document; a missing document is an idempotent no-op."""
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        filter_expr = build_scope_filter(
+            knowledge_id=knowledge_id,
+            doc_refs=[doc_ref],
+            published=False,
+        )
+        deleted_chunks = self._delete_verified(collection_name, filter_expr)
+        self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
+        return {
+            "doc_ref": doc_ref,
+            "knowledge_id": knowledge_id,
+            "deleted_chunks": deleted_chunks,
+            "status": "deleted",
+        }
+
+    def _delete_verified(self, collection_name: str, filter_expr: str) -> int:
+        with self._store.client() as client:
+            if not self._store.has_collection(client, collection_name):
+                return 0
+            self._store.require_bound(client, collection_name)
+            deleted = self._store.count_rows(client, collection_name, filter_expr)
+            self._store.delete_rows(client, collection_name, filter_expr)
+        with self._store.client() as reader:
+            remaining = self._store.count_rows(reader, collection_name, filter_expr)
+        if remaining:
+            raise StorageBackendError(
+                f"Milvus delete verification failed: {remaining} rows remain.",
+                details={"collection_name": collection_name, "remaining": remaining},
+            )
+        return deleted
+
+    def delete_knowledge(self, knowledge_id: str, **kwargs) -> Dict:
+        """Delete every chunk and parent node of one knowledge base."""
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        parent_collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        scope_filter = build_scope_filter(knowledge_id=knowledge_id, published=False)
+        deleted_chunks = self._delete_verified(collection_name, scope_filter)
+        deleted_parent_nodes = self._delete_verified(
+            parent_collection_name, scope_filter
+        )
+        return {
+            "knowledge_id": knowledge_id,
+            "deleted_chunks": deleted_chunks,
+            "deleted_parent_nodes": deleted_parent_nodes,
+            "status": "deleted",
+        }
+
+    def drop_knowledge_index(self, knowledge_id: str, **kwargs) -> Dict:
+        """Physically drop the backing collection for a dedicated KB strategy."""
+        self._ensure_can_drop_physical_index()
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        parent_collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        dropped_parent_collection = False
+
+        with self._store.client() as client:
+            collection_exists = self._store.has_collection(client, collection_name)
+            if collection_exists:
+                self._store.require_bound(client, collection_name)
+            parent_exists = self._store.has_collection(client, parent_collection_name)
+            if parent_exists:
+                self._store.require_bound(client, parent_collection_name)
+            if collection_exists:
+                client.drop_collection(collection_name=collection_name)
+            if parent_exists:
+                client.drop_collection(collection_name=parent_collection_name)
+                dropped_parent_collection = True
+            self._drop_binding(client, collection_name)
+
+        return {
+            "knowledge_id": knowledge_id,
+            "collection_name": collection_name,
+            "dropped_parent_collection": dropped_parent_collection,
+            "status": "dropped",
+        }
+
+    def _drop_binding(self, client: MilvusClient, collection_name: str) -> None:
+        from knowledge_engine.storage.milvus_native import INDEX_BINDING_COLLECTION
+
+        if not client.has_collection(INDEX_BINDING_COLLECTION):
+            return
+        client.delete(
+            collection_name=INDEX_BINDING_COLLECTION,
+            filter=(f'collection_name == "{sanitize_filter_value(collection_name)}"'),
+        )
+        client.flush(INDEX_BINDING_COLLECTION)
+
+    def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
+        """Read the published chunks of one document in stable order."""
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        filter_expr = build_scope_filter(
+            knowledge_id=knowledge_id,
+            doc_refs=[doc_ref],
+        )
+        rows = self._read_rows(collection_name, filter_expr, limit=MAX_QUERY_LIMIT)
+
+        if not rows:
+            raise ValueError(f"Document {doc_ref} not found")
+
+        chunks = [
+            {
+                "chunk_index": int(row.get(CHUNK_INDEX_FIELD) or 0),
+                "content": row.get(DISPLAY_TEXT_FIELD) or "",
+                "metadata": self._row_metadata(row),
+            }
+            for row in rows
+        ]
+        chunks.sort(key=lambda chunk: chunk["chunk_index"])
+        return {
+            "doc_ref": doc_ref,
+            "knowledge_id": knowledge_id,
+            "source_file": rows[0].get(SOURCE_FILE_FIELD),
+            "chunk_count": len(chunks),
+            "chunks": chunks,
+        }
+
+    def list_documents(
+        self, knowledge_id: str, page: int = 1, page_size: int = 20, **kwargs
+    ) -> Dict:
+        """Aggregate published chunks into a page of documents."""
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        filter_expr = build_scope_filter(knowledge_id=knowledge_id)
+        rows = self._read_rows(
+            collection_name,
+            filter_expr,
+            output_fields=[
+                DOC_REF_FIELD,
+                SOURCE_FILE_FIELD,
+                CREATED_AT_FIELD,
+                CHUNK_INDEX_FIELD,
+            ],
+            limit=MAX_QUERY_LIMIT,
+        )
+
+        if len(rows) >= MAX_QUERY_LIMIT:
+            logger.warning(
+                "[Milvus] Knowledge base %s has >= %d chunks; document listing "
+                "may be incomplete.",
+                knowledge_id,
+                MAX_QUERY_LIMIT,
+            )
+
+        documents: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            doc_ref = row.get(DOC_REF_FIELD)
+            if not doc_ref:
+                continue
+            document = documents.setdefault(
+                doc_ref,
+                {
+                    "doc_ref": doc_ref,
+                    "source_file": row.get(SOURCE_FILE_FIELD),
+                    "chunk_count": 0,
+                    "created_at": row.get(CREATED_AT_FIELD),
+                },
+            )
+            document["chunk_count"] += 1
+
+        ordered = sorted(
+            documents.values(),
+            key=lambda document: document.get("created_at") or "",
+            reverse=True,
+        )
+        start = (page - 1) * page_size
+        return {
+            "documents": ordered[start : start + page_size],
+            "total": len(ordered),
+            "page": page,
+            "page_size": page_size,
+            "knowledge_id": knowledge_id,
+        }
+
+    def test_connection(self) -> bool:
+        """Report whether the configured Milvus service is reachable."""
+        try:
+            with self._store.client() as client:
+                client.list_collections()
+            return True
+        except Exception:
+            logger.warning("[Milvus] Connection test failed", exc_info=True)
+            return False
+
+    def get_all_chunks(
+        self,
+        knowledge_id: str,
+        max_chunks: int = MAX_QUERY_LIMIT,
+        metadata_condition: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        """Read published chunks for direct injection in stable order."""
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        filter_expr = build_scope_filter(knowledge_id=knowledge_id)
+        rows = self._read_rows(collection_name, filter_expr, limit=max_chunks)
+
+        chunks = [
+            {
+                "content": row.get(DISPLAY_TEXT_FIELD) or "",
+                "title": row.get(SOURCE_FILE_FIELD) or "",
+                "chunk_id": int(row.get(CHUNK_INDEX_FIELD) or 0),
+                "doc_ref": row.get(DOC_REF_FIELD) or "",
+                "metadata": self._row_metadata(row),
+            }
+            for row in rows
+        ]
+        chunks.sort(key=lambda chunk: (chunk["doc_ref"], chunk["chunk_id"]))
+        filtered = filter_chunk_records(chunks, metadata_condition)
+        return filtered[:max_chunks]
+
+    def _read_rows(
+        self,
+        collection_name: str,
+        filter_expr: str,
+        *,
+        limit: int,
+        output_fields: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Read published rows without ever creating or adopting a collection."""
+        with self._store.client() as client:
+            if not self._store.has_collection(client, collection_name):
+                return []
+            self._store.require_bound(client, collection_name)
+            return self._store.query_rows(
+                client,
+                collection_name,
+                filter_expr,
+                output_fields=output_fields,
+                limit=limit,
+            )
+
+    @staticmethod
     def _build_parent_node_filter_expr(knowledge_id: str, doc_ref: str) -> str:
-        safe_knowledge_id = MilvusBackend._sanitize_filter_value(knowledge_id)
-        safe_doc_ref = MilvusBackend._sanitize_filter_value(doc_ref)
-        return f'knowledge_id == "{safe_knowledge_id}" and doc_ref == "{safe_doc_ref}"'
+        return build_scope_filter(
+            knowledge_id=knowledge_id,
+            doc_refs=[doc_ref],
+            published=False,
+        )
 
     def _delete_parent_nodes_with_client(
         self,
@@ -422,547 +870,15 @@ class MilvusBackend(BaseStorageBackend):
             return 0
 
         filter_expr = self._build_parent_node_filter_expr(knowledge_id, doc_ref)
-        try:
-            client.delete(collection_name=collection_name, filter=filter_expr)
-        except TypeError:
-            client.delete(collection_name=collection_name, expr=filter_expr)
+        client.delete(collection_name=collection_name, filter=filter_expr)
         return 0
 
     def delete_parent_nodes(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
         collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        client = self._get_client()
-
-        try:
+        with self._store.client() as client:
             return self._delete_parent_nodes_with_client(
-                client,
-                collection_name,
-                knowledge_id,
-                doc_ref,
+                client, collection_name, knowledge_id, doc_ref
             )
-        finally:
-            try:
-                client.close()
-            except Exception:
-                pass
-
-    def retrieve(
-        self,
-        knowledge_id: str,
-        query: str,
-        embed_model,
-        retrieval_setting: Dict[str, Any],
-        scope: Optional[RetrievalScope] = None,
-        metadata_condition: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> Dict:
-        """
-        Retrieve nodes from Milvus (Dify-style API).
-
-        Uses LlamaIndex's VectorStoreQuery with different modes:
-        - DEFAULT: Pure vector similarity search
-        - TEXT_SEARCH: Pure BM25 keyword search
-        - HYBRID: Combined vector + BM25 search with RRF ranking
-
-        Note on score_threshold:
-        - For vector search: score_threshold is applied (cosine similarity 0-1)
-        - For keyword search: score_threshold is applied (BM25 scores vary)
-        - For hybrid search: score_threshold is IGNORED because RRF scores are
-          in a different range (typically 0.01-0.05) and ranking is already
-          optimized by the fusion algorithm
-
-        Args:
-            knowledge_id: Knowledge base ID
-            query: Search query
-            embed_model: Embedding model
-            retrieval_setting: Dict with:
-                - top_k: Maximum number of results
-                - score_threshold: Minimum similarity score (0-1, ignored for hybrid)
-                - retrieval_mode: Optional 'vector'/'keyword'/'hybrid' (default: 'vector')
-            metadata_condition: Optional metadata filtering
-            **kwargs: Additional parameters
-
-        Returns:
-            Retrieval result dict
-        """
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        # Increased default top_k from 5 to 20 for better RAG coverage
-        top_k = retrieval_setting.get("top_k", DEFAULT_TOP_K)
-        score_threshold = retrieval_setting.get("score_threshold", 0.7)
-        retrieval_mode = retrieval_setting.get("retrieval_mode", "vector")
-
-        # Validate retrieval mode
-        if retrieval_mode not in self.SUPPORTED_RETRIEVAL_METHODS:
-            raise ValueError(
-                f"Milvus does not support '{retrieval_mode}' retrieval mode. "
-                f"Supported modes: {self.SUPPORTED_RETRIEVAL_METHODS}."
-            )
-
-        # Create vector store
-        vector_store = self.create_vector_store(
-            collection_name,
-            retrieval_mode,
-            retrieval_setting=retrieval_setting,
-        )
-
-        filters = self._build_metadata_filters(knowledge_id, metadata_condition)
-        native_filter_expr = self._build_scoped_native_filter_expr(
-            scope=scope,
-            metadata_filters=filters,
-        )
-        query_filters = None if native_filter_expr else filters
-
-        # Determine query mode and parameters
-        resolved_queries = resolve_search_queries(query, retrieval_setting)
-        if retrieval_mode == "keyword":
-            # Pure BM25 keyword search - no embedding needed
-            query_mode = VectorStoreQueryMode.TEXT_SEARCH
-            query_embedding = None
-            query_str = resolved_queries.sparse_query
-        elif retrieval_mode == "hybrid":
-            # Hybrid search - needs embedding
-            query_mode = VectorStoreQueryMode.HYBRID
-            query_embedding = embed_model.get_query_embedding(
-                resolved_queries.dense_query
-            )
-            query_str = resolved_queries.sparse_query
-        else:
-            # Default: Pure vector search
-            query_mode = VectorStoreQueryMode.DEFAULT
-            query_embedding = embed_model.get_query_embedding(
-                resolved_queries.dense_query
-            )
-            query_str = resolved_queries.dense_query
-
-        # Create VectorStoreQuery
-        vs_query = VectorStoreQuery(
-            query_str=query_str,
-            query_embedding=query_embedding,
-            similarity_top_k=top_k,
-            mode=query_mode,
-            filters=query_filters,
-        )
-
-        logger.info(
-            "[Milvus] retrieve: collection=%s, mode=%s, query_mode=%s, top_k=%s, score_threshold=%s, effective_threshold=%s, hybrid_ranker=%s, hybrid_ranker_params=%s, dense_query=%s, sparse_query=%s",
-            collection_name,
-            retrieval_mode,
-            query_mode,
-            top_k,
-            score_threshold,
-            0.0 if retrieval_mode == "hybrid" else score_threshold,
-            getattr(vector_store, "hybrid_ranker", None),
-            getattr(vector_store, "hybrid_ranker_params", None),
-            resolved_queries.dense_query,
-            query_str,
-        )
-
-        # Debug logging for hybrid search troubleshooting
-        logger.debug(
-            f"[Milvus] retrieve: mode={retrieval_mode}, query_mode={query_mode}, "
-            f"sparse_embedding_function={type(vector_store.sparse_embedding_function)}, "
-            f"enable_sparse={vector_store.enable_sparse}"
-        )
-
-        # Execute query
-        query_kwargs = {"string_expr": native_filter_expr} if native_filter_expr else {}
-        result = vector_store.query(vs_query, **query_kwargs)
-
-        logger.info(
-            "[Milvus] query result: collection=%s, nodes_count=%d, top_scores=%s",
-            collection_name,
-            len(result.nodes) if result.nodes else 0,
-            result.similarities[:5] if result.similarities else None,
-        )
-
-        # Debug logging for query results
-        logger.debug(
-            f"[Milvus] query result: nodes_count={len(result.nodes) if result.nodes else 0}, "
-            f"similarities={result.similarities[:5] if result.similarities else None}"
-        )
-
-        # Process results
-        # For hybrid search, skip score_threshold because RRF scores are in a different
-        # range (0.01-0.05) and the ranking is already optimized by the fusion algorithm
-        effective_threshold = 0.0 if retrieval_mode == "hybrid" else score_threshold
-        return self._process_query_results(result, effective_threshold)
-
-    def _build_metadata_filters(
-        self, knowledge_id: str, metadata_condition: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Build metadata filters from condition dict.
-
-        Args:
-            knowledge_id: Knowledge base ID (always filtered)
-            metadata_condition: Optional additional metadata conditions
-
-        Returns:
-            MetadataFilters object
-        """
-        return parse_metadata_filters(knowledge_id, metadata_condition)
-
-    def _build_scoped_native_filter_expr(
-        self,
-        *,
-        scope: Optional[RetrievalScope],
-        metadata_filters: MetadataFilters,
-    ) -> str:
-        if not scope or not scope.document_ids:
-            return ""
-
-        metadata_expr = _to_milvus_filter(metadata_filters)
-        doc_refs = [
-            f'"{self._sanitize_filter_value(str(doc_id))}"'
-            for doc_id in scope.document_ids
-        ]
-        doc_scope_expr = f"doc_ref in [{', '.join(doc_refs)}]"
-
-        expressions = []
-        if metadata_expr:
-            expressions.append(self._parenthesize_filter_expr(metadata_expr))
-        expressions.append(doc_scope_expr)
-        return " and ".join(expressions)
-
-    @staticmethod
-    def _parenthesize_filter_expr(expression: str) -> str:
-        normalized = expression.strip()
-        if normalized.startswith("(") and normalized.endswith(")"):
-            return normalized
-        if " and " in normalized or " or " in normalized:
-            return f"({normalized})"
-        return normalized
-
-    def _process_query_results(
-        self,
-        result,
-        score_threshold: float,
-    ) -> Dict:
-        """
-        Process VectorStoreQueryResult into Dify-compatible format.
-
-        Args:
-            result: VectorStoreQueryResult from LlamaIndex
-            score_threshold: Minimum relevance score (0-1).
-                            For hybrid search, this should be set to 0.0 because
-                            RRF scores are in a different range (0.01-0.05).
-
-        Returns:
-            Dict with 'records' list in Dify-compatible format
-        """
-        # Handle empty results
-        if not result.nodes:
-            return {"records": []}
-
-        # Process results (Dify-compatible format)
-        results = []
-        similarities = result.similarities or []
-
-        for i, node in enumerate(result.nodes):
-            score = (
-                similarities[i]
-                if i < len(similarities) and similarities[i] is not None
-                else 0.0
-            )
-
-            # Apply score threshold filter
-            if score >= score_threshold:
-                results.append(
-                    {
-                        "content": self.get_node_display_text(node),
-                        "score": float(score),
-                        "title": node.metadata.get("source_file", ""),
-                        "metadata": node.metadata,
-                    }
-                )
-
-        return {"records": results}
-
-    def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
-        """
-        Delete document from Milvus using LlamaIndex API.
-
-        Uses delete_nodes with metadata filters to remove all chunks
-        with matching doc_ref.
-
-        Args:
-            knowledge_id: Knowledge base ID
-            doc_ref: Document reference ID (doc_xxx format)
-            **kwargs: Additional parameters
-
-        Returns:
-            Deletion result dict
-        """
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        vector_store = self.create_vector_store(collection_name)
-
-        # Build filters to match the document
-        filters = self._build_doc_ref_filters(knowledge_id, doc_ref)
-
-        # Get nodes first to count them
-        try:
-            nodes = vector_store.get_nodes(filters=filters)
-            deleted_count = len(nodes)
-        except Exception:
-            deleted_count = 0
-
-        # Delete nodes using LlamaIndex API
-        vector_store.delete_nodes(filters=filters)
-        self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
-
-        return {
-            "doc_ref": doc_ref,
-            "knowledge_id": knowledge_id,
-            "deleted_chunks": deleted_count,
-            "status": "deleted",
-        }
-
-    def delete_knowledge(self, knowledge_id: str, **kwargs) -> Dict:
-        """Delete all chunks and parent nodes for a knowledge base."""
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        parent_collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        client = None
-
-        try:
-            client = self._get_client()
-            deleted_chunks = self._delete_collection_by_knowledge_id(
-                client,
-                collection_name,
-                knowledge_id,
-            )
-            deleted_parent_nodes = self._delete_collection_by_knowledge_id(
-                client,
-                parent_collection_name,
-                knowledge_id,
-            )
-            return {
-                "knowledge_id": knowledge_id,
-                "deleted_chunks": deleted_chunks,
-                "deleted_parent_nodes": deleted_parent_nodes,
-                "status": "deleted",
-            }
-        finally:
-            if client:
-                try:
-                    client.close()
-                except Exception:
-                    pass
-
-    def drop_knowledge_index(self, knowledge_id: str, **kwargs) -> Dict:
-        """Physically drop the backing collection for a dedicated KB strategy."""
-        self._ensure_can_drop_physical_index()
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        parent_collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        client = None
-
-        try:
-            client = self._get_client()
-            dropped_parent_collection = False
-
-            if client.has_collection(collection_name):
-                client.drop_collection(collection_name=collection_name)
-
-            if client.has_collection(parent_collection_name):
-                client.drop_collection(collection_name=parent_collection_name)
-                dropped_parent_collection = True
-
-            return {
-                "knowledge_id": knowledge_id,
-                "collection_name": collection_name,
-                "dropped_parent_collection": dropped_parent_collection,
-                "status": "dropped",
-            }
-        finally:
-            if client:
-                try:
-                    client.close()
-                except Exception:
-                    pass
-
-    def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
-        """
-        Get document details from Milvus using LlamaIndex API.
-
-        Uses get_nodes with metadata filters to retrieve all chunks
-        with matching doc_ref.
-
-        Args:
-            knowledge_id: Knowledge base ID
-            doc_ref: Document reference ID (doc_xxx format)
-            **kwargs: Additional parameters
-
-        Returns:
-            Document details dict with chunks
-        """
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        vector_store = self.create_vector_store(collection_name)
-
-        # Build filters to match the document
-        filters = self._build_doc_ref_filters(knowledge_id, doc_ref)
-
-        # Get nodes using LlamaIndex API
-        nodes = vector_store.get_nodes(filters=filters)
-
-        if not nodes:
-            raise ValueError(f"Document {doc_ref} not found")
-
-        # Extract chunks and sort by chunk_index
-        chunks = []
-        source_file = None
-        for node in nodes:
-            metadata = node.metadata
-
-            if source_file is None:
-                source_file = metadata.get("source_file")
-
-            chunks.append(
-                {
-                    "chunk_index": metadata.get("chunk_index"),
-                    "content": self.get_node_display_text(node),
-                    "metadata": metadata,
-                }
-            )
-
-        # Sort by chunk_index
-        chunks.sort(key=lambda x: x.get("chunk_index", 0))
-
-        return {
-            "doc_ref": doc_ref,
-            "knowledge_id": knowledge_id,
-            "source_file": source_file,
-            "chunk_count": len(chunks),
-            "chunks": chunks,
-        }
-
-    def _build_doc_ref_filters(self, knowledge_id: str, doc_ref: str):
-        """
-        Build metadata filters for document reference lookup.
-
-        Args:
-            knowledge_id: Knowledge base ID
-            doc_ref: Document reference ID (doc_xxx format)
-
-        Returns:
-            MetadataFilters object for filtering by knowledge_id and doc_ref
-        """
-        return MetadataFilters(
-            filters=[
-                MetadataFilter(
-                    key="knowledge_id", value=knowledge_id, operator=FilterOperator.EQ
-                ),
-                MetadataFilter(
-                    key="doc_ref", value=doc_ref, operator=FilterOperator.EQ
-                ),
-            ],
-            condition="and",
-        )
-
-    def list_documents(
-        self, knowledge_id: str, page: int = 1, page_size: int = 20, **kwargs
-    ) -> Dict:
-        """
-        List documents in Milvus collection.
-
-        Uses MilvusClient directly for aggregation functionality.
-
-        Args:
-            knowledge_id: Knowledge base ID
-            page: Page number
-            page_size: Page size
-            **kwargs: Additional parameters
-
-        Returns:
-            Document list dict
-        """
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        client = None
-
-        try:
-            # Create MilvusClient for direct query
-            client = self._get_client()
-
-            # Check if collection exists
-            collections = client.list_collections()
-            if collection_name not in collections:
-                return {
-                    "documents": [],
-                    "total": 0,
-                    "page": page,
-                    "page_size": page_size,
-                    "knowledge_id": knowledge_id,
-                }
-
-            # Sanitize knowledge_id to prevent expression injection
-            safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
-            filter_expr = f'knowledge_id == "{safe_knowledge_id}"'
-
-            # Query all records with matching knowledge_id
-            # Note: Milvus requires specifying output fields
-            results = client.query(
-                collection_name=collection_name,
-                filter=filter_expr,
-                output_fields=["doc_ref", "source_file", "created_at", "chunk_index"],
-                limit=MAX_QUERY_LIMIT,
-            )
-
-            # Warn if results may be truncated
-            if len(results) >= MAX_QUERY_LIMIT:
-                logger.warning(
-                    f"[Milvus] Knowledge base {knowledge_id} has >= {MAX_QUERY_LIMIT} "
-                    "chunks; document listing may be incomplete."
-                )
-
-            # Aggregate by doc_ref
-            doc_map: Dict[str, Dict] = {}
-            for record in results:
-                doc_ref = record.get("doc_ref")
-                if not doc_ref:
-                    continue
-
-                if doc_ref not in doc_map:
-                    doc_map[doc_ref] = {
-                        "doc_ref": doc_ref,
-                        "source_file": record.get("source_file"),
-                        "chunk_count": 0,
-                        "created_at": record.get("created_at"),
-                    }
-                doc_map[doc_ref]["chunk_count"] += 1
-
-            # Convert to list and sort by created_at
-            all_docs = list(doc_map.values())
-            all_docs.sort(key=lambda x: x.get("created_at") or "", reverse=True)
-
-            # Pagination
-            total = len(all_docs)
-            start = (page - 1) * page_size
-            end = start + page_size
-            documents = all_docs[start:end]
-
-            return {
-                "documents": documents,
-                "total": total,
-                "page": page,
-                "page_size": page_size,
-                "knowledge_id": knowledge_id,
-            }
-
-        except Exception as e:
-            logger.warning(
-                f"[Milvus] Failed to list documents for KB {knowledge_id}: {e}"
-            )
-            return {
-                "documents": [],
-                "total": 0,
-                "page": page,
-                "page_size": page_size,
-                "knowledge_id": knowledge_id,
-            }
-        finally:
-            # Ensure client is closed to avoid connection leaks
-            if client:
-                try:
-                    client.close()
-                except Exception:
-                    pass
 
     def save_parent_nodes(
         self,
@@ -970,13 +886,12 @@ class MilvusBackend(BaseStorageBackend):
         parent_nodes: List[BaseNode],
         **kwargs,
     ) -> Dict[str, Any]:
+        """Persist hierarchical parent nodes (lifecycle work lands later)."""
         if not parent_nodes:
             return {"stored_count": 0}
 
         collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        client = self._get_client()
-
-        try:
+        with self._store.client() as client:
             if not client.has_collection(collection_name):
                 client.create_collection(
                     collection_name=collection_name,
@@ -1009,33 +924,6 @@ class MilvusBackend(BaseStorageBackend):
                 ],
             )
             return {"stored_count": len(parent_nodes)}
-        finally:
-            try:
-                client.close()
-            except Exception:
-                pass
-
-    def _delete_collection_by_knowledge_id(
-        self,
-        client: MilvusClient,
-        collection_name: str,
-        knowledge_id: str,
-    ) -> int:
-        if not client.has_collection(collection_name):
-            return 0
-
-        safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
-        results = client.query(
-            collection_name=collection_name,
-            filter=f'knowledge_id == "{safe_knowledge_id}"',
-            output_fields=["doc_ref"],
-            limit=MAX_QUERY_LIMIT,
-        )
-        client.delete(
-            collection_name=collection_name,
-            filter=f'knowledge_id == "{safe_knowledge_id}"',
-        )
-        return len(results)
 
     def get_parent_nodes(
         self,
@@ -1047,21 +935,20 @@ class MilvusBackend(BaseStorageBackend):
             return {}
 
         collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        client = self._get_client()
-
-        try:
+        with self._store.client() as client:
             if not client.has_collection(collection_name):
                 return {}
 
             parent_records: Dict[str, Dict[str, Any]] = {}
-            safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
             for parent_node_id in parent_node_ids:
-                safe_parent_node_id = self._sanitize_filter_value(parent_node_id)
                 results = client.query(
                     collection_name=collection_name,
-                    filter=(
-                        f'knowledge_id == "{safe_knowledge_id}" and '
-                        f'parent_node_id == "{safe_parent_node_id}"'
+                    filter=build_scope_filter(
+                        knowledge_id=knowledge_id,
+                        extra_conditions=[
+                            f'parent_node_id == "{sanitize_filter_value(parent_node_id)}"'
+                        ],
+                        published=False,
                     ),
                     output_fields=[
                         "parent_node_id",
@@ -1080,120 +967,3 @@ class MilvusBackend(BaseStorageBackend):
                     "metadata": json.loads(record.get("metadata_json") or "{}"),
                 }
             return parent_records
-        finally:
-            try:
-                client.close()
-            except Exception:
-                pass
-
-    def test_connection(self) -> bool:
-        """
-        Test connection to Milvus.
-
-        Returns:
-            True if connection successful, False otherwise
-        """
-        client = None
-        try:
-            client = self._get_client()
-            # Try to list collections as a connection test
-            client.list_collections()
-            return True
-        except Exception:
-            return False
-        finally:
-            # Ensure client is closed to avoid connection leaks
-            if client:
-                try:
-                    client.close()
-                except Exception:
-                    pass
-
-    def get_all_chunks(
-        self,
-        knowledge_id: str,
-        max_chunks: int = MAX_QUERY_LIMIT,
-        metadata_condition: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> List[Dict[str, Any]]:
-        """
-        Get all chunks from a knowledge base in Milvus.
-
-        Uses MilvusClient directly for efficient batch retrieval.
-
-        Args:
-            knowledge_id: Knowledge base ID
-            max_chunks: Maximum number of chunks to retrieve (safety limit)
-            **kwargs: Additional parameters (e.g., user_id for per_user strategy)
-
-        Returns:
-            List of chunk dicts with content, title, chunk_id, doc_ref, metadata
-        """
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        client = None
-
-        try:
-            # Create MilvusClient for direct query
-            client = self._get_client()
-
-            # Check if collection exists
-            collections = client.list_collections()
-            if collection_name not in collections:
-                return []
-
-            # Sanitize knowledge_id to prevent expression injection
-            safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
-            filter_expr = f'knowledge_id == "{safe_knowledge_id}"'
-
-            # Query all records with matching knowledge_id
-            results = client.query(
-                collection_name=collection_name,
-                filter=filter_expr,
-                output_fields=[
-                    "doc_ref",
-                    "source_file",
-                    "created_at",
-                    "chunk_index",
-                    "text",
-                    "display_text",
-                ],
-                limit=max_chunks,
-            )
-
-            # Convert to chunk format
-            chunks = []
-            for record in results:
-                # Get text content - try 'text' field first, then fallback
-                raw_content = record.get("text", "")
-
-                chunks.append(
-                    {
-                        "content": self.get_display_text_from_metadata(
-                            record,
-                            fallback=self.extract_chunk_text(raw_content),
-                        ),
-                        "title": record.get("source_file", ""),
-                        "chunk_id": record.get("chunk_index", 0),
-                        "doc_ref": record.get("doc_ref", ""),
-                        "metadata": record,
-                    }
-                )
-
-            # Sort by doc_ref and chunk_index
-            chunks.sort(key=lambda x: (x.get("doc_ref", ""), x.get("chunk_id", 0)))
-
-            filtered_chunks = filter_chunk_records(chunks, metadata_condition)
-            return filtered_chunks[:max_chunks]
-
-        except Exception as e:
-            logger.warning(
-                f"[Milvus] Failed to get all chunks for KB {knowledge_id}: {e}"
-            )
-            return []
-        finally:
-            # Ensure client is closed to avoid connection leaks
-            if client:
-                try:
-                    client.close()
-                except Exception:
-                    pass
