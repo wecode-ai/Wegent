@@ -79,6 +79,41 @@ export function getDefaultSimpleBindMode(): TaskType[] {
   return ['chat']
 }
 
+export function getAutomaticSimpleBindMode(
+  executorMode: SimpleExecutorMode,
+  selectedShell?: Pick<UnifiedShell, 'shellType'> | null
+): TaskType[] {
+  if (executorMode === 'complex') {
+    return ['code', 'task']
+  }
+
+  if (executorMode === 'custom' && isCodingAgentShell(selectedShell)) {
+    return ['code', 'task']
+  }
+
+  return ['chat']
+}
+
+export function resolveSimpleBindMode(
+  bindMode: TaskType[],
+  executorMode: SimpleExecutorMode,
+  selectedShell?: Pick<UnifiedShell, 'shellType'> | null
+): TaskType[] {
+  return bindMode.length > 0 ? bindMode : getAutomaticSimpleBindMode(executorMode, selectedShell)
+}
+
+export function matchesAutomaticSimpleBindMode(
+  bindMode: TaskType[],
+  executorMode: SimpleExecutorMode,
+  selectedShell?: Pick<UnifiedShell, 'shellType'> | null
+): boolean {
+  const automaticBindMode = getAutomaticSimpleBindMode(executorMode, selectedShell)
+  return (
+    bindMode.length === automaticBindMode.length &&
+    automaticBindMode.every(mode => bindMode.includes(mode))
+  )
+}
+
 export function getSimpleBindModeOptions(): SimpleBindModeOption[] {
   return SIMPLE_BIND_MODE_OPTIONS
 }
@@ -97,7 +132,9 @@ export function getModelCategoryTypeForBindMode(bindMode: TaskType[]): ModelCate
   return 'llm'
 }
 
-export function isCodingAgentShell(shell: UnifiedShell | null | undefined): boolean {
+export function isCodingAgentShell(
+  shell: Pick<UnifiedShell, 'shellType'> | null | undefined
+): boolean {
   const shellType = shell?.shellType.toLowerCase()
   return shellType === 'codex' || shellType === 'claudecode'
 }

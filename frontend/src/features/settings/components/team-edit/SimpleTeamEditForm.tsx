@@ -5,7 +5,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Lock, LockKeyholeOpen, SettingsIcon, Wand2, XIcon } from 'lucide-react'
+import { ChevronDown, Lock, LockKeyholeOpen, SettingsIcon, Wand2, XIcon } from 'lucide-react'
 
 import type { SkillRefMeta } from '@/apis/bots'
 import type { ModelTypeEnum, UnifiedModel } from '@/apis/models'
@@ -13,6 +13,7 @@ import type { UnifiedShell } from '@/apis/shells'
 import type { UnifiedSkill } from '@/apis/skills'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import {
   GroupedModelSelect,
@@ -54,6 +55,7 @@ interface SimpleTeamEditFormProps {
   inputPlaceholder: TeamInputPlaceholder
   onInputPlaceholderChange: (value: TeamInputPlaceholder) => void
   bindMode: TaskType[]
+  effectiveBindMode: TaskType[]
   setBindMode: (value: TaskType[]) => void
   icon: string | null
   setIcon: (value: string | null) => void
@@ -110,6 +112,7 @@ export default function SimpleTeamEditForm({
   inputPlaceholder,
   onInputPlaceholderChange,
   bindMode,
+  effectiveBindMode,
   setBindMode,
   icon,
   setIcon,
@@ -154,7 +157,19 @@ export default function SimpleTeamEditForm({
   const { t } = useTranslation()
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
-  const showRequiresWorkspace = bindMode.includes('code')
+  const [availableModulesOpen, setAvailableModulesOpen] = useState(false)
+  const showRequiresWorkspace = effectiveBindMode.includes('code')
+  const bindModeSummary = useMemo(() => {
+    const labelKey =
+      bindMode.length === 0
+        ? 'settings:team.simple.bind_mode.automatic'
+        : 'settings:team.simple.bind_mode.selected'
+    const modeLabels = effectiveBindMode
+      .map(mode => t(`settings:team.simple.bind_mode.${mode}.title`))
+      .join(t('settings:team.simple.bind_mode.summary_separator'))
+
+    return `${t(labelKey)} · ${modeLabels}`
+  }, [bindMode.length, effectiveBindMode, t])
   const selectedModel = useMemo(
     () => resolveSelectedModel(models, modelName, modelType, modelNamespace),
     [modelName, modelNamespace, modelType, models]
@@ -324,29 +339,6 @@ export default function SimpleTeamEditForm({
       >
         <SimpleConfigGroup>
           <SimpleConfigRow
-            label={t('common:team.bind_mode')}
-            description={t('settings:team.simple.execution.bind_mode_description')}
-            align="start"
-          >
-            <TeamBindModeCards value={bindMode} onChange={setBindMode} />
-          </SimpleConfigRow>
-
-          {showRequiresWorkspace && (
-            <SimpleConfigRow
-              label={t('common:team.requires_workspace')}
-              description={t('settings:team.simple.execution.requires_workspace_description')}
-            >
-              <div className="flex justify-end">
-                <Switch
-                  id="requiresWorkspace"
-                  checked={requiresWorkspace === true}
-                  onCheckedChange={checked => setRequiresWorkspace(checked)}
-                />
-              </div>
-            </SimpleConfigRow>
-          )}
-
-          <SimpleConfigRow
             label={t('settings:team.simple.executor.title')}
             description={t('settings:team.simple.execution.executor_description')}
             align="start"
@@ -364,6 +356,65 @@ export default function SimpleTeamEditForm({
               hideLabel
             />
           </SimpleConfigRow>
+
+          {showRequiresWorkspace && (
+            <SimpleConfigRow
+              label={t('common:team.requires_workspace')}
+              description={t('settings:team.simple.execution.requires_workspace_description')}
+            >
+              <div className="flex justify-end">
+                <Switch
+                  id="requiresWorkspace"
+                  checked={requiresWorkspace === true}
+                  onCheckedChange={checked => setRequiresWorkspace(checked)}
+                />
+              </div>
+            </SimpleConfigRow>
+          )}
+
+          <Collapsible open={availableModulesOpen} onOpenChange={setAvailableModulesOpen}>
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-surface"
+                data-testid="simple-bind-mode-settings-toggle"
+              >
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-text-primary">
+                    {t('settings:team.simple.bind_mode.advanced_title')}
+                  </div>
+                  <div
+                    className="mt-0.5 truncate text-xs text-text-secondary"
+                    data-testid="simple-bind-mode-summary"
+                  >
+                    {bindModeSummary}
+                  </div>
+                </div>
+                <ChevronDown
+                  className={cn(
+                    'h-4 w-4 shrink-0 text-text-muted transition-transform',
+                    availableModulesOpen && 'rotate-180'
+                  )}
+                />
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div
+                className="border-t border-border px-4 py-4"
+                data-testid="simple-bind-mode-settings-content"
+              >
+                <div className="mb-3">
+                  <div className="text-sm font-medium text-text-primary">
+                    {t('settings:team.simple.bind_mode.available_modules')}
+                  </div>
+                  <p className="mt-0.5 text-xs leading-5 text-text-secondary">
+                    {t('settings:team.simple.bind_mode.automatic_hint')}
+                  </p>
+                </div>
+                <TeamBindModeCards value={bindMode} onChange={setBindMode} />
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         </SimpleConfigGroup>
       </SimpleConfigSection>
 
