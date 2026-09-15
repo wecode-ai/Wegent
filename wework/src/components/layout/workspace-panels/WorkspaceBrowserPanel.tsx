@@ -117,7 +117,6 @@ import type { BrowserAnnotationCommand } from '@/types/browser-annotation'
 import { browserAnnotationStateToContexts } from '@/lib/browser-annotation-context'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
-import { retainElectronEmbeddedBrowserView } from './electronEmbeddedBrowserHost'
 
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
 const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
@@ -723,12 +722,11 @@ export function WorkspaceBrowserTabPanel({
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserCloseRequests(event => {
-      if (!activeRef.current || event.label !== currentLabelRef.current) return
+      if (event.label !== currentLabelRef.current) return
       console.info(
         '[Wework] Embedded browser close consumed',
         JSON.stringify({ label: event.label, nativeLabel: event.nativeLabel })
       )
-      retainElectronEmbeddedBrowserView(event.label)
       nativeBrowserOpenRef.current = false
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
@@ -2927,19 +2925,20 @@ export function WorkspaceBrowserTabPanel({
             className="h-full w-full border-0 bg-background"
           />
         )}
-        {currentUrl && embeddedBrowserAvailable && (
+        {embeddedBrowserAvailable && (currentUrl || electronRuntime) && (
           <div
             ref={browserHostRef}
-            data-testid="workspace-browser-native-view"
+            data-testid={currentUrl ? 'workspace-browser-native-view' : undefined}
             className={cn(
-              'relative h-full min-h-0 w-full overflow-hidden',
-              deviceToolbar.isEnabled ? 'bg-neutral-700' : 'bg-background'
+              'absolute inset-0 min-h-0 w-full overflow-hidden',
+              deviceToolbar.isEnabled ? 'bg-neutral-700' : 'bg-background',
+              !currentUrl && 'invisible pointer-events-none'
             )}
             aria-label={t('workbench.browser')}
           >
             {electronRuntime ? (
               <ElectronEmbeddedBrowserView
-                active={active}
+                active={Boolean(currentUrl) && active}
                 cursor={agentCursor}
                 cursorScale={
                   deviceToolbar.isEnabled

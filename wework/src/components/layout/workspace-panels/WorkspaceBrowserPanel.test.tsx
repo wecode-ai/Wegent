@@ -2267,6 +2267,39 @@ describe('WorkspaceBrowserPanel', () => {
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('')
   })
 
+  test('consumes a close request while its task pane is inactive', async () => {
+    const previousRuntimeConfig = window.__WEWORK_RUNTIME_CONFIG__
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...previousRuntimeConfig,
+      desktopHost: 'electron',
+    }
+    let handleClose!: (event: { label: string; nativeLabel: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      handleClose = handler
+      return Promise.resolve(vi.fn())
+    })
+    const view = render(<WorkspaceBrowserPanel active label="workspace-browser-runtime-1" />)
+    try {
+      await screen.findByTestId('workspace-browser-native-view')
+      const webviewHost = await screen.findByTestId('workspace-browser-electron-webview')
+      view.rerender(<WorkspaceBrowserPanel active={false} label="workspace-browser-runtime-1" />)
+
+      act(() => {
+        handleClose({
+          label: 'workspace-browser-runtime-1',
+          nativeLabel: 'workspace-browser-native-1',
+        })
+      })
+
+      expect(screen.queryByTestId('workspace-browser-native-view')).not.toBeInTheDocument()
+      expect(webviewHost).toBeInTheDocument()
+      expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('')
+    } finally {
+      view.unmount()
+      window.__WEWORK_RUNTIME_CONFIG__ = previousRuntimeConfig
+    }
+  })
+
   test('does not overwrite the address draft while page-state polling continues', async () => {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)
