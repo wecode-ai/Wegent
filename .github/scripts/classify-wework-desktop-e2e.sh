@@ -12,7 +12,6 @@ core_segments=(
   external-content-import
   automation-lifecycle
   project-automation
-  local-project-automation-chain
   project-event-sources
   project-assignment-notification
   offline-local-project-space
@@ -143,7 +142,7 @@ core_shards=(
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,local-project-automation-chain,collaboration-agent-automation-chain
+  project-automation,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
@@ -477,10 +476,6 @@ classify_wework_path() {
       select_target "core:automation-lifecycle"
       select_target "core:project-automation"
       select_target "cloud:all"
-      return
-      ;;
-    wework/e2e/desktop/scenarios/local-project-automation-chain.scenario.mjs)
-      select_target "core:local-project-automation-chain"
       return
       ;;
     wework/e2e/desktop/scenarios/project-assignment-notification.scenario.mjs)
