@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
+import { createReadStream, createWriteStream } from 'node:fs'
 import { chmod, copyFile, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { delimiter, dirname, join, win32 } from 'node:path'
 import { Readable, Transform } from 'node:stream'
@@ -21,7 +21,8 @@ interface UvArtifact {
   archiveName: string
   archiveBytes: number
   archiveSha256: string
-  directoryName: string
+  executablePath: string
+  executableSha256: string
 }
 
 const UV_ARTIFACTS: Record<string, UvArtifact> = {
@@ -29,37 +30,43 @@ const UV_ARTIFACTS: Record<string, UvArtifact> = {
     archiveName: 'uv-aarch64-apple-darwin.tar.gz',
     archiveBytes: 18_341_942,
     archiveSha256: 'dc098ff224d78ed418e121fd374f655949d2c7031a70f6f6604eaf016a130433',
-    directoryName: 'uv-aarch64-apple-darwin',
+    executablePath: 'uv-aarch64-apple-darwin/uv',
+    executableSha256: 'd54989c0037e115f53c34a5658c2cc0ff5c44e35b5635ed9a5463b9caa364f81',
   },
   'darwin-x64': {
     archiveName: 'uv-x86_64-apple-darwin.tar.gz',
     archiveBytes: 19_689_319,
     archiveSha256: '58b1d4a25aa8ff99147c2550b33dcf730207fe7e0f9a0d5d36a1bbf36b845aca',
-    directoryName: 'uv-x86_64-apple-darwin',
+    executablePath: 'uv-x86_64-apple-darwin/uv',
+    executableSha256: '5749c828967b8bad23e0b76c116d6beb8d54bd116f7bbbf5f015a1282e10392a',
   },
   'linux-arm64': {
     archiveName: 'uv-aarch64-unknown-linux-gnu.tar.gz',
     archiveBytes: 20_199_463,
     archiveSha256: '9db0c2f6683099f86bfeea47f4134e915f382512278de95b2a0e625957594ff3',
-    directoryName: 'uv-aarch64-unknown-linux-gnu',
+    executablePath: 'uv-aarch64-unknown-linux-gnu/uv',
+    executableSha256: 'b880aad13554f4eb7815f962b4f40e3f94fb2f86cae4b98afa0906324b61f754',
   },
   'linux-x64': {
     archiveName: 'uv-x86_64-unknown-linux-gnu.tar.gz',
     archiveBytes: 21_370_871,
     archiveSha256: '2cf10babba653310606f8b49876cfb679928669e7ddaa1fb41fb00ce73e64f66',
-    directoryName: 'uv-x86_64-unknown-linux-gnu',
+    executablePath: 'uv-x86_64-unknown-linux-gnu/uv',
+    executableSha256: 'd3dc3ca8e29337dd602a9a4df9e6edb15ebc52aed91461debeedb96939dc4ce0',
   },
   'win32-arm64': {
     archiveName: 'uv-aarch64-pc-windows-msvc.zip',
     archiveBytes: 19_448_216,
     archiveSha256: '4c615aa19e37b2ec7da3370a25a562bb0061ab005081e4539702c059715dc2b0',
-    directoryName: 'uv-aarch64-pc-windows-msvc',
+    executablePath: 'uv.exe',
+    executableSha256: 'bdb71f3522356f307a2708775085602eca8240955cd414c0860712356afcc1a9',
   },
   'win32-x64': {
     archiveName: 'uv-x86_64-pc-windows-msvc.zip',
     archiveBytes: 20_760_405,
     archiveSha256: '515dc53d7553f1357d0abc1f70acd921fbb9e30230b1d9a08737236daa6ee920',
-    directoryName: 'uv-x86_64-pc-windows-msvc',
+    executablePath: 'uv.exe',
+    executableSha256: '456ee3b3b9a30cf647a2b36ad3e2ffe6261485414e9978daec0ce3a049afc0af',
   },
 }
 
@@ -96,6 +103,7 @@ export interface PythonRuntimeManagerOptions {
   arch?: string
   fetch?: typeof fetch
   runFile?: RunFile
+  fileSha256?: (path: string) => Promise<string>
   log?: (event: Record<string, unknown>) => void
 }
 
@@ -107,6 +115,7 @@ export class PythonRuntimeManager {
   private readonly arch: string
   private readonly fetch: typeof fetch
   private readonly runFile: RunFile
+  private readonly fileSha256: (path: string) => Promise<string>
   private readonly log: (event: Record<string, unknown>) => void
   private activeEnsure: Promise<PythonRuntimeStatus> | null = null
   private currentStatus: PythonRuntimeStatus
@@ -117,6 +126,7 @@ export class PythonRuntimeManager {
     this.platform = options.platform ?? process.platform
     this.arch = options.arch ?? process.arch
     this.fetch = options.fetch ?? globalThis.fetch
+    this.fileSha256 = options.fileSha256 ?? sha256File
     this.runFile =
       options.runFile ??
       (async (file, args, runOptions) => {
@@ -218,7 +228,7 @@ export class PythonRuntimeManager {
       })
       const output = `${stdout}\n${stderr}`.trim()
       const match = /Python\s+(\d+)\.(\d+)\.(\d+)/.exec(output)
-      if (!match || Number(match[1]) !== 3 || Number(match[2]) < 12) return null
+      if (!match || Number(match[1]) !== 3 || Number(match[2]) !== 12) return null
       const details = await stat(path)
       return this.statusValue('installed', {
         version: `${match[1]}.${match[2]}.${match[3]}`,
@@ -234,7 +244,15 @@ export class PythonRuntimeManager {
     const executableName = this.platform === 'win32' ? 'uv.exe' : 'uv'
     const targetDirectory = join(this.root, 'bootstrap', `uv-${UV_VERSION}`)
     const targetPath = join(targetDirectory, executableName)
-    if (await isFile(targetPath)) return targetPath
+    if (await isFile(targetPath)) {
+      try {
+        if ((await this.fileSha256(targetPath)) === artifact.executableSha256) return targetPath
+      } catch {
+        // Treat unreadable cached files as invalid and restore them from the pinned archive.
+      }
+      this.log({ event: 'python-runtime-uv-cache-invalid', version: UV_VERSION })
+      await rm(targetPath, { force: true })
+    }
 
     const temporaryRoot = join(this.root, 'temporary', randomUUID())
     const archivePath = join(temporaryRoot, artifact.archiveName)
@@ -251,9 +269,12 @@ export class PythonRuntimeManager {
       } else {
         await tar.x({ file: archivePath, cwd: stagingDirectory })
       }
-      const extractedPath = join(stagingDirectory, artifact.directoryName, executableName)
+      const extractedPath = join(stagingDirectory, artifact.executablePath)
       if (!(await isFile(extractedPath))) {
-        throw new Error(`uv archive does not contain ${artifact.directoryName}/${executableName}`)
+        throw new Error(`uv archive does not contain ${artifact.executablePath}`)
+      }
+      if ((await this.fileSha256(extractedPath)) !== artifact.executableSha256) {
+        throw new Error('uv executable checksum mismatch')
       }
       await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 })
       const pendingPath = `${targetPath}.${randomUUID()}.pending`
@@ -340,6 +361,12 @@ async function isFile(path: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+async function sha256File(path: string): Promise<string> {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(path)) hash.update(chunk)
+  return hash.digest('hex')
 }
 
 function errorMessage(error: unknown): string {
