@@ -5,12 +5,11 @@ import {
   claimElectronEmbeddedBrowserView,
   relabelElectronEmbeddedBrowserView,
   releaseElectronEmbeddedBrowserView,
+  resetElectronEmbeddedBrowserView,
   retainElectronEmbeddedBrowserView,
 } from './electronEmbeddedBrowserHost'
 
 const embeddedBrowserMocks = vi.hoisted(() => ({
-  closeRequestHandler: null as ((event: { label: string; nativeLabel: string }) => void) | null,
-  listenEmbeddedBrowserCloseRequests: vi.fn(),
   notifyEmbeddedBrowserAgentCursorArrived: vi.fn(),
 }))
 
@@ -33,16 +32,6 @@ describe('ElectronEmbeddedBrowserView', () => {
     vi.useFakeTimers()
     embeddedBrowserMocks.notifyEmbeddedBrowserAgentCursorArrived.mockReset()
     embeddedBrowserMocks.notifyEmbeddedBrowserAgentCursorArrived.mockResolvedValue(undefined)
-    embeddedBrowserMocks.closeRequestHandler = null
-    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockReset()
-    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
-      embeddedBrowserMocks.closeRequestHandler = handler
-      return Promise.resolve(() => {
-        if (embeddedBrowserMocks.closeRequestHandler === handler) {
-          embeddedBrowserMocks.closeRequestHandler = null
-        }
-      })
-    })
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     document.querySelector('[data-wework-browser-webview-host-root]')?.remove()
   })
@@ -232,20 +221,12 @@ describe('ElectronEmbeddedBrowserView', () => {
     })
     Object.assign(previousWebview as HTMLElement, { destroy })
 
-    await act(async () => {
-      embeddedBrowserMocks.closeRequestHandler?.({
-        label: 'workspace-browser',
-        nativeLabel: 'electron-browser-1',
-      })
+    act(() => {
+      resetElectronEmbeddedBrowserView('workspace-browser')
     })
 
-    expect(host.querySelectorAll('webview')).toHaveLength(0)
     expect(destroy).toHaveBeenCalledOnce()
     expect(previousWebview?.isConnected).toBe(false)
-
-    await act(async () => {
-      vi.advanceTimersByTime(0)
-    })
 
     const nextWebview = host.querySelector('webview')
     expect(nextWebview).not.toBe(previousWebview)

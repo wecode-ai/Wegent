@@ -25,7 +25,6 @@ export interface HostedElectronWebview {
   owner: symbol | null
   retained: boolean
   retentionTimeout: number | null
-  resetTimeout: number | null
   webview: ElectronWebviewElement
 }
 
@@ -117,7 +116,6 @@ function createHostedWebview(label: string): HostedElectronWebview {
     owner: null,
     retained: false,
     retentionTimeout: null,
-    resetTimeout: null,
     webview,
   }
 }
@@ -137,10 +135,6 @@ function destroyHostedWebview(host: HostedElectronWebview) {
   if (host.destroyed) return
   host.destroyed = true
   clearRetentionTimeout(host)
-  if (host.resetTimeout !== null) {
-    window.clearTimeout(host.resetTimeout)
-    host.resetTimeout = null
-  }
   if (hostedWebviews.get(host.label) === host) hostedWebviews.delete(host.label)
   destroyElectronWebview(host.webview)
   host.container.remove()
@@ -266,21 +260,14 @@ export function relabelElectronEmbeddedBrowserView(
   assignHostedWebviewLabel(host, label)
 }
 
-export function resetElectronEmbeddedBrowserView(host: HostedElectronWebview, owner: symbol): void {
-  if (host.destroyed || host.owner !== owner) return
-  if (host.resetTimeout !== null) window.clearTimeout(host.resetTimeout)
+export function resetElectronEmbeddedBrowserView(label: string): void {
+  const host = connectedHostedWebview(label)
+  if (!host) return
   const previousWebview = host.webview
   const nextWebview = createElectronWebview(host.label)
   host.webview = nextWebview
   destroyElectronWebview(previousWebview)
-  host.resetTimeout = window.setTimeout(() => {
-    host.resetTimeout = null
-    if (host.destroyed || host.webview !== nextWebview || !host.container.isConnected) {
-      destroyElectronWebview(nextWebview)
-      return
-    }
-    host.container.insertBefore(nextWebview, host.cursorHost)
-  }, 0)
+  host.container.insertBefore(nextWebview, host.cursorHost)
 }
 
 export function positionElectronEmbeddedBrowserView(
