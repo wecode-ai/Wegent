@@ -367,6 +367,25 @@ export function WorkbenchProvider({
   useLayoutEffect(() => {
     latestUserPreferencesRef.current = currentUser.preferences
   }, [currentUser.preferences])
+  const updateUserPreferences = useCallback(
+    async (patch: UserPreferences): Promise<UserPreferences> => {
+      const userApi = resolvedServices.userApi
+      if (!userApi) {
+        throw new Error('User preferences are unavailable')
+      }
+      const previousPreferences = latestUserPreferencesRef.current ?? {}
+      const updatedUser = await userApi.updateCurrentUser({ preferences: patch })
+      const preferences = {
+        ...previousPreferences,
+        ...patch,
+        ...(updatedUser.preferences ?? {}),
+      }
+      latestUserPreferencesRef.current = preferences
+      dispatch({ type: 'user_preferences_updated', preferences })
+      return preferences
+    },
+    [resolvedServices.userApi]
+  )
   useWorkbenchTelemetry({
     currentProject: state.currentProject,
     devices: state.devices,
@@ -2730,6 +2749,7 @@ export function WorkbenchProvider({
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode: selectProjectExecutionMode,
+    updateUserPreferences,
     setWorkbenchError,
     projectWorktreeBranch,
     setProjectWorktreeBranch,

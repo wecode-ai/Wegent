@@ -431,6 +431,7 @@ class DesktopE2EServer {
     this.modelRequests = []
     this.catalogRequests = []
     this.httpRequests = []
+    this.userPreferences = {}
     this.runtimeImBindingRequests = []
     this.telemetryRequests = []
     this.blockedCloudRequests = []
@@ -1201,6 +1202,22 @@ class DesktopE2EServer {
         id: 9001,
         user_name: CLOUD_STORED_USER_NAME,
         email: 'desktop-e2e@wework.local',
+        preferences: this.userPreferences,
+      })
+      return
+    }
+
+    if (request.method === 'PUT' && url.pathname === '/api/users/me') {
+      const body = await readRequestBody(request)
+      this.userPreferences = {
+        ...this.userPreferences,
+        ...(body.preferences ?? {}),
+      }
+      json(response, 200, {
+        id: 9001,
+        user_name: CLOUD_STORED_USER_NAME,
+        email: 'desktop-e2e@wework.local',
+        preferences: this.userPreferences,
       })
       return
     }
