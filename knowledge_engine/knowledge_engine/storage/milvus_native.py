@@ -75,7 +75,10 @@ ROW_OUTPUT_FIELDS: List[str] = [
 ]
 
 INDEX_BINDING_COLLECTION = "wegent_index_bindings"
+INDEX_CLAIM_COLLECTION = "wegent_index_claims"
 BINDING_VECTOR_FIELD = "binding_vector"
+CLAIM_VECTOR_FIELD = "claim_vector"
+CLAIM_ID_FIELD = "claim_id"
 # Milvus rejects dimensions below 2, so the registry placeholder is 2d even
 # though it is never searched.
 BINDING_VECTOR_DIM = 2
@@ -295,6 +298,35 @@ def build_binding_collection_schema() -> CollectionSchema:
             is_primary=True,
             max_length=MAX_KEY_LENGTH,
         ),
+    ]
+    fields.extend(_binding_payload_fields())
+    fields.append(
+        FieldSchema(
+            name=BINDING_STATE_FIELD,
+            dtype=DataType.VARCHAR,
+            max_length=MAX_KEY_LENGTH,
+        )
+    )
+    # Milvus requires every collection to own a vector field. This
+    # placeholder is never searched; the registry only answers filters.
+    fields.append(
+        FieldSchema(
+            name=BINDING_VECTOR_FIELD,
+            dtype=DataType.FLOAT_VECTOR,
+            dim=BINDING_VECTOR_DIM,
+        )
+    )
+    return CollectionSchema(
+        fields=fields,
+        auto_id=False,
+        enable_dynamic_field=False,
+        description="wegent index binding registry",
+    )
+
+
+def _binding_payload_fields() -> List[FieldSchema]:
+    """Columns that mirror the stored index contract payload."""
+    return [
         FieldSchema(
             name="connection", dtype=DataType.VARCHAR, max_length=MAX_TEXT_LENGTH
         ),
@@ -316,25 +348,44 @@ def build_binding_collection_schema() -> CollectionSchema:
         FieldSchema(
             name="binding_json", dtype=DataType.VARCHAR, max_length=MAX_TEXT_LENGTH
         ),
+    ]
+
+
+def build_claim_collection_schema() -> CollectionSchema:
+    """Creation claims, keyed by collection plus contract digest."""
+    fields = [
         FieldSchema(
-            name=BINDING_STATE_FIELD,
+            name=CLAIM_ID_FIELD,
+            dtype=DataType.VARCHAR,
+            is_primary=True,
+            max_length=MAX_ID_LENGTH,
+        ),
+        FieldSchema(
+            name="collection_name",
             dtype=DataType.VARCHAR,
             max_length=MAX_KEY_LENGTH,
         ),
-        # Milvus requires every collection to own a vector field. This
-        # placeholder is never searched; the registry only answers filters.
+    ]
+    fields.extend(_binding_payload_fields())
+    fields.append(
         FieldSchema(
-            name=BINDING_VECTOR_FIELD,
+            name=CLAIM_VECTOR_FIELD,
             dtype=DataType.FLOAT_VECTOR,
             dim=BINDING_VECTOR_DIM,
-        ),
-    ]
+        )
+    )
     return CollectionSchema(
         fields=fields,
         auto_id=False,
         enable_dynamic_field=False,
-        description="wegent index binding registry",
+        description="wegent index creation claims",
     )
+
+
+def claim_id_for(binding: MilvusIndexBinding) -> str:
+    """Claim key: the key includes the contract, so contracts cannot collide."""
+    payload = json.dumps(binding.to_payload(), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def collection_dimension(client: MilvusClient, collection_name: str) -> int | None:
@@ -449,22 +500,12 @@ class MilvusDocumentStore:
         *,
         state: str = BINDING_STATE_READY,
     ) -> None:
-        if not client.has_collection(INDEX_BINDING_COLLECTION):
-            index_params = client.prepare_index_params()
-            index_params.add_index(
-                field_name=BINDING_VECTOR_FIELD,
-                index_type=INDEX_TYPE,
-                metric_type="IP",
-            )
-            try:
-                client.create_collection(
-                    collection_name=INDEX_BINDING_COLLECTION,
-                    schema=build_binding_collection_schema(),
-                    index_params=index_params,
-                )
-            except Exception:
-                if not client.has_collection(INDEX_BINDING_COLLECTION):
-                    raise
+        self._ensure_registry_collection(
+            client,
+            INDEX_BINDING_COLLECTION,
+            build_binding_collection_schema(),
+            vector_field=BINDING_VECTOR_FIELD,
+        )
         row = binding.to_row()
         row[BINDING_VECTOR_FIELD] = list(BINDING_VECTOR_VALUE)
         row[BINDING_STATE_FIELD] = state
@@ -473,6 +514,71 @@ class MilvusDocumentStore:
             data=[row],
         )
         client.flush(INDEX_BINDING_COLLECTION)
+
+    def _ensure_registry_collection(
+        self,
+        client: MilvusClient,
+        collection_name: str,
+        schema: CollectionSchema,
+        *,
+        vector_field: str,
+    ) -> None:
+        if client.has_collection(collection_name):
+            return
+        index_params = client.prepare_index_params()
+        index_params.add_index(
+            field_name=vector_field,
+            index_type=INDEX_TYPE,
+            metric_type="IP",
+        )
+        try:
+            client.create_collection(
+                collection_name=collection_name,
+                schema=schema,
+                index_params=index_params,
+            )
+        except Exception:
+            if not client.has_collection(collection_name):
+                raise
+
+    def claim_index(self, client: MilvusClient, binding: MilvusIndexBinding) -> str:
+        """Record a creation claim that no other contract can overwrite."""
+        self._ensure_registry_collection(
+            client,
+            INDEX_CLAIM_COLLECTION,
+            build_claim_collection_schema(),
+            vector_field=CLAIM_VECTOR_FIELD,
+        )
+        claim_id = claim_id_for(binding)
+        row = binding.to_row()
+        row[CLAIM_ID_FIELD] = claim_id
+        row[CLAIM_VECTOR_FIELD] = list(BINDING_VECTOR_VALUE)
+        client.upsert(collection_name=INDEX_CLAIM_COLLECTION, data=[row])
+        client.flush(INDEX_CLAIM_COLLECTION)
+        return claim_id
+
+    def has_claim(self, client: MilvusClient, binding: MilvusIndexBinding) -> bool:
+        """Whether this exact contract holds a creation claim."""
+        if not client.has_collection(INDEX_CLAIM_COLLECTION):
+            return False
+        rows = client.query(
+            collection_name=INDEX_CLAIM_COLLECTION,
+            filter=f'{CLAIM_ID_FIELD} == "{claim_id_for(binding)}"',
+            output_fields=[CLAIM_ID_FIELD],
+            limit=1,
+            consistency_level="Strong",
+        )
+        return bool(rows)
+
+    def release_claim(self, client: MilvusClient, binding: MilvusIndexBinding) -> None:
+        """Release the claim once the contract is confirmed."""
+        if not client.has_collection(INDEX_CLAIM_COLLECTION):
+            return
+        client.delete(
+            collection_name=INDEX_CLAIM_COLLECTION,
+            filter=f'{CLAIM_ID_FIELD} == "{claim_id_for(binding)}"',
+        )
+        client.flush(INDEX_CLAIM_COLLECTION)
 
     def ensure_index(
         self,
@@ -484,44 +590,57 @@ class MilvusDocumentStore:
     ) -> MilvusIndexBinding:
         """Create or repair the index, then verify the bound contract.
 
-        A creation intent is persisted before the collection is created, so a
-        process that dies between the two steps can be repaired by retrying
-        with the same contract instead of leaving an unusable collection.
+        A creation claim keyed by ``collection + contract`` is persisted
+        before the collection is created. Because the claim key contains the
+        contract digest, a racing writer with a different contract writes a
+        different row and can never overwrite the successful one; a process
+        that dies between creation and confirmation can be repaired by
+        retrying the same contract.
         """
         requested = self.build_binding(
             collection_name,
             dimension=dimension,
             embedding_space=embedding_space,
         )
-        bound, state = self.read_binding_entry(client, collection_name)
+        bound, _state = self.read_binding_entry(client, collection_name)
         collection_exists = client.has_collection(collection_name)
 
-        if bound is None:
-            if collection_exists:
-                # Unknown collection: never adopted, overwritten or dropped.
-                raise IndexContractIncompatibleError(
-                    collection_name,
-                    "the collection has no stored index contract",
-                )
-            self.write_binding(client, requested, state=BINDING_STATE_CREATING)
-        else:
+        if bound is not None:
             bound.assert_compatible(requested)
-            if collection_exists:
-                self._assert_collection_dimension(client, requested)
-                if state != BINDING_STATE_READY:
-                    self.write_binding(client, requested, state=BINDING_STATE_READY)
-                return bound
-            if state == BINDING_STATE_READY:
+            if not collection_exists:
                 raise IndexMissingError(
                     collection_name,
                     "the bound collection confirmed earlier is gone",
                 )
+            self._assert_collection_dimension(client, requested)
+            return bound
 
+        if collection_exists:
+            # The collection exists without a contract. Only a process holding
+            # the matching creation claim may confirm it; anything else is an
+            # unknown collection that is never adopted automatically.
+            if not self.has_claim(client, requested):
+                raise IndexContractIncompatibleError(
+                    collection_name,
+                    "the collection has no stored index contract",
+                )
+            self._assert_collection_dimension(client, requested)
+            self._confirm_index(client, requested)
+            return requested
+
+        self.claim_index(client, requested)
         if self._create_collection(client, requested):
             self._assert_collection_dimension(client, requested)
-            self.write_binding(client, requested, state=BINDING_STATE_READY)
+            self._confirm_index(client, requested)
             return requested
         return self._await_binding(client, requested)
+
+    def _confirm_index(
+        self, client: MilvusClient, requested: MilvusIndexBinding
+    ) -> None:
+        """Publish the contract and release the creation claim."""
+        self.write_binding(client, requested, state=BINDING_STATE_READY)
+        self.release_claim(client, requested)
 
     def _await_binding(
         self, client: MilvusClient, requested: MilvusIndexBinding

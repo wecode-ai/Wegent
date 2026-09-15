@@ -65,6 +65,7 @@ from knowledge_engine.storage.milvus_native import (
     node_row_id,
     sanitize_filter_value,
 )
+from knowledge_engine.storage.milvus_parent_store import MilvusParentStore
 from shared.models import RetrievalScope
 
 logger = logging.getLogger(__name__)
@@ -131,6 +132,11 @@ class MilvusBackend(BaseStorageBackend):
             token=self.token,
             db_name=self.db_name,
             timeout=float(self.ext.get("timeout") or DEFAULT_TIMEOUT_SECONDS),
+        )
+        self._parent_store = MilvusParentStore(
+            store=self._store,
+            collection_name_for=self.get_parent_store_name,
+            display_text_for=self.get_node_display_text,
         )
 
     def _parse_db_name_from_url(self, url: str) -> tuple[str, str]:
@@ -685,11 +691,19 @@ class MilvusBackend(BaseStorageBackend):
             "status": "deleted",
         }
 
-    def _delete_verified(self, collection_name: str, filter_expr: str) -> int:
+    def _delete_verified(
+        self,
+        collection_name: str,
+        filter_expr: str,
+        *,
+        require_bound: bool = True,
+    ) -> int:
         with self._store.client() as client:
             if not self._store.has_collection(client, collection_name):
                 return 0
-            self._store.require_bound(client, collection_name)
+            if require_bound:
+                # The parent sidecar is not part of the retrieval contract.
+                self._store.require_bound(client, collection_name)
             deleted = self._store.count_rows(client, collection_name, filter_expr)
             self._store.delete_rows(client, collection_name, filter_expr)
         with self._store.client() as reader:
@@ -708,7 +722,7 @@ class MilvusBackend(BaseStorageBackend):
         scope_filter = build_scope_filter(knowledge_id=knowledge_id, published=False)
         deleted_chunks = self._delete_verified(collection_name, scope_filter)
         deleted_parent_nodes = self._delete_verified(
-            parent_collection_name, scope_filter
+            parent_collection_name, scope_filter, require_bound=False
         )
         return {
             "knowledge_id": knowledge_id,
@@ -729,8 +743,6 @@ class MilvusBackend(BaseStorageBackend):
             if collection_exists:
                 self._store.require_bound(client, collection_name)
             parent_exists = self._store.has_collection(client, parent_collection_name)
-            if parent_exists:
-                self._store.require_bound(client, parent_collection_name)
             if collection_exists:
                 client.drop_collection(collection_name=collection_name)
             if parent_exists:
@@ -920,34 +932,8 @@ class MilvusBackend(BaseStorageBackend):
         self._store.require_bound(client, collection_name)
         return False
 
-    @staticmethod
-    def _build_parent_node_filter_expr(knowledge_id: str, doc_ref: str) -> str:
-        return build_scope_filter(
-            knowledge_id=knowledge_id,
-            doc_refs=[doc_ref],
-            published=False,
-        )
-
-    def _delete_parent_nodes_with_client(
-        self,
-        client: MilvusClient,
-        collection_name: str,
-        knowledge_id: str,
-        doc_ref: str,
-    ) -> int:
-        if not client.has_collection(collection_name):
-            return 0
-
-        filter_expr = self._build_parent_node_filter_expr(knowledge_id, doc_ref)
-        client.delete(collection_name=collection_name, filter=filter_expr)
-        return 0
-
     def delete_parent_nodes(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
-        collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        with self._store.client() as client:
-            return self._delete_parent_nodes_with_client(
-                client, collection_name, knowledge_id, doc_ref
-            )
+        return self._parent_store.delete(knowledge_id, doc_ref, **kwargs)
 
     def save_parent_nodes(
         self,
@@ -955,46 +941,7 @@ class MilvusBackend(BaseStorageBackend):
         parent_nodes: List[BaseNode],
         **kwargs,
     ) -> Dict[str, Any]:
-        """Persist hierarchical parent nodes (lifecycle work lands later)."""
-        if not parent_nodes:
-            return {"stored_count": 0}
-
-        collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        with self._store.client() as client:
-            if not client.has_collection(collection_name):
-                client.create_collection(
-                    collection_name=collection_name,
-                    # Milvus requires a dimension of at least 2; this sidecar
-                    # placeholder vector is never searched.
-                    dimension=2,
-                    auto_id=True,
-                    enable_dynamic_field=True,
-                )
-            else:
-                self._delete_parent_nodes_with_client(
-                    client,
-                    collection_name,
-                    knowledge_id,
-                    parent_nodes[0].metadata.get("doc_ref", ""),
-                )
-
-            client.insert(
-                collection_name=collection_name,
-                data=[
-                    {
-                        "vector": [0.0, 0.0],
-                        "parent_node_id": node.node_id,
-                        "knowledge_id": knowledge_id,
-                        "doc_ref": node.metadata.get("doc_ref"),
-                        "source_file": node.metadata.get("source_file"),
-                        "content": self.get_node_display_text(node),
-                        "title": node.metadata.get("source_file", ""),
-                        "metadata_json": json.dumps(node.metadata),
-                    }
-                    for node in parent_nodes
-                ],
-            )
-            return {"stored_count": len(parent_nodes)}
+        return self._parent_store.save(knowledge_id, parent_nodes, **kwargs)
 
     def get_parent_nodes(
         self,
@@ -1002,39 +949,4 @@ class MilvusBackend(BaseStorageBackend):
         parent_node_ids: List[str],
         **kwargs,
     ) -> Dict[str, Dict[str, Any]]:
-        if not parent_node_ids:
-            return {}
-
-        collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        with self._store.client() as client:
-            if not client.has_collection(collection_name):
-                return {}
-
-            parent_records: Dict[str, Dict[str, Any]] = {}
-            for parent_node_id in parent_node_ids:
-                results = client.query(
-                    collection_name=collection_name,
-                    filter=build_scope_filter(
-                        knowledge_id=knowledge_id,
-                        extra_conditions=[
-                            f'parent_node_id == "{sanitize_filter_value(parent_node_id)}"'
-                        ],
-                        published=False,
-                    ),
-                    output_fields=[
-                        "parent_node_id",
-                        "content",
-                        "title",
-                        "metadata_json",
-                    ],
-                    limit=1,
-                )
-                if not results:
-                    continue
-                record = results[0]
-                parent_records[parent_node_id] = {
-                    "content": record.get("content", ""),
-                    "title": record.get("title", ""),
-                    "metadata": json.loads(record.get("metadata_json") or "{}"),
-                }
-            return parent_records
+        return self._parent_store.get(knowledge_id, parent_node_ids, **kwargs)

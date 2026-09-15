@@ -617,6 +617,49 @@ def test_concurrent_incompatible_creation_fails_explicitly(
     assert any(outcome.startswith("incompatible") for outcome in outcomes), outcomes
 
 
+def test_racing_incompatible_writer_cannot_overwrite_a_confirmed_binding(
+    milvus_server_env: MilvusContractEnv,
+) -> None:
+    """A late incompatible writer must not clobber the winner's contract."""
+    milvus_env = milvus_server_env
+    knowledge_id = milvus_env.new_knowledge_id()
+    backend, model, _ = _index_document(
+        milvus_env,
+        knowledge_id=knowledge_id,
+        document_id=1301,
+        text="winner contract content that must stay queryable",
+        dimension=1536,
+    )
+    collection_name = backend.get_index_name(knowledge_id)
+
+    with backend._store.client() as client:
+        confirmed = backend._store.read_binding(client, collection_name)
+    assert confirmed is not None
+
+    # The late writer claims its own contract and then tries to create the
+    # same collection: it must fail without touching the confirmed binding.
+    other = milvus_env.backend()
+    with other._store.client() as client:
+        with pytest.raises(IndexContractIncompatibleError):
+            other._store.ensure_index(
+                client,
+                collection_name,
+                dimension=1024,
+                embedding_space="sha256:late-writer",
+            )
+        assert other._store.read_binding(client, collection_name) == confirmed
+
+    hits = _query(
+        milvus_env,
+        knowledge_id=knowledge_id,
+        query="winner contract content",
+        dimension=1536,
+        backend=backend,
+        model=model,
+    )
+    assert hits["records"]
+
+
 def test_source_file_and_display_text_survive_the_round_trip(
     milvus_env: MilvusContractEnv,
 ) -> None:
