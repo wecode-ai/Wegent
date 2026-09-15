@@ -580,7 +580,7 @@ export async function clearEmbeddedBrowserData(kinds?: EmbeddedBrowserDataKind[]
   return invokeDesktopHost<number>('browser.clearData', { dataKinds: kinds ?? null })
 }
 
-function isEmbeddedBrowserUnavailableError(error: unknown, label: string): boolean {
+export function isEmbeddedBrowserUnavailableError(error: unknown, label: string): boolean {
   return error instanceof Error && error.message === `Embedded browser is unavailable: ${label}`
 }
 
