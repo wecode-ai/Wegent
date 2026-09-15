@@ -532,6 +532,9 @@ classify_wework_path() {
     wework/src/features/workbench/projectTaskTracking* | \
       wework/src/features/workbench/workbenchContextTypes*)
       select_target "core:task-status-sync"
+      if [[ "$path" == wework/src/features/workbench/workbenchContextTypes* ]]; then
+        select_target "core:send-key-preference"
+      fi
       return
       ;;
     # The main sidebar also owns project creation, chats, and attachments.
@@ -566,6 +569,9 @@ classify_wework_path() {
       if [[ "$path" == wework/src/api/local/localServices* || \
         "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
         select_target "core:project-ai-settings"
+      fi
+      if [[ "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
+        select_target "core:send-key-preference"
       fi
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
