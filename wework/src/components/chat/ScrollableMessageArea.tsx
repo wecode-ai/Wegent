@@ -1283,8 +1283,9 @@ function ScrollableMessagePaneContent({
     )
     const correction = anchorOffset - anchor.offsetFromScrollerTop + readerScrollTop
     const layout = `${Math.round(getMaximumScrollOffset(scroller))}:${scroller.clientWidth}:${scroller.clientHeight}`
-    const layoutChanged =
-      lastMeasuredLayoutRef.current !== null && lastMeasuredLayoutRef.current !== layout
+    // A layout this rule has not measured yet counts as still moving: the first frame of a re-layout is
+    // exactly the one that used to hand the reader a position taken in the middle of it.
+    const layoutChanged = lastMeasuredLayoutRef.current !== layout
     lastMeasuredLayoutRef.current = layout
     if (Math.abs(correction) < 1) {
       // The sampled text is already back where it was, so the sample describes the settled layout — but
