@@ -48,7 +48,8 @@ test('finds older agents in management and chat after creating 205 agents', asyn
       if (new URL(request.url()).pathname.endsWith('/api/teams'))
         catalogRequests.push(request.url())
     })
-    await page.goto('/resource-library?tab=mine&type=agent&source=mine')
+    // Match API order so later pages append instead of moving the scroll anchor.
+    await page.goto('/resource-library?tab=mine&type=agent&source=mine&sort=latest')
     await expect(page.locator('[data-testid^="team-card-"]')).toHaveCount(100)
     expect(searchRequests).toEqual([])
     expect(catalogRequests).toHaveLength(1)

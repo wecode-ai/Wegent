@@ -10,6 +10,7 @@ import type { ReactNode } from 'react'
 import { botApis } from '@/apis/bots'
 import { teamApis } from '@/apis/team'
 import { McpTargetSelectorDialog } from '@/features/resource-library/components/McpTargetSelectorDialog'
+import type { Bot } from '@/types/api'
 
 const mockToast = jest.fn()
 const mockOpenChange = jest.fn()
@@ -65,6 +66,21 @@ jest.mock('@/components/ui/scroll-area', () => ({
 
 const mockedBotApis = botApis as jest.Mocked<typeof botApis>
 const mockedTeamApis = teamApis as jest.Mocked<typeof teamApis>
+
+function createBot(id: number): Bot {
+  return {
+    id,
+    name: `Bot ${id}`,
+    shell_name: 'Chat',
+    shell_type: 'Chat',
+    agent_config: {},
+    system_prompt: '',
+    mcp_servers: {},
+    is_active: true,
+    created_at: '',
+    updated_at: '',
+  }
+}
 
 describe('McpTargetSelectorDialog', () => {
   beforeEach(() => {
@@ -234,6 +250,59 @@ describe('McpTargetSelectorDialog', () => {
     expect(mockedBotApis.updateBot).not.toHaveBeenCalled()
     expect(mockOpenChange).toHaveBeenCalledWith(false)
   })
+
+  it.each([false, true])(
+    'loads later bot pages before offering targets (failure: %s)',
+    async fails => {
+      const firstPage = Array.from({ length: 100 }, (_, index) => createBot(index + 21))
+      mockedBotApis.getBots.mockResolvedValueOnce({ total: 101, items: firstPage })
+      if (fails) {
+        mockedBotApis.getBots.mockRejectedValueOnce(new Error('Second page unavailable'))
+      } else {
+        mockedBotApis.getBots.mockResolvedValueOnce({ total: 101, items: [createBot(20)] })
+      }
+      const user = userEvent.setup()
+      render(
+        <McpTargetSelectorDialog
+          open
+          onOpenChange={mockOpenChange}
+          server={{
+            id: '@community/search',
+            name: 'Content Search',
+            description: 'Search community content',
+            type: 'streamable-http',
+            base_url: 'https://example.test/mcp',
+            is_active: true,
+            provider: 'Community MCP',
+          }}
+        />
+      )
+
+      if (fails) {
+        expect(await screen.findByText('mcp_market.targets_load_failed')).toBeInTheDocument()
+        expect(screen.queryByTestId('mcp-target-agent-card-11')).not.toBeInTheDocument()
+        expect(screen.queryByTestId('mcp-target-agent-card-10')).not.toBeInTheDocument()
+        expect(mockedBotApis.updateBot).not.toHaveBeenCalled()
+      } else {
+        await user.click(await screen.findByTestId('mcp-target-team-10-bot-20'))
+        await user.click(screen.getByTestId('mcp-target-submit'))
+        await waitFor(() =>
+          expect(mockedBotApis.updateBot).toHaveBeenCalledWith(20, {
+            mcp_servers: {
+              '%40community%2Fsearch': {
+                type: 'streamable-http',
+                url: 'https://example.test/mcp',
+              },
+            },
+          })
+        )
+        expect(mockOpenChange).toHaveBeenCalledWith(false)
+      }
+      expect(mockedBotApis.getBots).toHaveBeenCalledTimes(2)
+      expect(mockedBotApis.getBots).toHaveBeenNthCalledWith(1, { page: 1, limit: 100 }, 'personal')
+      expect(mockedBotApis.getBots).toHaveBeenNthCalledWith(2, { page: 2, limit: 100 }, 'personal')
+    }
+  )
 
   it('keeps only failed Bots selected for retry', async () => {
     mockedBotApis.updateBot

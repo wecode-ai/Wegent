@@ -4,7 +4,7 @@
 
 import { apiClient } from './client'
 import { getToken } from './user'
-import { fetchAllTeams } from '@wegent/chat-core'
+import { fetchAllPages } from '@wegent/chat-core'
 import type { TeamBot, Team, PaginationParams, TaskType, TeamInputPlaceholder } from '@/types/api'
 import type { CheckRunningTasksResponse } from './common'
 
@@ -135,7 +135,7 @@ export const teamApis = {
   ): Promise<TeamListResponse> {
     // Cancellable requests own their pagination so aborts cannot affect other consumers.
     if (options?.signal) {
-      return fetchAllTeams((page, limit) =>
+      return fetchAllPages((page, limit) =>
         teamApis.getTeams({ page, limit }, scope, groupName, options)
       )
     }
@@ -144,7 +144,7 @@ export const teamApis = {
     if (!refresh && pending) return pending
 
     // Share the entire pagination chain; completed results are never cached here.
-    const request = fetchAllTeams((page, limit) =>
+    const request = fetchAllPages((page, limit) =>
       teamApis.getTeams({ page, limit }, scope, groupName)
     ).finally(() => {
       if (pendingTeamCatalogs.get(key) === request) pendingTeamCatalogs.delete(key)

@@ -9,7 +9,7 @@ export type {
   TaskStatus,
 } from './api-types'
 export { nestMessageBlocks } from './message-blocks'
-export { fetchAllTeams } from './team-list'
+export { fetchAllPages } from './pagination'
 export type { CardBlock, MessageBlock, MessageBlockStatus } from './message-blocks'
 export {
   getLatestThinkingContent,
