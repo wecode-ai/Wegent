@@ -126,6 +126,9 @@ import {
   GOAL_SNAPSHOT_RECONCILIATION_PROMPT,
   GOAL_SNAPSHOT_RECONCILIATION_TEXT,
   GOAL_RESTART_COMPLETION_TEXT,
+  GOAL_RESTART_BLOCKER_COMPLETION_TEXT,
+  GOAL_RESTART_BLOCKER_INITIAL_TEXT,
+  GOAL_RESTART_BLOCKER_PROMPT,
   GOAL_RESTART_INITIAL_TEXT,
   GOAL_RESTART_PROMPT,
   GUIDANCE_SCROLL_ACTIVE_PROMPT,
@@ -567,6 +570,12 @@ class DesktopE2EServer {
     this.goalRestartResumeRelease = new Promise(resolvePromise => {
       this.releaseGoalRestartResume = resolvePromise
     })
+    this.goalRestartBlockerRelease = new Promise(resolvePromise => {
+      this.releaseGoalRestartBlocker = resolvePromise
+    })
+    this.firstGoalRestartResumeRelease = new Promise(resolvePromise => {
+      this.releaseFirstGoalRestartResume = resolvePromise
+    })
     this.supervisorInitialRelease = new Promise(resolvePromise => {
       this.releaseSupervisorInitial = resolvePromise
     })
@@ -597,6 +606,9 @@ class DesktopE2EServer {
     this.goalIdleStage = 'initial'
     this.goalBusyStage = 'plan'
     this.goalRestartStage = 'initial'
+    this.goalRestartBlockerStage = 'initial'
+    this.goalRestartScenarioByThreadId = new Map()
+    this.firstResumedGoalRestartScenario = null
     this.cloudGoalRestartStage = 'initial'
     this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
@@ -785,6 +797,7 @@ class DesktopE2EServer {
         'goal_idle',
         'goal_snapshot_reconciliation',
         'goal_busy_handoff',
+        'goal_restart_blocker',
         'goal_restart',
         'cloud_goal_restart',
         'turn_navigation',
@@ -1022,6 +1035,27 @@ class DesktopE2EServer {
 
   releaseGoalRestartResponse() {
     this.releaseGoalRestartResume()
+  }
+
+  releaseGoalRestartBlockerResponse() {
+    this.releaseGoalRestartBlocker()
+  }
+
+  releaseFirstGoalRestartResponse() {
+    this.releaseFirstGoalRestartResume()
+  }
+
+  async holdSubsequentGoalRestartResume(scenario) {
+    if (this.firstResumedGoalRestartScenario === null) {
+      this.firstResumedGoalRestartScenario = scenario
+      await this.firstGoalRestartResumeRelease
+      return
+    }
+    if (scenario === 'goal_restart_blocker') {
+      await this.goalRestartBlockerRelease
+      return
+    }
+    await this.goalRestartResumeRelease
   }
 
   releaseCloudInitialResponse() {
@@ -3018,6 +3052,109 @@ class DesktopE2EServer {
       return
     }
 
+    const serializedBody = JSON.stringify(body)
+    const requestThreadId = body.client_metadata?.thread_id
+    const turnMetadata = body.client_metadata?.['x-codex-turn-metadata']
+    let parentThreadId
+    if (typeof turnMetadata === 'string') {
+      try {
+        parentThreadId = JSON.parse(turnMetadata).parent_thread_id
+      } catch {
+        parentThreadId = undefined
+      }
+    }
+    if (
+      typeof requestThreadId === 'string' &&
+      serializedBody.includes(GOAL_RESTART_BLOCKER_PROMPT)
+    ) {
+      this.goalRestartScenarioByThreadId.set(requestThreadId, 'goal_restart_blocker')
+    } else if (
+      typeof requestThreadId === 'string' &&
+      this.scenario === 'goal_restart' &&
+      serializedBody.includes(GOAL_RESTART_PROMPT)
+    ) {
+      this.goalRestartScenarioByThreadId.set(requestThreadId, 'goal_restart')
+    }
+    const taggedThreadId =
+      typeof requestThreadId === 'string' && this.goalRestartScenarioByThreadId.has(requestThreadId)
+        ? requestThreadId
+        : typeof parentThreadId === 'string'
+          ? parentThreadId
+          : undefined
+    const goalRestartScenario =
+      typeof taggedThreadId === 'string'
+        ? this.goalRestartScenarioByThreadId.get(taggedThreadId)
+        : undefined
+
+    if (goalRestartScenario === 'goal_restart_blocker') {
+      this.recordScenarioRequest('goal_restart_blocker', modelRequest)
+      if (this.goalRestartBlockerStage === 'initial') {
+        assert.ok(
+          serializedBody.includes(GOAL_RESTART_BLOCKER_PROMPT),
+          'The real Codex request did not contain the Goal restart blocker prompt'
+        )
+        this.goalRestartBlockerStage = 'continuation'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GOAL_RESTART_BLOCKER_INITIAL_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (this.goalRestartBlockerStage === 'continuation') {
+        this.goalRestartBlockerStage = 'waiting_resume'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await new Promise(resolvePromise => response.once('close', resolvePromise))
+        return
+      }
+      if (this.goalRestartBlockerStage === 'waiting_resume') {
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        this.goalRestartBlockerStage = 'awaiting_resume_release'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.holdSubsequentGoalRestartResume('goal_restart_blocker')
+        response.end(
+          createSse([
+            ...functionCall(
+              'wework-e2e-goal-restart-blocker-complete',
+              updateGoal.name,
+              updateGoal.arguments
+            ),
+            responseCompleted(responseId),
+          ])
+        )
+        return
+      }
+      assert.equal(
+        this.goalRestartBlockerStage,
+        'awaiting_resume_release',
+        `Unexpected Goal restart blocker model stage: ${this.goalRestartBlockerStage}`
+      )
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The resumed Goal restart blocker did not return its update_goal output'
+      )
+      this.goalRestartBlockerStage = 'complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(GOAL_RESTART_BLOCKER_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'cloud_goal_restart') {
       this.recordScenarioRequest('cloud_goal_restart', modelRequest)
       if (this.cloudGoalRestartStage === 'initial') {
@@ -3067,11 +3204,11 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'goal_restart') {
+    if (goalRestartScenario === 'goal_restart') {
       this.recordScenarioRequest('goal_restart', modelRequest)
       if (this.goalRestartStage === 'initial') {
         assert.ok(
-          JSON.stringify(body).includes(GOAL_RESTART_PROMPT),
+          serializedBody.includes(GOAL_RESTART_PROMPT),
           'The real Codex request did not contain the Goal restart prompt'
         )
         this.goalRestartStage = 'continuation'
@@ -3104,7 +3241,7 @@ class DesktopE2EServer {
           'Content-Type': 'text/event-stream; charset=utf-8',
         })
         response.write(createSse([responseCreated(responseId)]))
-        await this.goalRestartResumeRelease
+        await this.holdSubsequentGoalRestartResume('goal_restart')
         response.end(
           createSse([
             ...functionCall(
