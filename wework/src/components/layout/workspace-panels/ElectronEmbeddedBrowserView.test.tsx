@@ -5,7 +5,6 @@ import {
   claimElectronEmbeddedBrowserView,
   relabelElectronEmbeddedBrowserView,
   releaseElectronEmbeddedBrowserView,
-  resetElectronEmbeddedBrowserView,
   retainElectronEmbeddedBrowserView,
 } from './electronEmbeddedBrowserHost'
 
@@ -203,7 +202,7 @@ describe('ElectronEmbeddedBrowserView', () => {
     expect(screen.queryByTestId('workspace-browser-electron-webview')).not.toBeInTheDocument()
   })
 
-  test('replaces a closed webview before the same route is reopened', async () => {
+  test('retains the attached webview while the same route is closed and reopened', async () => {
     const source = render(
       <ElectronEmbeddedBrowserView
         active
@@ -213,29 +212,15 @@ describe('ElectronEmbeddedBrowserView', () => {
       />
     )
     const host = screen.getByTestId('workspace-browser-electron-webview')
-    const previousWebview = host.querySelector('webview')
-    const previousPartition = previousWebview?.getAttribute('partition')
-
-    act(() => {
-      resetElectronEmbeddedBrowserView('workspace-browser')
-    })
-
-    expect(previousWebview?.isConnected).toBe(false)
-
-    const nextWebview = host.querySelector('webview')
-    expect(nextWebview).not.toBe(previousWebview)
-    expect(host.querySelectorAll('webview')).toHaveLength(1)
-    expect(nextWebview?.getAttribute('partition')).not.toBe(previousPartition)
-    expect(nextWebview?.isConnected).toBe(true)
-    expect(host.style.visibility).toBe('visible')
-    expect(host.style.pointerEvents).toBe('auto')
+    const webview = host.querySelector('webview')
+    retainElectronEmbeddedBrowserView('workspace-browser')
 
     source.unmount()
     await act(async () => {
       await Promise.resolve()
     })
     expect(host.isConnected).toBe(true)
-    expect(host.querySelector('webview')).toBe(nextWebview)
+    expect(host.querySelector('webview')).toBe(webview)
 
     const reopened = render(
       <ElectronEmbeddedBrowserView
@@ -246,7 +231,9 @@ describe('ElectronEmbeddedBrowserView', () => {
       />
     )
     expect(screen.getByTestId('workspace-browser-electron-webview')).toBe(host)
-    expect(host.querySelector('webview')).toBe(nextWebview)
+    expect(host.querySelector('webview')).toBe(webview)
+    expect(host.style.visibility).toBe('visible')
+    expect(host.style.pointerEvents).toBe('auto')
     reopened.unmount()
   })
 

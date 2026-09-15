@@ -164,6 +164,7 @@ export class EmbeddedBrowserManager {
   >()
   private readonly activeTabs = new Map<string, string>()
   private readonly downloads = new Map<string, BrowserDownload>()
+  private readonly cacheBypassContentsIds = new Set<number>()
   private readonly agentControlPaused = new Set<string>()
   private readonly agentActive = new Set<string>()
   private readonly agentApprovals = new Map<string, BrowserAgentApproval>()
@@ -353,6 +354,7 @@ export class EmbeddedBrowserManager {
       this.setAgentControlPaused(entry.label, true)
     })
     contents.once('destroyed', () => {
+      this.cacheBypassContentsIds.delete(contents.id)
       const removedLabels = new Set<string>()
       for (const [attachedLabel, attached] of this.attachedContents) {
         if (attached.id !== contents.id) continue
@@ -902,16 +904,16 @@ export class EmbeddedBrowserManager {
     this.emit('open-request', payload)
   }
 
-  async requestClose(label: string): Promise<void> {
+  requestClose(label: string): void {
     const normalizedLabel = requiredLabel(label)
     const entry = this.entries.get(normalizedLabel)
     if (!entry) return
-    this.close(normalizedLabel)
+    this.entries.delete(normalizedLabel)
+    this.clearEntryRuntimeState(normalizedLabel)
     this.emit('close-request', {
       label: normalizedLabel,
       nativeLabel: entry.nativeLabel,
     })
-    await this.waitForAttachedContents(normalizedLabel)
   }
 
   close(label: string, expectedNativeLabel?: string | null): void {
@@ -924,6 +926,15 @@ export class EmbeddedBrowserManager {
   }
 
   private clearLabelScopedState(label: string): void {
+    this.clearEntryRuntimeState(label)
+    this.attachedContents.delete(label)
+    this.rejectAttachmentWaiters(
+      label,
+      new Error(`Embedded browser webview was closed before attachment: ${label}`)
+    )
+  }
+
+  private clearEntryRuntimeState(label: string): void {
     this.agentControlPaused.delete(label)
     this.agentActive.delete(label)
     this.clearAgentCursorHide(label)
@@ -933,11 +944,6 @@ export class EmbeddedBrowserManager {
     for (const [approvalId, approval] of this.agentApprovals) {
       if (approval.label === label) this.agentApprovals.delete(approvalId)
     }
-    this.attachedContents.delete(label)
-    this.rejectAttachmentWaiters(
-      label,
-      new Error(`Embedded browser webview was closed before attachment: ${label}`)
-    )
   }
 
   closeMany(labels: string[]): void {
@@ -992,7 +998,12 @@ export class EmbeddedBrowserManager {
         ...(storages?.length ? { storages: [...new Set(storages)] } : {}),
       })
     }
-    if (clearAll || kinds.includes('cache')) await browserSession.clearCache()
+    if (clearAll || kinds.includes('cache')) {
+      await browserSession.clearCache()
+      for (const contents of this.attachedContents.values()) {
+        if (!contents.isDestroyed()) this.cacheBypassContentsIds.add(contents.id)
+      }
+    }
     return this.entries.size
   }
 
@@ -1198,6 +1209,11 @@ export class EmbeddedBrowserManager {
       }
       entry.previewDisplayUrl = navigation.kind === 'preview' ? navigation.displayUrl : null
       entry.previewSourceUrl = navigation.kind === 'preview' ? navigation.sourceUrl : null
+      const bypassCache = this.cacheBypassContentsIds.delete(entry.contents.id)
+      if (bypassCache && entry.contents.getURL() === navigation.displayUrl) {
+        entry.contents.reloadIgnoringCache()
+        return
+      }
       await entry.contents.loadURL(navigation.displayUrl)
     } catch (error) {
       if (!entry.navigationError) {

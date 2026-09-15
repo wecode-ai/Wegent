@@ -568,6 +568,11 @@ function browserLabelForRightWorkspaceTab(
   return suffix === '1' ? baseLabel : `${baseLabel}-${suffix}`
 }
 
+function browserBaseLabelForWorkbenchPane(taskId: string | undefined, paneKey: string): string {
+  const labelSegment = taskId ?? paneKey
+  return `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(labelSegment)}`
+}
+
 function createInitialBrowserWorkspaceState({
   initialWorkspaceState,
   defaultEmbeddedBrowserLabel,
@@ -872,22 +877,29 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     (request: EmbeddedBrowserOpenRequest) => {
       const requestBaseLabel = request.baseLabel || request.label || DEFAULT_EMBEDDED_BROWSER_LABEL
       if (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL) {
-        return null
+        return props.visible === false ? null : activePaneKey
+      }
+      if (
+        props.visible !== false &&
+        requestBaseLabel ===
+          browserBaseLabelForWorkbenchPane(
+            props.activePane.currentRuntimeTask?.taskId,
+            activePaneKey
+          )
+      ) {
+        return activePaneKey
       }
       return (
-        Array.from(new Set([activePaneKey, ...runtimePaneKeys])).find(paneKey => {
-          if (paneKey === activePaneKey) return false
+        runtimePaneKeys.find(paneKey => {
           const pane = resolvePane(paneKey)
-          const labelSegment = pane?.currentRuntimeTask?.taskId ?? paneKey
-          return (
-            pane !== null &&
-            requestBaseLabel ===
-              `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(labelSegment)}`
-          )
+          return pane
+            ? requestBaseLabel ===
+                browserBaseLabelForWorkbenchPane(pane.currentRuntimeTask?.taskId, paneKey)
+            : false
         }) ?? null
       )
     },
-    [activePaneKey, resolvePane, runtimePaneKeys]
+    [activePaneKey, props.activePane, props.visible, resolvePane, runtimePaneKeys]
   )
   useEffect(() => {
     const listener = listenEmbeddedBrowserOpenRequests(request => {
@@ -3810,22 +3822,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [defaultEmbeddedBrowserLabel, openBrowserTab, rightPanelView]
   )
-  useEffect(() => {
-    if (!paneActive) return
-    const listener = listenEmbeddedBrowserOpenRequests(request => {
-      if (!paneActiveRef.current) return
-      logBrowserOpenDiagnostic('openRequestReceived', {
-        requestId: request.id,
-        url: request.url,
-        label: request.label ?? null,
-        source: request.source ?? null,
-      })
-      routeEmbeddedBrowserOpenRequest(request, true)
-    })
-    return () => {
-      void listener?.then(unlisten => unlisten())
-    }
-  }, [paneActive, routeEmbeddedBrowserOpenRequest])
   useEffect(() => {
     if (!pendingBrowserOpenRequest) return
     if (routedBrowserOpenRequestIdRef.current === pendingBrowserOpenRequest.id) return
