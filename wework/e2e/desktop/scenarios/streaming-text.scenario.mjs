@@ -934,7 +934,6 @@ export function createDesktopScenario({
   const toolFinalCompletionRelease = new Promise(resolve => {
     releaseToolFinalCompletion = resolve
   })
-
   const verifyLongCodeTerminalBurst = async control => {
     await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
     await openNewChatWithE2EModel(control, uiTimeoutMs)
@@ -962,6 +961,16 @@ export function createDesktopScenario({
       Number(await control.command('getElementCount', THINKING_INDICATOR_SELECTOR)),
       0,
       'The generic thinking indicator remained after long-code output became visible'
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
+        )
+      ),
+      0,
+      'The processing timeline completed while final assistant text was still streaming'
     )
 
     releaseLongCodeStream()

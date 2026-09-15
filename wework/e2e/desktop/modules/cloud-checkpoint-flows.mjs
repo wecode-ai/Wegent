@@ -52,6 +52,7 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
+  REMOTE_DOCKER_DEVICE_ID,
   SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -606,6 +607,10 @@ async function verifyCloudCheckpoint({
     setPhase('cloud-plugin-auto-update-fixtures')
     await cloudEnvironment.seedPluginAutoUpdateFixtures(6)
     setPhase('cloud-plugin-auto-update-release-push')
+    console.log(
+      '[plugin-auto-update] scheduling',
+      JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).idleTasks
+    )
     const completionDeadline = Date.now() + WORKBENCH_READY_TIMEOUT_MS
     let completionError = null
     while (Date.now() < completionDeadline) {
@@ -619,6 +624,10 @@ async function verifyCloudCheckpoint({
       await new Promise(resolve => setTimeout(resolve, 100))
     }
     if (completionError) {
+      console.log(
+        '[plugin-auto-update] scheduling at failure',
+        JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).idleTasks
+      )
       throw new Error(
         'Published release events did not auto-update plugins outside the plugin page',
         { cause: completionError }
@@ -683,6 +692,12 @@ async function verifyCloudCheckpoint({
       setPhase('cloud-automation-lifecycle')
       await ensureExperimentalFeaturesEnabled(control)
       await verifyCloudAutomationLifecycle(control, CLOUD_DEVICE_ID)
+      setPhase('remote-docker-automation-lifecycle')
+      await verifyCloudAutomationLifecycle(control, REMOTE_DOCKER_DEVICE_ID, {
+        automationSuffix: 'Remote Docker',
+        deviceName: 'Wework E2E Remote Docker Device',
+        expectedCompletionIndex: 2,
+      })
       return
     case 'model-routing':
       setPhase('cloud-model-routing')

@@ -128,7 +128,7 @@ export function TemporaryChatPanel({
   projectWorkBarTrailingContext,
   onRestoreConversation,
   initialScrollPosition = 'restore',
-  scrollOrigin = 'top',
+  scrollOrigin = 'bottom',
   onOpenRuntimeTask,
 }: TemporaryChatPanelProps) {
   const { t } = useTranslation('common')
@@ -200,7 +200,6 @@ export function TemporaryChatPanel({
   const [sending, setSending] = useState(false)
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
-  const [loadingFullTranscript, setLoadingFullTranscript] = useState(false)
   const [hiddenRequestUserInputIds, setHiddenRequestUserInputIds] = useState<ReadonlySet<string>>(
     () => new Set()
   )
@@ -295,34 +294,6 @@ export function TemporaryChatPanel({
       abortRuntimeConversationHydration(address, hydrationToken)
     }
   }, [address, lifecycleStore, loadRuntimeTranscriptForPane, sendEphemeral])
-
-  const loadFullTranscript = useCallback(async () => {
-    if (!address || loadingFullTranscript) return
-    setLoadingFullTranscript(true)
-    const hydrationToken = beginRuntimeConversationHydration(address)
-    try {
-      const transcript = await loadRuntimeTranscriptForPane(address, {
-        includeFullContent: true,
-        refresh: true,
-      })
-      lifecycleStore.syncTranscript(address, transcript, {
-        preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isTurnActive ?? false,
-      })
-      const nextMessages = completeRuntimeConversationHydration(
-        address,
-        hydrationToken,
-        transcript.turns
-      )
-      if (nextMessages.length > 0) {
-        setMessages(nextMessages)
-      }
-    } catch (caughtError) {
-      abortRuntimeConversationHydration(address, hydrationToken)
-      setError(caughtError instanceof Error ? caughtError.message : '加载完整输出失败')
-    } finally {
-      setLoadingFullTranscript(false)
-    }
-  }, [address, lifecycleStore, loadRuntimeTranscriptForPane, loadingFullTranscript])
 
   useEffect(() => {
     if (!address) return
@@ -885,8 +856,6 @@ export function TemporaryChatPanel({
           className="min-h-0 flex-1"
           messageListClassName={`${DESKTOP_MESSAGE_LIST_CLASS} pb-4 pt-5`}
           scrollTestId="right-workspace-chat-scroll-area"
-          onLoadFullTranscript={loadFullTranscript}
-          loadingFullTranscript={loadingFullTranscript}
           onRetryFailedMessage={
             address
               ? message => {

@@ -32,6 +32,7 @@ import type {
 } from "./AutomationRulesView.types";
 import { useAutomationLocale, useTranslation } from "./AutomationUiHost";
 import { SimpleWorkflowDag } from "./SimpleWorkflowDag";
+import { useRuntimeConfiguration } from "../runtime-profile/context";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 type Translate = (
@@ -316,6 +317,7 @@ export function AutomationPolicyView({
 }: AutomationRulesViewProps) {
   const locale = useAutomationLocale();
   const { t } = useTranslation("common");
+  const configureRuntime = useRuntimeConfiguration();
   const [selectedId, setSelectedId] = useState<string | null>(
     () => rules[0]?.id ?? null,
   );
@@ -324,6 +326,7 @@ export function AutomationPolicyView({
   );
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [actionError, setActionError] = useState("");
+  const [configurationMissing, setConfigurationMissing] = useState(false);
   const [showRuns, setShowRuns] = useState(false);
   const [running, setRunning] = useState(false);
   const [deletedRuleIds, setDeletedRuleIds] = useState<Set<string>>(
@@ -362,6 +365,7 @@ export function AutomationPolicyView({
     setDraft((current) => (current ? update(current) : current));
     setSaveState("dirty");
     setActionError("");
+    setConfigurationMissing(false);
   };
 
   const canDiscardDraft = () =>
@@ -378,6 +382,7 @@ export function AutomationPolicyView({
     setDraft(rule);
     setSaveState("dirty");
     setActionError("");
+    setConfigurationMissing(false);
     setShowRuns(false);
   };
 
@@ -393,6 +398,7 @@ export function AutomationPolicyView({
     setDraft(cloneRule(selected));
     setSaveState("idle");
     setActionError("");
+    setConfigurationMissing(false);
     setShowRuns(false);
   };
 
@@ -422,6 +428,7 @@ export function AutomationPolicyView({
     }
     setSaveState("saving");
     setActionError("");
+    setConfigurationMissing(false);
     try {
       const saved = await onSaveRule(linearizeCoordinatorWorkflow(draft));
       if (!saved) {
@@ -444,6 +451,7 @@ export function AutomationPolicyView({
   const toggleEnabled = async () => {
     if (!draft || !onToggleRule || !draft.persisted) return;
     setActionError("");
+    setConfigurationMissing(false);
     try {
       const saved = await onToggleRule(draft, !draft.enabled);
       if (!saved) return;
@@ -463,15 +471,25 @@ export function AutomationPolicyView({
     if (!window.confirm(t("automation.policy.runConfirm"))) return;
     setRunning(true);
     setActionError("");
+    setConfigurationMissing(false);
     try {
       await onRunRule(draft);
       await onLoadRuns?.();
       setShowRuns(true);
     } catch (runError) {
+      setConfigurationMissing(
+        runError instanceof Error &&
+          "errorCode" in runError &&
+          runError.errorCode === "COORDINATOR_EXECUTION_CONFIG_INCOMPLETE",
+      );
       setActionError(
-        runError instanceof Error
-          ? runError.message
-          : t("automation.policy.runFailed"),
+        runError instanceof Error &&
+          "errorCode" in runError &&
+          runError.errorCode === "COORDINATOR_EXECUTION_CONFIG_INCOMPLETE"
+          ? t("automation.policy.coordinatorConfigurationMissing")
+          : runError instanceof Error
+            ? runError.message
+            : t("automation.policy.runFailed"),
       );
     } finally {
       setRunning(false);
@@ -487,6 +505,7 @@ export function AutomationPolicyView({
     )
       return;
     setActionError("");
+    setConfigurationMissing(false);
     try {
       await onDeleteRule(draft);
       const nextRule = availableRules.find((rule) => rule.id !== draft.id);
@@ -544,6 +563,21 @@ export function AutomationPolicyView({
         {error || actionError ? (
           <div className="automation-policy-error" role="alert">
             <span>{actionError || error}</span>
+            {configurationMissing && configureRuntime ? (
+              <button
+                type="button"
+                data-testid="automation-configure-runtime"
+                className="automation-policy-secondary-button min-h-11"
+                onClick={() =>
+                  configureRuntime(async () => {
+                    setActionError("");
+                    setConfigurationMissing(false);
+                  })
+                }
+              >
+                {t("automation.policy.configureRuntime")}
+              </button>
+            ) : null}
             {error && onReload ? (
               <button type="button" onClick={() => void onReload()}>
                 <RotateCcw size={15} />

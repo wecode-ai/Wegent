@@ -53,6 +53,7 @@ export interface ComposerEditorHandle {
   element: HTMLElement | null
   focus: () => void
   getSnapshot: () => ComposerEditorSnapshot
+  insertLineBreak: () => boolean
   setValue: (value: string, selectionOffset?: number) => void
 }
 
@@ -126,6 +127,17 @@ export const ComposerProseMirrorEditor = forwardRef<
       },
       getSnapshot() {
         return viewRef.current ? readComposerSnapshot(viewRef.current.state) : emptySnapshot()
+      },
+      insertLineBreak() {
+        const view = viewRef.current
+        if (!view) return false
+        const handled = splitBlock(
+          view.state,
+          transaction => view.dispatch(transaction.scrollIntoView()),
+          view
+        )
+        if (handled) keepTrailingComposerCaretVisible(view)
+        return handled
       },
       setValue(value, selectionOffset = value.length) {
         const view = viewRef.current

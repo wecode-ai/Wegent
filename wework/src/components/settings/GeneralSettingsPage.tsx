@@ -45,6 +45,7 @@ import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelS
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import { changeWorkbenchMode } from '@/features/workbench-mode/workbenchMode'
 import { getTelemetryConfig } from '@/telemetry/config'
+import { getPlatform } from '@/lib/platform'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -105,6 +106,9 @@ export function GeneralSettingsPage() {
   const [recordingPopoutShortcut, setRecordingPopoutShortcut] = useState(false)
   const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(DEFAULT_MAX_CONCURRENT_TASKS)
   const [installedSmartApps, setInstalledSmartApps] = useState<HarnessAppInstallation[]>([])
+  const [pendingSendKey, setPendingSendKey] = useState<'enter' | 'cmd_enter' | null>(null)
+  const persistedSendKey = workbench?.state?.user?.preferences?.send_key ?? 'enter'
+  const sendKey = pendingSendKey ?? persistedSendKey
 
   useEffect(() => {
     if (appPreferences && !appPreferences.loaded) return
@@ -316,6 +320,23 @@ export function GeneralSettingsPage() {
       setPreferences(current => ({ ...current, language: previousLanguage }))
       setError(t('workbench.general_settings_save_failed'))
     } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleSendKeyChange = async (nextSendKey: 'enter' | 'cmd_enter') => {
+    if (nextSendKey === sendKey || !workbench?.updateUserPreferences) return
+
+    setPendingSendKey(nextSendKey)
+    setSaving(true)
+    setError(null)
+    try {
+      await workbench.updateUserPreferences({ send_key: nextSendKey })
+    } catch (saveError) {
+      console.error('[Wework] Failed to update message send shortcut', saveError)
+      setError(t('workbench.general_settings_send_key_save_failed'))
+    } finally {
+      setPendingSendKey(null)
       setSaving(false)
     }
   }
@@ -534,6 +555,47 @@ export function GeneralSettingsPage() {
                       ].join(' ')}
                     >
                       <span className="truncate">{t(`workbench.${option.shortLabelKey}`)}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            }
+          />
+          <SettingsRow
+            label={t('workbench.general_settings_send_key')}
+            description={t('workbench.general_settings_send_key_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <div className="grid h-8 w-full shrink-0 grid-cols-2 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
+                {(['enter', 'cmd_enter'] as const).map(option => {
+                  const active = sendKey === option
+                  const label =
+                    option === 'enter'
+                      ? t('workbench.general_settings_send_key_enter')
+                      : t(
+                          'workbench.general_settings_send_key_command_enter',
+                          '{{modifier}} Enter 发送',
+                          {
+                            modifier: getPlatform() === 'mac' ? '⌘' : 'Ctrl',
+                          }
+                        )
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      data-testid={`general-send-key-${option}-button`}
+                      disabled={loading || saving || !workbench?.updateUserPreferences}
+                      aria-pressed={active}
+                      onClick={() => void handleSendKeyChange(option)}
+                      className={[
+                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                        active
+                          ? 'bg-text-primary text-background shadow-sm'
+                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
+                      ].join(' ')}
+                    >
+                      <span className="truncate">{label}</span>
                     </button>
                   )
                 })}

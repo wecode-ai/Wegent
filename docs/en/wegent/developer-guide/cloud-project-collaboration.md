@@ -19,6 +19,12 @@ A cloud project is not the existing `Project` model:
 
 ## Client reuse boundary
 
+### Execution configuration and waiting states
+
+Cloud projects configure the current user's default device and model under **Project settings → Assignment and dispatch** for the AI coordinator. Creating a custom Codex agent requires a device and model; **Configure device and model** in the agent list sets defaults for future tasks. Model identity and provider options remain opaque dictionaries and are not subject to API field case conversion. Device presence comes from connection heartbeats. If an AI-coordinated workflow lacks required execution settings, Issue creation returns a configuration error before persisting the Issue or starting dispatch. Configure the missing settings before creating the Issue.
+
+Successful planning and assignment by the coordinator does not mean the Issue is complete. Parent steps and child details display the child's execution state. Missing device or model configuration keeps an execution in `waiting_runtime`; **Configure and continue** applies a complete profile to that existing execution. This does not change project or agent defaults and preserves manual approval requirements. Workflow progress counts steps only after acceptance.
+
 Wegent Web replaces the former **Inbox** entry with **Collaboration** and directly reuses the Backend APIs for cloud projects, board Issues, comments, attachments, shared files, members, and execution records. Web and Wework do not maintain a second domain model or API surface.
 
 Cross-client types, API clients, copy, test contracts, and host-independent React components live in `packages/collaboration`. `CollaborationApp` is the sole primary interface for cloud projects in both Web and Wework. It owns the project home, board, Issue details, comments, attachments, files, members, runs, and project settings; the clients must not maintain parallel cloud-collaboration pages.

@@ -266,7 +266,7 @@ export class FeedbackBundleManager {
         return []
       })
       for (const entry of directoryEntries) {
-        if (!entry.isFile() || extname(entry.name) !== '.log') continue
+        if (!entry.isFile() || !isRuntimeLogFile(entry.name)) continue
         const path = join(directory, entry.name)
         if (seen.has(path)) continue
         seen.add(path)
@@ -291,6 +291,10 @@ export class FeedbackBundleManager {
       }
     }
   }
+}
+
+function isRuntimeLogFile(fileName: string): boolean {
+  return /\.log(?:\.\d+)?$/i.test(fileName)
 }
 
 async function writeBundleArchive(bundle: PendingBundle, destination: string): Promise<void> {

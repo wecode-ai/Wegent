@@ -123,6 +123,8 @@ import {
   GOAL_IDLE_FOLLOW_UP_TEXT,
   GOAL_IDLE_INITIAL_TEXT,
   GOAL_IDLE_PROMPT,
+  GOAL_SNAPSHOT_RECONCILIATION_PROMPT,
+  GOAL_SNAPSHOT_RECONCILIATION_TEXT,
   GOAL_RESTART_COMPLETION_TEXT,
   GOAL_RESTART_INITIAL_TEXT,
   GOAL_RESTART_PROMPT,
@@ -429,6 +431,7 @@ class DesktopE2EServer {
     this.modelRequests = []
     this.catalogRequests = []
     this.httpRequests = []
+    this.userPreferences = {}
     this.runtimeImBindingRequests = []
     this.telemetryRequests = []
     this.blockedCloudRequests = []
@@ -555,6 +558,9 @@ class DesktopE2EServer {
     this.goalIdleFollowUpRelease = new Promise(resolvePromise => {
       this.releaseGoalIdleFollowUp = resolvePromise
     })
+    this.goalSnapshotReconciliationRelease = new Promise(resolvePromise => {
+      this.releaseGoalSnapshotReconciliation = resolvePromise
+    })
     this.goalBusyPlanRelease = new Promise(resolvePromise => {
       this.releaseGoalBusyPlan = resolvePromise
     })
@@ -592,7 +598,6 @@ class DesktopE2EServer {
     this.goalBusyStage = 'plan'
     this.goalRestartStage = 'initial'
     this.cloudGoalRestartStage = 'initial'
-    this.goalRestartResumeRequested = false
     this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
@@ -778,6 +783,7 @@ class DesktopE2EServer {
         'background_completion_restore',
         'background_follow_up_restore',
         'goal_idle',
+        'goal_snapshot_reconciliation',
         'goal_busy_handoff',
         'goal_restart',
         'cloud_goal_restart',
@@ -1006,16 +1012,16 @@ class DesktopE2EServer {
     this.releaseGoalIdleFollowUp()
   }
 
+  releaseGoalSnapshotReconciliationResponse() {
+    this.releaseGoalSnapshotReconciliation()
+  }
+
   releaseGoalBusyPlanResponse() {
     this.releaseGoalBusyPlan()
   }
 
   releaseGoalRestartResponse() {
     this.releaseGoalRestartResume()
-  }
-
-  markGoalRestartResumeRequested() {
-    this.goalRestartResumeRequested = true
   }
 
   releaseCloudInitialResponse() {
@@ -1196,6 +1202,22 @@ class DesktopE2EServer {
         id: 9001,
         user_name: CLOUD_STORED_USER_NAME,
         email: 'desktop-e2e@wework.local',
+        preferences: this.userPreferences,
+      })
+      return
+    }
+
+    if (request.method === 'PUT' && url.pathname === '/api/users/me') {
+      const body = await readRequestBody(request)
+      this.userPreferences = {
+        ...this.userPreferences,
+        ...(body.preferences ?? {}),
+      }
+      json(response, 200, {
+        id: 9001,
+        user_name: CLOUD_STORED_USER_NAME,
+        email: 'desktop-e2e@wework.local',
+        preferences: this.userPreferences,
       })
       return
     }
@@ -3073,11 +3095,6 @@ class DesktopE2EServer {
         return
       }
       if (this.goalRestartStage === 'waiting_resume') {
-        assert.equal(
-          this.goalRestartResumeRequested,
-          true,
-          'The interrupted Goal resumed without explicit user input'
-        )
         const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
         this.goalRestartStage = 'awaiting_resume_release'
         response.writeHead(200, {
@@ -3195,6 +3212,25 @@ class DesktopE2EServer {
       })
       response.write(createSse(stream.start))
       await this.goalIdleFollowUpRelease
+      response.end(createSse(stream.finish))
+      return
+    }
+
+    if (this.scenario === 'goal_snapshot_reconciliation') {
+      this.recordScenarioRequest('goal_snapshot_reconciliation', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(GOAL_SNAPSHOT_RECONCILIATION_PROMPT),
+        'The real Codex request did not contain the Goal snapshot reconciliation prompt'
+      )
+      const stream = streamingTextEvents(responseId, GOAL_SNAPSHOT_RECONCILIATION_TEXT)
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse(stream.start))
+      await this.goalSnapshotReconciliationRelease
       response.end(createSse(stream.finish))
       return
     }

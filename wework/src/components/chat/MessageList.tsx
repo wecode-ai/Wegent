@@ -133,8 +133,6 @@ interface MessageListProps {
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
   onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
@@ -230,8 +228,6 @@ export const MessageList = memo(function MessageList({
   onEditLastUserMessage,
   canEditLastUserMessage = false,
   onForkMessage,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
@@ -633,6 +629,7 @@ export const MessageList = memo(function MessageList({
               <AssistantMessage
                 message={message}
                 conversationKey={conversationKey}
+                isActiveTurn={isWaitingForAssistant && index === visibleMessages.length - 1}
                 devices={devices}
                 onRetryFailedMessage={onRetryFailedMessage}
                 onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
@@ -645,8 +642,6 @@ export const MessageList = memo(function MessageList({
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 onOpenSubagent={onOpenSubagent}
-                onLoadFullTranscript={onLoadFullTranscript}
-                loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 onFork={onForkMessage && message.turnId ? () => onForkMessage(message) : undefined}
@@ -777,8 +772,6 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'canEditLastUserMessage'
       : null,
     previous.onForkMessage !== next.onForkMessage ? 'onForkMessage' : null,
-    previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
-    previous.loadingFullTranscript !== next.loadingFullTranscript ? 'loadingFullTranscript' : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
       ? 'hideRequestUserInputBlocks'
       : null,
@@ -1938,6 +1931,7 @@ function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
 export function AssistantMessage({
   message,
   conversationKey,
+  isActiveTurn = false,
   devices,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
@@ -1950,14 +1944,13 @@ export function AssistantMessage({
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
   onOpenSubagent,
-  onLoadFullTranscript,
-  loadingFullTranscript,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   onFork,
 }: {
   message: WorkbenchMessage
   conversationKey?: string | number | null
+  isActiveTurn?: boolean
   devices: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
@@ -1982,8 +1975,6 @@ export function AssistantMessage({
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onOpenSubagent?: (block: SubagentBlock) => void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onFork?: () => Promise<void> | void
@@ -2044,6 +2035,8 @@ export function AssistantMessage({
   const usesFinalProcessingShell =
     hasBlocks &&
     !hasPlanResponse &&
+    !isStreaming &&
+    !isActiveTurn &&
     !hasRunningBlocks &&
     !isCancelled &&
     !hasProcessingAfterContent &&
@@ -2107,8 +2100,6 @@ export function AssistantMessage({
           onRequestUserInputIgnore={onRequestUserInputIgnore}
           onOpenAssistantPlan={onOpenAssistantPlan}
           onOpenSubagent={onOpenSubagent}
-          onLoadFullTranscript={onLoadFullTranscript}
-          loadingFullTranscript={loadingFullTranscript}
           hideRequestUserInputBlocks={hideRequestUserInputBlocks}
           hiddenRequestUserInputIds={hiddenRequestUserInputIds}
         />
@@ -2165,8 +2156,6 @@ export function AssistantMessage({
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 onOpenSubagent={onOpenSubagent}
-                onLoadFullTranscript={onLoadFullTranscript}
-                loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
               />
@@ -2234,13 +2223,6 @@ export function AssistantMessage({
             <AssistantThinkingIndicator content={activeThinkingContent} />
           )}
           {generatedImages.length > 0 ? <GeneratedImageGallery images={generatedImages} /> : null}
-          {message.contentTruncated ? (
-            <ContentTruncatedNotice
-              originalChars={message.contentOriginalChars}
-              onLoadFullTranscript={onLoadFullTranscript}
-              loadingFullTranscript={loadingFullTranscript}
-            />
-          ) : null}
           {hasVisibleContent && !hasProcessingAfterContent ? (
             <div data-message-selectable-text data-testid="assistant-message-content">
               <AssistantMarkdown
@@ -2471,36 +2453,6 @@ function GeneratedImagePreview({
       placeholderClassName="flex min-h-40 w-full items-center justify-center rounded-lg border border-border bg-surface text-text-muted"
       buttonClassName="block w-full cursor-zoom-in p-0 text-left"
     />
-  )
-}
-
-function ContentTruncatedNotice({
-  originalChars,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
-}: {
-  originalChars?: number
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
-}) {
-  return (
-    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-muted">
-      <span>
-        早期内容已从当前视图卸载
-        {typeof originalChars === 'number' ? `，原始约 ${originalChars.toLocaleString()} 字` : ''}。
-      </span>
-      {onLoadFullTranscript ? (
-        <button
-          type="button"
-          data-testid="load-full-runtime-transcript-button"
-          onClick={() => void onLoadFullTranscript()}
-          disabled={loadingFullTranscript}
-          className="h-8 rounded border border-border bg-base px-2 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
-        >
-          {loadingFullTranscript ? '正在加载完整输出' : '加载完整输出'}
-        </button>
-      ) : null}
-    </div>
   )
 }
 

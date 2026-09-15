@@ -51,6 +51,7 @@ def execution_environment_values(
     grant: ResourceMember,
     device: Kind,
     *,
+    connection_status: str,
     workspace_id: str | None = None,
 ) -> dict[str, object]:
     spec = _kind_spec(device)
@@ -82,7 +83,7 @@ def execution_environment_values(
         "owner_type": owner_type,
         "owner_id": owner_id,
         "owner_name": owner_name,
-        "status": execution_environment_status(device),
+        "status": connection_status,
         "owner_user_id": owner_user_id,
         "added_by_user_id": grant.invited_by_user_id,
         "created_at": grant.created_at,
@@ -93,6 +94,7 @@ def execution_environment_values(
 def personal_environment_values(
     device: Kind,
     *,
+    connection_status: str,
     owner: User,
     workspace_ids: list[str],
 ) -> dict[str, object]:
@@ -108,7 +110,7 @@ def personal_environment_values(
         "owner_type": "user",
         "owner_id": str(owner.id),
         "owner_name": owner.user_name,
-        "status": execution_environment_status(device),
+        "status": connection_status,
         "workspace_ids": workspace_ids,
         "updated_at": device.updated_at,
     }
@@ -164,24 +166,6 @@ def agent_status(team: Kind) -> str:
     }:
         return "available"
     return "unavailable"
-
-
-def execution_environment_status(device: Kind) -> str:
-    if not device.is_active or not isinstance(device.json, dict):
-        return "offline"
-    raw_status = _kind_spec(device).get("status")
-    if not isinstance(raw_status, str):
-        status = device.json.get("status")
-        status = status if isinstance(status, dict) else {}
-        raw_status = status.get("status") or status.get("state")
-    normalized = str(raw_status or "").lower()
-    if normalized in {"online", "busy", "available", "ready"}:
-        return "online"
-    if normalized in {"provisioning", "pending", "creating", "starting"}:
-        return "provisioning"
-    if normalized in {"error", "failed", "unavailable"}:
-        return "error"
-    return "offline"
 
 
 def execution_environment_kind(device_type: str) -> str:

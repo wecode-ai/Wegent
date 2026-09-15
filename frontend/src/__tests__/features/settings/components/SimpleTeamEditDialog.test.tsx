@@ -16,7 +16,7 @@ import { createTeam, updateTeam } from '@/features/settings/services/teams'
 import type { Bot, Team } from '@/types/api'
 import type { Group } from '@/types/group'
 
-const mockRefreshTeams = jest.fn()
+const mockInvalidateTeams = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -167,7 +167,7 @@ jest.mock('@/apis/skills', () => ({
 
 jest.mock('@/contexts/TeamContext', () => ({
   useTeamContext: () => ({
-    refreshTeams: mockRefreshTeams,
+    invalidateTeams: mockInvalidateTeams,
   }),
 }))
 
@@ -327,7 +327,7 @@ function makeTeam(overrides: Partial<Team> = {}): Team {
 describe('Simple TeamEditDialog', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockRefreshTeams.mockResolvedValue(undefined)
+    mockInvalidateTeams.mockReturnValue(undefined)
     mockedGetUnifiedShells.mockResolvedValue({
       data: [
         { name: 'Chat', type: 'public', displayName: 'Chat', shellType: 'Chat' },
@@ -1160,6 +1160,7 @@ describe('Simple TeamEditDialog', () => {
     await waitFor(() => {
       expect(mockedUpdateTeam).toHaveBeenCalled()
       expect(mockedCreateListing).toHaveBeenCalled()
+      expect(mockInvalidateTeams).toHaveBeenCalled()
       expect(onClose).toHaveBeenCalled()
     })
     expect(toast).toHaveBeenCalledWith({
@@ -1284,7 +1285,7 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
-  it('saves Codex as the default coding engine', async () => {
+  it('keeps Claude Code as the default coding engine', async () => {
     render(
       <TeamEditDialog
         open
@@ -1300,14 +1301,14 @@ describe('Simple TeamEditDialog', () => {
 
     await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
 
-    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'codex-agent' } })
+    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'code-agent' } })
     fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => {
       expect(mockedCreateBot).toHaveBeenCalledWith(
         expect.objectContaining({
-          shell_name: 'Codex',
+          shell_name: 'ClaudeCode',
         })
       )
     })

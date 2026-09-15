@@ -157,6 +157,7 @@ pub struct CodexAppServerTurnOptions {
     pub fork_thread_id: Option<String>,
     pub fork_thread_path: Option<String>,
     pub resume_thread_id: Option<String>,
+    pub resume_goal_only: bool,
     pub initial_thread_goal: Option<Value>,
     pub notifications: Option<CodexNotificationSender>,
     pub cancellation: Option<oneshot::Receiver<()>>,
@@ -1576,6 +1577,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         fork_thread_id,
         fork_thread_path,
         resume_thread_id,
+        resume_goal_only,
         initial_thread_goal,
         notifications,
         mut cancellation,
@@ -1594,6 +1596,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     log_executor_event("codex shared app-server turn starting", &fields);
 
     let mut subscribed_thread_id = None;
+    let mut early_notification_rx = None;
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
         let awaits_initial_goal_turn = initial_thread_goal.is_some() && !request.ephemeral;
@@ -1612,6 +1615,16 @@ async fn run_codex_app_server_turn_on_shared_client(
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
             client.mark_thread_active(thread_id).await;
             subscribed_thread_id = Some(thread_id.to_owned());
+            if resume_goal_only {
+                early_notification_rx = Some(
+                    client
+                        .subscribe_thread_notifications_for_launch_config(
+                            &launch_config,
+                            thread_id,
+                        )
+                        .await?,
+                );
+            }
         }
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
@@ -1652,9 +1665,14 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
-        let mut notification_rx = client
-            .subscribe_thread_notifications_for_launch_config(&launch_config, &thread_id)
-            .await?;
+        let mut notification_rx = match early_notification_rx {
+            Some(notification_rx) => notification_rx,
+            None => {
+                client
+                    .subscribe_thread_notifications_for_launch_config(&launch_config, &thread_id)
+                    .await?
+            }
+        };
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }
@@ -1697,7 +1715,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
-        let active_turn_id = if awaits_initial_goal_turn {
+        let active_turn_id = if awaits_initial_goal_turn || resume_goal_only {
             log_executor_event("codex shared goal turn awaiting", &turn_fields);
             None
         } else {
@@ -2111,6 +2129,8 @@ async fn read_shared_turn_notifications(
 ) -> Result<ExecutionOutcome, String> {
     let mut last_outcome: Option<ExecutionOutcome> = None;
     let mut waiting_for_initial_progress = true;
+    let mut goal_continuation_deadline: Option<Instant> = None;
+    let mut goal_continuation_recovery_attempted = false;
     let request_user_input_answers = options
         .request_user_input_answers
         .take()
@@ -2142,6 +2162,38 @@ async fn read_shared_turn_notifications(
                         startup_timeout_seconds,
                     )
                     .await);
+                }
+            }
+        } else if let Some(deadline) = goal_continuation_deadline {
+            match timeout_at(deadline, receive_notification).await {
+                Ok(received) => received?,
+                Err(_) => {
+                    match reconcile_stalled_goal_continuation(
+                        client,
+                        thread_id,
+                        goal_continuation_recovery_attempted,
+                    )
+                    .await?
+                    {
+                        GoalContinuationReconciliation::GoalFinished => {
+                            return last_outcome.ok_or_else(|| {
+                                "Goal finished without a completed turn outcome".to_owned()
+                            });
+                        }
+                        GoalContinuationReconciliation::TurnRunning(turn_id) => {
+                            if let Some(callback) = options.active_turn_started.as_ref() {
+                                callback(thread_id.to_owned(), turn_id.clone());
+                            }
+                            options.active_turn_id = Some(turn_id);
+                            goal_continuation_deadline = None;
+                        }
+                        GoalContinuationReconciliation::ResumeRequested => {
+                            goal_continuation_recovery_attempted = true;
+                            goal_continuation_deadline =
+                                Some(Instant::now() + Duration::from_secs(startup_timeout_seconds));
+                        }
+                    }
+                    continue;
                 }
             }
         } else {
@@ -2235,6 +2287,7 @@ async fn read_shared_turn_notifications(
                 callback(thread_id.to_owned(), turn_id.clone());
             }
             options.active_turn_id = Some(turn_id);
+            goal_continuation_deadline = None;
         } else if let (Some(active_turn_id), Some(notification_turn_id)) = (
             options.active_turn_id.as_deref(),
             notification_turn_id.as_deref(),
@@ -2332,8 +2385,81 @@ async fn read_shared_turn_notifications(
             }
             last_outcome = Some(outcome);
             state.reset_turn_output();
+            goal_continuation_deadline =
+                Some(Instant::now() + Duration::from_secs(startup_timeout_seconds));
         }
     }
+}
+
+enum GoalContinuationReconciliation {
+    GoalFinished,
+    TurnRunning(String),
+    ResumeRequested,
+}
+
+async fn reconcile_stalled_goal_continuation(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+    recovery_attempted: bool,
+) -> Result<GoalContinuationReconciliation, String> {
+    let goal_response = client
+        .request("thread/goal/get", json!({"threadId": thread_id}))
+        .await?;
+    let goal_status = goal_response
+        .get("goal")
+        .and_then(|goal| goal.get("status"))
+        .and_then(Value::as_str);
+    if goal_status != Some("active") {
+        return Ok(GoalContinuationReconciliation::GoalFinished);
+    }
+
+    let thread_response = client
+        .request(
+            "thread/read",
+            json!({"threadId": thread_id, "includeTurns": true}),
+        )
+        .await?;
+    if let Some(turn_id) = latest_in_progress_turn_id(&thread_response) {
+        return Ok(GoalContinuationReconciliation::TurnRunning(turn_id));
+    }
+    if recovery_attempted {
+        return Err(
+            "Codex Goal remained active and idle after thread resume; automatic continuation did not start"
+                .to_owned(),
+        );
+    }
+
+    client
+        .request("thread/resume", json!({"threadId": thread_id}))
+        .await?;
+    log_executor_event(
+        "codex shared Goal continuation reconciled by thread resume",
+        &[("thread_id", thread_id.to_owned())],
+    );
+    Ok(GoalContinuationReconciliation::ResumeRequested)
+}
+
+fn latest_in_progress_turn_id(response: &Value) -> Option<String> {
+    response
+        .get("thread")
+        .and_then(|thread| thread.get("turns"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .rev()
+        .find(|turn| {
+            turn.get("status")
+                .and_then(Value::as_str)
+                .is_some_and(|status| {
+                    matches!(
+                        status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
+                        "inprogress" | "running" | "active"
+                    )
+                })
+        })
+        .and_then(|turn| turn.get("id"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 fn required_mcp_startup_failure(message: &Value) -> Option<String> {
@@ -3419,6 +3545,11 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
     let context_window =
         codex_model_context_window(model_config).unwrap_or(DEFAULT_CODEX_MODEL_CONTEXT_WINDOW);
     overrides.push(format!("model_context_window={context_window}"));
+    if let Some(auto_compact_limit) = codex_auto_compact_token_limit(model_config, context_window) {
+        overrides.push(format!(
+            "model_auto_compact_token_limit={auto_compact_limit}"
+        ));
+    }
     overrides
 }
 
@@ -3497,6 +3628,27 @@ fn codex_model_context_window(model_config: &Value) -> Option<i64> {
         .or_else(|| model_config.get("contextWindow"))
         .and_then(value_i64)
         .filter(|value| *value > 0)
+}
+
+fn codex_model_max_output_tokens(model_config: &Value) -> Option<i64> {
+    model_config
+        .get("max_output_tokens")
+        .or_else(|| model_config.get("maxOutputTokens"))
+        .and_then(value_i64)
+        .filter(|value| *value > 0)
+}
+
+/// Token threshold at which Codex must compact before the upstream rejects the turn.
+///
+/// Upstream providers count the completion budget against the same window as the input,
+/// and the configured output ceiling travels with every request, so the usable input
+/// budget is `context_window - max_output_tokens`. Without this override Codex derives its
+/// auto-compaction threshold from the raw context window (90%, and 95% as a hard cap),
+/// which stays far above the input budget and lets conversations grow until the upstream
+/// fails the turn with a context-length error.
+fn codex_auto_compact_token_limit(model_config: &Value, context_window: i64) -> Option<i64> {
+    let max_output_tokens = codex_model_max_output_tokens(model_config)?;
+    (max_output_tokens < context_window).then(|| context_window - max_output_tokens)
 }
 
 fn configured_codex_provider(

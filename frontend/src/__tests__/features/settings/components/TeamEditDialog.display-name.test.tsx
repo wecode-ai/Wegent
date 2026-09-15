@@ -61,7 +61,7 @@ jest.mock('@/features/settings/components/BotEdit', () => ({
 
 jest.mock('@/contexts/TeamContext', () => ({
   useTeamContext: () => ({
-    refreshTeams: mockRefreshTeams,
+    invalidateTeams: mockRefreshTeams,
   }),
 }))
 

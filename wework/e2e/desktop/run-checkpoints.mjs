@@ -37,6 +37,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
   'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
+  'running-plan-history': './scenarios/running-plan-history.scenario.mjs',
   'codex-notification-isolation': './scenarios/codex-notification-isolation.scenario.mjs',
   'context-compaction': './scenarios/context-compaction.scenario.mjs',
   'computer-use': './scenarios/computer-use.scenario.mjs',
@@ -60,6 +61,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
+  'send-key-preference': './scenarios/send-key-preference.scenario.mjs',
   'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
@@ -85,6 +87,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'executor-stream-recovery',
   'transcript-sync',
   'running-conversation-history',
+  'running-plan-history',
   'codex-notification-isolation',
   'context-compaction',
   'computer-use',
@@ -103,6 +106,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'browser-annotation-anchors',
   'browser-annotation-design',
   'external-content-import',
+  'send-key-preference',
   'workbench-mode',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([

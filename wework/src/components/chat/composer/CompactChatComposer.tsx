@@ -104,6 +104,7 @@ interface CompactChatComposerProps {
   isStreaming?: boolean
   onPause?: () => void
   projectPhrases?: QuickPhrase[]
+  sendKey?: 'enter' | 'cmd_enter'
 }
 
 export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactChatComposerProps>(
@@ -155,6 +156,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       isStreaming = false,
       onPause,
       projectPhrases = [],
+      sendKey = 'enter',
     },
     ref
   ) {
@@ -421,6 +423,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               onSelectModel={onSelectModel}
               onBlockedModelSelect={onBlockedModelSelect}
               isModelSelectionReady={isModelSelectionReady}
+              sendKey={sendKey}
             />
             {canExpandInput && (
               <button
@@ -635,6 +638,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 onSelectModel={onSelectModel}
                 onBlockedModelSelect={onBlockedModelSelect}
                 isModelSelectionReady={isModelSelectionReady}
+                sendKey={sendKey}
               />
             </div>
           </div>

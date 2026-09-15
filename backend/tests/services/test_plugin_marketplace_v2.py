@@ -946,7 +946,7 @@ def _create_auto_update_install(
 
 @pytest.mark.parametrize(
     ("install_count", "expected_batches"),
-    [(0, 0), (1, 1), (5, 1), (6, 2), (12, 3)],
+    [(0, 0), (1, 1), (5, 5), (6, 6), (12, 12)],
 )
 def test_auto_update_batches_are_bounded_and_drain_all_candidates(
     test_db, test_user, install_count, expected_batches
@@ -972,7 +972,7 @@ def test_auto_update_batches_are_bounded_and_drain_all_candidates(
             break
 
     assert len(batch_sizes) == expected_batches
-    assert all(size <= 5 for size in batch_sizes)
+    assert all(size == 1 for size in batch_sizes)
     assert sum(batch_sizes) == install_count
     for installed, _, _, latest in installs:
         test_db.refresh(installed)
@@ -2010,6 +2010,91 @@ def test_device_sync_omitted_result_keeps_confirmed_install(test_db, test_user):
     assert row.state == "installed"
     assert row.actual_release_id == release.id
     assert row.desired_release_id == release.id
+
+
+def test_single_plugin_sync_result_does_not_change_other_plugin(test_db, test_user):
+    installed, release = _device_install(test_db, test_user.id)
+    other_installed = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="device-state-two",
+        json={
+            "spec": {
+                **installed.json["spec"],
+                "installState": "installed",
+            }
+        },
+        is_active=True,
+    )
+    test_db.add(other_installed)
+    test_db.flush()
+    test_db.add_all(
+        [
+            PluginDeviceInstallation(
+                installed_kind_id=installed.id,
+                user_id=test_user.id,
+                device_id="current-device",
+                desired_release_id=release.id,
+                actual_release_id=0,
+                state="pending",
+            ),
+            PluginDeviceInstallation(
+                installed_kind_id=other_installed.id,
+                user_id=test_user.id,
+                device_id="current-device",
+                desired_release_id=release.id,
+                actual_release_id=release.id,
+                state="installed",
+            ),
+        ]
+    )
+    test_db.commit()
+
+    PluginDeviceInstallationService().record_plugin_sync_response(
+        test_db,
+        user_id=test_user.id,
+        installed_kind_id=installed.id,
+        response=DeviceCapabilitySyncResponse(
+            success=False,
+            device_id="current-device",
+            plugins=[
+                DeviceCapabilityItemResult(
+                    id=installed.id,
+                    status="failed",
+                    stage="download",
+                    error_code="PLUGIN_DOWNLOAD_FAILED",
+                    error="download failed",
+                )
+            ],
+            results=[
+                DeviceCapabilitySyncResult(
+                    device_id="current-device",
+                    success=False,
+                    error="download failed",
+                    plugins=[
+                        DeviceCapabilityItemResult(
+                            id=installed.id,
+                            status="failed",
+                            stage="download",
+                            error_code="PLUGIN_DOWNLOAD_FAILED",
+                            error="download failed",
+                        )
+                    ],
+                )
+            ],
+        ),
+    )
+
+    rows = {
+        row.installed_kind_id: row
+        for row in test_db.query(PluginDeviceInstallation).all()
+    }
+    assert rows[installed.id].state == "failed"
+    assert rows[installed.id].error_code == "PLUGIN_DOWNLOAD_FAILED"
+    assert rows[other_installed.id].state == "installed"
+    assert rows[other_installed.id].actual_release_id == release.id
+    assert rows[other_installed.id].attempt_count == 0
 
 
 def test_ensure_pending_for_device_creates_and_resets_failed(test_db, test_user):

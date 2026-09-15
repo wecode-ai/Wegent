@@ -6,13 +6,14 @@
 
 import { useEffect, useRef, useState, useCallback, type Dispatch, type SetStateAction } from 'react'
 import { useRouter } from 'next/navigation'
-import { SparklesIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
+import { SparklesIcon, ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { ArrowLeft, List, Search } from 'lucide-react'
 import { userApis } from '@/apis/user'
 import type { Bot, QuickAccessResponse, QuickAccessTeam, Team, UserPreferences } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
 import { useToast } from '@/hooks/use-toast'
 import { TEAM_SELECTOR_POPOVER_CLASS_NAME } from '../selector/team-selector-popover'
@@ -39,6 +40,9 @@ interface QuickAccessCardsProps {
   currentMode: TeamModeFilter
   isLoading?: boolean
   isTeamsLoading?: boolean
+  loadError?: Error | null
+  /** Whether the raw team cache (before mode filtering) is empty. */
+  rawTeamsEmpty?: boolean
   hideSelected?: boolean
   onRefreshTeams?: () => Promise<Team[]>
   showWizardButton?: boolean
@@ -55,9 +59,11 @@ export function QuickAccessCards({
   onPresetSelect,
   currentMode,
   isLoading,
-  isTeamsLoading: _isTeamsLoading,
+  isTeamsLoading = false,
+  loadError = null,
+  rawTeamsEmpty = teams.length === 0,
   hideSelected: _hideSelected = false,
-  onRefreshTeams: _onRefreshTeams,
+  onRefreshTeams,
   showWizardButton: _showWizardButton = false,
   defaultTeam,
   launchIntent,
@@ -72,6 +78,9 @@ export function QuickAccessCards({
   const [draggedTeamId, setDraggedTeamId] = useState<number | null>(null)
   const [dragOverTeamId, setDragOverTeamId] = useState<number | null>(null)
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
+  const [isRetryingTeams, setIsRetryingTeams] = useState(false)
+  // Consecutive manual retry failures; used to surface the "refresh page" fallback.
+  const [retryFailureCount, setRetryFailureCount] = useState(0)
   const [dialogTeams, setDialogTeams] = useState<Team[]>(teams)
   const [dialogBots, setDialogBots] = useState<Bot[]>([])
   const [morePopoverOpen, setMorePopoverOpen] = useState(false)
@@ -351,9 +360,9 @@ export function QuickAccessCards({
     const createdTeam = createdTeamRef.current
     createdTeamRef.current = null
 
-    if (_onRefreshTeams && createdTeam) {
+    if (onRefreshTeams && createdTeam) {
       try {
-        const refreshedTeams = await _onRefreshTeams()
+        const refreshedTeams = await onRefreshTeams()
         onTeamSelect(refreshedTeams.find(t => t.id === createdTeam.id) || createdTeam)
       } catch (error) {
         console.error('Failed to refresh teams after creating agent:', error)
@@ -365,9 +374,102 @@ export function QuickAccessCards({
     if (createdTeam) {
       onTeamSelect(createdTeam)
     }
-  }, [_onRefreshTeams, onTeamSelect])
+  }, [onRefreshTeams, onTeamSelect])
 
-  if (teams.length === 0) {
+  const handleRetryTeams = useCallback(async () => {
+    if (!onRefreshTeams) {
+      return
+    }
+
+    setIsRetryingTeams(true)
+    try {
+      await onRefreshTeams()
+      setRetryFailureCount(0)
+    } catch {
+      // Failure keeps the retry card visible; track it to surface a
+      // "refresh page" fallback after repeated manual retries.
+      setRetryFailureCount(count => count + 1)
+    } finally {
+      setIsRetryingTeams(false)
+    }
+  }, [onRefreshTeams])
+
+  // Loading, failure and "no agents" are different states; an in-flight or
+  // failed request must never be rendered as "no agents available".
+  if (isTeamsLoading && rawTeamsEmpty) {
+    return (
+      <div
+        className="flex flex-col items-center justify-center mt-8 mb-4"
+        data-testid="quick-access-teams-loading"
+      >
+        <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">
+          <div className="flex justify-center mb-4">
+            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center animate-pulse">
+              <SparklesIcon className="w-6 h-6 text-primary/40" />
+            </div>
+          </div>
+          <p className="text-sm text-text-muted" aria-live="polite">
+            {t('teams.loading')}
+          </p>
+          <div className="mt-4 flex flex-col items-center gap-2 animate-pulse">
+            <div className="h-3 w-40 rounded-full bg-border" />
+            <div className="h-3 w-24 rounded-full bg-border" />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (loadError && rawTeamsEmpty) {
+    return (
+      <div
+        className="flex flex-col items-center justify-center mt-8 mb-4"
+        data-testid="quick-access-teams-error"
+      >
+        <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">
+          <div className="flex justify-center mb-4">
+            <div className="w-12 h-12 rounded-full bg-error/10 flex items-center justify-center">
+              <ExclamationTriangleIcon className="w-6 h-6 text-error" />
+            </div>
+          </div>
+          <h3 className="text-lg font-semibold text-text-primary mb-2">
+            {t('teams.load_failed_title')}
+          </h3>
+          <p className="text-sm text-text-muted">
+            {t('teams.load_failed_description')}
+            {loadError.message ? ` (${loadError.message})` : ''}
+          </p>
+          <div className="mt-4 flex items-center justify-center gap-2">
+            {onRefreshTeams && (
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                data-testid="quick-access-teams-retry"
+                disabled={isRetryingTeams}
+                onClick={handleRetryTeams}
+              >
+                {t('teams.retry')}
+              </Button>
+            )}
+            {retryFailureCount > 0 && (
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                data-testid="quick-access-teams-reload"
+                onClick={() => window.location.reload()}
+              >
+                {t('teams.refresh_page')}
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (rawTeamsEmpty) {
     return (
       <div className="flex flex-col items-center justify-center mt-8 mb-4">
         <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">

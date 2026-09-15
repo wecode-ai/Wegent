@@ -4,6 +4,7 @@
 
 import {
   createSharedWorkspaceHttpApi,
+  createAutomationExecutionCatalogApi,
   mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
   mapWorkspaceDeliveryAssetDto,
@@ -974,6 +975,7 @@ export function createWeworkSharedWorkspaceApi<
         }))
       },
     },
+    automationExecutionCatalog: createAutomationExecutionCatalogApi(client),
     runtimeProfiles: {
       async list() {
         return (await runtimeProfileApi.list()).map(toRuntimeProfile)

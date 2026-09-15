@@ -119,6 +119,8 @@ import {
   applyRuntimeConversationGoalContinuation,
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
+  beginRuntimeGoalSnapshot,
+  isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationAssistantStarted,
   publishRuntimeTransportReplaced,
   runtimeConversationKey,
@@ -365,6 +367,25 @@ export function WorkbenchProvider({
   useLayoutEffect(() => {
     latestUserPreferencesRef.current = currentUser.preferences
   }, [currentUser.preferences])
+  const updateUserPreferences = useCallback(
+    async (patch: UserPreferences): Promise<UserPreferences> => {
+      const userApi = resolvedServices.userApi
+      if (!userApi) {
+        throw new Error('User preferences are unavailable')
+      }
+      const previousPreferences = latestUserPreferencesRef.current ?? {}
+      const updatedUser = await userApi.updateCurrentUser({ preferences: patch })
+      const preferences = {
+        ...previousPreferences,
+        ...patch,
+        ...(updatedUser.preferences ?? {}),
+      }
+      latestUserPreferencesRef.current = preferences
+      dispatch({ type: 'user_preferences_updated', preferences })
+      return preferences
+    },
+    [resolvedServices.userApi]
+  )
   useWorkbenchTelemetry({
     currentProject: state.currentProject,
     devices: state.devices,
@@ -881,7 +902,8 @@ export function WorkbenchProvider({
     })
   }, [])
   const [taskComposerCatalogsRequested, setTaskComposerCatalogsRequested] = useState(false)
-  const taskComposerCatalogsEnabled = loadTaskComposerCatalogs || taskComposerCatalogsRequested
+  const taskComposerCatalogsEnabled =
+    taskComposerCatalogsRequested || (loadTaskComposerCatalogs && state.runtimeWork !== null)
   const requestTaskComposerCatalogs = useCallback(() => {
     setTaskComposerCatalogsRequested(true)
   }, [])
@@ -1887,14 +1909,14 @@ export function WorkbenchProvider({
     const expectedGoalStatus = lifecycleStore.getTask(address)?.goalStatus
     if (expectedGoalStatus === null || expectedGoalStatus === undefined) return
 
+    const snapshotVersion = beginRuntimeGoalSnapshot(address)
     void runtimeTasks
       .getRuntimeGoal(address)
       .then(response => {
-        if (!response.accepted) return
-        const goal = response.goal
-        if (!goal) return
+        if (!response.accepted || !isRuntimeGoalSnapshotCurrent(address, snapshotVersion)) return
+        const goal = response.goal ?? null
         setRuntimeConversationGoal(address, goal)
-        lifecycleStore.goalStatusReceived(address, goal.status)
+        lifecycleStore.goalStatusReceived(address, goal?.status ?? null)
       })
       .catch(error => {
         console.warn('[Wework] Runtime Goal snapshot sync failed', {
@@ -2391,7 +2413,7 @@ export function WorkbenchProvider({
   useEffect(() => {
     if (
       prewarmComposerApps &&
-      isWorkbenchShellReady &&
+      state.runtimeWork !== null &&
       localAppsPrewarmSourceRef.current !== listLocalApps
     ) {
       localAppsPrewarmSourceRef.current = listLocalApps
@@ -2435,7 +2457,7 @@ export function WorkbenchProvider({
         localAppsRefreshTimerRef.current = null
       }
     }
-  }, [isWorkbenchShellReady, listLocalApps, prewarmComposerApps])
+  }, [listLocalApps, prewarmComposerApps, state.runtimeWork])
 
   // Plugin market UI resolves package logos into the catalog cache; overlay those
   // onto composer apps when the cache arrives after the warm path.
@@ -2727,6 +2749,7 @@ export function WorkbenchProvider({
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode: selectProjectExecutionMode,
+    updateUserPreferences,
     setWorkbenchError,
     projectWorktreeBranch,
     setProjectWorktreeBranch,

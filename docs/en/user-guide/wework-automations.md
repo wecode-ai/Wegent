@@ -28,9 +28,23 @@ are scheduled by the local Executor.
 
 ## Cloud mode
 
-Cloud automations are not currently available. The **Cloud** option remains
-visible in Wework but cannot be selected. Automations are stored, scheduled,
-and executed by the current device's local Executor.
+**Cloud** includes both Wegent cloud devices and Remote Docker devices. After
+you select a device, its Executor stores, schedules, and runs the automation;
+Wework does not need to remain open when a run is triggered.
+
+- A device must be online, run a compatible Executor version, and use the
+  Claude Code shell before it can be selected. Offline or incompatible devices
+  remain visible but are disabled.
+- A Remote Docker host must remain running and connected to Wegent when a run
+  is scheduled.
+- Configuration and run history stay on the selected Executor. They are not
+  synchronized or migrated between the local device, cloud devices, and Remote
+  Docker devices.
+- The location and device are locked after an automation is saved. Create a new
+  automation to move the schedule to another Executor.
+- Recurring runs missed by more than one minute while the Executor is stopped
+  are recorded as skipped. A missed one-time run executes once when the
+  Executor recovers.
 
 ## Schedule types
 
@@ -50,9 +64,11 @@ works with both conversation modes and is persisted with the automation.
 
 - **Create a new task each run** creates an independent Codex task and is suitable
   for reports, checks, and recurring analysis.
-- **Existing task** selects a pinned, continuable local task and appends every
-  later run to that task. Regular history and a task that is merely open are
-  not selected automatically; pin the task in the sidebar first.
+- **Existing task** selects a pinned, continuable task on a local, cloud, or
+  Remote Docker device and appends every later run to that task. Regular
+  history and a task that is merely open are not selected automatically; pin
+  the task in the sidebar first. Tasks on offline or incompatible devices stay
+  visible but cannot be selected.
 
 ## Viewing details
 

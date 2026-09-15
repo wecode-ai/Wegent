@@ -27,19 +27,19 @@ export function KeyboardShortcut({ value, className }: KeyboardShortcutProps) {
 
 function KeyboardShortcutPart({ value }: { value: string }) {
   const platform = getPlatform()
-  const isWindows = platform === 'win'
+  const isMac = platform === 'mac'
 
   if (value === 'Command') {
-    return isWindows ? <span>Ctrl</span> : <span aria-label="Command">⌘</span>
+    return isMac ? <span aria-label="Command">⌘</span> : <span>Ctrl</span>
   }
   if (value === 'Control') {
-    return isWindows ? <span>Ctrl</span> : <span aria-label="Control">⌃</span>
+    return isMac ? <span aria-label="Control">⌃</span> : <span>Ctrl</span>
   }
   if (value === 'Shift') {
-    return isWindows ? <span>Shift</span> : <span aria-label="Shift">⇧</span>
+    return isMac ? <span aria-label="Shift">⇧</span> : <span>Shift</span>
   }
   if (value === 'Alt') {
-    return isWindows ? <span>Alt</span> : <span aria-label="Option">⌥</span>
+    return isMac ? <span aria-label="Option">⌥</span> : <span>Alt</span>
   }
   if (value === 'Enter') return <CornerDownLeft className="h-3.5 w-3.5" aria-label="Enter" />
   return <span>{value}</span>

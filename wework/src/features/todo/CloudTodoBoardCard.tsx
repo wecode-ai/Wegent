@@ -703,7 +703,6 @@ function RuntimeTaskProgressSummary({
             sendEphemeral={false}
             collapseComposerWhenIdle
             initialScrollPosition="latest"
-            scrollOrigin="bottom"
             emptyStateText={t('todo.task_progress_empty', '暂无任务进展详情')}
             placeholder={t('workbench.task_activity_inline_placeholder')}
             onOpenRuntimeTask={onOpenRuntimeTask}
