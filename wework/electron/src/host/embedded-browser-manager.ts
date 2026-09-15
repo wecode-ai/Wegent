@@ -686,11 +686,6 @@ export class EmbeddedBrowserManager {
     const normalizedBaseLabel = requiredLabel(baseLabel)
     const normalizedActiveLabel = requiredLabel(activeLabel)
     this.activeTabs.set(normalizedBaseLabel, normalizedActiveLabel)
-    console.info('[embedded-browser] active tab route set', {
-      baseLabel: normalizedBaseLabel,
-      activeLabel: normalizedActiveLabel,
-      hasActiveLabel: this.entries.has(normalizedActiveLabel),
-    })
     const prefix = `${normalizedBaseLabel}:`
     for (const entry of this.entries.values()) {
       if (
@@ -913,11 +908,6 @@ export class EmbeddedBrowserManager {
   async requestClose(label: string): Promise<void> {
     const normalizedLabel = requiredLabel(label)
     const entry = this.entries.get(normalizedLabel)
-    console.info('[embedded-browser] close requested', {
-      label: normalizedLabel,
-      hasEntry: Boolean(entry),
-      activeLabel: this.activeLabel(normalizedLabel),
-    })
     if (!entry) return
     this.close(normalizedLabel)
     this.emit('close-request', {
@@ -929,12 +919,6 @@ export class EmbeddedBrowserManager {
 
   close(label: string, expectedNativeLabel?: string | null): void {
     const entry = this.entries.get(label)
-    console.info('[embedded-browser] close', {
-      label,
-      expectedNativeLabel: expectedNativeLabel ?? null,
-      nativeLabel: entry?.nativeLabel ?? null,
-      hasEntry: Boolean(entry),
-    })
     if (!entry) return
     if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
     this.entries.delete(label)
