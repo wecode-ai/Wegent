@@ -711,6 +711,12 @@ export class EmbeddedBrowserManager {
     return this.entries.has(normalizedLabel) && !this.agentClosedLabels.has(normalizedLabel)
   }
 
+  resumeAgentClosed(label: string): boolean {
+    const normalizedLabel = requiredLabel(label)
+    if (!this.entries.has(normalizedLabel)) return false
+    return this.agentClosedLabels.delete(normalizedLabel)
+  }
+
   isAgentControlPaused(label: string): boolean {
     return this.agentControlPaused.has(requiredLabel(label))
   }

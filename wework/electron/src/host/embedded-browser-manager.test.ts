@@ -331,6 +331,8 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     expect(() => manager.state('workspace-browser')).toThrow(
       'Embedded browser is unavailable: workspace-browser'
     )
+    expect(manager.resumeAgentClosed('workspace-browser')).toBe(true)
+    expect(manager.has('workspace-browser')).toBe(true)
 
     await expect(
       manager.open({
@@ -345,7 +347,6 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       url: 'https://reopened.example/',
       visible: true,
     })
-    expect(manager.has('workspace-browser')).toBe(true)
     expect(contents.loadURL).toHaveBeenLastCalledWith('https://reopened.example/')
     expect(contents.close).not.toHaveBeenCalled()
     await rm(directory, { recursive: true, force: true })

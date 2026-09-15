@@ -315,17 +315,21 @@ export class EmbeddedBrowserBridge {
   ): Promise<{ ok: true }> {
     const url = requiredString(request.url, 'url')
     let resolvedLabel = label
+    const openRequest = {
+      id: `agent-open-${Date.now()}-${randomBytes(6).toString('hex')}`,
+      url,
+      baseLabel,
+      source: 'agent',
+      disposition: 'current-tab',
+      targetLabel: label,
+      parentLabel: null,
+      browserSessionId: request.browserSessionId ?? null,
+    }
+    if (this.browser.resumeAgentClosed(resolvedLabel)) {
+      this.browser.requestOpen(openRequest)
+    }
     if (!this.browser.has(resolvedLabel)) {
-      this.browser.requestOpen({
-        id: `agent-open-${Date.now()}-${randomBytes(6).toString('hex')}`,
-        url,
-        baseLabel,
-        source: 'agent',
-        disposition: 'current-tab',
-        targetLabel: label,
-        parentLabel: null,
-        browserSessionId: request.browserSessionId ?? null,
-      })
+      this.browser.requestOpen(openRequest)
       await waitFor(() => {
         const activeLabel = this.browser.activeLabel(baseLabel)
         if (this.browser.has(activeLabel)) {

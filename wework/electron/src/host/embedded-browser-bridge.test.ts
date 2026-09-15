@@ -270,6 +270,48 @@ describe('EmbeddedBrowserBridge', () => {
     )
   })
 
+  test('resumes an agent-closed browser without waiting for a new attachment', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const browser = fakeBrowser()
+    browser.resumeAgentClosed.mockReturnValue(true)
+    browser.has.mockReturnValue(true)
+    browser.state.mockReturnValue({
+      label: 'workspace-browser',
+      nativeLabel: 'workspace-browser-native',
+      title: 'Fixture',
+      url: 'https://example.test/',
+      isLoading: false,
+      navigationError: null,
+    })
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    const runtimePath = await bridge.start()
+    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
+      address: string
+      token: string
+    }
+
+    const response = await fetch(`http://${identity.address}/browser`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${identity.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'open',
+        url: 'https://example.test/',
+        timeoutMs: 10,
+      }),
+    })
+
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      data: { ok: true },
+    })
+    expect(browser.requestOpen).toHaveBeenCalledOnce()
+    expect(browser.navigate).not.toHaveBeenCalled()
+  })
+
   test('accepts the final page URL after navigation redirects', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
     const browser = fakeBrowser()
@@ -395,6 +437,7 @@ describe('EmbeddedBrowserBridge', () => {
 function fakeBrowser() {
   const activeLabel = vi.fn((label: string) => label)
   const has = vi.fn(() => false)
+  const resumeAgentClosed = vi.fn(() => false)
   const requestOpen = vi.fn()
   const state = vi.fn(() => ({
     label: 'workspace-browser',
@@ -413,6 +456,7 @@ function fakeBrowser() {
   const manager = {
     activeLabel,
     has,
+    resumeAgentClosed,
     requestOpen,
     state,
     navigate,
@@ -435,6 +479,7 @@ function fakeBrowser() {
     clickAt,
     evaluate,
     has,
+    resumeAgentClosed,
     hideAgentCursor,
     manager,
     navigate,
