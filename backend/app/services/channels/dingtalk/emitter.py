@@ -14,6 +14,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from app.core.cache import cache_manager
+from app.schemas.dingtalk_card import DingTalkChatCardConfig
+from app.services.channels.dingtalk.card_adapter import create_card_adapter
+from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 from app.services.channels.emitter import SyncResponseEmitter
 from app.services.execution.emitters import ResultEmitter
 from shared.models import EventType, ExecutionEvent
@@ -280,13 +283,20 @@ class StreamingResponseEmitter(ResultEmitter):
         dingtalk_client: "DingTalkStreamClient",
         incoming_message: "ChatbotMessage",
         existing_card_instance_id: Optional[str] = None,
+        chat_card: Optional[DingTalkChatCardConfig] = None,
+        channel_id: int = 0,
     ):
-        from app.services.channels.dingtalk.card import DingTalkMarkdownCard
-
         self._dingtalk_client = dingtalk_client
         self._incoming_message = incoming_message
-        self._card = DingTalkMarkdownCard(dingtalk_client, incoming_message)
-        self._card.set_order(["msgContent"])
+        self.chat_card = chat_card
+        self.subtask_id = 0
+        self._card = create_card_adapter(
+            dingtalk_client,
+            incoming_message,
+            chat_card,
+            channel_id,
+            existing_card_instance_id,
+        )
         self._full_content = ""
         self._pending_content = ""
         self._last_update_time = 0.0
@@ -306,7 +316,6 @@ class StreamingResponseEmitter(ResultEmitter):
         self._pending_progress: list[Callable[[_CompactProgressState], None]] = []
 
         if existing_card_instance_id:
-            self._card.card_instance_id = existing_card_instance_id
             self._started = True
         else:
             self._started = False
@@ -335,6 +344,8 @@ class StreamingResponseEmitter(ResultEmitter):
 
     def set_shared_content_key(self, key: str) -> None:
         """Enable Redis-backed answer and progress state sharing."""
+        if self.chat_card:
+            key = f"{key}:{self._card.out_track_id}"
         self._shared_content_key = key
 
     async def _ensure_card_started(self) -> bool:
@@ -342,7 +353,7 @@ class StreamingResponseEmitter(ResultEmitter):
             return True
         try:
             logger.info("[StreamingEmitter] Starting AI card...")
-            await self._call_card("ai_start")
+            await self._call_card("start")
             if not self._card.card_instance_id:
                 logger.error("[StreamingEmitter] AI card has no instance ID")
                 return False
@@ -395,6 +406,18 @@ class StreamingResponseEmitter(ResultEmitter):
         finally:
             await redis_client.aclose()
 
+    async def _save_final_answer(self, content: str) -> None:
+        if not self._shared_content_key:
+            return
+        from app.services.channels.callback import CHANNEL_TASK_CALLBACK_TTL
+
+        client = await cache_manager._get_client()
+        try:
+            await client.set(self._answer_key, content.encode("utf-8"))
+            await client.expire(self._answer_key, CHANNEL_TASK_CALLBACK_TTL)
+        finally:
+            await client.aclose()
+
     async def _redis_cleanup(self) -> None:
         if not self._shared_content_key:
             return
@@ -434,7 +457,7 @@ class StreamingResponseEmitter(ResultEmitter):
         if not await self._may_update_display(force):
             return False
         try:
-            await self._call_card("ai_streaming", content, append=False)
+            await self._call_card("update", content)
             self._last_update_time = time.monotonic()
             return True
         except Exception:
@@ -584,12 +607,10 @@ class StreamingResponseEmitter(ResultEmitter):
 
     @trace_async(span_name="dingtalk.card_request", tracer_name=__name__)
     async def _call_card(self, method: str, *args: Any, **kwargs: Any) -> None:
-        """Keep synchronous SDK I/O off the event loop and preserve write order."""
+        """Preserve adapter write order, including threaded SDK calls on cancellation."""
         self._check_writer_lease()
         started = time.monotonic()
-        call = asyncio.create_task(
-            asyncio.to_thread(getattr(self._card, method), *args, **kwargs)
-        )
+        call = asyncio.create_task(getattr(self._card, method)(*args, **kwargs))
         cancelled = False
         try:
             while not call.done():
@@ -722,6 +743,7 @@ class StreamingResponseEmitter(ResultEmitter):
         message_id: Optional[int] = None,
         **kwargs: Any,
     ) -> None:
+        self.subtask_id = subtask_id
         logger.info("[StreamingEmitter] start task=%s subtask=%s", task_id, subtask_id)
         if self._finished or self._finishing or self._closed:
             return
@@ -882,16 +904,35 @@ class StreamingResponseEmitter(ResultEmitter):
                 subtask_id,
                 len(final_content),
             )
+            await self._save_final_answer(final_content)
+            self._full_content = final_content
+            self._pending_content = ""
             await self._finish_card(final_content)
+            log_dingtalk_message(
+                logger,
+                "reply_finished",
+                {
+                    "task_id": task_id,
+                    "subtask_id": subtask_id,
+                    "card_instance_id": self.card_instance_id,
+                    "conversation_id": getattr(
+                        self._incoming_message, "conversation_id", None
+                    ),
+                    "incoming_msg_id": getattr(
+                        self._incoming_message, "message_id", None
+                    ),
+                    "content": final_content,
+                },
+            )
 
     async def _finish_card(self, content: str, *, failed: bool = False) -> None:
         """Only discard recovery state after terminal delivery and fencing succeed."""
-        await self._call_card("ai_streaming", content, append=False)
+        await self._call_card("update", content)
         if failed:
-            await self._call_card("ai_fail")
+            await self._call_card("fail", content)
         else:
             await asyncio.sleep(0.1)
-            await self._call_card("ai_finish", content)
+            await self._call_card("finish", content)
         await self._mark_finished()
         self._progress.mode = "answer"
         self._full_content = content

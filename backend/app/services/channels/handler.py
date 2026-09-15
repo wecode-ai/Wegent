@@ -1105,7 +1105,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message: str,
         message_context: MessageContext,
         runtime_task: Optional[dict[str, Any]] = None,
-    ) -> None:
+        attachment_ids: Optional[List[int]] = None,
+    ) -> bool:
         from app.schemas.runtime_work import (
             RuntimeMessageSource,
             RuntimeSendRequest,
@@ -1117,10 +1118,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         runtime_task = runtime_task or getattr(im_session, "active_runtime_task", None)
         if not isinstance(runtime_task, dict):
             await self.send_text_reply(message_context, "请先使用 /switch 选择任务。")
-            return
+            return False
         if not message.strip():
             await self.send_text_reply(message_context, "请发送文本继续本地任务。")
-            return
+            return False
 
         try:
             address = runtime_work_service.canonical_runtime_event_address(
@@ -1135,11 +1136,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 self._channel_type.value,
                 user.id,
             )
-            await im_session_service.clear_active_task(db, session=im_session)
+            if not message_context.extra_data.get("card_follow_up"):
+                await im_session_service.clear_active_task(db, session=im_session)
             await self.send_text_reply(
                 message_context, "当前本地任务不可用,请回到 Wework 重新选择。"
             )
-            return
+            return False
 
         if (
             uses_active_runtime_task
@@ -1159,6 +1161,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 runtime_task=runtime_task,
             )
 
+        message_context.extra_data["card_runtime_task"] = runtime_task
         message_source = self._build_private_im_message_source(
             im_session,
             message_context=message_context,
@@ -1187,6 +1190,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 request=RuntimeSendRequest(
                     address=address,
                     message=message,
+                    attachment_ids=attachment_ids or [],
                     client_user_message_id=client_user_message_id,
                     modelSelection=(
                         runtime_task.get("modelSelection")
@@ -1224,17 +1228,18 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 user.id,
                 runtime_task.get("localTaskId"),
             )
-            await im_session_service.clear_active_task(db, session=im_session)
+            if not message_context.extra_data.get("card_follow_up"):
+                await im_session_service.clear_active_task(db, session=im_session)
             await self._emit_private_im_runtime_stream_error(
                 streaming_emitter=streaming_emitter,
                 task_id=callback_key,
                 message_context=message_context,
                 error="当前本地任务不可用,请回到 Wework 重新选择。",
             )
-            return
+            return False
 
         if response.accepted:
-            return
+            return True
         await self._delete_private_im_runtime_callback(callback_key)
         await self._emit_private_im_runtime_stream_error(
             streaming_emitter=streaming_emitter,
@@ -1242,6 +1247,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message_context=message_context,
             error=response.error or "本地任务暂时无法接收消息，请稍后重试。",
         )
+        return False
 
     def _runtime_task_callback_key(self, runtime_task: dict[str, Any]) -> str:
         return runtime_local_task_callback_key(
@@ -1470,9 +1476,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message_context: MessageContext,
         params: Any,
         initial_stream_content: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         if assistant_subtask is None:
-            return
+            return False
 
         task_id = task.id
         device_id = extract_task_device_id(task) or getattr(params, "device_id", None)
@@ -1549,10 +1555,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 message_context,
                 f"任务执行失败：{exc}。任务状态已恢复，可以继续发送消息重试。",
             )
-            return
+            return False
 
         if streaming_emitter:
-            return
+            return True
 
         try:
             response = await asyncio.wait_for(
@@ -1567,6 +1573,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if response:
             await self.send_text_reply(message_context, response)
+        return True
 
     def _mark_private_im_task_response_failed(
         self,
@@ -2728,6 +2735,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         user_id: int,
         subtask_id: int,
         images: List[Dict[str, str]],
+        *,
+        strict: bool = False,
     ) -> List[int]:
         """Persist IM channel images as SubtaskContext attachments.
 
@@ -2740,6 +2749,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             user_id: Owner user ID
             subtask_id: User subtask ID to link the images to
             images: List of image dicts with mime_type and base64_data
+            strict: Raise on failure and leave the transaction to the caller
 
         Returns:
             List of created SubtaskContext IDs
@@ -2764,6 +2774,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     filename=filename,
                     binary_data=binary_data,
                     subtask_id=subtask_id,
+                    commit=not strict,
                 )
                 created_ids.append(context.id)
                 self.logger.info(
@@ -2775,6 +2786,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     len(binary_data),
                 )
             except Exception as e:
+                if strict:
+                    raise
                 self.logger.error(
                     "[%sHandler] Failed to persist IM image %d: %s",
                     self._channel_type.value,

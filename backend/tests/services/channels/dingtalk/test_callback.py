@@ -13,8 +13,12 @@ from app.services.channels.dingtalk.callback import (
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "chat_card", [None, {"template_id": "custom.schema", "content_key": "answer"}]
+)
 async def test_fresh_worker_reconnects_to_persisted_dingtalk_card(
     monkeypatch: pytest.MonkeyPatch,
+    chat_card,
 ) -> None:
     from dingtalk_stream import ChatbotMessage
 
@@ -33,11 +37,15 @@ async def test_fresh_worker_reconnects_to_persisted_dingtalk_card(
             dingtalk_client,
             incoming_message,
             existing_card_instance_id,
+            chat_card=None,
+            channel_id=0,
         ) -> None:
             calls["constructor"] = {
                 "dingtalk_client": dingtalk_client,
                 "incoming_message": incoming_message,
                 "existing_card_instance_id": existing_card_instance_id,
+                "chat_card": chat_card.model_dump() if chat_card else None,
+                "channel_id": channel_id,
             }
 
         def set_shared_content_key(self, key: str) -> None:
@@ -67,6 +75,7 @@ async def test_fresh_worker_reconnects_to_persisted_dingtalk_card(
         conversation_id="conv-private",
         incoming_message_data={"msgId": "dingtalk-message-1"},
         card_instance_id="card-instance-1",
+        chat_card=chat_card,
     )
     restored = DingTalkCallbackInfo.from_dict(persisted.to_dict())
     service = DingTalkCallbackService()
@@ -84,6 +93,20 @@ async def test_fresh_worker_reconnects_to_persisted_dingtalk_card(
         "dingtalk_client": channel._client,
         "incoming_message": incoming_message,
         "existing_card_instance_id": "card-instance-1",
+        "chat_card": (
+            dict(
+                chat_card,
+                follow_up_enabled=True,
+                follow_up_action="follow_up",
+                follow_up_text_key="followUpText",
+                follow_up_images_key="followUpImages",
+                follow_up_status_key=None,
+                initial_data={},
+            )
+            if chat_card
+            else None
+        ),
+        "channel_id": 77,
     }
     assert calls["shared_content_key"] == f"channel:streaming_content:{task_id}"
     assert calls["emit_start"] == {"task_id": task_id, "subtask_id": 42}

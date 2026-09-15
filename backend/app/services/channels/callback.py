@@ -272,6 +272,12 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 )
                 return None
 
+    async def accepts_runtime_source(
+        self, task_id: int | str, source: Dict[str, Any]
+    ) -> bool:
+        """Allow channels to reject events from an older local-runtime turn."""
+        return True
+
     async def _remove_emitter(self, task_id: int) -> None:
         """Remove emitter, lock, and offset tracking from cache.
 
