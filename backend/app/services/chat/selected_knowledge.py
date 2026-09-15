@@ -116,6 +116,13 @@ def activate_provider_native_knowledge(
     if not provider_skills:
         return
 
+    # Selecting a knowledge source activates its provider Skill. A Skill bound as
+    # available-only is resolved with ``mcp_deferred``, so promote it before the
+    # MCP contract below is validated.
+    from app.services.execution.request_builder import TaskRequestBuilder
+
+    TaskRequestBuilder.activate_claimed_skill_mcp(request, provider_skills)
+
     skill_names = set(request.skill_names or [])
     skill_configs = {
         config.get("name"): config
