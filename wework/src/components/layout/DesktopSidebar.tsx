@@ -1512,6 +1512,9 @@ function RuntimeTaskRow({
   const hasActiveGoal = taskLifecycle?.goalStatus === 'active'
   const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
   const queued = isRuntimeTaskQueued(task)
+  const showQueuePausedStatus =
+    queuePaused && !(queued && taskLifecycle?.derived.shouldShowSidebarRunning)
+  const showQueuedStatus = queued && !taskLifecycle?.derived.shouldShowSidebarRunning
   const queuePosition =
     queued && Number.isInteger(task.queuePosition) && Number(task.queuePosition) > 0
       ? Number(task.queuePosition)
@@ -1841,7 +1844,7 @@ function RuntimeTaskRow({
                   `runtime-local-task-notify-icon-${task.taskId}`
                 )}
               <span className="flex h-[30px] w-[30px] items-center justify-center">
-                {queued ? (
+                {showQueuedStatus ? (
                   <span
                     data-testid={`runtime-local-task-queued-${task.taskId}`}
                     role="status"
@@ -1875,7 +1878,7 @@ function RuntimeTaskRow({
                       </span>
                     ) : null}
                   </span>
-                ) : queuePaused ? (
+                ) : showQueuePausedStatus ? (
                   <span
                     data-testid={`runtime-local-task-queue-paused-${task.taskId}`}
                     role="status"

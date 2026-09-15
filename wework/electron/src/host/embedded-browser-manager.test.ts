@@ -134,62 +134,6 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     vi.clearAllMocks()
   })
 
-  test('waits for a replacement webview before completing a bridge close', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
-    const events: BrowserHostEvent[] = []
-    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
-    const contents = new FakeWebContents()
-    contents.loadURL.mockImplementation(async url => {
-      contents.commitUrl(url)
-    })
-    manager.attach('workspace-browser', contents as unknown as WebContents)
-    const pageState = await manager.open({
-      label: 'workspace-browser',
-      url: 'https://example.test/',
-      bounds: { x: 0, y: 0, width: 800, height: 600 },
-      visible: true,
-      navigateExisting: true,
-    })
-    manager.setActiveTab('workspace-browser', 'workspace-browser')
-    let closeCompleted = false
-
-    const close = manager.requestClose('workspace-browser').then(() => {
-      closeCompleted = true
-    })
-    await Promise.resolve()
-
-    expect(events.at(-1)).toMatchObject({
-      type: 'close-request',
-      payload: {
-        label: 'workspace-browser',
-        nativeLabel: pageState.nativeLabel,
-      },
-    })
-    expect(contents.close).toHaveBeenCalledOnce()
-    expect(closeCompleted).toBe(false)
-    expect(manager.activeLabel('workspace-browser')).toBe('workspace-browser')
-
-    const replacement = new FakeWebContents()
-    replacement.loadURL.mockImplementation(async url => {
-      replacement.commitUrl(url)
-    })
-    manager.attach('workspace-browser', replacement as unknown as WebContents)
-    await close
-
-    expect(closeCompleted).toBe(true)
-    expect(manager.hasAttached('workspace-browser')).toBe(true)
-    const reopened = await manager.openAttached(
-      'workspace-browser',
-      'https://reopened.example.test/'
-    )
-    expect(reopened).toMatchObject({
-      url: 'https://reopened.example.test/',
-      visible: true,
-    })
-    expect(replacement.loadURL).toHaveBeenCalledWith('https://reopened.example.test/')
-    await rm(directory, { recursive: true, force: true })
-  })
-
   test('applies request headers only to an exact HTTPS origin and path prefix', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)
@@ -354,6 +298,46 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     manager.relabel('workspace-browser', 'workspace-browser-task-1')
 
     await expect(arrival).resolves.toBe(false)
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('waits for a replacement webview before completing a close request', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+
+    let closeCompleted = false
+    const closeRequest = manager.requestClose('workspace-browser').then(() => {
+      closeCompleted = true
+    })
+    await Promise.resolve()
+
+    expect(closeCompleted).toBe(false)
+    expect(contents.close).toHaveBeenCalledOnce()
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'close-request',
+        payload: expect.objectContaining({ label: 'workspace-browser' }),
+      })
+    )
+
+    const replacement = new FakeWebContents()
+    manager.attach('workspace-browser', replacement as unknown as WebContents)
+    await closeRequest
+
+    expect(closeCompleted).toBe(true)
     await rm(directory, { recursive: true, force: true })
   })
 
@@ -878,75 +862,28 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
-  test('remaps a destroyed global route to the sole remaining browser', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
-    const manager = new EmbeddedBrowserManager(directory)
-    const firstContents = new FakeWebContents()
-    const secondContents = new FakeWebContents()
-    firstContents.loadURL.mockImplementation(async url => {
-      firstContents.commitUrl(url)
-    })
-    secondContents.loadURL.mockImplementation(async url => {
-      secondContents.commitUrl(url)
-    })
-    manager.attach('workspace-browser-runtime-first', firstContents as unknown as WebContents)
-    manager.attach('workspace-browser-runtime-second', secondContents as unknown as WebContents)
-    await manager.open({
-      label: 'workspace-browser-runtime-first',
-      url: 'https://first.example.test/',
-      bounds: { x: 0, y: 0, width: 800, height: 600 },
-      visible: false,
-      navigateExisting: true,
-    })
-    await manager.open({
-      label: 'workspace-browser-runtime-second',
-      url: 'https://second.example.test/',
-      bounds: { x: 0, y: 0, width: 800, height: 600 },
-      visible: true,
-      navigateExisting: true,
-    })
-    manager.setActiveTab('workspace-browser', 'workspace-browser-runtime-second')
-
-    secondContents.close()
-
-    expect(manager.activeLabel('workspace-browser')).toBe('workspace-browser-runtime-first')
-    await rm(directory, { recursive: true, force: true })
-  })
-
-  test('keeps an active route while its newly added browser is attaching', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
-    const manager = new EmbeddedBrowserManager(directory)
-
-    manager.setActiveTab('workspace-browser', 'workspace-browser-2')
-
-    expect(manager.activeLabel('workspace-browser')).toBe('workspace-browser-2')
-    await rm(directory, { recursive: true, force: true })
-  })
-
-  test('closes the sole live browser when the active bridge route is stale', async () => {
+  test('removes active tab routes that point to a closed browser', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)
     const contents = new FakeWebContents()
     contents.loadURL.mockImplementation(async url => {
       contents.commitUrl(url)
     })
-    manager.attach('workspace-browser-runtime-live', contents as unknown as WebContents)
+    const firstTaskLabel = 'workspace-browser-task-1'
+    const secondTaskLabel = 'workspace-browser-task-2'
+    manager.attach(secondTaskLabel, contents as unknown as WebContents)
     await manager.open({
-      label: 'workspace-browser-runtime-live',
+      label: secondTaskLabel,
       url: 'https://example.test/',
       bounds: { x: 0, y: 0, width: 800, height: 600 },
-      visible: false,
+      visible: true,
       navigateExisting: true,
     })
-    manager.setActiveTab('workspace-browser', 'workspace-browser-runtime-removed')
+    manager.setActiveTab(firstTaskLabel, secondTaskLabel)
 
-    const close = manager.requestClose('workspace-browser-runtime-removed', 'workspace-browser')
-    await Promise.resolve()
+    manager.close(secondTaskLabel)
 
-    expect(contents.close).toHaveBeenCalledOnce()
-    const replacement = new FakeWebContents()
-    manager.attach('workspace-browser-runtime-live', replacement as unknown as WebContents)
-    await close
+    expect(manager.activeLabel(firstTaskLabel)).toBe(firstTaskLabel)
     await rm(directory, { recursive: true, force: true })
   })
 

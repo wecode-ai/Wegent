@@ -402,6 +402,49 @@ describe('GeneralSettingsPage', () => {
     expect(screen.getByText('workbench.general_settings_send_key_save_failed')).toBeInTheDocument()
   })
 
+  test('saves the follow-up behavior as a user preference', async () => {
+    const updateUserPreferences = vi.fn().mockResolvedValue({
+      send_key: 'cmd_enter' as const,
+      follow_up_behavior: 'guide' as const,
+    })
+    const renderSettings = (followUpBehavior: 'queue' | 'guide') => (
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {},
+            state: {
+              user: {
+                id: 1,
+                user_name: 'alice',
+                email: 'alice@example.com',
+                preferences: {
+                  send_key: 'cmd_enter',
+                  follow_up_behavior: followUpBehavior,
+                },
+              },
+            },
+            updateUserPreferences,
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+    const rendered = render(renderSettings('queue'))
+
+    const guideButton = await screen.findByTestId('general-follow-up-guide-button')
+    await waitFor(() => expect(guideButton).toBeEnabled())
+    await userEvent.click(guideButton)
+
+    await waitFor(() => {
+      expect(updateUserPreferences).toHaveBeenCalledWith({
+        follow_up_behavior: 'guide',
+      })
+    })
+    rendered.rerender(renderSettings('guide'))
+    expect(guideButton).toHaveAttribute('aria-pressed', 'true')
+  })
+
   test('persists the selected startup workspace tab', async () => {
     getAppPreferencesMock.mockResolvedValue({
       ...defaultPreferences,

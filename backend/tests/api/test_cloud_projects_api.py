@@ -38,7 +38,9 @@ from app.services.auth import create_task_token
 from app.services.cloud_files import cloud_file_service
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import DeliveryStorageUnavailableError
+from app.services.loop_item_executions.service import ACTIVE_STATUSES
 from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.project_automation_domain import ACTIVE_RUN_STATUSES
 
 
 class FakeProviderResponse:
@@ -611,17 +613,31 @@ def test_archiving_cloud_project_deletes_all_automation_rules(
         assert rule.version == 2
 
 
+@pytest.mark.parametrize(
+    ("run_status", "project_key"),
+    [
+        (run_status, f"activerun{index}")
+        for index, run_status in enumerate(sorted(ACTIVE_RUN_STATUSES), start=1)
+    ],
+)
 def test_archiving_cloud_project_rejects_active_automation_run(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
     test_token: str,
+    run_status: str,
+    project_key: str,
 ) -> None:
-    project = test_client.post(
+    created = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
-        json={"project_key": "running", "name": "Running automation"},
-    ).json()
+        json={
+            "project_key": project_key,
+            "name": f"Automation {run_status}",
+        },
+    )
+    assert created.status_code == 201, created.text
+    project = created.json()
     rule = ProjectAutomationRule(
         cloud_project_id=project["id"],
         title="Active rule",
@@ -636,8 +652,57 @@ def test_archiving_cloud_project_rejects_active_automation_run(
             cloud_project_id=project["id"],
             parent_id=rule.id,
             title="Active run",
-            status="running",
+            status=run_status,
             created_by_user_id=test_user.id,
+        )
+    )
+    test_db.commit()
+
+    archived = test_client.delete(
+        f"/api/v1/cloud-projects/{project['id']}",
+        params={"version": project["version"]},
+        headers=_auth(test_token),
+    )
+
+    assert archived.status_code == 409
+    assert "Stop active automation runs" in archived.json()["detail"]
+    test_db.expire_all()
+    assert test_db.get(CloudProject, project["id"]).status == "active"
+
+
+@pytest.mark.parametrize(
+    ("execution_status", "project_key"),
+    [
+        (execution_status, f"activeexec{index}")
+        for index, execution_status in enumerate(sorted(ACTIVE_STATUSES), start=1)
+    ],
+)
+def test_archiving_cloud_project_rejects_active_loop_item_execution(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    execution_status: str,
+    project_key: str,
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": project_key,
+            "name": f"Execution {execution_status}",
+        },
+    )
+    assert created.status_code == 201, created.text
+    project = created.json()
+    test_db.add(
+        LoopItemExecution(
+            loop_item_id=f"issue-{execution_status}",
+            cloud_project_id=str(project["id"]),
+            executor_owner_user_id=test_user.id,
+            assigner_user_id=test_user.id,
+            execution_environment="local",
+            status=execution_status,
         )
     )
     test_db.commit()

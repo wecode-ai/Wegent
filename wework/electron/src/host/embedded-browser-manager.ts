@@ -70,11 +70,6 @@ interface BrowserOpenInput {
   navigateExisting: boolean
 }
 
-interface ClosedBrowserLayout {
-  bounds: BrowserBounds
-  visible: boolean
-}
-
 export interface BrowserHostEvent {
   sequence: number
   type:
@@ -159,7 +154,6 @@ export const EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR = ':host:'
 export class EmbeddedBrowserManager {
   private readonly entries = new Map<string, BrowserEntry>()
   private readonly attachedContents = new Map<string, WebContents>()
-  private readonly closedBrowserLayouts = new Map<string, ClosedBrowserLayout>()
   private readonly attachmentWaiters = new Map<
     string,
     Set<{
@@ -345,7 +339,7 @@ export class EmbeddedBrowserManager {
     const normalizedLabel = requiredLabel(label)
     const existing = this.entries.get(normalizedLabel)
     if (existing && existing.contents.id !== contents.id) {
-      this.close(normalizedLabel, existing.nativeLabel, true)
+      this.close(normalizedLabel, existing.nativeLabel)
     }
     const previous = this.attachedContents.get(normalizedLabel)
     if (previous && previous.id !== contents.id && !previous.isDestroyed()) previous.close()
@@ -371,7 +365,7 @@ export class EmbeddedBrowserManager {
         removedLabels.add(entryLabel)
       }
       for (const removedLabel of removedLabels) {
-        this.remapActiveRoutes(removedLabel)
+        this.clearActiveTabReferences(removedLabel)
         this.clearLabelScopedState(removedLabel)
       }
     })
@@ -401,10 +395,7 @@ export class EmbeddedBrowserManager {
   async open(input: BrowserOpenInput): Promise<BrowserPageState> {
     const label = requiredLabel(input.label)
     const existing = this.entries.get(label)
-    if (existing) {
-      this.closedBrowserLayouts.delete(label)
-      return this.openExisting(existing, input)
-    }
+    if (existing) return this.openExisting(existing, input)
     const contents = await this.waitForAttachedContents(label)
     const migrated = this.entries.get(label)
     if (migrated) return this.openExisting(migrated, input)
@@ -500,7 +491,6 @@ export class EmbeddedBrowserManager {
       void this.recordHistoryVisit(entry)
     })
     this.entries.set(label, entry)
-    this.closedBrowserLayouts.delete(label)
     // Registration, not navigation completion, is the browser host readiness boundary.
     // The requested URL is already authoritative in state() while Chromium finishes loading.
     await this.load(entry, entry.requestedUrl as string)
@@ -717,26 +707,6 @@ export class EmbeddedBrowserManager {
     return this.entries.has(requiredLabel(label))
   }
 
-  hasAttached(label: string): boolean {
-    const contents = this.attachedContents.get(requiredLabel(label))
-    return Boolean(contents && !contents.isDestroyed())
-  }
-
-  async openAttached(label: string, url: string): Promise<BrowserPageState> {
-    const normalizedLabel = requiredLabel(label)
-    if (!this.hasAttached(normalizedLabel)) {
-      throw new Error(`Embedded browser webview is not attached: ${normalizedLabel}`)
-    }
-    const layout = this.closedBrowserLayouts.get(normalizedLabel)
-    return this.open({
-      label: normalizedLabel,
-      url,
-      bounds: layout?.bounds ?? { x: 0, y: 0, width: 1, height: 1 },
-      visible: layout?.visible ?? true,
-      navigateExisting: true,
-    })
-  }
-
   isAgentControlPaused(label: string): boolean {
     return this.agentControlPaused.has(requiredLabel(label))
   }
@@ -935,72 +905,31 @@ export class EmbeddedBrowserManager {
     this.emit('open-request', payload)
   }
 
-  async requestClose(label: string, baseLabel = label): Promise<void> {
-    const requestedLabel = requiredLabel(label)
-    const normalizedBaseLabel = requiredLabel(baseLabel)
-    const activeLabel = this.activeTabs.get(normalizedBaseLabel) ?? null
-    const liveLabel = this.liveBrowserLabel(normalizedBaseLabel)
-    const normalizedLabel = this.entries.has(requestedLabel) ? requestedLabel : liveLabel
-    console.log('[embedded-browser] bridge close resolved', {
-      requestedLabel,
-      baseLabel: normalizedBaseLabel,
-      activeLabel,
-      liveLabel,
-      resolvedLabel: normalizedLabel,
-      entryLabels: [...this.entries.keys()],
-      attachedLabels: [...this.attachedContents.keys()],
-    })
-    if (!normalizedLabel) return
+  async requestClose(label: string): Promise<void> {
+    const normalizedLabel = requiredLabel(label)
     const entry = this.entries.get(normalizedLabel)
     if (!entry) return
-    this.closedBrowserLayouts.set(normalizedLabel, {
-      bounds: { ...entry.bounds },
-      visible: entry.visible,
-    })
+    this.close(normalizedLabel)
     this.emit('close-request', {
       label: normalizedLabel,
       nativeLabel: entry.nativeLabel,
     })
-    this.close(normalizedLabel, entry.nativeLabel, true)
     await this.waitForAttachedContents(normalizedLabel)
   }
 
-  private liveBrowserLabel(baseLabel: string): string | null {
-    const activeLabel = this.activeTabs.get(baseLabel)
-    if (activeLabel && this.entries.has(activeLabel)) return activeLabel
-    const prefixes = [`${baseLabel}:`, `${baseLabel}-`]
-    const scopedEntries = [...this.entries.values()].filter(
-      entry => entry.label === baseLabel || prefixes.some(prefix => entry.label.startsWith(prefix))
-    )
-    return (
-      scopedEntries.find(entry => entry.visible)?.label ??
-      (scopedEntries.length === 1 ? (scopedEntries[0]?.label ?? null) : null)
-    )
-  }
-
-  close(label: string, expectedNativeLabel?: string | null, preserveActiveRoute = false): void {
+  close(label: string, expectedNativeLabel?: string | null): void {
     const entry = this.entries.get(label)
     if (!entry) return
     if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
     this.entries.delete(label)
-    if (!preserveActiveRoute) this.remapActiveRoutes(label)
+    this.clearActiveTabReferences(label)
     this.clearLabelScopedState(label)
     if (!entry.contents.isDestroyed()) entry.contents.close()
   }
 
-  private remapActiveRoutes(closedLabel: string): void {
+  private clearActiveTabReferences(label: string): void {
     for (const [baseLabel, activeLabel] of this.activeTabs) {
-      if (activeLabel !== closedLabel) continue
-      const prefixes = [`${baseLabel}:`, `${baseLabel}-`]
-      const scopedEntries = [...this.entries.values()].filter(
-        entry =>
-          entry.label === baseLabel || prefixes.some(prefix => entry.label.startsWith(prefix))
-      )
-      const replacement =
-        scopedEntries.find(entry => entry.visible) ??
-        (scopedEntries.length === 1 ? scopedEntries[0] : null)
-      if (replacement) this.activeTabs.set(baseLabel, replacement.label)
-      else this.activeTabs.delete(baseLabel)
+      if (baseLabel === label || activeLabel === label) this.activeTabs.delete(baseLabel)
     }
   }
 

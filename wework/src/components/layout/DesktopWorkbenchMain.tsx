@@ -568,11 +568,6 @@ function browserLabelForRightWorkspaceTab(
   return suffix === '1' ? baseLabel : `${baseLabel}-${suffix}`
 }
 
-function browserBaseLabelForWorkbenchPane(taskId: string | undefined, paneKey: string): string {
-  const labelSegment = taskId ?? paneKey
-  return `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(labelSegment)}`
-}
-
 function createInitialBrowserWorkspaceState({
   initialWorkspaceState,
   defaultEmbeddedBrowserLabel,
@@ -879,27 +874,19 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       if (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL) {
         return props.visible === false ? null : activePaneKey
       }
-      if (
-        props.visible !== false &&
-        requestBaseLabel ===
-          browserBaseLabelForWorkbenchPane(
-            props.activePane.currentRuntimeTask?.taskId,
-            activePaneKey
-          )
-      ) {
-        return activePaneKey
-      }
       return (
-        runtimePaneKeys.find(paneKey => {
+        Array.from(new Set([activePaneKey, ...runtimePaneKeys])).find(paneKey => {
           const pane = resolvePane(paneKey)
-          return pane
-            ? requestBaseLabel ===
-                browserBaseLabelForWorkbenchPane(pane.currentRuntimeTask?.taskId, paneKey)
-            : false
+          const labelSegment = pane?.currentRuntimeTask?.taskId ?? paneKey
+          return (
+            pane !== null &&
+            requestBaseLabel ===
+              `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(labelSegment)}`
+          )
         }) ?? null
       )
     },
-    [activePaneKey, props.activePane, props.visible, resolvePane, runtimePaneKeys]
+    [activePaneKey, props.visible, resolvePane, runtimePaneKeys]
   )
   useEffect(() => {
     const listener = listenEmbeddedBrowserOpenRequests(request => {
@@ -3304,25 +3291,25 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }
         : null
 
-      const currentState = browserStatesRef.current[tab]
-      const nextBrowserStates = {
-        ...browserStatesRef.current,
-        [tab]: currentState
-          ? {
-              ...currentState,
-              ...overrides,
-              openRequest: normalizedRequest ?? currentState.openRequest,
-            }
-          : createBrowserTabState(tab, {
-              label: stateLabel,
-              browserSessionId:
-                request?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
-              openRequest: normalizedRequest,
-              ...overrides,
-            }),
-      }
-      browserStatesRef.current = nextBrowserStates
-      setBrowserStates(nextBrowserStates)
+      setBrowserStates(current => {
+        const currentState = current[tab]
+        return {
+          ...current,
+          [tab]: currentState
+            ? {
+                ...currentState,
+                ...overrides,
+                openRequest: normalizedRequest ?? currentState.openRequest,
+              }
+            : createBrowserTabState(tab, {
+                label: stateLabel,
+                browserSessionId:
+                  request?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
+                openRequest: normalizedRequest,
+                ...overrides,
+              }),
+        }
+      })
       setRightPanelImmediateLayout(true)
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
@@ -3571,15 +3558,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       const installationIds = new Set<string>()
       Object.entries(browserStatesRef.current).forEach(([tab, browserState]) => {
-        if (!browserState) return
-        if (browserState.developmentPreview) {
-          installationIds.add(browserState.developmentPreview.installationId)
-          const browserTab = tab as RightWorkspaceBrowserTab
-          previewRequests.set(browserTab, (previewRequests.get(browserTab) ?? 0) + 1)
-        }
+        if (!browserState?.developmentPreview) return
+        installationIds.add(browserState.developmentPreview.installationId)
+        const browserTab = tab as RightWorkspaceBrowserTab
+        previewRequests.set(browserTab, (previewRequests.get(browserTab) ?? 0) + 1)
         void closeEmbeddedBrowser(browserState.label, browserState.nativeLabel ?? undefined).catch(
           error => {
-            console.error('Failed to close embedded browser during workbench disposal:', error)
+            console.error('Failed to close Smart app browser during workbench disposal:', error)
           }
         )
       })

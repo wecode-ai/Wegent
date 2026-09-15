@@ -1867,6 +1867,71 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('collaboration-platform-root')).toBeInTheDocument()
   })
 
+  test('routes a retained My Tasks board to the dedicated work-items surface', () => {
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          public_id: 'default-work-items',
+          project_key: 'WORK',
+          name: '我的任务',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-09-14T00:00:00Z',
+          updated_at: '2026-09-14T00:00:00Z',
+          metadata: { system_kind: 'default_work_items' },
+        },
+      ],
+    })
+    const boardTab = {
+      id: 'board-my-tasks',
+      kind: 'board' as const,
+      title: '我的任务',
+      contentRoute: '/todo?projectStore=local&projectId=default-work-items',
+      fixed: false,
+    }
+    const workspaceTabs = {
+      tabs: [boardTab],
+      activeTabId: boardTab.id,
+      activeTab: boardTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } as unknown as WorkspaceTabsContextValue
+
+    render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          surfaceKind="board"
+          workspaceTabId={boardTab.id}
+          state={{
+            ...baseProps.state,
+            user: {
+              id: 1,
+              user_name: 'local',
+              email: 'local@example.com',
+            },
+          }}
+        />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.getByTestId('cloud-todo-workspace')).toHaveAttribute('data-embedded', 'true')
+    expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
+  })
+
   test('keeps a retained board bound to its own workspace tab route', async () => {
     deliveryApiMock.available = true
     const project = {
@@ -1937,9 +2002,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    await userEvent.click(screen.getByTestId('collaboration-tab-manage'))
-    await userEvent.click(screen.getByTestId('collaboration-project-settings-board'))
-    expect(screen.getByTestId('collaboration-tab-manage')).toHaveClass('bg-background')
+    await userEvent.click(screen.getByTestId('collaboration-board-settings'))
+    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '看板设置' })).toBeInTheDocument()
 
     view.rerender(
       <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
@@ -1948,11 +2013,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('collaboration-tab-manage')).toHaveClass('bg-background')
-    expect(screen.getByTestId('collaboration-project-settings-board')).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
+    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
     expect(actions.updateActiveTab).not.toHaveBeenCalled()
 
     view.rerender(
@@ -1962,11 +2023,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('collaboration-tab-manage')).toHaveClass('bg-background')
-    expect(screen.getByTestId('collaboration-project-settings-board')).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
+    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
   })
 
   test('returns to the workspace after opening settings from its account menu', async () => {
@@ -7222,6 +7279,20 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-browser-loading')).not.toBeInTheDocument()
   })
 
+  test('does not close an ordinary browser when its workbench surface is disposed', async () => {
+    runtimeMocks.electron = true
+    const { unmount } = renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    expect(screen.getByTestId('right-workspace-browser-tab-1')).toBeInTheDocument()
+    embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
+
+    unmount()
+
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
+  })
+
   test('adds browser pages from the right workspace new tab menu', async () => {
     renderWorkspacePanelLayout()
 
@@ -7258,64 +7329,6 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('right-workspace-browser-tab-1'))
     expect(screen.getAllByTestId('workspace-browser-url-input')[0]).toHaveValue(
       'http://example.com/'
-    )
-  })
-
-  test('routes an immediate bridge open request to a newly selected browser tab', async () => {
-    runtimeMocks.electron = true
-    renderWorkspacePanelLayout()
-
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
-    desktopHostMocks.invoke.mockClear()
-
-    let emitted = false
-    embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockImplementation(
-      async (_baseLabel: string, activeLabel: string) => {
-        if (emitted || !activeLabel.endsWith('-2')) return
-        emitted = true
-        desktopHostMocks.emit({
-          sequence: 1,
-          type: 'browser.event',
-          payload: {
-            sequence: 1,
-            type: 'open-request',
-            payload: {
-              id: 'agent-open-new-browser-tab',
-              baseLabel: 'workspace-browser-blank-0',
-              source: 'agent',
-              disposition: 'current-tab',
-              targetLabel: activeLabel,
-              label: activeLabel,
-              url: 'https://example.com/second',
-            },
-          },
-        })
-      }
-    )
-
-    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
-    await userEvent.click(
-      within(screen.getByTestId('right-workspace-new-tab-menu')).getByTestId(
-        'right-workspace-browser-option'
-      )
-    )
-
-    await waitFor(() => {
-      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
-        'browser.open',
-        expect.objectContaining({
-          label: 'workspace-browser-blank-0-2',
-          url: 'about:blank',
-        })
-      )
-    })
-    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith(
-      'browser.open',
-      expect.objectContaining({
-        label: 'workspace-browser-blank-0',
-        url: 'about:blank',
-      })
     )
   })
 
@@ -12583,6 +12596,42 @@ describe('DesktopWorkbenchLayout', () => {
         label: 'workspace-browser-runtime-b',
       })
     )
+  })
+
+  test('opens an embedded browser requested by the active blank pane', async () => {
+    runtimeMocks.electron = true
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+    desktopHostMocks.invoke.mockClear()
+
+    act(() => {
+      desktopHostMocks.emit({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 1,
+          type: 'open-request',
+          payload: {
+            id: 'agent-open-blank-pane',
+            baseLabel: 'workspace-browser-blank-0',
+            source: 'agent',
+            disposition: 'current-tab',
+            targetLabel: 'workspace-browser-blank-0',
+            label: 'workspace-browser-blank-0',
+            url: 'https://example.com/',
+          },
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-blank-0',
+          url: 'about:blank',
+        })
+      )
+    })
   })
 
   test('keeps a default browser request assigned to the task active when it arrived', async () => {

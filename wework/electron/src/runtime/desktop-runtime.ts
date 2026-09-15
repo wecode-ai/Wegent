@@ -114,20 +114,13 @@ export class DesktopRuntime {
 
   private async performStart(generation: number): Promise<void> {
     try {
-      const executorPreparation = this.prepareExecutor()
-      const coreDshPreparation = this.prepareCoreDshLaunch()
-      const executorReady = executorPreparation.then(async executor => {
-        await this.startPreparedExecutor(executor, generation)
-        return executor
-      })
-      const coreDshStart = Promise.all([coreDshPreparation, executorReady]).then(
-        async ([launch, executor]) => {
-          if (this.lifecycleGeneration !== generation || !launch) return
-          const preparedCoreDsh = this.createPreparedCoreDsh(launch, executor)
-          await this.startPreparedCoreDsh(preparedCoreDsh, generation)
-        }
-      )
-      await coreDshStart
+      const executor = await this.prepareExecutor()
+      await this.startPreparedExecutor(executor, generation)
+      if (this.lifecycleGeneration !== generation) return
+      const launch = await this.prepareCoreDshLaunch()
+      if (this.lifecycleGeneration !== generation || !launch) return
+      const preparedCoreDsh = this.createPreparedCoreDsh(launch, executor)
+      await this.startPreparedCoreDsh(preparedCoreDsh, generation)
       if (this.lifecycleGeneration !== generation) return
       this.started = true
     } catch (error) {

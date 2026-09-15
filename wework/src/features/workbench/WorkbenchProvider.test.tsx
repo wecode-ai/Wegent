@@ -900,6 +900,16 @@ function RuntimeTaskForkProbe() {
         {workbench.state.currentRuntimeTask?.taskId ?? 'none'}
       </span>
       <span data-testid="fork-current-project">{workbench.state.currentProject?.id ?? 'none'}</span>
+      <span data-testid="fork-runtime-task-titles">
+        {workbench.state.runtimeWork?.projects
+          .flatMap(project => project.deviceWorkspaces)
+          .flatMap(workspace => workspace.tasks)
+          .map(
+            task =>
+              `${task.taskId}:${task.title}:${task.optimistic === true ? 'optimistic' : 'resolved'}`
+          )
+          .join('|') ?? 'none'}
+      </span>
       <button
         type="button"
         data-testid="open-fork-source"
@@ -976,6 +986,17 @@ function CloudWorkStatusProbe() {
 function DeviceStatusProbe() {
   const workbench = useWorkbench()
   return <span data-testid="device-status">{workbench.state.devices[0]?.status ?? 'missing'}</span>
+}
+
+function DeviceSlotProbe() {
+  const device = useWorkbench().state.devices[0]
+  return (
+    <span data-testid="device-slot">
+      {device
+        ? `${device.slot_used ?? 0}/${device.slot_max ?? 0}:${device.running_tasks?.[0]?.task_id ?? 'none'}`
+        : 'missing'}
+    </span>
+  )
 }
 
 function RuntimeRunningTasksProbe() {
@@ -2631,10 +2652,37 @@ describe('WorkbenchProvider runtime tasks', () => {
         .mockReturnValueOnce(refreshRequest.promise),
       forkRuntimeTask: vi.fn().mockResolvedValue({
         accepted: true,
+        source: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-a',
+        },
         target: {
           deviceId: 'device-1',
           workspacePath: '/workspace/project-alpha',
           taskId: 'runtime-fork',
+        },
+        runtime: 'codex',
+        transcript: {
+          taskId: 'runtime-fork',
+          workspacePath: '/workspace/project-alpha',
+          runtime: 'codex',
+          running: false,
+          messages: [],
+          turns: [
+            {
+              id: 'fork-turn',
+              status: 'completed',
+              runtimeStatus: 'done',
+              items: [
+                {
+                  id: 'fork-assistant',
+                  type: 'assistant_text',
+                  content: 'Forked transcript is ready',
+                },
+              ],
+            },
+          ],
         },
       }),
     })
@@ -2656,6 +2704,16 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('fork-current-runtime-task')).toHaveTextContent('runtime-fork')
     )
     expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7')
+    expect(screen.getByTestId('fork-runtime-task-titles')).toHaveTextContent(
+      'runtime-fork:Runtime A:optimistic'
+    )
+    expect(
+      getRuntimeConversationMessages({
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-fork',
+      }).map(message => message.content)
+    ).toContain('Forked transcript is ready')
     expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2)
 
     refreshRequest.resolve(
@@ -4727,6 +4785,42 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(screen.getByTestId('device-status')).toHaveTextContent('online')
+  })
+
+  test('applies slot updates without refreshing the full device list', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers = handlers
+      return vi.fn()
+    })
+    const listDevices = vi
+      .fn()
+      .mockResolvedValue([createDevice({ slot_used: 0, slot_max: 1, running_tasks: [] })])
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<DeviceSlotProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('device-slot')).toHaveTextContent('0/1:none'))
+    const callsBeforeEvent = listDevices.mock.calls.length
+
+    await act(async () => {
+      streamHandlers.onDeviceSlotUpdate?.({
+        device_id: 'device-1',
+        slot_used: 1,
+        slot_max: 3,
+        running_tasks: [{ task_id: 42 }],
+      })
+    })
+
+    expect(screen.getByTestId('device-slot')).toHaveTextContent('1/3:42')
+    expect(listDevices).toHaveBeenCalledTimes(callsBeforeEvent)
   })
 
   test('keeps the last confirmed online state when an offline event refresh fails', async () => {

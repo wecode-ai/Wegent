@@ -12,7 +12,7 @@ from app.models.delivery import ProjectAutomationRule, ProjectChatAgent, Runtime
 from app.schemas.issue_workflow import WorkflowExecutionConfig
 from app.schemas.project_chat import ProjectChatWorkspaceBinding
 from app.services.project_automation_domain import manager_type, runtime_config
-from app.services.project_chat.service import bot_config
+from app.services.project_chat.service import compiled_bot_config
 from app.services.project_chat.workspace_binding import read_agent_workspace_binding
 
 
@@ -45,7 +45,11 @@ def require_coordinator_execution_config(
 def project_robot_execution_config(
     db: Session, agent: ProjectChatAgent
 ) -> WorkflowExecutionConfig:
-    config = bot_config(agent)
+    config = compiled_bot_config(
+        db,
+        agent,
+        execution_user_id=int(agent.created_by_user_id or 0),
+    )
     runtime_profile_id = str(config.get("default_runtime_profile_id") or "") or None
     runtime_profile = (
         db.get(RuntimeProfile, runtime_profile_id) if runtime_profile_id else None
@@ -72,6 +76,7 @@ def project_robot_execution_config(
         )
     return WorkflowExecutionConfig(
         agent_id=agent.id,
+        runtime=config["runtime"],
         runtime_profile_id=runtime_profile_id,
         execution_device_id=str(
             (
@@ -96,6 +101,7 @@ def project_robot_execution_config(
             )
             or {}
         ),
+        system_prompt=str(config.get("system_prompt") or "") or None,
         workspace_binding=workspace_binding,
         runtime_permission_mode=(
             profile_metadata.get("runtime_permission_mode")
@@ -108,7 +114,14 @@ def project_robot_execution_config(
             or config.get("initial_supervisor")
         ),
         additional_skills=(
-            profile_metadata.get("additional_skills") or config.get("additional_skills")
+            profile_metadata.get("additional_skills")
+            if "additional_skills" in profile_metadata
+            else config.get("additional_skills")
+        ),
+        mcp_servers=(
+            profile_metadata.get("mcp_servers")
+            if "mcp_servers" in profile_metadata
+            else config.get("mcp_servers")
         ),
         attachment_ids=(
             profile_metadata.get("attachment_ids") or config.get("attachment_ids")
@@ -185,6 +198,7 @@ def execution_context(
         "runtime_profile_id": config.runtime_profile_id,
         "runtime_subject_user_id": runtime_subject_user_id,
         "agent_id": config.agent_id,
+        "runtime": config.runtime,
         "execution_device_id": config.execution_device_id,
         "model": config.model,
         "model_type": config.model_type,

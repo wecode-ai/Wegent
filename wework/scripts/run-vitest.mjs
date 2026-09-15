@@ -34,7 +34,7 @@ if (requestedArgs.length === 0) {
 }
 
 if (requestedArgs.length === 0 || vitestArgs.length > 0) {
-  run('vitest', ['run', ...vitestArgs])
+  run('vitest', ['run', ...nodeTestFiles.flatMap(path => ['--exclude', path]), ...vitestArgs])
 }
 
 if (requestedArgs.length === 0) {

@@ -1000,7 +1000,7 @@ describe('cloud runtime sync state', () => {
     ])
   })
 
-  test('preserves a remote executor project UI id after its Codex sidebar descriptor appears', () => {
+  test('preserves one remote project UI id across descriptor and executor sources', () => {
     const workspacePath = '/srv/repo'
     const remoteProject = {
       project: {
@@ -1023,6 +1023,7 @@ describe('cloud runtime sync state', () => {
           project: {
             key: 'wegent-remote:remote-device:%2Fsrv%2Frepo',
             sidebarStateKey: 'wegent-remote:remote-device:%2Fsrv%2Frepo',
+            id: remoteProjectId,
             name: 'Remote',
             kind: 'remote',
             source: 'remote_project',
@@ -1041,6 +1042,8 @@ describe('cloud runtime sync state', () => {
       chats: [],
       totalTasks: 0,
     }
+
+    expect(runtimeProjectUiId(localDescriptor.projects[0].project)).toBe(remoteProjectId)
 
     const merged = mergeRuntimeWorkLists(
       localDescriptor,

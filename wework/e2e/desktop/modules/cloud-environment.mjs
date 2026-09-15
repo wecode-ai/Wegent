@@ -12,6 +12,7 @@ import {
   CLOUD_MODEL_CASES,
   CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_PUBLIC_MODEL_NAME,
+  CLOUD_PUBLIC_MODEL_OPTIONS,
   CLOUD_VISION_SIDECAR_CASE,
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_API_KEY,
@@ -45,12 +46,6 @@ const REDIS_START_ATTEMPTS = 5
 const REDIS_READY_PATTERN = /Ready to accept connections/
 const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
 const MANAGED_CLOUD_SANDBOX_ID = 'wework-e2e-managed-cloud-sandbox'
-const CLOUD_PUBLIC_MODEL_OPTIONS = {
-  weworkCloudModelNamespace: 'default',
-  weworkCloudModelResourceUserId: '0',
-  weworkCloudModelUpstreamApiFormat: 'openai-responses',
-}
-
 async function waitForRedisReady(redis, logPath, fromOffset) {
   let spawnError = null
   const captureSpawnError = error => {

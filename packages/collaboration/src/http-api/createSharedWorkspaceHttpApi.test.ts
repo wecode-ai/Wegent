@@ -31,6 +31,65 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
+  it("uses one collaboration-group resource for workspace and project scopes", async () => {
+    const { transport, get, post, remove } = createTransport();
+    const group = {
+      id: "group-1",
+      workspace_id: "workspace-1",
+      owner_type: "workspace",
+      owner_id: "workspace-1",
+      name: "交付协作组",
+      leader: { kind: "human", id: "8" },
+      members: [{ kind: "human", id: "8" }],
+      coordination_mode: "manager",
+      policy: {
+        prompt: "持续分配 Issue",
+        trigger_type: "manual",
+        event_type: null,
+        event_config: {},
+        cron_expression: null,
+        timezone: "Asia/Shanghai",
+        issue_selector: {},
+        output_policy: {},
+        enabled: true,
+      },
+      version: 1,
+      created_by_user_id: 8,
+      created_at: "2026-09-14T00:00:00Z",
+      updated_at: "2026-09-14T00:00:00Z",
+    };
+    get.mockResolvedValueOnce({ items: [group] });
+    post.mockResolvedValue(group);
+    const api = createSharedWorkspaceHttpApi(transport);
+
+    await expect(
+      api.projects.listCollaborationGroups?.("project/1"),
+    ).resolves.toMatchObject([{ owner_type: "workspace" }]);
+    await api.projects.addCollaborationGroup?.("project/1", "group/1");
+    await api.projects.createCollaborationGroup?.("project/1", {
+      name: "项目协作组",
+      leader: { kind: "human", id: "8" },
+      members: [{ kind: "human", id: "8" }],
+      coordinationMode: "manager",
+    });
+    await api.projects.removeCollaborationGroup?.("project/1", "group/1");
+
+    expect(post).toHaveBeenNthCalledWith(
+      1,
+      "/v1/cloud-projects/project%2F1/collaboration-groups/group%2F1",
+    );
+    expect(post).toHaveBeenNthCalledWith(
+      2,
+      "/v1/cloud-projects/project%2F1/collaboration-groups",
+      expect.objectContaining({
+        coordination_mode: "manager",
+      }),
+    );
+    expect(remove).toHaveBeenCalledWith(
+      "/v1/cloud-projects/project%2F1/collaboration-groups/group%2F1",
+    );
+  });
+
   it("owns canonical workspace resource endpoints and DTO mapping", async () => {
     const { transport, get, post, patch, remove } = createTransport();
     get
@@ -200,6 +259,7 @@ describe("createSharedWorkspaceHttpApi", () => {
         id: "agent-1",
         projectId: "project-1",
         wegentTeamId: 9,
+        team_id: 9,
         workspaceBinding: { type: "standalone", status: "ready" },
       },
     ]);

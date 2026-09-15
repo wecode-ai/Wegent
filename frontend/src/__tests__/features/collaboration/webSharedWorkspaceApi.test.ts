@@ -496,9 +496,12 @@ describe('createWebSharedWorkspaceApi', () => {
     ).toBe(true)
   })
 
-  it('does not expose a My Work port from the Web adapter', () => {
-    const api = createWebSharedWorkspaceApi(createClient(), { getBlob: jest.fn() })
+  it('loads My Work from the shared cloud work-item endpoint', async () => {
+    const client = createClient()
+    client.get.mockResolvedValue({ items: [{ id: 'issue-1' }] })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
 
-    expect(api.myWork).toBeUndefined()
+    await expect(api.myWork?.list()).resolves.toEqual([{ id: 'issue-1' }])
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-work-items/my-work')
   })
 })

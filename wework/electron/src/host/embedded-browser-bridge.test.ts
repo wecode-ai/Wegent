@@ -128,105 +128,6 @@ describe('EmbeddedBrowserBridge', () => {
     expect(browser.navigate).toHaveBeenCalledWith('workspace-browser-2', 'https://example.test/')
   })
 
-  test('does not acknowledge close until the replacement host is attached', async () => {
-    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
-    const browser = fakeBrowser()
-    let finishClose: () => void = () => undefined
-    browser.manager.requestClose = vi.fn(
-      () =>
-        new Promise<void>(resolve => {
-          finishClose = resolve
-        })
-    )
-    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
-    bridges.push(bridge)
-    const runtimePath = await bridge.start()
-    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
-      address: string
-      token: string
-    }
-    let responseCompleted = false
-
-    const response = fetch(`http://${identity.address}/browser`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${identity.token}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        action: 'close',
-        label: 'workspace-browser',
-      }),
-    }).then(result => {
-      responseCompleted = true
-      return result
-    })
-
-    await vi.waitFor(() => expect(browser.manager.requestClose).toHaveBeenCalledOnce())
-    expect(responseCompleted).toBe(false)
-    finishClose()
-
-    await expect((await response).json()).resolves.toEqual({
-      ok: true,
-      data: { ok: true },
-    })
-  })
-
-  test('opens an attached replacement directly while synchronizing frontend state', async () => {
-    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
-    const browser = fakeBrowser()
-    browser.hasAttached.mockReturnValue(true)
-    browser.openAttached.mockImplementation(async (_label, url) => {
-      browser.has.mockReturnValue(true)
-      browser.state.mockReturnValue({
-        label: 'workspace-browser',
-        nativeLabel: 'workspace-browser',
-        title: null,
-        url,
-        isLoading: false,
-        navigationError: null,
-      })
-      return browser.state()
-    })
-    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
-    bridges.push(bridge)
-    const runtimePath = await bridge.start()
-    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
-      address: string
-      token: string
-    }
-
-    const response = await fetch(`http://${identity.address}/browser`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${identity.token}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        action: 'open',
-        label: 'workspace-browser',
-        url: 'https://reopened.example.test/',
-      }),
-    })
-
-    await expect(response.json()).resolves.toEqual({
-      ok: true,
-      data: { ok: true },
-    })
-    expect(browser.openAttached).toHaveBeenCalledWith(
-      'workspace-browser',
-      'https://reopened.example.test/'
-    )
-    expect(browser.requestOpen).toHaveBeenCalledWith(
-      expect.objectContaining({
-        baseLabel: 'workspace-browser',
-        targetLabel: 'workspace-browser',
-        source: 'agent',
-      })
-    )
-    expect(browser.navigate).not.toHaveBeenCalled()
-  })
-
   test('waits for the host cursor to arrive before dispatching a click', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
     const browser = fakeBrowser()
@@ -494,8 +395,6 @@ describe('EmbeddedBrowserBridge', () => {
 function fakeBrowser() {
   const activeLabel = vi.fn((label: string) => label)
   const has = vi.fn(() => false)
-  const hasAttached = vi.fn(() => false)
-  const openAttached = vi.fn()
   const requestOpen = vi.fn()
   const state = vi.fn(() => ({
     label: 'workspace-browser',
@@ -514,8 +413,6 @@ function fakeBrowser() {
   const manager = {
     activeLabel,
     has,
-    hasAttached,
-    openAttached,
     requestOpen,
     state,
     navigate,
@@ -538,11 +435,9 @@ function fakeBrowser() {
     clickAt,
     evaluate,
     has,
-    hasAttached,
     hideAgentCursor,
     manager,
     navigate,
-    openAttached,
     requestOpen,
     showAgentCursor,
     state,
