@@ -1299,6 +1299,23 @@ function ScrollableMessagePaneContent({
     }
   }, [bottomOrigin, captureUserViewportAnchor, readReaderScrollOffsetSinceAnchor])
 
+  /**
+   * Puts the text back where the reader left it whenever the offset has moved since the sample for a
+   * reason of the layout's own, and leaves everything alone while another part of the scroll owner is
+   * already moving the viewport.
+   *
+   * This has to run before any position is taken as the reader's own: a re-measured row rewrites the
+   * offset by itself, and a reader who wheels a moment later would otherwise adopt that rewritten
+   * position as the one they chose, leaving the shift behind for good.
+   */
+  const restoreReaderPositionIfOwned = useCallback(() => {
+    if (!userScrollPausedAutoFollowRef.current) return
+    if (pendingLayoutScrollPositionRef.current !== null) return
+    if (preserveLatestUserTurnRef.current) return
+    if (restoredScrollSnapshotRef.current?.key === currentScrollKey) return
+    restoreReaderPositionFromLayout()
+  }, [currentScrollKey, restoreReaderPositionFromLayout])
+
   const handleContentLayoutChange = useCallback(() => {
     if (virtualInitialPositionOwnerRef.current?.key === currentScrollKey) {
       virtualInitialPositionOwnerRef.current = null
@@ -1416,11 +1433,15 @@ function ScrollableMessagePaneContent({
       if (!nativeEvent || !('deltaY' in nativeEvent) || Number(nativeEvent.deltaY) >= 0) return
 
       clearScheduledScrolls()
-      captureUserViewportAnchor()
       explicitBottomFollowRef.current = false
       userScrollPausedAutoFollowRef.current = true
+      // The reader is taking the viewport back. A row that re-measured since the last sample may already
+      // have rewritten the offset, so that shift is given back before this position is adopted as the
+      // one the reader is looking at — the wheel's own scrolling is applied on top of it afterwards.
+      restoreReaderPositionIfOwned()
+      captureUserViewportAnchor()
     },
-    [captureUserViewportAnchor, clearScheduledScrolls]
+    [captureUserViewportAnchor, clearScheduledScrolls, restoreReaderPositionIfOwned]
   )
 
   const handleScroll = useCallback(() => {
@@ -1439,20 +1460,9 @@ function ScrollableMessagePaneContent({
         pending.distanceFromBottomPx = getDistanceFromBottom(scroller, bottomOrigin)
       }
     }
-    // The reader owns the viewport, so their text has to stay where they left it. The rule leaves the
-    // reader's own scrolling alone and re-samples where nothing had to be corrected, so running it
-    // here keeps the sample fresh and takes back the offset rewrite a content height change performs —
-    // before this event can be read as a new position and the shift it carries can be adopted as one.
-    if (
-      userScrollPausedAutoFollowRef.current &&
-      pendingLayoutScrollPositionRef.current === null &&
-      !preserveLatestUserTurnRef.current &&
-      restoredScrollSnapshotRef.current?.key !== currentScrollKey
-    ) {
-      // Run before the scroll state is read below: a rewrite that got as far as the end of the history
-      // would otherwise look like the reader arriving back at the bottom and release their pause.
-      restoreReaderPositionFromLayout()
-    }
+    // Run before the scroll state is read below: a rewrite that got as far as the end of the history
+    // would otherwise look like the reader arriving back at the bottom and release their pause.
+    restoreReaderPositionIfOwned()
     if (!userInitiated) {
       if (streamingFollowOwnedRef.current) {
         setShowScrollButton(false)
@@ -1487,7 +1497,7 @@ function ScrollableMessagePaneContent({
     currentScrollKey,
     followStreamingToBottom,
     isTurnNavigationAutoScrollSuspended,
-    restoreReaderPositionFromLayout,
+    restoreReaderPositionIfOwned,
     setScrollToBottom,
     streamingFollowActive,
     updateScrollState,

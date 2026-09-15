@@ -64,14 +64,19 @@ interface ReaderLayoutModel {
    * - `belowViewportGrowthPx` only makes the content taller underneath the anchor;
    * - `readerScrollPx` is the reader's own scrolling;
    * - `scrollerWidthPx` re-lays out the scroller's own box, as opening a panel beside the conversation
-   *   does.
+   *   does;
+   * - `coalesceScrollEvent` leaves out the scroll event the rewrite would deliver: the browser delivers
+   *   it in the same frame as the next wheel step, which is the order that used to lose the shift.
    */
   apply: (change: {
     aboveViewportGrowthPx?: number
     belowViewportGrowthPx?: number
     readerScrollPx?: number
     scrollerWidthPx?: number
+    coalesceScrollEvent?: boolean
   }) => void
+  /** The reader's own wheel step: the handler runs before the browser applies the scrolling. */
+  scrollAsUser: (pixels: number) => void
   /** Where the sampled text sits on screen right now. */
   anchorTopPx: () => number
 }
@@ -91,6 +96,10 @@ function createAnchorHarness(): AnchorHarness {
   const SCROLLER_TOP = 100
   const HARNESS_MESSAGE_ID = 'anchor-harness-message'
   const HARNESS_TEXT = '锚点会话里正在阅读的长消息'
+  const HARNESS_NEWER_TEXT = '锚点会话里更靠后的一条消息'
+  // A later message sits this far down the content from the sampled one, so a height change can pull a
+  // different paragraph to the top of the viewport.
+  const NEWER_MESSAGE_OFFSET_PX = 282
 
   vi.stubGlobal(
     'ResizeObserver',
@@ -117,6 +126,13 @@ function createAnchorHarness(): AnchorHarness {
             status: 'done',
             createdAt: '2026-09-11T00:00:00.000Z',
           },
+          {
+            id: 'anchor-harness-newer-message',
+            role: 'assistant',
+            content: HARNESS_NEWER_TEXT,
+            status: 'done',
+            createdAt: '2026-09-11T00:00:01.000Z',
+          },
         ]}
       />
     </div>
@@ -124,6 +140,7 @@ function createAnchorHarness(): AnchorHarness {
 
   const scroller = externalScrollRef.current!
   const anchor = screen.getByText(HARNESS_TEXT).closest('[data-scroll-anchor]')!
+  const newerAnchor = screen.getByText(HARNESS_NEWER_TEXT).closest('[data-scroll-anchor]')!
   const layout = {
     clientWidthPx: 607,
     contentHeightPx: 10_000,
@@ -148,23 +165,28 @@ function createAnchorHarness(): AnchorHarness {
     scroller.scrollTop = Number(options.top ?? 0)
   }) as unknown as HTMLDivElement['scrollTo']
   mockRect(scroller, SCROLLER_TOP, SCROLLER_TOP + CLIENT_HEIGHT)
-  anchor.getBoundingClientRect = vi.fn(() => {
-    const top =
-      SCROLLER_TOP +
-      layout.anchorContentTopPx -
-      (layout.contentHeightPx - CLIENT_HEIGHT + scroller.scrollTop)
-    return {
-      top,
-      bottom: top + 40,
-      left: 0,
-      right: 320,
-      width: 320,
-      height: 40,
-      x: 0,
-      y: top,
-      toJSON: () => ({}),
-    } as DOMRect
-  })
+  const mockAnchorRect = (element: Element, contentTopOffsetPx: number) => {
+    element.getBoundingClientRect = vi.fn(() => {
+      const top =
+        SCROLLER_TOP +
+        layout.anchorContentTopPx +
+        contentTopOffsetPx -
+        (layout.contentHeightPx - CLIENT_HEIGHT + scroller.scrollTop)
+      return {
+        top,
+        bottom: top + 40,
+        left: 0,
+        right: 320,
+        width: 320,
+        height: 40,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect
+    })
+  }
+  mockAnchorRect(anchor, 0)
+  mockAnchorRect(newerAnchor, NEWER_MESSAGE_OFFSET_PX)
 
   return {
     scroller,
@@ -190,6 +212,15 @@ function createAnchorHarness(): AnchorHarness {
           (scrollerBoxResized ? 0 : rangeChangePx) + (change.readerScrollPx ?? 0)
         const maximumOffsetPx = Math.max(0, layout.contentHeightPx - CLIENT_HEIGHT)
         scroller.scrollTop = Math.min(0, Math.max(-maximumOffsetPx, -layout.distanceFromBottomPx))
+        layout.distanceFromBottomPx = -scroller.scrollTop
+        if (change.coalesceScrollEvent !== true) {
+          fireEvent.scroll(scroller)
+        }
+      },
+      scrollAsUser: pixels => {
+        fireEvent.wheel(scroller, { deltaY: -pixels })
+        const maximumOffsetPx = Math.max(0, layout.contentHeightPx - CLIENT_HEIGHT)
+        scroller.scrollTop = Math.max(-maximumOffsetPx, scroller.scrollTop - pixels)
         layout.distanceFromBottomPx = -scroller.scrollTop
         fireEvent.scroll(scroller)
       },
@@ -734,6 +765,27 @@ describe('ScrollableMessageArea', () => {
       harness.flushResizeObservers()
 
       expect(model.anchorTopPx()).toBe(anchorBefore)
+    } finally {
+      harness.dispose()
+    }
+  })
+
+  test('does not adopt a re-measured row rewrite as the position the reader chose', () => {
+    const harness = createAnchorHarness()
+    try {
+      const { model } = harness
+      const anchorBefore = model.anchorTopPx()
+      model.sample()
+
+      // Measured from a reported trace: a row the reader had scrolled past came back 332px shorter, the
+      // scroller rewrote the offset towards the bottom with it, and the reader's next wheel step landed
+      // before any layout event could put the text back. Their step has to arrive where they were
+      // reading, so the text may only move by the 120px they asked for — never by the 332px with it.
+      model.apply({ aboveViewportGrowthPx: -332, coalesceScrollEvent: true })
+      model.scrollAsUser(120)
+      harness.flushResizeObservers()
+
+      expect(model.anchorTopPx()).toBe(anchorBefore + 120)
     } finally {
       harness.dispose()
     }
