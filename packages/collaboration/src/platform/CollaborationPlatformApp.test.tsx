@@ -29,6 +29,7 @@ import type {
   CollaborationPlatformHostAdapter,
   CollaborationPlatformLocation,
 } from "./types";
+import { useCollaborationPlatformController } from "./useCollaborationPlatformController";
 
 const workspace: CollaborationWorkspace = {
   id: "workspace-1",
@@ -674,6 +675,32 @@ function PlatformHarness({
   );
 }
 
+function PlatformControllerHarness({
+  api,
+  location = initialLocation,
+}: {
+  api: SharedWorkspaceApi;
+  location?: CollaborationPlatformLocation;
+}) {
+  const { state } = useCollaborationPlatformController({
+    api,
+    location,
+    loadFailedMessage: "加载协作空间失败",
+  });
+  return (
+    <output data-testid="platform-controller-state">
+      {JSON.stringify({
+        loading: state.loading,
+        error: state.error,
+        workspaceIds: state.workspaces.map((candidate) => candidate.id),
+        projectIds: state.projects.map((candidate) => candidate.id),
+        myWork: state.myWork,
+        executions: state.executions,
+      })}
+    </output>
+  );
+}
+
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal(
@@ -702,6 +729,41 @@ afterEach(async () => {
 });
 
 describe("CollaborationPlatformApp real component flow", () => {
+  it("keeps primary navigation data when root auxiliary data fails", async () => {
+    const { api } = createApi();
+    const listMyWork = vi
+      .fn()
+      .mockRejectedValue(new Error("my work unavailable"));
+    const listExecutions = vi
+      .fn()
+      .mockRejectedValue(new Error("runs unavailable"));
+    api.myWork = { list: listMyWork };
+    api.executions.list = listExecutions;
+
+    await render(
+      <PlatformControllerHarness
+        api={api}
+        location={{ ...initialLocation, rootView: "runs" }}
+      />,
+    );
+
+    const state = JSON.parse(
+      byTestId("platform-controller-state").textContent ?? "{}",
+    );
+    expect(listMyWork).toHaveBeenCalledOnce();
+    expect(listExecutions).toHaveBeenCalledWith(project.id, {
+      includeTerminal: true,
+    });
+    expect(state).toEqual({
+      loading: false,
+      error: null,
+      workspaceIds: [workspace.id],
+      projectIds: [project.id],
+      myWork: [],
+      executions: [],
+    });
+  });
+
   it("reports readiness only after the initial platform data is loaded", async () => {
     const { api } = createApi();
     const onReady = vi.fn();

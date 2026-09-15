@@ -71,6 +71,42 @@ function updateCurrentWorkspace(
   };
 }
 
+async function loadRootMyWork(
+  api: SharedWorkspaceApi,
+): Promise<WorkspaceMyWorkItem[]> {
+  try {
+    return (await api.myWork?.list()) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+async function loadRootExecutions(
+  api: SharedWorkspaceApi,
+  projects: CollaborationProject[],
+): Promise<CollaborationPlatformState["executions"]> {
+  const entries = await Promise.all(
+    projects.map(async (project) => {
+      try {
+        const projectExecutions = await api.executions.list(project.id, {
+          includeTerminal: true,
+        });
+        return projectExecutions.map((execution) => ({
+          project,
+          execution,
+        }));
+      } catch {
+        return [];
+      }
+    }),
+  );
+  return entries
+    .flat()
+    .sort((left, right) =>
+      right.execution.updated_at.localeCompare(left.execution.updated_at),
+    );
+}
+
 export function useCollaborationPlatformController({
   api,
   location,
@@ -125,28 +161,9 @@ export function useCollaborationPlatformController({
       if (revision !== loadRevisionRef.current) return;
       if (!location.workspaceId) {
         const [myWork, executions] = await Promise.all([
-          api.myWork?.list() ?? Promise.resolve([]),
+          loadRootMyWork(api),
           location.rootView === "runs"
-            ? Promise.all(
-                navigationProjects.map(async (project) => {
-                  const projectExecutions = await api.executions.list(
-                    project.id,
-                    { includeTerminal: true },
-                  );
-                  return projectExecutions.map((execution) => ({
-                    project,
-                    execution,
-                  }));
-                }),
-              ).then((entries) =>
-                entries
-                  .flat()
-                  .sort((left, right) =>
-                    right.execution.updated_at.localeCompare(
-                      left.execution.updated_at,
-                    ),
-                  ),
-              )
+            ? loadRootExecutions(api, navigationProjects)
             : Promise.resolve([]),
         ]);
         if (revision !== loadRevisionRef.current) return;
