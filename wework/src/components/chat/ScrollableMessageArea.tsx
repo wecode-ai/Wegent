@@ -319,9 +319,14 @@ function ScrollableMessagePaneContent({
   // Offset this rule wrote by itself since the anchor was sampled. That write is ours, not the
   // reader's, so the next correction has to leave it out of the reader's scrolling.
   const selfScrollOffsetRef = useRef(0)
+  // The layout the last correction measured, so a sample is only replaced while the layout stands still.
+  // A pane re-laid out beside the conversation re-wraps its messages over several frames, and replacing
+  // the sample between two of them moves the reader onto a layout that is still moving.
+  const lastMeasuredLayoutRef = useRef<string | null>(null)
   const clearUserViewportAnchor = useCallback(() => {
     userViewportAnchorRef.current = null
     selfScrollOffsetRef.current = 0
+    lastMeasuredLayoutRef.current = null
   }, [])
   const lastScrollPositionRef = useRef<number | null>(null)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
@@ -1277,9 +1282,18 @@ function ScrollableMessagePaneContent({
       getMaximumScrollOffset(scroller)
     )
     const correction = anchorOffset - anchor.offsetFromScrollerTop + readerScrollTop
+    const layout = `${Math.round(getMaximumScrollOffset(scroller))}:${scroller.clientWidth}:${scroller.clientHeight}`
+    const layoutChanged =
+      lastMeasuredLayoutRef.current !== null && lastMeasuredLayoutRef.current !== layout
+    lastMeasuredLayoutRef.current = layout
     if (Math.abs(correction) < 1) {
-      // The sampled text is already back where it was, so the sample describes the settled layout.
-      captureUserViewportAnchor()
+      // The sampled text is already back where it was, so the sample describes the settled layout — but
+      // only once that layout has stopped moving. A pane re-laid out beside the conversation re-wraps its
+      // messages over several frames, and replacing the sample between two of them would read the shift
+      // that is still coming as the position the reader chose.
+      if (!layoutChanged) {
+        captureUserViewportAnchor()
+      }
       return
     }
     const previousScrollTop = scroller.scrollTop
@@ -1292,7 +1306,7 @@ function ScrollableMessagePaneContent({
     // adopting the clamped position as the one the reader chose.
     selfScrollOffsetRef.current += appliedScrollTop
     lastScrollPositionRef.current = getDistanceFromTop(scroller, bottomOrigin)
-    if (Math.abs(appliedScrollTop - correction) < 1) {
+    if (Math.abs(appliedScrollTop - correction) < 1 && !layoutChanged) {
       // The reader is settled again where this sample was taken, so the next layout change has to
       // measure from here rather than from a baseline that already includes this correction.
       captureUserViewportAnchor()
