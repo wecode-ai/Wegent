@@ -2037,6 +2037,53 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('reopens the same external URL after closing while inactive', async () => {
+    mockBrowserHostRect()
+    let handleClose!: (event: { label: string; nativeLabel: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      handleClose = handler
+      return Promise.resolve(vi.fn())
+    })
+    embeddedBrowserMocks.openEmbeddedBrowser
+      .mockResolvedValueOnce({
+        nativeLabel: 'workspace-browser-native-1',
+        title: null,
+        url: 'about:blank',
+      })
+      .mockResolvedValueOnce({
+        nativeLabel: 'workspace-browser-native-2',
+        title: null,
+        url: 'about:blank',
+      })
+    const firstRequest = {
+      id: 'test-close-while-inactive-1',
+      baseLabel: 'workspace-browser',
+      source: 'agent' as const,
+      disposition: 'current-tab' as const,
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+    }
+    const view = render(<WorkspaceBrowserPanel active openRequest={firstRequest} />)
+
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1))
+    view.rerender(<WorkspaceBrowserPanel active={false} openRequest={firstRequest} />)
+    act(() => {
+      handleClose({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+      })
+    })
+    view.rerender(
+      <WorkspaceBrowserPanel
+        active={false}
+        openRequest={{ ...firstRequest, id: 'test-close-while-inactive-2' }}
+      />
+    )
+
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(2))
+    expect(embeddedBrowserMocks.reloadEmbeddedBrowser).not.toHaveBeenCalled()
+  })
+
   test('opens hidden immediately when the active browser host is not measurable yet', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockReturnValueOnce({

@@ -160,4 +160,31 @@ describe('PythonRuntimeManager', () => {
       error: expect.stringContaining('uv archive size mismatch'),
     })
   })
+
+  test('aborts a stalled uv download after the bounded timeout', async () => {
+    const directory = await temporaryDirectory()
+    const fetch = vi.fn(
+      (_input: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted', 'AbortError'))
+          })
+        })
+    )
+    const manager = new PythonRuntimeManager({
+      dataDirectory: directory,
+      environment: {},
+      runtimeBin: join(directory, 'runtime', 'bin'),
+      platform: 'darwin',
+      arch: 'arm64',
+      fetch,
+      downloadTimeoutMs: 10,
+      runFile: vi.fn().mockRejectedValue(new Error('missing')),
+    })
+
+    await expect(manager.ensure()).rejects.toThrow('uv download timed out after 10ms')
+    expect(fetch).toHaveBeenCalledWith(expect.any(String), {
+      signal: expect.any(AbortSignal),
+    })
+  })
 })

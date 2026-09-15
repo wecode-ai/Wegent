@@ -722,7 +722,7 @@ export function WorkspaceBrowserTabPanel({
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserCloseRequests(event => {
-      if (!activeRef.current || event.label !== currentLabelRef.current) return
+      if (event.label !== currentLabelRef.current) return
       if (event.nativeLabel !== nativeLabelRef.current) {
         console.info(
           '[Wework] Embedded browser close ignored',

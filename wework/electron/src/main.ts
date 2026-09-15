@@ -1228,7 +1228,13 @@ function installIpc(): void {
       pythonStatus,
     ]
   })
-  ipcMain.handle('runtime:ensure-python', async () => (await managedPythonRuntime()).ensure())
+  ipcMain.handle('runtime:ensure-python', async () => {
+    const pythonRuntime = await managedPythonRuntime()
+    if (process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP === '1') {
+      return pythonRuntime.status()
+    }
+    return pythonRuntime.ensure()
+  })
   ipcMain.handle('runtime:choose-node-executable', async () => {
     const options: OpenDialogOptions = {
       title: 'Select Node.js executable',
@@ -1902,7 +1908,10 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
     .filter(Boolean)
     .join(delimiter)
-  const runtimeEnvironment = pythonRuntime.environment()
+  const runtimeEnvironment =
+    process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP === '1'
+      ? { ...nodeRuntime.environment }
+      : pythonRuntime.environment()
   runtimeEnvironment.PATH = [cliBin, runtimeEnvironment.PATH?.trim()]
     .filter(Boolean)
     .join(delimiter)

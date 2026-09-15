@@ -13,6 +13,7 @@ const execFileAsync = promisify(execFile)
 
 const PYTHON_VERSION = '3.12'
 const UV_VERSION = '0.9.5'
+const UV_DOWNLOAD_TIMEOUT_MS = 120_000
 const UV_DOWNLOAD_BASE_URL = `https://mjs.sinaimg.cn/umd/cs-packages/uv/${UV_VERSION}`
 const PYTHON_DOWNLOAD_MIRROR_URL =
   'https://python-standalone.org/mirror/astral-sh/python-build-standalone/'
@@ -102,6 +103,7 @@ export interface PythonRuntimeManagerOptions {
   platform?: NodeJS.Platform
   arch?: string
   fetch?: typeof fetch
+  downloadTimeoutMs?: number
   runFile?: RunFile
   fileSha256?: (path: string) => Promise<string>
   log?: (event: Record<string, unknown>) => void
@@ -114,6 +116,7 @@ export class PythonRuntimeManager {
   private readonly platform: NodeJS.Platform
   private readonly arch: string
   private readonly fetch: typeof fetch
+  private readonly downloadTimeoutMs: number
   private readonly runFile: RunFile
   private readonly fileSha256: (path: string) => Promise<string>
   private readonly log: (event: Record<string, unknown>) => void
@@ -126,6 +129,7 @@ export class PythonRuntimeManager {
     this.platform = options.platform ?? process.platform
     this.arch = options.arch ?? process.arch
     this.fetch = options.fetch ?? globalThis.fetch
+    this.downloadTimeoutMs = options.downloadTimeoutMs ?? UV_DOWNLOAD_TIMEOUT_MS
     this.fileSha256 = options.fileSha256 ?? sha256File
     this.runFile =
       options.runFile ??
@@ -288,37 +292,57 @@ export class PythonRuntimeManager {
   }
 
   private async downloadUv(artifact: UvArtifact, destination: string): Promise<void> {
-    const response = await this.fetch(`${UV_DOWNLOAD_BASE_URL}/${artifact.archiveName}`)
-    if (!response.ok || !response.body) {
-      throw new Error(`Failed to download uv: HTTP ${response.status}`)
-    }
-    await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
-    let downloadedBytes = 0
-    const hash = createHash('sha256')
-    const tracker = new Transform({
-      transform: (chunk: Buffer, _encoding, callback) => {
-        downloadedBytes += chunk.length
-        hash.update(chunk)
-        this.currentStatus = this.statusValue('downloading', {
-          downloadedBytes,
-          totalBytes: artifact.archiveBytes,
-        })
-        callback(null, chunk)
-      },
-    })
-    await pipeline(
-      Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
-      tracker,
-      createWriteStream(destination, { mode: 0o600 })
-    )
-    const actualSha256 = hash.digest('hex')
-    if (downloadedBytes !== artifact.archiveBytes) {
-      throw new Error(
-        `uv archive size mismatch: expected ${artifact.archiveBytes}, received ${downloadedBytes}`
+    const controller = new AbortController()
+    let timedOut = false
+    const timeout = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, this.downloadTimeoutMs)
+
+    try {
+      const response = await this.fetch(`${UV_DOWNLOAD_BASE_URL}/${artifact.archiveName}`, {
+        signal: controller.signal,
+      })
+      if (!response.ok || !response.body) {
+        throw new Error(`Failed to download uv: HTTP ${response.status}`)
+      }
+      await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+      let downloadedBytes = 0
+      const hash = createHash('sha256')
+      const tracker = new Transform({
+        transform: (chunk: Buffer, _encoding, callback) => {
+          downloadedBytes += chunk.length
+          hash.update(chunk)
+          this.currentStatus = this.statusValue('downloading', {
+            downloadedBytes,
+            totalBytes: artifact.archiveBytes,
+          })
+          callback(null, chunk)
+        },
+      })
+      await pipeline(
+        Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
+        tracker,
+        createWriteStream(destination, { mode: 0o600 })
       )
-    }
-    if (actualSha256 !== artifact.archiveSha256) {
-      throw new Error('uv archive checksum mismatch')
+      const actualSha256 = hash.digest('hex')
+      if (downloadedBytes !== artifact.archiveBytes) {
+        throw new Error(
+          `uv archive size mismatch: expected ${artifact.archiveBytes}, received ${downloadedBytes}`
+        )
+      }
+      if (actualSha256 !== artifact.archiveSha256) {
+        throw new Error('uv archive checksum mismatch')
+      }
+    } catch (error) {
+      if (timedOut) {
+        throw new Error(`uv download timed out after ${this.downloadTimeoutMs}ms`, {
+          cause: error,
+        })
+      }
+      throw error
+    } finally {
+      clearTimeout(timeout)
     }
   }
 
