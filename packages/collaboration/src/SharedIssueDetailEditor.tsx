@@ -796,6 +796,7 @@ export function TodoEditor(props: TodoEditorProps) {
   initialTaskBindingsRef.current = props.initialTaskBindings;
   const taskBindingsRequestIdRef = useRef(0);
   const deliveriesRequestIdRef = useRef(0);
+  const currentDeliveryRequestIdRef = useRef(0);
   const selectedDeliveryRequestIdRef = useRef(0);
   const attachmentsRequestIdRef = useRef(0);
   const visibleAttachments = useMemo(() => {
@@ -868,12 +869,9 @@ export function TodoEditor(props: TodoEditorProps) {
       // Independent detail sources fail closed without hiding available data.
     }
   }, [editItemId, editorPort]);
-  const refreshExecutionArtifacts = useCallback(
-    async () => {
-      await Promise.all([refreshTaskBindings(), refreshDeliveries()]);
-    },
-    [refreshDeliveries, refreshTaskBindings],
-  );
+  const refreshExecutionArtifacts = useCallback(async () => {
+    await Promise.all([refreshTaskBindings(), refreshDeliveries()]);
+  }, [refreshDeliveries, refreshTaskBindings]);
   const openDelivery = useCallback(
     async (deliveryId: string) => {
       if (editItemId == null) return;
@@ -955,6 +953,7 @@ export function TodoEditor(props: TodoEditorProps) {
     itemLoadGenerationRef.current += 1;
     taskBindingsRequestIdRef.current += 1;
     deliveriesRequestIdRef.current += 1;
+    currentDeliveryRequestIdRef.current += 1;
     selectedDeliveryRequestIdRef.current += 1;
     attachmentsRequestIdRef.current += 1;
     setDeliveries([]);
@@ -1018,6 +1017,30 @@ export function TodoEditor(props: TodoEditorProps) {
     refreshDeliveries,
     refreshTaskBindings,
   ]);
+
+  useEffect(() => {
+    const requestId = ++currentDeliveryRequestIdRef.current;
+    const currentDeliveryId = item?.current_delivery_id;
+    if (editItemId == null || !currentDeliveryId) return;
+
+    void editorPort.deliveries
+      .get(currentDeliveryId)
+      .then((currentDelivery) => {
+        if (
+          requestId !== currentDeliveryRequestIdRef.current ||
+          loadedEditItemIdRef.current !== editItemId
+        )
+          return;
+        deliveriesRequestIdRef.current += 1;
+        setDeliveries((existing) => [
+          currentDelivery,
+          ...existing.filter((delivery) => delivery.id !== currentDelivery.id),
+        ]);
+      })
+      .catch(() => {
+        // The regular delivery list remains authoritative if hydration fails.
+      });
+  }, [editItemId, editorPort, item?.current_delivery_id]);
 
   const refreshWorkflowPlan = useCallback(() => {
     if (editItemId == null || item?.workflow?.advancement_policy !== "ai")

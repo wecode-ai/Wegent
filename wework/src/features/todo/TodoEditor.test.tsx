@@ -456,6 +456,75 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue('Inspect changes')
   })
 
+  it('hydrates the authoritative current delivery when an external update completes the Issue', async () => {
+    const initialDeliveryList = deferred<{ items: [] }>()
+    const currentDelivery = {
+      id: 'delivery-1',
+      loop_item_id: baseItem.id,
+      created_by_user_id: 1,
+      source_task_binding_id: null,
+      source_task_snapshot: null,
+      status: 'delivered',
+      created_at: '2026-09-15T13:55:16Z',
+      delivered_at: '2026-09-15T13:55:16Z',
+      markdown: '',
+      chat: null,
+      assets: [
+        {
+          id: 'asset-1',
+          kind: 'file',
+          display_name: 'result.txt',
+          relative_path: 'result.txt',
+          content_type: 'text/plain',
+          size_bytes: 6,
+          sha256: 'sha256',
+        },
+      ],
+      fulfillments: [],
+    }
+    const deliveryApi = {
+      ...api,
+      listDeliveries: vi.fn(() => initialDeliveryList.promise),
+      getDelivery: vi.fn(async () => currentDelivery),
+    } as never
+    const renderEditor = (item: CloudLoopItem) => (
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={deliveryApi}
+        currentUserId={1}
+      />
+    )
+    const view = render(renderEditor(baseItem))
+
+    view.rerender(
+      renderEditor({
+        ...baseItem,
+        status: 'completed',
+        current_delivery_id: currentDelivery.id,
+        version: 2,
+      })
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
+    expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent(
+      '交付结果 · 1 个附件'
+    )
+    expect(deliveryApi.getDelivery).toHaveBeenCalledWith(currentDelivery.id)
+
+    await act(async () => {
+      initialDeliveryList.resolve({ items: [] })
+      await initialDeliveryList.promise
+    })
+
+    expect(screen.getByTestId('todo-detail-deliveries')).toHaveTextContent('交付结果 · 1 个附件')
+  })
+
   it('hydrates placeholder fields when the same issue version finishes loading', () => {
     const placeholder = { ...baseItem, title: '', description: '' }
     const view = render(editorElement(placeholder))

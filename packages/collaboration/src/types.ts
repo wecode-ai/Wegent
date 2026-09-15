@@ -103,6 +103,7 @@ export interface CollaborationIssue {
   due_at: string | null;
   tags: string[];
   sort_order: number;
+  current_delivery_id?: string | null;
   version: number;
   created_at: string;
   updated_at: string;
