@@ -128,7 +128,7 @@ export function TemporaryChatPanel({
   projectWorkBarTrailingContext,
   onRestoreConversation,
   initialScrollPosition = 'restore',
-  scrollOrigin = 'top',
+  scrollOrigin = 'bottom',
   onOpenRuntimeTask,
 }: TemporaryChatPanelProps) {
   const { t } = useTranslation('common')

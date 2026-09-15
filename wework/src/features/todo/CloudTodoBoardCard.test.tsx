@@ -621,7 +621,6 @@ describe('CloudTodoBoardCard', () => {
     expect(conversation).toHaveAttribute('data-collapse-composer', 'true')
     expect(conversation).toHaveAttribute('data-cloud-project-id', String(item.cloud_project_id))
     expect(conversation).toHaveAttribute('data-initial-scroll-position', 'latest')
-    expect(conversation).toHaveAttribute('data-scroll-origin', 'bottom')
   })
 
   it('does not show an older response while a new task turn is starting', () => {

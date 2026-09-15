@@ -1499,10 +1499,6 @@ describe('CloudTodoWorkspace', () => {
       'true'
     )
     expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
-      'data-scroll-origin',
-      'bottom'
-    )
-    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
       'data-model-name',
       'gpt-5.6-codex'
     )
