@@ -1107,6 +1107,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const environmentInfoPinned = environmentInfoVisibility.pinned
   const environmentInfoOverlayOpen = environmentInfoVisibility.overlayOpen
   const paneActiveRef = useRef(paneActive)
+  const routedBrowserOpenRequestIdRef = useRef<string | null>(null)
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appPreferences = useAppPreferencesState()
   const appearanceContext = useOptionalAppearance()
@@ -3755,7 +3756,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => window.removeEventListener('keydown', focusComposerForPasteShortcut)
   }, [hasConversation, paneActive, paneVisible, workbenchVisible])
   const routeEmbeddedBrowserOpenRequest = useCallback(
-    (request: EmbeddedBrowserOpenRequest) => {
+    (request: EmbeddedBrowserOpenRequest, assignedToPane = false) => {
       const states = browserStatesRef.current
       const targetByLabel = findBrowserTabByPopupParent(
         states,
@@ -3764,7 +3765,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const requestBaseLabel = request.baseLabel || request.label || DEFAULT_EMBEDDED_BROWSER_LABEL
       const baseLabelMatchesPane =
         requestBaseLabel === defaultEmbeddedBrowserLabel ||
-        (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL && paneActiveRef.current) ||
+        (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL && assignedToPane) ||
         Boolean(targetByLabel)
       if (!baseLabelMatchesPane) {
         logBrowserOpenDiagnostic('routeRequestDropped', {
@@ -3809,13 +3810,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   useEffect(() => {
     if (!pendingBrowserOpenRequest) return
+    if (routedBrowserOpenRequestIdRef.current === pendingBrowserOpenRequest.id) return
+    routedBrowserOpenRequestIdRef.current = pendingBrowserOpenRequest.id
     logBrowserOpenDiagnostic('openRequestReceived', {
       requestId: pendingBrowserOpenRequest.id,
       url: pendingBrowserOpenRequest.url,
       label: pendingBrowserOpenRequest.label ?? null,
       source: pendingBrowserOpenRequest.source ?? null,
     })
-    routeEmbeddedBrowserOpenRequest(pendingBrowserOpenRequest)
+    routeEmbeddedBrowserOpenRequest(pendingBrowserOpenRequest, true)
   }, [pendingBrowserOpenRequest, routeEmbeddedBrowserOpenRequest])
   useEffect(() => {
     if (!pendingBrowserOpenRequest) return

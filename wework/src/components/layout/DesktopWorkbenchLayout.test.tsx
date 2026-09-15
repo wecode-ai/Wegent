@@ -12527,6 +12527,56 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('keeps a default browser request assigned to the task active when it arrived', async () => {
+    runtimeMocks.electron = true
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+    desktopHostMocks.invoke.mockClear()
+
+    act(() => {
+      desktopHostMocks.emit({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 1,
+          type: 'open-request',
+          payload: {
+            id: 'user-open-before-task-switch',
+            baseLabel: 'workspace-browser',
+            source: 'user',
+            disposition: 'new-tab',
+            label: 'workspace-browser',
+            url: 'https://example.com/',
+          },
+        },
+      })
+      rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+    })
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-runtime-a',
+          url: 'https://example.com/',
+          visible: false,
+        })
+      )
+    })
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith(
+      'browser.open',
+      expect.objectContaining({
+        label: 'workspace-browser-runtime-a-2',
+      })
+    )
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith(
+      'browser.open',
+      expect.objectContaining({
+        label: 'workspace-browser-runtime-b',
+      })
+    )
+  })
+
   test('preserves the open file when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     const workspaceFileApi = {
