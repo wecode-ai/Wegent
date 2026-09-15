@@ -25,7 +25,11 @@ from knowledge_engine.embedding.vectors import (
 )
 from knowledge_engine.query.executor import QueryExecutor
 from knowledge_engine.services.document_service import DocumentService
-from knowledge_engine.storage.errors import IndexContractIncompatibleError
+from knowledge_engine.storage.errors import (
+    IndexContractIncompatibleError,
+    IndexMissingError,
+    IndexRollbackError,
+)
 from shared.models import RetrievalScope
 
 from .conftest import MilvusContractEnv
@@ -277,38 +281,77 @@ def test_query_and_delete_of_missing_index_create_nothing(
 def test_partial_write_is_not_queryable(
     milvus_env: MilvusContractEnv, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A write that fails before publication leaves no retrievable content."""
+    """A failed write never leaves retrievable content, at either stage."""
     from knowledge_engine.storage.milvus_backend import MilvusBackend
 
-    knowledge_id = milvus_env.new_knowledge_id()
-    backend = milvus_env.backend()
+    for failing_stage in ("write", "publish"):
+        knowledge_id = milvus_env.new_knowledge_id()
+        backend = milvus_env.backend()
 
-    def fail_on_write_stage(self, collection_name, filter_expr, *, expected, stage):
-        if stage == "write":
-            raise RuntimeError("simulated partial write failure")
-        return None
+        def fail_on_stage(self, collection_name, filter_expr, *, expected, stage):
+            if stage == failing_stage:
+                raise RuntimeError(f"simulated {failing_stage} failure")
+            return None
 
-    monkeypatch.setattr(MilvusBackend, "_assert_visible_row_count", fail_on_write_stage)
+        monkeypatch.setattr(MilvusBackend, "_assert_visible_row_count", fail_on_stage)
 
-    with pytest.raises(RuntimeError):
-        _index_document(
+        with pytest.raises((RuntimeError, IndexRollbackError)):
+            _index_document(
+                milvus_env,
+                knowledge_id=knowledge_id,
+                document_id=505,
+                text="half written content must never be visible",
+                dimension=1536,
+                backend=backend,
+            )
+
+        monkeypatch.undo()
+        hits = _query(
             milvus_env,
             knowledge_id=knowledge_id,
-            document_id=505,
-            text="half written content must never be visible",
+            query="half written content",
             dimension=1536,
             backend=backend,
         )
+        assert (
+            hits["records"] == []
+        ), f"content stayed visible after {failing_stage} failure"
 
-    monkeypatch.undo()
-    hits = _query(
+
+def test_confirmed_index_loss_is_not_reported_as_an_empty_knowledge_base(
+    milvus_env: MilvusContractEnv,
+) -> None:
+    """A published index that disappears must fail, not return empty."""
+    from pymilvus import MilvusClient
+
+    knowledge_id = milvus_env.new_knowledge_id()
+    backend, model, _ = _index_document(
         milvus_env,
         knowledge_id=knowledge_id,
-        query="half written content",
+        document_id=1101,
+        text="content whose physical index will be dropped",
         dimension=1536,
-        backend=backend,
     )
-    assert hits["records"] == []
+
+    client = MilvusClient(uri=milvus_env.uri)
+    try:
+        client.drop_collection(backend.get_index_name(knowledge_id))
+    finally:
+        client.close()
+
+    with pytest.raises(IndexMissingError):
+        _query(
+            milvus_env,
+            knowledge_id=knowledge_id,
+            query="content whose physical index",
+            dimension=1536,
+            backend=backend,
+            model=model,
+        )
+    with pytest.raises(IndexMissingError):
+        backend.get_all_chunks(knowledge_id)
+    # Deleting a document stays idempotent even when the physical index is gone.
+    assert backend.delete_document(knowledge_id, "1101")["deleted_chunks"] == 0
 
 
 def test_invalid_vectors_never_publish(

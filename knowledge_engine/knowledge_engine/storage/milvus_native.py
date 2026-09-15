@@ -25,6 +25,7 @@ from pymilvus import CollectionSchema, DataType, FieldSchema, MilvusClient
 
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
+    IndexMissingError,
     StorageBackendError,
 )
 
@@ -75,6 +76,9 @@ ROW_OUTPUT_FIELDS: List[str] = [
 
 INDEX_BINDING_COLLECTION = "wegent_index_bindings"
 BINDING_VECTOR_FIELD = "binding_vector"
+BINDING_STATE_FIELD = "state"
+BINDING_STATE_CREATING = "creating"
+BINDING_STATE_READY = "ready"
 CONCURRENT_BINDING_TIMEOUT_SECONDS = 5.0
 CONCURRENT_BINDING_POLL_SECONDS = 0.05
 
@@ -91,6 +95,8 @@ class MilvusIndexBinding:
     dimension: int
     metric_type: str
     index_type: str
+    # Reserved for the analyzer-backed sparse slice; empty for dense-only.
+    analyzer: str = ""
 
     def to_payload(self) -> Dict[str, Any]:
         return asdict(self)
@@ -111,6 +117,7 @@ class MilvusIndexBinding:
             dimension=int(payload["dimension"]),
             metric_type=str(payload["metric_type"]),
             index_type=str(payload["index_type"]),
+            analyzer=str(payload.get("analyzer") or ""),
         )
 
     @classmethod
@@ -133,6 +140,7 @@ class MilvusIndexBinding:
             "dimension",
             "metric_type",
             "index_type",
+            "analyzer",
         ):
             if getattr(self, field) != getattr(other, field):
                 raise IndexContractIncompatibleError(
@@ -300,8 +308,14 @@ def build_binding_collection_schema() -> CollectionSchema:
         FieldSchema(
             name="index_type", dtype=DataType.VARCHAR, max_length=MAX_KEY_LENGTH
         ),
+        FieldSchema(name="analyzer", dtype=DataType.VARCHAR, max_length=MAX_KEY_LENGTH),
         FieldSchema(
             name="binding_json", dtype=DataType.VARCHAR, max_length=MAX_TEXT_LENGTH
+        ),
+        FieldSchema(
+            name=BINDING_STATE_FIELD,
+            dtype=DataType.VARCHAR,
+            max_length=MAX_KEY_LENGTH,
         ),
         # Milvus requires every collection to own a vector field. This
         # placeholder is never searched; the registry only answers filters.
@@ -399,21 +413,34 @@ class MilvusDocumentStore:
     def read_binding(
         self, client: MilvusClient, collection_name: str
     ) -> MilvusIndexBinding | None:
-        """Read the stored contract without creating any resource."""
+        binding, _ = self.read_binding_entry(client, collection_name)
+        return binding
+
+    def read_binding_entry(
+        self, client: MilvusClient, collection_name: str
+    ) -> tuple[MilvusIndexBinding | None, str | None]:
+        """Read the stored contract and its lifecycle state, creating nothing."""
         if not client.has_collection(INDEX_BINDING_COLLECTION):
-            return None
+            return None, None
         rows = client.query(
             collection_name=INDEX_BINDING_COLLECTION,
             filter=f'collection_name == "{sanitize_filter_value(collection_name)}"',
-            output_fields=["binding_json"],
+            output_fields=["binding_json", BINDING_STATE_FIELD],
             limit=1,
             consistency_level="Strong",
         )
         if not rows:
-            return None
-        return MilvusIndexBinding.from_row(rows[0])
+            return None, None
+        state = rows[0].get(BINDING_STATE_FIELD)
+        return MilvusIndexBinding.from_row(rows[0]), (str(state) if state else None)
 
-    def write_binding(self, client: MilvusClient, binding: MilvusIndexBinding) -> None:
+    def write_binding(
+        self,
+        client: MilvusClient,
+        binding: MilvusIndexBinding,
+        *,
+        state: str = BINDING_STATE_READY,
+    ) -> None:
         if not client.has_collection(INDEX_BINDING_COLLECTION):
             index_params = client.prepare_index_params()
             index_params.add_index(
@@ -432,6 +459,7 @@ class MilvusDocumentStore:
                     raise
         row = binding.to_row()
         row[BINDING_VECTOR_FIELD] = [0.0]
+        row[BINDING_STATE_FIELD] = state
         client.upsert(
             collection_name=INDEX_BINDING_COLLECTION,
             data=[row],
@@ -446,20 +474,44 @@ class MilvusDocumentStore:
         dimension: int,
         embedding_space: str,
     ) -> MilvusIndexBinding:
-        """Create the index if absent, otherwise verify the bound contract."""
+        """Create or repair the index, then verify the bound contract.
+
+        A creation intent is persisted before the collection is created, so a
+        process that dies between the two steps can be repaired by retrying
+        with the same contract instead of leaving an unusable collection.
+        """
         requested = self.build_binding(
             collection_name,
             dimension=dimension,
             embedding_space=embedding_space,
         )
-        if client.has_collection(collection_name):
-            return self._verify_existing(client, requested)
+        bound, state = self.read_binding_entry(client, collection_name)
+        collection_exists = client.has_collection(collection_name)
+
+        if bound is None:
+            if collection_exists:
+                # Unknown collection: never adopted, overwritten or dropped.
+                raise IndexContractIncompatibleError(
+                    collection_name,
+                    "the collection has no stored index contract",
+                )
+            self.write_binding(client, requested, state=BINDING_STATE_CREATING)
+        else:
+            bound.assert_compatible(requested)
+            if collection_exists:
+                self._assert_collection_dimension(client, requested)
+                if state != BINDING_STATE_READY:
+                    self.write_binding(client, requested, state=BINDING_STATE_READY)
+                return bound
+            if state == BINDING_STATE_READY:
+                raise IndexMissingError(
+                    collection_name,
+                    "the bound collection confirmed earlier is gone",
+                )
 
         if self._create_collection(client, requested):
-            # Only the creating process writes the binding, so a losing racer
-            # can never publish a contract that disagrees with the collection.
             self._assert_collection_dimension(client, requested)
-            self.write_binding(client, requested)
+            self.write_binding(client, requested, state=BINDING_STATE_READY)
             return requested
         return self._await_binding(client, requested)
 
@@ -469,12 +521,13 @@ class MilvusDocumentStore:
         """Re-read a concurrently created collection until its contract lands."""
         deadline = time.monotonic() + CONCURRENT_BINDING_TIMEOUT_SECONDS
         while True:
-            if self.read_binding(client, requested.collection_name) is not None:
+            binding, state = self.read_binding_entry(client, requested.collection_name)
+            if binding is not None and state == BINDING_STATE_READY:
                 return self._verify_existing(client, requested)
             if time.monotonic() >= deadline:
                 raise IndexContractIncompatibleError(
                     requested.collection_name,
-                    "the collection has no stored index contract",
+                    "the collection has no confirmed index contract",
                 )
             time.sleep(CONCURRENT_BINDING_POLL_SECONDS)
 

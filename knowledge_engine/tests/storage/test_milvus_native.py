@@ -6,8 +6,13 @@
 
 import pytest
 
-from knowledge_engine.storage.errors import IndexContractIncompatibleError
+from knowledge_engine.storage.errors import (
+    IndexContractIncompatibleError,
+    IndexMissingError,
+)
 from knowledge_engine.storage.milvus_native import (
+    BINDING_STATE_CREATING,
+    BINDING_STATE_READY,
     DENSE_VECTOR_FIELD,
     METRIC_TYPE,
     MilvusDocumentStore,
@@ -188,3 +193,94 @@ def test_client_is_closed_when_the_operation_raises():
             raise RuntimeError("boom")
 
     assert created[0].closed is True
+
+
+class _CollectionClient:
+    """Minimal client stub for index-creation state transitions."""
+
+    def __init__(self, *, collection_exists: bool) -> None:
+        self.collection_exists = collection_exists
+
+    def has_collection(self, collection_name: str) -> bool:
+        return self.collection_exists
+
+
+def _store_for_state(binding, state, *, collection_exists: bool):
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+    store.read_binding_entry = lambda client, name: (binding, state)
+    store._assert_collection_dimension = lambda client, requested: None
+    written: list[str] = []
+    store.write_binding = (
+        lambda client, requested, *, state=BINDING_STATE_READY: written.append(state)
+    )
+    created: list[str] = []
+    store._create_collection = (
+        lambda client, requested: created.append(requested.collection_name) or True
+    )
+    return store, written, created
+
+
+def test_ensure_index_repairs_an_unconfirmed_creation_on_retry():
+    """A crash between collection creation and ready must be retryable."""
+    binding = _binding()
+    store, written, _ = _store_for_state(
+        binding, BINDING_STATE_CREATING, collection_exists=True
+    )
+
+    result = store.ensure_index(
+        _CollectionClient(collection_exists=True),
+        binding.collection_name,
+        dimension=binding.dimension,
+        embedding_space=binding.embedding_space,
+    )
+
+    assert result == binding
+    assert written == [BINDING_STATE_READY]
+
+
+def test_ensure_index_persists_the_intent_before_creating():
+    """The creation intent is durable, so an interrupted create can be retried."""
+    binding = _binding()
+    store, written, created = _store_for_state(None, None, collection_exists=False)
+
+    store.ensure_index(
+        _CollectionClient(collection_exists=False),
+        binding.collection_name,
+        dimension=binding.dimension,
+        embedding_space=binding.embedding_space,
+    )
+
+    assert written == [BINDING_STATE_CREATING, BINDING_STATE_READY]
+    assert created == [binding.collection_name]
+
+
+def test_ensure_index_still_rejects_an_unknown_collection():
+    """A collection with no stored contract is never adopted automatically."""
+    binding = _binding()
+    store, written, _ = _store_for_state(None, None, collection_exists=True)
+
+    with pytest.raises(IndexContractIncompatibleError):
+        store.ensure_index(
+            _CollectionClient(collection_exists=True),
+            binding.collection_name,
+            dimension=binding.dimension,
+            embedding_space=binding.embedding_space,
+        )
+
+    assert written == []
+
+
+def test_ensure_index_reports_a_missing_confirmed_index():
+    """A ready contract whose collection disappeared must fail loudly."""
+    binding = _binding()
+    store, _, _ = _store_for_state(
+        binding, BINDING_STATE_READY, collection_exists=False
+    )
+
+    with pytest.raises(IndexMissingError):
+        store.ensure_index(
+            _CollectionClient(collection_exists=False),
+            binding.collection_name,
+            dimension=binding.dimension,
+            embedding_space=binding.embedding_space,
+        )

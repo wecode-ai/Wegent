@@ -54,3 +54,40 @@ class UnsupportedStorageCapabilityError(StorageBackendError):
             f"Storage backend '{backend}' does not support '{capability}' yet.",
             details={"capability": capability, "backend": backend},
         )
+
+
+class IndexMissingError(StorageBackendError):
+    """Raised when a confirmed physical index disappeared from the service."""
+
+    code = "index_missing"
+    retryable = False
+
+    def __init__(self, collection_name: str, reason: str) -> None:
+        super().__init__(
+            f"Milvus index '{collection_name}' is missing: {reason}. "
+            "A knowledge base with a confirmed index must not degrade into an "
+            "empty result; this needs an operational decision.",
+            details={"collection_name": collection_name, "reason": reason},
+        )
+
+
+class IndexRollbackError(StorageBackendError):
+    """Raised when a failed publication could not be rolled back."""
+
+    code = "index_rollback_failed"
+    retryable = True
+
+    def __init__(
+        self,
+        collection_name: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = {"collection_name": collection_name}
+        merged_details.update(details or {})
+        super().__init__(
+            f"Milvus index '{collection_name}' could not be rolled back after a "
+            "failed publication; the index may be visible while the business "
+            "state says the write failed. Re-run the same execution.",
+            details=merged_details,
+        )

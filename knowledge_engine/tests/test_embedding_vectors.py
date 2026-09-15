@@ -124,3 +124,32 @@ def test_compute_embedding_space_differs_across_models():
     second.model_name = "text-embedding-3-large"
 
     assert compute_embedding_space(first) != compute_embedding_space(second)
+
+
+def test_compute_embedding_space_differs_across_providers():
+    """Same model name and dimension from different providers is a new space."""
+    first = _FakeEmbedModel([], configured_dimension=1536)
+    first.model_name = "shared-model-name"
+    first.api_url = "https://provider-a.test/v1/embeddings"
+    second = _FakeEmbedModel([], configured_dimension=1536)
+    second.model_name = "shared-model-name"
+    second.api_url = "https://provider-b.test/v1/embeddings"
+
+    assert compute_embedding_space(first) != compute_embedding_space(second)
+
+
+def test_compute_embedding_space_ignores_endpoint_credentials():
+    """Rotating keys or userinfo must not change the space digest."""
+    with_credentials = _FakeEmbedModel([], configured_dimension=1536)
+    with_credentials.model_name = "shared-model-name"
+    with_credentials.api_url = (
+        "https://user:secret@provider-a.test/v1/embeddings?api-version=1"
+    )
+    without_credentials = _FakeEmbedModel([], configured_dimension=1536)
+    without_credentials.model_name = "shared-model-name"
+    without_credentials.api_url = "https://provider-a.test/v1/embeddings"
+
+    assert compute_embedding_space(with_credentials) == compute_embedding_space(
+        without_credentials
+    )
+    assert "secret" not in compute_embedding_space(with_credentials)

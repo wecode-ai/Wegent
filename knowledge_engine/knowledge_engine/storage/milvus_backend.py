@@ -39,6 +39,8 @@ from knowledge_engine.storage.base import (
 )
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import (
+    IndexMissingError,
+    IndexRollbackError,
     StorageBackendError,
     UnsupportedStorageCapabilityError,
 )
@@ -221,6 +223,9 @@ class MilvusBackend(BaseStorageBackend):
             published_filter=self._execution_filter(
                 knowledge_id, doc_ref, attempt_id, published=True
             ),
+            execution_filter=self._execution_filter(
+                knowledge_id, doc_ref, attempt_id, published=False
+            ),
         )
 
         logger.info(
@@ -272,16 +277,59 @@ class MilvusBackend(BaseStorageBackend):
         rows: List[Dict[str, Any]],
         *,
         published_filter: str,
+        execution_filter: str,
     ) -> None:
-        """Publish a fully written execution and verify its visibility."""
-        with self._store.client() as client:
-            self._store.upsert_rows(
-                client, collection_name, self._with_publication(rows, published=True)
+        """Publish a fully written execution and verify its visibility.
+
+        The publication write is the last mutation of the write path, so a
+        failure afterwards is rolled back by removing this execution's rows:
+        the caller sees the failure and the index does not stay readable for a
+        document the business state never marked successful.
+        """
+        try:
+            with self._store.client() as client:
+                self._store.upsert_rows(
+                    client,
+                    collection_name,
+                    self._with_publication(rows, published=True),
+                )
+                self._store.flush(client, collection_name)
+            self._assert_visible_row_count(
+                collection_name, published_filter, expected=len(rows), stage="publish"
             )
-            self._store.flush(client, collection_name)
-        self._assert_visible_row_count(
-            collection_name, published_filter, expected=len(rows), stage="publish"
-        )
+        except Exception as publish_error:
+            self._rollback_failed_publication(
+                collection_name, execution_filter, publish_error
+            )
+
+    def _rollback_failed_publication(
+        self,
+        collection_name: str,
+        execution_filter: str,
+        publish_error: Exception,
+    ) -> None:
+        """Remove a failed execution and re-raise the original failure."""
+        try:
+            with self._store.client() as client:
+                self._store.delete_rows(client, collection_name, execution_filter)
+            with self._store.client() as reader:
+                remaining = self._store.count_rows(
+                    reader, collection_name, execution_filter
+                )
+            if remaining:
+                raise StorageBackendError(
+                    "Milvus publication rollback left rows behind.",
+                    details={
+                        "collection_name": collection_name,
+                        "remaining": remaining,
+                    },
+                )
+        except Exception as rollback_error:
+            raise IndexRollbackError(
+                collection_name,
+                details={"rollback_error": str(rollback_error)},
+            ) from publish_error
+        raise publish_error
 
     def _resolve_generation(self, kwargs: Dict[str, Any]) -> int:
         generation = kwargs.get("index_generation")
@@ -457,11 +505,7 @@ class MilvusBackend(BaseStorageBackend):
         # An empty knowledge base answers empty without calling the embedding
         # provider: only a real index justifies a provider request.
         with self._store.client() as client:
-            if self._store.require_bound(client, collection_name) is None:
-                logger.info(
-                    "[Milvus] Query on missing index returns empty: collection=%s",
-                    collection_name,
-                )
+            if self._index_is_absent(client, collection_name):
                 return {"records": []}
 
         resolved_queries = resolve_search_queries(query, retrieval_setting)
@@ -475,7 +519,10 @@ class MilvusBackend(BaseStorageBackend):
                 embedding_space=compute_embedding_space(embed_model),
             )
             if binding is None:
-                return {"records": []}
+                raise IndexMissingError(
+                    collection_name,
+                    "the bound collection disappeared during the query",
+                )
             hits = self._store.search(
                 client,
                 collection_name,
@@ -840,9 +887,8 @@ class MilvusBackend(BaseStorageBackend):
     ) -> List[Dict[str, Any]]:
         """Read published rows without ever creating or adopting a collection."""
         with self._store.client() as client:
-            if not self._store.has_collection(client, collection_name):
+            if self._index_is_absent(client, collection_name):
                 return []
-            self._store.require_bound(client, collection_name)
             return self._store.query_rows(
                 client,
                 collection_name,
@@ -850,6 +896,29 @@ class MilvusBackend(BaseStorageBackend):
                 output_fields=output_fields,
                 limit=limit,
             )
+
+    def _index_is_absent(self, client: MilvusClient, collection_name: str) -> bool:
+        """Distinguish a never-indexed knowledge base from a lost index.
+
+        No stored contract and no collection means the knowledge base was
+        never indexed, which is a valid empty result. A stored contract whose
+        collection is gone is a service fault and must not degrade into empty.
+        """
+        binding = self._store.read_binding(client, collection_name)
+        exists = self._store.has_collection(client, collection_name)
+        if binding is None and not exists:
+            logger.info(
+                "[Milvus] Query on never-indexed knowledge base returns empty: %s",
+                collection_name,
+            )
+            return True
+        if binding is not None and not exists:
+            raise IndexMissingError(
+                collection_name,
+                "a confirmed index contract exists but its collection is gone",
+            )
+        self._store.require_bound(client, collection_name)
+        return False
 
     @staticmethod
     def _build_parent_node_filter_expr(knowledge_id: str, doc_ref: str) -> str:

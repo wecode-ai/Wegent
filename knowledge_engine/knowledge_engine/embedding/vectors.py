@@ -56,7 +56,7 @@ class InvalidEmbeddingVectorError(VectorPreparationError):
         super().__init__(f"Embedding provider returned an invalid vector: {reason}.")
 
 
-def prepare_text_vectors(embed_model, texts: Sequence[str]) -> list[list[float]]:
+def prepare_text_vectors(embed_model: Any, texts: Sequence[str]) -> list[list[float]]:
     """Embed retrieval texts and validate the resulting vectors.
 
     An empty batch never reaches the provider; a document with no indexable
@@ -73,7 +73,7 @@ def prepare_text_vectors(embed_model, texts: Sequence[str]) -> list[list[float]]
         expected_dimension=_configured_dimension(embed_model),
         model_name=read_model_name(embed_model),
     )
-    return _normalize_vectors(vectors, dimension)
+    return _coerce_float_vectors(vectors, dimension)
 
 
 def validate_vectors(
@@ -114,7 +114,7 @@ def validate_vectors(
     return dimension
 
 
-def prepare_query_vector(embed_model, query: str) -> list[float]:
+def prepare_query_vector(embed_model: Any, query: str) -> list[float]:
     """Embed one retrieval query with the query-side embedding entry point."""
     vector = embed_model.get_query_embedding(query)
     validate_vectors(
@@ -139,24 +139,24 @@ def _validate_components(vector: Sequence[Any]) -> None:
         raise InvalidEmbeddingVectorError("vector must not have a zero norm")
 
 
-def _normalize_vectors(vectors: Iterable[Any], dimension: int) -> list[list[float]]:
-    normalized: list[list[float]] = []
+def _coerce_float_vectors(vectors: Iterable[Any], dimension: int) -> list[list[float]]:
+    coerced: list[list[float]] = []
     for vector in vectors:
         values = [float(value) for value in vector]
         if len(values) != dimension:
             raise InvalidEmbeddingVectorError(
                 "vector dimension changed during validation"
             )
-        normalized.append(values)
-    return normalized
+        coerced.append(values)
+    return coerced
 
 
-def _configured_dimension(embed_model) -> int | None:
+def _configured_dimension(embed_model: Any) -> int | None:
     dimension = getattr(embed_model, "_configured_dimension", None)
     return dimension if isinstance(dimension, int) and dimension > 0 else None
 
 
-def read_model_name(embed_model) -> str | None:
+def read_model_name(embed_model: Any) -> str | None:
     """Best-effort read of the provider-facing model identifier."""
     for attribute in ("model_name", "model", "_model_name"):
         value = getattr(embed_model, attribute, None)

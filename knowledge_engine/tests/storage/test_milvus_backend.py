@@ -78,6 +78,10 @@ class FakeStore:
         self.calls.append(("verify_index", collection_name, dimension, embedding_space))
         return self.binding
 
+    def read_binding(self, client, collection_name):
+        self.calls.append(("read_binding", collection_name))
+        return self.binding if self.collection_exists else None
+
     def require_bound(self, client, collection_name):
         self.calls.append(("require_bound", collection_name))
         if not self.collection_exists:
@@ -372,6 +376,32 @@ def test_index_fails_when_published_verification_misses_rows():
         )
 
     assert original_query is not None
+
+
+def test_publish_failure_rolls_back_visibility():
+    """A failure after the publish write must not leave readable content."""
+    backend = _backend()
+    store = FakeStore()
+    backend._store = store
+
+    def fail_on_publish_stage(self, collection_name, filter_expr, *, expected, stage):
+        if stage == "publish":
+            raise RuntimeError("simulated publish verification failure")
+        return None
+
+    backend._assert_visible_row_count = fail_on_publish_stage.__get__(
+        backend, type(backend)
+    )
+
+    with pytest.raises(RuntimeError):
+        backend.index_with_metadata(
+            nodes=_nodes(),
+            chunk_metadata=_chunk_metadata(),
+            embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+        )
+
+    published = [row for row in store.rows if row.get(PUBLISHED_FIELD)]
+    assert published == []
 
 
 def test_retrieve_returns_raw_cosine_scores_above_threshold():
