@@ -605,7 +605,7 @@ export async function createDesktopScenario({
     const appEnvironmentPool = await request(
       `/api/v1/cloud-projects/${project.id}/execution-environments`
     )
-    const appPoolEntry = appEnvironmentPool.items.find(entry => entry.id === appDevice.id)
+    const appPoolEntry = appEnvironmentPool.items.find(entry => entry.device_id === appDevice.id)
     assert.ok(
       appPoolEntry?.device_key,
       'The Wework app device was not added to the project device pool'
