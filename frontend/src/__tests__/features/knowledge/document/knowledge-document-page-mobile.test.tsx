@@ -439,6 +439,7 @@ describe('KnowledgeDocumentPageMobile detail view switch', () => {
         })
       )
     })
+    expect(mockCreateCodeWiki.mock.calls[0][0].allow_document_download).toBeUndefined()
     await waitFor(() => {
       expect(mockTree.refreshPersonal).toHaveBeenCalledTimes(1)
     })

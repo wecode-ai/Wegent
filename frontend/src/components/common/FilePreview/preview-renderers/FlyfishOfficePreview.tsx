@@ -7,7 +7,7 @@
 import FileViewer, { type ViewerOptions, type ViewerState } from '@file-viewer/react'
 import fileViewerPackage from '@file-viewer/react/package.json'
 import officePreset from '@file-viewer/preset-office'
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 
 const FILE_VIEWER_ASSET_BASE = `/file-viewer/${fileViewerPackage.version}-protected-docs-v1`
 
@@ -60,29 +60,41 @@ export function FlyfishOfficePreview({
   )
   const extension = filename.split('.').pop()?.toLowerCase()
   const isPresentation = extension === 'pptx'
-  const viewerOptions = protectedMode
-    ? {
-        ...OFFICE_VIEWER_OPTIONS,
-        toolbar: {
-          ...(typeof OFFICE_VIEWER_OPTIONS.toolbar === 'object'
-            ? OFFICE_VIEWER_OPTIONS.toolbar
-            : {}),
-          download: false,
-          exportHtml: false,
-          print: false,
-          permissions: {
-            download: false,
-            print: false,
-            'export-html': false,
-          },
-        },
-      }
-    : OFFICE_VIEWER_OPTIONS
+  // Keep options and callback identities stable: @file-viewer's React wrapper
+  // reloads the document whenever any of these references changes, which drops
+  // pagination and scroll state. Unmemoized values made every parent
+  // re-render (document-list polling, watermark or protection state updates)
+  // reset the viewer back to the first page while the user was reading.
+  const viewerOptions = useMemo<ViewerOptions>(
+    () =>
+      protectedMode
+        ? {
+            ...OFFICE_VIEWER_OPTIONS,
+            toolbar: {
+              ...(typeof OFFICE_VIEWER_OPTIONS.toolbar === 'object'
+                ? OFFICE_VIEWER_OPTIONS.toolbar
+                : {}),
+              download: false,
+              exportHtml: false,
+              print: false,
+              permissions: {
+                download: false,
+                print: false,
+                'export-html': false,
+              },
+            },
+          }
+        : OFFICE_VIEWER_OPTIONS,
+    [protectedMode]
+  )
 
-  const handleStateChange = (state: ViewerState) => {
-    if (!state.error || !onError) return
-    onError(state.error instanceof Error ? state.error : new Error(String(state.error)))
-  }
+  const handleStateChange = useCallback(
+    (state: ViewerState) => {
+      if (!state.error || !onError) return
+      onError(state.error instanceof Error ? state.error : new Error(String(state.error)))
+    },
+    [onError]
+  )
 
   return (
     <FileViewer

@@ -357,6 +357,7 @@ class KnowledgeService:
         # Build resource data
         resource_data = kb_crd.model_dump()
         if data.allow_document_download is None:
+            # The download policy treats an absent setting as allowed.
             resource_data["spec"].pop("allowDocumentDownload", None)
         if "status" not in resource_data or resource_data["status"] is None:
             resource_data["status"] = {"state": "Available"}

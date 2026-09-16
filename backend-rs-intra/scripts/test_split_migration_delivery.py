@@ -38,6 +38,138 @@ def initialize_repository(path: Path, branch: str) -> None:
 
 
 class SplitMigrationDeliveryTest(unittest.TestCase):
+    def test_rebase_back_squashes_net_traffic_changes_onto_develop(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repository = Path(temporary_directory) / "Wegent-intra"
+            repository.mkdir()
+            initialize_repository(repository, "develop")
+
+            write(repository, "backend-rs-intra/src/lib.rs", "base migration\n")
+            write(
+                repository,
+                "backend-rs-intra/.traffic-e2e/progress.yaml",
+                "base traffic\n",
+            )
+            commit_all(repository, "chore: base")
+
+            run(["git", "switch", "-c", "dev-migration"], repository)
+            write(
+                repository,
+                "backend-rs-intra/.traffic-e2e/progress.yaml",
+                "traffic step one\n",
+            )
+            commit_all(repository, "test: add first traffic step")
+            write(
+                repository,
+                "backend-rs-intra/.traffic-e2e/progress.yaml",
+                "traffic step two\n",
+            )
+            commit_all(repository, "test: add second traffic step")
+            source_sha = run(["git", "rev-parse", "HEAD"], repository).strip()
+
+            run(["git", "switch", "develop"], repository)
+            write(repository, "backend-rs-intra/src/lib.rs", "integrated migration\n")
+            commit_all(repository, "feat: migration merged into develop")
+            develop_sha = run(["git", "rev-parse", "HEAD"], repository).strip()
+            run(["git", "switch", "dev-migration"], repository)
+
+            rewrite_worktree = (
+                repository
+                / "backend-rs-intra/.traffic-e2e/local/rewrite-worktrees/integration"
+            )
+            run(
+                [
+                    "git",
+                    "worktree",
+                    "add",
+                    "--quiet",
+                    "-b",
+                    "integration/rebase-back-test",
+                    str(rewrite_worktree),
+                    "dev-migration",
+                ],
+                repository,
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "rebase-back",
+                    "--intra-repo",
+                    str(repository),
+                    "--source",
+                    "dev-migration",
+                    "--base",
+                    "develop",
+                    "--backup-branch",
+                    "backup/rebase-back-test",
+                ],
+                cwd=repository,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+            )
+
+            self.assertEqual(
+                run(["git", "rev-parse", "dev-migration^"], repository).strip(),
+                develop_sha,
+            )
+            self.assertEqual(
+                run(
+                    [
+                        "git",
+                        "show",
+                        "dev-migration:backend-rs-intra/src/lib.rs",
+                    ],
+                    repository,
+                ),
+                "integrated migration\n",
+            )
+            self.assertEqual(
+                run(
+                    [
+                        "git",
+                        "show",
+                        "dev-migration:backend-rs-intra/.traffic-e2e/progress.yaml",
+                    ],
+                    repository,
+                ),
+                "traffic step two\n",
+            )
+            self.assertEqual(
+                run(
+                    ["git", "rev-list", "--count", "dev-migration"], repository
+                ).strip(),
+                "3",
+            )
+            self.assertEqual(
+                run(
+                    ["git", "show", "-s", "--format=%s", "dev-migration"],
+                    repository,
+                ).strip(),
+                "chore(traffic-e2e): retain migration verification",
+            )
+            self.assertEqual(
+                run(
+                    ["git", "rev-parse", "backup/rebase-back-test"], repository
+                ).strip(),
+                source_sha,
+            )
+            self.assertFalse(rewrite_worktree.exists())
+            self.assertEqual(
+                run(
+                    ["git", "show-ref", "--verify", "--quiet", "refs/heads/integration/rebase-back-test"],
+                    repository,
+                ),
+                "",
+            )
+
     def test_apply_sends_each_path_to_its_expected_destination(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

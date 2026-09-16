@@ -11,6 +11,7 @@ import httpx
 from fastapi import HTTPException
 
 from wecode.config.orphan_pod_config import (
+    EXECUTOR_CLEANUP_STALE_WARMPOOLS_URL,
     EXECUTOR_DELETE_BY_TASK_ID_URL,
     EXECUTOR_DELETE_POD_BY_NAME_URL,
     EXECUTOR_OLD_TASK_IDS_URL,
@@ -197,6 +198,46 @@ async def cleanup_sandbox_by_task_id_async(
         )
 
 
+async def cleanup_stale_warmpools_async(
+    self,
+    grace_period_days: int = 7,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Delete stale SandboxWarmPool CRs via executor_manager.
+
+    A warm pool CR is stale when its sandboxTemplateRef no longer matches the
+    currently deployed executor template and it is older than the grace period.
+    Deleting the CR releases its unbound standby pods; pods bound to tasks are
+    unaffected and stay under the regular orphan pod cleanup.
+    """
+    try:
+        payload = {"grace_period_days": grace_period_days, "dry_run": dry_run}
+        logger.info(
+            "+++ executor.cleanup_stale_warmpools async request url=%s "
+            "grace_period_days=%d dry_run=%s",
+            EXECUTOR_CLEANUP_STALE_WARMPOOLS_URL,
+            grace_period_days,
+            dry_run,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                EXECUTOR_CLEANUP_STALE_WARMPOOLS_URL,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            return _validate_delete_response(response.json(), "cleanup-stale-warmpools")
+    except httpx.HTTPError as e:
+        logger.warning("+++ Failed to cleanup stale warmpools: %s", e)
+        return {
+            "status": "failed",
+            "error_msg": f"Error cleaning up stale warmpools: {e}",
+            "deleted": [],
+            "skipped": [],
+            "failed": [],
+        }
+
+
 def apply_patch():
     """Attach orphan pod cleanup methods to executor_kinds_service."""
     global _patch_applied
@@ -221,6 +262,9 @@ def apply_patch():
     )
     executor_kinds_service.cleanup_sandbox_by_task_id_async = (
         cleanup_sandbox_by_task_id_async.__get__(executor_kinds_service)
+    )
+    executor_kinds_service.cleanup_stale_warmpools_async = (
+        cleanup_stale_warmpools_async.__get__(executor_kinds_service)
     )
 
     _patch_applied = True

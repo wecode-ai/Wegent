@@ -177,12 +177,34 @@ the internal MR has merged:
 
 ```bash
 git fetch origin
-git switch dev-migration
-git rebase origin/develop
+uv run python backend-rs-intra/scripts/split_migration_delivery.py rebase-back \
+  --source dev-migration \
+  --base origin/develop \
+  --output-dir /tmp/wegent-migration-rebase-back
+```
+
+`rebase-back` finds the common ancestor of `dev-migration` and
+`origin/develop`, checks only the source branch's changes since that ancestor,
+rejects any local public, internal, or ignored paths, and creates a backup
+branch. It then resets `dev-migration` to `origin/develop` and reapplies only
+the local traffic-E2E patch as one squashed commit. This is important when
+`develop` has advanced independently or an MR was squash-merged: changes
+already present in `develop` are taken from the new base instead of being
+mistaken for source-branch changes. It does not use or replay the old history
+from `origin/dev-migration`, and it does not push the rewritten branch. Before
+the rewrite, it removes registered, clean Git worktrees below
+`backend-rs-intra/.traffic-e2e/local/rewrite-worktrees`; their branches are
+preserved. If any such worktree has uncommitted changes, the command stops
+before changing the migration branch. Unregistered directories are not
+removed automatically.
+
+Review the generated manifest, then publish the rewritten branch with:
+
+```bash
 git push --force-with-lease origin dev-migration
 ```
 
-At that point `develop` contains the synchronized public code and the internal
-migration code. The rebase should leave only the traffic-E2E commit. If a
-conflict occurs, first determine whether upstream already has an equivalent
-change; do not reintroduce already delivered public or internal files.
+If the command reports a non-traffic difference, stop and deliver or remove
+that path first. If it fails after creating the backup branch, restore the
+source branch from the printed backup branch after reviewing the worktree
+state; do not rerun the command blindly.

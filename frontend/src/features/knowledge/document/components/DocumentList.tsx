@@ -89,9 +89,13 @@ import { getDocumentProtection } from '@/apis/knowledge'
 export { deletedFolderAffectsActiveFolder, folderTreeContainsId }
 export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResourceSelection'
 
-const failClosedDocumentProtection: DocumentProtection = {
-  original_download_allowed: false,
-  watermark_text: null,
+// Seed the protection UI from the KB record the list API already returned; the
+// dedicated protection endpoint refines it (deployment resolver) once it loads.
+function resolveInitialDocumentProtection(knowledgeBase: KnowledgeBase): DocumentProtection {
+  return {
+    original_download_allowed: knowledgeBase.allow_document_download ?? true,
+    watermark_text: null,
+  }
 }
 
 interface DocumentProtectionState {
@@ -281,7 +285,7 @@ export function DocumentList({
   )}`
   const [documentProtectionState, setDocumentProtectionState] = useState<DocumentProtectionState>({
     requestKey: null,
-    protection: failClosedDocumentProtection,
+    protection: resolveInitialDocumentProtection(knowledgeBase),
   })
   const [searchQuery, setSearchQuery] = useState('')
   const [sortField, setSortField] = useState<SortField>('createdAt')
@@ -296,7 +300,7 @@ export function DocumentList({
     let cancelled = false
     setDocumentProtectionState({
       requestKey: null,
-      protection: failClosedDocumentProtection,
+      protection: resolveInitialDocumentProtection(knowledgeBase),
     })
     void getDocumentProtection(knowledgeBase.id)
       .then(protection => {
@@ -311,19 +315,19 @@ export function DocumentList({
         if (!cancelled) {
           setDocumentProtectionState({
             requestKey: null,
-            protection: failClosedDocumentProtection,
+            protection: resolveInitialDocumentProtection(knowledgeBase),
           })
         }
       })
     return () => {
       cancelled = true
     }
-  }, [documentProtectionRequestKey, knowledgeBase.id])
+  }, [documentProtectionRequestKey, knowledgeBase])
 
   const documentProtection =
     documentProtectionState.requestKey === documentProtectionRequestKey
       ? documentProtectionState.protection
-      : failClosedDocumentProtection
+      : resolveInitialDocumentProtection(knowledgeBase)
   const allowDownload = documentProtection.original_download_allowed
 
   // Folder state
