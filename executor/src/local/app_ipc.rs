@@ -2234,17 +2234,6 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .unwrap_or_else(|| params.clone()),
             )
             .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
-            if let Some(status) = input.status.as_deref() {
-                crate::logging::log_executor_event(
-                    "local task status update requested",
-                    &[
-                        ("project_id", project_id.to_owned()),
-                        ("task_id", task_id.to_owned()),
-                        ("status", status.to_owned()),
-                        ("version", input.version.to_string()),
-                    ],
-                );
-            }
             serialize_task_value(
                 runtime
                     .update_task(project_id, task_id, input)
