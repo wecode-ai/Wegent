@@ -1,3 +1,4 @@
+import '@/i18n'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
@@ -17,12 +18,13 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: appVersionMocks.isElectronRuntime,
-  isElectronRuntime: () => false,
   isElectronRuntime: appVersionMocks.isElectronRuntime,
 }))
 
 function renderPage(overrides: Partial<AppUpdateContextValue> = {}) {
   const value: AppUpdateContextValue = {
+    currentVersion: '0.1.0',
+    isUpdateReady: false,
     updateChannel: 'stable',
     autoUpdateEnabled: true,
     availableUpdate: null,
@@ -63,6 +65,21 @@ describe('AboutSettingsPage', () => {
     await waitFor(() => {
       expect(screen.getByTestId('about-app-version')).toHaveTextContent('v2.3.4')
     })
+  })
+
+  test('labels the screenshot scenario as returning to an older stable release', () => {
+    renderPage({
+      currentVersion: '0.5.0-beta.1',
+      status: 'available',
+      availableUpdate: {
+        currentVersion: '0.5.0-beta.1',
+        version: '0.4.3',
+        kind: 'downgrade-to-stable',
+      },
+    })
+    expect(screen.getByTestId('about-check-update-button')).toHaveTextContent('回到正式版 0.4.3')
+    expect(screen.getByTestId('about-update-status')).toHaveTextContent('版本号低于当前版本')
+    expect(screen.queryByText(/发现新版本/)).not.toBeInTheDocument()
   })
 
   test('lets the user opt into Beta and stable updates', () => {

@@ -349,6 +349,24 @@ Give each concurrent worktree a distinct `WEWORK_PORT`. Isolated sessions use
 separate Executor Homes, application-data directories, and single-instance
 locks.
 
+## Client update selection
+
+- A prerelease with Beta updates disabled can return to the latest stable release,
+  regardless of version order. An older stable release is labeled as a return to
+  stable and requires downgrade confirmation before downloading. Automatic updates
+  must never start this download.
+- With Beta enabled, the client reads the beta rolling channel containing both
+  stable and Beta releases and only accepts newer versions. Publishing retains
+  the highest SemVer version across both release types.
+- A stable installation with Beta disabled only accepts newer stable releases.
+  Otherwise, the UI reports that no updates are available.
+
+The Electron host explicitly sets `allowDowngrade` after setting the channel,
+allowing only a prerelease to return to stable. It returns the update kind through
+IPC so About, menus, the sidebar, and the title bar share the same copy. Changing
+channels clears the previous target and confirmation state. Every installation
+requires the user to confirm a restart.
+
 ## GitHub Actions
 
 `.github/workflows/wework-app.yml` supports stable and beta channels, an

@@ -2,13 +2,8 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from './runtime-environment'
 import { getPlatform } from './platform'
 
-export type WeworkUpdateChannel = 'stable' | 'beta'
-
-export interface WeworkUpdateInfo {
-  currentVersion: string
-  version: string
-  body?: string
-}
+import type { WeworkUpdateChannel, WeworkUpdateInfo } from '../../electron/src/host/app-update-info'
+export type { WeworkUpdateChannel, WeworkUpdateInfo } from '../../electron/src/host/app-update-info'
 
 import type { WeworkUpdateDownloadProgress } from '../../electron/src/host/app-update-progress'
 export type { WeworkUpdateDownloadProgress } from '../../electron/src/host/app-update-progress'

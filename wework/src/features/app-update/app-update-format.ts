@@ -1,7 +1,3 @@
-export function formatAppUpdateVersion(template: string, version: string): string {
-  return template.replace('{{version}}', version)
-}
-
 export function calculateAppUpdateDownloadPercent(
   downloadedBytes: number,
   totalBytes: number | null

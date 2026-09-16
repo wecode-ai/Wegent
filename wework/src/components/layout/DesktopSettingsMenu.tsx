@@ -1,3 +1,4 @@
+import { getAppUpdateCopy } from '@/features/app-update/app-update-copy'
 import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import {
   ChevronDown,
@@ -26,10 +27,7 @@ import {
 } from '@/api/wegentUsage'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
-import {
-  calculateAppUpdateDownloadPercent,
-  formatAppUpdateVersion,
-} from '@/features/app-update/app-update-format'
+import { calculateAppUpdateDownloadPercent } from '@/features/app-update/app-update-format'
 import { AppUpdateErrorDetailsDialog } from '@/features/app-update/AppUpdateErrorDetailsDialog'
 import type { AppUpdateError } from '@/features/app-update/app-update-error'
 import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
@@ -175,7 +173,7 @@ export function DesktopSettingsMenu({
   ])
 
   const handleUpdateClick = async () => {
-    if (availableUpdate && installUpdate) {
+    if (updateError?.stage !== 'check' && availableUpdate && installUpdate) {
       await installUpdate()
       return
     }
@@ -183,15 +181,9 @@ export function DesktopSettingsMenu({
     await checkNow?.()
   }
 
-  const updateButtonLabel = availableUpdate
-    ? formatAppUpdateVersion(
-        t('workbench.app_update_install', {
-          defaultValue: '更新到 {{version}}',
-          version: availableUpdate.version,
-        }),
-        availableUpdate.version
-      )
-    : t('workbench.app_update_check', { defaultValue: '检查更新' })
+  const { action: updateButtonLabel, message: updateStatusMessage } = getAppUpdateCopy(appUpdate, t)
+  const updateMessage = updateStatus === 'downloading' ? null : updateStatusMessage
+
   const isUpdateBusy =
     updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'
   const downloadPercent = downloadProgress
@@ -200,22 +192,6 @@ export function DesktopSettingsMenu({
         downloadProgress.totalBytes
       )
     : null
-  const updateMessage =
-    updateStatus === 'downloading' || updateStatus === 'installing'
-      ? null
-      : availableUpdate
-        ? formatAppUpdateVersion(
-            t('workbench.app_update_available', {
-              defaultValue: '发现新版本 {{version}}',
-              version: availableUpdate.version,
-            }),
-            availableUpdate.version
-          )
-        : updateStatus === 'upToDate'
-          ? t('workbench.app_update_up_to_date', {
-              defaultValue: '已是最新版本',
-            })
-          : null
   const downloadMessage =
     updateStatus === 'downloading' ? formatAppUpdateProgress(downloadProgress, t) : null
 

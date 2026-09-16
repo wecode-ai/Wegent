@@ -1,19 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import type { AppUpdater, UpdateInfo } from 'electron-updater'
+import { lt, prerelease } from 'semver'
+import type { WeworkUpdateChannel, WeworkUpdateInfo } from './app-update-info.js'
+export type { WeworkUpdateChannel, WeworkUpdateInfo } from './app-update-info.js'
 import type {
   ComponentDownloadProgress,
   HostDownloadPhase,
   WeworkUpdateDownloadProgress,
 } from './app-update-progress.js'
 export type { WeworkUpdateDownloadProgress } from './app-update-progress.js'
-
-export type WeworkUpdateChannel = 'stable' | 'beta'
-
-export interface WeworkUpdateInfo {
-  currentVersion: string
-  version: string
-  body?: string
-}
 
 interface AppUpdateServiceOptions {
   updater: AppUpdater
@@ -93,6 +88,8 @@ export class AppUpdateService {
 
     this.updater.allowPrerelease = channel === 'beta'
     this.updater.channel = channel === 'beta' ? 'beta' : 'latest'
+    // Setting channel enables downgrades in electron-updater, so override it afterwards.
+    this.updater.allowDowngrade = channel === 'stable' && prerelease(this.currentVersion()) !== null
     this.updater.setFeedURL({
       provider: 'generic',
       url: this.updateBaseUrl,
@@ -102,8 +99,7 @@ export class AppUpdateService {
     try {
       result = await this.updater.checkForUpdates()
     } catch (error) {
-      if (isMissingChannelManifestError(error)) return null
-      throw error
+      if (!isMissingChannelManifestError(error)) throw error
     }
     if (!result?.isUpdateAvailable || !result.updateInfo) {
       if (this.downloadedVersion !== this.pendingVersion) {
@@ -114,7 +110,10 @@ export class AppUpdateService {
       return null
     }
 
-    const update = toWeworkUpdateInfo(this.currentVersion(), result.updateInfo)
+    if (channel === 'stable' && prerelease(result.updateInfo.version) !== null) {
+      throw new Error('The stable update channel must contain a stable release.')
+    }
+    const update = toWeworkUpdateInfo(this.currentVersion(), result.updateInfo, channel)
     if (this.pendingVersion !== update.version || this.pendingChannel !== channel) {
       this.downloadedVersion = null
       this.progress = { downloadedBytes: 0, totalBytes: null }
@@ -250,7 +249,11 @@ function isMissingChannelManifestError(error: unknown): boolean {
   )
 }
 
-function toWeworkUpdateInfo(currentVersion: string, update: UpdateInfo): WeworkUpdateInfo {
+function toWeworkUpdateInfo(
+  currentVersion: string,
+  update: UpdateInfo,
+  channel: WeworkUpdateChannel
+): WeworkUpdateInfo {
   const body =
     typeof update.releaseNotes === 'string'
       ? update.releaseNotes
@@ -261,6 +264,14 @@ function toWeworkUpdateInfo(currentVersion: string, update: UpdateInfo): WeworkU
   return {
     currentVersion,
     version: update.version,
+    kind:
+      channel === 'stable' && prerelease(currentVersion) !== null
+        ? lt(update.version, currentVersion)
+          ? 'downgrade-to-stable'
+          : 'return-to-stable'
+        : prerelease(update.version) !== null
+          ? 'upgrade-beta'
+          : 'upgrade-stable',
     ...(body ? { body } : {}),
   }
 }

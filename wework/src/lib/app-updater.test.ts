@@ -1,3 +1,4 @@
+import '@/i18n'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   checkForWeworkUpdate,
@@ -39,6 +40,7 @@ describe('Wework app updater', () => {
 
   test('checks for updates through the Electron desktop capability', async () => {
     const update = {
+      kind: 'upgrade-stable' as const,
       currentVersion: '0.2.6',
       version: '0.2.7',
       body: 'Changes',
@@ -53,6 +55,7 @@ describe('Wework app updater', () => {
 
   test('downloads and then installs a checked update through Electron capabilities', async () => {
     const update = {
+      kind: 'upgrade-stable' as const,
       currentVersion: '0.2.6',
       version: '0.2.7',
       body: 'Changes',

@@ -25,9 +25,11 @@ export type AppUpdateStatus =
   | 'error'
 
 export interface AppUpdateContextValue {
+  currentVersion: string | null
   updateChannel: WeworkUpdateChannel
   autoUpdateEnabled: boolean
   availableUpdate: WeworkUpdateInfo | null
+  isUpdateReady: boolean
   installedReleaseNotes: WeworkInstalledReleaseNotes | null
   status: AppUpdateStatus
   downloadProgress: WeworkUpdateDownloadProgress | null

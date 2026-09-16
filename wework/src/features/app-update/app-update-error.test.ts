@@ -2,6 +2,19 @@ import { describe, expect, test } from 'vitest'
 import { createAppUpdateError } from './app-update-error'
 
 describe('createAppUpdateError', () => {
+  test('distinguishes a corrupt update from a network download failure', () => {
+    expect(
+      createAppUpdateError(
+        new Error('sha512 checksum mismatch, expected abc, got def'),
+        'download',
+        1
+      )
+    ).toMatchObject({
+      kind: 'verification',
+      code: 'APP_UPDATE_VERIFICATION_FAILED',
+      stage: 'download',
+    })
+  })
   test('classifies network failures without retaining an HTML proxy response', () => {
     const error = createAppUpdateError(
       new Error(

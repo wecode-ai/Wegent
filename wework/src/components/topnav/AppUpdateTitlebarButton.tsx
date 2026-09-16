@@ -1,15 +1,17 @@
+import { getAppUpdateCopy } from '@/features/app-update/app-update-copy'
 import { Download, Loader2 } from 'lucide-react'
 import { useAppUpdate } from '@/features/app-update/app-update-context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 
 export function AppUpdateTitlebarButton() {
-  const { availableUpdate, status, installUpdate } = useAppUpdate()
+  const appUpdate = useAppUpdate()
+  const { availableUpdate, status, installUpdate } = appUpdate
   const { t } = useTranslation('common')
 
   if (!availableUpdate) return null
 
-  const isBusy = status === 'downloading' || status === 'installing'
+  const isBusy = status === 'checking' || status === 'downloading' || status === 'installing'
 
   return (
     <button
@@ -28,15 +30,7 @@ export function AppUpdateTitlebarButton() {
       ) : (
         <Download className="h-3.5 w-3.5" />
       )}
-      <span>
-        {isBusy
-          ? t('workbench.app_update_installing_short', {
-              defaultValue: '更新中',
-            })
-          : t('workbench.app_update_titlebar_button', {
-              defaultValue: '更新',
-            })}
-      </span>
+      <span>{getAppUpdateCopy(appUpdate, t).action}</span>
     </button>
   )
 }

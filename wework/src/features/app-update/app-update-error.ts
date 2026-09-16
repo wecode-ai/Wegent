@@ -1,5 +1,5 @@
 export type AppUpdateErrorStage = 'check' | 'download' | 'install'
-export type AppUpdateErrorKind = 'network' | 'unsupported' | 'generic'
+export type AppUpdateErrorKind = 'network' | 'unsupported' | 'verification' | 'generic'
 
 export interface AppUpdateError {
   stage: AppUpdateErrorStage
@@ -38,12 +38,14 @@ export function createAppUpdateError(
 }
 
 function classifyAppUpdateError(message: string): AppUpdateErrorKind {
+  if (/\bchecksum mismatch\b/i.test(message)) return 'verification'
   if (UNSUPPORTED_ERROR_PATTERN.test(message)) return 'unsupported'
   if (NETWORK_ERROR_PATTERN.test(message)) return 'network'
   return 'generic'
 }
 
 function appUpdateErrorCode(kind: AppUpdateErrorKind, stage: AppUpdateErrorStage): string {
+  if (kind === 'verification') return 'APP_UPDATE_VERIFICATION_FAILED'
   if (kind === 'network') return 'APP_UPDATE_NETWORK_UNAVAILABLE'
   if (kind === 'unsupported') return 'APP_UPDATE_UNAVAILABLE'
   return `APP_UPDATE_${stage.toUpperCase()}_FAILED`

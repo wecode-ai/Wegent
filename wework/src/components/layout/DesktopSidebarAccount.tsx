@@ -1,5 +1,5 @@
+import { getAppUpdateCopy } from '@/features/app-update/app-update-copy'
 import { calculateAppUpdateDownloadPercent } from '@/features/app-update/app-update-format'
-import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import { Download, Loader2, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
@@ -38,13 +38,6 @@ function getSidebarAccountSummary(user: UserProfile | null, fallback: string) {
     label,
     detail,
   }
-}
-
-function formatSidebarTemplate(template: string, values: Record<string, string>) {
-  return Object.entries(values).reduce(
-    (result, [key, value]) => result.replaceAll(`{{${key}}}`, value),
-    template
-  )
 }
 
 function SidebarUpdateDownloadProgress({ progress }: { progress: number }) {
@@ -98,15 +91,8 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
 
   if (!appUpdate || !availableUpdate) return null
 
-  const title = formatSidebarTemplate(
-    t('workbench.app_update_install', {
-      defaultValue: '更新到 {{version}}',
-      version: availableUpdate.version,
-    }),
-    { version: availableUpdate.version }
-  )
-  const downloadTitle = formatAppUpdateProgress(downloadProgress, t)
-  const actionLabel = status === 'downloading' ? downloadTitle : title
+  const copy = getAppUpdateCopy(appUpdate, t)
+  const actionLabel = status === 'downloading' ? copy.message : copy.action
   const button = (
     <button
       ref={buttonRef}

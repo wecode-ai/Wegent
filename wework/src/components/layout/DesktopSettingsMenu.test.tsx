@@ -1,3 +1,5 @@
+import type { WeworkUpdateInfo } from '@/lib/app-updater'
+import '@/i18n'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -12,7 +14,7 @@ const runtimeModeMock = vi.hoisted(() => ({
   isLocalFirstAppRuntime: vi.fn(() => false),
 }))
 let mockUpdateState = {
-  availableUpdate: null as null | { currentVersion: string; version: string },
+  availableUpdate: null as WeworkUpdateInfo | null,
   status: 'idle',
   downloadProgress: null as null | { downloadedBytes: number; totalBytes: number | null },
   error: null as AppUpdateError | null,
@@ -218,6 +220,7 @@ describe('DesktopSettingsMenu', () => {
     mockUpdateState = {
       ...mockUpdateState,
       availableUpdate: {
+        kind: 'upgrade-stable' as const,
         currentVersion: '0.1.0',
         version: '0.1.1',
       },
@@ -228,7 +231,7 @@ describe('DesktopSettingsMenu', () => {
     renderMenu()
 
     const updateButton = screen.getByTestId('check-app-update-button')
-    expect(updateButton).toHaveTextContent('更新到 0.1.1')
+    expect(updateButton).toHaveTextContent('升级到正式版 0.1.1')
 
     await userEvent.click(updateButton)
     expect(mockInstallUpdate).toHaveBeenCalledTimes(1)
@@ -238,6 +241,7 @@ describe('DesktopSettingsMenu', () => {
     mockUpdateState = {
       ...mockUpdateState,
       availableUpdate: {
+        kind: 'upgrade-stable' as const,
         currentVersion: '0.1.0',
         version: '0.1.1',
       },
@@ -300,6 +304,7 @@ describe('DesktopSettingsMenu', () => {
     mockUpdateState = {
       ...mockUpdateState,
       availableUpdate: {
+        kind: 'upgrade-stable' as const,
         currentVersion: '0.1.0',
         version: '0.1.1',
       },
