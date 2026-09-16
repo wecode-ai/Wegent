@@ -16,7 +16,7 @@ After you send a local image, Wework keeps its preview in the message. The image
 
 Pasted Markdown appears as editable content in the composer. Sent messages also render tables, lists, bold text, and code. Use `Shift+Enter` for a new line and `Tab` / `Shift+Tab` to move between table cells.
 
-Hover over a message table to copy its Markdown or expand it; press `Esc` to close the expanded view. Select an HTTP/HTTPS link in the composer to open its actions. Sent links open using your browser preference. Text appended after a pasted link stays separate and does not change its destination.
+Hover over a message table to copy its Markdown or expand it; press `Esc` to close the expanded view. Click an HTTP/HTTPS link in the composer to open its actions. Sent links open using your browser preference. Text appended after a pasted link stays separate and does not change its destination.
 
 ## Add a conversation to a project-space board
 

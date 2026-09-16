@@ -3,6 +3,7 @@ import type { Fragment, Mark, Node as PMNode } from 'prosemirror-model'
 interface SerializedDocument {
   text: string
   positions: Map<number, number>
+  textblockPositions?: [number, number][]
 }
 
 const cache = new WeakMap<PMNode, SerializedDocument>()
@@ -52,11 +53,14 @@ export function serializedOffsetFromPosition(doc: PMNode, position: number): num
 }
 
 export function positionFromSerializedOffset(doc: PMNode, offset: number): number {
-  const { positions } = serializeMarkdownDocument(doc)
+  const serializedDocument = serializeMarkdownDocument(doc)
+  const { positions } = serializedDocument
+  const textblockPositions = (serializedDocument.textblockPositions ??= Array.from(
+    positions
+  ).filter(([position]) => doc.resolve(position).parent.isTextblock))
   let result = 1
   let distance = Infinity
-  for (const [position, serialized] of positions) {
-    if (!doc.resolve(position).parent.isTextblock) continue
+  for (const [position, serialized] of textblockPositions) {
     const current = Math.abs(serialized - offset)
     // Atomic references snap forward; normal text positions map exactly.
     if (current < distance || (serialized >= offset && current === distance)) {
