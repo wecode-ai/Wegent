@@ -39,6 +39,7 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import LoopItemAssign
 from app.schemas.runtime_profile import RuntimeProfileCreate
+from app.services import execution_environment_initialization
 from app.services.board_team_execution import dispatch_board_robot_execution
 from app.services.issue_execution_configuration import (
     execution_context,
@@ -52,11 +53,13 @@ from app.services.loop_item_executions.service import (
     execution_display_state,
     loop_item_execution_service,
     runtime_task_id_for,
+    utcnow,
 )
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_automation_execution import project_automation_execution
 from app.services.runtime_profiles import runtime_profile_service
 from app.services.workflow_stage_context import workflow_stage_task_instruction
+from tests.utils.devices import SHARED_APP_DEVICE_ID, create_app_device
 
 
 @pytest.fixture
@@ -2143,6 +2146,120 @@ def test_stall_scan_keeps_runs_with_text_output(
     assert claimed.status == "running"
 
 
+def _make_stalled_wegent_execution(
+    db: Session, user: User
+) -> tuple[LoopItemExecution, ProjectChatMessage]:
+    """Create a running managed Wegent execution stuck past the stall window."""
+
+    from app.services.loop_items.service import loop_item_service
+
+    project = _make_project(db, user)
+    item = _make_item(db, project, user)
+    bot, _team = _make_wegent_bot(db, project, user)
+    loop_item_service.assign(
+        db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=user.id,
+        values=LoopItemAssign(
+            assignee_type="agent",
+            assignee_id=bot.id,
+            version=item.version,
+        ),
+    )
+    execution = (
+        db.query(LoopItemExecution)
+        .filter(
+            LoopItemExecution.loop_item_id == item.id,
+            LoopItemExecution.agent_id == bot.id,
+        )
+        .one()
+    )
+    assert execution.execution_environment == "wegent"
+    assert not execution.runtime_device_id
+    execution.status = "running"
+    execution.started_at = utcnow() - timedelta(minutes=44)
+    message_id = str(uuid.uuid4())
+    activity = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=execution.cloud_project_id,
+        task_id=execution.loop_item_id,
+        sender_type="agent",
+        sender_id=bot.id,
+        sender_name=bot.title,
+        message_type="agent_chunk",
+        content="",
+        metadata_json={"run_status": "running"},
+        agent_id=bot.id,
+        status="streaming",
+    )
+    db.add(activity)
+    db.commit()
+    return execution, activity
+
+
+def test_stall_scan_recovers_wegent_run_without_runtime_identity(
+    test_db: Session, test_user: User
+) -> None:
+    """A managed Wegent run executes in the Chat runtime and never claims a
+    device, so its runtime ids stay empty forever. It must still be recovered.
+
+    Regression: stall_scan skipped every execution without runtime ids, so a
+    wegent run whose Chat stream died silently stayed "执行中" indefinitely and
+    the task could not be modified.
+    """
+
+    execution, _activity = _make_stalled_wegent_execution(test_db, test_user)
+
+    stalled = loop_item_execution_service.stall_scan(
+        test_db, text_timeout_seconds=20 * 60
+    )
+
+    assert [run.id for run in stalled] == [execution.id]
+    test_db.refresh(execution)
+    assert execution.status == "cancel_requested"
+    assert "未产生任何输出" in execution.execution_note
+
+
+def test_stall_scan_keeps_wegent_run_with_agent_text(
+    test_db: Session, test_user: User
+) -> None:
+    """The Wegent activity row is keyed by loop item plus agent, so its text
+    must be found and read as progress rather than as a stall."""
+
+    execution, activity = _make_stalled_wegent_execution(test_db, test_user)
+    activity.content = "real progress text"
+    test_db.commit()
+
+    stalled = loop_item_execution_service.stall_scan(
+        test_db, text_timeout_seconds=20 * 60
+    )
+
+    assert stalled == []
+    test_db.refresh(execution)
+    assert execution.status == "running"
+
+
+def test_stall_scan_skips_runs_without_any_probeable_identity(
+    test_db: Session, test_user: User
+) -> None:
+    """Without runtime ids and without an agent id no activity row can be
+    located, so a stall cannot be proven and the run must be left alone."""
+
+    execution, _activity = _make_stalled_wegent_execution(test_db, test_user)
+    execution.agent_id = ""
+    test_db.commit()
+
+    stalled = loop_item_execution_service.stall_scan(
+        test_db, text_timeout_seconds=20 * 60
+    )
+
+    assert stalled == []
+    test_db.refresh(execution)
+    assert execution.status == "running"
+
+
 def test_approve_reject_only_creator(test_db: Session, test_user: User) -> None:
     project = _make_project(test_db, test_user)
     bot = _make_bot(test_db, project, test_user, mode="manual_approval")
@@ -2660,6 +2777,88 @@ def test_project_execution_environment_reaches_runtime_request(
         "prepared_workspace_path": "/workspace/environments/project-1",
     }
     assert payload["workspacePath"] == "/workspace/environments/project-1"
+
+
+async def test_app_prepared_environment_only_reaches_its_own_installation(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every Wework installation registers as ``local-device``, so the prepared
+    worktree can only be matched by the record route queue rows persist.
+
+    Regression: the preparation stored the shared logical id while queue rows
+    carry ``app-record-<id>``, so the comparison never matched and the prepared
+    environment worktree was silently unused by every App run.
+    """
+
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "exit_code": 0,
+                "stdout": {"workspacePath": "/workspace/environments/app"},
+            }
+        ),
+    )
+    devices = [create_app_device(test_db, user_id=test_user.id) for _ in range(2)]
+    prepared = (
+        await execution_environment_initialization.initialize_execution_environment(
+            db=test_db,
+            device=devices[0],
+            environment_id="project-app",
+            definition={
+                "repositories": [
+                    {
+                        "name": "Wegent",
+                        "url": "https://github.com/wecode-ai/Wegent.git",
+                        "ref": "main",
+                        "path": "wegent",
+                        "primary": True,
+                    }
+                ],
+                "setup_steps": [],
+            },
+        )
+    )
+    project = _make_project(test_db, test_user)
+    project.metadata_json = {
+        **dict(project.metadata_json or {}),
+        "execution_environment": prepared,
+    }
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    test_db.commit()
+
+    def workspace_path_for(execution_device_id: str) -> str:
+        request = WeworkExecutionProfile.for_project_robot(bot).build_runtime_request(
+            test_db,
+            execution_id=451,
+            runtime_task_id=f"app-environment-{execution_device_id}",
+            task=TaskContext(
+                id=item.id,
+                cloud_project_id=str(project.id),
+                title=item.title,
+                description="",
+                status="in_progress",
+                priority="medium",
+            ),
+            cloud_project_id=str(project.id),
+            origin_context={},
+            execution_device_id=execution_device_id,
+        )
+        payload = request.model_dump(by_alias=True, exclude_none=True)
+        return str(payload.get("workspacePath") or "")
+
+    assert prepared["prepared_device_id"] == f"app-record-{devices[0].id}"
+    assert (
+        workspace_path_for(f"app-record-{devices[0].id}")
+        == "/workspace/environments/app"
+    )
+    assert workspace_path_for(f"app-record-{devices[1].id}") == ""
+    assert workspace_path_for(SHARED_APP_DEVICE_ID) == ""
 
 
 def test_claude_code_project_agent_compiles_executor_payload(

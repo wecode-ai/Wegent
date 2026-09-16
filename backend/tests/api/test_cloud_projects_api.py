@@ -2884,3 +2884,116 @@ def test_cloud_workspace_lists_immutable_delivery_files(
     assert read_content.status_code == 200
     assert read_content.content == b"report"
     assert read_content.headers["content-type"] == "application/pdf"
+
+
+def test_execution_environment_initialization_keeps_the_client_version_token(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed preparation must stay retryable and never hold the project row."""
+
+    monkeypatch.setattr(
+        "app.services.workspaces.environment_status.cache_manager.mget_or_raise",
+        AsyncMock(return_value={}),
+    )
+    device = Kind(
+        kind="Device",
+        name="environment-init-device",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {"deviceType": "local"},
+            "metadata": {"name": "environment-init-device"},
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+    test_db.refresh(device)
+
+    project_response = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "envinit", "name": "Environment initialization"},
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+    bound = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": device.id},
+    )
+    assert bound.status_code == 201, bound.text
+
+    configured = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": project["version"],
+            "executionEnvironment": {
+                "repositories": [
+                    {
+                        "name": "wegent",
+                        "url": "ssh://git@example.invalid:2222/wegent.git",
+                        "ref": "develop",
+                        "path": "wegent",
+                        "primary": True,
+                    }
+                ],
+                "setupSteps": [],
+            },
+        },
+    )
+    assert configured.status_code == 200, configured.text
+    configured_version = configured.json()["version"]
+
+    open_transactions: list[bool] = []
+
+    def prepare(status_value: str, error: str) -> AsyncMock:
+        async def _prepare(*, db: Session, device: Kind, **_: object) -> dict:
+            open_transactions.append(db.in_transaction())
+            return {
+                "repositories": [],
+                "setup_steps": [],
+                "status": status_value,
+                "fingerprint": "b" * 64,
+                "prepared_device_id": device.name,
+                "prepared_workspace_path": "" if error else "/workspace/ready",
+                "prepared_at": None,
+                "error": error,
+            }
+
+        return AsyncMock(side_effect=_prepare)
+
+    monkeypatch.setattr(
+        "app.services.cloud_projects.service.initialize_execution_environment",
+        prepare("error", "Failed to prepare execution repositories: boom"),
+    )
+    failed = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environment/initialize",
+        headers=_auth(test_token),
+        json={"device_id": device.id, "version": configured_version},
+    )
+    assert failed.status_code == 200, failed.text
+    assert failed.json()["execution_environment"]["status"] == "error"
+    # The preparation result is not a configuration change, so the token survives.
+    assert failed.json()["version"] == configured_version
+
+    monkeypatch.setattr(
+        "app.services.cloud_projects.service.initialize_execution_environment",
+        prepare("ready", ""),
+    )
+    retried = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environment/initialize",
+        headers=_auth(test_token),
+        json={"device_id": device.id, "version": configured_version},
+    )
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["execution_environment"]["status"] == "ready"
+    assert retried.json()["version"] == configured_version
+
+    # The project row must be unlocked while the device prepares the environment.
+    assert open_transactions == [False, False]

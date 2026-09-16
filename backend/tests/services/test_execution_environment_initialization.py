@@ -3,14 +3,187 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
+from app.models.user import User
+from app.schemas.base_role import BaseRole
 from app.schemas.workspace import ExecutionEnvironmentDefinition
 from app.services import execution_environment_initialization
+from app.services.device.runtime_route import normalize_execution_device_id
+from app.services.workspaces.resource_mapping import execution_environment_values
+from tests.utils.devices import SHARED_APP_DEVICE_ID, create_app_device
+
+PRIMARY_REPOSITORY = {
+    "name": "Wegent",
+    "url": "https://github.com/wecode-ai/Wegent.git",
+    "ref": "main",
+    "path": "wegent",
+    "primary": True,
+}
+
+
+def _remote_device() -> Kind:
+    return Kind(
+        kind="Device",
+        name="remote-device",
+        namespace="default",
+        user_id=7,
+        json={"spec": {"deviceType": "remote", "deviceId": "remote-device"}},
+    )
+
+
+@pytest.mark.asyncio
+async def test_initialization_syncs_git_credentials_to_remote_devices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "exit_code": 0,
+                "stdout": {"workspacePath": "/workspace/environment"},
+            }
+        ),
+    )
+    sync = AsyncMock()
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "sync_git_accounts_to_device",
+        sync,
+    )
+    db = MagicMock()
+    db.get.return_value = object()
+
+    await execution_environment_initialization.initialize_execution_environment(
+        db=db,
+        device=_remote_device(),
+        environment_id="project-1",
+        definition={"repositories": [PRIMARY_REPOSITORY], "setup_steps": []},
+    )
+
+    sync.assert_awaited_once()
+    assert sync.await_args.kwargs["device_id"] == "remote-device"
+    assert sync.await_args.kwargs["allow_empty"] is False
+
+
+@pytest.mark.asyncio
+async def test_initialization_keeps_device_credentials_when_owner_has_no_accounts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.device.git_credentials import (
+        DeviceGitCredentialResolutionError,
+    )
+
+    execute = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": {"workspacePath": "/workspace/environment"},
+        }
+    )
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        execute,
+    )
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "sync_git_accounts_to_device",
+        AsyncMock(side_effect=DeviceGitCredentialResolutionError("none")),
+    )
+    db = MagicMock()
+    db.get.return_value = object()
+
+    result = (
+        await execution_environment_initialization.initialize_execution_environment(
+            db=db,
+            device=_remote_device(),
+            environment_id="project-1",
+            definition={"repositories": [PRIMARY_REPOSITORY], "setup_steps": []},
+        )
+    )
+
+    assert result["status"] == "ready"
+    assert execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_initialization_surfaces_credential_sync_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execute = AsyncMock()
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        execute,
+    )
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "sync_git_accounts_to_device",
+        AsyncMock(side_effect=RuntimeError("device rejected the sync")),
+    )
+    db = MagicMock()
+    db.get.return_value = object()
+
+    result = (
+        await execution_environment_initialization.initialize_execution_environment(
+            db=db,
+            device=_remote_device(),
+            environment_id="project-1",
+            definition={"repositories": [PRIMARY_REPOSITORY], "setup_steps": []},
+        )
+    )
+
+    assert result["status"] == "error"
+    assert result["error"] == "device rejected the sync"
+    execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_initialization_does_not_sync_git_credentials_to_app_devices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "exit_code": 0,
+                "stdout": {"workspacePath": "/workspace/environment"},
+            }
+        ),
+    )
+    sync = AsyncMock()
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "sync_git_accounts_to_device",
+        sync,
+    )
+
+    await execution_environment_initialization.initialize_execution_environment(
+        db=object(),
+        device=Kind(
+            kind="Device",
+            name="shared-app-device-name",
+            namespace="default",
+            user_id=7,
+            json={"spec": {"deviceType": "app", "deviceId": "shared-app-device-name"}},
+        ),
+        environment_id="project-1",
+        definition={"repositories": [PRIMARY_REPOSITORY], "setup_steps": []},
+    )
+
+    sync.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -117,7 +290,7 @@ async def test_initialization_failure_returns_error_state(
             device=device,
             environment_id="workspace-1",
             definition={
-                "repositories": [],
+                "repositories": [PRIMARY_REPOSITORY],
                 "setup_steps": [
                     {"command": "exit 1", "working_directory": ""},
                 ],
@@ -130,6 +303,38 @@ async def test_initialization_failure_returns_error_state(
     assert result["prepared_workspace_path"] == ""
     assert result["prepared_at"] is None
     assert result["error"] == "setup failed"
+
+
+@pytest.mark.asyncio
+async def test_initialization_rejects_definition_without_primary_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+
+    execute = AsyncMock()
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        execute,
+    )
+    device = Kind(
+        kind="Device",
+        name="device-runtime-id",
+        namespace="default",
+        user_id=7,
+        json={},
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        await execution_environment_initialization.initialize_execution_environment(
+            db=object(),
+            device=device,
+            environment_id="workspace-1",
+            definition={"repositories": []},
+        )
+
+    assert excinfo.value.status_code == 422
+    execute.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -167,13 +372,93 @@ async def test_initialization_routes_app_device_by_unique_record_id(
             db=object(),
             device=device,
             environment_id="project-1",
-            definition={"repositories": [], "setup_steps": []},
+            definition={"repositories": [PRIMARY_REPOSITORY], "setup_steps": []},
         )
     )
 
     assert execute.await_args.kwargs["device_id"] == "app-record-42"
     assert result["status"] == "ready"
-    assert result["prepared_device_id"] == "shared-app-device-name"
+    assert result["prepared_device_id"] == "app-record-42"
+
+
+@pytest.mark.asyncio
+async def test_app_installations_sharing_one_logical_id_prepare_distinct_identities(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "exit_code": 0,
+                "stdout": {"workspacePath": "/workspace/environment"},
+            }
+        ),
+    )
+    devices = [create_app_device(test_db, user_id=test_user.id) for _ in range(2)]
+
+    prepared = [
+        await execution_environment_initialization.initialize_execution_environment(
+            db=test_db,
+            device=device,
+            environment_id="project-1",
+            definition={"repositories": [PRIMARY_REPOSITORY], "setup_steps": []},
+        )
+        for device in devices
+    ]
+
+    assert {device.name for device in devices} == {SHARED_APP_DEVICE_ID}
+    assert [state["prepared_device_id"] for state in prepared] == [
+        f"app-record-{devices[0].id}",
+        f"app-record-{devices[1].id}",
+    ]
+    # The persisted identity must be the one queue rows carry, otherwise the
+    # prepared worktree can never be matched back to its installation.
+    for state in prepared:
+        assert (
+            normalize_execution_device_id(
+                test_db,
+                user_id=test_user.id,
+                submitted_device_id=state["prepared_device_id"],
+            )
+            == state["prepared_device_id"]
+        )
+
+
+def test_execution_environment_values_expose_the_prepared_identity(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    devices = [create_app_device(test_db, user_id=test_user.id) for _ in range(2)]
+    grant = ResourceMember(
+        resource_type=ResourceType.DEVICE.value,
+        resource_id=devices[0].id,
+        entity_type="project",
+        entity_id="1",
+        role=BaseRole.Developer.value,
+        status=MemberStatus.APPROVED.value,
+        invited_by_user_id=test_user.id,
+    )
+    test_db.add(grant)
+    test_db.commit()
+
+    values = [
+        execution_environment_values(
+            test_db,
+            grant,
+            device,
+            connection_status="online",
+        )["device_key"]
+        for device in devices
+    ]
+
+    assert values == [
+        f"app-record-{devices[0].id}",
+        f"app-record-{devices[1].id}",
+    ]
 
 
 def test_definition_accepts_multiple_repositories_and_repository_scoped_steps() -> None:

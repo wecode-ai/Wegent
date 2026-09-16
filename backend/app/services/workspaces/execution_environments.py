@@ -203,7 +203,9 @@ class WorkspaceExecutionEnvironmentService:
             public_id=current.public_id,
             is_default=current.is_default,
             execution_environment=state,
-            version=current.version + 1,
+            # Recording a preparation result is not a configuration change, so the
+            # client keeps a usable version token and can retry after a failure.
+            version=current.version,
         )
         db.commit()
         db.refresh(kind)

@@ -397,18 +397,26 @@ class CloudProjectService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Execution device is not available in this Project",
             )
-        metadata = dict(project.metadata_json or {})
-        definition = metadata.get("execution_environment")
+        definition = (project.metadata_json or {}).get("execution_environment")
         definition = definition if isinstance(definition, dict) else {}
+        # Preparation runs on the device for minutes, so the project row must not
+        # stay locked while it runs; otherwise every concurrent project write
+        # blocks for the whole preparation and then fails the version check.
+        db.commit()
         state = await initialize_execution_environment(
             db=db,
             device=device,
             environment_id=f"project-{cloud_project_id}",
             definition=definition,
         )
+        project = self._lock_project(db, cloud_project_id)
+        if project.version != version:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Project changed")
+        metadata = dict(project.metadata_json or {})
         metadata["execution_environment"] = state
         project.metadata_json = metadata
-        project.version += 1
+        # Recording a preparation result is not a configuration change, so the
+        # client keeps a usable version token and can retry after a failure.
         db.commit()
         db.refresh(project)
         return project
