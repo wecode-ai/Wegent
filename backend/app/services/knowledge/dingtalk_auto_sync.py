@@ -173,6 +173,7 @@ def refresh_dingtalk_copy(
         return False
     document, user = context.document, context.user
     baseline = document.external_source_config.get("source_update_time")
+    status_before = _status_name(document.index_status)
     if (
         update_time is not None
         and document.index_status == DocumentIndexStatus.SUCCESS
@@ -207,7 +208,7 @@ def refresh_dingtalk_copy(
         baseline_update_time=baseline,
         # A missing live timestamp is itself the reason to refresh, not a gap.
         live_update_time=update_time if update_time is not None else "unavailable",
-        index_status=_status_name(document.index_status),
+        index_status_before=status_before,
         previous_attachment_id=document.attachment_id,
         next_generation=result.document.index_generation if result.started else None,
         reason=result.reason,

@@ -609,6 +609,7 @@ def test_refresh_and_body_landing_log_source_timestamps(
     refresh_line = _decision_line(caplog, "refresh")
     assert "baseline_update_time=1789562600000" in refresh_line
     assert "live_update_time=1789562644000" in refresh_line
+    assert "index_status_before=success" in refresh_line
     assert f"next_generation={new_generation}" in refresh_line
 
     landed_line = next(
