@@ -151,4 +151,65 @@ describe('messagePretextLayout', () => {
     expect(mockedPrepare).not.toHaveBeenCalled()
     expect(mockedLayout).not.toHaveBeenCalled()
   })
+
+  test('measures fenced code by its rendered lines instead of wrapping it', () => {
+    const code = Array.from(
+      { length: 10 },
+      (_, index) => `const line${index} = '${'x'.repeat(160)}'`
+    )
+    const message: WorkbenchMessage = {
+      id: 'assistant-code',
+      role: 'assistant',
+      content: ['Intro', '', '```ts', ...code, '```', '', 'Outro'].join('\n'),
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+    }
+
+    // Two prose segments at the mocked three lines each, plus ten unwrapped code lines and the
+    // code block's own chrome — plus the assistant row's hover action and vertical buffer.
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(2 * 72 + 10 * 22 + 84 + 32)
+    expect(mockedPrepare).toHaveBeenCalledTimes(2)
+    for (const [text] of mockedPrepare.mock.calls) {
+      expect(text).not.toContain('const line0')
+    }
+  })
+
+  test('treats an unclosed fence as code until the end of the message', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-unclosed-fence',
+      role: 'assistant',
+      content: ['Before', '```', 'one', 'two', ''].join('\n'),
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+    }
+
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(72 + 2 * 22 + 84 + 32)
+  })
+
+  test('closes a fence only with its own marker', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-fence-marker',
+      role: 'assistant',
+      content: ['~~~~', '```', 'inner', '~~~~', 'After'].join('\n'),
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+    }
+
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(72 + 2 * 22 + 84 + 32)
+    expect(mockedPrepare).toHaveBeenCalledTimes(1)
+    expect(mockedPrepare.mock.calls[0]?.[0]).toContain('After')
+  })
+
+  test('keeps inline code in the wrapped prose measurement', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-inline-code',
+      role: 'assistant',
+      content: 'Run `pnpm test` and ``pnpm lint`` before pushing',
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+    }
+
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(104)
+    expect(mockedPrepare).toHaveBeenCalledTimes(1)
+  })
 })
