@@ -602,12 +602,27 @@ export async function createDesktopScenario({
         timeoutMs: Math.max(uiTimeoutMs, 60_000),
       }
     )
+    const appEnvironmentPool = await request(
+      `/api/v1/cloud-projects/${project.id}/execution-environments`
+    )
+    const appPoolEntry = appEnvironmentPool.items.find(entry => entry.id === appDevice.id)
+    assert.ok(
+      appPoolEntry?.device_key,
+      'The Wework app device was not added to the project device pool'
+    )
     const appInitializedProject = await request(`/api/v1/cloud-projects/${project.id}`)
-    assert.equal(appInitializedProject.execution_environment?.status, 'ready')
+    // Preparation state is per device and keyed by the device route, so the
+    // duplicate app installation sharing one logical device id cannot collide.
+    const appDeviceState =
+      appInitializedProject.execution_environment?.devices?.[appPoolEntry.device_key]
     assert.equal(
-      appInitializedProject.execution_environment?.prepared_device_id,
-      appDevice.device_id,
-      'The Wework app device environment did not preserve its logical device identity'
+      appDeviceState?.status,
+      'ready',
+      'The Wework app device environment did not become ready'
+    )
+    assert.ok(
+      appDeviceState?.workspace_path,
+      'The Wework app device environment did not persist its prepared workspace path'
     )
     await control.command(
       'clickWhenEnabled',
@@ -654,19 +669,20 @@ export async function createDesktopScenario({
     const environments = await request(
       `/api/v1/cloud-projects/${project.id}/execution-environments`
     )
-    assert.ok(
-      environments.items.some(environment => environment.device_id === cloudDevice.id),
-      'The project device pool did not persist the real cloud Executor'
+    const cloudPoolEntry = environments.items.find(
+      environment => environment.device_id === cloudDevice.id
     )
+    assert.ok(cloudPoolEntry, 'The project device pool did not persist the real cloud Executor')
     const configuredProject = await request(`/api/v1/cloud-projects/${project.id}`)
-    assert.equal(configuredProject.execution_environment?.status, 'ready')
+    const cloudDeviceState =
+      configuredProject.execution_environment?.devices?.[cloudPoolEntry.device_key]
     assert.equal(
-      configuredProject.execution_environment?.prepared_device_id,
-      CLOUD_DEVICE_ID,
-      'The initialized environment was prepared on the configured real cloud Executor'
+      cloudDeviceState?.status,
+      'ready',
+      'The initialized environment was not ready on the configured real cloud Executor'
     )
     assert.ok(
-      configuredProject.execution_environment?.prepared_workspace_path,
+      cloudDeviceState?.workspace_path,
       'The real environment initialization did not persist its workspace path'
     )
     await capture(control, 'collaboration-agent-chain-04-device-pool.png')
