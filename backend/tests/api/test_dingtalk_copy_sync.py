@@ -128,11 +128,12 @@ def test_auto_sync_setting_survives_create_update_and_reload(
         assert loaded.status_code == 200
         assert loaded.json()["dingtalk_auto_sync_enabled"] is enabled
     # Saving an unrelated field must preserve the existing enabled value.
-    test_client.put(
+    updated = test_client.put(
         f"/api/knowledge-bases/{kb_id}",
         headers=headers,
         json={"description": "updated"},
     )
+    assert updated.status_code == 200
     assert (
         test_client.get(f"/api/knowledge-bases/{kb_id}", headers=headers).json()[
             "dingtalk_auto_sync_enabled"
