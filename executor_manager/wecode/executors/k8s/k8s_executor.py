@@ -2034,6 +2034,136 @@ class K8sExecutor(Executor):
             return False
         return creation_time < cutoff
 
+    def cleanup_stale_warmpools(
+        self,
+        grace_period_days: int = 7,
+        dry_run: bool = False,
+        label_selector: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Delete SandboxWarmPool CRs that no longer match the current template.
+
+        Every executor template upgrade creates a new SandboxWarmPool CR, but the
+        old CRs are never removed, so the operator keeps their standby pods alive
+        forever. A CR is stale when its sandboxTemplateRef differs from the
+        current WARMPOOL_TEMPLATE_NAME and it is older than grace_period_days.
+        Deleting the CR only releases unbound standby pods; pods already bound
+        to tasks keep their task-id labels and stay under the regular orphan
+        pod cleanup.
+
+        Args:
+            grace_period_days: Minimum CR age before it may be deleted.
+            dry_run: Report eligible CRs without deleting them.
+            label_selector: Optional selector restricting which CRs are managed.
+
+        Returns:
+            Dict with status, deleted/skipped/failed CR lists and failed_count.
+        """
+        result: Dict[str, Any] = {
+            "status": "success",
+            "current_template": WARMPOOL_TEMPLATE_NAME,
+            "grace_period_days": grace_period_days,
+            "dry_run": dry_run,
+            "deleted": [],
+            "skipped": [],
+            "failed": [],
+            "failed_count": 0,
+        }
+        if not WARMPOOL_TEMPLATE_NAME:
+            result["status"] = "skipped"
+            result["reason"] = "warmpool_template_not_configured"
+            return result
+
+        from executor_manager.wecode.executors.warmpool import WarmPoolClient
+
+        api_client = _get_api_client()
+        if api_client is None:
+            return {
+                **result,
+                "status": "failed",
+                "error_msg": "Failed to get Kubernetes API client",
+            }
+
+        warmpool_client = WarmPoolClient(api_client, K8S_NAMESPACE)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=grace_period_days)
+
+        try:
+            warmpools = warmpool_client.list_sandbox_warmpools(
+                label_selector=label_selector
+            )
+        except Exception as e:
+            logger.error("+++ Error listing SandboxWarmPools: %s", e)
+            return {**result, "status": "failed", "error_msg": f"Error: {e}"}
+
+        for warmpool in warmpools:
+            metadata = warmpool.get("metadata", {})
+            name = metadata.get("name", "")
+            template_name = (
+                warmpool.get("spec", {}).get("sandboxTemplateRef", {}).get("name", "")
+            )
+
+            if not name:
+                result["skipped"].append({"name": name, "reason": "no_name"})
+                continue
+            if template_name == WARMPOOL_TEMPLATE_NAME:
+                result["skipped"].append({"name": name, "reason": "current_template"})
+                continue
+            if not self._is_resource_older_than(metadata, cutoff):
+                result["skipped"].append(
+                    {
+                        "name": name,
+                        "reason": "within_grace_period",
+                        "template": template_name,
+                        "created_at": metadata.get("creationTimestamp"),
+                    }
+                )
+                continue
+
+            if dry_run:
+                result["skipped"].append(
+                    {"name": name, "reason": "dry_run", "template": template_name}
+                )
+                continue
+
+            try:
+                warmpool_client.delete_sandbox_warmpool(name)
+                logger.info(
+                    "+++ Deleted stale SandboxWarmPool '%s' (template=%s, current=%s)",
+                    name,
+                    template_name,
+                    WARMPOOL_TEMPLATE_NAME,
+                )
+                result["deleted"].append({"name": name, "template": template_name})
+            except ApiException as e:
+                if e.status == 404:
+                    result["skipped"].append({"name": name, "reason": "not_found"})
+                    continue
+                logger.error("+++ Failed to delete SandboxWarmPool '%s': %s", name, e)
+                result["failed"].append(
+                    {"name": name, "reason": "delete_failed", "error": str(e)}
+                )
+            except Exception as e:
+                logger.error("+++ Failed to delete SandboxWarmPool '%s': %s", name, e)
+                result["failed"].append(
+                    {"name": name, "reason": "delete_failed", "error": str(e)}
+                )
+
+        result["failed_count"] = len(result["failed"])
+        if result["failed_count"]:
+            logger.warning(
+                "+++ Stale SandboxWarmPool cleanup failed to delete %d CR(s): %s",
+                result["failed_count"],
+                [item.get("name") for item in result["failed"]],
+            )
+        logger.info(
+            "+++ Stale SandboxWarmPool cleanup complete scanned=%d deleted=%d "
+            "skipped=%d failed_count=%d",
+            len(warmpools),
+            len(result["deleted"]),
+            len(result["skipped"]),
+            result["failed_count"],
+        )
+        return result
+
     def _get_old_executor_claim_targets(
         self,
         core_v1: client.CoreV1Api,

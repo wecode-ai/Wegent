@@ -25,6 +25,54 @@ class DeletePodByNameRequest(BaseModel):
     executor_namespace: Optional[str] = None
 
 
+class CleanupStaleWarmPoolsRequest(BaseModel):
+    grace_period_days: int = 7
+    dry_run: bool = False
+    label_selector: Optional[str] = None
+
+
+async def cleanup_stale_warmpools(
+    request: CleanupStaleWarmPoolsRequest, http_request: Request
+):
+    """Delete SandboxWarmPool CRs whose template no longer matches the current one.
+
+    A warm pool CR is stale when its sandboxTemplateRef differs from the
+    currently configured WARMPOOL_TEMPLATE_NAME and it is older than the grace
+    period. Deleting the CR releases its unbound standby pods; pods bound to
+    tasks keep their task-id labels and stay under the regular orphan cleanup.
+    """
+    if request.grace_period_days < 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"grace_period_days must be at least 1, got {request.grace_period_days}",
+        )
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            "+++ Received request to cleanup stale warmpools "
+            "(grace_period_days=%d, dry_run=%s) from %s",
+            request.grace_period_days,
+            request.dry_run,
+            client_ip,
+        )
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        if not hasattr(executor, "cleanup_stale_warmpools"):
+            raise HTTPException(
+                status_code=501,
+                detail="cleanup_stale_warmpools is not supported by this executor",
+            )
+        return executor.cleanup_stale_warmpools(
+            grace_period_days=request.grace_period_days,
+            dry_run=request.dry_run,
+            label_selector=request.label_selector,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("+++ Error cleaning up stale warmpools: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 async def delete_executor_by_task_id(
     request: DeleteExecutorByTaskIdRequest, http_request: Request
 ):
@@ -167,6 +215,11 @@ def register(api_router: APIRouter) -> None:
         "/executor/old-task-ids",
         get_old_task_ids,
         methods=["GET"],
+    )
+    api_router.add_api_route(
+        "/executor/cleanup-stale-warmpools",
+        cleanup_stale_warmpools,
+        methods=["POST"],
     )
     api_router.add_api_route(
         "/executor/pod-owners",

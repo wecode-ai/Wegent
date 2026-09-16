@@ -17,7 +17,6 @@ from typing import Any, Dict, List, Optional
 
 from kubernetes import client
 from kubernetes.client.rest import ApiException
-from shared.logger import setup_logger
 
 from executor_manager.wecode.executors.warmpool.constants import (
     ANNOTATION_TASK_INFO,
@@ -34,6 +33,7 @@ from executor_manager.wecode.executors.warmpool.constants import (
     SANDBOX_WARMPOOL_API_VERSION,
     SANDBOX_WARMPOOL_PLURAL,
 )
+from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 
@@ -208,9 +208,9 @@ class WarmPoolClient:
         if annotations or task_info:
             patch_body["metadata"]["annotations"] = annotations or {}
             if task_info:
-                patch_body["metadata"]["annotations"][
-                    ANNOTATION_TASK_INFO
-                ] = json.dumps(task_info)
+                patch_body["metadata"]["annotations"][ANNOTATION_TASK_INFO] = (
+                    json.dumps(task_info)
+                )
 
         logger.info(f"Patching SandboxClaim '{name}'")
 
@@ -377,7 +377,9 @@ class WarmPoolClient:
                 metadata["annotations"] = annotations
 
             body = {"metadata": metadata}
-            logger.info(f"Patching Pod '{pod_name}' with labels={labels}, annotations={annotations}")
+            logger.info(
+                f"Patching Pod '{pod_name}' with labels={labels}, annotations={annotations}"
+            )
             self.core_api.patch_namespaced_pod(
                 name=pod_name,
                 namespace=self.namespace,
@@ -619,6 +621,30 @@ class WarmPoolClient:
             if e.status == 404:
                 return None
             raise
+
+    def list_sandbox_warmpools(
+        self, label_selector: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        List SandboxWarmPools with optional label selector.
+
+        Args:
+            label_selector: Kubernetes label selector string
+
+        Returns:
+            List of SandboxWarmPool objects
+        """
+        kwargs = {
+            "group": SANDBOX_WARMPOOL_API_GROUP,
+            "version": SANDBOX_WARMPOOL_API_VERSION,
+            "namespace": self.namespace,
+            "plural": SANDBOX_WARMPOOL_PLURAL,
+        }
+        if label_selector:
+            kwargs["label_selector"] = label_selector
+
+        result = self.custom_api.list_namespaced_custom_object(**kwargs)
+        return result.get("items", [])
 
     def delete_sandbox_warmpool(self, name: str) -> Dict[str, Any]:
         """
