@@ -78,15 +78,20 @@ vi.mock('@wegent/collaboration', async importOriginal => {
     },
     CollaborationPlatformApp: ({
       host,
+      navigationApis,
     }: {
       host: {
         location: CollaborationPlatformLocation
         navigate(next: CollaborationPlatformLocation): void
       }
+      navigationApis?: SharedWorkspaceApi[]
     }) =>
       createElement(
         'div',
-        null,
+        {
+          'data-testid': 'collaboration-platform-root',
+          'data-navigation-source-count': navigationApis?.length ?? 0,
+        },
         createElement(
           'span',
           { 'data-testid': 'collaboration-platform-location' },
@@ -215,6 +220,33 @@ function deferred<T>() {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it('provides local and cloud navigation as independent data sources', () => {
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: {
+          id: 1,
+          user_name: 'admin',
+          email: 'admin@example.com',
+        } as never,
+        localProjects: [],
+        services: {
+          sharedWorkspaceApi: {
+            workspaces: {},
+            projects: {},
+          },
+          projectSpaceApis: {
+            local: createLocalDeliveryApi(),
+          },
+        } as never,
+      })
+    )
+
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-navigation-source-count',
+      '2'
+    )
+  })
+
   it('does not restore the system My Tasks project inside collaboration', async () => {
     const getProject = vi.fn()
 

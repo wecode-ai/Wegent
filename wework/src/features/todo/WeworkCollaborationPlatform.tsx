@@ -1464,6 +1464,13 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       locale,
     ]
   )
+  const navigationApis = useMemo(
+    () =>
+      [localProjectApi, api?.workspaces ? withoutDefaultWorkItemProject(api) : undefined].filter(
+        (candidate): candidate is SharedWorkspaceApi => Boolean(candidate)
+      ),
+    [api, localProjectApi]
+  )
   const activeProject =
     String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
       ? null
@@ -1530,6 +1537,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
     <div className="h-full min-h-0 flex-1" data-testid="wework-collaboration-platform">
       <CollaborationPlatformApp
         api={platformApi}
+        navigationApis={navigationApis}
         locale={locale}
         onReady={handleReady}
         host={{
