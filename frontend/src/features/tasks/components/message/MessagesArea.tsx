@@ -289,6 +289,7 @@ function MessagesArea({
   } = useTaskSession()
   const { theme } = useTheme()
   const { user } = useUser()
+  const isAdmin = user?.role === 'admin'
   const { traceAction } = useTraceAction()
   const { registerCorrectionHandlers } = useSocket()
   const isMobile = useIsMobile()
@@ -1406,7 +1407,7 @@ function MessagesArea({
                   onReEdit={onReEdit}
                   waitingMessage={waitingMessage}
                   taskType={selectedTaskDetail?.task_type}
-                  onForwardClick={handleForwardClick}
+                  onForwardClick={isAdmin ? handleForwardClick : undefined}
                   onSaveToKnowledge={
                     user ? content => handleSaveToKnowledge(index, content) : undefined
                   }
@@ -1482,7 +1483,7 @@ function MessagesArea({
       )}
 
       {/* Send Message to Collaboration */}
-      {selectedTaskDetail?.id && (
+      {isAdmin && selectedTaskDetail?.id && (
         <SendToCollaborationDialog
           taskId={selectedTaskDetail.id}
           subtaskIds={forwardInitialSubtaskId ? [forwardInitialSubtaskId] : undefined}

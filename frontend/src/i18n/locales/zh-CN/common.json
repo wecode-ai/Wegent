@@ -128,6 +128,7 @@
     "collaboration": "协作",
     "more": "更多",
     "more_summary": "设备 · 协作",
+    "more_summary_non_admin": "设备",
     "settings": "设置",
     "docs": "文档",
     "feature_docs": "功能文档",
