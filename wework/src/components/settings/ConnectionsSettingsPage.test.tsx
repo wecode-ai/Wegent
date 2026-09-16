@@ -296,6 +296,7 @@ describe('ConnectionsSettingsPage', () => {
     })
     cancelLocalCodexLoginMock.mockResolvedValue(undefined)
     localStorage.clear()
+    delete window.weworkElectronNetwork
     delete window.__WEWORK_RUNTIME_CONFIG__
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -1739,6 +1740,34 @@ describe('ConnectionsSettingsPage', () => {
     )
     expect(userApi.getProxyConfig).not.toHaveBeenCalled()
     expect(userApi.updateProxyConfig).not.toHaveBeenCalled()
+  })
+
+  test('shows the effective system proxy used by local Codex', async () => {
+    const disconnectedConnection: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'disconnected',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    window.weworkElectronNetwork = {
+      resolveCodexProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
+    }
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={disconnectedConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    await userEvent.click(screen.getByTestId('settings-nav-proxy'))
+
+    expect(await screen.findByTestId('local-proxy-config-status')).toHaveTextContent('系统代理')
+    expect(screen.getByTestId('local-proxy-effective-url')).toHaveTextContent(
+      'http://system-proxy.example.com:7890'
+    )
   })
 
   test('updates the local Codex remote apps setting from plugin settings', async () => {

@@ -160,7 +160,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { builtinCodexCatalogModel } from '@/features/model-settings/codexCatalog'
 import { localModelSupportsImageInput } from '@/features/model-settings/localModelProviders'
-import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
+import { getEffectiveLocalCodexProxyUrl } from '@/desktop/systemProxy'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import {
@@ -1240,7 +1240,7 @@ function harnessProxyUpstream(
     native_namespace_tools: nativeNamespaceTools,
     api_key: apiKey,
     default_headers: headers,
-    proxy_url: getLocalProxyUrl() || null,
+    proxy_url: getEffectiveLocalCodexProxyUrl() || null,
     model_id: recordString(config.model_id),
     routing_model_id: null,
     max_output_tokens: recordNumber(config.max_output_tokens),
@@ -3637,7 +3637,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     getLocalDeviceId,
     {
       cloudModelGateway: deps.cloudModelGateway,
-      getRuntimeProxyUrl: getLocalProxyUrl,
+      getRuntimeProxyUrl: getEffectiveLocalCodexProxyUrl,
       user: deps.user,
       materializeRuntimeTask: deps.materializeRuntimeTask,
     }
@@ -3647,7 +3647,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     (method, params) => request(method, params as Record<string, unknown>),
     {
       cloudModelGateway: deps.cloudModelGateway,
-      getRuntimeProxyUrl: getLocalProxyUrl,
+      getRuntimeProxyUrl: getEffectiveLocalCodexProxyUrl,
       user: deps.user,
       prepareRuntimeModel: data => runtimeWorkApi.prepareRuntimeModel(data),
     }
@@ -3723,7 +3723,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         modelType: data.modelType,
         modelOptions: data.modelOptions,
         cloudModelGateway: deps.cloudModelGateway,
-        runtimeProxyUrl: getLocalProxyUrl(),
+        runtimeProxyUrl: getEffectiveLocalCodexProxyUrl(),
         localDeviceId: deviceId,
         workspaceSource: 'local_path',
         newSession: true,

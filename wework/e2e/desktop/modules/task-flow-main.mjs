@@ -1161,7 +1161,7 @@ async function main() {
     if (!RUNS_PLUGIN_E2E) {
       await writeCodexConfig(
         codexHome,
-        control.url,
+        desktopScenario?.modelServerUrl ?? control.url,
         `${desktopScenario?.codexConfigToml ?? ''}\n${
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
         }\n${
@@ -1284,7 +1284,9 @@ async function main() {
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
-    const electronLaunchArguments = resolveElectronLaunchArguments()
+    const electronLaunchArguments = resolveElectronLaunchArguments({
+      extraArguments: desktopScenario?.electronLaunchArguments ?? [],
+    })
     let activeAppEnvironment = appEnvironment
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {

@@ -62,6 +62,7 @@ function mockStartup(): void {
 describe('localExecutor', () => {
   beforeEach(() => {
     localStorage.clear()
+    delete window.weworkElectronNetwork
     resetLocalExecutorStateForTests()
     describeDshExecutorMock.mockReset()
     requestDshExecutorMock.mockReset()
@@ -108,6 +109,18 @@ describe('localExecutor', () => {
 
     expect(requestDshExecutorMock).toHaveBeenCalledWith('runtime.codex.runtime_config.update', {
       proxyUrl: 'http://127.0.0.1:7890',
+    })
+  })
+
+  test('passes the system proxy into the startup barrier when no local proxy is configured', async () => {
+    window.weworkElectronNetwork = {
+      resolveCodexProxy: vi.fn().mockResolvedValue('http://127.0.0.1:7891'),
+    }
+
+    await ensureLocalExecutorStarted()
+
+    expect(requestDshExecutorMock).toHaveBeenCalledWith('runtime.codex.runtime_config.update', {
+      proxyUrl: 'http://127.0.0.1:7891',
     })
   })
 
