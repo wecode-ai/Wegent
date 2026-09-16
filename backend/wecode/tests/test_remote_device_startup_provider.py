@@ -71,14 +71,22 @@ def test_internal_provider_generates_pinned_host_network_commands(monkeypatch):
     assert result.env["DEVICE_CODE_SERVER_ENABLED"] == "true"
     assert result.env["DEVICE_TERMINAL_ENABLED"] == "true"
     assert result.env["DEVICE_SESSION_GATEWAY_HOST"] == "0.0.0.0"
+    assert result.env["WEGENT_EXECUTOR_HOME_ID"] == "device-1"
+    assert result.env["WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED"] == "true"
     assert "--network host" in result.command
     assert "--pull always" in result.command
     assert "-p 17888:17888" not in result.command
     assert "--name 'remote device'" in result.command
     assert "-e DEVICE_CODE_SERVER_ENABLED=true" in result.command
     assert "-e DEVICE_TERMINAL_ENABLED=true" in result.command
+    assert "-e WEGENT_EXECUTOR_HOME_ID=device-1" in result.command
+    assert "-e WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true" in result.command
     assert result.command.rstrip().endswith(result.image)
     assert 'if [ -z "${DEVICE_PUBLIC_BASE_URL:-}" ]; then' in result.commands[1].command
+    assert "WEGENT_EXECUTOR_HOME_ID" not in result.commands[1].command
+    assert (
+        "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED" not in result.commands[1].command
+    )
 
 
 @pytest.mark.parametrize(

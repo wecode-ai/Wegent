@@ -13,6 +13,7 @@ from fastapi import HTTPException, status
 from app.core.config import settings
 from app.schemas.device import DeviceType
 from app.services.device.remote_device_startup import (
+    CONTAINER_ONLY_ENV_KEYS,
     RemoteDeviceCommandContext,
     RemoteDeviceCommandResult,
     RemoteDeviceStartupCommandData,
@@ -191,12 +192,18 @@ class WecodeRemoteDeviceCommandProvider:
             "WEGENT_BACKEND_URL": backend_url,
             "WEGENT_SOCKET_URL": socket_url,
             "WEGENT_AUTH_TOKEN": context.auth_token,
+            "WEGENT_EXECUTOR_HOME_ID": context.device_id,
+            "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED": "true",
             "DEVICE_SESSION_GATEWAY_HOST": "0.0.0.0",
             "DEVICE_SESSION_GATEWAY_PORT": "17888",
         }
         docker_command = _build_docker_command(context, image, env)
         process_command = _build_process_command(
-            env,
+            {
+                key: value
+                for key, value in env.items()
+                if key not in CONTAINER_ONLY_ENV_KEYS
+            },
             self._config.REMOTE_DEVICE_EXECUTOR_INSTALL_URL,
         )
         return RemoteDeviceCommandResult(

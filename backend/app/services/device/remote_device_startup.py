@@ -28,6 +28,14 @@ DEFAULT_REMOTE_DEVICE_EXECUTOR_INSTALL_URL = (
     "local_executor_install.sh"
 )
 DEVICE_SESSION_GATEWAY_PORT = 17888
+# Worktree persistence is declared by the container startup command, which pins a
+# named volume at a fixed mount path. A host process has no such guarantee.
+CONTAINER_ONLY_ENV_KEYS = frozenset(
+    {
+        "WEGENT_EXECUTOR_HOME_ID",
+        "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -294,11 +302,7 @@ class DefaultRemoteDeviceCommandProvider:
         process_env = {
             key: value
             for key, value in env.items()
-            if key
-            not in {
-                "WEGENT_EXECUTOR_HOME_ID",
-                "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED",
-            }
+            if key not in CONTAINER_ONLY_ENV_KEYS
         }
         process_command = _build_process_start_command(
             process_env,
