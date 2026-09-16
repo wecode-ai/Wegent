@@ -79,7 +79,6 @@ export interface EmbeddedBrowserOpenRequest {
 }
 
 export interface EmbeddedBrowserCloseRequest {
-  requestId: string
   label: string
   nativeLabel: string
 }
@@ -314,16 +313,6 @@ export function listenEmbeddedBrowserCloseRequests(
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
   return listenElectronBrowserEvents('close-request', handler)
-}
-
-export async function notifyEmbeddedBrowserCloseRequestHandled(
-  request: EmbeddedBrowserCloseRequest
-): Promise<void> {
-  await invokeDesktopHost<void>('browser.notifyCloseRequestHandled', {
-    requestId: request.requestId,
-    label: request.label,
-    nativeLabel: request.nativeLabel,
-  })
 }
 
 export function listenEmbeddedBrowserAgentState(
@@ -580,7 +569,7 @@ export async function clearEmbeddedBrowserData(kinds?: EmbeddedBrowserDataKind[]
   return invokeDesktopHost<number>('browser.clearData', { dataKinds: kinds ?? null })
 }
 
-export function isEmbeddedBrowserUnavailableError(error: unknown, label: string): boolean {
+function isEmbeddedBrowserUnavailableError(error: unknown, label: string): boolean {
   return error instanceof Error && error.message === `Embedded browser is unavailable: ${label}`
 }
 

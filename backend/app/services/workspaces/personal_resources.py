@@ -51,7 +51,11 @@ class WorkspacePersonalResourceService:
                     "owner_type": "user",
                     "owner_id": str(user.id),
                     "owner_name": user.user_name,
-                    "status": agent_status(team),
+                    "status": agent_status(
+                        db,
+                        team,
+                        execution_user_id=user_id,
+                    ),
                     "execution_environment_ids": environment_ids,
                     "workspace_ids": team_workspace_ids.get(team.id, []),
                 }

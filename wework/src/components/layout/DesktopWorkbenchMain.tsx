@@ -880,12 +880,13 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       }
       if (requestBaseLabel === activePaneBrowserLabel) return activePaneKey
       return (
-        runtimePaneKeys.find(paneKey => {
+        Array.from(new Set([activePaneKey, ...runtimePaneKeys])).find(paneKey => {
           const pane = resolvePane(paneKey)
-          const taskId = pane?.currentRuntimeTask?.taskId
+          const labelSegment = pane?.currentRuntimeTask?.taskId ?? paneKey
           return (
-            taskId !== undefined &&
-            requestBaseLabel === `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(taskId)}`
+            pane !== null &&
+            requestBaseLabel ===
+              `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(labelSegment)}`
           )
         }) ?? null
       )
@@ -3566,15 +3567,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       const installationIds = new Set<string>()
       Object.entries(browserStatesRef.current).forEach(([tab, browserState]) => {
-        if (!browserState) return
-        if (browserState.developmentPreview) {
-          installationIds.add(browserState.developmentPreview.installationId)
-          const browserTab = tab as RightWorkspaceBrowserTab
-          previewRequests.set(browserTab, (previewRequests.get(browserTab) ?? 0) + 1)
-        }
+        if (!browserState?.developmentPreview) return
+        installationIds.add(browserState.developmentPreview.installationId)
+        const browserTab = tab as RightWorkspaceBrowserTab
+        previewRequests.set(browserTab, (previewRequests.get(browserTab) ?? 0) + 1)
         void closeEmbeddedBrowser(browserState.label, browserState.nativeLabel ?? undefined).catch(
           error => {
-            console.error('Failed to close embedded browser during workbench disposal:', error)
+            console.error('Failed to close Smart app browser during workbench disposal:', error)
           }
         )
       })

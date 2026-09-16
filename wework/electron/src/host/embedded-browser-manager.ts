@@ -85,14 +85,6 @@ export interface BrowserHostEvent {
   payload: Record<string, unknown>
 }
 
-interface BrowserCloseRequestWaiter {
-  label: string
-  nativeLabel: string
-  resolve: () => void
-  reject: (error: Error) => void
-  timeout: NodeJS.Timeout
-}
-
 interface BrowserAgentApproval {
   label: string
   signature: string
@@ -170,7 +162,6 @@ export class EmbeddedBrowserManager {
       timeout: NodeJS.Timeout
     }>
   >()
-  private readonly closeRequestWaiters = new Map<string, BrowserCloseRequestWaiter>()
   private readonly activeTabs = new Map<string, string>()
   private readonly downloads = new Map<string, BrowserDownload>()
   private readonly agentControlPaused = new Set<string>()
@@ -373,7 +364,10 @@ export class EmbeddedBrowserManager {
         this.entries.delete(entryLabel)
         removedLabels.add(entryLabel)
       }
-      for (const removedLabel of removedLabels) this.clearLabelScopedState(removedLabel)
+      for (const removedLabel of removedLabels) {
+        this.clearActiveTabReferences(removedLabel)
+        this.clearLabelScopedState(removedLabel)
+      }
     })
     this.resolveAttachmentWaiters(normalizedLabel, contents)
   }
@@ -914,45 +908,13 @@ export class EmbeddedBrowserManager {
   async requestClose(label: string): Promise<void> {
     const normalizedLabel = requiredLabel(label)
     const entry = this.entries.get(normalizedLabel)
-    const requestId = randomUUID()
-    // The renderer can retain a stale native reference after Electron has
-    // already discarded the corresponding entry. Use a unique close identity
-    // so it still clears and acknowledges that logical browser before reopen.
-    const nativeLabel = entry?.nativeLabel ?? `missing-browser-${requestId}`
-    const handled = new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.closeRequestWaiters.delete(requestId)
-        reject(
-          new Error(`Timed out waiting for embedded browser close request: ${normalizedLabel}`)
-        )
-      }, 5_000)
-      this.closeRequestWaiters.set(requestId, {
-        label: normalizedLabel,
-        nativeLabel,
-        resolve,
-        reject,
-        timeout,
-      })
-    })
-    if (entry) this.close(normalizedLabel)
+    if (!entry) return
+    this.close(normalizedLabel)
     this.emit('close-request', {
-      requestId,
       label: normalizedLabel,
-      nativeLabel,
+      nativeLabel: entry.nativeLabel,
     })
-    await handled
-  }
-
-  notifyCloseRequestHandled(requestId: string, label: string, nativeLabel: string): void {
-    const waiter = this.closeRequestWaiters.get(requestId)
-    if (!waiter) return
-    const normalizedLabel = requiredLabel(label)
-    if (waiter.label !== normalizedLabel || waiter.nativeLabel !== nativeLabel) {
-      throw new Error('Embedded browser close acknowledgement does not match its request')
-    }
-    this.closeRequestWaiters.delete(requestId)
-    clearTimeout(waiter.timeout)
-    waiter.resolve()
+    await this.waitForAttachedContents(normalizedLabel)
   }
 
   close(label: string, expectedNativeLabel?: string | null): void {
@@ -960,8 +922,15 @@ export class EmbeddedBrowserManager {
     if (!entry) return
     if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
     this.entries.delete(label)
+    this.clearActiveTabReferences(label)
     this.clearLabelScopedState(label)
     if (!entry.contents.isDestroyed()) entry.contents.close()
+  }
+
+  private clearActiveTabReferences(label: string): void {
+    for (const [baseLabel, activeLabel] of this.activeTabs) {
+      if (baseLabel === label || activeLabel === label) this.activeTabs.delete(baseLabel)
+    }
   }
 
   private clearLabelScopedState(label: string): void {
@@ -1167,13 +1136,6 @@ export class EmbeddedBrowserManager {
       }
     }
     this.attachmentWaiters.clear()
-    for (const [requestId, waiter] of this.closeRequestWaiters) {
-      clearTimeout(waiter.timeout)
-      waiter.reject(
-        new Error(`Embedded browser stopped before close request completed: ${waiter.label}`)
-      )
-      this.closeRequestWaiters.delete(requestId)
-    }
   }
 
   private required(label: string): BrowserEntry {

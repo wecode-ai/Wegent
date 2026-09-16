@@ -84,10 +84,12 @@ function normalizePersistedTab(tab: WorkspaceTab, labels: WorkspaceTabLabels): W
       '项目空间',
       '工作空间',
       '协作',
+      '协作 (Beta)',
       'Work items',
       'Project spaces',
       'Workspaces',
       'Collaboration',
+      'Collaboration (Beta)',
     ].includes(tab.title)
   const normalized = { ...tab, fixed: tab.fixed === true }
   return isLegacyDefaultBoard

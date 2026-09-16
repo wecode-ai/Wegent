@@ -35,16 +35,11 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   goBackEmbeddedBrowser: vi.fn(),
   goForwardEmbeddedBrowser: vi.fn(),
   isEmbeddedBrowserLabelTransferred: vi.fn(),
-  isEmbeddedBrowserUnavailableError: vi.fn(
-    (error: unknown, label: string) =>
-      error instanceof Error && error.message === `Embedded browser is unavailable: ${label}`
-  ),
   listenEmbeddedBrowserAgentCursor: vi.fn(),
   listenEmbeddedBrowserAgentState: vi.fn(),
   listenEmbeddedBrowserAnnotationState: vi.fn(),
   listenEmbeddedBrowserAnnotationRequests: vi.fn(),
   listenEmbeddedBrowserCloseRequests: vi.fn(),
-  notifyEmbeddedBrowserCloseRequestHandled: vi.fn(),
   listenEmbeddedBrowserDownloads: vi.fn(),
   listenEmbeddedBrowserInvalidTlsCertificates: vi.fn(),
   listenEmbeddedBrowserLocalFilePreview: vi.fn(),
@@ -207,7 +202,6 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.listenEmbeddedBrowserAnnotationRequests.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserAgentCursor.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockReturnValue(null)
-    embeddedBrowserMocks.notifyEmbeddedBrowserCloseRequestHandled.mockResolvedValue(undefined)
     embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserInvalidTlsCertificates.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserLocalFilePreview.mockReturnValue(null)
@@ -772,23 +766,26 @@ describe('WorkspaceBrowserPanel', () => {
     fireEvent.submit(input.closest('form')!)
     await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
 
-    act(() => {
-      handleLocalFilePreview({
-        label: 'workspace-browser',
-        nativeLabel: 'workspace-browser-native-1',
-        url: 'file:///Users/me/archive.zip',
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        handleLocalFilePreview({
+          label: 'workspace-browser',
+          nativeLabel: 'workspace-browser-native-1',
+          url: 'file:///Users/me/archive.zip',
+        })
       })
-    })
 
-    const notice = screen.getByTestId('transient-notice')
-    expect(notice).toHaveTextContent('此文件无法预览')
+      const notice = screen.getByTestId('transient-notice')
+      expect(notice).toHaveTextContent('此文件无法预览')
 
-    await waitFor(
-      () => {
-        expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
-      },
-      { timeout: 3000 }
-    )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_200)
+      })
+      expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('shows an invalid TLS warning returned during the initial browser open', async () => {
@@ -1177,7 +1174,6 @@ describe('WorkspaceBrowserPanel', () => {
 
     act(() => {
       handleClose({
-        requestId: 'close-agent-cursor-1',
         label: 'workspace-browser',
         nativeLabel: 'workspace-browser-native-1',
       })
@@ -2021,7 +2017,6 @@ describe('WorkspaceBrowserPanel', () => {
     await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1))
     act(() => {
       handleClose({
-        requestId: 'close-before-submitted-reopen',
         label: 'workspace-browser',
         nativeLabel: 'workspace-browser-native-1',
       })
@@ -2043,65 +2038,6 @@ describe('WorkspaceBrowserPanel', () => {
         'workspace-browser'
       )
     })
-  })
-
-  test('reopens the same external URL after closing while inactive', async () => {
-    mockBrowserHostRect()
-    let handleClose!: (event: { label: string; nativeLabel: string }) => void
-    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
-      handleClose = handler
-      return Promise.resolve(vi.fn())
-    })
-    embeddedBrowserMocks.openEmbeddedBrowser
-      .mockResolvedValueOnce({
-        nativeLabel: 'workspace-browser-native-1',
-        title: null,
-        url: 'about:blank',
-      })
-      .mockResolvedValueOnce({
-        nativeLabel: 'workspace-browser-native-2',
-        title: null,
-        url: 'about:blank',
-      })
-    const firstRequest = {
-      id: 'test-close-while-inactive-1',
-      baseLabel: 'workspace-browser',
-      source: 'agent' as const,
-      disposition: 'current-tab' as const,
-      label: 'workspace-browser',
-      url: 'https://example.test/',
-    }
-    const view = render(<WorkspaceBrowserPanel active openRequest={firstRequest} />)
-
-    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1))
-    view.rerender(<WorkspaceBrowserPanel active={false} openRequest={firstRequest} />)
-    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockRejectedValueOnce(
-      new Error('Embedded browser is unavailable: workspace-browser')
-    )
-    act(() => {
-      handleClose({
-        requestId: 'close-while-inactive-1',
-        label: 'workspace-browser',
-        nativeLabel: 'workspace-browser-native-manager',
-      })
-    })
-    await waitFor(() => {
-      expect(embeddedBrowserMocks.notifyEmbeddedBrowserCloseRequestHandled).toHaveBeenCalledWith({
-        requestId: 'close-while-inactive-1',
-        label: 'workspace-browser',
-        nativeLabel: 'workspace-browser-native-manager',
-      })
-    })
-
-    view.rerender(
-      <WorkspaceBrowserPanel
-        active={false}
-        openRequest={{ ...firstRequest, id: 'test-close-while-inactive-2' }}
-      />
-    )
-
-    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(2))
-    expect(embeddedBrowserMocks.reloadEmbeddedBrowser).not.toHaveBeenCalled()
   })
 
   test('opens hidden immediately when the active browser host is not measurable yet', async () => {
@@ -2314,7 +2250,7 @@ describe('WorkspaceBrowserPanel', () => {
     expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
   })
 
-  test('ignores a stale close event for a replacement native browser', async () => {
+  test('consumes a close request by logical label when the native label is stale', async () => {
     let handleClose!: (event: { label: string; nativeLabel: string }) => void
     embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
       handleClose = handler
@@ -2325,21 +2261,34 @@ describe('WorkspaceBrowserPanel', () => {
 
     act(() => {
       handleClose({
-        requestId: 'stale-close-request-1',
         label: 'workspace-browser-runtime-1',
         nativeLabel: 'embedded-browser-native-stale',
       })
     })
 
-    expect(screen.getByTestId('workspace-browser-native-view')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.com/')
-    await waitFor(() => {
-      expect(embeddedBrowserMocks.notifyEmbeddedBrowserCloseRequestHandled).toHaveBeenCalledWith({
-        requestId: 'stale-close-request-1',
+    expect(screen.queryByTestId('workspace-browser-native-view')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('')
+  })
+
+  test('consumes a close request while its task pane is inactive', async () => {
+    let handleClose!: (event: { label: string; nativeLabel: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      handleClose = handler
+      return Promise.resolve(vi.fn())
+    })
+    const view = render(<WorkspaceBrowserPanel active label="workspace-browser-runtime-1" />)
+    await screen.findByTestId('workspace-browser-native-view')
+    view.rerender(<WorkspaceBrowserPanel active={false} label="workspace-browser-runtime-1" />)
+
+    act(() => {
+      handleClose({
         label: 'workspace-browser-runtime-1',
-        nativeLabel: 'embedded-browser-native-stale',
+        nativeLabel: 'workspace-browser-native-1',
       })
     })
+
+    expect(screen.queryByTestId('workspace-browser-native-view')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('')
   })
 
   test('does not overwrite the address draft while page-state polling continues', async () => {

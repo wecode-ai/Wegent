@@ -6,12 +6,12 @@ core_segments=(
   remote-device-onboarding
   workspace-tabs
   collaboration-shared-core
+  collaboration-agent-automation-chain
   cloud-space-mention
   priority-filter
   external-content-import
   automation-lifecycle
   project-automation
-  local-project-automation-chain
   project-event-sources
   project-assignment-notification
   offline-local-project-space
@@ -21,6 +21,7 @@ core_segments=(
   plugin-development
   project-ai-settings
   model-routing
+  fork-provider-preservation
   codex-account-login
   permission-modes
   workbench-mode
@@ -50,6 +51,7 @@ core_segments=(
   tray-lifecycle
   conversation-state
   send-key-preference
+  system-proxy
   environment-panel-scroll
   temporary-chat
   workspace-attachments
@@ -139,11 +141,11 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  conversation-state,send-key-preference,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
+  conversation-state,send-key-preference,system-proxy,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,local-project-automation-chain
+  project-automation,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
@@ -151,7 +153,7 @@ core_shards=(
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
-  model-routing,computer-use,codex-account-login
+  model-routing,fork-provider-preservation,computer-use,codex-account-login
 )
 
 validate_core_shards() {
@@ -297,6 +299,15 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    # System proxy resolution spans Electron, local runtime request routing,
+    # and the proxy settings surface.
+    wework/electron/src/host/system-proxy* | \
+      wework/src/components/settings/ProxySettingsPage* | \
+      wework/src/desktop/systemProxy* | \
+      wework/e2e/desktop/scenarios/system-proxy.scenario.mjs)
+      select_target "core:system-proxy"
+      return
+      ;;
     # Cloud device restart and upgrade actions require the managed Nevis fixture.
     wework/src/components/settings/ConnectionsSettingsPage* | \
       wework/src/components/settings/DeviceVersionBadge* | \
@@ -479,10 +490,6 @@ classify_wework_path() {
       select_target "cloud:all"
       return
       ;;
-    wework/e2e/desktop/scenarios/local-project-automation-chain.scenario.mjs)
-      select_target "core:local-project-automation-chain"
-      return
-      ;;
     wework/e2e/desktop/scenarios/project-assignment-notification.scenario.mjs)
       select_target "core:project-assignment-notification"
       return
@@ -497,6 +504,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs)
       select_target "core:collaboration-shared-core"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-agent-automation-chain.scenario.mjs)
+      select_target "core:collaboration-agent-automation-chain"
       return
       ;;
     wework/e2e/desktop/scenarios/board-focus-view.scenario.mjs)
@@ -806,6 +817,37 @@ classify_path() {
       select_target "plugins:plugin-marketplace-lifecycle"
       select_target "cloud:plugin-workspace-publication"
       ;;
+    backend/app/schemas/issue_workflow.py | \
+      backend/app/schemas/project_chat.py | \
+      backend/app/schemas/runtime_work.py | \
+      backend/app/services/cloud_projects/service.py | \
+      backend/app/services/issue_execution_configuration.py | \
+      backend/app/services/loop_item_executions/* | \
+      backend/app/services/project_automation_* | \
+      backend/app/services/project_automations.py | \
+      backend/app/services/project_chat/* | \
+      backend/app/services/project_workflow_projection.py | \
+      backend/app/services/runtime_work_service.py | \
+      backend/tests/api/test_cloud_projects_api.py | \
+      backend/tests/schemas/test_issue_workflow.py | \
+      backend/tests/services/test_coordinator_configuration.py | \
+      backend/tests/services/test_loop_item_executions.py | \
+      backend/tests/services/test_project_automations.py | \
+      backend/tests/services/test_project_chat_service.py | \
+      backend/tests/services/test_project_workflow_projection.py | \
+      backend/tests/services/test_runtime_work_service.py | \
+      executor/src/agents/claude_code.rs | \
+      executor/src/agents/mod.rs | \
+      executor/src/agents/runtime_capabilities.rs | \
+      executor/src/runtime_work/events.rs | \
+      executor/src/runtime_work/handler.rs | \
+      executor/src/runtime_work/handler/claude_turns.rs | \
+      executor/src/runtime_work/util.rs | \
+      executor/src/services/skill_deployer.rs | \
+      executor/src/task_runtime/model.rs | \
+      executor/src/task_runtime/store.rs)
+      select_target "core:collaboration-agent-automation-chain"
+      ;;
   esac
 
   case "$path" in
@@ -868,10 +910,12 @@ classify_path() {
       packages/collaboration/src/dto-mappers/workspaceDtoMappers*)
       select_target "core:remote-device-onboarding"
       select_target "core:collaboration-shared-core"
+      select_target "core:collaboration-agent-automation-chain"
       select_target "cloud:cloud-device-lifecycle"
       ;;
     packages/collaboration/*)
       select_target "core:collaboration-shared-core"
+      select_target "core:collaboration-agent-automation-chain"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites

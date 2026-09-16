@@ -110,6 +110,10 @@ import {
   FORK_ENCRYPTED_CONTENT,
   FORK_FOLLOW_UP_COMPLETION_TEXT,
   FORK_FOLLOW_UP_PROMPT,
+  FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT,
+  FORK_PROVIDER_FOLLOW_UP_PROMPT,
+  FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
+  FORK_PROVIDER_SOURCE_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
   FRESH_CHAT_PROMPT,
   GENERIC_MCP_TOOL_BLOCK_ID,
@@ -788,6 +792,8 @@ class DesktopE2EServer {
         'follow_up',
         'running_fork_follow_up',
         'fork_follow_up',
+        'fork_provider_source',
+        'fork_provider_follow_up',
         'task_plan',
         'request_user_input',
         'mcp_elicitation',
@@ -891,6 +897,11 @@ class DesktopE2EServer {
         this.scenarioWaiters.set(scenario, resolvePromise)
       })
     )
+  }
+
+  awaitNextScenarioRequest(scenario, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
+    const nextCount = (this.scenarioRequests.get(scenario)?.length ?? 0) + 1
+    return this.awaitScenarioRequestCount(scenario, nextCount, timeoutMs)
   }
 
   async awaitScenarioRequestCount(scenario, count, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
@@ -2109,6 +2120,47 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(MULTIMODAL_VISION_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'fork_provider_source' || this.scenario === 'fork_provider_follow_up') {
+      const requestKind = codexRequestKind(body)
+      if (requestKind === 'prewarm' || requestKind === 'compaction') {
+        const responseId = `fork-provider-empty-${this.modelRequests.length}`
+        this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+        return
+      }
+      const expectedModel = LOCAL_MODEL_CASES.find(model => model.protocol === 'responses')
+      assert.ok(expectedModel, 'Missing the responses local model for fork provider verification')
+      assert.equal(
+        protocol,
+        expectedModel.protocol,
+        'The fork provider regression reached the wrong protocol endpoint'
+      )
+      assert.equal(
+        body.model,
+        expectedModel.modelId,
+        'The forked task did not preserve the source model route'
+      )
+      const isFollowUp = this.scenario === 'fork_provider_follow_up'
+      const expectedPrompt = isFollowUp
+        ? FORK_PROVIDER_FOLLOW_UP_PROMPT
+        : FORK_PROVIDER_SOURCE_PROMPT
+      assert.ok(
+        JSON.stringify(body).includes(expectedPrompt),
+        'The fork provider regression request did not contain its expected prompt'
+      )
+      this.recordScenarioRequest(this.scenario, modelRequest)
+      const responseId = `fork-provider-${this.modelRequests.length}`
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(
+          isFollowUp
+            ? FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT
+            : FORK_PROVIDER_SOURCE_COMPLETION_TEXT
+        ),
         responseCompleted(responseId),
       ])
       return

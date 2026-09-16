@@ -100,6 +100,13 @@ const RUNNING_FORK_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RUNNING_FORK_COMPLETE'
 const FORK_FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP: continue only in the forked task.'
 const FORK_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP_COMPLETE'
 const FORK_ENCRYPTED_CONTENT = 'gAAAA-wework-desktop-e2e-fork-context'
+const FORK_PROVIDER_SOURCE_PROMPT =
+  'WEWORK_DESKTOP_E2E_FORK_PROVIDER_SOURCE: create a task through the local model router.'
+const FORK_PROVIDER_SOURCE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FORK_PROVIDER_SOURCE_COMPLETE'
+const FORK_PROVIDER_FOLLOW_UP_PROMPT =
+  'WEWORK_DESKTOP_E2E_FORK_PROVIDER_FOLLOW_UP: continue through the inherited local model router.'
+const FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_FORK_PROVIDER_FOLLOW_UP_COMPLETE'
 const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
@@ -475,6 +482,11 @@ const TELEMETRY_FORBIDDEN_PROPERTY_PATTERN =
   /(authorization|code|content|credential|email|file|message|path|prompt|repository|response|task_id|token|url|user_id|workspace)/i
 const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
 const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
+const CLOUD_PUBLIC_MODEL_OPTIONS = {
+  weworkCloudModelNamespace: 'default',
+  weworkCloudModelResourceUserId: '0',
+  weworkCloudModelUpstreamApiFormat: 'openai-responses',
+}
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const REMOTE_DOCKER_DEVICE_ID = 'wework-e2e-remote-docker-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
@@ -1232,7 +1244,7 @@ async function sendPromptUntilScenarioRequest(
   scenario,
   timeoutMs = MODEL_REQUEST_TIMEOUT_MS
 ) {
-  const scenarioRequest = control.awaitScenarioRequest(scenario)
+  const scenarioRequest = control.awaitNextScenarioRequest(scenario, timeoutMs)
   await sendPrompt(control, selector, prompt)
   return withTimeout(
     scenarioRequest,
@@ -1557,6 +1569,10 @@ export {
   FORK_FOLLOW_UP_PROMPT,
   FORK_FOLLOW_UP_COMPLETION_TEXT,
   FORK_ENCRYPTED_CONTENT,
+  FORK_PROVIDER_SOURCE_PROMPT,
+  FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
+  FORK_PROVIDER_FOLLOW_UP_PROMPT,
+  FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT,
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
   REQUEST_USER_INPUT_COMPLETION_TEXT,
@@ -1742,6 +1758,7 @@ export {
   TELEMETRY_FORBIDDEN_PROPERTY_PATTERN,
   CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_PUBLIC_MODEL_LABEL,
+  CLOUD_PUBLIC_MODEL_OPTIONS,
   CLOUD_DEVICE_ID,
   REMOTE_DOCKER_DEVICE_ID,
   FRESH_CHAT_PROMPT,

@@ -597,15 +597,11 @@ class SessionManager:
 
         Returns:
             Tuple of (Redis client, PubSub object) or (None, None)
-            Caller is responsible for closing the client when done.
+            Caller is responsible for closing both objects when done.
         """
         try:
             channel = self._get_channel_key(subtask_id)
-            redis_client = await self._cache._get_client()
-            pubsub = redis_client.pubsub()
-            await pubsub.subscribe(channel)
-            # Return both client and pubsub so caller can close client when done
-            return redis_client, pubsub
+            return await self._cache.subscribe(channel)
         except Exception as e:
             logger.error(
                 f"Error subscribing to streaming channel for subtask {subtask_id}: {e}"
@@ -650,7 +646,7 @@ class SessionManager:
         """Subscribe to the callback event channel for a subtask.
 
         Returns (redis_client, pubsub) so the caller can poll with
-        pubsub.get_message() and close the client when done.
+        pubsub.get_message() and close both objects when done.
 
         Args:
             subtask_id: Subtask ID
@@ -660,10 +656,7 @@ class SessionManager:
         """
         try:
             channel = self._get_callback_channel_key(subtask_id)
-            redis_client = await self._cache._get_client()
-            pubsub = redis_client.pubsub()
-            await pubsub.subscribe(channel)
-            return redis_client, pubsub
+            return await self._cache.subscribe(channel)
         except Exception as e:
             logger.error(
                 f"[SessionManager] subscribe_callback_channel failed for subtask {subtask_id}: {e}"

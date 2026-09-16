@@ -1386,6 +1386,69 @@ def test_issue_creation_dispatches_only_the_selected_matching_automation(
     assert ingest.await_args.kwargs["automation_id"] == "rule-2"
 
 
+def test_tag_update_requires_and_dispatches_one_matching_automation(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Choose tag automation"},
+    ).json()
+    matching_rules = [
+        SimpleNamespace(id="rule-1", title="Implement", description=""),
+        SimpleNamespace(id="rule-2", title="Review", description=""),
+    ]
+    monkeypatch.setattr(
+        "app.services.project_automations.project_automation_processor.matching_rules",
+        MagicMock(return_value=matching_rules),
+    )
+    ingest = AsyncMock(return_value=1)
+    monkeypatch.setattr(
+        deliveries_endpoint.project_incoming_hook_service,
+        "ingest_internal",
+        ingest,
+    )
+
+    selection_response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": created["version"], "tags": ["review"]},
+    )
+
+    assert selection_response.status_code == 409
+    assert (
+        selection_response.json()["detail"]["code"] == "automation_selection_required"
+    )
+    unchanged = test_db.get(LoopItem, created["id"])
+    assert unchanged is not None
+    test_db.refresh(unchanged)
+    assert unchanged.tags == []
+    assert unchanged.version == created["version"]
+    ingest.assert_not_awaited()
+
+    selected_response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "tags": ["review"],
+            "automation_rule_id": "rule-2",
+        },
+    )
+
+    assert selected_response.status_code == 200
+    assert selected_response.json()["tags"] == ["review"]
+    ingest.assert_awaited_once()
+    event = ingest.await_args.args[1]
+    assert event.event_type == "task.tag_added"
+    assert event.payload["added_tags"] == ["review"]
+    assert ingest.await_args.kwargs["automation_id"] == "rule-2"
+
+
 def test_issue_created_in_inbox_starts_its_existing_workflow(
     test_client: TestClient,
     test_token: str,

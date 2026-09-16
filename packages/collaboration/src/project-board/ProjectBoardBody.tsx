@@ -135,6 +135,7 @@ export interface ProjectBoardBodyProps<TItem> {
     value: ProjectBoardGroupBy,
     onChange: (value: ProjectBoardGroupBy) => void,
   ): ReactNode;
+  renderBoardSettingsAction?(): ReactNode;
   rootLabel: string;
   rootUnitLabel: string;
   searchPlaceholder: string;
@@ -180,6 +181,7 @@ export function ProjectBoardBody<TItem>({
   renderExternalGroupPicker,
   renderFocusIcon,
   renderGroupPicker,
+  renderBoardSettingsAction,
   renderItem,
   renderItemsFooter,
   renderQuickStart,
@@ -349,6 +351,7 @@ export function ProjectBoardBody<TItem>({
                 {saveGlobalLabel}
               </button>
             ) : null}
+            {renderBoardSettingsAction?.()}
           </div>
         </div>
       )}

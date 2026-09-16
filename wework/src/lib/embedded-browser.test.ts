@@ -12,7 +12,6 @@ import {
   migrateEmbeddedBrowserLabel,
   migrateEmbeddedBrowserLabelSequence,
   notifyEmbeddedBrowserAgentCursorArrived,
-  notifyEmbeddedBrowserCloseRequestHandled,
   relabelEmbeddedBrowser,
   resolveEmbeddedBrowserAgentApproval,
   requestEmbeddedBrowserOpen,
@@ -212,20 +211,6 @@ describe('embedded-browser', () => {
     expect(desktopHostMocks.invoke).toHaveBeenCalledWith('browser.notifyAgentCursorArrived', {
       label: 'workspace-browser-task-1',
       moveSequence: 7,
-    })
-  })
-
-  test('acknowledges a handled close request through Electron', async () => {
-    await notifyEmbeddedBrowserCloseRequestHandled({
-      requestId: 'close-request-1',
-      label: 'workspace-browser-task-1',
-      nativeLabel: 'electron-browser-1',
-    })
-
-    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('browser.notifyCloseRequestHandled', {
-      requestId: 'close-request-1',
-      label: 'workspace-browser-task-1',
-      nativeLabel: 'electron-browser-1',
     })
   })
 

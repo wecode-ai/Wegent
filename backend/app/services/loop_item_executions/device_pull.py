@@ -14,6 +14,7 @@ from typing import Any
 
 from app.core.distributed_lock import distributed_lock
 from app.db.session import get_db_session
+from app.models.delivery import loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
 from app.services.device.capacity import validate_runtime_capacity_observation_sync
 from app.services.loop_item_executions.service import (
@@ -24,6 +25,32 @@ from app.services.loop_item_executions.service import (
 logger = logging.getLogger(__name__)
 
 DEVICE_PULL_LOCK_SECONDS = 30
+
+
+def _unconfirmed_claim(
+    db,
+    *,
+    owner_user_id: int,
+    runtime_device_id: str,
+    runtime_instance_id: str,
+    environment: str,
+) -> LoopItemExecution | None:
+    """Return work reserved by this Runtime but not yet acknowledged."""
+
+    return (
+        db.query(LoopItemExecution)
+        .filter(
+            LoopItemExecution.executor_owner_user_id == owner_user_id,
+            LoopItemExecution.runtime_device_id == runtime_device_id,
+            LoopItemExecution.runtime_instance_id == runtime_instance_id,
+            LoopItemExecution.execution_environment == environment,
+            LoopItemExecution.status == "claimed",
+            loop_datetime_is_unset(LoopItemExecution.start_requested_at),
+        )
+        .order_by(LoopItemExecution.claimed_at.asc(), LoopItemExecution.id.asc())
+        .with_for_update()
+        .first()
+    )
 
 
 def _runtime_prompt(payload: dict[str, Any]) -> str | None:
@@ -54,17 +81,39 @@ def _claim_execution(
         if capacity is None:
             return {"success": True, "task": None}
 
-        row = loop_item_execution_service.claim_next_for_device(
+        row = _unconfirmed_claim(
             db,
-            execution_device_id=execution_target_id,
-            runtime_device_id=runtime_device_id,
-            environment=environment,
-            runtime_instance_id=runtime_instance_id,
-            device_capacity=capacity.limit,
-            runtime_active=capacity.active,
-            runtime_active_task_ids=capacity.active_task_ids,
             owner_user_id=owner_user_id,
+            runtime_device_id=runtime_device_id,
+            runtime_instance_id=runtime_instance_id,
+            environment=environment,
         )
+        if row is not None:
+            row = loop_item_execution_service.heartbeat(
+                db,
+                execution_id=row.id,
+                runtime_device_id=runtime_device_id,
+                runtime_task_id=row.runtime_task_id,
+            )
+            logger.warning(
+                "[RobotQueue] Redelivering unconfirmed execution=%s task=%s "
+                "runtime_instance=%s",
+                row.id if row is not None else None,
+                row.runtime_task_id if row is not None else None,
+                runtime_instance_id,
+            )
+        else:
+            row = loop_item_execution_service.claim_next_for_device(
+                db,
+                execution_device_id=execution_target_id,
+                runtime_device_id=runtime_device_id,
+                environment=environment,
+                runtime_instance_id=runtime_instance_id,
+                device_capacity=capacity.limit,
+                runtime_active=capacity.active,
+                runtime_active_task_ids=capacity.active_task_ids,
+                owner_user_id=owner_user_id,
+            )
         if row is None:
             return {"success": True, "task": None}
 
@@ -103,12 +152,16 @@ def _claim_execution(
             execution_request["task_id"] = runtime_task_id
             execution_request["subtask_id"] = f"{runtime_task_id}-assistant"
 
-        advanced = loop_item_execution_service.mark_start_requested(
+        # Claiming and materializing a payload does not prove that the
+        # Socket.IO acknowledgement reached the Executor. Keep
+        # start_requested_at unset until the Executor confirms that Runtime
+        # accepted the create request, so a lost pull response remains safe to
+        # recover and redeliver.
+        loop_item_execution_service._bind_issue_execution_task(
             db,
-            execution_ids=[row.id],
+            execution=row,
         )
-        if advanced != 1:
-            return {"success": True, "task": None}
+        db.commit()
 
         return {
             "success": True,

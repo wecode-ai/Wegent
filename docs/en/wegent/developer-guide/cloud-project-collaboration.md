@@ -21,9 +21,17 @@ A cloud project is not the existing `Project` model:
 
 ### Execution configuration and waiting states
 
-Cloud projects configure the current user's default device and model under **Project settings → Assignment and dispatch** for the AI coordinator. Creating a custom Codex agent requires a device and model; **Configure device and model** in the agent list sets defaults for future tasks. Model identity and provider options remain opaque dictionaries and are not subject to API field case conversion. Device presence comes from connection heartbeats. If an AI-coordinated workflow lacks required execution settings, Issue creation returns a configuration error before persisting the Issue or starting dispatch. Configure the missing settings before creating the Issue.
+Project settings keep collaboration organization separate from runtime resources:
 
-Successful planning and assignment by the coordinator does not mean the Issue is complete. Parent steps and child details display the child's execution state. Missing device or model configuration keeps an execution in `waiting_runtime`; **Configure and continue** applies a complete profile to that existing execution. This does not change project or agent defaults and preserves manual approval requirements. Workflow progress counts steps only after acceptance.
+- **Collaboration members** presents project participants in the order **Agents → Project members → Collaboration groups**. A collaboration group is a reusable organization whose members and leader may be humans or Agents. Workflow stages belong to the collaboration group.
+- **Automatic processing** defines trigger rules only. Issue creation, Tag changes, external events, or schedules route work to a project member, Agent, or collaboration group. A rule never binds a device.
+- **Execution environments** manages the project's authorized device pool. Agent creation does not select a device. Manual assignments and automatic processing resolve a device from this pool when a Run is claimed.
+
+A Mention in a comment only creates a mention and notification; it never changes the assignee. Assignment, Mention, Subscription, and Run have independent semantics. Only an explicit assignment changes ownership and creates a Run when the target is an Agent or collaboration group.
+
+Model identity and provider options remain opaque dictionaries and are not subject to API field case conversion. Device presence comes from connection heartbeats. If model or workspace configuration is missing, the execution remains in `waiting_runtime` and uses the unified runtime-configuration entrypoint; the device itself is bound when the Run is claimed.
+
+Successful planning and assignment by the coordinator does not mean the Issue is complete. Parent steps and child details display the child's execution state. Missing model or workspace configuration keeps an execution in `waiting_runtime`; **Configure and continue** completes that existing execution's profile. If no device currently satisfies authorization and capacity constraints, the Run remains queued for device claim instead of requiring a device binding on the Agent. Completing runtime configuration does not change project or Agent defaults and preserves manual approval requirements. Workflow progress counts steps only after acceptance.
 
 Wegent Web replaces the former **Inbox** entry with **Collaboration** and directly reuses the Backend APIs for cloud projects, board Issues, comments, attachments, shared files, members, and execution records. Web and Wework do not maintain a second domain model or API surface.
 
@@ -32,6 +40,8 @@ Cross-client types, API clients, copy, test contracts, and host-independent Reac
 Web supplies Next.js routing, notifications, and external-link behavior through a host adapter. Wework uses the same adapter to inject local project storage and a **Desktop tools** entry. Only local projects, terminals, device execution, AI orchestration, and other behavior that depends on Electron, the local filesystem, or the local executor may enter the desktop-specific workspace. New portable behavior must land in the shared package first instead of being copied into both hosts and synchronized later.
 
 The shared package owns business state, field structure, and interaction contracts, but it must not duplicate a host's existing design system. Dialogs, tabs, selects, inputs, and primary actions should be injected through an explicit host adapter; the shared package keeps only a neutral default for host-independent use. Hosts pass brand colors through semantic CSS variables instead of hard-coding Web or Wework colors in shared components. The shared board sizing chain must preserve `min-width: 0`, `min-height: 0`, and vertical flex constraints so horizontal overflow remains inside the board scroll container instead of placing a page-level scrollbar above the remaining content.
+
+The **Collaboration members** settings page uses a wide content container because Agents, project members, and collaboration-group forms need multi-column space; ordinary settings pages retain the default narrow container. Member and responsibility columns in collaboration-group details must use shrinkable `minmax(0, ...)` tracks, with `min-width: 0` and truncation on text nodes. Fixed minimum track widths must not push form controls outside the panel, and heading actions remain on one line.
 
 When chat messages enter a collaboration space, the Backend creates immutable message snapshots from a source Task the current user is authorized to access. The target may be a new Issue or a comment on an existing Issue. Clients must not write chat text directly as if it were a trusted snapshot.
 

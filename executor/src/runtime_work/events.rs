@@ -44,7 +44,7 @@ const MAX_TOOL_OUTPUT_DELTA_BYTES: usize = 64 * 1024;
 const MAX_TOOL_OUTPUT_BUFFER_BYTES: usize = 512 * 1024;
 static LAST_RUNTIME_EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-fn next_runtime_event_sequence() -> u64 {
+pub(super) fn next_runtime_event_sequence() -> u64 {
     let wall_clock = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
