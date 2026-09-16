@@ -1186,6 +1186,7 @@ function insertDelayedSubagentBlock(
 
 function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): WorkbenchMessage[] {
   const messages: WorkbenchMessage[] = []
+  const runtimeTurnStartedAt = runtimeConversationTurnTimestamp(turn)
   let assistantItems: RuntimeConversationItem[] = []
   let followsGuidance = false
 
@@ -1210,6 +1211,7 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
       runtimeStatus: isLast ? turn.status : 'done',
       subtaskId: turn.id ?? undefined,
       turnId: turn.id ?? undefined,
+      runtimeTurnStartedAt,
       runtimeMessageIndex: turn.runtimeMessageIndex,
       blocks: blocks.length > 0 ? blocks : undefined,
       runtimeDisplayItems: assistantItems.flatMap<RuntimeAssistantDisplayItem>(item =>

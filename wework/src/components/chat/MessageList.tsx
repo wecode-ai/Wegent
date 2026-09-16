@@ -65,7 +65,7 @@ import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { CodeCommentPreview } from './CodeCommentPreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { getFileEditDurationsBySourceBlock } from './blocks/fileEditDurations'
-import { getDurationText } from './blocks/processingDuration'
+import { ProcessingDurationLabel } from './ProcessingDurationLabel'
 import { usePersistentProcessingExpansion } from './blocks/processingExpansionState'
 import { isContextCompactionToolName, isGuidanceToolName } from './blocks/toolBlockKinds'
 import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from './requestUserInputMessages'
@@ -869,7 +869,7 @@ function formatCompactDuration(durationMs: number): string {
 }
 
 function getStoppedElapsedDuration(message: WorkbenchMessage): string | null {
-  const startedAt = getTurnStartMs(message.createdAt)
+  const startedAt = message.runtimeTurnStartedAt ?? getTurnStartMs(message.createdAt)
   if (startedAt === undefined) return null
 
   const completedAt = getMessageTimestampMs(message.completedAt)
@@ -1979,19 +1979,20 @@ export function AssistantMessage({
   )
   const processingSegments = splitProcessingBlocks(displayBlocks)
   const hasBlocks = displayBlocks.length > 0
+  const hasProcessingActivity =
+    hasBlocks || message.blocks?.some(block => block.type === 'thinking')
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = !isCancelled && message.status === 'streaming'
   const activeThinkingContent = isStreaming ? getRuntimeMessageActiveThinking(message) : ''
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
-  const isAssistantRunning = isStreaming || hasRunningBlocks
+  const isAssistantSettled = isCancelled || message.status === 'done' || message.status === 'failed'
+  const isAssistantRunning = !isAssistantSettled && (isStreaming || hasRunningBlocks)
   const canShowFinalArtifacts = !isAssistantRunning
-  const hasStreamedResponse = hasBlocks || hasVisibleContent
-  const shouldShowProcessingSummary = hasBlocks || (isAssistantRunning && hasStreamedResponse)
+  const shouldShowProcessingSummary = hasBlocks
   const processingStateKey = getMessageDisplayStateKey(conversationKey, message)
   const [finalProcessingExpanded, setFinalProcessingExpanded] = usePersistentProcessingExpansion(
     `${processingStateKey}:final-processing`
   )
-  const [finalProcessingCompletedAt] = useState(() => Date.now())
   const isProcessingOnlyBeforeGuidance =
     Boolean(message.runtimeGuidanceSplitBefore) && !hasVisibleContent
   const hasPlanResponse = displayBlocks.some(
@@ -2014,12 +2015,10 @@ export function AssistantMessage({
   const usesFinalProcessingShell =
     hasBlocks &&
     !hasPlanResponse &&
-    !isStreaming &&
-    !isActiveTurn &&
     !hasRunningBlocks &&
     !isCancelled &&
     !hasProcessingAfterContent &&
-    (isProcessingOnlyBeforeGuidance ||
+    ((isProcessingOnlyBeforeGuidance && !isActiveTurn) ||
       (hasVisibleContent &&
         !message.runtimeGuidanceSplitBefore &&
         !message.runtimeGuidanceContinuation))
@@ -2143,12 +2142,21 @@ export function AssistantMessage({
         )
       })
     : null
-  const finalProcessingDuration = getDurationText(
-    displayBlocks,
-    getProcessingSummaryStartMs(message, displayBlocks, false) ?? finalProcessingCompletedAt,
-    finalProcessingCompletedAt,
-    isStreaming ? finalProcessingCompletedAt : null,
-    false
+  const lastProcessingBlock = displayBlocks.at(-1)
+  const processingStartedAt =
+    message.runtimeTurnStartedAt ??
+    getProcessingSummaryStartMs(message, message.blocks ?? [], false)
+  const processingCompletedAt = isAssistantRunning
+    ? undefined
+    : (getMessageTimestampMs(message.completedAt) ??
+      lastProcessingBlock?.completedAt ??
+      lastProcessingBlock?.createdAt)
+  const processingDurationLabel = (
+    <ProcessingDurationLabel
+      startedAt={processingStartedAt}
+      completedAt={processingCompletedAt}
+      isRunning={isAssistantRunning}
+    />
   )
 
   return (
@@ -2172,6 +2180,14 @@ export function AssistantMessage({
                 : t('assistant_status.stopped')}
             </div>
           ) : null}
+          {hasProcessingActivity && !isCancelled && !usesFinalProcessingShell ? (
+            <div
+              className="mb-3 w-full border-b border-border pb-2 text-sm text-text-muted"
+              data-testid="live-processing-timeline"
+            >
+              {processingDurationLabel}
+            </div>
+          ) : null}
           {usesFinalProcessingShell ? (
             <div
               className="mb-3 min-w-0 w-full border-b border-border pb-2"
@@ -2184,7 +2200,7 @@ export function AssistantMessage({
                 className="flex min-h-8 items-center gap-1 text-sm text-text-muted hover:text-text-secondary"
                 onClick={() => setFinalProcessingExpanded(value => !value)}
               >
-                <span>{finalProcessingDuration || '已处理'}</span>
+                {processingDurationLabel}
                 <ChevronDown
                   className={`h-4 w-4 transition-transform ${finalProcessingExpanded ? '' : '-rotate-90'}`}
                   strokeWidth={2}
