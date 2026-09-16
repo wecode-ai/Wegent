@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Sequence
 
+import grpc
 from pymilvus import (
     CollectionSchema,
     DataType,
@@ -490,7 +491,7 @@ class MilvusDocumentStore:
                 alias=f"wegent-{uuid.uuid4().hex}",
             )
             yield client
-        except MilvusException as exc:
+        except (MilvusException, grpc.RpcError) as exc:
             raise rpc_failure(exc) from exc
         finally:
             if client is not None:

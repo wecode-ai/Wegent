@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import socket
+import threading
 import uuid
 from dataclasses import dataclass, field
+from typing import Iterator
 
 import pytest
 from llama_index.core.schema import TextNode
@@ -27,6 +30,58 @@ from knowledge_engine.storage.milvus_native import INDEX_BINDING_COLLECTION
 CONTRACT_URI_ENV = "MILVUS_CONTRACT_URI"
 CONTRACT_DIMENSION = 1536
 CONTRACT_CREATED_AT = "2026-01-01T00:00:00Z"
+
+
+class SilentTcpTarget:
+    """A local TCP endpoint that accepts connections and never speaks.
+
+    Fault-injection target for deadline contracts: the socket is reachable, so
+    nothing depends on routing or on an external network, but no byte ever
+    arrives, which is what makes a client wait until its own deadline. Holding
+    the accepted connections open is what distinguishes it from a refused
+    connection, which fails immediately instead of exercising the deadline.
+    """
+
+    def __init__(self, backlog: int = 8) -> None:
+        self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._listener.bind(("127.0.0.1", 0))
+        self._listener.listen(backlog)
+        self._listener.settimeout(0.2)
+        self._accepted: list[socket.socket] = []
+        self._stopping = threading.Event()
+        self._thread = threading.Thread(target=self._accept_forever, daemon=True)
+        self._thread.start()
+
+    @property
+    def uri(self) -> str:
+        host, port = self._listener.getsockname()
+        return f"http://{host}:{port}"
+
+    def _accept_forever(self) -> None:
+        while not self._stopping.is_set():
+            try:
+                connection, _ = self._listener.accept()
+            except (TimeoutError, OSError):
+                continue
+            self._accepted.append(connection)
+
+    def close(self) -> None:
+        self._stopping.set()
+        self._thread.join(timeout=2)
+        for connection in self._accepted:
+            connection.close()
+        self._listener.close()
+
+
+@pytest.fixture
+def silent_tcp_target() -> Iterator[SilentTcpTarget]:
+    """A local endpoint that accepts a connection and then goes silent."""
+    target = SilentTcpTarget()
+    try:
+        yield target
+    finally:
+        target.close()
 
 
 class DeterministicEmbedding:
