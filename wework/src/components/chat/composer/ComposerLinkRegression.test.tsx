@@ -32,8 +32,8 @@ describe('ComposerTextarea GitHub inline link chips', () => {
     ['https://github.com/wecode-ai/Wegent', 'composer-link-chip'],
     ['https://example.com/page', 'composer-text-link'],
   ])('preserves edited delimiter labels for %s after draft restoration', (url, testId) => {
-    const label = String.raw`Docs [draft]\done]`
-    const markdown = String.raw`[Docs \[draft\]\\done\]](${url})`
+    const label = String.raw`!Docs [draft]\done]`
+    const markdown = String.raw`[!Docs \[draft\]\\done\]](${url})`
     const view = render(<Harness initialValue={url} />)
     fireEvent.click(screen.getByTestId(testId))
     fireEvent.click(screen.getByTestId('link-edit-edit-text'))

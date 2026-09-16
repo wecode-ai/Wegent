@@ -12,7 +12,7 @@ export interface ParsedComposerLink extends ComposerLinkPayload {
   end: number
 }
 
-const MARKDOWN_LINK_REGEX = /\[!?((?:\\.|[^\]\\])*)\]\(([a-z][a-z0-9+.-]*:\/\/[^\s)\]]+)\)/gi
+const MARKDOWN_LINK_REGEX = /\[((?:\\.|[^\]\\])*)\]\(([a-z][a-z0-9+.-]*:\/\/[^\s)\]]+)\)/gi
 const BARE_URL_REGEX = new RegExp('https?:\\/\\/[^\\s)\\]}]+', 'gi')
 
 export function serializeComposerLink({
