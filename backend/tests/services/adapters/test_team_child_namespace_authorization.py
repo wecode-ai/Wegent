@@ -258,6 +258,10 @@ def test_child_group_team_list_includes_authorized_parent_team(
     _owner, child_member, child, team, _kb = _arrange_parent_team_authorized_to_child(
         test_db, member_role=member_role
     )
+    payload = deepcopy(team.json)
+    payload["spec"]["members"][0]["prompt"] = "private-parent-instructions"
+    team.json = payload
+    test_db.commit()
 
     teams, total = team_kinds_service.get_user_teams_page(
         test_db,
@@ -273,7 +277,21 @@ def test_child_group_team_list_includes_authorized_parent_team(
     # share_status=2 means the team is shared from others.
     assert listed_team["share_status"] == 2
     assert listed_team["access_source"] == "namespace_authorization"
+    expected_prompt = (
+        "" if member_role == "RestrictedAnalyst" else "private-parent-instructions"
+    )
+    assert listed_team["bots"][0]["bot_prompt"] == expected_prompt
     assert total == len(teams)
+
+    result = task_kinds_service.create_task_or_append(
+        test_db,
+        obj_in=TaskCreate(team_id=team.id, title="Child task", prompt="hello"),
+        user=child_member,
+    )
+    detail = task_kinds_service.get_task_detail(
+        test_db, task_id=result["id"], user_id=child_member.id
+    )
+    assert detail["team"]["bots"][0]["bot_prompt"] == expected_prompt
 
 
 def test_team_list_deduplicates_direct_share_and_namespace_authorization(

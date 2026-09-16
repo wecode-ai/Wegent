@@ -17,7 +17,16 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, literal, literal_column, or_, tuple_, union_all
+from sqlalchemy import (
+    String,
+    and_,
+    func,
+    literal,
+    literal_column,
+    or_,
+    tuple_,
+    union_all,
+)
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -46,7 +55,6 @@ from app.services.adapters.pipeline_context import normalize_context_passing
 from app.services.adapters.shell_utils import get_shell_type
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
-from app.services.group_permission import get_restricted_analyst_groups
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
 from app.services.team_access_policy import TEAM_USE_ROLE, team_usage_summary
@@ -354,6 +362,17 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
         approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
         authorization_start = time.time()
+        if group_namespaces and effective_roles is None:
+            from app.services.group_permission import get_effective_roles_in_groups
+
+            effective_roles = get_effective_roles_in_groups(
+                db, user_id, group_namespaces
+            )
+        restricted_group_namespaces = {
+            namespace
+            for namespace, role in (effective_roles or {}).items()
+            if role == GroupRole.RestrictedAnalyst
+        }
         authorized_namespace_ids = self._get_accessible_authorization_namespace_ids(
             db,
             user_id,
@@ -376,6 +395,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 Kind.updated_at.label("team_updated_at"),
                 literal_column("0").label("share_status"),  # Default 0 for own teams
                 literal_column(str(user_id)).label("context_user_id"),
+                literal(False).label("restricted_guest_access"),
                 literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
                 literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
             ).filter(
@@ -400,6 +420,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         Kind.user_id.label(
                             "context_user_id"
                         ),  # Use team owner, not inviter
+                        literal(False).label("restricted_guest_access"),
                         literal(self.ACCESS_SOURCE_USER_SHARE).label("access_source"),
                         literal(self.ACCESS_RANK_USER_SHARE).label("access_rank"),
                     )
@@ -434,6 +455,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         "share_status"
                     ),  # 0 for public teams (system-owned)
                     literal_column("0").label("context_user_id"),
+                    literal(False).label("restricted_guest_access"),
                     literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
                     literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
                 ).filter(
@@ -455,6 +477,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 Kind.updated_at.label("team_updated_at"),
                 literal_column("0").label("share_status"),
                 Kind.user_id.label("context_user_id"),
+                Kind.namespace.in_(restricted_group_namespaces).label(
+                    "restricted_guest_access"
+                ),
                 literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
                 literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
             ).filter(
@@ -470,36 +495,42 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             authorized_namespace_entity_ids = [
                 str(ns_id) for ns_id in authorized_namespace_ids
             ]
-            authorized_member_exists = (
-                db.query(ResourceMember.id)
+            authorized_team_query = (
+                db.query(
+                    Kind.id.label("team_id"),
+                    Kind.user_id.label("team_user_id"),
+                    Kind.name.label("team_name"),
+                    Kind.namespace.label("team_namespace"),
+                    Kind.json.label("team_json"),
+                    Kind.created_at.label("team_created_at"),
+                    Kind.updated_at.label("team_updated_at"),
+                    literal_column("2").label("share_status"),
+                    Kind.user_id.label("context_user_id"),
+                    Namespace.name.in_(restricted_group_namespaces).label(
+                        "restricted_guest_access"
+                    ),
+                    literal(self.ACCESS_SOURCE_NAMESPACE_AUTHORIZATION).label(
+                        "access_source"
+                    ),
+                    literal(self.ACCESS_RANK_NAMESPACE_AUTHORIZATION).label(
+                        "access_rank"
+                    ),
+                )
+                .join(
+                    ResourceMember,
+                    (ResourceMember.resource_id == Kind.id)
+                    & ResourceMember.resource_type.in_(team_resource_type_variants),
+                )
+                .join(Namespace, ResourceMember.entity_id == Namespace.id.cast(String))
                 .filter(
-                    ResourceMember.resource_id == Kind.id,
-                    ResourceMember.resource_type.in_(team_resource_type_variants),
                     ResourceMember.entity_type == "namespace",
                     ResourceMember.entity_id.in_(authorized_namespace_entity_ids),
                     ResourceMember.status.in_(approved_status_variants),
+                    Namespace.is_active.is_(True),
+                    Kind.kind == "Team",
+                    Kind.is_active.is_(True),
+                    ~Kind.namespace.in_(group_namespaces),
                 )
-                .exists()
-            )
-            authorized_team_query = db.query(
-                Kind.id.label("team_id"),
-                Kind.user_id.label("team_user_id"),
-                Kind.name.label("team_name"),
-                Kind.namespace.label("team_namespace"),
-                Kind.json.label("team_json"),
-                Kind.created_at.label("team_created_at"),
-                Kind.updated_at.label("team_updated_at"),
-                literal_column("2").label("share_status"),
-                Kind.user_id.label("context_user_id"),
-                literal(self.ACCESS_SOURCE_NAMESPACE_AUTHORIZATION).label(
-                    "access_source"
-                ),
-                literal(self.ACCESS_RANK_NAMESPACE_AUTHORIZATION).label("access_rank"),
-            ).filter(
-                authorized_member_exists,
-                Kind.kind == "Team",
-                Kind.is_active.is_(True),
-                ~Kind.namespace.in_(group_namespaces),
             )
             queries.append(authorized_team_query)
 
@@ -524,12 +555,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 combined_query.c.team_updated_at,
                 combined_query.c.share_status,
                 combined_query.c.context_user_id,
+                combined_query.c.restricted_guest_access,
                 combined_query.c.access_source,
                 func.row_number()
                 .over(
                     partition_by=combined_query.c.team_id,
                     order_by=(
                         combined_query.c.access_rank.asc(),
+                        combined_query.c.restricted_guest_access.desc(),
                         combined_query.c.team_updated_at.desc(),
                         combined_query.c.team_id.desc(),
                     ),
@@ -547,6 +580,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             ranked_query.c.team_updated_at,
             ranked_query.c.share_status,
             ranked_query.c.context_user_id,
+            ranked_query.c.restricted_guest_access,
             ranked_query.c.access_source,
         ).filter(ranked_query.c.access_row_number == 1)
         if shared_only:
@@ -977,17 +1011,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Execute the query
         t1 = time.time()
         teams_data = final_query.all()
-        restricted_namespaces = get_restricted_analyst_groups(
-            db,
-            user_id,
-            list(
-                {
-                    row.team_namespace
-                    for row in teams_data
-                    if row.team_namespace != "default" and row.team_user_id != user_id
-                }
-            ),
-        )
         logger.info(
             f"[get_user_teams] main query took {time.time() - t1:.3f}s, returned {len(teams_data)} teams"
         )
@@ -1288,10 +1311,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "user_name": team_user.user_name,
                 }
 
-            if (
-                team_data.team_namespace in restricted_namespaces
-                and team_data.team_user_id != user_id
-            ):
+            if team_data.restricted_guest_access and team_data.team_user_id != user_id:
                 team_dict = team_usage_summary(team_dict)
             result.append(team_dict)
 

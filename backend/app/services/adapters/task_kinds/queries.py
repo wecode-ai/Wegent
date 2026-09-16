@@ -356,18 +356,22 @@ class TaskQueryMixin:
                     team is not None,
                 )
                 if task_owner_id:
-                    from app.services.group_permission import is_restricted_analyst
-                    from app.services.team_access_policy import team_usage_summary
+                    from app.services.team_access_policy import (
+                        should_redact_team_for_user,
+                        team_usage_summary,
+                    )
 
-                    is_group_guest = (
-                        team.user_id != user_id
-                        and team.namespace != "default"
-                        and is_restricted_analyst(db, user_id, team.namespace)
+                    redact_team = should_redact_team_for_user(
+                        db,
+                        user_id=user_id,
+                        team_id=team.id,
+                        team_user_id=team.user_id,
+                        team_namespace=team.namespace,
                     )
                     team = team_kinds_service._convert_to_team_dict(
                         team, db, task_owner_id
                     )
-                    if is_group_guest:
+                    if redact_team:
                         team = team_usage_summary(team)
                 else:
                     logger.warning(
