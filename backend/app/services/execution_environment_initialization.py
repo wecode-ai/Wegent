@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
+from app.core.distributed_lock import distributed_lock
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
 from app.services.device.command_service import execute_configured_device_command
@@ -117,54 +118,70 @@ async def initialize_execution_environment(
     # Persist the same identity queue rows carry, so a prepared workspace is
     # reused by exactly the installation that built it.
     device_key = runtime_device_route_id(device)
-    try:
-        await _sync_device_git_credentials(db, device)
-        result = await execute_configured_device_command(
-            db=db,
-            user_id=int(device.user_id),
-            device_id=record_route_id(device),
-            command_key="environment_prepare",
-            args=[
-                json.dumps(
-                    {
-                        "environmentId": f"{environment_id}-{fingerprint[:12]}",
-                        "repositories": definition.get("repositories") or [],
-                        "setupSteps": definition.get("setup_steps") or [],
-                        "fingerprint": fingerprint,
-                    },
-                    ensure_ascii=False,
-                )
-            ],
-            timeout_seconds=600,
-            max_output_bytes=5 * 1024 * 1024,
-            allow_internal=True,
-        )
-        if not bool(result.get("success")) or result.get("exit_code") != 0:
-            raise RuntimeError(
-                str(
-                    result.get("stderr")
-                    or result.get("error")
-                    or "Execution environment initialization failed"
-                )
+    # Concurrent preparations of one environment on one device race on the same
+    # target directory; the callers release their row locks before calling in,
+    # so serialize here instead. The RPC below can run for the full command
+    # timeout, hence the watchdog-extended expiry.
+    lock_name = f"execution-environment-init:{environment_id}:{device_key}"
+    async with distributed_lock.acquire_watchdog_context_async(
+        lock_name,
+        expire_seconds=900,
+        extend_interval_seconds=60,
+    ) as acquired:
+        if not acquired:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Execution environment initialization is already in progress "
+                "on this device",
             )
-    except Exception as error:
+        try:
+            await _sync_device_git_credentials(db, device)
+            result = await execute_configured_device_command(
+                db=db,
+                user_id=int(device.user_id),
+                device_id=record_route_id(device),
+                command_key="environment_prepare",
+                args=[
+                    json.dumps(
+                        {
+                            "environmentId": f"{environment_id}-{fingerprint[:12]}",
+                            "repositories": definition.get("repositories") or [],
+                            "setupSteps": definition.get("setup_steps") or [],
+                            "fingerprint": fingerprint,
+                        },
+                        ensure_ascii=False,
+                    )
+                ],
+                timeout_seconds=600,
+                max_output_bytes=5 * 1024 * 1024,
+                allow_internal=True,
+            )
+            if not bool(result.get("success")) or result.get("exit_code") != 0:
+                raise RuntimeError(
+                    str(
+                        result.get("stderr")
+                        or result.get("error")
+                        or "Execution environment initialization failed"
+                    )
+                )
+        except Exception as error:
+            return {
+                **definition,
+                "status": "error",
+                "fingerprint": fingerprint,
+                "prepared_device_id": device_key,
+                "prepared_workspace_path": "",
+                "prepared_at": None,
+                "error": str(error),
+            }
+        stdout = result.get("stdout")
+        prepared = stdout if isinstance(stdout, dict) else {}
         return {
             **definition,
-            "status": "error",
+            "status": "ready",
             "fingerprint": fingerprint,
             "prepared_device_id": device_key,
-            "prepared_workspace_path": "",
-            "prepared_at": None,
-            "error": str(error),
+            "prepared_workspace_path": str(prepared.get("workspacePath") or ""),
+            "prepared_at": datetime.now(timezone.utc).isoformat(),
+            "error": "",
         }
-    stdout = result.get("stdout")
-    prepared = stdout if isinstance(stdout, dict) else {}
-    return {
-        **definition,
-        "status": "ready",
-        "fingerprint": fingerprint,
-        "prepared_device_id": device_key,
-        "prepared_workspace_path": str(prepared.get("workspacePath") or ""),
-        "prepared_at": datetime.now(timezone.utc).isoformat(),
-        "error": "",
-    }

@@ -584,6 +584,36 @@ describe("ProjectExecutionEnvironments", () => {
     expect(element("-1748").textContent).not.toContain("正在创建环境");
   });
 
+  it("issues a single initialization for rapid clicks in the same tick", async () => {
+    // React state guards are async: two clicks before a re-render both see
+    // `saving === false`, so the component must reject the second attempt
+    // synchronously — including a click on another device's button, because
+    // the project-level config save cannot run concurrently either.
+    const pending = new Promise<never>(() => {});
+    const api = await render({
+      assigned: [
+        environment(1748, "Wework laptop", "online", "app-record-1748"),
+        environment(1824, "Wework desktop", "online", "app-record-1824"),
+      ],
+    });
+    api.projects.update.mockImplementationOnce(() => pending);
+    await change("-repository-name-0", "Wegent");
+    await change(
+      "-repository-url-0",
+      "https://github.com/wecode-ai/Wegent.git",
+    );
+    await change("-repository-path-0", "wegent");
+    await act(async () => {
+      element<HTMLButtonElement>("-initialize-1748").click();
+      element<HTMLButtonElement>("-initialize-1748").click();
+      element<HTMLButtonElement>("-initialize-1824").click();
+    });
+
+    expect(api.projects.update).toHaveBeenCalledOnce();
+    expect(api.projects.initializeExecutionEnvironment).not.toHaveBeenCalled();
+    expect(element("-1748").textContent).toContain("正在创建环境");
+  });
+
   it("localizes status labels and filters in English", async () => {
     await render({
       locale: "en",

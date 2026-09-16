@@ -2,13 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.core.distributed_lock import distributed_lock
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -37,6 +41,181 @@ def _remote_device() -> Kind:
         user_id=7,
         json={"spec": {"deviceType": "remote", "deviceId": "remote-device"}},
     )
+
+
+class _InMemoryLock:
+    """Deterministic stand-in for the Redis watchdog lock.
+
+    The suite runs under pytest-xdist against a shared Redis, so tests using
+    the same environment and device would otherwise collide on the real lock.
+    """
+
+    def __init__(self) -> None:
+        self.held: set[str] = set()
+        self.names: list[str] = []
+
+    @asynccontextmanager
+    async def acquire(self, lock_name: str, **_kwargs: object):
+        self.names.append(lock_name)
+        acquired = lock_name not in self.held
+        if acquired:
+            self.held.add(lock_name)
+        try:
+            yield acquired
+        finally:
+            self.held.discard(lock_name)
+
+
+@pytest.fixture(autouse=True)
+def initialization_lock(monkeypatch: pytest.MonkeyPatch) -> _InMemoryLock:
+    lock = _InMemoryLock()
+    monkeypatch.setattr(
+        distributed_lock, "acquire_watchdog_context_async", lock.acquire
+    )
+    return lock
+
+
+@pytest.mark.asyncio
+async def test_initialization_serializes_concurrent_prepares_per_device(
+    monkeypatch: pytest.MonkeyPatch,
+    initialization_lock: _InMemoryLock,
+) -> None:
+    # A second preparation for the same environment on the same device must
+    # fail fast with a clear conflict instead of racing on the clone target.
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "sync_git_accounts_to_device",
+        AsyncMock(),
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _execute(**_kwargs: object) -> dict[str, object]:
+        started.set()
+        await release.wait()
+        return {
+            "success": True,
+            "exit_code": 0,
+            "stdout": {"workspacePath": "/workspace/environment"},
+        }
+
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        AsyncMock(side_effect=_execute),
+    )
+    db = MagicMock()
+    db.get.return_value = object()
+    definition = {"repositories": [PRIMARY_REPOSITORY], "setup_steps": []}
+    first = asyncio.create_task(
+        execution_environment_initialization.initialize_execution_environment(
+            db=db,
+            device=_remote_device(),
+            environment_id="project-1",
+            definition=definition,
+        )
+    )
+    await started.wait()
+
+    with pytest.raises(HTTPException) as excinfo:
+        await execution_environment_initialization.initialize_execution_environment(
+            db=db,
+            device=_remote_device(),
+            environment_id="project-1",
+            definition=definition,
+        )
+
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail == (
+        "Execution environment initialization is already in progress on this device"
+    )
+    release.set()
+    assert (await first)["status"] == "ready"
+    assert initialization_lock.names == [
+        "execution-environment-init:project-1:remote-device",
+        "execution-environment-init:project-1:remote-device",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_initialization_lock_is_scoped_per_environment_and_device(
+    monkeypatch: pytest.MonkeyPatch,
+    initialization_lock: _InMemoryLock,
+) -> None:
+    # A preparation in flight must not block a different environment on the
+    # same device or the same environment on a different device.
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "sync_git_accounts_to_device",
+        AsyncMock(),
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    executions = 0
+
+    async def _execute(**_kwargs: object) -> dict[str, object]:
+        nonlocal executions
+        executions += 1
+        if executions == 1:
+            started.set()
+            await release.wait()
+        return {
+            "success": True,
+            "exit_code": 0,
+            "stdout": {"workspacePath": "/workspace/environment"},
+        }
+
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        AsyncMock(side_effect=_execute),
+    )
+    db = MagicMock()
+    db.get.return_value = object()
+    definition = {"repositories": [PRIMARY_REPOSITORY], "setup_steps": []}
+    first = asyncio.create_task(
+        execution_environment_initialization.initialize_execution_environment(
+            db=db,
+            device=_remote_device(),
+            environment_id="project-1",
+            definition=definition,
+        )
+    )
+    await started.wait()
+
+    other_environment = (
+        await execution_environment_initialization.initialize_execution_environment(
+            db=db,
+            device=_remote_device(),
+            environment_id="project-2",
+            definition=definition,
+        )
+    )
+    other_device = Kind(
+        kind="Device",
+        name="other-remote-device",
+        namespace="default",
+        user_id=7,
+        json={"spec": {"deviceType": "remote", "deviceId": "other-remote-device"}},
+    )
+    other_device_state = (
+        await execution_environment_initialization.initialize_execution_environment(
+            db=db,
+            device=other_device,
+            environment_id="project-1",
+            definition=definition,
+        )
+    )
+    release.set()
+
+    assert other_environment["status"] == "ready"
+    assert other_device_state["status"] == "ready"
+    assert (await first)["status"] == "ready"
+    assert initialization_lock.names == [
+        "execution-environment-init:project-1:remote-device",
+        "execution-environment-init:project-2:remote-device",
+        "execution-environment-init:project-1:other-remote-device",
+    ]
 
 
 @pytest.mark.asyncio
@@ -309,8 +488,6 @@ async def test_initialization_failure_returns_error_state(
 async def test_initialization_rejects_definition_without_primary_repository(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from fastapi import HTTPException
-
     execute = AsyncMock()
     monkeypatch.setattr(
         execution_environment_initialization,

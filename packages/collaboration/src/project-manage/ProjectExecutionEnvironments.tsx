@@ -205,6 +205,10 @@ export function ProjectExecutionEnvironments({
     new Map<string, { name: string; path: string; ref: string }>(),
   );
   const branchesInFlight = useRef(new Set<string>());
+  // `saving` is async React state, so two initialize clicks in the same tick
+  // would both pass a state-based guard; the ref flips synchronously and also
+  // blocks a second device's button while one initialization is in flight.
+  const initializationInFlight = useRef(false);
 
   const loadRepositoryOptions = useCallback(async () => {
     if (!gitRepositoriesApi) return;
@@ -513,7 +517,12 @@ export function ProjectExecutionEnvironments({
   async function createEnvironmentOnDevice(
     device: CollaborationExecutionEnvironment,
   ) {
-    if (saving || device.device_id == null || device.status !== "online")
+    if (
+      initializationInFlight.current ||
+      saving ||
+      device.device_id == null ||
+      device.status !== "online"
+    )
       return;
     if (!primaryRepositoryReady) {
       setEnvironmentError(
@@ -524,6 +533,7 @@ export function ProjectExecutionEnvironments({
       );
       return;
     }
+    initializationInFlight.current = true;
     setSaving(true);
     setInitializingDeviceId(device.device_id);
     setError("");
@@ -581,6 +591,7 @@ export function ProjectExecutionEnvironments({
         saveError instanceof Error ? saveError.message : String(saveError),
       );
     } finally {
+      initializationInFlight.current = false;
       setSaving(false);
       setInitializingDeviceId(null);
     }
