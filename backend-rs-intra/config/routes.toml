@@ -1,0 +1,6 @@
+# Requests listed here are handled by the composed Rust API. Every other
+# request continues to the Python Backend.
+[[routes]]
+methods = ["GET"]
+path = "/api/quota/claude/quota"
+match_kind = "exact"

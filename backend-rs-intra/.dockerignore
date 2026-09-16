@@ -1,0 +1,14 @@
+/.git/
+/.traffic-e2e/local/
+/target/
+**/target/
+/data/
+/recordings/
+**/recordings/
+*.pem
+*.key
+*.jks
+*.p12
+*.pfx
+.env
+.env.*
