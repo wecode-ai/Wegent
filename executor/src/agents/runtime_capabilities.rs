@@ -21,7 +21,9 @@ use serde_json::{json, Map, Value};
 use crate::{
     agents::{
         backend_url::{is_local_mode, request_backend_url_or_default},
-        claude_config_dir, claude_task_dir, extract_claude_options,
+        claude_config_dir,
+        claude_options::merge_claude_mcp_servers,
+        claude_task_dir, extract_claude_options,
         skill_download::skill_download_concurrency,
     },
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
@@ -401,36 +403,39 @@ pub async fn prepare_claude_runtime(
     if managed_wework_mcp_required(request) {
         crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     }
-    let mut claude_options = extract_claude_options(request, &global_mcps);
-    inject_managed_wework_mcps(request, &mut claude_options.mcp_servers)?;
-    if !claude_options.mcp_servers.is_empty() {
-        let mcp_config_path = task_dir
-            .join(".wework/runtime")
-            .join(claude_mcp_config_file_name(request));
-        let content = json!({"mcpServers": claude_options.mcp_servers});
-        if write_json_file(&mcp_config_path, &content).is_ok() {
-            spec = spec
-                .arg("--mcp-config")
-                .arg(mcp_config_path.display().to_string())
-                .env(
-                    "WEGENT_MCP_CONFIG_PATH",
-                    mcp_config_path.display().to_string(),
-                );
-            log_runtime_event(
-                request,
-                "claude mcp config prepared",
-                vec![
-                    ("mcp_config", mcp_config_path.display().to_string()),
-                    ("bot_mcp_count", bot_mcp_count(request).to_string()),
-                    ("top_level_mcp_count", request.mcp_servers.len().to_string()),
-                    ("global_mcp_count", global_mcps.len().to_string()),
-                    (
-                        "mcp_headers",
-                        mcp_server_headers_summary(&claude_options.mcp_servers),
-                    ),
-                ],
+    let claude_options = extract_claude_options(request, &global_mcps);
+    let runtime_dir = task_dir.join(".wework/runtime");
+    let cache_path = runtime_dir.join(format!(
+        "claude-mcp-cache-{}.json",
+        safe_mcp_file_component(&request.task_id)
+    ));
+    let mut mcp_servers = merge_claude_mcp_servers(&cache_path, claude_options.mcp_servers)?;
+    if !mcp_servers.is_empty() {
+        write_json_file(&cache_path, &json!({"mcpServers": mcp_servers}))?;
+    }
+    // Executor-managed MCP credentials are resolved for each turn, not cached.
+    inject_managed_wework_mcps(request, &mut mcp_servers)?;
+    if !mcp_servers.is_empty() {
+        let mcp_config_path = runtime_dir.join(claude_mcp_config_file_name(request));
+        write_json_file(&mcp_config_path, &json!({"mcpServers": mcp_servers}))?;
+        spec = spec
+            .arg("--mcp-config")
+            .arg(mcp_config_path.display().to_string())
+            .env(
+                "WEGENT_MCP_CONFIG_PATH",
+                mcp_config_path.display().to_string(),
             );
-        }
+        log_runtime_event(
+            request,
+            "claude mcp config prepared",
+            vec![
+                ("mcp_config", mcp_config_path.display().to_string()),
+                ("bot_mcp_count", bot_mcp_count(request).to_string()),
+                ("top_level_mcp_count", request.mcp_servers.len().to_string()),
+                ("global_mcp_count", global_mcps.len().to_string()),
+                ("mcp_headers", mcp_server_headers_summary(&mcp_servers)),
+            ],
+        );
     }
 
     Ok(spec)
@@ -2471,24 +2476,24 @@ fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
         .map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
-fn claude_mcp_config_file_name(request: &ExecutionRequest) -> String {
-    fn safe_component(value: &str) -> String {
-        let value = value
-            .chars()
-            .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-            .take(64)
-            .collect::<String>();
-        if value.is_empty() {
-            "unknown".to_owned()
-        } else {
-            value
-        }
+fn safe_mcp_file_component(value: &str) -> String {
+    let value = value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        .take(64)
+        .collect::<String>();
+    if value.is_empty() {
+        "unknown".to_owned()
+    } else {
+        value
     }
+}
 
+fn claude_mcp_config_file_name(request: &ExecutionRequest) -> String {
     format!(
         "claude-mcp-{}-{}.json",
-        safe_component(&request.task_id),
-        safe_component(&request.subtask_id)
+        safe_mcp_file_component(&request.task_id),
+        safe_mcp_file_component(&request.subtask_id)
     )
 }
 
