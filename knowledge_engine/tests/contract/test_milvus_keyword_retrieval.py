@@ -283,6 +283,11 @@ def test_shared_physical_index_keeps_every_hit_inside_scope(
     )
     first_kb, second_kb = "7201", "7202"
     collection_name = rolling_backend.get_index_name(first_kb)
+    # A previous run that was interrupted between dropping the collection and
+    # dropping its binding leaves a confirmed contract with no collection, and
+    # re-running this test would fail on that leftover instead of the behaviour
+    # under test. Clear both up front so the test is repeatable.
+    _drop_shared_index(milvus_env, collection_name)
     try:
         _index_text_document(
             milvus_env,

@@ -66,13 +66,13 @@ def test_get_storage_retrieval_methods_uses_registered_backends(monkeypatch) -> 
     assert get_all_storage_retrieval_methods()["fake"] == ["vector", "hybrid"]
 
 
-def test_registered_backends_advertise_their_keyword_capability() -> None:
+def test_registered_backends_advertise_their_keyword_and_hybrid_capability() -> None:
     """The public capability map is what the backend API serves to clients."""
     from knowledge_engine.storage.factory import get_all_storage_retrieval_methods
 
     methods = get_all_storage_retrieval_methods()
 
-    assert methods["milvus"] == ["vector", "keyword"]
+    assert methods["milvus"] == ["vector", "keyword", "hybrid"]
 
 
 def test_create_storage_backend_from_runtime_config_requires_url() -> None:

@@ -269,11 +269,11 @@ def _nodes(count=2):
     ]
 
 
-def test_init_has_no_default_dimension_and_supports_vector_and_keyword():
+def test_init_has_no_default_dimension_and_supports_all_three_modes():
     backend = _backend()
 
     assert backend.dim is None
-    assert backend.SUPPORTED_RETRIEVAL_METHODS == ["vector", "keyword"]
+    assert backend.SUPPORTED_RETRIEVAL_METHODS == ["vector", "keyword", "hybrid"]
     assert backend.supports_retrieval_scope is True
     assert backend.db_name == "default"
     assert backend.base_url == "http://localhost:19530"
@@ -544,15 +544,35 @@ def test_retrieve_missing_index_does_not_call_the_embedding_provider():
     assert result == {"records": []}
 
 
-@pytest.mark.parametrize("mode", ["hybrid"])
-def test_retrieve_unsupported_modes_fail_loudly(mode):
+def test_retrieve_unsupported_mode_fails_loudly():
     with pytest.raises(UnsupportedStorageCapabilityError):
         _backend().retrieve(
             knowledge_id="1",
             query="q",
             embed_model=FakeEmbedModel([[1.0, 0.0]]),
-            retrieval_setting={"retrieval_mode": mode},
+            retrieval_setting={"retrieval_mode": "rerank"},
         )
+
+
+def _hybrid_hit(row_id, doc_ref, *, display, score):
+    return {
+        "id": row_id,
+        "doc_ref": doc_ref,
+        SOURCE_FILE_FIELD: f"document-{doc_ref}.txt",
+        DISPLAY_TEXT_FIELD: display,
+        METADATA_FIELD: {"knowledge_id": "1", "doc_ref": doc_ref},
+        "__score__": score,
+    }
+
+
+def _hybrid_store():
+    """One candidate only the dense branch prefers and one only BM25 prefers."""
+    return FakeStore(
+        rows=[_hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75)],
+        sparse_hits=[
+            _hybrid_hit("keyword-row", "43", display="keyword 偏好", score=0.5)
+        ],
+    )
 
 
 class ExplodingEmbedModel:
@@ -700,6 +720,299 @@ def test_keyword_retrieve_rejects_a_contract_without_an_analyzer():
             embed_model=ExplodingEmbedModel(),
             retrieval_setting={"retrieval_mode": "keyword", "score_threshold": 0.0},
         )
+
+
+def test_hybrid_retrieve_fuses_both_branches_with_the_default_weights():
+    """Hybrid queries both routes over one filter and fuses their raw scores."""
+    backend = _backend()
+    store = _hybrid_store()
+    backend._store = store
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="深度学习模型训练 zebra_pipeline_99",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={
+            "retrieval_mode": "hybrid",
+            "top_k": 5,
+            "score_threshold": 0.0,
+        },
+    )
+
+    dense_request = store.searches[0]
+    keyword_request = store.sparse_searches[0]
+    assert dense_request["limit"] == 5
+    assert keyword_request["limit"] == 5
+    assert dense_request["filter"] == keyword_request["filter"]
+    assert 'knowledge_id == "1"' in dense_request["filter"]
+    assert "published == true" in dense_request["filter"]
+    assert [record["content"] for record in result["records"]] == [
+        "dense 偏好",
+        "keyword 偏好",
+    ]
+    # Default 0.7/0.3 of the fixed mappings: dense (1+0.75)/2, keyword 0.5/1.5.
+    assert result["records"][0]["score"] == pytest.approx(0.7 * 0.875)
+    assert result["records"][1]["score"] == pytest.approx(0.3 * (0.5 / 1.5))
+    assert result["records"][0]["title"] == "document-42.txt"
+    assert result["records"][0]["metadata"]["doc_ref"] == "42"
+
+
+def test_hybrid_retrieve_sums_both_shares_for_a_row_both_routes_recall():
+    """A row recalled by both routes reports the sum, not the larger share."""
+    backend = _backend()
+    shared_row = _hybrid_hit("shared-row", "42", display="两路都命中", score=0.75)
+    store = FakeStore(
+        rows=[shared_row],
+        sparse_hits=[dict(shared_row, **{"__score__": 1.0})],
+    )
+    backend._store = store
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={
+            "retrieval_mode": "hybrid",
+            "top_k": 5,
+            "score_threshold": 0.0,
+            "vector_weight": 0.5,
+            "keyword_weight": 0.5,
+        },
+    )
+
+    # Dense (1 + 0.75) / 2 = 0.875 and keyword 1.0 / 2.0 = 0.5, summed.
+    assert [record["content"] for record in result["records"]] == ["两路都命中"]
+    assert result["records"][0]["score"] == pytest.approx(0.5 * 0.875 + 0.5 * 0.5)
+
+
+@pytest.mark.parametrize(
+    ("vector_weight", "keyword_weight", "dense_share", "keyword_share"),
+    [
+        (0.9, 0.1, 0.9, 0.1),
+        (0.1, 0.9, 0.1, 0.9),
+        (3.0, 1.0, 0.75, 0.25),
+    ],
+)
+def test_hybrid_retrieve_weights_the_two_contributions(
+    vector_weight, keyword_weight, dense_share, keyword_share
+):
+    """Each route contributes exactly its normalized share of the fusion."""
+    backend = _backend()
+    store = _hybrid_store()
+    backend._store = store
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={
+            "retrieval_mode": "hybrid",
+            "top_k": 5,
+            "score_threshold": 0.0,
+            "vector_weight": vector_weight,
+            "keyword_weight": keyword_weight,
+        },
+    )
+
+    scores = {record["content"]: record["score"] for record in result["records"]}
+    assert scores["dense 偏好"] == pytest.approx(dense_share * 0.875)
+    assert scores["keyword 偏好"] == pytest.approx(keyword_share * (0.5 / 1.5))
+    if vector_weight > keyword_weight:
+        assert [record["content"] for record in result["records"]] == [
+            "dense 偏好",
+            "keyword 偏好",
+        ]
+    else:
+        assert [record["content"] for record in result["records"]] == [
+            "keyword 偏好",
+            "dense 偏好",
+        ]
+
+
+def test_hybrid_threshold_cuts_the_fused_relevance_not_the_weighted_share():
+    """A lone-route hit passes on its own quality, not on the weight cap."""
+    backend = _backend()
+    store = FakeStore(
+        sparse_hits=[
+            _hybrid_hit("keyword-row", "43", display="keyword 偏好", score=0.5)
+        ],
+        rows=[_hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75)],
+    )
+    backend._store = store
+    settings = {
+        "retrieval_mode": "hybrid",
+        "top_k": 5,
+        "vector_weight": 0.7,
+        "keyword_weight": 0.3,
+    }
+
+    below_both = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={**settings, "score_threshold": 0.9},
+    )
+    between = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={**settings, "score_threshold": 0.5},
+    )
+
+    # Dense relevance 0.875 and keyword relevance 1/3: the weighted shares are
+    # 0.6125 and 0.1, so a 0.5 cut on the weighted share would keep neither.
+    assert below_both == {"records": []}
+    assert [record["content"] for record in between["records"]] == ["dense 偏好"]
+    # The reported score still shows the weighted contribution.
+    assert between["records"][0]["score"] == pytest.approx(0.7 * 0.875)
+
+
+@pytest.mark.parametrize(
+    ("configured", "dense_share", "keyword_share"),
+    [
+        ({"keyword_weight": 0.3}, 0.7, 0.3),
+        ({"vector_weight": 0.5}, 0.5, 0.5),
+        ({"keyword_weight": 0.1}, 0.9, 0.1),
+    ],
+)
+def test_hybrid_retrieve_completes_a_single_configured_weight(
+    configured, dense_share, keyword_share
+):
+    """A lone weight keeps its share and the partner takes the remainder."""
+    backend = _backend()
+    store = _hybrid_store()
+    backend._store = store
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={
+            "retrieval_mode": "hybrid",
+            "top_k": 5,
+            "score_threshold": 0.0,
+            **configured,
+        },
+    )
+
+    scores = {record["content"]: record["score"] for record in result["records"]}
+    assert scores["dense 偏好"] == pytest.approx(dense_share * 0.875)
+    assert scores["keyword 偏好"] == pytest.approx(keyword_share * (0.5 / 1.5))
+
+
+def test_hybrid_retrieve_with_full_vector_weight_skips_the_keyword_branch():
+    """A 1/0 endpoint still runs only the effective branch."""
+    backend = _backend()
+    store = FakeStore(
+        rows=[_hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75)]
+    )
+    backend._store = store
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={
+            "retrieval_mode": "hybrid",
+            "top_k": 5,
+            "score_threshold": 0.0,
+            "vector_weight": 1.0,
+            "keyword_weight": 0.0,
+        },
+    )
+
+    assert store.searches, "the dense branch must still run"
+    assert store.sparse_searches == []
+    assert [record["content"] for record in result["records"]] == ["dense 偏好"]
+    # The vector endpoint reports the raw cosine score of the pure vector mode.
+    assert result["records"][0]["score"] == pytest.approx(0.75)
+
+
+def test_hybrid_retrieve_with_full_keyword_weight_never_embeds():
+    """The 0/1 endpoint answers from BM25 alone and builds no query vector."""
+    backend = _backend()
+    store = _hybrid_store()
+    store.sparse_hits = [
+        _hybrid_hit("keyword-row", "43", display="keyword 偏好", score=3.0)
+    ]
+    backend._store = store
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=ExplodingEmbedModel(),
+        retrieval_setting={
+            "retrieval_mode": "hybrid",
+            "top_k": 5,
+            "score_threshold": 0.0,
+            "vector_weight": 0.0,
+            "keyword_weight": 1.0,
+        },
+    )
+
+    assert store.searches == []
+    assert store.sparse_searches, "the keyword branch must run"
+    # The keyword endpoint reports the keyword mode's fixed s/(1+s) mapping.
+    assert result["records"][0]["content"] == "keyword 偏好"
+    assert result["records"][0]["score"] == pytest.approx(0.75)
+
+
+@pytest.mark.parametrize(
+    ("weights", "message"),
+    [
+        ({"vector_weight": -0.1, "keyword_weight": 1.0}, "vector_weight"),
+        ({"vector_weight": 1.0, "keyword_weight": -0.1}, "keyword_weight"),
+        ({"vector_weight": 1.1}, "vector_weight"),
+        ({"keyword_weight": 1.1}, "keyword_weight"),
+        ({"vector_weight": "0.7", "keyword_weight": 0.3}, "vector_weight"),
+        ({"keyword_weight": ["0.3"]}, "keyword_weight"),
+        ({"vector_weight": float("nan"), "keyword_weight": 0.5}, "vector_weight"),
+        ({"vector_weight": float("inf"), "keyword_weight": 0.5}, "vector_weight"),
+        ({"keyword_weight": float("nan")}, "keyword_weight"),
+        ({"vector_weight": 0.0, "keyword_weight": 0.0}, "zero"),
+        ({"vector_weight": -0.0, "keyword_weight": -0.0}, "zero"),
+    ],
+)
+def test_hybrid_retrieve_rejects_invalid_weights(weights, message):
+    """Invalid weights fail explicitly instead of silently changing the mode."""
+    backend = _backend()
+    backend._store = _hybrid_store()
+
+    with pytest.raises(ValueError) as error:
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=FakeEmbedModel([[1.0, 0.0]]),
+            retrieval_setting={"retrieval_mode": "hybrid", **weights},
+        )
+
+    assert message in str(error.value)
+
+
+def test_hybrid_retrieve_keeps_scope_and_metadata_filters():
+    """Both branches share the same scope and metadata predicate."""
+    backend = _backend()
+    store = _hybrid_store()
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"retrieval_mode": "hybrid", "score_threshold": 0.0},
+        scope=RetrievalScope(document_ids=[7, 8]),
+        metadata_condition={
+            "operator": "and",
+            "conditions": [{"key": "category", "operator": "eq", "value": "tech"}],
+        },
+    )
+
+    expression = store.searches[0]["filter"]
+    assert store.searches[0]["filter"] == store.sparse_searches[0]["filter"]
+    assert 'knowledge_id == "1"' in expression
+    assert 'doc_ref in ["7", "8"]' in expression
+    assert 'metadata["category"] == "tech"' in expression
+    assert "published == true" in expression
 
 
 def test_reads_reject_a_contract_from_an_older_schema():

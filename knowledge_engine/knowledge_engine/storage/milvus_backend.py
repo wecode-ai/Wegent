@@ -9,14 +9,14 @@ the server-maintained index contract that binds a collection to its embedding
 space, schema and keyword analyzer. Collections are created only by the
 explicit index write path; queries, reads and deletes never create resources.
 
-Two retrieval modes are served from one physical collection: ``vector`` uses
-the stored dense vectors with their raw COSINE score, and ``keyword`` uses the
-server-side BM25 sparse field built over the analyzed retrieval text, so it
-never asks the embedding provider for a query vector. Weighted ``hybrid``
-retrieval is a later slice and raises an explicit unsupported-capability error
-instead of silently degrading to a different scoring mode. The embedding space
-contract makes a same-dimension model swap an explicit failure rather than a
-silent quality regression.
+Three retrieval modes are served from one physical collection: ``vector`` uses
+the stored dense vectors with their raw COSINE score, ``keyword`` uses the
+server-side BM25 sparse field built over the analyzed retrieval text so it
+never asks the embedding provider for a query vector, and ``hybrid`` fuses
+both routes with the configured vector/keyword weights. Every mode applies the
+same knowledge base, document and metadata filter inside the database before
+the ``top_k`` cut. The embedding space contract makes a same-dimension model
+swap an explicit failure rather than a silent quality regression.
 """
 
 import json
@@ -84,6 +84,56 @@ DEFAULT_SCORE_THRESHOLD = 0.7
 MAX_QUERY_LIMIT = 10000
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_ATTEMPT_PREFIX = "gen"
+DEFAULT_VECTOR_WEIGHT = 0.7
+DEFAULT_KEYWORD_WEIGHT = 0.3
+
+
+def resolve_hybrid_weights(retrieval_setting: Dict[str, Any]) -> tuple[float, float]:
+    """Resolve the configured vector/keyword weights into a normalized pair.
+
+    Mirrors the Elasticsearch hybrid contract: the weights are shares of one
+    fusion, so both configured weights are normalized to sum to one, a lone
+    weight keeps its own share and the other branch takes the remainder, and an
+    absent pair falls back to the product default 0.7/0.3. Values that cannot
+    describe a share fail explicitly instead of silently switching the mode.
+    """
+    vector_weight = _hybrid_weight("vector_weight", retrieval_setting)
+    keyword_weight = _hybrid_weight("keyword_weight", retrieval_setting)
+
+    if vector_weight is not None and keyword_weight is not None:
+        total = vector_weight + keyword_weight
+        if total <= 0.0:
+            raise ValueError(
+                "hybrid retrieval requires a positive vector_weight or "
+                "keyword_weight; both are zero."
+            )
+        return vector_weight / total, keyword_weight / total
+
+    if vector_weight is not None:
+        if vector_weight > 1.0:
+            raise ValueError("hybrid retrieval requires vector_weight <= 1.")
+        return vector_weight, 1.0 - vector_weight
+
+    if keyword_weight is not None:
+        if keyword_weight > 1.0:
+            raise ValueError("hybrid retrieval requires keyword_weight <= 1.")
+        return 1.0 - keyword_weight, keyword_weight
+
+    return DEFAULT_VECTOR_WEIGHT, DEFAULT_KEYWORD_WEIGHT
+
+
+def _hybrid_weight(name: str, retrieval_setting: Dict[str, Any]) -> Optional[float]:
+    raw_value = retrieval_setting.get(name)
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+        raise ValueError(f"hybrid retrieval requires a numeric {name}.")
+    value = float(raw_value)
+    if not math.isfinite(value):
+        raise ValueError(f"hybrid retrieval requires a finite {name}.")
+    if value < 0.0:
+        raise ValueError(f"hybrid retrieval requires a non-negative {name}.")
+    return value
 
 
 def keyword_relevance_score(raw_score: float) -> float:
@@ -101,7 +151,7 @@ def keyword_relevance_score(raw_score: float) -> float:
 class MilvusBackend(BaseStorageBackend):
     """Dense Milvus storage backend using the official synchronous SDK."""
 
-    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector", "keyword"]
+    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector", "keyword", "hybrid"]
     supports_retrieval_scope: ClassVar[bool] = True
     INDEX_PREFIX: ClassVar[str] = "collection"
 
@@ -496,9 +546,11 @@ class MilvusBackend(BaseStorageBackend):
         similarity for this candidate with no candidate-set re-normalization.
         ``keyword`` runs server-side BM25 over the analyzed retrieval text and
         maps the raw BM25 score onto the shared relevance scale with the fixed
-        ``s / (1 + s)`` mapping. Both modes apply the same knowledge base,
-        document and metadata filters inside the database before ``top_k``, and
-        both compare the resulting score with ``>=`` against ``score_threshold``.
+        ``s / (1 + s)`` mapping. ``hybrid`` fuses both branches with the
+        normalized vector/keyword weights. Every mode applies the same
+        knowledge base, document and metadata filters inside the database
+        before ``top_k``, and compares the resulting score with ``>=`` against
+        ``score_threshold``.
         """
         retrieval_mode = str(retrieval_setting.get("retrieval_mode") or "vector")
         if retrieval_mode not in self.SUPPORTED_RETRIEVAL_METHODS:
@@ -516,11 +568,27 @@ class MilvusBackend(BaseStorageBackend):
         )
         resolved_queries = resolve_search_queries(query, retrieval_setting)
 
+        # Resolve the weights before any storage call so an invalid request
+        # fails without touching the index or the embedding provider.
+        vector_weight, keyword_weight = (
+            resolve_hybrid_weights(retrieval_setting)
+            if retrieval_mode == "hybrid"
+            else (None, None)
+        )
+
         # An empty knowledge base answers empty without calling the embedding
         # provider: only a real index justifies a provider request.
         with self._store.client() as client:
             if self._index_is_absent(client, collection_name):
                 return {"records": []}
+
+        # A zero-weight endpoint is not a hybrid request: it runs the surviving
+        # branch alone, so the keyword-only endpoint never builds a query
+        # vector and the vector-only endpoint never pays for BM25 analysis.
+        if retrieval_mode == "hybrid" and keyword_weight == 0.0:
+            retrieval_mode = "vector"
+        elif retrieval_mode == "hybrid" and vector_weight == 0.0:
+            retrieval_mode = "keyword"
 
         if retrieval_mode == "keyword":
             return self._keyword_retrieve(
@@ -531,21 +599,49 @@ class MilvusBackend(BaseStorageBackend):
                 score_threshold=score_threshold,
             )
 
+        if retrieval_mode == "hybrid":
+            return self._hybrid_retrieve(
+                collection_name=collection_name,
+                dense_query=resolved_queries.dense_query,
+                sparse_query=resolved_queries.sparse_query,
+                embed_model=embed_model,
+                filter_expr=filter_expr,
+                top_k=top_k,
+                score_threshold=score_threshold,
+                vector_weight=vector_weight,
+                keyword_weight=keyword_weight,
+            )
+
         query_vector = prepare_query_vector(embed_model, resolved_queries.dense_query)
 
+        hits = self._dense_search(
+            collection_name=collection_name,
+            query_vector=query_vector,
+            embed_model=embed_model,
+            filter_expr=filter_expr,
+            top_k=top_k,
+        )
+
+        return self._process_hits(hits, score_threshold)
+
+    def _dense_search(
+        self,
+        *,
+        collection_name: str,
+        query_vector: Sequence[float],
+        embed_model,
+        filter_expr: str,
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
+        """Verify the bound index and run one dense search inside it."""
         with self._store.client() as client:
-            binding = self._store.verify_index(
+            self._require_bound_index(
                 client,
                 collection_name,
                 dimension=len(query_vector),
                 embedding_space=compute_embedding_space(embed_model),
             )
-            if binding is None:
-                raise IndexMissingError(
-                    collection_name,
-                    "the bound collection disappeared during the query",
-                )
-            hits = self._store.search(
+            return self._store.search(
                 client,
                 collection_name,
                 query_vector=query_vector,
@@ -553,7 +649,148 @@ class MilvusBackend(BaseStorageBackend):
                 limit=top_k,
             )
 
-        return self._process_hits(hits, score_threshold)
+    def _require_bound_index(
+        self,
+        client: MilvusClient,
+        collection_name: str,
+        *,
+        dimension: int,
+        embedding_space: str,
+    ) -> None:
+        """Fail when the contract exists but its collection disappeared."""
+        binding = self._store.verify_index(
+            client,
+            collection_name,
+            dimension=dimension,
+            embedding_space=embedding_space,
+        )
+        if binding is None:
+            raise IndexMissingError(
+                collection_name,
+                "the bound collection disappeared during the query",
+            )
+
+    def _hybrid_retrieve(
+        self,
+        *,
+        collection_name: str,
+        dense_query: str,
+        sparse_query: str,
+        embed_model,
+        filter_expr: str,
+        top_k: int,
+        score_threshold: float,
+        vector_weight: float,
+        keyword_weight: float,
+    ) -> Dict:
+        """Fuse the dense and keyword routes over one shared scope.
+
+        Both routes are requested with the same knowledge base, document,
+        metadata and publication filter, so hybrid never widens what the
+        caller may read. Each route contributes its raw database score through
+        its own fixed monotonic mapping and the two mapped values are combined
+        with the normalized weights.
+
+        The fusion deliberately avoids the server-side weighted ranker. On the
+        verified Milvus 2.5.4 + pymilvus 2.6.3 combination that ranker
+        min-max normalizes each route against its own candidate set, so the
+        same row scored differently when only ``top_k`` changed (measured
+        0.6643 with ``top_k=5`` and 0.5648 with the wider candidate set for the
+        same row and weights). A fixed mapping keeps the score reproducible.
+        """
+        query_vector = prepare_query_vector(embed_model, dense_query)
+        with self._store.client() as client:
+            self._require_bound_index(
+                client,
+                collection_name,
+                dimension=len(query_vector),
+                embedding_space=compute_embedding_space(embed_model),
+            )
+            dense_hits = self._store.search(
+                client,
+                collection_name,
+                query_vector=query_vector,
+                filter_expr=filter_expr,
+                limit=top_k,
+            )
+            keyword_hits = self._store.sparse_search(
+                client,
+                collection_name,
+                query_text=sparse_query,
+                filter_expr=filter_expr,
+                limit=top_k,
+            )
+
+        return self._fuse_hybrid_hits(
+            dense_hits=dense_hits,
+            keyword_hits=keyword_hits,
+            vector_weight=vector_weight,
+            keyword_weight=keyword_weight,
+            score_threshold=score_threshold,
+            top_k=top_k,
+        )
+
+    def _fuse_hybrid_hits(
+        self,
+        *,
+        dense_hits: Sequence[Dict[str, Any]],
+        keyword_hits: Sequence[Dict[str, Any]],
+        vector_weight: float,
+        keyword_weight: float,
+        score_threshold: float,
+        top_k: int,
+    ) -> Dict:
+        """Combine the two routes' raw scores with a fixed mapping.
+
+        A row keeps the same fused score no matter which other rows matched:
+        the cosine share uses the fixed ``(1 + cos) / 2`` mapping and the BM25
+        share reuses the keyword mode's fixed ``s / (1 + s)`` mapping. A row
+        both routes recalled the row reports the sum of both shares, and a row
+        that only one route recalled keeps that route's share alone.
+
+        The threshold keeps cutting the fused relevance instead of the reported
+        score: a lone-route hit is a quality decision, and the configured weight
+        must not silently become a quality cap that the default 0.7 threshold
+        then rejects. Reporting the weighted fusion keeps the weights visible in
+        the score and in the ordering.
+        """
+        fused: Dict[Any, tuple[float, float]] = {}
+        evidence: Dict[Any, Dict[str, Any]] = {}
+        for hits, mapper, weight in (
+            (dense_hits, self._dense_relevance_score, vector_weight),
+            (keyword_hits, keyword_relevance_score, keyword_weight),
+        ):
+            for hit in hits:
+                mapped = mapper(float(hit.get("__score__", 0.0)))
+                row_id = hit.get(ID_FIELD)
+                evidence.setdefault(row_id, hit)
+                weighted, relevance = fused.get(row_id, (0.0, 0.0))
+                fused[row_id] = (weighted + weight * mapped, relevance + mapped)
+
+        ranked = sorted(fused.items(), key=lambda entry: entry[1][0], reverse=True)[
+            :top_k
+        ]
+        hits = [evidence[row_id] for row_id, _ in ranked]
+        scores = {row_id: weighted for row_id, (weighted, _) in ranked}
+        threshold_scores = {row_id: relevance for row_id, (_, relevance) in ranked}
+        return self._process_hits(
+            hits,
+            score_threshold,
+            score_lookup=scores,
+            threshold_lookup=threshold_scores,
+        )
+
+    @staticmethod
+    def _dense_relevance_score(raw_score: float) -> float:
+        """Map a raw COSINE score onto the shared 0..1 relevance scale.
+
+        The mapping is fixed and monotonic (``(1 + cos) / 2``) instead of
+        being derived from the candidate set. Pure vector retrieval keeps the
+        raw cosine score; only the hybrid fusion needs a bounded share.
+        """
+        if not math.isfinite(raw_score):
+            return 0.0
+        return min(1.0, max(0.0, (1.0 + raw_score) / 2.0))
 
     def _keyword_retrieve(
         self,
@@ -607,12 +844,15 @@ class MilvusBackend(BaseStorageBackend):
         score_threshold: float,
         *,
         score_mapper: Optional[Callable[[float], float]] = None,
+        score_lookup: Optional[Dict[Any, float]] = None,
+        threshold_lookup: Optional[Dict[Any, float]] = None,
     ) -> Dict:
         records = []
         for hit in hits:
-            raw_score = float(hit.get("__score__", 0.0))
-            score = score_mapper(raw_score) if score_mapper else raw_score
-            if score < score_threshold:
+            score = self._hit_score(
+                hit, score_mapper=score_mapper, score_lookup=score_lookup
+            )
+            if self._threshold_score(hit, score, threshold_lookup) < score_threshold:
                 continue
             metadata = self._row_metadata(hit)
             records.append(
@@ -627,6 +867,34 @@ class MilvusBackend(BaseStorageBackend):
                 }
             )
         return {"records": records}
+
+    @staticmethod
+    def _hit_score(
+        hit: Dict[str, Any],
+        *,
+        score_mapper: Optional[Callable[[float], float]],
+        score_lookup: Optional[Dict[Any, float]],
+    ) -> float:
+        """Resolve one hit's reported score from the lookup, mapper or raw value."""
+        if score_lookup is not None:
+            return float(score_lookup.get(hit.get(ID_FIELD), 0.0))
+        raw_score = float(hit.get("__score__", 0.0))
+        return score_mapper(raw_score) if score_mapper else raw_score
+
+    @staticmethod
+    def _threshold_score(
+        hit: Dict[str, Any],
+        reported_score: float,
+        threshold_lookup: Optional[Dict[Any, float]],
+    ) -> float:
+        """Score the threshold compares against.
+
+        Only the hybrid fusion separates the reported score from the gated
+        score: every other mode gates on the value it reports.
+        """
+        if threshold_lookup is None:
+            return reported_score
+        return float(threshold_lookup.get(hit.get(ID_FIELD), 0.0))
 
     def _row_metadata(self, hit: Dict[str, Any]) -> Dict[str, Any]:
         raw = hit.get(METADATA_FIELD)
