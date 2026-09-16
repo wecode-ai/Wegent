@@ -41,12 +41,16 @@ from app.schemas.project_chat import LoopItemAssign
 from app.schemas.runtime_profile import RuntimeProfileCreate
 from app.services import execution_environment_initialization
 from app.services.board_team_execution import dispatch_board_robot_execution
+from app.services.device.runtime_route import runtime_device_route_id
 from app.services.issue_execution_configuration import (
     execution_context,
     project_robot_execution_config,
 )
 from app.services.issue_workflow_planning import issue_workflow_planning_service
-from app.services.loop_item_executions.profile import WeworkExecutionProfile
+from app.services.loop_item_executions.profile import (
+    WeworkExecutionProfile,
+    WeworkExecutionProfileError,
+)
 from app.services.loop_item_executions.service import (
     TaskContext,
     WeworkRuntimeConfigurationError,
@@ -2694,10 +2698,15 @@ def test_project_execution_environment_reaches_runtime_request(
             {"command": "corepack enable", "working_directory": "wegent"},
             {"command": "pnpm install", "working_directory": "wegent"},
         ],
-        "status": "ready",
         "fingerprint": "environment-v1",
-        "prepared_device_id": "cloud-device-1",
-        "prepared_workspace_path": "/workspace/environments/project-1",
+        "devices": {
+            "cloud-device-1": {
+                "status": "ready",
+                "workspace_path": "/workspace/environments/project-1",
+                "prepared_at": "2026-09-16T00:00:00+00:00",
+                "error": "",
+            }
+        },
     }
     project.metadata_json = metadata
     bot = _make_bot(test_db, project, test_user)
@@ -2771,10 +2780,15 @@ def test_project_execution_environment_reaches_runtime_request(
             {"command": "corepack enable", "workingDirectory": "wegent"},
             {"command": "pnpm install", "workingDirectory": "wegent"},
         ],
-        "status": "ready",
         "fingerprint": "environment-v1",
-        "prepared_device_id": "cloud-device-1",
-        "prepared_workspace_path": "/workspace/environments/project-1",
+        "devices": {
+            "cloud-device-1": {
+                "status": "ready",
+                "workspace_path": "/workspace/environments/project-1",
+                "prepared_at": "2026-09-16T00:00:00+00:00",
+                "error": "",
+            }
+        },
     }
     assert payload["workspacePath"] == "/workspace/environments/project-1"
 
@@ -2787,9 +2801,9 @@ async def test_app_prepared_environment_only_reaches_its_own_installation(
     """Every Wework installation registers as ``local-device``, so the prepared
     worktree can only be matched by the record route queue rows persist.
 
-    Regression: the preparation stored the shared logical id while queue rows
-    carry ``app-record-<id>``, so the comparison never matched and the prepared
-    environment worktree was silently unused by every App run.
+    The environment state keeps one entry per device route id
+    (``app-record-<id>``); a task landing on any other installation fails the
+    preflight instead of silently ignoring the prepared worktree.
     """
 
     monkeypatch.setattr(
@@ -2804,29 +2818,34 @@ async def test_app_prepared_environment_only_reaches_its_own_installation(
         ),
     )
     devices = [create_app_device(test_db, user_id=test_user.id) for _ in range(2)]
-    prepared = (
-        await execution_environment_initialization.initialize_execution_environment(
-            db=test_db,
-            device=devices[0],
-            environment_id="project-app",
-            definition={
-                "repositories": [
-                    {
-                        "name": "Wegent",
-                        "url": "https://github.com/wecode-ai/Wegent.git",
-                        "ref": "main",
-                        "path": "wegent",
-                        "primary": True,
-                    }
-                ],
-                "setup_steps": [],
-            },
-        )
+    definition = {
+        "repositories": [
+            {
+                "name": "Wegent",
+                "url": "https://github.com/wecode-ai/Wegent.git",
+                "ref": "main",
+                "path": "wegent",
+                "primary": True,
+            }
+        ],
+        "setup_steps": [],
+    }
+    entry = await execution_environment_initialization.initialize_execution_environment(
+        db=test_db,
+        device=devices[0],
+        environment_id="project-app",
+        definition=definition,
     )
     project = _make_project(test_db, test_user)
     project.metadata_json = {
         **dict(project.metadata_json or {}),
-        "execution_environment": prepared,
+        "execution_environment": (
+            execution_environment_initialization.merge_execution_environment_device_state(
+                definition,
+                device_key=runtime_device_route_id(devices[0]),
+                device_state=entry,
+            )
+        ),
     }
     bot = _make_bot(test_db, project, test_user)
     item = _make_item(test_db, project, test_user)
@@ -2852,13 +2871,20 @@ async def test_app_prepared_environment_only_reaches_its_own_installation(
         payload = request.model_dump(by_alias=True, exclude_none=True)
         return str(payload.get("workspacePath") or "")
 
-    assert prepared["prepared_device_id"] == f"app-record-{devices[0].id}"
+    assert runtime_device_route_id(devices[0]) == f"app-record-{devices[0].id}"
     assert (
         workspace_path_for(f"app-record-{devices[0].id}")
         == "/workspace/environments/app"
     )
-    assert workspace_path_for(f"app-record-{devices[1].id}") == ""
-    assert workspace_path_for(SHARED_APP_DEVICE_ID) == ""
+    for other_device_id in (
+        f"app-record-{devices[1].id}",
+        SHARED_APP_DEVICE_ID,
+    ):
+        with pytest.raises(
+            WeworkExecutionProfileError,
+            match="Project execution environment is not ready",
+        ):
+            workspace_path_for(other_device_id)
 
 
 def test_claude_code_project_agent_compiles_executor_payload(

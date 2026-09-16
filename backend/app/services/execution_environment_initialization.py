@@ -85,13 +85,41 @@ def execution_environment_fingerprint(definition: dict[str, Any]) -> str:
 def preparing_execution_environment(definition: dict[str, Any]) -> dict[str, Any]:
     return {
         **definition,
-        "status": "preparing",
         "fingerprint": execution_environment_fingerprint(definition),
-        "prepared_device_id": "",
-        "prepared_workspace_path": "",
-        "prepared_at": None,
-        "error": "",
+        "devices": {},
     }
+
+
+# Preparation state written before per-device records existed. Dropped on the
+# next write so old single-slot rows never linger beside the devices map.
+_LEGACY_STATE_KEYS = frozenset(
+    {
+        "status",
+        "prepared_device_id",
+        "prepared_workspace_path",
+        "prepared_at",
+        "error",
+    }
+)
+
+
+def merge_execution_environment_device_state(
+    persisted: dict[str, Any], *, device_key: str, device_state: dict[str, Any]
+) -> dict[str, Any]:
+    """Record one device's preparation result without touching other devices.
+
+    The shared configuration (repositories, setup steps, fingerprint) stays at
+    the top level; every prepared device owns exactly one entry under
+    ``devices`` keyed by its Runtime route id.
+    """
+    merged = {
+        key: value for key, value in persisted.items() if key not in _LEGACY_STATE_KEYS
+    }
+    devices = merged.get("devices")
+    devices = dict(devices) if isinstance(devices, dict) else {}
+    devices[device_key] = device_state
+    merged["devices"] = devices
+    return merged
 
 
 async def initialize_execution_environment(
@@ -101,6 +129,12 @@ async def initialize_execution_environment(
     environment_id: str,
     definition: dict[str, Any],
 ) -> dict[str, Any]:
+    """Prepare the environment on one device and return that device's entry.
+
+    Callers persist the entry under ``devices[route_id]`` of the environment
+    state via :func:`merge_execution_environment_device_state`; the route id is
+    ``runtime_device_route_id(device)``.
+    """
     # Saving tolerates an empty repository list so a draft environment can be
     # stored, but preparation on a device cannot run without one; reject here
     # instead of letting the executor surface a raw internal error.
@@ -166,22 +200,16 @@ async def initialize_execution_environment(
                 )
         except Exception as error:
             return {
-                **definition,
                 "status": "error",
-                "fingerprint": fingerprint,
-                "prepared_device_id": device_key,
-                "prepared_workspace_path": "",
+                "workspace_path": "",
                 "prepared_at": None,
                 "error": str(error),
             }
         stdout = result.get("stdout")
         prepared = stdout if isinstance(stdout, dict) else {}
         return {
-            **definition,
             "status": "ready",
-            "fingerprint": fingerprint,
-            "prepared_device_id": device_key,
-            "prepared_workspace_path": str(prepared.get("workspacePath") or ""),
+            "workspace_path": str(prepared.get("workspacePath") or ""),
             "prepared_at": datetime.now(timezone.utc).isoformat(),
             "error": "",
         }

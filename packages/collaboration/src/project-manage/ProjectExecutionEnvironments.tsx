@@ -17,6 +17,7 @@ import type {
 } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationExecutionEnvironment,
+  CollaborationExecutionEnvironmentDeviceState,
   CollaborationExecutionEnvironmentRepository,
   CollaborationExecutionEnvironmentSetupStep,
   CollaborationProject,
@@ -70,6 +71,14 @@ type BranchState = {
 // catalog was available, so the current draft stays visible and selectable.
 const CUSTOM_REPOSITORY_VALUE = "__custom_repository__";
 const CUSTOM_REF_VALUE = "__custom_ref__";
+
+// Stable empty map so the prop-sync effect does not re-run on every render
+// when the environment has never been prepared on any device.
+type DeviceStateMap = Record<
+  string,
+  CollaborationExecutionEnvironmentDeviceState
+>;
+const NO_DEVICE_STATES: DeviceStateMap = {};
 
 type ExecutionEnvironmentScope =
   | {
@@ -145,15 +154,13 @@ export function ProjectExecutionEnvironments({
     workspace?.version ?? project!.version,
   );
   const [configSaved, setConfigSaved] = useState(false);
-  const [environmentStatus, setEnvironmentStatus] = useState(
-    initialConfig?.status ?? "uninitialized",
+  const [deviceStates, setDeviceStates] = useState<DeviceStateMap>(
+    initialConfig?.devices ?? NO_DEVICE_STATES,
   );
-  const [preparedDeviceId, setPreparedDeviceId] = useState(
-    initialConfig?.prepared_device_id ?? "",
-  );
-  const [environmentError, setEnvironmentError] = useState(
-    initialConfig?.error ?? "",
-  );
+  // The bottom error line follows the device the user last tried to create
+  // on. A ref, so tracking it never re-triggers the prop-sync effect below.
+  const environmentErrorDeviceKey = useRef("");
+  const [environmentError, setEnvironmentError] = useState("");
   const [statusFilter, setStatusFilter] = useState<
     "all" | CollaborationExecutionEnvironment["status"]
   >("all");
@@ -211,26 +218,20 @@ export function ProjectExecutionEnvironments({
   const initializationInFlight = useRef(false);
 
   const incomingVersion = workspace?.version ?? project!.version;
-  const incomingStatus = initialConfig?.status ?? "uninitialized";
-  const incomingPreparedDeviceId = initialConfig?.prepared_device_id ?? "";
-  const incomingError = initialConfig?.error ?? "";
+  const incomingDevices = initialConfig?.devices ?? NO_DEVICE_STATES;
 
-  // The parent re-fetches the project on a poll, so the server-owned fields
-  // must follow the prop instead of staying stuck at the mount-time values.
-  // While a create is in flight the flow writes these itself from the device
-  // response, and the form drafts are user input and never re-seeded here.
+  // The parent re-fetches the project on a poll, so the server-owned per-device
+  // states must follow the prop instead of staying stuck at the mount-time
+  // values. While a create is in flight the flow writes these itself from the
+  // device response, and the form drafts are user input and never re-seeded
+  // here.
   useEffect(() => {
     if (initializationInFlight.current || saving) return;
     setConfigVersion(incomingVersion);
-    setEnvironmentStatus(incomingStatus);
-    setPreparedDeviceId(incomingPreparedDeviceId);
-    setEnvironmentError(incomingError);
-  }, [
-    incomingVersion,
-    incomingStatus,
-    incomingPreparedDeviceId,
-    incomingError,
-  ]);
+    setDeviceStates(incomingDevices);
+    const errorKey = environmentErrorDeviceKey.current;
+    setEnvironmentError(errorKey ? (incomingDevices[errorKey]?.error ?? "") : "");
+  }, [incomingVersion, incomingDevices]);
 
   const loadRepositoryOptions = useCallback(async () => {
     if (!gitRepositoriesApi) return;
@@ -560,6 +561,7 @@ export function ProjectExecutionEnvironments({
     setInitializingDeviceId(device.device_id);
     setError("");
     setConfigSaved(false);
+    const deviceKey = device.device_key ?? String(device.device_id);
     const executionEnvironment = {
       repositories: configuredRepositories,
       setupSteps: setupSteps
@@ -571,8 +573,7 @@ export function ProjectExecutionEnvironments({
     };
     try {
       // The in-flight state belongs to the clicked device (initializingDeviceId);
-      // the shared status must stay untouched so other devices keep showing
-      // their own persisted state instead of all switching to preparing.
+      // other devices keep showing their own persisted per-device state.
       setEnvironmentError("");
       const updated = isWorkspaceScope
         ? await api.workspaces!.update(scopeId, {
@@ -593,13 +594,15 @@ export function ProjectExecutionEnvironments({
             version: updated.version,
           });
       const initializedConfig = initialized.execution_environment;
+      const nextDeviceStates = initializedConfig?.devices ?? NO_DEVICE_STATES;
+      const deviceState = nextDeviceStates[deviceKey];
       setConfigVersion(initialized.version);
-      setEnvironmentStatus(initializedConfig?.status ?? "error");
-      setPreparedDeviceId(initializedConfig?.prepared_device_id ?? "");
-      setEnvironmentError(initializedConfig?.error ?? "");
-      if (initializedConfig?.status !== "ready") {
+      setDeviceStates(nextDeviceStates);
+      environmentErrorDeviceKey.current = deviceKey;
+      setEnvironmentError(deviceState?.error ?? "");
+      if (deviceState?.status !== "ready") {
         throw new Error(
-          initializedConfig?.error ||
+          deviceState?.error ||
             translate(
               "todo.execution_environment_initialization_failed",
               "执行环境初始化失败",
@@ -608,7 +611,7 @@ export function ProjectExecutionEnvironments({
       }
       setConfigSaved(true);
     } catch (saveError) {
-      setEnvironmentStatus("error");
+      environmentErrorDeviceKey.current = deviceKey;
       setEnvironmentError(
         saveError instanceof Error ? saveError.message : String(saveError),
       );
@@ -1156,16 +1159,19 @@ export function ProjectExecutionEnvironments({
               ) : (
                 <div className="overflow-hidden rounded-lg border border-border">
                   {visibleAssignedItems.map((environment, index) => {
-                    const hasEnvironment =
-                      initializingDeviceId === environment.device_id ||
-                      (preparedDeviceId !== "" &&
-                        (preparedDeviceId === environment.device_key ||
-                          preparedDeviceId === String(environment.device_id)));
-                    const instanceStatus =
-                      initializingDeviceId === environment.device_id
-                        ? "preparing"
-                        : hasEnvironment
-                          ? environmentStatus
+                    const deviceKey =
+                      environment.device_key ??
+                      String(environment.device_id ?? "");
+                    const deviceState = deviceStates[deviceKey];
+                    const isPreparingDevice =
+                      initializingDeviceId === environment.device_id;
+                    const hasEnvironment = isPreparingDevice || deviceState != null;
+                    const instanceStatus = isPreparingDevice
+                      ? "preparing"
+                      : deviceState?.status === "ready"
+                        ? "ready"
+                        : deviceState?.status === "error"
+                          ? "error"
                           : "uninitialized";
                     return (
                       <div

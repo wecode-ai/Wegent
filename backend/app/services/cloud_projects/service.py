@@ -31,8 +31,10 @@ from app.schemas.cloud_project import (
 )
 from app.services.cloud_project_visibility import accessible_cloud_projects
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.runtime_route import runtime_device_route_id
 from app.services.execution_environment_initialization import (
     initialize_execution_environment,
+    merge_execution_environment_device_state,
     preparing_execution_environment,
 )
 from app.services.loop_item_status_history import write_status_change
@@ -413,7 +415,12 @@ class CloudProjectService:
         if project.version != version:
             raise HTTPException(status.HTTP_409_CONFLICT, "Project changed")
         metadata = dict(project.metadata_json or {})
-        metadata["execution_environment"] = state
+        environment = metadata.get("execution_environment")
+        metadata["execution_environment"] = merge_execution_environment_device_state(
+            environment if isinstance(environment, dict) else {},
+            device_key=runtime_device_route_id(device),
+            device_state=state,
+        )
         project.metadata_json = metadata
         # Recording a preparation result is not a configuration change, so the
         # client keeps a usable version token and can retry after a failure.

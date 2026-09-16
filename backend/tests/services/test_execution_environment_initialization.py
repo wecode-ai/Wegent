@@ -20,7 +20,10 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import ExecutionEnvironmentDefinition
 from app.services import execution_environment_initialization
-from app.services.device.runtime_route import normalize_execution_device_id
+from app.services.device.runtime_route import (
+    normalize_execution_device_id,
+    runtime_device_route_id,
+)
 from app.services.workspaces.resource_mapping import execution_environment_values
 from tests.utils.devices import SHARED_APP_DEVICE_ID, create_app_device
 
@@ -421,22 +424,25 @@ async def test_initialization_prepares_device_and_returns_ready_state(
     )
 
     assert result["status"] == "ready"
-    assert result["prepared_device_id"] == "device-runtime-id"
-    assert result["prepared_workspace_path"] == "/workspace/environment-project-1"
+    assert result["workspace_path"] == "/workspace/environment-project-1"
     assert isinstance(result["prepared_at"], str)
     assert result["prepared_at"].endswith("+00:00")
     assert result["error"] == ""
-    assert len(result["fingerprint"]) == 64
+    fingerprint = (
+        execution_environment_initialization.execution_environment_fingerprint(
+            definition
+        )
+    )
     command = execute.await_args.kwargs
     assert command["command_key"] == "environment_prepare"
     assert command["device_id"] == "device-kind-name"
     assert command["allow_internal"] is True
     payload = json.loads(command["args"][0])
     assert payload == {
-        "environmentId": f"project-1-{result['fingerprint'][:12]}",
+        "environmentId": f"project-1-{fingerprint[:12]}",
         "repositories": definition["repositories"],
         "setupSteps": definition["setup_steps"],
-        "fingerprint": result["fingerprint"],
+        "fingerprint": fingerprint,
     }
 
 
@@ -477,11 +483,12 @@ async def test_initialization_failure_returns_error_state(
         )
     )
 
-    assert result["status"] == "error"
-    assert result["prepared_device_id"] == "device-runtime-id"
-    assert result["prepared_workspace_path"] == ""
-    assert result["prepared_at"] is None
-    assert result["error"] == "setup failed"
+    assert result == {
+        "status": "error",
+        "workspace_path": "",
+        "prepared_at": None,
+        "error": "setup failed",
+    }
 
 
 @pytest.mark.asyncio
@@ -517,6 +524,7 @@ async def test_initialization_rejects_definition_without_primary_repository(
 @pytest.mark.asyncio
 async def test_initialization_routes_app_device_by_unique_record_id(
     monkeypatch: pytest.MonkeyPatch,
+    initialization_lock: _InMemoryLock,
 ) -> None:
     execute = AsyncMock(
         return_value={
@@ -555,7 +563,11 @@ async def test_initialization_routes_app_device_by_unique_record_id(
 
     assert execute.await_args.kwargs["device_id"] == "app-record-42"
     assert result["status"] == "ready"
-    assert result["prepared_device_id"] == "app-record-42"
+    # The lock key carries the same record route the caller persists the
+    # device entry under.
+    assert initialization_lock.names == [
+        "execution-environment-init:project-1:app-record-42"
+    ]
 
 
 @pytest.mark.asyncio
@@ -564,16 +576,17 @@ async def test_app_installations_sharing_one_logical_id_prepare_distinct_identit
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    execute = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": {"workspacePath": "/workspace/environment"},
+        }
+    )
     monkeypatch.setattr(
         execution_environment_initialization,
         "execute_configured_device_command",
-        AsyncMock(
-            return_value={
-                "success": True,
-                "exit_code": 0,
-                "stdout": {"workspacePath": "/workspace/environment"},
-            }
-        ),
+        execute,
     )
     devices = [create_app_device(test_db, user_id=test_user.id) for _ in range(2)]
 
@@ -588,20 +601,25 @@ async def test_app_installations_sharing_one_logical_id_prepare_distinct_identit
     ]
 
     assert {device.name for device in devices} == {SHARED_APP_DEVICE_ID}
-    assert [state["prepared_device_id"] for state in prepared] == [
+    assert [entry["status"] for entry in prepared] == ["ready", "ready"]
+    device_keys = [runtime_device_route_id(device) for device in devices]
+    assert device_keys == [
         f"app-record-{devices[0].id}",
         f"app-record-{devices[1].id}",
     ]
-    # The persisted identity must be the one queue rows carry, otherwise the
+    assert [call.kwargs["device_id"] for call in execute.await_args_list] == (
+        device_keys
+    )
+    # The merge key must be the identity queue rows carry, otherwise the
     # prepared worktree can never be matched back to its installation.
-    for state in prepared:
+    for device_key in device_keys:
         assert (
             normalize_execution_device_id(
                 test_db,
                 user_id=test_user.id,
-                submitted_device_id=state["prepared_device_id"],
+                submitted_device_id=device_key,
             )
-            == state["prepared_device_id"]
+            == device_key
         )
 
 
@@ -636,6 +654,58 @@ def test_execution_environment_values_expose_the_prepared_identity(
         f"app-record-{devices[0].id}",
         f"app-record-{devices[1].id}",
     ]
+
+
+def test_device_state_merge_keeps_other_devices_and_drops_legacy_state() -> None:
+    preparing = execution_environment_initialization.preparing_execution_environment(
+        {"repositories": [PRIMARY_REPOSITORY], "setup_steps": []}
+    )
+    assert "status" not in preparing
+    assert preparing["devices"] == {}
+    assert len(preparing["fingerprint"]) == 64
+
+    ready = {
+        "status": "ready",
+        "workspace_path": "/workspace/device-a",
+        "prepared_at": "2026-09-16T00:00:00+00:00",
+        "error": "",
+    }
+    failed = {
+        "status": "error",
+        "workspace_path": "",
+        "prepared_at": None,
+        "error": "boom",
+    }
+    merged = (
+        execution_environment_initialization.merge_execution_environment_device_state(
+            preparing, device_key="device-a", device_state=ready
+        )
+    )
+    merged = (
+        execution_environment_initialization.merge_execution_environment_device_state(
+            merged, device_key="device-b", device_state=failed
+        )
+    )
+
+    assert merged["repositories"] == [PRIMARY_REPOSITORY]
+    assert merged["devices"] == {"device-a": ready, "device-b": failed}
+
+    # Rows persisted before per-device state lose their single-slot fields on
+    # the next write instead of lingering beside the devices map.
+    legacy = {
+        "repositories": [],
+        "status": "ready",
+        "prepared_device_id": "old-device",
+        "prepared_workspace_path": "/workspace/old",
+        "prepared_at": None,
+        "error": "",
+    }
+    merged = (
+        execution_environment_initialization.merge_execution_environment_device_state(
+            legacy, device_key="device-a", device_state=ready
+        )
+    )
+    assert merged == {"repositories": [], "devices": {"device-a": ready}}
 
 
 def test_definition_accepts_multiple_repositories_and_repository_scoped_steps() -> None:

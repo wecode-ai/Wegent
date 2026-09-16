@@ -100,13 +100,18 @@ class ExecutionEnvironmentDefinition(BaseModel):
         return self
 
 
-class ExecutionEnvironmentConfig(ExecutionEnvironmentDefinition):
-    status: Literal["uninitialized", "preparing", "ready", "error"] = "uninitialized"
-    fingerprint: str = ""
-    prepared_device_id: str = ""
-    prepared_workspace_path: str = ""
+class ExecutionEnvironmentDeviceState(BaseModel):
+    """Preparation state one device holds for the shared environment config."""
+
+    status: Literal["preparing", "ready", "error"] = "preparing"
+    workspace_path: str = ""
     prepared_at: datetime | None = None
     error: str = ""
+
+
+class ExecutionEnvironmentConfig(ExecutionEnvironmentDefinition):
+    fingerprint: str = ""
+    devices: dict[str, ExecutionEnvironmentDeviceState] = Field(default_factory=dict)
 
 
 class ExecutionEnvironmentInitialize(BaseModel):

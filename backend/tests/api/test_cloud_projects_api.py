@@ -2956,12 +2956,8 @@ def test_execution_environment_initialization_keeps_the_client_version_token(
         async def _prepare(*, db: Session, device: Kind, **_: object) -> dict:
             open_transactions.append(db.in_transaction())
             return {
-                "repositories": [],
-                "setup_steps": [],
                 "status": status_value,
-                "fingerprint": "b" * 64,
-                "prepared_device_id": device.name,
-                "prepared_workspace_path": "" if error else "/workspace/ready",
+                "workspace_path": "" if error else "/workspace/ready",
                 "prepared_at": None,
                 "error": error,
             }
@@ -2978,7 +2974,11 @@ def test_execution_environment_initialization_keeps_the_client_version_token(
         json={"device_id": device.id, "version": configured_version},
     )
     assert failed.status_code == 200, failed.text
-    assert failed.json()["execution_environment"]["status"] == "error"
+    failed_devices = failed.json()["execution_environment"]["devices"]
+    assert failed_devices[device.name]["status"] == "error"
+    assert failed_devices[device.name]["error"] == (
+        "Failed to prepare execution repositories: boom"
+    )
     # The preparation result is not a configuration change, so the token survives.
     assert failed.json()["version"] == configured_version
 
@@ -2992,7 +2992,9 @@ def test_execution_environment_initialization_keeps_the_client_version_token(
         json={"device_id": device.id, "version": configured_version},
     )
     assert retried.status_code == 200, retried.text
-    assert retried.json()["execution_environment"]["status"] == "ready"
+    retried_devices = retried.json()["execution_environment"]["devices"]
+    assert retried_devices[device.name]["status"] == "ready"
+    assert retried_devices[device.name]["workspace_path"] == "/workspace/ready"
     assert retried.json()["version"] == configured_version
 
     # The project row must be unlocked while the device prepares the environment.

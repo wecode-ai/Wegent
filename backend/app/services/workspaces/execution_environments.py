@@ -11,8 +11,10 @@ from app.models.resource_member import ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceExecutionEnvironmentCreate
+from app.services.device.runtime_route import runtime_device_route_id
 from app.services.execution_environment_initialization import (
     initialize_execution_environment,
+    merge_execution_environment_device_state,
 )
 from app.services.workspaces.access import require_workspace_role
 from app.services.workspaces.environment_status import execution_environment_statuses
@@ -202,7 +204,11 @@ class WorkspaceExecutionEnvironmentService:
             namespace=current.namespace,
             public_id=current.public_id,
             is_default=current.is_default,
-            execution_environment=state,
+            execution_environment=merge_execution_environment_device_state(
+                current.execution_environment,
+                device_key=runtime_device_route_id(device),
+                device_state=state,
+            ),
             # Recording a preparation result is not a configuration change, so the
             # client keeps a usable version token and can retry after a failure.
             version=current.version,

@@ -177,36 +177,45 @@ async function render({
           setup_steps: [
             { command: "pnpm install", working_directory: "wegent" },
           ],
-          status: "preparing",
+          fingerprint: "environment-v1",
+          devices: {},
         },
       })),
       initializeExecutionEnvironment: vi.fn(
-        async (_projectId: string, input: { deviceId: number }) => ({
-          ...project,
-          version: 3,
-          execution_environment: {
-            repositories: [
-              {
-                name: "Wegent",
-                url: "https://github.com/wecode-ai/Wegent.git",
-                ref: "main",
-                path: "wegent",
-                primary: true,
+        async (_projectId: string, input: { deviceId: number }) => {
+          // The backend records the entry under the identity of the exact
+          // device record that prepared the environment.
+          const deviceKey = [...assigned, ...available].find(
+            (candidate) => candidate.device_id === input.deviceId,
+          )!.device_key!;
+          return {
+            ...project,
+            version: 3,
+            execution_environment: {
+              repositories: [
+                {
+                  name: "Wegent",
+                  url: "https://github.com/wecode-ai/Wegent.git",
+                  ref: "main",
+                  path: "wegent",
+                  primary: true,
+                },
+              ],
+              setup_steps: [
+                { command: "pnpm install", working_directory: "wegent" },
+              ],
+              fingerprint: "environment-v1",
+              devices: {
+                [deviceKey]: {
+                  status: "ready" as const,
+                  workspace_path: "/workspace/project-1",
+                  prepared_at: "2026-09-16T00:00:00Z",
+                  error: "",
+                },
               },
-            ],
-            setup_steps: [
-              { command: "pnpm install", working_directory: "wegent" },
-            ],
-            status: "ready",
-            fingerprint: "environment-v1",
-            // The backend answers with the identity of the exact device record
-            // that prepared the environment, never a shared logical name.
-            prepared_device_id: [...assigned, ...available].find(
-              (candidate) => candidate.device_id === input.deviceId,
-            )!.device_key,
-            prepared_workspace_path: "/workspace/project-1",
-          },
-        }),
+            },
+          };
+        },
       ),
       listExecutionEnvironments: vi.fn(async () => assigned),
       addExecutionEnvironment: vi.fn(
@@ -421,9 +430,17 @@ describe("ProjectExecutionEnvironments", () => {
       async () => ({
         version: 3,
         execution_environment: {
-          status: "error",
-          prepared_device_id: "app-record-21",
-          error: rawError,
+          repositories: [],
+          setup_steps: [],
+          fingerprint: "environment-v1",
+          devices: {
+            "device-21": {
+              status: "error" as const,
+              workspace_path: "",
+              prepared_at: null,
+              error: rawError,
+            },
+          },
         },
       }),
     );
@@ -439,6 +456,7 @@ describe("ProjectExecutionEnvironments", () => {
       `[data-testid="${prefix}-environment-error"]`,
     );
     expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledOnce();
+    expect(element("-21").textContent).toContain("环境创建失败");
     expect(shown?.textContent).toBe(
       "Failed to prepare execution repositories: fatal: could not read " +
         "Username for 'https://git.example.com': terminal prompts disabled",
@@ -587,12 +605,15 @@ describe("ProjectExecutionEnvironments", () => {
       executionEnvironment: {
         repositories: [],
         setup_steps: [],
-        status: "ready",
         fingerprint: "environment-v1",
-        prepared_device_id: "app-record-1748",
-        prepared_workspace_path: "/workspace/project-1",
-        prepared_at: "2026-09-16T00:00:00Z",
-        error: "",
+        devices: {
+          "app-record-1748": {
+            status: "ready",
+            workspace_path: "/workspace/project-1",
+            prepared_at: "2026-09-16T00:00:00Z",
+            error: "",
+          },
+        },
       },
     });
     api.projects.initializeExecutionEnvironment.mockImplementationOnce(
@@ -611,6 +632,99 @@ describe("ProjectExecutionEnvironments", () => {
     expect(element("-1824").textContent).toContain("正在创建环境");
     expect(element("-1748").textContent).toContain("环境已就绪");
     expect(element("-1748").textContent).not.toContain("正在创建环境");
+  });
+
+  it("renders each device's own persisted state independently", async () => {
+    await render({
+      assigned: [
+        environment(1748, "Wework laptop", "online", "app-record-1748"),
+        environment(1824, "Wework desktop", "online", "app-record-1824"),
+        environment(21, "Assigned online", "online"),
+      ],
+      executionEnvironment: {
+        repositories: [],
+        setup_steps: [],
+        fingerprint: "environment-v1",
+        devices: {
+          "app-record-1748": {
+            status: "ready",
+            workspace_path: "/workspace/project-1",
+            prepared_at: "2026-09-16T00:00:00Z",
+            error: "",
+          },
+          "app-record-1824": {
+            status: "error",
+            workspace_path: "",
+            prepared_at: null,
+            error: "clone failed",
+          },
+        },
+      },
+    });
+
+    expect(element("-1748").textContent).toContain("环境已就绪");
+    expect(element<HTMLButtonElement>("-initialize-1748").textContent).toContain(
+      "重新创建",
+    );
+    expect(element("-1824").textContent).toContain("环境创建失败");
+    expect(element<HTMLButtonElement>("-initialize-1824").textContent).toContain(
+      "重新创建",
+    );
+    expect(element("-21").textContent).toContain("尚未创建环境");
+    expect(element<HTMLButtonElement>("-initialize-21").textContent).toContain(
+      "创建环境",
+    );
+  });
+
+  it("refreshes every device row when the project prop poll delivers new state", async () => {
+    const api = await render({
+      assigned: [
+        environment(1748, "Wework laptop", "online", "app-record-1748"),
+        environment(1824, "Wework desktop", "online", "app-record-1824"),
+      ],
+      executionEnvironment: {
+        repositories: [],
+        setup_steps: [],
+        fingerprint: "environment-v1",
+        devices: {
+          "app-record-1748": {
+            status: "ready",
+            workspace_path: "/workspace/project-1",
+            prepared_at: "2026-09-16T00:00:00Z",
+            error: "",
+          },
+        },
+      },
+    });
+
+    expect(element("-1748").textContent).toContain("环境已就绪");
+    expect(element("-1824").textContent).toContain("尚未创建环境");
+
+    await rerender(api, {
+      version: 3,
+      executionEnvironment: {
+        repositories: [],
+        setup_steps: [],
+        fingerprint: "environment-v1",
+        devices: {
+          "app-record-1748": {
+            status: "ready",
+            workspace_path: "/workspace/project-1",
+            prepared_at: "2026-09-16T00:00:00Z",
+            error: "",
+          },
+          "app-record-1824": {
+            status: "ready",
+            workspace_path: "/workspace/project-1-b",
+            prepared_at: "2026-09-16T01:00:00Z",
+            error: "",
+          },
+        },
+      },
+    });
+
+    expect(element("-1748").textContent).toContain("环境已就绪");
+    expect(element("-1824").textContent).toContain("环境已就绪");
   });
 
   it("issues a single initialization for rapid clicks in the same tick", async () => {
@@ -812,12 +926,15 @@ describe("ProjectExecutionEnvironments", () => {
       executionEnvironment: {
         repositories: [],
         setup_steps: [],
-        status: "ready",
         fingerprint: "environment-v1",
-        prepared_device_id: "device-21",
-        prepared_workspace_path: "/workspace/project-1",
-        prepared_at: "2026-09-16T00:00:00Z",
-        error: "",
+        devices: {
+          "device-21": {
+            status: "ready",
+            workspace_path: "/workspace/project-1",
+            prepared_at: "2026-09-16T00:00:00Z",
+            error: "",
+          },
+        },
       },
     });
 
@@ -846,12 +963,15 @@ describe("ProjectExecutionEnvironments", () => {
           },
         ],
         setup_steps: [{ command: "pnpm install", working_directory: "wegent" }],
-        status: "ready",
         fingerprint: "environment-v2",
-        prepared_device_id: "device-21",
-        prepared_workspace_path: "/workspace/project-1",
-        prepared_at: "2026-09-16T00:00:00Z",
-        error: "",
+        devices: {
+          "device-21": {
+            status: "ready",
+            workspace_path: "/workspace/project-1",
+            prepared_at: "2026-09-16T00:00:00Z",
+            error: "",
+          },
+        },
       },
     });
 
@@ -895,12 +1015,15 @@ describe("ProjectExecutionEnvironments", () => {
       executionEnvironment: {
         repositories: [],
         setup_steps: [],
-        status: "ready",
         fingerprint: "environment-v1",
-        prepared_device_id: "app-record-1748",
-        prepared_workspace_path: "/workspace/project-1",
-        prepared_at: "2026-09-16T00:00:00Z",
-        error: "",
+        devices: {
+          "app-record-1748": {
+            status: "ready",
+            workspace_path: "/workspace/project-1",
+            prepared_at: "2026-09-16T00:00:00Z",
+            error: "",
+          },
+        },
       },
     });
 

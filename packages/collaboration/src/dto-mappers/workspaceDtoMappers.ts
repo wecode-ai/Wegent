@@ -299,26 +299,31 @@ export function mapCollaborationWorkspaceDto(
             };
           })
         : [],
-      status: (executionEnvironment.status ?? "uninitialized") as NonNullable<
-        CollaborationWorkspace["execution_environment"]
-      >["status"],
       fingerprint: String(executionEnvironment.fingerprint ?? ""),
-      prepared_device_id: String(
-        executionEnvironment.prepared_device_id ??
-          executionEnvironment.preparedDeviceId ??
-          "",
+      devices: Object.fromEntries(
+        Object.entries(asRecord(executionEnvironment.devices ?? {})).map(
+          ([deviceKey, value]) => {
+            const entry = asRecord(value);
+            return [
+              deviceKey,
+              {
+                status: entry.status as
+                  | "preparing"
+                  | "ready"
+                  | "error"
+                  | undefined,
+                workspace_path: String(
+                  entry.workspace_path ?? entry.workspacePath ?? "",
+                ),
+                prepared_at: nullableString(
+                  entry.prepared_at ?? entry.preparedAt ?? null,
+                ),
+                error: String(entry.error ?? ""),
+              },
+            ];
+          },
+        ),
       ),
-      prepared_workspace_path: String(
-        executionEnvironment.prepared_workspace_path ??
-          executionEnvironment.preparedWorkspacePath ??
-          "",
-      ),
-      prepared_at: nullableString(
-        executionEnvironment.prepared_at ??
-          executionEnvironment.preparedAt ??
-          null,
-      ),
-      error: String(executionEnvironment.error ?? ""),
     },
     project_count: Number(row.project_count ?? row.projectCount ?? 0),
     created_by_user_id: Number(
