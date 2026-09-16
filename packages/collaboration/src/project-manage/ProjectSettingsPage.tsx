@@ -7,12 +7,14 @@ import type { ReactNode } from "react";
 export function ProjectSettingsPage({
   actions,
   children,
+  contentWidth = "default",
   description,
   testId,
   title,
 }: {
   actions?: ReactNode;
   children: ReactNode;
+  contentWidth?: "default" | "wide";
   description: string;
   testId: string;
   title: string;
@@ -22,7 +24,11 @@ export function ProjectSettingsPage({
       className="min-h-0 flex-1 overflow-y-auto px-8 py-7 text-sm"
       data-testid={testId}
     >
-      <div className="mx-auto max-w-3xl">
+      <div
+        className={
+          contentWidth === "wide" ? "mx-auto max-w-5xl" : "mx-auto max-w-3xl"
+        }
+      >
         <header className="mb-8 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="heading-base tracking-normal text-text-primary">
