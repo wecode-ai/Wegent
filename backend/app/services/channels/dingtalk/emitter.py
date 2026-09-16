@@ -6,14 +6,22 @@
 
 import asyncio
 import logging
-import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from app.core.cache import cache_manager
+from app.schemas.dingtalk_card import DingTalkChatCardConfig
+from app.services.channels.dingtalk.card_adapter import create_card_adapter
+from app.services.channels.dingtalk.card_progress import (
+    CompactProgressState,
+    compact_text,
+    merge_safe_block,
+    project_block,
+    safe_block,
+)
+from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 from app.services.channels.emitter import SyncResponseEmitter
 from app.services.execution.emitters import ResultEmitter
 from shared.models import EventType, ExecutionEvent
@@ -28,241 +36,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["SyncResponseEmitter", "StreamingResponseEmitter"]
 
-_MARKDOWN_TOKEN_RE = re.compile(r"[`*_>#]+")
-_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f]+")
 _WAITING_FOR_INPUT_CONTENT = "等待你在 Wework 中确认后继续。"
 _EMPTY_FINAL_CONTENT = "本轮已结束，未生成最终回复。"
-
-
-def _safe_single_line(value: Any) -> str:
-    """Return one masked, normalized line for the compact IM projection."""
-    if not isinstance(value, str):
-        return ""
-    text = mask_string(value)
-    text = _CONTROL_CHARACTER_RE.sub(" ", text)
-    text = _MARKDOWN_TOKEN_RE.sub("", text)
-    return " ".join(text.split()).strip()
-
-
-def _compact_text(value: Any, limit: int) -> str:
-    """Return one safe, bounded line for the compact IM projection."""
-    text = _safe_single_line(value)
-    if len(text) <= limit:
-        return text
-    return f"{text[: limit - 1].rstrip()}…"
-
-
-@dataclass
-class _CompactProgressState:
-    """Serializable, bounded DingTalk progress projection."""
-
-    mode: str = "progress"
-    current: str = "正在理解需求…"
-    recent: list[str] = field(default_factory=list)
-    blocks: dict[str, dict[str, Any]] = field(default_factory=dict)
-    reasoning_summary: str = ""
-
-    MAX_RECENT = 2
-    MAX_BLOCKS = 20
-    MAX_STEP_LENGTH = 80
-    MAX_CARD_LENGTH = 320
-    MAX_REASONING_LENGTH = 240
-
-    @classmethod
-    def from_dict(cls, value: Any) -> "_CompactProgressState":
-        if not isinstance(value, dict):
-            return cls()
-        mode = (
-            value.get("mode")
-            if value.get("mode") in {"progress", "answer"}
-            else "progress"
-        )
-        current = _compact_text(value.get("current"), cls.MAX_STEP_LENGTH)
-        recent = value.get("recent") if isinstance(value.get("recent"), list) else []
-        recent = [
-            text
-            for item in recent[-cls.MAX_RECENT :]
-            if (text := _compact_text(item, cls.MAX_STEP_LENGTH))
-        ]
-        blocks = value.get("blocks") if isinstance(value.get("blocks"), dict) else {}
-        safe_blocks = {
-            str(block_id): _safe_block(block)
-            for block_id, block in list(blocks.items())[-cls.MAX_BLOCKS :]
-            if isinstance(block, dict)
-        }
-        reasoning_summary = _compact_text(
-            value.get("reasoning_summary"), cls.MAX_REASONING_LENGTH
-        )
-        return cls(
-            mode=mode,
-            current=current or "正在处理…",
-            recent=recent,
-            blocks=safe_blocks,
-            reasoning_summary=reasoning_summary,
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "mode": self.mode,
-            "current": self.current,
-            "recent": self.recent[-self.MAX_RECENT :],
-            "blocks": self.blocks,
-            "reasoning_summary": self.reasoning_summary,
-        }
-
-    def set_current(self, value: str) -> None:
-        text = _compact_text(value, self.MAX_STEP_LENGTH)
-        if text:
-            self.reasoning_summary = ""
-            self.current = text
-
-    def append_reasoning_summary(self, value: str) -> None:
-        separator = " " if self.reasoning_summary and value[:1].isspace() else ""
-        summary = _safe_single_line(f"{self.reasoning_summary}{separator}{value}")
-        if not summary:
-            self.set_current("正在分析…")
-            return
-        summary = summary[-self.MAX_REASONING_LENGTH :]
-        self.reasoning_summary = summary
-        prefix = "正在分析："
-        available = self.MAX_STEP_LENGTH - len(prefix)
-        visible = summary
-        if len(visible) > available:
-            visible = f"…{visible[-(available - 1):]}"
-        self.current = f"{prefix}{visible}"
-
-    def complete(self, value: str) -> None:
-        text = _compact_text(value, self.MAX_STEP_LENGTH)
-        if text and (not self.recent or self.recent[-1] != text):
-            self.recent.append(text)
-            self.recent = self.recent[-self.MAX_RECENT :]
-        self.reasoning_summary = ""
-        self.current = "继续处理…"
-
-    def remember_block(self, block: dict[str, Any]) -> None:
-        block_id = str(block.get("id") or "").strip()
-        if not block_id:
-            return
-        if block_id not in self.blocks and len(self.blocks) >= self.MAX_BLOCKS:
-            self.blocks.pop(next(iter(self.blocks)))
-        self.blocks[block_id] = block
-
-    def render(self) -> str:
-        lines = ["**执行进度**"]
-        lines.extend(f"✅ {item}" for item in self.recent[-self.MAX_RECENT :])
-        lines.append(f"⏳ {self.current or '正在处理…'}")
-        return "\n".join(lines)[: self.MAX_CARD_LENGTH]
-
-
-def _safe_block(block: Any) -> dict[str, Any]:
-    """Keep only fields needed to project a block safely."""
-    if not isinstance(block, dict):
-        return {}
-    block_type = _compact_text(block.get("type"), 24).lower()
-    safe = {
-        "id": str(block.get("id") or "").strip(),
-        "type": block_type,
-        "status": _compact_text(block.get("status"), 24).lower(),
-        "process_kind": _compact_text(block.get("process_kind"), 32).lower(),
-        "tool_name": _compact_text(block.get("tool_name"), 40),
-        "display_name": _compact_text(block.get("display_name"), 40),
-        "title": _compact_text(block.get("title"), 80),
-        "agent_type": _compact_text(block.get("agent_type"), 40),
-    }
-    if block_type in {"text", "plan"}:
-        safe["content"] = _compact_text(block.get("content"), 80)
-    render_payload = block.get("render_payload")
-    safe["needs_input"] = bool(
-        block.get("needs_input")
-        or (
-            isinstance(render_payload, dict)
-            and render_payload.get("kind") == "request_user_input"
-        )
-        or safe["tool_name"] == "request_user_input"
-    )
-    return safe
-
-
-def _merge_safe_block(
-    existing: dict[str, Any], updates: Any, block_id: str
-) -> dict[str, Any]:
-    if not isinstance(updates, dict):
-        return existing
-    merged = {**existing, "id": block_id}
-    for key in (
-        "type",
-        "status",
-        "process_kind",
-        "tool_name",
-        "display_name",
-        "title",
-        "agent_type",
-        "content",
-        "render_payload",
-    ):
-        if key in updates:
-            merged[key] = updates[key]
-    return _safe_block(merged)
-
-
-def _tool_label(value: dict[str, Any]) -> str:
-    return value.get("display_name") or value.get("tool_name") or "工具"
-
-
-def _project_block(state: _CompactProgressState, block: dict[str, Any]) -> None:
-    if not block:
-        return
-    status = block.get("status") or "pending"
-    block_type = block.get("type")
-    if block.get("needs_input"):
-        state.set_current("等待你在 Wework 中确认…")
-    elif block_type == "thinking":
-        state.set_current("正在分析…")
-    elif block_type == "tool":
-        _project_tool_block(state, block, status)
-    elif block_type == "subagent":
-        _project_subagent_block(state, block, status)
-    elif block_type in {"text", "plan"}:
-        _project_text_block(state, block, status)
-    else:
-        state.set_current("正在处理新步骤…")
-
-
-def _project_tool_block(
-    state: _CompactProgressState, block: dict[str, Any], status: str
-) -> None:
-    label = _tool_label(block)
-    if status in {"error", "failed"}:
-        state.set_current(f"工具执行失败：{label}")
-    elif status in {"done", "completed", "success"}:
-        state.complete(f"工具完成：{label}")
-    else:
-        state.set_current(f"正在使用工具：{label}")
-
-
-def _project_subagent_block(
-    state: _CompactProgressState, block: dict[str, Any], status: str
-) -> None:
-    label = block.get("title") or block.get("display_name") or block.get("agent_type")
-    label = label or "协作任务"
-    if status in {"error", "failed"}:
-        state.set_current(f"协作任务失败：{label}")
-    elif status in {"done", "completed", "success"}:
-        state.complete(f"协作任务完成：{label}")
-    else:
-        state.set_current(f"正在协同处理：{label}")
-
-
-def _project_text_block(
-    state: _CompactProgressState, block: dict[str, Any], status: str
-) -> None:
-    content = block.get("content")
-    if not content:
-        state.set_current("正在整理过程…")
-    elif status in {"done", "completed", "success"}:
-        state.complete(content)
-    else:
-        state.set_current(content)
 
 
 class StreamingResponseEmitter(ResultEmitter):
@@ -280,19 +55,26 @@ class StreamingResponseEmitter(ResultEmitter):
         dingtalk_client: "DingTalkStreamClient",
         incoming_message: "ChatbotMessage",
         existing_card_instance_id: Optional[str] = None,
+        chat_card: Optional[DingTalkChatCardConfig] = None,
+        channel_id: int = 0,
     ):
-        from app.services.channels.dingtalk.card import DingTalkMarkdownCard
-
         self._dingtalk_client = dingtalk_client
         self._incoming_message = incoming_message
-        self._card = DingTalkMarkdownCard(dingtalk_client, incoming_message)
-        self._card.set_order(["msgContent"])
+        self.chat_card = chat_card
+        self.subtask_id = 0
+        self._card = create_card_adapter(
+            dingtalk_client,
+            incoming_message,
+            chat_card,
+            channel_id,
+            existing_card_instance_id,
+        )
         self._full_content = ""
         self._pending_content = ""
         self._last_update_time = 0.0
         self._finished = False
         self._shared_content_key: Optional[str] = None
-        self._progress = _CompactProgressState()
+        self._progress = CompactProgressState()
         self._update_lock = asyncio.Lock()
         self._reconnected = bool(existing_card_instance_id)
         self._initialized = False
@@ -303,10 +85,9 @@ class StreamingResponseEmitter(ResultEmitter):
         self._flush_error: Optional[Exception] = None
         self._lease_renewal: Optional[asyncio.Task[None]] = None
         self._flush_now = asyncio.Event()
-        self._pending_progress: list[Callable[[_CompactProgressState], None]] = []
+        self._pending_progress: list[Callable[[CompactProgressState], None]] = []
 
         if existing_card_instance_id:
-            self._card.card_instance_id = existing_card_instance_id
             self._started = True
         else:
             self._started = False
@@ -335,6 +116,8 @@ class StreamingResponseEmitter(ResultEmitter):
 
     def set_shared_content_key(self, key: str) -> None:
         """Enable Redis-backed answer and progress state sharing."""
+        if self.chat_card:
+            key = f"{key}:{self._card.out_track_id}"
         self._shared_content_key = key
 
     async def _ensure_card_started(self) -> bool:
@@ -342,7 +125,7 @@ class StreamingResponseEmitter(ResultEmitter):
             return True
         try:
             logger.info("[StreamingEmitter] Starting AI card...")
-            await self._call_card("ai_start")
+            await self._call_card("start")
             if not self._card.card_instance_id:
                 logger.error("[StreamingEmitter] AI card has no instance ID")
                 return False
@@ -361,7 +144,7 @@ class StreamingResponseEmitter(ResultEmitter):
         if key:
             cached = await cache_manager.get(key)
             if cached is not None:
-                self._progress = _CompactProgressState.from_dict(cached)
+                self._progress = CompactProgressState.from_dict(cached)
 
     async def _save_progress_state(self, state: Optional[dict] = None) -> None:
         key = self._progress_state_key
@@ -394,6 +177,18 @@ class StreamingResponseEmitter(ResultEmitter):
             return raw.decode("utf-8") if raw else ""
         finally:
             await redis_client.aclose()
+
+    async def _save_final_answer(self, content: str) -> None:
+        if not self._shared_content_key:
+            return
+        from app.services.channels.callback import CHANNEL_TASK_CALLBACK_TTL
+
+        client = await cache_manager._get_client()
+        try:
+            await client.set(self._answer_key, content.encode("utf-8"))
+            await client.expire(self._answer_key, CHANNEL_TASK_CALLBACK_TTL)
+        finally:
+            await client.aclose()
 
     async def _redis_cleanup(self) -> None:
         if not self._shared_content_key:
@@ -434,7 +229,7 @@ class StreamingResponseEmitter(ResultEmitter):
         if not await self._may_update_display(force):
             return False
         try:
-            await self._call_card("ai_streaming", content, append=False)
+            await self._call_card("update", content)
             self._last_update_time = time.monotonic()
             return True
         except Exception:
@@ -516,18 +311,18 @@ class StreamingResponseEmitter(ResultEmitter):
         updates, self._pending_progress = self._pending_progress, []
         content, self._pending_content = self._pending_content, ""
         started = time.monotonic()
-        state = _CompactProgressState.from_dict(self._progress.to_dict())
+        state = CompactProgressState.from_dict(self._progress.to_dict())
         if self._progress_state_key:
             cached = await cache_manager.get(self._progress_state_key)
             if cached is not None:
-                state = _CompactProgressState.from_dict(cached)
+                state = CompactProgressState.from_dict(cached)
                 if state.mode == "progress":
                     for update in updates:
                         update(state)
         if content:
             state.mode = "answer"
         # Keep local projection current, including events received during the read.
-        self._progress = _CompactProgressState.from_dict(state.to_dict())
+        self._progress = CompactProgressState.from_dict(state.to_dict())
         if self._progress.mode == "progress":
             for update in self._pending_progress:
                 update(self._progress)
@@ -558,7 +353,7 @@ class StreamingResponseEmitter(ResultEmitter):
         self._last_update_time = time.monotonic()
 
     async def _update_progress(
-        self, updater: Callable[[_CompactProgressState], None]
+        self, updater: Callable[[CompactProgressState], None]
     ) -> None:
         if self._finished or self._finishing or self._closed:
             return
@@ -584,12 +379,10 @@ class StreamingResponseEmitter(ResultEmitter):
 
     @trace_async(span_name="dingtalk.card_request", tracer_name=__name__)
     async def _call_card(self, method: str, *args: Any, **kwargs: Any) -> None:
-        """Keep synchronous SDK I/O off the event loop and preserve write order."""
+        """Preserve adapter write order, including threaded SDK calls on cancellation."""
         self._check_writer_lease()
         started = time.monotonic()
-        call = asyncio.create_task(
-            asyncio.to_thread(getattr(self._card, method), *args, **kwargs)
-        )
+        call = asyncio.create_task(getattr(self._card, method)(*args, **kwargs))
         cancelled = False
         try:
             while not call.done():
@@ -722,6 +515,7 @@ class StreamingResponseEmitter(ResultEmitter):
         message_id: Optional[int] = None,
         **kwargs: Any,
     ) -> None:
+        self.subtask_id = subtask_id
         logger.info("[StreamingEmitter] start task=%s subtask=%s", task_id, subtask_id)
         if self._finished or self._finishing or self._closed:
             return
@@ -761,7 +555,7 @@ class StreamingResponseEmitter(ResultEmitter):
         await self._update_progress(lambda state: state.set_current(content))
 
     async def emit_tool_start(self, event: ExecutionEvent) -> None:
-        label = _compact_text(
+        label = compact_text(
             (event.data or {}).get("display_name") or event.tool_name, 40
         )
         await self._update_progress(
@@ -769,13 +563,13 @@ class StreamingResponseEmitter(ResultEmitter):
         )
 
     async def emit_tool_result(self, event: ExecutionEvent) -> None:
-        label = _compact_text(
+        label = compact_text(
             (event.data or {}).get("display_name") or event.tool_name, 40
         )
         status = str((event.data or {}).get("status") or "").lower()
         failed = status in {"error", "failed"} or bool((event.data or {}).get("error"))
 
-        def update(state: _CompactProgressState) -> None:
+        def update(state: CompactProgressState) -> None:
             if failed:
                 state.set_current(f"工具执行失败：{label or '工具'}")
             else:
@@ -784,11 +578,11 @@ class StreamingResponseEmitter(ResultEmitter):
         await self._update_progress(update)
 
     async def emit_block_created(self, event: ExecutionEvent) -> None:
-        block = _safe_block((event.data or {}).get("block"))
+        block = safe_block((event.data or {}).get("block"))
 
-        def update(state: _CompactProgressState) -> None:
+        def update(state: CompactProgressState) -> None:
             state.remember_block(block)
-            _project_block(state, block)
+            project_block(state, block)
 
         await self._update_progress(update)
 
@@ -798,11 +592,11 @@ class StreamingResponseEmitter(ResultEmitter):
         if not block_id or not isinstance(updates, dict):
             return
 
-        def update(state: _CompactProgressState) -> None:
+        def update(state: CompactProgressState) -> None:
             existing = state.blocks.get(block_id, {"id": block_id})
-            block = _merge_safe_block(existing, updates, block_id)
+            block = merge_safe_block(existing, updates, block_id)
             state.remember_block(block)
-            _project_block(state, block)
+            project_block(state, block)
 
         await self._update_progress(update)
 
@@ -816,7 +610,7 @@ class StreamingResponseEmitter(ResultEmitter):
 
     async def emit_progress(self, event: ExecutionEvent) -> None:
         progress = max(0, min(int(event.progress or 0), 100))
-        status = _compact_text(event.status, 50)
+        status = compact_text(event.status, 50)
         if not progress and not status:
             return
         text = f"任务进度 {progress}%" if progress else "正在处理"
@@ -882,16 +676,35 @@ class StreamingResponseEmitter(ResultEmitter):
                 subtask_id,
                 len(final_content),
             )
+            await self._save_final_answer(final_content)
+            self._full_content = final_content
+            self._pending_content = ""
             await self._finish_card(final_content)
+            log_dingtalk_message(
+                logger,
+                "reply_finished",
+                {
+                    "task_id": task_id,
+                    "subtask_id": subtask_id,
+                    "card_instance_id": self.card_instance_id,
+                    "conversation_id": getattr(
+                        self._incoming_message, "conversation_id", None
+                    ),
+                    "incoming_msg_id": getattr(
+                        self._incoming_message, "message_id", None
+                    ),
+                    "content": final_content,
+                },
+            )
 
     async def _finish_card(self, content: str, *, failed: bool = False) -> None:
         """Only discard recovery state after terminal delivery and fencing succeed."""
-        await self._call_card("ai_streaming", content, append=False)
+        await self._call_card("update", content)
         if failed:
-            await self._call_card("ai_fail")
+            await self._call_card("fail", content)
         else:
             await asyncio.sleep(0.1)
-            await self._call_card("ai_finish", content)
+            await self._call_card("finish", content)
         await self._mark_finished()
         self._progress.mode = "answer"
         self._full_content = content
@@ -917,7 +730,7 @@ class StreamingResponseEmitter(ResultEmitter):
                 mask_string(error),
             )
             # ai_fail alone leaves a blank body; deliver the error text first.
-            error_text = _compact_text(error, self.MAX_ERROR_CONTENT_LENGTH)
+            error_text = compact_text(error, self.MAX_ERROR_CONTENT_LENGTH)
             content = (
                 f"❌ 任务执行失败：{error_text}" if error_text else "❌ 任务执行失败"
             )
@@ -946,11 +759,18 @@ class StreamingResponseEmitter(ResultEmitter):
             await self._finish_card(content)
 
     async def close(self) -> None:
+        """Drain pending writes before releasing the adapter's HTTP resources."""
         self._closed = True
-        await self.flush()
-        # Terminal failure may leave buffered text. Persist it for reconstruction;
-        # closing a local worker must not delete another worker's recovery state.
-        if self._pending_content and not self._finished and self._flush_error is None:
-            async with self._update_lock, self._shared_write():
-                if not self._finished:
-                    await self._flush_pending()
+        try:
+            await self.flush()
+            # Preserve unfinished text for reconstruction by other workers.
+            if (
+                self._pending_content
+                and not self._finished
+                and self._flush_error is None
+            ):
+                async with self._update_lock, self._shared_write():
+                    if not self._finished:
+                        await self._flush_pending()
+        finally:
+            await self._card.close()

@@ -4,7 +4,7 @@ import {
   requestDshExecutor,
   subscribeDshExecutorEvents,
 } from '@/api/dsh/executorTransport'
-import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
+import { resetSystemProxyStateForTests, resolveLocalCodexProxyUrl } from './systemProxy'
 
 export type UnlistenFn = () => void
 
@@ -274,9 +274,9 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
   if (!ensureLocalExecutorStartedPromise) {
     ensureLocalExecutorStartedPromise = (async () => {
       const available = await ensureLocalExecutorAvailable()
-      const proxyUrl = getLocalProxyUrl().trim()
+      const proxyUrl = await resolveLocalCodexProxyUrl()
       await requestDshExecutor('runtime.codex.runtime_config.update', {
-        proxyUrl: proxyUrl || null,
+        proxyUrl,
       })
       const codexStartup = await requestDshExecutor<CodexStartupStatus>(
         'runtime.codex.ensure_started'
@@ -308,6 +308,7 @@ export function resetLocalExecutorStateForTests(): void {
   reconciledBundledPluginMarketplaceKey = ''
   reconcilingBundledPluginMarketplaceKey = ''
   reconcileBundledPluginMarketplacePromise = null
+  resetSystemProxyStateForTests()
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {

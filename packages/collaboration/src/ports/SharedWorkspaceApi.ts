@@ -49,6 +49,21 @@ export interface WorkspaceProjectUpdateInput {
   cardDisplay?: CollaborationProject["card_display"];
   pullRequestAutomation?: Record<string, unknown>;
   workflowDefinition?: Record<string, unknown>;
+  collaborationGroups?: import("../types").CollaborationGroup[];
+  automaticProcessingRules?: WorkspaceAutomationRule[];
+  executionEnvironment?: {
+    repositories: Array<{
+      name: string;
+      url: string;
+      ref: string;
+      path: string;
+      primary: boolean;
+    }>;
+    setupSteps: Array<{
+      command: string;
+      workingDirectory: string;
+    }>;
+  };
 }
 
 export interface WorkspaceMyWorkItem extends CollaborationIssue {
@@ -149,12 +164,26 @@ export interface WorkspaceAssignmentCreateInput {
 export interface WorkspaceCreateInput {
   name: string;
   description?: string;
+  namespace?: string;
 }
 
 export interface WorkspaceUpdateInput {
   version: number;
   name?: string;
   description?: string;
+  executionEnvironment?: {
+    repositories: Array<{
+      name: string;
+      url: string;
+      ref: string;
+      path: string;
+      primary: boolean;
+    }>;
+    setupSteps: Array<{
+      command: string;
+      workingDirectory: string;
+    }>;
+  };
 }
 
 export interface WorkspaceMemberCreateInput {
@@ -168,6 +197,36 @@ export interface WorkspaceMemberUpdateInput {
 
 export interface WorkspaceAgentCreateInput {
   teamId: number;
+}
+
+export interface CollaborationGroupCreateInput {
+  name: string;
+  description?: string;
+  instructions?: string;
+  leader: { kind: "human" | "agent"; id: string; responsibility?: string };
+  members: Array<{
+    kind: "human" | "agent";
+    id: string;
+    responsibility?: string;
+  }>;
+  coordinationMode: "manager";
+  stages?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    assignee?: {
+      kind: "human" | "agent";
+      id: string;
+      responsibility?: string;
+    } | null;
+  }>;
+  executionRequirements?: {
+    requiredTags: string[];
+  };
+}
+
+export interface CollaborationGroupUpdateInput extends Partial<CollaborationGroupCreateInput> {
+  version: number;
 }
 
 export interface WorkspaceExecutionEnvironmentCreateInput {
@@ -254,6 +313,9 @@ export interface WorkspaceAutomationRule {
   name: string;
   enabled: boolean;
   version: number;
+  targetKind?: "human" | "agent" | "collaboration_group" | null;
+  targetId?: string | null;
+  targetName?: string | null;
   [key: string]: unknown;
 }
 
@@ -262,6 +324,14 @@ export interface WorkspaceAutomationRun {
   projectId: string;
   automationId: string;
   status: string;
+  trigger?: "scheduled" | "manual" | "event";
+  taskId?: string | null;
+  taskTitle?: string | null;
+  error?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  completedAt?: string | null;
+  retryable?: boolean;
   [key: string]: unknown;
 }
 
@@ -346,10 +416,31 @@ export interface SharedWorkspaceProjectsApi {
     projectId: string,
     deviceId: number,
   ): Promise<void>;
+  initializeExecutionEnvironment(
+    projectId: string,
+    input: { deviceId: number; version: number },
+  ): Promise<CollaborationProject>;
   importMessages(
     projectId: string,
     input: WorkspaceMessageImportInput,
   ): Promise<{ issue: CollaborationIssue }>;
+  listCollaborationGroups?(
+    projectId: string,
+  ): Promise<import("../types").CollaborationGroup[]>;
+  addCollaborationGroup?(
+    projectId: string,
+    groupId: string,
+  ): Promise<import("../types").CollaborationGroup>;
+  createCollaborationGroup?(
+    projectId: string,
+    input: CollaborationGroupCreateInput,
+  ): Promise<import("../types").CollaborationGroup>;
+  updateCollaborationGroup?(
+    projectId: string,
+    groupId: string,
+    input: CollaborationGroupUpdateInput,
+  ): Promise<import("../types").CollaborationGroup>;
+  removeCollaborationGroup?(projectId: string, groupId: string): Promise<void>;
 }
 
 export interface SharedWorkspaceMyWorkApi {
@@ -447,6 +538,19 @@ export interface SharedCollaborationWorkspacesApi {
     input: WorkspaceAgentCreateInput,
   ): Promise<CollaborationOwnedAgent>;
   removeAgent(workspaceId: string, teamId: number): Promise<void>;
+  listCollaborationGroups(
+    workspaceId: string,
+  ): Promise<import("../types").CollaborationGroup[]>;
+  createCollaborationGroup(
+    workspaceId: string,
+    input: CollaborationGroupCreateInput,
+  ): Promise<import("../types").CollaborationGroup>;
+  updateCollaborationGroup(
+    workspaceId: string,
+    groupId: string,
+    input: CollaborationGroupUpdateInput,
+  ): Promise<import("../types").CollaborationGroup>;
+  removeCollaborationGroup(workspaceId: string, groupId: string): Promise<void>;
   listExecutionEnvironments(
     workspaceId: string,
   ): Promise<CollaborationExecutionEnvironment[]>;
@@ -458,6 +562,10 @@ export interface SharedCollaborationWorkspacesApi {
     workspaceId: string,
     deviceId: number,
   ): Promise<void>;
+  initializeExecutionEnvironment(
+    workspaceId: string,
+    input: { deviceId: number; version: number },
+  ): Promise<CollaborationWorkspace>;
 }
 
 export interface SharedCollaborationResourcesApi {
@@ -709,8 +817,8 @@ export interface SharedWorkspaceApi {
   files: SharedWorkspaceFilesApi;
   deliveries: SharedWorkspaceDeliveriesApi;
   executions: SharedWorkspaceExecutionsApi;
-  automations: SharedWorkspaceAutomationsApi;
-  incomingHooks: SharedWorkspaceIncomingHooksApi;
+  automations?: SharedWorkspaceAutomationsApi;
+  incomingHooks?: SharedWorkspaceIncomingHooksApi;
   automationExecutionCatalog?: SharedWorkspaceAutomationExecutionCatalogApi;
   runtimeProfiles: SharedWorkspaceRuntimeProfilesApi;
   agents: SharedWorkspaceAgentsApi;

@@ -100,6 +100,8 @@ Wework uses an isolated Codex Home for local runtime configuration. During first
 
 Wework considers the local runtime usable only after the real Codex app-server completes `initialize`, not merely when the executor stdio transport is connected. After Electron starts the executor, it first applies the current local proxy configuration and then starts and initializes the shared Codex app-server through `runtime.codex.ensure_started`; the renderer proceeds to the interactive workbench only after that call succeeds. The Codex initialization path must not synchronously wait for plugin marketplace refreshes, Git fetches, update checks, or other external network requests. Those background requests must not delay the `initialize` response even when the network is unavailable or a proxy never responds. Startup E2E coverage must verify this boundary with the real Codex binary and a blocking network proxy, while also confirming that no Agent model request is sent during initialization.
 
+Electron must keep the main window hidden while it starts and use the separate startup splash window as the only visible loading surface. `wework/electron/src/shell/index.html` hosts Core DSH startup and failure diagnostics only; it must not imitate the workbench layout, task list, composer, or any other skeleton UI. Electron shows the main window and closes the startup splash only after the Renderer reports the first actionable workbench through `renderer.startupReady`. Startup failures continue to expose retry and recovery actions through the startup splash. This preserves one visible startup path and prevents an unready main window from covering the animation or flashing placeholder content before the real interface.
+
 ### Runtime Task and Goal State
 
 The runtime task `running` field represents only whether a model turn is currently executing. After a turn completes, fails, or is cancelled, the executor must settle that field to `false`. Wework uses it to decide whether to render the stop control and running indicator, and whether a new message can be sent directly.
@@ -237,6 +239,19 @@ Device CRDs use `spec.deviceType` to separate lifecycle ownership and frontend c
 `remote` devices reuse the local executor WebSocket registration, heartbeat, task execution, and command RPC channels, but `RemoteDeviceProvider` lists them separately and returns `remoteConfig`. Backend does not persist the `WEGENT_AUTH_TOKEN` contained in the generated command; the Device CRD stores only non-sensitive metadata such as provider, image, deviceId, deviceName, backendUrl, publicBaseUrl, and createdAt.
 
 After a remote Docker device starts, it sends `device:register` with `device_type=remote`, which updates the matching Device CRD. Online state still uses the Redis device-online key, so task routing, slot accounting, and terminal/code-server session RPC use the same protocol as local devices. The frontend does not expose cloud lifecycle actions for `remote` devices; users stop, restart, or remove the container on the Docker host.
+
+### Project device authorization pool and claiming
+
+By default, any available device owned by the project owner may claim a Run. Once devices are granted to a project through the existing `ResourceMember` `kind + resource` authorization relationship, those grants become the project's device allowlist. No dedicated mapping table is introduced.
+
+Neither automatic-processing rules nor manual assignments require the user to select a device. A human target only changes the assignee. An Agent or collaboration-group target creates a queued Run without a bound device. Claiming then verifies, in order:
+
+1. the device belongs to the Run owner;
+2. the device is allowed by the project device pool;
+3. if the same Issue previously ran on a device, the new Run keeps that device affinity;
+4. the device and Agent still have available capacity.
+
+A successful claim atomically writes the canonical device ID, execution environment, lease, and runtime request through the same conditional update so two devices cannot claim the Run. A project with no explicit device grants remains open to the owner's devices; after the first grant, only allowlisted devices are eligible. Presence affects whether a device can claim now, but does not prevent an administrator from pre-authorizing an offline device.
 
 ---
 

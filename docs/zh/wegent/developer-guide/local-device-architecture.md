@@ -100,6 +100,8 @@ Wework 使用独立 Codex Home 隔离本地运行时配置。首次初始化时�
 
 Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。 Electron 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
 
+Electron 启动主窗口时必须保持主窗口隐藏，并由独立的 startup splash 窗口持续展示启动动画。`wework/electron/src/shell/index.html` 只承载 Core DSH 启动宿主和失败诊断，不得模拟工作台布局、任务列表、输入框或其他骨架屏。Renderer 通过 `renderer.startupReady` 报告首个可操作工作台后，Electron 才显示主窗口并关闭 startup splash；启动失败时继续由 startup splash 提供重试和恢复操作。这样启动期间始终只有一条可见反馈路径，不会由未就绪的主窗口覆盖动画或在动画与真实界面之间闪现占位内容。
+
 ### 运行时任务与目标状态
 
 运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
@@ -237,6 +239,19 @@ sequenceDiagram
 `remote` 设备复用本地 executor 的 WebSocket 注册、心跳、任务执行和 command RPC 通道，但由 `RemoteDeviceProvider` 独立列出和返回 `remoteConfig`。Backend 不保存生成命令中的 `WEGENT_AUTH_TOKEN`；Device CRD 只保存 provider、image、deviceId、deviceName、backendUrl、publicBaseUrl 和 createdAt 等非敏感元数据。
 
 远程 Docker 设备启动后会发送 `device:register`，payload 中的 `device_type=remote` 会更新同名 Device CRD。在线状态仍存储在 Redis 的设备在线键中，因此任务调度、slot 统计、terminal/code-server session RPC 与本地设备保持同一套协议。前端不会对 `remote` 设备展示云设备生命周期操作；停止、重启、删除容器由用户在 Docker 主机上完成。
+
+### 项目设备授权池与领取
+
+项目默认允许项目所有者名下的可用设备领取 Run。通过现有 `ResourceMember` 的 `kind + resource` 授权关系为项目添加任意设备后，这些授权构成项目设备白名单；不新增专用映射表。
+
+自动处理规则和人工分配都不要求用户选择设备。目标为人时只改变负责人；目标为智能体或协作小组时创建未绑定设备的排队 Run。设备领取时依次校验：
+
+1. 设备属于 Run 所有者；
+2. 设备满足项目授权池；
+3. 同一 Issue 已经在某台设备执行过时，继续使用该设备；
+4. 设备和智能体仍有可用容量。
+
+领取成功后通过同一个条件更新原子写入规范设备 ID、执行环境、租约和运行请求，避免多个设备同时领取。项目没有显式设备授权时使用默认开放语义；一旦存在授权，则只允许白名单设备。设备是否在线只影响当前能否领取，不影响管理员预先授权离线设备。
 
 ---
 

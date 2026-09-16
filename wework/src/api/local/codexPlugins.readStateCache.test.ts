@@ -141,6 +141,49 @@ describe('local codex plugin readState cache', () => {
     ).rejects.toThrow('Store unavailable')
   })
 
+  test('waits for bundled plugin initialization before replacing imported Codex config', async () => {
+    let finishExecutorStartup: (() => void) | undefined
+    let finishMarketplaceReconciliation: (() => void) | undefined
+    mocks.ensureLocalExecutorStarted.mockReturnValue(
+      new Promise(resolve => {
+        finishExecutorStartup = () => resolve({ deviceId: 'local-device' })
+      })
+    )
+    mocks.ensureBundledPluginMarketplaceRegistered.mockReturnValue(
+      new Promise(resolve => {
+        finishMarketplaceReconciliation = () => resolve(undefined)
+      })
+    )
+    mocks.requestLocalExecutor.mockResolvedValue({
+      source: 'codex',
+      sourcePath: '/home/user/.codex',
+      destinationPath: '/executor/codex',
+      importedEntries: ['config.toml'],
+    })
+
+    const importing = createLocalCodexPluginApi().importExternalContent('codex')
+
+    expect(mocks.ensureLocalExecutorStarted).toHaveBeenCalledOnce()
+    expect(mocks.ensureBundledPluginMarketplaceRegistered).not.toHaveBeenCalled()
+    expect(mocks.requestLocalExecutor).not.toHaveBeenCalled()
+
+    finishExecutorStartup?.()
+    await vi.waitFor(() =>
+      expect(mocks.ensureBundledPluginMarketplaceRegistered).toHaveBeenCalledOnce()
+    )
+    expect(mocks.requestLocalExecutor).not.toHaveBeenCalled()
+
+    finishMarketplaceReconciliation?.()
+    await expect(importing).resolves.toMatchObject({
+      source: 'codex',
+      importedEntries: ['config.toml'],
+    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.codex_home.import_external_content',
+      { source: 'codex' }
+    )
+  })
+
   test('membership summaries preserve managed plugins default prompts', async () => {
     const original = mocks.requestLocalExecutor.getMockImplementation()!
     mocks.requestLocalExecutor.mockImplementation(async (method, params) => {

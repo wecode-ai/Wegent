@@ -321,6 +321,46 @@ impl CodexAppServerClient {
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let (request_id, handle, response_rx) = self.prepare_request().await?;
+        Self::send_request_and_wait(
+            method,
+            params,
+            timeout_seconds,
+            request_id,
+            handle,
+            response_rx,
+        )
+        .await
+    }
+
+    async fn request_for_launch_config(
+        &self,
+        method: &str,
+        params: Value,
+        launch_config: &CodexLaunchConfig,
+    ) -> Result<Value, String> {
+        let timeout_seconds = codex_rpc_timeout_seconds();
+        let (request_id, handle, response_rx) = self
+            .prepare_request_with_process(true, Some(launch_config))
+            .await?;
+        Self::send_request_and_wait(
+            method,
+            params,
+            timeout_seconds,
+            request_id,
+            handle,
+            response_rx,
+        )
+        .await
+    }
+
+    async fn send_request_and_wait(
+        method: &str,
+        params: Value,
+        timeout_seconds: u64,
+        request_id: u64,
+        handle: CodexAppServerHandle,
+        response_rx: oneshot::Receiver<Result<Value, String>>,
+    ) -> Result<Value, String> {
         let message = json!({
             "method": method,
             "id": request_id,
@@ -366,13 +406,14 @@ impl CodexAppServerClient {
         let runtime_proxy_env = proxy_environment(proxy_url);
         let process = {
             let mut state = self.state.lock().await;
-            if state.runtime_proxy_env == runtime_proxy_env {
+            if runtime_proxy_endpoint_matches(&state.runtime_proxy_env, &runtime_proxy_env) {
                 return Ok(false);
             }
             if !allow_active_turns && !state.active_threads.is_empty() {
                 return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
             }
-            state.runtime_proxy_env = runtime_proxy_env;
+            replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
+            state.process_environment.clear();
             state.process.take()
         };
         if let Some(process) = process {
@@ -425,7 +466,11 @@ impl CodexAppServerClient {
     }
 
     pub async fn restart(&self) {
-        let process = self.state.lock().await.process.take();
+        let process = {
+            let mut state = self.state.lock().await;
+            state.process_environment.clear();
+            state.process.take()
+        };
         let Some(process) = process else {
             return;
         };
@@ -447,6 +492,7 @@ impl CodexAppServerClient {
             if pending_request_count > 0 {
                 return Err(pending_request_count);
             }
+            state.process_environment.clear();
             state.process.take()
         };
         if let Some(process) = process {
@@ -475,6 +521,7 @@ impl CodexAppServerClient {
             mutation().map_err(CodexAuthMutationError::Update)?;
             state.thread_generations.clear();
             state.idle_thread_generations.clear();
+            state.process_environment.clear();
             state.process.take()
         };
         drop(process);
@@ -505,6 +552,7 @@ impl CodexAppServerClient {
                 .thread_generations
                 .retain(|thread_id, _| thread_id == active_thread_id);
             state.idle_thread_generations.clear();
+            state.process_environment.clear();
             state.process.take()
         };
         if let Some(process) = process {
@@ -521,6 +569,7 @@ impl CodexAppServerClient {
             {
                 return false;
             }
+            state.process_environment.clear();
             state.process.take()
         };
         let Some(process) = process else {
@@ -580,7 +629,7 @@ impl CodexAppServerClient {
         ),
         String,
     > {
-        self.prepare_request_with_process(true).await
+        self.prepare_request_with_process(true, None).await
     }
 
     async fn prepare_existing_request(
@@ -593,12 +642,13 @@ impl CodexAppServerClient {
         ),
         String,
     > {
-        self.prepare_request_with_process(false).await
+        self.prepare_request_with_process(false, None).await
     }
 
     async fn prepare_request_with_process(
         &self,
         start_if_missing: bool,
+        launch_config: Option<&CodexLaunchConfig>,
     ) -> Result<
         (
             u64,
@@ -607,6 +657,7 @@ impl CodexAppServerClient {
         ),
         String,
     > {
+        ensure_codex_mcp_endpoints().await?;
         let mut state = self.state.lock().await;
         if state
             .process
@@ -614,19 +665,37 @@ impl CodexAppServerClient {
             .is_some_and(|process| process.has_exited())
         {
             state.process = None;
+            state.process_environment.clear();
+        }
+        let empty_launch_environment = BTreeMap::new();
+        let launch_environment = launch_config
+            .map(|config| &config.env)
+            .unwrap_or(&empty_launch_environment);
+        let process_environment =
+            codex_process_environment(&state.runtime_proxy_env, launch_environment);
+        if state.process.is_some() && state.process_environment != process_environment {
+            if !state.active_threads.is_empty() {
+                return Err(
+                    "cannot change Codex app-server environment while a turn is active".to_owned(),
+                );
+            }
+            state.process = None;
+            state.process_environment.clear();
         }
         if state.process.is_none() {
-            let launch_config = CodexLaunchConfig {
-                env: state.runtime_proxy_env.clone(),
-                ..CodexLaunchConfig::default()
-            };
             if !start_if_missing {
                 return Err("codex app-server is not running".to_owned());
             }
-            let (process, next_id) =
-                start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
-                    .await?;
+            let mut process_launch_config = launch_config.cloned().unwrap_or_default();
+            process_launch_config.env = process_environment.clone();
+            let (process, next_id) = start_persistent_codex_app_server(
+                &self.binary,
+                state.next_id,
+                &process_launch_config,
+            )
+            .await?;
             state.process = Some(process);
+            state.process_environment = process_environment;
             state.next_id = next_id;
         }
 
@@ -640,6 +709,28 @@ impl CodexAppServerClient {
         let (tx, rx) = oneshot::channel();
         handle.pending.lock().await.insert(request_id, tx);
         Ok((request_id, handle, rx))
+    }
+
+    pub async fn fork_thread_at(
+        &self,
+        thread_id: &str,
+        thread_path: Option<&str>,
+        last_turn_id: &str,
+        request: &ExecutionRequest,
+    ) -> Result<Value, String> {
+        let launch_config = build_codex_launch_config_for_fork(request, thread_id)?;
+        let mut params = thread_fork_params(thread_id, thread_path, request, &launch_config);
+        params["lastTurnId"] = Value::String(last_turn_id.to_owned());
+        let response = self
+            .request_for_launch_config("thread/fork", params, &launch_config)
+            .await?;
+        let forked_thread_id = thread_id_from_response(
+            "thread/fork",
+            &response,
+            launch_config.model_provider.as_deref(),
+        )?;
+        bind_local_proxy_thread(&launch_config, &forked_thread_id)?;
+        Ok(response)
     }
 
     async fn send_response(&self, request_id: Value, result: Value) -> Result<(), String> {
@@ -678,6 +769,7 @@ impl CodexAppServerClient {
             .is_some_and(|process| process.has_exited())
         {
             state.process = None;
+            state.process_environment.clear();
         }
         Ok(state
             .process
@@ -885,6 +977,7 @@ impl CodexAppServerClient {
     async fn ensure_process_with_startup(
         &self,
     ) -> Result<(CodexAppServerHandle, Option<Duration>), String> {
+        ensure_codex_mcp_endpoints().await?;
         let mut state = self.state.lock().await;
         if state
             .process
@@ -892,11 +985,23 @@ impl CodexAppServerClient {
             .is_some_and(|process| process.has_exited())
         {
             state.process = None;
+            state.process_environment.clear();
         }
         let mut initialize_elapsed = None;
+        let process_environment =
+            codex_process_environment(&state.runtime_proxy_env, &BTreeMap::new());
+        if state.process.is_some() && state.process_environment != process_environment {
+            if !state.active_threads.is_empty() {
+                return Err(
+                    "cannot change Codex app-server environment while a turn is active".to_owned(),
+                );
+            }
+            state.process = None;
+            state.process_environment.clear();
+        }
         if state.process.is_none() {
             let launch_config = CodexLaunchConfig {
-                env: state.runtime_proxy_env.clone(),
+                env: process_environment.clone(),
                 ..CodexLaunchConfig::default()
             };
             let initialize_started_at = Instant::now();
@@ -905,6 +1010,7 @@ impl CodexAppServerClient {
                     .await?;
             initialize_elapsed = Some(initialize_started_at.elapsed());
             state.process = Some(process);
+            state.process_environment = process_environment;
             state.next_id = next_id;
         }
         Ok((
@@ -928,17 +1034,20 @@ impl CodexAppServerClient {
             .is_some_and(|process| process.has_exited())
         {
             state.process = None;
+            state.process_environment.clear();
         }
-        if !launch_config.env.is_empty() && state.runtime_proxy_env != launch_config.env {
+        let process_environment =
+            codex_process_environment(&state.runtime_proxy_env, &launch_config.env);
+        if state.process.is_some() && state.process_environment != process_environment {
             if !state.active_threads.is_empty() {
                 return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
             }
-            state.runtime_proxy_env = launch_config.env.clone();
             state.process = None;
+            state.process_environment.clear();
         }
         if state.process.is_none() {
             let mut process_launch_config = launch_config.clone();
-            process_launch_config.env = state.runtime_proxy_env.clone();
+            process_launch_config.env = process_environment.clone();
             let (process, next_id) = start_persistent_codex_app_server(
                 &self.binary,
                 state.next_id,
@@ -946,6 +1055,7 @@ impl CodexAppServerClient {
             )
             .await?;
             state.process = Some(process);
+            state.process_environment = process_environment;
             state.next_id = next_id;
         }
         Ok(state
@@ -1051,6 +1161,7 @@ struct CodexAppServerSharedState {
     next_thread_generation: u64,
     thread_lifecycle_gates: HashMap<String, Weak<Mutex<()>>>,
     runtime_proxy_env: BTreeMap<String, String>,
+    process_environment: BTreeMap<String, String>,
 }
 
 impl Default for CodexAppServerSharedState {
@@ -1064,6 +1175,7 @@ impl Default for CodexAppServerSharedState {
             next_thread_generation: 1,
             thread_lifecycle_gates: HashMap::new(),
             runtime_proxy_env: BTreeMap::new(),
+            process_environment: BTreeMap::new(),
         }
     }
 }
@@ -3193,6 +3305,20 @@ struct CodexLocalImage {
 }
 
 fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchConfig, String> {
+    build_codex_launch_config_with_bound_thread(request, None)
+}
+
+fn build_codex_launch_config_for_fork(
+    request: &ExecutionRequest,
+    source_thread_id: &str,
+) -> Result<CodexLaunchConfig, String> {
+    build_codex_launch_config_with_bound_thread(request, Some(source_thread_id))
+}
+
+fn build_codex_launch_config_with_bound_thread(
+    request: &ExecutionRequest,
+    bound_thread_id: Option<&str>,
+) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
     let configured_base_url = non_empty_config(&request.model_config, "base_url")
         .or_else(|| non_empty_config(&request.model_config, "baseUrl"));
@@ -3258,14 +3384,15 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                     ("payload_auth_present", configured_auth_present.to_string()),
                 ],
             );
-            configure_codex_router(
+            configure_or_retain_codex_router(
                 &mut launch_config,
                 &request.task_id,
+                bound_thread_id,
                 upstream,
                 model.clone(),
                 request_model_switched(request),
                 vision_sidecar_upstream(&request.model_config)?,
-            );
+            )?;
         } else {
             log_executor_event(
                 "codex model route selected",
@@ -3305,14 +3432,15 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                 ("payload_auth_present", configured_auth_present.to_string()),
             ],
         );
-        configure_codex_router(
+        configure_or_retain_codex_router(
             &mut launch_config,
             &request.task_id,
+            bound_thread_id,
             upstream,
             model.clone(),
             request_model_switched(request),
             vision_sidecar_upstream(&request.model_config)?,
-        );
+        )?;
     } else {
         let inference_provider = inference_model_provider(&request.model_config);
         log_executor_event(
@@ -3335,15 +3463,20 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     launch_config
         .config_overrides
         .extend(global_mcp_config_overrides());
+    let (browser_overrides, browser_env) = cdp_browser_mcp_config_overrides(request)?;
+    launch_config.config_overrides.extend(browser_overrides);
+    launch_config.env.extend(browser_env);
+    let (computer_use_overrides, computer_use_env) = computer_use_mcp_config_overrides();
     launch_config
         .config_overrides
-        .extend(cdp_browser_mcp_config_overrides(request)?);
+        .extend(computer_use_overrides);
+    launch_config.env.extend(computer_use_env);
+    let (project_space_overrides, project_space_env) =
+        managed_wework_mcp_config_overrides(request)?;
     launch_config
         .config_overrides
-        .extend(computer_use_mcp_config_overrides());
-    launch_config
-        .config_overrides
-        .extend(project_space_mcp_config_overrides(request)?);
+        .extend(project_space_overrides);
+    launch_config.env.extend(project_space_env);
     launch_config
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
@@ -3400,6 +3533,36 @@ fn configure_codex_router(
     if model_switched {
         local_model_proxy::mark_model_switch(&local_token);
     }
+    configure_codex_router_registration(launch_config, local_token);
+}
+
+fn configure_or_retain_codex_router(
+    launch_config: &mut CodexLaunchConfig,
+    task_id: &str,
+    bound_thread_id: Option<&str>,
+    upstream: LocalModelProxyUpstream,
+    routing_model_id: Option<String>,
+    model_switched: bool,
+    vision_sidecar: Option<VisionSidecarUpstream>,
+) -> Result<(), String> {
+    if let Some(thread_id) = bound_thread_id {
+        let local_token =
+            local_model_proxy::retain_for_thread(thread_id, routing_model_id.as_deref())?;
+        configure_codex_router_registration(launch_config, local_token);
+    } else {
+        configure_codex_router(
+            launch_config,
+            task_id,
+            upstream,
+            routing_model_id,
+            model_switched,
+            vision_sidecar,
+        );
+    }
+    Ok(())
+}
+
+fn configure_codex_router_registration(launch_config: &mut CodexLaunchConfig, local_token: String) {
     let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
     let provider = codex_model_catalog::PROVIDER_ID;
@@ -3529,6 +3692,15 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
     overrides.push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned());
+    overrides.push(format!(
+        "shell_environment_policy.exclude={}",
+        toml_json_value(&json!([
+            "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION",
+            "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION",
+            "WEWORK_COMPUTER_USE_BRIDGE_URL",
+            "WEWORK_COMPUTER_USE_BRIDGE_TOKEN",
+        ]))
+    ));
     overrides
 }
 
@@ -3813,6 +3985,42 @@ fn proxy_environment(proxy_url: Option<&str>) -> BTreeMap<String, String> {
     .into_iter()
     .map(|(key, value)| (key.to_owned(), value.to_owned()))
     .collect()
+}
+
+fn runtime_proxy_endpoint_matches(
+    current: &BTreeMap<String, String>,
+    requested: &BTreeMap<String, String>,
+) -> bool {
+    current.get("ALL_PROXY") == requested.get("ALL_PROXY")
+}
+
+fn codex_process_environment(
+    runtime_proxy_env: &BTreeMap<String, String>,
+    launch_env: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut environment = codex_base_process_environment();
+    environment.extend(launch_env.clone());
+    replace_proxy_environment(&mut environment, runtime_proxy_env.clone());
+    environment
+}
+
+fn replace_proxy_environment(
+    current: &mut BTreeMap<String, String>,
+    requested: BTreeMap<String, String>,
+) {
+    for key in [
+        "ALL_PROXY",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "all_proxy",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+    ] {
+        current.remove(key);
+    }
+    current.extend(requested);
 }
 
 fn merge_required_no_proxy(configured: Option<&str>) -> String {
@@ -4136,7 +4344,9 @@ fn global_mcp_config_overrides() -> Vec<String> {
     overrides
 }
 
-fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
+fn cdp_browser_mcp_config_overrides(
+    request: &ExecutionRequest,
+) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
     let server_name = crate::browser_mcp::WEWORK_BROWSER_MCP_SERVER_NAME;
     let key = toml_key_path(&["mcp_servers", server_name]);
     let mut overrides = vec![
@@ -4156,17 +4366,27 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<St
         "features.non_prefixed_mcp_tool_names=true".to_owned(),
     ];
     if !crate::browser_mcp::bridge_is_available() {
-        return Ok(overrides);
+        return Ok((overrides, BTreeMap::new()));
     }
     let endpoint = crate::browser_mcp::http::browser_mcp_http_endpoint()
         .ok_or_else(|| "browser MCP endpoint is not ready".to_owned())?;
+    let auth_env_name = "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION";
+    let env = BTreeMap::from([(
+        auth_env_name.to_owned(),
+        format!("Bearer {}", endpoint.token),
+    )]);
     overrides.extend([
         format!("{key}.enabled=true"),
         format!("{key}.url={}", toml_value(&endpoint.url)),
         format!(
             "{}={}",
-            toml_key_path(&["mcp_servers", server_name, "http_headers", "Authorization"]),
-            toml_value(&format!("Bearer {}", endpoint.token))
+            toml_key_path(&[
+                "mcp_servers",
+                server_name,
+                "env_http_headers",
+                "Authorization"
+            ]),
+            toml_value(auth_env_name)
         ),
         format!("{key}.tool_timeout_sec=60"),
         format!(
@@ -4187,166 +4407,186 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<St
             toml_value(&label)
         ));
     }
-    Ok(overrides)
+    Ok((overrides, env))
 }
 
-fn computer_use_mcp_config_overrides() -> Vec<String> {
+fn codex_base_process_environment() -> BTreeMap<String, String> {
+    let mut environment = BTreeMap::from([(
+        "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION".to_owned(),
+        format!(
+            "Bearer {}",
+            crate::browser_mcp::http::browser_mcp_process_token()
+        ),
+    )]);
+    if let Some(endpoint) = crate::task_runtime::mcp_http::space_mcp_http_endpoint() {
+        environment.insert(
+            "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
+            format!("Bearer {}", endpoint.token),
+        );
+    }
+    environment.extend(computer_use_mcp_config_overrides().1);
+    environment
+}
+
+fn computer_use_mcp_config_overrides() -> (Vec<String>, BTreeMap<String, String>) {
     let path = executor_home().join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
     let Ok(contents) = fs::read_to_string(path) else {
-        return Vec::new();
+        return (Vec::new(), BTreeMap::new());
     };
     let Ok(record) = serde_json::from_str::<Value>(&contents) else {
-        return Vec::new();
+        return (Vec::new(), BTreeMap::new());
     };
     let Some(address) = record.get("address").and_then(Value::as_str) else {
-        return Vec::new();
+        return (Vec::new(), BTreeMap::new());
     };
     let Some(token) = record.get("token").and_then(Value::as_str) else {
-        return Vec::new();
+        return (Vec::new(), BTreeMap::new());
     };
     if address.trim().is_empty() || token.trim().is_empty() {
-        return Vec::new();
+        return (Vec::new(), BTreeMap::new());
     }
     let command =
         env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
-    vec![
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                "command"
-            ]),
-            toml_value(&command.display().to_string())
+    let env = BTreeMap::from([
+        (
+            "WEWORK_COMPUTER_USE_BRIDGE_URL".to_owned(),
+            format!("http://{}", address.trim()),
         ),
-        format!(
-            "{}={}",
-            toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
-            toml_json_value(&json!(["computer-use-mcp-server"]))
+        (
+            "WEWORK_COMPUTER_USE_BRIDGE_TOKEN".to_owned(),
+            token.trim().to_owned(),
         ),
-        format!(
-            "{}=15",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                "startup_timeout_sec"
-            ])
-        ),
-        format!(
-            "{}=120",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                "tool_timeout_sec"
-            ])
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                "default_tools_approval_mode"
-            ]),
-            toml_value("writes")
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                "env",
-                "WEWORK_COMPUTER_USE_BRIDGE_URL"
-            ]),
-            toml_value(&format!("http://{}", address.trim()))
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
-                "env",
-                "WEWORK_COMPUTER_USE_BRIDGE_TOKEN"
-            ]),
-            toml_value(token.trim())
-        ),
-    ]
-}
-
-fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
-    let server_name = crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME;
-    let key = toml_key_path(&["mcp_servers", server_name]);
-    let grant = crate::task_runtime::mcp::encoded_space_context_grant(request);
-    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint()
-        .ok_or_else(|| "project-space MCP endpoint is not ready".to_owned())?;
-    let mut overrides = vec![
-        format!("{key}.enabled=true"),
-        format!("{key}.url={}", toml_value(&endpoint.url)),
-        format!(
-            "{}={}",
-            toml_key_path(&["mcp_servers", server_name, "http_headers", "Authorization",]),
-            toml_value(&format!("Bearer {}", endpoint.token))
-        ),
-        format!("{key}.tool_timeout_sec=60"),
-    ];
-    if let Some(grant) = grant {
-        overrides.extend([
+    ]);
+    (
+        vec![
             format!(
-                "{key}.default_tools_approval_mode={}",
-                toml_value("approve")
+                "{}={}",
+                toml_key_path(&[
+                    "mcp_servers",
+                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                    "command"
+                ]),
+                toml_value(&command.display().to_string())
+            ),
+            format!(
+                "{}={}",
+                toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
+                toml_json_value(&json!(["computer-use-mcp-server"]))
+            ),
+            format!(
+                "{}=15",
+                toml_key_path(&[
+                    "mcp_servers",
+                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                    "startup_timeout_sec"
+                ])
+            ),
+            format!(
+                "{}=120",
+                toml_key_path(&[
+                    "mcp_servers",
+                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                    "tool_timeout_sec"
+                ])
             ),
             format!(
                 "{}={}",
                 toml_key_path(&[
                     "mcp_servers",
-                    server_name,
-                    "http_headers",
-                    "X-Wework-Space-Context-Grant",
+                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                    "default_tools_approval_mode"
                 ]),
-                toml_value(&grant)
+                toml_value("writes")
             ),
-        ]);
+            format!(
+                "{}={}",
+                toml_key_path(&[
+                    "mcp_servers",
+                    WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                    "env_vars"
+                ]),
+                toml_json_value(&json!([
+                    "WEWORK_COMPUTER_USE_BRIDGE_URL",
+                    "WEWORK_COMPUTER_USE_BRIDGE_TOKEN"
+                ]))
+            ),
+        ],
+        env,
+    )
+}
+
+fn managed_wework_mcp_config_overrides(
+    request: &ExecutionRequest,
+) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
+    let mut overrides = Vec::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint()
+        .ok_or_else(|| "Wework MCP endpoint is not ready".to_owned())?;
+    let env = BTreeMap::from([(
+        "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
+        format!("Bearer {}", endpoint.token),
+    )]);
+    if let Some(config) = crate::task_runtime::mcp::notifications_mcp_client_config(request)? {
+        append_managed_mcp_config(
+            crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
+            config,
+            &mut overrides,
+        );
     }
-    let backend_url = request
-        .backend_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| env::var("WEGENT_BACKEND_URL").ok())
-        .filter(|value| !value.trim().is_empty());
-    if let Some(backend_url) = backend_url {
+    if crate::task_runtime::mcp::encoded_space_context_grant(request).is_none() {
+        return Ok((overrides, env));
+    }
+    append_managed_mcp_config(
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::space_mcp_client_config(request)?,
+        &mut overrides,
+    );
+    Ok((overrides, env))
+}
+
+fn append_managed_mcp_config(
+    server_name: &str,
+    config: crate::task_runtime::mcp::SpaceMcpClientConfig,
+    overrides: &mut Vec<String>,
+) {
+    let key = toml_key_path(&["mcp_servers", server_name]);
+    overrides.extend([
+        format!("{key}.enabled=true"),
+        format!("{key}.url={}", toml_value(&config.url)),
+        format!(
+            "{key}.tool_timeout_sec={}",
+            crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS
+        ),
+    ]);
+    for (header_name, header_value) in config.headers {
+        if header_name == "Authorization" {
+            debug_assert_eq!(
+                header_value,
+                format!(
+                    "Bearer {}",
+                    crate::task_runtime::mcp_http::space_mcp_http_endpoint()
+                        .expect("Wework MCP endpoint should remain active")
+                        .token
+                )
+            );
+            overrides.push(format!(
+                "{}={}",
+                toml_key_path(&["mcp_servers", server_name, "env_http_headers", &header_name]),
+                toml_value("WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION")
+            ));
+        } else {
+            overrides.push(format!(
+                "{}={}",
+                toml_key_path(&["mcp_servers", server_name, "http_headers", &header_name]),
+                toml_value(&header_value)
+            ));
+        }
+    }
+    if config.context_bound {
         overrides.push(format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                server_name,
-                "http_headers",
-                "X-Wework-Space-Backend-Url",
-            ]),
-            toml_value(backend_url.trim())
+            "{key}.default_tools_approval_mode={}",
+            toml_value("approve")
         ));
     }
-    let auth_token = request
-        .auth_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| env::var("WEGENT_AUTH_TOKEN").ok())
-        .filter(|value| !value.trim().is_empty());
-    if let Some(auth_token) = auth_token {
-        overrides.push(format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                server_name,
-                "http_headers",
-                "X-Wework-Space-Backend-Token",
-            ]),
-            toml_value(auth_token.trim())
-        ));
-    }
-    Ok(overrides)
 }
 
 fn embedded_browser_label(request: &ExecutionRequest) -> Option<String> {

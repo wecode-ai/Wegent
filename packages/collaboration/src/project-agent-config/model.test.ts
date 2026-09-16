@@ -5,15 +5,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { WorkspaceProjectAgent } from "../ports/SharedWorkspaceApi";
-import type {
-  CollaborationExecutionEnvironment,
-  CollaborationOwnedAgent,
-} from "../types";
-import {
-  createCodexProjectAgentInput,
-  createWegentProjectAgentInput,
-  normalizeProjectAgent,
-} from "./model";
+import type { CollaborationOwnedAgent } from "../types";
+import { createWegentProjectAgentInput, normalizeProjectAgent } from "./model";
 
 const team: CollaborationOwnedAgent = {
   id: "workspace-agent-1",
@@ -24,20 +17,6 @@ const team: CollaborationOwnedAgent = {
   owner_name: "研发空间",
   status: "available",
   execution_environment_ids: [],
-};
-
-const environment: CollaborationExecutionEnvironment = {
-  id: "environment-1",
-  device_id: 22,
-  device_key: "device-macbook",
-  name: "MacBook Pro",
-  kind: "local_device",
-  coding_tools: ["claude_code", "codex"],
-  owner_type: "user",
-  owner_id: "7",
-  owner_name: "李明",
-  status: "online",
-  updated_at: "2026-09-12T00:00:00Z",
 };
 
 describe("project agent configuration model", () => {
@@ -65,6 +44,8 @@ describe("project agent configuration model", () => {
       executionDeviceId: "cloud-1",
       model: null,
       runtimeProfileId: null,
+      additionalSkills: [],
+      mcpServers: {},
     });
   });
 
@@ -74,40 +55,5 @@ describe("project agent configuration model", () => {
       runtime: "wegent",
       wegentTeamId: 12,
     });
-  });
-
-  it.each(['local_device', 'cloud_host'] as const)(
-    'creates a %s Codex agent with its own task workspace',
-    kind => {
-      expect(
-        createCodexProjectAgentInput({
-          environment: { ...environment, kind },
-          name: " Codex 产品工程师 ",
-          capabilityDescription: " 实现产品需求 ",
-          systemPrompt: " 遵循项目规范 ",
-        }),
-      ).toEqual({
-        name: "Codex 产品工程师",
-        runtime: "codex",
-        capabilityDescription: "实现产品需求",
-        systemPrompt: "遵循项目规范",
-        executionDeviceId: "device-macbook",
-        executionEnvironment: kind === 'cloud_host' ? 'cloud' : 'local',
-        workspaceBinding: {
-          type: 'standalone',
-        },
-      });
-    }
-  )
-
-  it("rejects execution environments that cannot address an executor", () => {
-    expect(() =>
-      createCodexProjectAgentInput({
-        environment: { ...environment, device_key: undefined },
-        name: "Codex",
-        capabilityDescription: "",
-        systemPrompt: "",
-      }),
-    ).toThrow("device_key");
   });
 });

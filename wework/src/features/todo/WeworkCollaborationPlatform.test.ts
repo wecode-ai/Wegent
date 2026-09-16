@@ -78,15 +78,20 @@ vi.mock('@wegent/collaboration', async importOriginal => {
     },
     CollaborationPlatformApp: ({
       host,
+      navigationApis,
     }: {
       host: {
         location: CollaborationPlatformLocation
         navigate(next: CollaborationPlatformLocation): void
       }
+      navigationApis?: SharedWorkspaceApi[]
     }) =>
       createElement(
         'div',
-        null,
+        {
+          'data-testid': 'collaboration-platform-root',
+          'data-navigation-source-count': navigationApis?.length ?? 0,
+        },
         createElement(
           'span',
           { 'data-testid': 'collaboration-platform-location' },
@@ -215,10 +220,68 @@ function deferred<T>() {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it('provides local and cloud navigation as independent data sources', () => {
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: {
+          id: 1,
+          user_name: 'admin',
+          email: 'admin@example.com',
+        } as never,
+        localProjects: [],
+        services: {
+          sharedWorkspaceApi: {
+            workspaces: {},
+            projects: {},
+          },
+          projectSpaceApis: {
+            local: createLocalDeliveryApi(),
+          },
+        } as never,
+      })
+    )
+
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-navigation-source-count',
+      '2'
+    )
+  })
+
+  it('does not restore the system My Tasks project inside collaboration', async () => {
+    const getProject = vi.fn()
+
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: {
+          id: 1,
+          user_name: 'admin',
+          email: 'admin@example.com',
+        } as never,
+        localProjects: [],
+        services: {
+          sharedWorkspaceApi: {
+            projects: {
+              get: getProject,
+              list: vi.fn(async () => []),
+            },
+          },
+        } as never,
+        activeProjectRef: {
+          projectStore: 'local',
+          projectId: 'default-work-items',
+        },
+        onActiveProjectChange: vi.fn(),
+      })
+    )
+
+    expect(screen.getByTestId('collaboration-platform-location')).toHaveTextContent('workspace')
+    expect(getProject).not.toHaveBeenCalled()
+  })
+
   it('does not restore a stale controlled project while workspace navigation propagates', async () => {
     const getProject = vi.fn().mockResolvedValue({
-      id: 'default-work-items',
-      name: 'My tasks',
+      id: 'active-project',
+      name: 'Active project',
       workspace_id: 'cloud-workspace',
       project_store: 'backend',
     })
@@ -241,13 +304,13 @@ describe('Wework collaboration workspace API', () => {
         } as never,
         activeProjectRef: {
           projectStore: 'backend',
-          projectId: 'default-work-items',
+          projectId: 'active-project',
         },
         onActiveProjectChange,
       })
     )
 
-    await screen.findByText('default-work-items')
+    await screen.findByText('active-project')
     await act(async () => {
       screen.getByTestId('collaboration-platform-open-local-workspace').click()
     })
@@ -285,20 +348,20 @@ describe('Wework collaboration workspace API', () => {
         } as never,
         activeProjectRef: {
           projectStore: 'backend',
-          projectId: 'default-work-items',
+          projectId: 'active-project',
         },
         onActiveProjectChange: vi.fn(),
       })
     )
 
-    await screen.findByText('default-work-items')
+    await screen.findByText('active-project')
     await act(async () => {
       screen.getByTestId('collaboration-platform-open-project-missing').click()
     })
 
     await waitFor(() => {
       expect(screen.getByTestId('collaboration-platform-location')).toHaveTextContent(
-        'default-work-items'
+        'active-project'
       )
     })
     expect(getProject).toHaveBeenCalledWith('project-missing')
@@ -347,13 +410,13 @@ describe('Wework collaboration workspace API', () => {
         } as never,
         activeProjectRef: {
           projectStore: 'backend',
-          projectId: 'default-work-items',
+          projectId: 'active-project',
         },
         onActiveProjectChange,
       })
     )
 
-    await screen.findByText('default-work-items')
+    await screen.findByText('active-project')
     act(() => {
       screen.getByTestId('collaboration-platform-open-project-a').click()
       screen.getByTestId('collaboration-platform-open-project-b').click()
@@ -1198,6 +1261,55 @@ describe('Wework collaboration workspace API', () => {
     ])
   })
 
+  it('persists local automatic processing rules without a cloud automation service', async () => {
+    let project = {
+      id: 'local-project',
+      name: 'Local project',
+      project_store: 'local' as const,
+      version: 1,
+      automatic_processing_rules: [],
+    }
+    const deliveryApi = {
+      listCloudProjects: vi.fn(async () => ({ items: [project] })),
+      updateCloudProject: vi.fn(async (_projectId: string, input: Record<string, unknown>) => {
+        project = {
+          ...project,
+          version: project.version + 1,
+          automatic_processing_rules:
+            (input.automatic_processing_rules as typeof project.automatic_processing_rules) ?? [],
+        }
+        return project
+      }),
+    } as unknown as DeliveryApi
+    const api = createLocalWorkspaceApi(deliveryApi, 1, 'admin', null)
+
+    const created = await api?.automations?.create('local-project', {
+      name: '新 Issue 自动处理',
+      enabled: true,
+      triggerType: 'event',
+      eventType: 'task.created',
+      eventConfig: { executionTarget: 'existing_issue' },
+      targetKind: 'agent',
+      targetId: 'agent-1',
+    })
+
+    expect(created).toMatchObject({
+      projectId: 'local-project',
+      name: '新 Issue 自动处理',
+      targetKind: 'agent',
+      targetId: 'agent-1',
+      version: 1,
+    })
+    await expect(api?.automations?.list('local-project')).resolves.toEqual([created])
+    expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith(
+      'local-project',
+      expect.objectContaining({
+        version: 1,
+        automatic_processing_rules: [created],
+      })
+    )
+  })
+
   it('keeps project execution environment methods when local and cloud APIs are combined', async () => {
     const cloudEnvironment = {
       id: 'cloud-environment',
@@ -1232,6 +1344,29 @@ describe('Wework collaboration workspace API', () => {
       cloudEnvironment,
     ])
     expect(listCloudExecutionEnvironments).toHaveBeenCalledWith('cloud-project')
+  })
+
+  it('keeps local collaboration group requests off the cloud API', async () => {
+    const listCloudCollaborationGroups = vi.fn()
+    const cloudApi = {
+      workspaces: {
+        listCollaborationGroups: listCloudCollaborationGroups,
+      },
+      projects: {},
+    } as unknown as SharedWorkspaceApi
+    const api = createWeworkPlatformApi(
+      cloudApi,
+      createLocalDeliveryApi(),
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    await expect(
+      api?.workspaces?.listCollaborationGroups('wework-local-workspace')
+    ).resolves.toEqual([])
+    expect(listCloudCollaborationGroups).not.toHaveBeenCalled()
   })
 
   it('keeps local project resource setup on the local API after creation', async () => {
@@ -1365,5 +1500,66 @@ describe('Wework collaboration workspace API', () => {
       }),
     ])
     expect(listCloudProjects).toHaveBeenCalledWith()
+  })
+
+  it('filters the system My Tasks project from local and cloud collaboration lists', async () => {
+    const localDeliveryApi = createLocalDeliveryApi()
+    vi.mocked(localDeliveryApi.listCloudProjects).mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          project_key: 'WORK',
+          name: '我的任务',
+          project_store: 'local',
+          metadata: { system_kind: 'default_work_items' },
+        },
+        {
+          id: 'local-project',
+          project_key: 'LOCAL',
+          name: 'Local project',
+          project_store: 'local',
+        },
+      ],
+    } as never)
+    const listCloudProjects = vi.fn().mockResolvedValue([
+      {
+        id: 'default-work-items',
+        project_key: 'WORK',
+        name: 'My Tasks',
+        project_store: 'backend',
+        metadata: { system_kind: 'default_work_items' },
+      },
+      {
+        id: 'cloud-project',
+        project_key: 'CLOUD',
+        name: 'Cloud project',
+        project_store: 'backend',
+        workspace_id: 'cloud-workspace',
+      },
+    ])
+    const api = createWeworkPlatformApi(
+      {
+        workspaces: {},
+        projects: {
+          list: listCloudProjects,
+        },
+      } as unknown as SharedWorkspaceApi,
+      localDeliveryApi,
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    await expect(api?.projects.list()).resolves.toEqual([
+      expect.objectContaining({ id: 'local-project' }),
+      expect.objectContaining({ id: 'cloud-project' }),
+    ])
+    await expect(api?.projects.list('wework-local-workspace')).resolves.toEqual([
+      expect.objectContaining({ id: 'local-project' }),
+    ])
+    await expect(api?.workspaces?.get('wework-local-workspace')).resolves.toEqual(
+      expect.objectContaining({ project_count: 1 })
+    )
   })
 })

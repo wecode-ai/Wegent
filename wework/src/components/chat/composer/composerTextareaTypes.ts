@@ -13,6 +13,15 @@ export interface ComposerSubmitOptions {
   interruptWhenBusy?: boolean
 }
 
+export type ComposerFollowUpBehavior = 'queue' | 'guide'
+
+export function primaryComposerSubmitOptions(
+  isStreaming: boolean,
+  followUpBehavior: ComposerFollowUpBehavior
+): ComposerSubmitOptions | undefined {
+  return isStreaming && followUpBehavior === 'guide' ? { guideWhenBusy: true } : undefined
+}
+
 export interface ComposerExternalMentionCandidate {
   id: string
   type: 'agent' | 'user'
@@ -63,4 +72,6 @@ export interface ComposerTextareaProps {
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   isModelSelectionReady?: boolean
   sendKey?: 'enter' | 'cmd_enter'
+  followUpBehavior?: ComposerFollowUpBehavior
+  isStreaming?: boolean
 }

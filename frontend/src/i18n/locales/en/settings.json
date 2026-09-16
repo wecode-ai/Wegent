@@ -275,6 +275,12 @@
         "executor_description": "Controls the runtime environment used to handle tasks."
       },
       "bind_mode": {
+        "advanced_title": "Advanced settings",
+        "available_modules": "Available modules",
+        "automatic": "Automatic (based on how it runs)",
+        "selected": "Selected",
+        "automatic_hint": "Leave every module unselected to choose automatically from the runtime. Once selected, exactly those modules are saved.",
+        "summary_separator": ", ",
         "more_modes": "More modes",
         "collapse_more_modes": "Collapse more modes",
         "chat": {

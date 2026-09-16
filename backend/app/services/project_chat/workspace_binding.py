@@ -85,7 +85,7 @@ def normalize_workspace_binding(
         status="ready",
         projectId=project.id,
         deviceWorkspaceId=device_workspace_id,
-        deviceId=execution_device_id,
+        deviceId=execution_device_id or None,
     )
 
 
