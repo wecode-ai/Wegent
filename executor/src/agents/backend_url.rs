@@ -200,49 +200,49 @@ mod tests {
             Some("http://task-api.local:8000".to_owned())
         );
     }
-}
 
-#[cfg(test)]
-mod proxy_probe {
-    use std::io::Write as _;
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    fn request_with_gateway(base_url: &str) -> ExecutionRequest {
+        let mut request = ExecutionRequest::default();
+        request.model_config = serde_json::json!({ "base_url": base_url });
+        request
+    }
 
     #[test]
-    fn plain_client_honors_env_proxy() {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-                let address = listener.local_addr().unwrap();
-                let server = tokio::spawn(async move {
-                    let (mut stream, _) = listener.accept().await.unwrap();
-                    let mut buffer = vec![0; 1024];
-                    let _ = stream.read(&mut buffer).await.unwrap();
-                    let mut response = std::io::Cursor::new(Vec::<u8>::new());
-                    write!(
-                        response,
-                        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
-                    )
-                    .unwrap();
-                    stream.write_all(&response.into_inner()).await.unwrap();
-                });
-                // Dead proxy: if the client honors env proxies, this must fail.
-                std::env::set_var("HTTP_PROXY", "http://127.0.0.1:1");
-                let plain = reqwest::Client::new()
-                    .get(format!("http://{address}/x"))
-                    .send()
-                    .await;
-                println!(
-                    "PROBE plain client result: {:?}",
-                    plain
-                        .as_ref()
-                        .map(|r| r.status())
-                        .map_err(|e| e.to_string())
-                );
-                std::env::remove_var("HTTP_PROXY");
-                drop(server);
-            });
+    fn loopback_model_gateway_uses_the_device_backend() {
+        let mut request =
+            request_with_gateway("http://localhost:8000/api/runtime-work/llm-responses-proxy");
+
+        rewrite_loopback_model_gateway(&mut request, "http://wegent.lan:8000");
+
+        assert_eq!(
+            request.model_config["base_url"],
+            serde_json::json!("http://wegent.lan:8000/api/runtime-work/llm-responses-proxy")
+        );
+    }
+
+    #[test]
+    fn reachable_model_gateway_is_never_rewritten() {
+        let mut request = request_with_gateway(
+            "https://backend.example.com/api/runtime-work/llm-responses-proxy",
+        );
+
+        rewrite_loopback_model_gateway(&mut request, "http://wegent.lan:8000");
+
+        assert_eq!(
+            request.model_config["base_url"],
+            serde_json::json!("https://backend.example.com/api/runtime-work/llm-responses-proxy")
+        );
+    }
+
+    #[test]
+    fn loopback_gateway_stays_when_the_device_backend_is_loopback() {
+        let mut request = request_with_gateway("http://localhost:8000/api/work");
+
+        rewrite_loopback_model_gateway(&mut request, "http://localhost:8000");
+
+        assert_eq!(
+            request.model_config["base_url"],
+            serde_json::json!("http://localhost:8000/api/work")
+        );
     }
 }
