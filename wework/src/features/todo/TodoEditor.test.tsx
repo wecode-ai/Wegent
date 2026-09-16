@@ -456,6 +456,75 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue('Inspect changes')
   })
 
+  it('hydrates the authoritative current delivery when an external update completes the Issue', async () => {
+    const initialDeliveryList = deferred<{ items: [] }>()
+    const currentDelivery = {
+      id: 'delivery-1',
+      loop_item_id: baseItem.id,
+      created_by_user_id: 1,
+      source_task_binding_id: null,
+      source_task_snapshot: null,
+      status: 'delivered',
+      created_at: '2026-09-15T13:55:16Z',
+      delivered_at: '2026-09-15T13:55:16Z',
+      markdown: '',
+      chat: null,
+      assets: [
+        {
+          id: 'asset-1',
+          kind: 'file',
+          display_name: 'result.txt',
+          relative_path: 'result.txt',
+          content_type: 'text/plain',
+          size_bytes: 6,
+          sha256: 'sha256',
+        },
+      ],
+      fulfillments: [],
+    }
+    const deliveryApi = {
+      ...api,
+      listDeliveries: vi.fn(() => initialDeliveryList.promise),
+      getDelivery: vi.fn(async () => currentDelivery),
+    } as never
+    const renderEditor = (item: CloudLoopItem) => (
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={deliveryApi}
+        currentUserId={1}
+      />
+    )
+    const view = render(renderEditor(baseItem))
+
+    view.rerender(
+      renderEditor({
+        ...baseItem,
+        status: 'completed',
+        current_delivery_id: currentDelivery.id,
+        version: 2,
+      })
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
+    expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent(
+      '交付结果 · 1 个附件'
+    )
+    expect(deliveryApi.getDelivery).toHaveBeenCalledWith(currentDelivery.id)
+
+    await act(async () => {
+      initialDeliveryList.resolve({ items: [] })
+      await initialDeliveryList.promise
+    })
+
+    expect(screen.getByTestId('todo-detail-deliveries')).toHaveTextContent('交付结果 · 1 个附件')
+  })
+
   it('hydrates placeholder fields when the same issue version finishes loading', () => {
     const placeholder = { ...baseItem, title: '', description: '' }
     const view = render(editorElement(placeholder))
@@ -1437,5 +1506,75 @@ describe('TodoEditor shared attachments', () => {
         dueAt: null,
       })
     )
+  })
+
+  it('does not reload issue resources when its parent rerenders', async () => {
+    const sharedApi = {
+      issues: {
+        update: vi.fn(),
+      },
+      attachments: {
+        list: vi.fn(async () => []),
+      },
+      collaborators: {
+        list: vi.fn(async () => []),
+      },
+      taskBindings: {
+        list: vi.fn(async () => []),
+      },
+      workflowPlans: {
+        get: vi.fn(async () => null),
+      },
+      members: {
+        list: vi.fn(async () => []),
+      },
+      agents: {
+        list: vi.fn(async () => []),
+      },
+      deliveries: {
+        list: vi.fn(async () => []),
+      },
+    } as never
+    const teamApi = {
+      listTeams: vi.fn(async () => []),
+    } as never
+    const onUpdated = vi.fn()
+    const onClose = vi.fn()
+    const renderEditor = () => (
+      <TodoEditor
+        mode="edit"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={onUpdated}
+        onClose={onClose}
+        sharedApi={sharedApi}
+        teamApi={teamApi}
+        currentUserId={1}
+      />
+    )
+    const view = render(renderEditor())
+
+    await vi.waitFor(() => {
+      expect(sharedApi.attachments.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.collaborators.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.taskBindings.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.members.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.agents.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.deliveries.list).toHaveBeenCalledTimes(1)
+      expect(teamApi.listTeams).toHaveBeenCalledTimes(1)
+    })
+
+    view.rerender(renderEditor())
+
+    await vi.waitFor(() => {
+      expect(sharedApi.attachments.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.collaborators.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.taskBindings.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.members.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.agents.list).toHaveBeenCalledTimes(1)
+      expect(sharedApi.deliveries.list).toHaveBeenCalledTimes(1)
+      expect(teamApi.listTeams).toHaveBeenCalledTimes(1)
+    })
   })
 })

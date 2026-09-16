@@ -126,10 +126,14 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     testIds,
     host,
     onClose,
+    workspaceContext,
   } = props;
   const { state, commands } = useProjectCreateController(props);
   const renderModal =
     host?.renderModal ?? ((modalProps) => <DefaultModal {...modalProps} />);
+  const cloudLocationDescription = workspaceContext
+    ? `${workspaceContext.name} · ${workspaceContext.owner}`
+    : labels.cloudLocationDescription;
   const providers = [
     {
       id: "local" as const,
@@ -215,7 +219,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                         <small>
                           {isLocal
                             ? labels.localLocationDescription
-                            : labels.cloudLocationDescription}
+                            : cloudLocationDescription}
                         </small>
                       </span>
                     </div>
@@ -239,7 +243,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                     description={
                       isLocal
                         ? labels.localLocationDescription
-                        : labels.cloudLocationDescription
+                        : cloudLocationDescription
                     }
                     onClick={() => {
                       commands.setLocation(target.location);

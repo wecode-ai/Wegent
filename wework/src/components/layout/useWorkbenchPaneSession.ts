@@ -2283,7 +2283,6 @@ export function useWorkbenchPaneSession({
 
           if (paneIsBusy) {
             resetAttachments()
-            setCodeCommentContexts([])
             if (options.interruptWhenBusy) {
               const sent = await interruptAndSendQueuedMessage(queuedMessage)
               if (!sent) {
@@ -2291,11 +2290,16 @@ export function useWorkbenchPaneSession({
                 setCodeCommentContexts(codeCommentContexts)
               } else {
                 setInput('')
+                clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
               }
               return sent
             }
             setQueuedMessages(messages => [...messages, queuedMessage])
             setInput('')
+            clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
+            if (options.guideWhenBusy) {
+              await sendQueuedMessageAsGuidance(queuedMessage, true)
+            }
             return true
           }
 
@@ -2327,7 +2331,7 @@ export function useWorkbenchPaneSession({
             setQueuedMessages(messages => [...messages, queuedMessage])
             setInput('')
             resetAttachments()
-            setCodeCommentContexts([])
+            clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
             setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
           }

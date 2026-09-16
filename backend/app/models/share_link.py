@@ -30,6 +30,7 @@ class ResourceType(str, PyEnum):
     CLOUD_PROJECT = "CloudProject"
     WORKSPACE = "Workspace"
     DEVICE = "Device"
+    COLLABORATION_GROUP = "CollaborationGroup"
 
 
 # Import BaseRole and create MemberRole alias for backward compatibility

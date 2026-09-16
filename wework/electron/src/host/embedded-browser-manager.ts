@@ -364,7 +364,10 @@ export class EmbeddedBrowserManager {
         this.entries.delete(entryLabel)
         removedLabels.add(entryLabel)
       }
-      for (const removedLabel of removedLabels) this.clearLabelScopedState(removedLabel)
+      for (const removedLabel of removedLabels) {
+        this.clearActiveTabReferences(removedLabel)
+        this.clearLabelScopedState(removedLabel)
+      }
     })
     this.resolveAttachmentWaiters(normalizedLabel, contents)
   }
@@ -902,16 +905,16 @@ export class EmbeddedBrowserManager {
     this.emit('open-request', payload)
   }
 
-  requestClose(label: string): void {
+  async requestClose(label: string): Promise<void> {
     const normalizedLabel = requiredLabel(label)
     const entry = this.entries.get(normalizedLabel)
+    if (!entry) return
     this.close(normalizedLabel)
-    if (entry) {
-      this.emit('close-request', {
-        label: normalizedLabel,
-        nativeLabel: entry.nativeLabel,
-      })
-    }
+    this.emit('close-request', {
+      label: normalizedLabel,
+      nativeLabel: entry.nativeLabel,
+    })
+    await this.waitForAttachedContents(normalizedLabel)
   }
 
   close(label: string, expectedNativeLabel?: string | null): void {
@@ -919,8 +922,15 @@ export class EmbeddedBrowserManager {
     if (!entry) return
     if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
     this.entries.delete(label)
+    this.clearActiveTabReferences(label)
     this.clearLabelScopedState(label)
     if (!entry.contents.isDestroyed()) entry.contents.close()
+  }
+
+  private clearActiveTabReferences(label: string): void {
+    for (const [baseLabel, activeLabel] of this.activeTabs) {
+      if (baseLabel === label || activeLabel === label) this.activeTabs.delete(baseLabel)
+    }
   }
 
   private clearLabelScopedState(label: string): void {

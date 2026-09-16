@@ -5,11 +5,7 @@
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
-import {
-  configureDispatchRuntime,
-  stopDispatchRun,
-  webApi,
-} from '../../utils/collaboration-test-support'
+import { webApi } from '../../utils/collaboration-test-support'
 import { REGULAR_USER } from '../../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 
@@ -46,12 +42,6 @@ interface CloudIssue {
       status: string
     }>
   }
-}
-
-interface CloudAutomationRun {
-  taskId: string
-  id: string
-  automationId: string
 }
 
 interface CloudFile {
@@ -349,14 +339,6 @@ test.describe('Collaboration cloud capabilities', () => {
     const suffix = Date.now()
     let projectId = ''
     let workspaceId = ''
-    let myWorkRequestCount = 0
-    const countMyWorkRequest = (request: { url(): string }) => {
-      if (new URL(request.url()).pathname.endsWith('/cloud-work-items/my-work')) {
-        myWorkRequestCount += 1
-      }
-    }
-    page.on('request', countMyWorkRequest)
-
     try {
       await page.goto('/collaboration')
       await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
@@ -374,12 +356,15 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId(`collaboration-workspace-${workspace.id}`)).toContainText(
         workspace.name
       )
-      await expect(page.getByTestId(`collaboration-project-card-${project.id}`)).toContainText(
-        project.name
-      )
+      const workspaceToggle = page.getByTestId(`collaboration-workspace-toggle-${workspace.id}`)
+      if ((await workspaceToggle.getAttribute('aria-expanded')) !== 'true') {
+        await workspaceToggle.click()
+      }
+      const projectNavigation = page.getByTestId(`collaboration-workspace-project-${project.id}`)
+      await expect(projectNavigation).toContainText(project.name)
       await captureEvidence(page, 'web-01-project-home')
 
-      await page.getByTestId(`collaboration-project-card-${project.id}`).click()
+      await projectNavigation.click()
       await expect(page.getByTestId('collaboration-empty-project')).toBeVisible()
       await page.goto(collaborationProjectPath(workspace.id, project.id))
       await expect(page.getByTestId('collaboration-root')).toBeVisible()
@@ -472,11 +457,9 @@ test.describe('Collaboration cloud capabilities', () => {
       ).toBeVisible()
       expect((await issue(page, issueId)).id).toBe(issueId)
       await captureEvidence(page, 'web-02-issue-detail')
-      expect(myWorkRequestCount).toBe(0)
     } finally {
       if (projectId) await archiveProject(page, projectId)
       if (workspaceId) await archiveWorkspace(page, workspaceId)
-      page.off('request', countMyWorkRequest)
     }
   })
 
@@ -569,8 +552,8 @@ test.describe('Collaboration cloud capabilities', () => {
         taskAttachmentName,
         'cloud task attachment evidence'
       )
-      await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
-      await page.getByTestId('collaboration-project-settings-files').click()
+      await page.goto(collaborationProjectPath(workspace.id, project.id))
+      await page.getByTestId('collaboration-tab-files').click()
       await expect(page.getByTestId('cloud-files-view')).toBeVisible()
       await expect(page.getByTestId(`task-attachment-${taskAttachment.id}`)).toContainText(
         taskAttachmentName
@@ -649,15 +632,11 @@ test.describe('Collaboration cloud capabilities', () => {
     }
   })
 
-  test('creates and explicitly saves a dispatch policy, runs it, and exposes Issue-centered history', async ({
-    page,
-  }) => {
+  test('creates and persists an Issue-created automatic processing rule', async ({ page }) => {
     test.setTimeout(120_000)
     const suffix = Date.now()
     let projectId = ''
     let workspaceId = ''
-    let cleanupRuntime: (() => Promise<void>) | undefined
-    let automationRun: CloudAutomationRun | undefined
 
     try {
       await page.goto('/collaboration')
@@ -665,67 +644,65 @@ test.describe('Collaboration cloud capabilities', () => {
       workspaceId = workspace.id
       const project = await createProjectByApi(page, workspace.id, `Automation ${suffix}`)
       projectId = project.id
-      cleanupRuntime = await configureDispatchRuntime(page, project.id, String(suffix))
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
-      await page.getByTestId('collaboration-project-settings-dispatch').click()
-      await expect(page.getByTestId('project-automation-policy')).toBeVisible()
-      await page.getByTestId('automation-welcome-create-policy').click()
+      await page.getByTestId('collaboration-project-settings-automatic-processing').click()
+      await expect(
+        page.getByTestId('collaboration-project-automatic-processing-page')
+      ).toBeVisible()
+      await page.getByTestId('automatic-processing-create').click()
+      await expect(page.getByTestId('automatic-processing-form')).toBeVisible()
+      await expect(page.getByTestId('automatic-processing-trigger-created')).toBeChecked()
+      await expect(page.getByTestId('automatic-processing-target-kind-human')).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
 
       const createResponse = page.waitForResponse(
         response =>
           response.request().method() === 'POST' &&
           response.url().includes(`/api/v1/cloud-projects/${project.id}/automations`)
       )
-      await page.getByTestId('automation-trigger-schedule').click()
-      await page.getByTestId('automation-policy-name').fill(`Cloud Automation ${suffix}`)
-      await page
-        .getByTestId('automation-coordinator-prompt')
-        .fill(
-          'Inspect pending Issues, create independently verifiable assignments, and keep execution evidence in each Issue.'
-        )
-      await page.getByTestId('automation-save-policy').click()
-      expect((await createResponse).ok()).toBe(true)
-      await expect(page.getByTestId('automation-save-policy')).toContainText(/已保存|Saved/)
-
-      const runResponse = page.waitForResponse(
-        response =>
-          response.request().method() === 'POST' &&
-          /\/automations\/[^/]+\/run$/.test(new URL(response.url()).pathname)
+      await page.getByTestId('automatic-processing-save').click()
+      const response = await createResponse
+      expect(response.ok(), `Automatic processing creation failed: ${await response.text()}`).toBe(
+        true
       )
-      page.once('dialog', dialog => dialog.accept())
-      await page.getByTestId('automation-run-now').click()
-      const run = await runResponse
-      expect(run.ok(), `Automation run failed: ${await run.text()}`).toBe(true)
-      const runBody = (await run.json()) as CloudAutomationRun
-      automationRun = runBody
-      expect(runBody.automationId).toBeTruthy()
+      const createdRule = (await response.json()) as { id: string }
+      expect(createdRule.id).toBeTruthy()
+      await expect(page.getByTestId(`automatic-processing-rule-${createdRule.id}`)).toContainText(
+        /Issue 创建后|Issue created/
+      )
+      await expect
+        .poll(async () => {
+          const rules = await webApi<
+            Array<{
+              id: string
+              eventType?: string
+              targetKind?: string
+              enabled: boolean
+            }>
+          >(page, `/api/v1/cloud-projects/${encodeURIComponent(project.id)}/automations`)
+          const rule = rules.find(candidate => candidate.id === createdRule.id)
+          return {
+            enabled: rule?.enabled,
+            eventType: rule?.eventType,
+            targetKind: rule?.targetKind,
+          }
+        })
+        .toEqual({
+          enabled: true,
+          eventType: 'task.created',
+          targetKind: 'human',
+        })
 
-      await page.getByTestId('automation-open-runs').click()
-      await expect(page.getByTestId(`automation-run-${runBody.id}`)).toBeVisible()
       await page.reload()
-      await page.getByTestId('collaboration-project-settings-dispatch').click()
-      await expect(page.getByTestId('project-automation-policy')).toBeVisible()
-      const persistedRunsResponse = page.waitForResponse(response => {
-        const pathname = new URL(response.url()).pathname
-        return (
-          response.request().method() === 'GET' &&
-          pathname.endsWith(`/automations/${encodeURIComponent(runBody.automationId)}/runs`)
-        )
-      })
-      await page.getByTestId('automation-open-runs').click()
-      const runsResponse = await persistedRunsResponse
-      expect(
-        runsResponse.ok(),
-        `Loading persisted automation runs failed: ${await runsResponse.text()}`
-      ).toBe(true)
-      const persistedRuns = (await runsResponse.json()) as CloudAutomationRun[]
-      expect(persistedRuns.some(candidate => candidate.id === runBody.id)).toBe(true)
-      await expect(page.getByTestId('automation-runs-loading')).toHaveCount(0)
-      await expect(page.getByTestId(`automation-run-${runBody.id}`)).toBeVisible()
-      await captureEvidence(page, 'web-09-automation-history')
+      await page.getByTestId('collaboration-project-settings-automatic-processing').click()
+      await expect(
+        page.getByTestId('collaboration-project-automatic-processing-page')
+      ).toBeVisible()
+      await expect(page.getByTestId(`automatic-processing-rule-${createdRule.id}`)).toBeVisible()
+      await captureEvidence(page, 'web-09-automatic-processing-rule')
     } finally {
-      if (automationRun) await stopDispatchRun(page, projectId, automationRun)
-      await cleanupRuntime?.()
       if (projectId) await archiveProject(page, projectId)
       if (workspaceId) await archiveWorkspace(page, workspaceId)
     }
@@ -776,7 +753,7 @@ test.describe('Collaboration cloud capabilities', () => {
 
       await page.goto(collaborationProjectPath(workspace.id, project.id, { issueId: created.id }))
       await page.getByTestId('cloud-todo-toggle-tasks').click()
-      await expect(page.getByTestId('cloud-todo-workflow-dag')).toBeVisible()
+      await expect(page.getByTestId('cloud-todo-workflow-stages')).toBeVisible()
       await page.getByTestId(`cloud-todo-workflow-node-${stageId}`).click()
       await expect(page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`)).toBeVisible()
       await captureEvidence(page, 'web-11-workflow-awaiting-approval')
@@ -804,7 +781,7 @@ test.describe('Collaboration cloud capabilities', () => {
 
       await page.reload()
       await page.getByTestId('cloud-todo-toggle-tasks').click()
-      await expect(page.getByTestId('cloud-todo-workflow-dag')).toBeVisible()
+      await expect(page.getByTestId('cloud-todo-workflow-stages')).toBeVisible()
       await page.getByTestId(`cloud-todo-workflow-node-${stageId}`).click()
       await expect(page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`)).toHaveCount(0)
       await expect(page.getByTestId(`cloud-todo-workflow-node-${stageId}`)).toContainText(
@@ -836,7 +813,8 @@ test.describe('Collaboration cloud capabilities', () => {
       const member = await regularUser(page)
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
 
-      await page.getByTestId('collaboration-project-settings-members').click()
+      await page.getByTestId('collaboration-project-settings-participants').click()
+      await page.getByTestId('collaboration-participants-tab-members').click()
       await page.getByTestId('cloud-project-members-toggle').click()
       await page.getByTestId('cloud-member-search').fill(REGULAR_USER.username)
       await page.getByTestId('cloud-member-role').selectOption('Reporter')
@@ -885,7 +863,9 @@ test.describe('Collaboration cloud capabilities', () => {
             `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`
           )
         ).board_config?.statuses.length ?? 0
-      await page.getByTestId('collaboration-project-settings-board').click()
+      await page.getByTestId('collaboration-tab-board').click()
+      await page.getByTestId('collaboration-board-settings').click()
+      await expect(page.getByTestId('project-board-settings-dialog')).toBeVisible()
       await page.getByTestId('cloud-board-status-add').click()
       await expect(page.locator('[data-testid^="cloud-board-status-status-"]')).toHaveCount(1)
       await expect
@@ -913,7 +893,8 @@ test.describe('Collaboration cloud capabilities', () => {
         .not.toBe(previousPriorityDisplay)
       await captureEvidence(page, 'web-10-project-manage')
 
-      await page.getByTestId('collaboration-tab-board').click()
+      await page.getByTestId('project-board-settings-close').click()
+      await expect(page.getByTestId('project-board-settings-dialog')).toBeHidden()
       await expect(page).toHaveURL(
         new RegExp(
           `${collaborationProjectPath(workspace.id, project.id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`

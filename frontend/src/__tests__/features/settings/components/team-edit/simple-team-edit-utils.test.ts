@@ -5,12 +5,15 @@
 import type { UnifiedShell } from '@/apis/shells'
 import type { TaskType } from '@/types/api'
 import {
+  getAutomaticSimpleBindMode,
   getDefaultSimpleBindMode,
   getCustomShells,
   getModelCategoryTypeForBindMode,
   getSimpleBindModeOptions,
   getSimpleExecutorOptions,
+  matchesAutomaticSimpleBindMode,
   normalizeExecutorForBindMode,
+  resolveSimpleBindMode,
   resolveSimpleExecutorFromBot,
   resolveShellForExecutor,
   shellSupportsPreloadSkills,
@@ -76,6 +79,24 @@ const bot: Bot = {
 describe('simple team edit utils', () => {
   it('defaults simple bind mode to chat only', () => {
     expect(getDefaultSimpleBindMode()).toEqual(['chat'])
+  })
+
+  it('derives automatic bind modes from the selected executor', () => {
+    expect(getAutomaticSimpleBindMode('simple', shells[0])).toEqual(['chat'])
+    expect(getAutomaticSimpleBindMode('complex', shells[2])).toEqual(['code', 'task'])
+    expect(getAutomaticSimpleBindMode('custom', shells[3])).toEqual(['chat'])
+    expect(getAutomaticSimpleBindMode('custom', shells[4])).toEqual(['code', 'task'])
+  })
+
+  it('uses explicit bind modes instead of the automatic executor policy', () => {
+    expect(resolveSimpleBindMode(['task'], 'simple', shells[0])).toEqual(['task'])
+    expect(resolveSimpleBindMode([], 'complex', shells[2])).toEqual(['code', 'task'])
+  })
+
+  it('recognizes persisted values that match the automatic executor policy', () => {
+    expect(matchesAutomaticSimpleBindMode(['chat'], 'simple', shells[0])).toBe(true)
+    expect(matchesAutomaticSimpleBindMode(['task', 'code'], 'complex', shells[2])).toBe(true)
+    expect(matchesAutomaticSimpleBindMode(['code'], 'complex', shells[2])).toBe(false)
   })
 
   it('exposes all supported bind modes', () => {

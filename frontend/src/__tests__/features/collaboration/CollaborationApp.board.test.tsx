@@ -108,6 +108,16 @@ describe('CollaborationApp shared project board', () => {
         update: updateIssue,
         reorder: reorderIssue,
       },
+      members: {
+        list: jest.fn().mockResolvedValue([]),
+        searchUsers: jest.fn().mockResolvedValue([]),
+        add: jest.fn(),
+        update: jest.fn(),
+        remove: jest.fn(),
+      },
+      agents: {
+        list: jest.fn().mockResolvedValue([]),
+      },
     } as unknown as SharedWorkspaceApi
     const host: CollaborationHostAdapter = {
       capabilities: {
@@ -134,6 +144,7 @@ describe('CollaborationApp shared project board', () => {
       'flex-col'
     )
     expect(screen.getByTestId('cloud-board-toolbar')).toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-board-settings')).toHaveTextContent('看板设置')
     for (const status of statuses) {
       expect(screen.getByTestId(`cloud-todo-column-${status.id}`)).toBeInTheDocument()
     }
@@ -157,6 +168,15 @@ describe('CollaborationApp shared project board', () => {
     )
     expect(updateIssue.mock.invocationCallOrder[0]).toBeLessThan(
       reorderIssue.mock.invocationCallOrder[0]
+    )
+
+    fireEvent.click(screen.getByTestId('collaboration-board-settings'))
+    expect(await screen.findByTestId('project-board-settings-dialog')).toHaveAccessibleName(
+      '看板设置'
+    )
+    fireEvent.click(screen.getByTestId('project-board-settings-close'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('project-board-settings-dialog')).not.toBeInTheDocument()
     )
 
     fireEvent.change(screen.getByTestId('cloud-board-search'), {

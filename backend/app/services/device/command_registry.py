@@ -1586,6 +1586,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
             '"${WEGENT_EXECUTOR_PROJECTS_DIR:-${WECODE_HOME:-$HOME/.wecode}/wegent-executor/workspace/projects}"\''
         ),
     ),
+    "environment_prepare": LocalDeviceCommandDefinition(
+        command="environment-prepare",
+        post_processor="json",
+    ),
     "ls_a": LocalDeviceCommandDefinition(
         command="ls -a",
         post_processor="file_list",

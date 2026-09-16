@@ -149,6 +149,10 @@ export default function DevicesPage() {
   }, [])
 
   useEffect(() => {
+    if (searchParams.get('register') === '1') setShowSetupGuide(true)
+  }, [searchParams])
+
+  useEffect(() => {
     if (highlightedDeviceId === null) return
     document
       .querySelector(

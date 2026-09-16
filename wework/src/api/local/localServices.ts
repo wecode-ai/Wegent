@@ -2210,8 +2210,9 @@ function adaptRuntimeWorkListResponse(
     if (rawTasks.length === 0 && workspaceSource === 'remote' && localWorkspaceLabels.has(label)) {
       continue
     }
+    const workspaceId = stableLocalId(`${workspaceDeviceId}\0${workspacePath}`)
     const deviceWorkspace: RuntimeDeviceWorkspace = {
-      id: stableLocalId(`${workspaceDeviceId}\0${workspacePath}`),
+      id: workspaceId,
       projectId: null,
       deviceId: workspaceDeviceId,
       deviceName: remoteHostId ?? 'Local Executor',
@@ -2321,7 +2322,10 @@ function adaptRuntimeWorkListResponse(
       project: {
         key: projectKey,
         ...(projectSource === 'remote_project' ? { sidebarStateKey: projectKey } : {}),
-        id: stableLocalId(`${localDeviceId}\0${projectKey}`),
+        id:
+          projectSource === 'remote_project'
+            ? workspaceId
+            : stableLocalId(`${localDeviceId}\0${projectKey}`),
         name: label,
         kind: projectKind,
         source: projectSource,

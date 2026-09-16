@@ -97,6 +97,39 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     {
         request.extra.insert("attachments".to_owned(), attachments);
     }
+    if let Some(additional_skills) = payload
+        .get("additionalSkills")
+        .or_else(|| payload.get("additional_skills"))
+        .filter(|value| value.is_array())
+        .cloned()
+    {
+        let skill_names = additional_skills
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|skill| {
+                skill
+                    .as_str()
+                    .or_else(|| skill.get("name").and_then(Value::as_str))
+            })
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .fold(Vec::new(), |mut names, name| {
+                if !names.iter().any(|existing| existing == name) {
+                    names.push(name.to_owned());
+                }
+                names
+            });
+        request
+            .extra
+            .insert("additional_skills".to_owned(), additional_skills);
+        request
+            .extra
+            .insert("preload_skills".to_owned(), json!(skill_names));
+        request
+            .extra
+            .insert("user_selected_skills".to_owned(), json!(skill_names));
+    }
     if let Some(additional_context) = payload
         .get("additionalContext")
         .or_else(|| payload.get("additional_context"))
@@ -874,6 +907,47 @@ mod tests {
                 "modelType": "public",
                 "options": {"reasoning": "medium"}
             }))
+        );
+    }
+
+    #[test]
+    fn normalizes_runtime_additional_skills_for_agent_consumers() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "additionalSkills": [
+                    {
+                        "name": "wework-plugin-creator",
+                        "namespace": "codex",
+                        "is_public": false
+                    },
+                    "review",
+                    {"name": "wework-plugin-creator", "namespace": "codex"}
+                ]
+            }),
+        );
+
+        assert_eq!(
+            request.extra.get("additional_skills"),
+            Some(&json!([
+                {
+                    "name": "wework-plugin-creator",
+                    "namespace": "codex",
+                    "is_public": false
+                },
+                "review",
+                {"name": "wework-plugin-creator", "namespace": "codex"}
+            ]))
+        );
+        assert_eq!(
+            request.extra.get("preload_skills"),
+            Some(&json!(["wework-plugin-creator", "review"]))
+        );
+        assert_eq!(
+            request.extra.get("user_selected_skills"),
+            Some(&json!(["wework-plugin-creator", "review"]))
         );
     }
 

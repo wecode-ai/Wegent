@@ -54,7 +54,7 @@ export const runtimeProfileMessages: Record<
     'runtimeSettings.use': '设为项目默认',
     'runtimeSettings.saved': '已设为当前项目默认配置。可返回原页面继续操作。',
     'runtimeSettings.workflowMissing':
-      'AI 调度器缺少设备或模型配置，任务尚未启动。请前往「项目设置 → 分配与调度 → 我的默认执行配置」完成配置。',
+      '自动处理缺少设备或模型配置，任务尚未启动。请前往「项目设置 → 自动处理 → 我的默认执行配置」完成配置。',
     'runtimeSettings.waiting': '等待配置',
   },
   en: {

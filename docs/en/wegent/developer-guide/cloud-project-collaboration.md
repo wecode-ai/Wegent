@@ -21,9 +21,17 @@ A cloud project is not the existing `Project` model:
 
 ### Execution configuration and waiting states
 
-Cloud projects configure the current user's default device and model under **Project settings → Assignment and dispatch** for the AI coordinator. Creating a custom Codex agent requires a device and model; **Configure device and model** in the agent list sets defaults for future tasks. Model identity and provider options remain opaque dictionaries and are not subject to API field case conversion. Device presence comes from connection heartbeats. If an AI-coordinated workflow lacks required execution settings, Issue creation returns a configuration error before persisting the Issue or starting dispatch. Configure the missing settings before creating the Issue.
+Project settings keep collaboration organization separate from runtime resources:
 
-Successful planning and assignment by the coordinator does not mean the Issue is complete. Parent steps and child details display the child's execution state. Missing device or model configuration keeps an execution in `waiting_runtime`; **Configure and continue** applies a complete profile to that existing execution. This does not change project or agent defaults and preserves manual approval requirements. Workflow progress counts steps only after acceptance.
+- **Collaboration members** presents project participants in the order **Agents → Project members → Collaboration groups**. A collaboration group is a reusable organization whose members and leader may be humans or Agents. Workflow stages belong to the collaboration group.
+- **Automatic processing** defines trigger rules only. Issue creation, Tag changes, external events, or schedules route work to a project member, Agent, or collaboration group. A rule never binds a device.
+- **Execution environments** manages the project's authorized device pool. Agent creation does not select a device. Manual assignments and automatic processing resolve a device from this pool when a Run is claimed.
+
+A Mention in a comment only creates a mention and notification; it never changes the assignee. Assignment, Mention, Subscription, and Run have independent semantics. Only an explicit assignment changes ownership and creates a Run when the target is an Agent or collaboration group.
+
+Model identity and provider options remain opaque dictionaries and are not subject to API field case conversion. Device presence comes from connection heartbeats. If model or workspace configuration is missing, the execution remains in `waiting_runtime` and uses the unified runtime-configuration entrypoint; the device itself is bound when the Run is claimed.
+
+Successful planning and assignment by the coordinator does not mean the Issue is complete. Parent steps and child details display the child's execution state. Missing model or workspace configuration keeps an execution in `waiting_runtime`; **Configure and continue** completes that existing execution's profile. If no device currently satisfies authorization and capacity constraints, the Run remains queued for device claim instead of requiring a device binding on the Agent. Completing runtime configuration does not change project or Agent defaults and preserves manual approval requirements. Workflow progress counts steps only after acceptance.
 
 Wegent Web replaces the former **Inbox** entry with **Collaboration** and directly reuses the Backend APIs for cloud projects, board Issues, comments, attachments, shared files, members, and execution records. Web and Wework do not maintain a second domain model or API surface.
 

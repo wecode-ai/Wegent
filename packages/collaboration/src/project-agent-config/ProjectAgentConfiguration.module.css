@@ -28,7 +28,7 @@
     rgb(var(--color-text-primary))
   );
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .addButton:disabled {
@@ -38,8 +38,9 @@
 
 .title {
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--text-heading-sm);
+  font-weight: 500;
+  line-height: 1.33;
   color: rgb(var(--color-text-primary));
 }
 
@@ -73,7 +74,7 @@
   margin: 0;
   color: rgb(var(--color-text-primary));
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .sectionHeading > span {
@@ -131,7 +132,7 @@
   overflow: hidden;
   color: rgb(var(--color-text-primary));
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -165,8 +166,14 @@
   white-space: nowrap;
 }
 
+.capabilitySummary {
+  flex: none;
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .archiveButton,
-.modeButton,
 .primaryButton {
   border: 0;
   border-radius: 8px;
@@ -270,32 +277,6 @@
   height: 16px;
 }
 
-.modes {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  margin-top: 14px;
-  padding: 4px;
-  border-radius: 10px;
-  background: rgb(var(--color-bg-base));
-  box-shadow: inset 0 0 0 1px rgb(var(--color-border));
-}
-
-.modeButton {
-  min-height: 34px;
-  background: transparent;
-  color: rgb(var(--color-text-muted));
-  font-size: 13px;
-}
-
-.modeButtonActive {
-  color: rgb(var(--color-text-primary));
-  background: rgb(var(--color-bg-surface));
-  box-shadow:
-    0 1px 3px rgb(0 0 0 / 12%),
-    inset 0 0 0 1px rgb(var(--color-border));
-}
-
 .form {
   display: grid;
   gap: 12px;
@@ -310,10 +291,10 @@
   font-weight: 500;
 }
 
-.input,
-.select,
-.textarea {
+.select {
   width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 9px;
   outline: none;
@@ -323,21 +304,7 @@
   font-weight: 400;
 }
 
-.input,
-.select {
-  min-height: 38px;
-  padding: 0 10px;
-}
-
-.textarea {
-  min-height: 78px;
-  resize: vertical;
-  padding: 9px 10px;
-}
-
-.input:focus,
-.select:focus,
-.textarea:focus {
+.select:focus {
   border-color: rgb(var(--color-focus, var(--color-focus-ring)));
   box-shadow: 0 0 0 3px rgb(var(--color-focus, var(--color-focus-ring)) / 0.16);
 }

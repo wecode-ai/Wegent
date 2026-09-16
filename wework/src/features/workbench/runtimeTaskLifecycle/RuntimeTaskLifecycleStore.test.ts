@@ -1210,6 +1210,67 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.shouldShowUnread).toBe(false)
   })
 
+  test.each(['running', 'recovering'] as const)(
+    'restores running from the executor Goal execution %s state',
+    goalExecutionStatus => {
+      const store = new RuntimeTaskLifecycleStore('test')
+      store.syncRuntimeWork(
+        runtimeWork(
+          task({
+            running: false,
+            goalStatus: 'active',
+            goalExecutionStatus,
+            status: 'active',
+            completedAt: 1_786_676_400_000,
+          })
+        )
+      )
+
+      const snapshot = store.getTask(address)
+      expect(snapshot?.execution.phase).toBe('running')
+      expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+      expect(snapshot?.task?.status).toBe('active')
+    }
+  )
+
+  test('restores running from a real executor queued active Goal snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          goalStatus: 'active',
+          status: 'queued',
+          completedAt: 1_789_483_225_000,
+        })
+      )
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('running')
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(snapshot?.task?.status).toBe('queued')
+  })
+
+  test('keeps a Goal needing attention idle after restart', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          goalStatus: 'active',
+          goalExecutionStatus: 'needsAttention',
+          status: 'active',
+          completedAt: 1_786_676_400_000,
+        })
+      )
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
   test('preserves a known Goal status when a later executor snapshot omits it', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))

@@ -39,7 +39,10 @@ vi.mock("./workspace-controller", () => ({
 import { CollaborationApp } from "./CollaborationApp";
 import { CollaborationSettings } from "./CollaborationSettings";
 import {
-  ProjectDispatchSettings,
+  CollaborationParticipantsTabs,
+  ProjectCollaborationGroups,
+  ProjectCollaborationParticipants,
+  ProjectAutomaticProcessing,
   ProjectSettingsShell,
 } from "./project-manage";
 import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapter";
@@ -105,22 +108,29 @@ function createHost(
   };
 }
 
-function renderApp(
-  host: CollaborationHostAdapter,
-  automationUiHost?: ComponentProps<
-    typeof CollaborationApp
-  >["automationUiHost"],
-) {
+function createApi(): SharedWorkspaceApi {
+  return {
+    workspaces: {
+      listCollaborationGroups: vi.fn(async () => []),
+    },
+    projects: {
+      listCollaborationGroups: vi.fn(async () => []),
+    },
+    automations: {},
+  } as unknown as SharedWorkspaceApi;
+}
+
+function renderApp(host: CollaborationHostAdapter) {
   return CollaborationApp({
-    api: {} as SharedWorkspaceApi,
+    api: createApi(),
     host,
-    automationUiHost,
   });
 }
 
 function createProject(version: number): CollaborationProject {
   return {
     id: "project-1",
+    workspace_id: "workspace-1",
     project_key: "PRJ",
     name: "Project",
     description: "",
@@ -239,9 +249,15 @@ describe("CollaborationApp API boundary", () => {
   });
 
   it("keeps the shared project view set free of host-only pages", () => {
-    expect(collaborationProjectViewIds).toEqual(["board", "table", "manage"]);
+    expect(collaborationProjectViewIds).toEqual([
+      "board",
+      "table",
+      "files",
+      "manage",
+    ]);
     expect(collaborationProjectViewIds).not.toContain("members");
     expect(collaborationProjectViewIds).not.toContain("runs");
+    expect(collaborationProjectViewIds).not.toContain("automation");
   });
 
   it("keeps project settings mounted across polling refreshes", () => {
@@ -293,7 +309,7 @@ describe("CollaborationApp API boundary", () => {
       sections: [
         {
           id: "dispatch",
-          label: "分配与调度",
+          label: "自动处理",
           testId: "project-settings-dispatch",
           content: <div>dispatch</div>,
         },
@@ -312,7 +328,7 @@ describe("CollaborationApp API boundary", () => {
     expect(content?.props.className).not.toContain("overflow-hidden");
   });
 
-  it("always exposes project ownership and assignment semantics in settings", () => {
+  it("keeps project settings limited to the four project-level concerns", () => {
     const host = createHost(false, "home");
     host.location = {
       projectId: "project-1",
@@ -328,67 +344,83 @@ describe("CollaborationApp API boundary", () => {
       }),
     );
 
-    const shell = findByType(
-      renderApp(host, {} as never),
-      CollaborationProjectViewShell,
-    );
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
     const settingsShell = findByType(
       shell?.props.slots.manage,
       ProjectSettingsShell,
     );
-    const dispatchSection = settingsShell?.props.sections.find(
-      (section: { id: string }) => section.id === "dispatch",
+    const sectionIds = settingsShell?.props.sections.map(
+      (section: { id: string }) => section.id,
+    );
+    const participantsSection = settingsShell?.props.sections.find(
+      (section: { id: string }) => section.id === "collaboration-participants",
+    );
+    const automaticProcessingSection = settingsShell?.props.sections.find(
+      (section: { id: string }) => section.id === "automatic-processing",
     );
 
-    expect(dispatchSection).toBeDefined();
-    expect(dispatchSection?.content.type).toBe(ProjectDispatchSettings);
-    expect(dispatchSection?.content.props.managerName).toBe("Project owner");
-    expect(dispatchSection?.content.props.canManage).toBe(true);
-    expect(dispatchSection?.content.props.automationContent).toBeDefined();
-
-    const configureAgents = vi.fn();
-    const continueManualAssignment = vi.fn();
-    const unavailableState = ProjectDispatchSettings({
-      canManage: true,
-      managerName: "Project owner",
-      onConfigureAgents: configureAgents,
-      onContinueManualAssignment: continueManualAssignment,
-      translate: (_key, fallback) => fallback,
-    });
-    findByTestId(
-      unavailableState,
-      "collaboration-dispatch-configure-agents",
-    )?.props.onClick();
-    findByTestId(
-      unavailableState,
-      "collaboration-dispatch-continue-manual",
-    )?.props.onClick();
-    expect(configureAgents).toHaveBeenCalledOnce();
-    expect(continueManualAssignment).toHaveBeenCalledOnce();
-
-    dispatchSection?.content.props.onContinueManualAssignment();
-    expect(host.navigate).toHaveBeenLastCalledWith({
-      projectId: "project-1",
-      issueId: null,
-      view: "board",
-    });
-
-    const memberState = ProjectDispatchSettings({
-      canManage: false,
-      managerName: "Project owner",
-      onConfigureAgents: vi.fn(),
-      onContinueManualAssignment: vi.fn(),
-      translate: (_key, fallback) => fallback,
-    });
+    expect(sectionIds).toEqual([
+      "project",
+      "collaboration-participants",
+      "environments",
+      "automatic-processing",
+    ]);
+    expect(participantsSection?.content.type).toBe(
+      ProjectCollaborationParticipants,
+    );
     expect(
-      findByTestId(memberState, "collaboration-dispatch-configure-agents"),
-    ).toBeUndefined();
-    expect(
-      findByTestId(memberState, "collaboration-dispatch-continue-manual"),
+      findByType(
+        participantsSection?.content.props.groupsContent,
+        ProjectCollaborationGroups,
+      ),
     ).toBeDefined();
+    expect(automaticProcessingSection).toBeDefined();
+    expect(automaticProcessingSection?.content.type).toBe(
+      ProjectAutomaticProcessing,
+    );
+    expect(participantsSection?.content).not.toBe(
+      automaticProcessingSection?.content,
+    );
   });
 
-  it("keeps project files inside the shared settings module", () => {
+  it("orders collaboration participants as agents, project members and groups", () => {
+    const participants = CollaborationParticipantsTabs({
+      agentsContent: <div data-testid="agents-content" />,
+      agentsLabel: "智能体",
+      ariaLabel: "协作成员",
+      membersContent: <div data-testid="members-content" />,
+      membersLabel: "项目成员",
+      groupsContent: <div data-testid="groups-content" />,
+      groupsLabel: "协作小组",
+    });
+    const tabs = descendants(participants).filter(
+      (element) => element.props.role === "tab",
+    );
+
+    expect(tabs.map((tab) => tab.props["data-testid"])).toEqual([
+      "collaboration-participants-tab-agents",
+      "collaboration-participants-tab-members",
+      "collaboration-participants-tab-groups",
+    ]);
+    expect(tabs.map((tab) => tab.props.children)).toEqual([
+      "智能体",
+      "项目成员",
+      "协作小组",
+    ]);
+    expect(tabs.map((tab) => tab.props["aria-selected"])).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    expect(
+      findByTestId(participants, "collaboration-participants-panel-agents"),
+    ).toBeDefined();
+    expect(findByTestId(participants, "agents-content")).toBeDefined();
+    expect(findByTestId(participants, "members-content")).toBeUndefined();
+    expect(findByTestId(participants, "groups-content")).toBeUndefined();
+  });
+
+  it("mounts files as a top-level project view instead of a settings section", () => {
     const host = createHost(false, "home");
     host.location = {
       projectId: "project-1",
@@ -407,9 +439,13 @@ describe("CollaborationApp API boundary", () => {
     const filesSection = settingsShell?.props.sections.find(
       (section: { id: string }) => section.id === "files",
     );
+    const filesView = findByType(
+      shell?.props.slots.files,
+      CollaborationFilesAdapter,
+    );
 
-    expect(filesSection?.testId).toBe("collaboration-project-settings-files");
-    expect(filesSection?.content.type).toBe(CollaborationFilesAdapter);
+    expect(filesSection).toBeUndefined();
+    expect(filesView).toBeDefined();
   });
 
   it("passes runtime bindings and the host card renderer through the shared board", () => {
@@ -462,7 +498,7 @@ describe("CollaborationApp API boundary", () => {
     });
 
     const app = CollaborationApp({
-      api: {} as SharedWorkspaceApi,
+      api: createApi(),
       host,
       renderBoardIssueCard,
     });
@@ -471,6 +507,7 @@ describe("CollaborationApp API boundary", () => {
 
     expect(board?.props.taskBindings).toEqual([binding]);
     expect(board?.props.renderIssueCard).toBe(renderBoardIssueCard);
+    expect(board?.props.onOpenBoardSettings).toEqual(expect.any(Function));
   });
 
   it("passes the selected Issue task bindings to a custom detail renderer", () => {
@@ -530,7 +567,7 @@ describe("CollaborationApp API boundary", () => {
     const renderIssueDetail = vi.fn(() => null);
 
     CollaborationApp({
-      api: {} as SharedWorkspaceApi,
+      api: createApi(),
       host,
       renderIssueDetail,
     });
@@ -548,17 +585,16 @@ describe("CollaborationApp API boundary", () => {
       project: { access_role: "RestrictedAnalyst" },
       labels: {
         board: "Board",
+        table: "Table",
         files: "Files",
-        automation: "Automation",
         manage: "Manage",
       },
       testIds: {
         board: "board",
+        table: "table",
         files: "files",
-        automation: "automation",
         manage: "manage",
       },
-      automationSupported: true,
       extensions: [
         {
           id: "table",

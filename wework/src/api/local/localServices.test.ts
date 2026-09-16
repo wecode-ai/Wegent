@@ -4425,6 +4425,45 @@ describe('createLocalAppServices', () => {
     })
   })
 
+  test('uses the remote executor project identity for a local sidebar descriptor', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      workspaces: [
+        {
+          workspacePath: '/srv/project',
+          label: 'Remote project',
+          workspaceSource: 'remote',
+          remoteHostId: 'remote-device',
+          projectKey: 'wegent-remote:remote-device:%2Fsrv%2Fproject',
+          projectKind: 'remote',
+          projectSource: 'remote_project',
+          tasks: [],
+        },
+      ],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const response = await services.runtimeWorkApi?.listRuntimeWork()
+    const project = response?.projects[0]
+
+    expect(project?.project.id).toBe(project?.deviceWorkspaces[0].id)
+    expect(project?.project).toMatchObject({
+      key: 'wegent-remote:remote-device:%2Fsrv%2Fproject',
+      sidebarStateKey: 'wegent-remote:remote-device:%2Fsrv%2Fproject',
+      stateDeviceId: 'local-device',
+    })
+    expect(project?.deviceWorkspaces[0]).toMatchObject({
+      deviceId: 'remote-device',
+      workspacePath: '/srv/project',
+      workspaceSource: 'remote',
+      remoteHostId: 'remote-device',
+    })
+  })
+
   test('routes local project archive requests with decoded workspace path', async () => {
     const request = vi.fn().mockResolvedValue({
       accepted: true,

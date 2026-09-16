@@ -201,12 +201,17 @@ function workspaceTabIframe(
   tab: WorkspaceTab,
   wegentUrl: string | null | undefined
 ): { appKey: string; embeddedBrowserLabel?: string; src: string; title: string } | null {
-  const appId = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)?.[1]
+  const tabUrl = new URL(tab.contentRoute, window.location.origin)
+  const tabPath = stripAppBasePath(tabUrl.pathname)
+  const appId = tabPath.match(/^\/app\/([^/]+)/)?.[1]
   if (!appId) return null
   const app = resolveDshApp(appId)
   if (app?.mode === 'iframe') {
-    const src =
-      app.urlSource === 'cloud-web' ? resolveCloudAppUrl(wegentUrl, app.cloudPath) : app.url
+    const appPrefix = `/app/${appId}`
+    const requestedCloudPath = tabPath.slice(appPrefix.length)
+    const cloudPath = requestedCloudPath || app.cloudPath || ''
+    const destination = `${cloudPath}${tabUrl.search}`
+    const src = app.urlSource === 'cloud-web' ? resolveCloudAppUrl(wegentUrl, destination) : app.url
     return src ? { appKey: app.id, src, title: app.label } : null
   }
   const harnessApp = resolveRunningHarnessApp(appId)
@@ -222,10 +227,9 @@ function workspaceTabIframe(
 
 function resolveCloudAppUrl(
   wegentUrl: string | null | undefined,
-  cloudPath: string | undefined
+  destination: string | undefined
 ): string | null {
   if (!wegentUrl) return null
-  const destination = cloudPath
   if (!destination) return wegentUrl
 
   const url = new URL(wegentUrl)
@@ -233,7 +237,9 @@ function resolveCloudAppUrl(
     url.searchParams.set('redirect', destination)
     return url.toString()
   }
-  url.pathname = `${url.pathname.replace(/\/+$/, '')}${destination}`
+  const requested = new URL(destination, 'https://wework.invalid')
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}${requested.pathname}`
+  url.search = requested.search
   return url.toString()
 }
 
