@@ -107,12 +107,55 @@ async function loadRootExecutions(
     );
 }
 
+interface RootNavigationSnapshot {
+  workspaces: CollaborationWorkspace[];
+  projects: CollaborationProject[];
+  myWork: WorkspaceMyWorkItem[];
+  executions: CollaborationPlatformState["executions"];
+}
+
+function mergeByKey<T>(collections: T[][], keyFor: (item: T) => string): T[] {
+  const merged = new Map<string, T>();
+  for (const collection of collections) {
+    for (const item of collection) {
+      const key = keyFor(item);
+      if (!merged.has(key)) merged.set(key, item);
+    }
+  }
+  return [...merged.values()];
+}
+
+function mergeRootNavigationSnapshots(
+  snapshots: RootNavigationSnapshot[],
+): RootNavigationSnapshot {
+  return {
+    workspaces: mergeByKey(
+      snapshots.map((snapshot) => snapshot.workspaces),
+      (workspace) => workspace.id,
+    ),
+    projects: mergeByKey(
+      snapshots.map((snapshot) => snapshot.projects),
+      (project) => project.id,
+    ),
+    myWork: mergeByKey(
+      snapshots.map((snapshot) => snapshot.myWork),
+      (item) => item.id,
+    ),
+    executions: mergeByKey(
+      snapshots.map((snapshot) => snapshot.executions),
+      ({ project, execution }) => `${project.id}:${execution.id}`,
+    ),
+  };
+}
+
 export function useCollaborationPlatformController({
   api,
+  navigationApis,
   location,
   loadFailedMessage,
 }: {
   api: SharedWorkspaceApi;
+  navigationApis?: SharedWorkspaceApi[];
   location: CollaborationPlatformLocation;
   loadFailedMessage: string;
 }) {
@@ -153,39 +196,98 @@ export function useCollaborationPlatformController({
         Boolean(location.projectId),
       error: null,
     }));
-    try {
-      const [workspaces, navigationProjects] = await Promise.all([
-        api.workspaces.list(),
-        api.projects.list(),
-      ]);
-      if (revision !== loadRevisionRef.current) return;
-      if (!location.workspaceId) {
-        const [myWork, executions] = await Promise.all([
-          loadRootMyWork(api),
-          location.rootView === "runs"
-            ? loadRootExecutions(api, navigationProjects)
-            : Promise.resolve([]),
-        ]);
+    if (!location.workspaceId) {
+      const sources = navigationApis?.length ? navigationApis : [api];
+      const snapshots = sources.map<RootNavigationSnapshot>(() => ({
+        workspaces: [],
+        projects: [],
+        myWork: [],
+        executions: [],
+      }));
+      let successfulNavigationLoads = 0;
+      const publish = () => {
         if (revision !== loadRevisionRef.current) return;
+        const snapshot = mergeRootNavigationSnapshots(snapshots);
         setState((current) => ({
           ...current,
-          workspaces,
+          workspaces: snapshot.workspaces,
           workspace: null,
           workspaceNavigationContext: null,
-          navigationProjects,
-          projects: navigationProjects,
+          navigationProjects: snapshot.projects,
+          projects: snapshot.projects,
           projectIssues: {},
-          myWork,
-          executions,
+          myWork: snapshot.myWork,
+          executions: snapshot.executions,
           members: [],
           agents: [],
           collaborationGroups: [],
           executionEnvironments: [],
           resources: emptyResources,
           loading: false,
+          error: null,
         }));
-        return;
+      };
+      const updateSnapshot = (
+        index: number,
+        update: Partial<RootNavigationSnapshot>,
+      ) => {
+        if (revision !== loadRevisionRef.current) return;
+        snapshots[index] = {
+          ...snapshots[index],
+          ...update,
+        };
+        if (successfulNavigationLoads > 0) publish();
+      };
+      for (const [index, source] of sources.entries()) {
+        void loadRootMyWork(source).then((myWork) => {
+          updateSnapshot(index, { myWork });
+        });
       }
+      const results = await Promise.allSettled(
+        sources.flatMap((source, index) => {
+          const loads: Promise<void>[] = [
+            source.projects.list().then((projects) => {
+              if (revision !== loadRevisionRef.current) return;
+              successfulNavigationLoads += 1;
+              updateSnapshot(index, { projects });
+              if (location.rootView === "runs") {
+                void loadRootExecutions(source, projects).then((executions) => {
+                  updateSnapshot(index, { executions });
+                });
+              }
+            }),
+          ];
+          if (source.workspaces) {
+            loads.push(
+              source.workspaces.list().then((workspaces) => {
+                if (revision !== loadRevisionRef.current) return;
+                successfulNavigationLoads += 1;
+                updateSnapshot(index, { workspaces });
+              }),
+            );
+          }
+          return loads;
+        }),
+      );
+      if (
+        revision === loadRevisionRef.current &&
+        successfulNavigationLoads === 0 &&
+        results.every((result) => result.status === "rejected")
+      ) {
+        setState((current) => ({
+          ...current,
+          loading: false,
+          error: loadFailedMessage,
+        }));
+      }
+      return;
+    }
+    try {
+      const [workspaces, navigationProjects] = await Promise.all([
+        api.workspaces.list(),
+        api.projects.list(),
+      ]);
+      if (revision !== loadRevisionRef.current) return;
       if (location.projectId) {
         const workspace =
           workspaces.find(
@@ -292,6 +394,7 @@ export function useCollaborationPlatformController({
   }, [
     api,
     loadFailedMessage,
+    navigationApis,
     location.projectId,
     location.rootView,
     location.workspaceId,

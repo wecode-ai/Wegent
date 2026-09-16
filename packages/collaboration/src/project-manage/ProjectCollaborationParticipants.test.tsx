@@ -8,7 +8,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { CollaborationParticipantsTabs } from "./ProjectCollaborationParticipants";
+import {
+  CollaborationParticipantsTabs,
+  ProjectCollaborationParticipants,
+} from "./ProjectCollaborationParticipants";
 
 describe("CollaborationParticipantsTabs", () => {
   let container: HTMLDivElement;
@@ -89,5 +92,26 @@ describe("CollaborationParticipantsTabs", () => {
     await press(tab("groups"), "Home");
     expect(document.activeElement).toBe(tab("agents"));
     expect(tab("agents").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("uses the wide settings layout for collaboration resources", async () => {
+    await act(async () => {
+      root.render(
+        <ProjectCollaborationParticipants
+          agentsContent={<div>Agents content</div>}
+          groupsContent={<div>Groups content</div>}
+          membersContent={<div>Members content</div>}
+          translate={(_key, fallback) => fallback ?? ""}
+        />,
+      );
+    });
+
+    expect(
+      container
+        .querySelector(
+          '[data-testid="collaboration-project-participants-page"]',
+        )
+        ?.firstElementChild?.classList.contains("max-w-5xl"),
+    ).toBe(true);
   });
 });

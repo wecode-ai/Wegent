@@ -677,13 +677,16 @@ function PlatformHarness({
 
 function PlatformControllerHarness({
   api,
+  navigationApis,
   location = initialLocation,
 }: {
   api: SharedWorkspaceApi;
+  navigationApis?: SharedWorkspaceApi[];
   location?: CollaborationPlatformLocation;
 }) {
   const { state } = useCollaborationPlatformController({
     api,
+    navigationApis,
     location,
     loadFailedMessage: "加载协作空间失败",
   });
@@ -729,6 +732,89 @@ afterEach(async () => {
 });
 
 describe("CollaborationPlatformApp real component flow", () => {
+  it("renders completed navigation sources while another source is still pending", async () => {
+    const localWorkspace = {
+      ...workspace,
+      id: "local-workspace",
+      location: "local" as const,
+    };
+    const localProject = {
+      ...project,
+      id: "local-project",
+      workspace_id: localWorkspace.id,
+      project_store: "local" as const,
+    };
+    const cloudWorkspace = { ...workspace, id: "cloud-workspace" };
+    const cloudProject = {
+      ...project,
+      id: "cloud-project",
+      workspace_id: cloudWorkspace.id,
+    };
+    const { api: localApi } = createApi({
+      initialWorkspaces: [localWorkspace],
+      initialProjects: [localProject],
+    });
+    const { api: cloudApi } = createApi({
+      initialWorkspaces: [cloudWorkspace],
+      initialProjects: [cloudProject],
+    });
+    const cloudWorkspaces = deferred<CollaborationWorkspace[]>();
+    const cloudProjects = deferred<CollaborationProject[]>();
+    cloudApi.workspaces!.list = vi.fn(() => cloudWorkspaces.promise);
+    cloudApi.projects.list = vi.fn(() => cloudProjects.promise);
+
+    await render(
+      <PlatformControllerHarness
+        api={localApi}
+        navigationApis={[localApi, cloudApi]}
+      />,
+    );
+
+    expect(
+      JSON.parse(byTestId("platform-controller-state").textContent ?? "{}"),
+    ).toMatchObject({
+      loading: false,
+      error: null,
+      workspaceIds: [localWorkspace.id],
+      projectIds: [localProject.id],
+    });
+
+    cloudWorkspaces.resolve([cloudWorkspace]);
+    cloudProjects.resolve([cloudProject]);
+    await flush();
+
+    expect(
+      JSON.parse(byTestId("platform-controller-state").textContent ?? "{}"),
+    ).toMatchObject({
+      loading: false,
+      error: null,
+      workspaceIds: [localWorkspace.id, cloudWorkspace.id],
+      projectIds: [localProject.id, cloudProject.id],
+    });
+  });
+
+  it("keeps successful workspaces when projects from the same source fail", async () => {
+    const cloudWorkspace = { ...workspace, id: "cloud-workspace" };
+    const { api } = createApi({
+      initialWorkspaces: [cloudWorkspace],
+      initialProjects: [],
+    });
+    api.projects.list = vi
+      .fn()
+      .mockRejectedValue(new Error("projects offline"));
+
+    await render(<PlatformControllerHarness api={api} />);
+
+    expect(
+      JSON.parse(byTestId("platform-controller-state").textContent ?? "{}"),
+    ).toMatchObject({
+      loading: false,
+      error: null,
+      workspaceIds: [cloudWorkspace.id],
+      projectIds: [],
+    });
+  });
+
   it("keeps primary navigation data when root auxiliary data fails", async () => {
     const { api } = createApi();
     const listMyWork = vi

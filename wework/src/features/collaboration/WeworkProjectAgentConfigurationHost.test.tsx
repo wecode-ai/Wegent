@@ -134,14 +134,14 @@ describe('weworkProjectAgentConfigurationHost', () => {
     )
 
     await waitFor(() => expect(screen.getByText('Codex Review')).toBeInTheDocument())
-    expect(screen.queryByText('Claude Review')).not.toBeInTheDocument()
+    expect(screen.getByText('Claude Review')).toBeInTheDocument()
     expect(screen.getByTestId('wework-agent-resource-create')).toBeDisabled()
 
     fireEvent.change(screen.getByTestId('wework-agent-runtime'), {
       target: { value: 'ClaudeCode' },
     })
-    await waitFor(() => expect(screen.getByText('Claude Review')).toBeInTheDocument())
-    expect(screen.queryByText('Codex Review')).not.toBeInTheDocument()
+    expect(screen.getByText('Codex Review')).toBeInTheDocument()
+    expect(screen.getByText('Claude Review')).toBeInTheDocument()
 
     fireEvent.change(screen.getByTestId('wework-agent-resource-name'), {
       target: { value: 'review-agent' },

@@ -109,7 +109,11 @@ export function ProjectAgentConfiguration({
             project.project_store === "local"
               ? agent.location === "local"
               : agent.location !== "local";
-          if (matchesProjectLocation && agent.team_id) {
+          if (
+            matchesProjectLocation &&
+            agent.status === "available" &&
+            agent.team_id
+          ) {
             selectableAgents.set(agent.team_id, agent);
           }
         }

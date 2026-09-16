@@ -328,7 +328,7 @@ describe("ProjectAgentConfiguration", () => {
     expect(element("project-agent-config")).toBeTruthy();
   });
 
-  it("lists existing Agents even when their legacy runtime status is unavailable", async () => {
+  it("does not offer Agents that cannot execute for the current user", async () => {
     const { api } = createApi({
       workspaceAgents: [{ ...workspaceAgent, status: "unavailable" }],
     });
@@ -336,13 +336,12 @@ describe("ProjectAgentConfiguration", () => {
 
     await click("project-agent-add");
 
-    const selector = element("project-agent-wegent-team") as HTMLSelectElement;
     expect(
-      Array.from(selector.options).map((option) => option.textContent),
-    ).toContain("研发团队");
-    expect(
-      document.querySelector('[data-testid="project-agent-wegent-empty"]'),
+      document.querySelector('[data-testid="project-agent-wegent-team"]'),
     ).toBeNull();
+    expect(element("project-agent-wegent-empty").textContent).toContain(
+      "智能体",
+    );
   });
 
   it("shows configured Skill and MCP counts for executable Agents", async () => {
