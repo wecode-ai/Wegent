@@ -4,6 +4,7 @@
 """Focused contracts for task assignment, robot approval, and queue state."""
 
 import uuid
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -599,3 +600,34 @@ def test_my_work_uses_latest_execution_truth_instead_of_task_binding(
     assert row["execution_attempt_no"] == 2
     assert row["execution_last_event_seq"] == 17
     assert row["ai_state"]["status"] == "unknown"
+
+
+def test_my_work_limits_results_before_loading_item_details(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    base_time = datetime(2026, 1, 1)
+    item_ids = [f"LIMIT-{index:03d}" for index in range(105)]
+    test_db.add_all(
+        [
+            LoopItem(
+                id=item_id,
+                cloud_project_id=project.id,
+                title=item_id,
+                description="",
+                status="inbox",
+                created_by_user_id=test_user.id,
+                metadata_json={},
+                updated_at=base_time + timedelta(minutes=index),
+            )
+            for index, item_id in enumerate(item_ids)
+        ]
+    )
+    test_db.commit()
+
+    rows = loop_item_service.list_my_work(test_db, test_user.id)
+
+    assert len(rows) == 100
+    assert [row["id"] for row in rows] == list(reversed(item_ids[5:]))
+    with pytest.raises(ValueError, match="limit must be between 1 and 100"):
+        loop_item_service.list_my_work(test_db, test_user.id, limit=101)
