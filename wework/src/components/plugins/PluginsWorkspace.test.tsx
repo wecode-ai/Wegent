@@ -1621,6 +1621,27 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
   })
 
+  test('clears a stale disconnected notice when the device reconnects', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+    mockCodexAppServerInvoke({ backendConnected: false })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+    expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent(
+      '当前设备未连接到云端'
+    )
+
+    act(() => {
+      setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true })
+    })
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
+    )
+  })
+
   test('rechecks the device connection before confirming a cloud install', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     let backendConnected = true
@@ -1646,6 +1667,32 @@ describe('PluginsWorkspace', () => {
         .mocked(fetch)
         .mock.calls.some(([input]) => String(input).includes('/plugins/marketplace/101/install'))
     ).toBe(false)
+  })
+
+  test('uses the live executor device when plugin state has not loaded its device id', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockCodexAppServerInvoke({ backendConnected: true })
+    localExecutorMocks.ensureStarted.mockResolvedValue({
+      running: true,
+      ready: true,
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+
+    expect(await screen.findByTestId('install-plugin-dialog')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
+    expect(requestLocalExecutor).toHaveBeenCalledWith('executor.backend.status')
+
+    await userEvent.click(screen.getByTestId('install-plugin-dialog-confirm'))
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/marketplace/101/install?device_id=current-device',
+        expect.objectContaining({ method: 'POST' })
+      )
+    )
   })
 
   test('renders a Codex-style plugin marketplace page', async () => {

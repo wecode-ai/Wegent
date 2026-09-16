@@ -2,13 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import nullcontext
+from unittest.mock import AsyncMock, Mock
+
 import pytest
 
 from app.models.kind import Kind
-from app.schemas.device import DeviceType
+from app.schemas.device import DeviceCapabilitySyncResult, DeviceType
 from app.services.device.capability_sync_service import (
     DeviceCapabilitySyncError,
     DeviceCapabilitySyncService,
+    capability_snapshot,
 )
 from app.services.device.runtime_route import RuntimeRoute
 
@@ -213,7 +217,7 @@ async def test_build_desired_capabilities_keeps_disabled_plugins_installed(
         test_db, test_user.id, name="disabled", enabled=False
     )
 
-    service = DeviceCapabilitySyncService()
+    service = DeviceCapabilitySyncService(session_factory=lambda: nullcontext(test_db))
 
     payload = service.build_desired_capabilities(test_db, user_id=test_user.id)
 
@@ -260,7 +264,7 @@ async def test_sync_user_global_capabilities_replaces_all_online_devices(
         lambda: fake_sio,
     )
 
-    service = DeviceCapabilitySyncService()
+    service = DeviceCapabilitySyncService(session_factory=lambda: nullcontext(test_db))
 
     result = await service.sync_user_global_capabilities(
         test_db,
@@ -315,6 +319,160 @@ async def test_sync_user_global_capabilities_uses_cloud_socket_device_id(
 
     assert result.synced == 1
     assert fake_sio.calls[0]["to"] == "socket-cloud"
+
+
+@pytest.mark.anyio
+async def test_sync_latest_device_capabilities_retries_concurrent_install():
+    service = DeviceCapabilitySyncService()
+    old = {"mode": "replace", "skills": [], "plugins": [], "mcps": []}
+    latest = {
+        "mode": "replace",
+        "skills": [],
+        "plugins": [
+            {
+                "installed_plugin_id": 42,
+                "name": "product-design",
+                "marketplace": "wegent",
+                "download_path": "https://packages.example.com/first",
+            }
+        ],
+        "mcps": [],
+    }
+    load_payload = Mock(side_effect=[old, latest, latest])
+    dispatch = AsyncMock(
+        side_effect=[
+            DeviceCapabilitySyncResult(
+                device_id="device-1",
+                success=False,
+                acknowledged=True,
+                error="Plugin stale-plugin failed during package: unavailable",
+                plugins=[
+                    {
+                        "id": 7,
+                        "name": "stale-plugin",
+                        "status": "failed",
+                        "stage": "package",
+                        "error": "unavailable",
+                    }
+                ],
+            ),
+            DeviceCapabilitySyncResult(
+                device_id="device-1",
+                success=False,
+                acknowledged=True,
+                error="Plugin stale-plugin failed during package: unavailable",
+                plugins=[
+                    {
+                        "id": 42,
+                        "name": "product-design",
+                        "status": "synced",
+                    }
+                ],
+            ),
+        ]
+    )
+    service.sync_device_payload = dispatch
+
+    result = await service.sync_latest_device_capabilities(
+        user_id=7,
+        device_id="device-1",
+        load_payload=load_payload,
+    )
+
+    assert result.acknowledged is True
+    assert result.success is False
+    assert dispatch.await_count == 2
+    assert dispatch.await_args_list[0].kwargs["payload"] == old
+    assert dispatch.await_args_list[1].kwargs["payload"] == latest
+
+
+@pytest.mark.anyio
+async def test_sync_latest_device_capabilities_does_not_retry_transport_failure():
+    service = DeviceCapabilitySyncService()
+    payload = {"mode": "replace", "skills": [], "plugins": [], "mcps": []}
+    load_payload = Mock(side_effect=[payload, AssertionError("must not reload")])
+    dispatch = AsyncMock(
+        return_value=DeviceCapabilitySyncResult(
+            device_id="device-1",
+            success=False,
+            error="device is offline",
+        )
+    )
+    service.sync_device_payload = dispatch
+
+    result = await service.sync_latest_device_capabilities(
+        user_id=7,
+        device_id="device-1",
+        load_payload=load_payload,
+    )
+
+    assert result.acknowledged is False
+    assert result.success is False
+    assert dispatch.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_sync_latest_device_capabilities_stops_after_bounded_retries():
+    service = DeviceCapabilitySyncService()
+    payloads = [
+        {"mode": "replace", "plugins": [{"installed_plugin_id": index}]}
+        for index in range(1, 5)
+    ]
+    load_payload = Mock(side_effect=payloads)
+    dispatch = AsyncMock(
+        return_value=DeviceCapabilitySyncResult(
+            device_id="device-1",
+            success=True,
+            acknowledged=True,
+        )
+    )
+    service.sync_device_payload = dispatch
+
+    result = await service.sync_latest_device_capabilities(
+        user_id=7,
+        device_id="device-1",
+        load_payload=load_payload,
+    )
+
+    assert result.success is False
+    assert result.acknowledged is True
+    assert (
+        result.error == "Capability desired state kept changing during synchronization"
+    )
+    assert dispatch.await_count == 3
+    assert [call.kwargs["payload"] for call in dispatch.await_args_list] == payloads[:3]
+
+
+def test_capability_snapshot_ignores_rotating_download_urls():
+    first = {
+        "mode": "replace",
+        "skills": [],
+        "plugins": [
+            {
+                "installed_plugin_id": 42,
+                "name": "product-design",
+                "marketplace": "wegent",
+                "release_id": 3,
+                "download_path": "https://packages.example.com/first",
+                "download_url_expires_at": "2026-09-16T10:00:00Z",
+            }
+        ],
+        "mcps": [],
+    }
+    second = {
+        **first,
+        "plugins": [
+            {
+                **first["plugins"][0],
+                "download_path": "https://packages.example.com/second",
+                "download_url_expires_at": "2026-09-16T10:05:00Z",
+            }
+        ],
+    }
+
+    assert capability_snapshot(first) == capability_snapshot(second)
+    second["plugins"][0]["release_id"] = 4
+    assert capability_snapshot(first) != capability_snapshot(second)
 
 
 @pytest.mark.anyio

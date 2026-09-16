@@ -315,6 +315,7 @@ class DeviceCapabilitySyncResult(BaseModel):
 
     device_id: str
     success: bool
+    acknowledged: bool = Field(default=False, exclude=True)
     error: Optional[str] = None
     skills: List[DeviceCapabilityItemResult] = Field(default_factory=list)
     plugins: List[DeviceCapabilityItemResult] = Field(default_factory=list)

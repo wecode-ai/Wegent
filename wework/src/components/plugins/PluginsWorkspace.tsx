@@ -29,6 +29,7 @@ import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAut
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { ensureLocalExecutorStarted, getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
 import {
   refreshLocalExecutorCloudConnectionStatus,
   useLocalExecutorCloudConnectionStatus,
@@ -1773,9 +1774,47 @@ export function PluginsWorkspace({
     })
   }
 
-  const hasLiveRuntimeCloudConnection = async () => {
-    if (!cloudApiBaseUrl || !currentDeviceId) return false
-    return refreshLocalExecutorCloudConnectionStatus(cloudApiBaseUrl)
+  const showDeviceIdentityUnavailableNotice = (itemId: string | number) => {
+    setPluginOperationNotice({
+      id: `install-device-identity-unavailable-${itemId}`,
+      kind: 'error',
+      message: t(
+        'workbench.plugins_install_device_identity_unavailable',
+        '当前设备信息尚未就绪，暂时无法安装插件。请稍后重试。'
+      ),
+    })
+  }
+
+  const rememberCurrentDeviceId = (deviceId: string) => {
+    const normalizedDeviceId = deviceId.trim()
+    if (!normalizedDeviceId || currentDeviceIdRef.current === normalizedDeviceId) {
+      return normalizedDeviceId
+    }
+    currentDeviceIdRef.current = normalizedDeviceId
+    setCurrentDeviceId(normalizedDeviceId)
+    return normalizedDeviceId
+  }
+
+  const resolveLiveRuntimeCloudConnection = async () => {
+    if (!cloudApiBaseUrl) return { connected: false, deviceId: '' }
+    const connected = await refreshLocalExecutorCloudConnectionStatus(cloudApiBaseUrl)
+    if (!connected) return { connected: false, deviceId: '' }
+
+    const knownDeviceId =
+      currentDeviceIdRef.current.trim() || getKnownLocalExecutorDeviceId()?.trim() || ''
+    if (knownDeviceId) {
+      return { connected: true, deviceId: rememberCurrentDeviceId(knownDeviceId) }
+    }
+
+    try {
+      const executor = await ensureLocalExecutorStarted()
+      return {
+        connected: true,
+        deviceId: rememberCurrentDeviceId(executor.deviceId ?? ''),
+      }
+    } catch {
+      return { connected: true, deviceId: '' }
+    }
   }
 
   const installMarketplacePlugin = async (
@@ -1816,9 +1855,18 @@ export function PluginsWorkspace({
       return
     }
 
-    if (needsCloudPackagePush && !(await hasLiveRuntimeCloudConnection())) {
-      showDeviceDisconnectedNotice(item.id)
-      return
+    let targetDeviceId = currentDeviceIdRef.current
+    if (needsCloudPackagePush) {
+      const liveConnection = await resolveLiveRuntimeCloudConnection()
+      if (!liveConnection.connected) {
+        showDeviceDisconnectedNotice(item.id)
+        return
+      }
+      if (!liveConnection.deviceId) {
+        showDeviceIdentityUnavailableNotice(item.id)
+        return
+      }
+      targetDeviceId = liveConnection.deviceId
     }
 
     if (alreadyInstalled) {
@@ -1833,10 +1881,10 @@ export function PluginsWorkspace({
         }
         setInstallingMarketplacePluginIds(previous => new Set(previous).add(item.id))
         pluginApi
-          .updateMarketplacePlugin(item.installedPluginId, item.latestReleaseId, currentDeviceId)
+          .updateMarketplacePlugin(item.installedPluginId, item.latestReleaseId, targetDeviceId)
           .then(plugin => {
             const next = toInstalledPluginItem(plugin)
-            const device = currentDeviceInstallation(plugin, currentDeviceId)
+            const device = currentDeviceInstallation(plugin, targetDeviceId)
             setInstalledPlugins(previous =>
               previous.map(candidate =>
                 String(candidate.id) === String(next.id) ? next : candidate
@@ -1988,27 +2036,44 @@ export function PluginsWorkspace({
             preparedItem.id,
             localMarketplaceId!
           )
-          return { plugin, preparedItem }
+          return {
+            plugin,
+            preparedItem,
+            targetDeviceId: currentDeviceIdRef.current,
+          }
         }
-        if (!(await hasLiveRuntimeCloudConnection())) {
+        const liveConnection = await resolveLiveRuntimeCloudConnection()
+        if (!liveConnection.connected) {
           throw Object.assign(new Error('Current device is disconnected'), {
             code: 'PLUGIN_DEVICE_DISCONNECTED',
           })
         }
-        const response = await pluginApi.installMarketplacePlugin(preparedItem.id, currentDeviceId)
-        return { plugin: response.plugin, preparedItem }
+        if (!liveConnection.deviceId) {
+          throw Object.assign(new Error('Current device identity is unavailable'), {
+            code: 'PLUGIN_DEVICE_ID_UNAVAILABLE',
+          })
+        }
+        const response = await pluginApi.installMarketplacePlugin(
+          preparedItem.id,
+          liveConnection.deviceId
+        )
+        return {
+          plugin: response.plugin,
+          preparedItem,
+          targetDeviceId: liveConnection.deviceId,
+        }
       })
-      .then(async ({ plugin, preparedItem }) => {
+      .then(async ({ plugin, preparedItem, targetDeviceId }) => {
         await ensureLocalConnectorsAfterInstall(preparedItem, plugin)
-        return plugin
+        return { plugin, targetDeviceId }
       })
 
     request
-      .then(plugin => {
+      .then(({ plugin, targetDeviceId }) => {
         const installed = toInstalledPluginItem(plugin)
         const deviceInstallation = installFromLocal
           ? null
-          : currentDeviceInstallation(plugin, currentDeviceId)
+          : currentDeviceInstallation(plugin, targetDeviceId)
         const deviceState = deviceInstallation?.state
         const installedOnCurrentDevice =
           installFromLocal ||
@@ -2115,6 +2180,11 @@ export function PluginsWorkspace({
         if (Reflect.get(error as object, 'code') === 'PLUGIN_DEVICE_DISCONNECTED') {
           setPluginMarketplaceState(previous => ({ ...previous, error: null }))
           showDeviceDisconnectedNotice(item.id)
+          return
+        }
+        if (Reflect.get(error as object, 'code') === 'PLUGIN_DEVICE_ID_UNAVAILABLE') {
+          setPluginMarketplaceState(previous => ({ ...previous, error: null }))
+          showDeviceIdentityUnavailableNotice(item.id)
           return
         }
         const rawErrorMessage = getErrorMessage(
@@ -4098,6 +4168,13 @@ export function PluginsWorkspace({
     }, 4_000)
     return () => window.clearTimeout(timeoutId)
   }, [pluginOperationNotice])
+
+  useEffect(() => {
+    if (!deviceCloudConnected) return
+    setPluginOperationNotice(current =>
+      current?.id.startsWith('install-device-disconnected-') ? null : current
+    )
+  }, [deviceCloudConnected])
 
   const pluginShareDialog = pluginShareState ? (
     <PluginShareDialog
