@@ -21,7 +21,6 @@ swap an explicit failure rather than a silent quality regression.
 
 import json
 import logging
-import math
 from typing import Any, Callable, ClassVar, Dict, List, Optional, Sequence
 
 from llama_index.core.schema import BaseNode
@@ -35,7 +34,6 @@ from knowledge_engine.embedding.vectors import (
     read_model_name,
     validate_vectors,
 )
-from knowledge_engine.retrieval.filters import filter_chunk_records
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import (
     DISPLAY_TEXT_METADATA_KEY,
@@ -49,10 +47,15 @@ from knowledge_engine.storage.errors import (
     StorageBackendError,
     UnsupportedStorageCapabilityError,
 )
+from knowledge_engine.storage.milvus_cleanup import MilvusCleanup
 from knowledge_engine.storage.milvus_filters import compile_metadata_conditions
+from knowledge_engine.storage.milvus_hybrid import (
+    fuse_hybrid_hits,
+    keyword_relevance_score,
+    resolve_hybrid_weights,
+)
 from knowledge_engine.storage.milvus_native import (
     ATTEMPT_ID_FIELD,
-    CHUNK_FIELDS_FOR_FILTERING,
     CHUNK_INDEX_FIELD,
     CREATED_AT_FIELD,
     DENSE_VECTOR_FIELD,
@@ -76,77 +79,19 @@ from knowledge_engine.storage.milvus_native import (
     sanitize_filter_value,
 )
 from knowledge_engine.storage.milvus_parent_store import MilvusParentStore
+from knowledge_engine.storage.milvus_rows import (
+    MAX_READ_LIMIT,
+    MilvusRowReader,
+    row_metadata,
+)
 from shared.models import RetrievalScope
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 20
 DEFAULT_SCORE_THRESHOLD = 0.7
-MAX_QUERY_LIMIT = 10000
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_ATTEMPT_PREFIX = "gen"
-DEFAULT_VECTOR_WEIGHT = 0.7
-DEFAULT_KEYWORD_WEIGHT = 0.3
-
-
-def resolve_hybrid_weights(retrieval_setting: Dict[str, Any]) -> tuple[float, float]:
-    """Resolve the configured vector/keyword weights into a normalized pair.
-
-    Mirrors the Elasticsearch hybrid contract: the weights are shares of one
-    fusion, so both configured weights are normalized to sum to one, a lone
-    weight keeps its own share and the other branch takes the remainder, and an
-    absent pair falls back to the product default 0.7/0.3. Values that cannot
-    describe a share fail explicitly instead of silently switching the mode.
-    """
-    vector_weight = _hybrid_weight("vector_weight", retrieval_setting)
-    keyword_weight = _hybrid_weight("keyword_weight", retrieval_setting)
-
-    if vector_weight is not None and keyword_weight is not None:
-        total = vector_weight + keyword_weight
-        if total <= 0.0:
-            raise ValueError(
-                "hybrid retrieval requires a positive vector_weight or "
-                "keyword_weight; both are zero."
-            )
-        return vector_weight / total, keyword_weight / total
-
-    if vector_weight is not None:
-        if vector_weight > 1.0:
-            raise ValueError("hybrid retrieval requires vector_weight <= 1.")
-        return vector_weight, 1.0 - vector_weight
-
-    if keyword_weight is not None:
-        if keyword_weight > 1.0:
-            raise ValueError("hybrid retrieval requires keyword_weight <= 1.")
-        return 1.0 - keyword_weight, keyword_weight
-
-    return DEFAULT_VECTOR_WEIGHT, DEFAULT_KEYWORD_WEIGHT
-
-
-def _hybrid_weight(name: str, retrieval_setting: Dict[str, Any]) -> Optional[float]:
-    raw_value = retrieval_setting.get(name)
-    if raw_value is None:
-        return None
-    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
-        raise ValueError(f"hybrid retrieval requires a numeric {name}.")
-    value = float(raw_value)
-    if not math.isfinite(value):
-        raise ValueError(f"hybrid retrieval requires a finite {name}.")
-    if value < 0.0:
-        raise ValueError(f"hybrid retrieval requires a non-negative {name}.")
-    return value
-
-
-def keyword_relevance_score(raw_score: float) -> float:
-    """Map a non-negative BM25 score onto the shared 0..1 relevance scale.
-
-    The mapping is fixed and monotonic (``score / (1 + score)``) instead of
-    being derived from the candidate set, so the same document keeps the same
-    score regardless of which other documents matched.
-    """
-    if not math.isfinite(raw_score) or raw_score <= 0.0:
-        return 0.0
-    return raw_score / (1.0 + raw_score)
 
 
 class MilvusBackend(BaseStorageBackend):
@@ -190,6 +135,18 @@ class MilvusBackend(BaseStorageBackend):
             store=self._store,
             collection_name_for=self.get_parent_store_name,
             display_text_for=self.get_node_display_text,
+        )
+        self._reader = MilvusRowReader(
+            store_for=lambda: self._store,
+            collection_name_for=self.get_index_name,
+            missing_index_for=self._index_is_absent,
+        )
+        self._cleanup = MilvusCleanup(
+            store_for=lambda: self._store,
+            collection_name_for=self.get_index_name,
+            parent_collection_name_for=self.get_parent_store_name,
+            parent_delete=self.delete_parent_nodes,
+            ensure_can_drop_physical_index=self._ensure_can_drop_physical_index,
         )
 
     def _parse_db_name_from_url(self, url: str) -> tuple[str, str]:
@@ -558,7 +515,9 @@ class MilvusBackend(BaseStorageBackend):
         normalized vector/keyword weights. Every mode applies the same
         knowledge base, document and metadata filters inside the database
         before ``top_k``, and compares the resulting score with ``>=`` against
-        ``score_threshold``.
+        ``score_threshold``. The score each mode reports is the score the
+        threshold compares, so a caller can reason about a returned record
+        from its score alone.
         """
         retrieval_mode = str(retrieval_setting.get("retrieval_mode") or "vector")
         if retrieval_mode not in self.SUPPORTED_RETRIEVAL_METHODS:
@@ -712,16 +671,8 @@ class MilvusBackend(BaseStorageBackend):
 
         Both routes are requested with the same knowledge base, document,
         metadata and publication filter, so hybrid never widens what the
-        caller may read. Each route contributes its raw database score through
-        its own fixed monotonic mapping and the two mapped values are combined
-        with the normalized weights.
-
-        The fusion deliberately avoids the server-side weighted ranker. On the
-        verified Milvus 2.5.4 + pymilvus 2.6.3 combination that ranker
-        min-max normalizes each route against its own candidate set, so the
-        same row scored differently when only ``top_k`` changed (measured
-        0.6643 with ``top_k=5`` and 0.5648 with the wider candidate set for the
-        same row and weights). A fixed mapping keeps the score reproducible.
+        caller may read. ``milvus_hybrid`` owns the scoring contract and why
+        the fusion is computed here instead of by the server-side ranker.
         """
         query_vector = prepare_query_vector(embed_model, dense_query)
         with self._store.client() as client:
@@ -766,57 +717,15 @@ class MilvusBackend(BaseStorageBackend):
         score_threshold: float,
         top_k: int,
     ) -> Dict:
-        """Combine the two routes' raw scores with a fixed mapping.
-
-        A row keeps the same fused score no matter which other rows matched:
-        the cosine share uses the fixed ``(1 + cos) / 2`` mapping and the BM25
-        share reuses the keyword mode's fixed ``s / (1 + s)`` mapping. A row
-        both routes recalled the row reports the sum of both shares, and a row
-        that only one route recalled keeps that route's share alone.
-
-        The threshold keeps cutting the fused relevance instead of the reported
-        score: a lone-route hit is a quality decision, and the configured weight
-        must not silently become a quality cap that the default 0.7 threshold
-        then rejects. Reporting the weighted fusion keeps the weights visible in
-        the score and in the ordering.
-        """
-        fused: Dict[Any, tuple[float, float]] = {}
-        evidence: Dict[Any, Dict[str, Any]] = {}
-        for hits, mapper, weight in (
-            (dense_hits, self._dense_relevance_score, vector_weight),
-            (keyword_hits, keyword_relevance_score, keyword_weight),
-        ):
-            for hit in hits:
-                mapped = mapper(float(hit.get("__score__", 0.0)))
-                row_id = hit.get(ID_FIELD)
-                evidence.setdefault(row_id, hit)
-                weighted, relevance = fused.get(row_id, (0.0, 0.0))
-                fused[row_id] = (weighted + weight * mapped, relevance + mapped)
-
-        ranked = sorted(fused.items(), key=lambda entry: entry[1][0], reverse=True)[
-            :top_k
-        ]
-        hits = [evidence[row_id] for row_id, _ in ranked]
-        scores = {row_id: weighted for row_id, (weighted, _) in ranked}
-        threshold_scores = {row_id: relevance for row_id, (_, relevance) in ranked}
-        return self._process_hits(
-            hits,
-            score_threshold,
-            score_lookup=scores,
-            threshold_lookup=threshold_scores,
+        """Fuse both routes and cut the fusion on the existing threshold field."""
+        hits, scores = fuse_hybrid_hits(
+            dense_hits=dense_hits,
+            keyword_hits=keyword_hits,
+            vector_weight=vector_weight,
+            keyword_weight=keyword_weight,
+            top_k=top_k,
         )
-
-    @staticmethod
-    def _dense_relevance_score(raw_score: float) -> float:
-        """Map a raw COSINE score onto the shared 0..1 relevance scale.
-
-        The mapping is fixed and monotonic (``(1 + cos) / 2``) instead of
-        being derived from the candidate set. Pure vector retrieval keeps the
-        raw cosine score; only the hybrid fusion needs a bounded share.
-        """
-        if not math.isfinite(raw_score):
-            return 0.0
-        return min(1.0, max(0.0, (1.0 + raw_score) / 2.0))
+        return self._process_hits(hits, score_threshold, score_lookup=scores)
 
     def _keyword_retrieve(
         self,
@@ -868,16 +777,15 @@ class MilvusBackend(BaseStorageBackend):
         *,
         score_mapper: Optional[Callable[[float], float]] = None,
         score_lookup: Optional[Dict[Any, float]] = None,
-        threshold_lookup: Optional[Dict[Any, float]] = None,
     ) -> Dict:
         records = []
         for hit in hits:
             score = self._hit_score(
                 hit, score_mapper=score_mapper, score_lookup=score_lookup
             )
-            if self._threshold_score(hit, score, threshold_lookup) < score_threshold:
+            if score < score_threshold:
                 continue
-            metadata = self._row_metadata(hit)
+            metadata = row_metadata(hit)
             records.append(
                 {
                     "content": hit.get(DISPLAY_TEXT_FIELD)
@@ -904,219 +812,29 @@ class MilvusBackend(BaseStorageBackend):
         raw_score = float(hit.get("__score__", 0.0))
         return score_mapper(raw_score) if score_mapper else raw_score
 
-    @staticmethod
-    def _threshold_score(
-        hit: Dict[str, Any],
-        reported_score: float,
-        threshold_lookup: Optional[Dict[Any, float]],
-    ) -> float:
-        """Score the threshold compares against.
-
-        Only the hybrid fusion separates the reported score from the gated
-        score: every other mode gates on the value it reports.
-        """
-        if threshold_lookup is None:
-            return reported_score
-        return float(threshold_lookup.get(hit.get(ID_FIELD), 0.0))
-
-    def _row_metadata(self, hit: Dict[str, Any]) -> Dict[str, Any]:
-        raw = hit.get(METADATA_FIELD)
-        if raw is None:
-            metadata: Dict[str, Any] = {}
-        elif isinstance(raw, dict):
-            metadata = dict(raw)
-        else:
-            raise StorageBackendError(
-                "Stored Milvus metadata is not a JSON object.",
-                details={"row_id": hit.get(ID_FIELD)},
-            )
-        for field in CHUNK_FIELDS_FOR_FILTERING:
-            if field in hit:
-                metadata.setdefault(field, hit[field])
-        if RETRIEVAL_TEXT_FIELD in hit:
-            metadata.setdefault(RETRIEVAL_TEXT_FIELD, hit[RETRIEVAL_TEXT_FIELD])
-        if DISPLAY_TEXT_FIELD in hit:
-            metadata.setdefault(DISPLAY_TEXT_FIELD, hit[DISPLAY_TEXT_FIELD])
-        return metadata
-
     def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """Delete one document; a missing document is an idempotent no-op."""
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        filter_expr = build_scope_filter(
-            knowledge_id=knowledge_id,
-            doc_refs=[doc_ref],
-            published=False,
-        )
-        deleted_chunks = self._delete_verified(collection_name, filter_expr)
-        self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
-        return {
-            "doc_ref": doc_ref,
-            "knowledge_id": knowledge_id,
-            "deleted_chunks": deleted_chunks,
-            "status": "deleted",
-        }
-
-    def _delete_verified(
-        self,
-        collection_name: str,
-        filter_expr: str,
-        *,
-        require_bound: bool = True,
-    ) -> int:
-        with self._store.client() as client:
-            if not self._store.has_collection(client, collection_name):
-                return 0
-            if require_bound:
-                # The parent sidecar is not part of the retrieval contract.
-                self._store.require_bound(client, collection_name)
-            deleted = self._store.count_rows(client, collection_name, filter_expr)
-            self._store.delete_rows(client, collection_name, filter_expr)
-        with self._store.client() as reader:
-            remaining = self._store.count_rows(reader, collection_name, filter_expr)
-        if remaining:
-            raise StorageBackendError(
-                f"Milvus delete verification failed: {remaining} rows remain.",
-                details={"collection_name": collection_name, "remaining": remaining},
-            )
-        return deleted
+        return self._cleanup.delete_document(knowledge_id, doc_ref, **kwargs)
 
     def delete_knowledge(self, knowledge_id: str, **kwargs) -> Dict:
         """Delete every chunk and parent node of one knowledge base."""
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        parent_collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        scope_filter = build_scope_filter(knowledge_id=knowledge_id, published=False)
-        deleted_chunks = self._delete_verified(collection_name, scope_filter)
-        deleted_parent_nodes = self._delete_verified(
-            parent_collection_name, scope_filter, require_bound=False
-        )
-        return {
-            "knowledge_id": knowledge_id,
-            "deleted_chunks": deleted_chunks,
-            "deleted_parent_nodes": deleted_parent_nodes,
-            "status": "deleted",
-        }
+        return self._cleanup.delete_knowledge(knowledge_id, **kwargs)
 
     def drop_knowledge_index(self, knowledge_id: str, **kwargs) -> Dict:
         """Physically drop the backing collection for a dedicated KB strategy."""
-        self._ensure_can_drop_physical_index()
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        parent_collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        dropped_parent_collection = False
-
-        with self._store.client() as client:
-            collection_exists = self._store.has_collection(client, collection_name)
-            if collection_exists:
-                self._store.require_bound(client, collection_name)
-            parent_exists = self._store.has_collection(client, parent_collection_name)
-            if collection_exists:
-                client.drop_collection(collection_name=collection_name)
-            if parent_exists:
-                client.drop_collection(collection_name=parent_collection_name)
-                dropped_parent_collection = True
-            self._drop_binding(client, collection_name)
-
-        return {
-            "knowledge_id": knowledge_id,
-            "collection_name": collection_name,
-            "dropped_parent_collection": dropped_parent_collection,
-            "status": "dropped",
-        }
-
-    def _drop_binding(self, client: MilvusClient, collection_name: str) -> None:
-        from knowledge_engine.storage.milvus_native import INDEX_BINDING_COLLECTION
-
-        if not client.has_collection(INDEX_BINDING_COLLECTION):
-            return
-        client.delete(
-            collection_name=INDEX_BINDING_COLLECTION,
-            filter=(f'collection_name == "{sanitize_filter_value(collection_name)}"'),
-        )
-        client.flush(INDEX_BINDING_COLLECTION)
+        return self._cleanup.drop_knowledge_index(knowledge_id, **kwargs)
 
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """Read the published chunks of one document in stable order."""
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        filter_expr = build_scope_filter(
-            knowledge_id=knowledge_id,
-            doc_refs=[doc_ref],
-        )
-        rows = self._read_rows(collection_name, filter_expr, limit=MAX_QUERY_LIMIT)
-
-        if not rows:
-            raise ValueError(f"Document {doc_ref} not found")
-
-        chunks = [
-            {
-                "chunk_index": int(row.get(CHUNK_INDEX_FIELD) or 0),
-                "content": row.get(DISPLAY_TEXT_FIELD) or "",
-                "metadata": self._row_metadata(row),
-            }
-            for row in rows
-        ]
-        chunks.sort(key=lambda chunk: chunk["chunk_index"])
-        return {
-            "doc_ref": doc_ref,
-            "knowledge_id": knowledge_id,
-            "source_file": rows[0].get(SOURCE_FILE_FIELD),
-            "chunk_count": len(chunks),
-            "chunks": chunks,
-        }
+        return self._reader.get_document(knowledge_id, doc_ref, **kwargs)
 
     def list_documents(
         self, knowledge_id: str, page: int = 1, page_size: int = 20, **kwargs
     ) -> Dict:
         """Aggregate published chunks into a page of documents."""
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        filter_expr = build_scope_filter(knowledge_id=knowledge_id)
-        rows = self._read_rows(
-            collection_name,
-            filter_expr,
-            output_fields=[
-                DOC_REF_FIELD,
-                SOURCE_FILE_FIELD,
-                CREATED_AT_FIELD,
-                CHUNK_INDEX_FIELD,
-            ],
-            limit=MAX_QUERY_LIMIT,
+        return self._reader.list_documents(
+            knowledge_id, page=page, page_size=page_size, **kwargs
         )
-
-        if len(rows) >= MAX_QUERY_LIMIT:
-            logger.warning(
-                "[Milvus] Knowledge base %s has >= %d chunks; document listing "
-                "may be incomplete.",
-                knowledge_id,
-                MAX_QUERY_LIMIT,
-            )
-
-        documents: Dict[str, Dict[str, Any]] = {}
-        for row in rows:
-            doc_ref = row.get(DOC_REF_FIELD)
-            if not doc_ref:
-                continue
-            document = documents.setdefault(
-                doc_ref,
-                {
-                    "doc_ref": doc_ref,
-                    "source_file": row.get(SOURCE_FILE_FIELD),
-                    "chunk_count": 0,
-                    "created_at": row.get(CREATED_AT_FIELD),
-                },
-            )
-            document["chunk_count"] += 1
-
-        ordered = sorted(
-            documents.values(),
-            key=lambda document: document.get("created_at") or "",
-            reverse=True,
-        )
-        start = (page - 1) * page_size
-        return {
-            "documents": ordered[start : start + page_size],
-            "total": len(ordered),
-            "page": page,
-            "page_size": page_size,
-            "knowledge_id": knowledge_id,
-        }
 
     def test_connection(self) -> bool:
         """Report whether the configured Milvus service is reachable."""
@@ -1131,48 +849,17 @@ class MilvusBackend(BaseStorageBackend):
     def get_all_chunks(
         self,
         knowledge_id: str,
-        max_chunks: int = MAX_QUERY_LIMIT,
+        max_chunks: int = MAX_READ_LIMIT,
         metadata_condition: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         """Read published chunks for direct injection in stable order."""
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        filter_expr = build_scope_filter(knowledge_id=knowledge_id)
-        rows = self._read_rows(collection_name, filter_expr, limit=max_chunks)
-
-        chunks = [
-            {
-                "content": row.get(DISPLAY_TEXT_FIELD) or "",
-                "title": row.get(SOURCE_FILE_FIELD) or "",
-                "chunk_id": int(row.get(CHUNK_INDEX_FIELD) or 0),
-                "doc_ref": row.get(DOC_REF_FIELD) or "",
-                "metadata": self._row_metadata(row),
-            }
-            for row in rows
-        ]
-        chunks.sort(key=lambda chunk: (chunk["doc_ref"], chunk["chunk_id"]))
-        filtered = filter_chunk_records(chunks, metadata_condition)
-        return filtered[:max_chunks]
-
-    def _read_rows(
-        self,
-        collection_name: str,
-        filter_expr: str,
-        *,
-        limit: int,
-        output_fields: Optional[Sequence[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Read published rows without ever creating or adopting a collection."""
-        with self._store.client() as client:
-            if self._read_bound_index(client, collection_name) is None:
-                return []
-            return self._store.query_rows(
-                client,
-                collection_name,
-                filter_expr,
-                output_fields=output_fields,
-                limit=limit,
-            )
+        return self._reader.get_all_chunks(
+            knowledge_id,
+            max_chunks=max_chunks,
+            metadata_condition=metadata_condition,
+            **kwargs,
+        )
 
     def _read_bound_index(
         self, client: MilvusClient, collection_name: str
@@ -1216,6 +903,10 @@ class MilvusBackend(BaseStorageBackend):
                 },
             )
         return binding
+
+    def _index_is_absent(self, client: MilvusClient, collection_name: str) -> bool:
+        """True when a read may answer empty because the KB was never indexed."""
+        return self._read_bound_index(client, collection_name) is None
 
     def delete_parent_nodes(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
         return self._parent_store.delete(knowledge_id, doc_ref, **kwargs)

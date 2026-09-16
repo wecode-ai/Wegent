@@ -881,8 +881,8 @@ def test_hybrid_retrieve_weights_the_two_contributions(
         ]
 
 
-def test_hybrid_threshold_cuts_the_fused_relevance_not_the_weighted_share():
-    """A lone-route hit passes on its own quality, not on the weight cap."""
+def test_hybrid_threshold_cuts_the_reported_fusion_score():
+    """The threshold compares exactly the score the caller receives."""
     backend = _backend()
     store = FakeStore(
         sparse_hits=[
@@ -898,25 +898,64 @@ def test_hybrid_threshold_cuts_the_fused_relevance_not_the_weighted_share():
         "keyword_weight": 0.3,
     }
 
-    below_both = backend.retrieve(
+    above_both = backend.retrieve(
         knowledge_id="1",
         query="q",
         embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={**settings, "score_threshold": 0.9},
+        retrieval_setting={**settings, "score_threshold": 0.05},
     )
     between = backend.retrieve(
         knowledge_id="1",
         query="q",
         embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={**settings, "score_threshold": 0.5},
+        retrieval_setting={**settings, "score_threshold": 0.3},
+    )
+    below_both = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={**settings, "score_threshold": 0.7},
     )
 
-    # Dense relevance 0.875 and keyword relevance 1/3: the weighted shares are
-    # 0.6125 and 0.1, so a 0.5 cut on the weighted share would keep neither.
-    assert below_both == {"records": []}
+    # Reported fusion scores: dense 0.7 * (1 + 0.75) / 2 = 0.6125, keyword
+    # 0.3 * 0.5 / 1.5 = 0.1. The cut is that same score, so 0.05 keeps both,
+    # 0.3 keeps the dense row only and 0.7 keeps neither.
+    assert [record["content"] for record in above_both["records"]] == [
+        "dense 偏好",
+        "keyword 偏好",
+    ]
     assert [record["content"] for record in between["records"]] == ["dense 偏好"]
-    # The reported score still shows the weighted contribution.
     assert between["records"][0]["score"] == pytest.approx(0.7 * 0.875)
+    assert below_both == {"records": []}
+
+
+def test_hybrid_threshold_keeps_a_score_equal_to_the_cut():
+    """The boundary is inclusive, exactly like the other retrieval modes."""
+    backend = _backend()
+    store = FakeStore(
+        sparse_hits=[
+            _hybrid_hit("keyword-row", "43", display="keyword 偏好", score=0.5)
+        ],
+        rows=[_hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75)],
+    )
+    backend._store = store
+    fusion_score = 0.7 * 0.875
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={
+            "retrieval_mode": "hybrid",
+            "top_k": 5,
+            "vector_weight": 0.7,
+            "keyword_weight": 0.3,
+            "score_threshold": fusion_score,
+        },
+    )
+
+    assert [record["content"] for record in result["records"]] == ["dense 偏好"]
+    assert result["records"][0]["score"] == pytest.approx(fusion_score)
 
 
 @pytest.mark.parametrize(

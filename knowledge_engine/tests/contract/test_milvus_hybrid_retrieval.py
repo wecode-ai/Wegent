@@ -346,29 +346,44 @@ def test_single_weight_takes_effect_and_pairs_with_its_complement(
     assert high < low, "the larger keyword share must move this row"
 
 
-def test_hybrid_threshold_gates_on_fused_relevance(preference_index) -> None:
-    """The existing threshold field cuts fused relevance, not the weight cap."""
+def test_hybrid_threshold_cuts_the_reported_fusion_score(preference_index) -> None:
+    """The threshold compares exactly the score the caller receives."""
     backend, knowledge_id, model = preference_index
 
-    kept = _hybrid(
+    # The uncut run is the full candidate set with the scores the caller would
+    # have received; every cut below must keep exactly the rows whose reported
+    # score reaches it, at the same value.
+    candidates = _hybrid(
         backend,
         knowledge_id,
         model,
-        score_threshold=0.3,
+        vector_weight=0.9,
+        keyword_weight=0.1,
+        score_threshold=0.0,
     )
-    dropped = _hybrid(
-        backend,
-        knowledge_id,
-        model,
-        score_threshold=1.5,
-    )
+    assert len(candidates["records"]) == 2
 
-    # A 0.3 cut keeps both rows; a 1.5 cut keeps neither, so the threshold
-    # really moves the fused result set. The strict separation between fused
-    # relevance and the weight-scaled share is pinned by the adapter unit tests,
-    # which can hold the branch scores constant.
-    assert set(_doc_refs(kept)) == {DENSE_DOC, KEYWORD_DOC}
-    assert dropped == {"records": []}
+    for threshold in (0.2, 0.55, 0.7):
+        filtered = _hybrid(
+            backend,
+            knowledge_id,
+            model,
+            vector_weight=0.9,
+            keyword_weight=0.1,
+            score_threshold=threshold,
+        )
+        expected = {
+            doc_ref
+            for doc_ref, score in _scores(candidates).items()
+            if score >= threshold
+        }
+        assert set(_doc_refs(filtered)) == expected, threshold
+        for record in filtered["records"]:
+            assert record["score"] >= threshold
+        for doc_ref in expected:
+            assert _scores(filtered)[doc_ref] == pytest.approx(
+                _scores(candidates)[doc_ref]
+            )
 
 
 def test_hybrid_scores_do_not_depend_on_the_requested_top_k(preference_index) -> None:
@@ -551,30 +566,23 @@ def test_hybrid_rejects_non_finite_and_double_zero_weights(preference_index) -> 
             _hybrid(backend, knowledge_id, model, **weights)
 
 
-def test_default_threshold_passes_a_single_route_positive_example(
-    preference_index,
-) -> None:
-    """The default threshold is not a weight cap for a single-route hit."""
+def test_default_weights_pass_a_preset_positive_example(preference_index) -> None:
+    """The default 0.7/0.3 settings clear a non-zero preset threshold."""
     backend, knowledge_id, model = preference_index
 
     result = _query(
         backend,
         knowledge_id=knowledge_id,
         query="zebra_pipeline_99",
-        dense_query=KEYWORD_QUERY_TEXT,
+        dense_query=DENSE_QUERY_TEXT,
         model=model,
         mode="hybrid",
-        vector_weight=0.1,
-        keyword_weight=0.9,
+        score_threshold=0.5,
     )
 
-    # No threshold is configured, so 0.7 applies. The keyword-preferred row is
-    # recalled by the keyword route alone; its weighted share is at most 0.9 of
-    # its own relevance, while the gate uses that relevance.
-    scores = _scores(result)
-    assert KEYWORD_DOC in scores
-    assert scores[KEYWORD_DOC] > 0.4
-    assert _doc_refs(result)[0] == KEYWORD_DOC
+    # Default weights and a real cut rather than a threshold of zero.
+    assert _doc_refs(result)[0] == DENSE_DOC
+    assert _scores(result)[DENSE_DOC] >= 0.5
 
 
 def test_hybrid_filters_before_the_candidate_cut(milvus_env: MilvusContractEnv) -> None:
