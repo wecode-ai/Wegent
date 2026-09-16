@@ -2085,6 +2085,13 @@ describe('CloudTodoWorkspace', () => {
     cloudApi.listCloudProjects = vi.fn(() => new Promise(() => undefined))
     const workbenchServices = {
       ...localServices,
+      agentResourceApi: {
+        listModels: vi.fn(async () => []),
+        listSkills: vi.fn(async () => []),
+        createAgent: vi.fn(),
+        getAgent: vi.fn(),
+        updateAgent: vi.fn(),
+      } as unknown as WorkbenchServices['agentResourceApi'],
       deliveryApi: cloudApi,
       sharedWorkspaceApi: undefined,
       projectSpaceApis: {
@@ -2150,14 +2157,15 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('collaboration-participants-tab-agents'))
     expect(await screen.findByTestId('project-agent-config')).toBeInTheDocument()
     await userEvent.click(await screen.findByTestId('project-agent-add'))
-    expect(screen.getByTestId('project-agent-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('project-agent-mode-existing')).toBeDisabled()
-    expect(screen.getByTestId('project-agent-mode-existing-card')).toHaveTextContent(
-      '登录并连接云端后可选择已有智能体'
-    )
+    expect(await screen.findByTestId('wework-agent-resource-creator')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-agent-dialog')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-agent-mode-existing')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-agent-mode-create')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-agent-wegent-team')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-agent-wegent-create')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-agent-open-create')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-agent-execution-environment')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('wework-agent-resource-creator-close'))
     await userEvent.click(screen.getByTestId('cloud-project-settings-automatic-processing'))
     expect(await screen.findByTestId('automatic-processing')).toBeInTheDocument()
 
