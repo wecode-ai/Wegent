@@ -2903,6 +2903,7 @@
 .collaboration-issue-table-actions {
   width: 72px;
   text-align: right;
+  white-space: nowrap;
 }
 
 .collaboration-issue-table-delete {
@@ -2914,6 +2915,7 @@
   background: transparent;
   font: inherit;
   font-size: 12px;
+  white-space: nowrap;
   cursor: pointer;
 }
 
