@@ -218,6 +218,8 @@ def test_my_work_batches_external_rows_per_project(
 ) -> None:
     project = _make_gitlab_project(test_db, test_user)
     item_ids = [f"{project.project_key}-1", f"{project.project_key}-2"]
+    local_item_id = f"{project.project_key}-15"
+    ordered_item_ids = [item_ids[1], local_item_id, item_ids[0]]
     test_db.add_all(
         [
             LoopItem(
@@ -227,6 +229,14 @@ def test_my_work_batches_external_rows_per_project(
                 metadata_json={"external_index": True},
             )
             for item_id in item_ids
+        ]
+        + [
+            LoopItem(
+                id=local_item_id,
+                cloud_project_id=str(project.id),
+                assignee_user_id=test_user.id,
+                metadata_json={},
+            )
         ]
     )
     test_db.commit()
@@ -246,8 +256,8 @@ def test_my_work_batches_external_rows_per_project(
 
     rows = loop_item_service.list_my_work(test_db, test_user.id)
 
-    assert [row["id"] for row in rows] == item_ids
-    assert calls == [(str(project.id), item_ids)]
+    assert [row["id"] for row in rows] == ordered_item_ids
+    assert calls == [(str(project.id), [item_ids[1], item_ids[0]])]
 
 
 def test_external_board_page_is_filtered_and_detail_is_lazy(

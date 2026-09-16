@@ -2490,7 +2490,49 @@ class LoopItemService:
             )
             for execution in execution_rows:
                 executions_by_item.setdefault(execution.loop_item_id, execution)
-        external_index_rows: list[LoopItem] = []
+        external_index_rows = [
+            item
+            for item in items
+            if isinstance(item.metadata_json, dict)
+            and (
+                item.metadata_json.get("external_index") is True
+                or item.metadata_json.get("external_shadow") is True
+            )
+        ]
+        external_views: dict[str, dict[str, object]] = {}
+        # External provider index rows are local pointers only; batch their live
+        # provider reads per project so My Work does not serialize remote calls.
+        if external_index_rows:
+            from app.services.loop_items.external_provider import (
+                external_loop_item_provider,
+            )
+
+            rows_by_project: dict[str, list[LoopItem]] = {}
+            for item in external_index_rows:
+                rows_by_project.setdefault(str(item.cloud_project_id), []).append(item)
+            for project_id, project_rows in rows_by_project.items():
+                try:
+                    views = external_loop_item_provider.get_many(
+                        db,
+                        project_id,
+                        user_id,
+                        [item.id for item in project_rows],
+                    )
+                except Exception:
+                    logger.warning(
+                        "[MyWork] Skip external project id=%s",
+                        project_id,
+                        exc_info=True,
+                    )
+                    continue
+                external_views.update(
+                    {
+                        str(view["id"]): view
+                        for view in views
+                        if isinstance(view.get("id"), str)
+                    }
+                )
+
         for item in items:
             metadata = (
                 item.metadata_json if isinstance(item.metadata_json, dict) else {}
@@ -2499,7 +2541,31 @@ class LoopItemService:
                 metadata.get("external_index") is True
                 or metadata.get("external_shadow") is True
             ):
-                external_index_rows.append(item)
+                view = external_views.get(item.id)
+                if view is None:
+                    continue
+                project = project_by_id.get(str(item.cloud_project_id))
+                if project is None:
+                    continue
+                metadata = (
+                    item.metadata_json if isinstance(item.metadata_json, dict) else {}
+                )
+                assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
+                result.append(
+                    {
+                        **view,
+                        "project_key": project.project_key,
+                        "project_name": project.name,
+                        "has_active_task": item.id in active_task_items,
+                        "assignment_history": (
+                            assignment_history
+                            if isinstance(assignment_history, list)
+                            else []
+                        ),
+                        # External provider tasks never carry status history.
+                        "status_history": [],
+                    }
+                )
                 continue
             assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
             status_history = metadata.get(STATUS_HISTORY_KEY)
@@ -2561,65 +2627,6 @@ class LoopItemService:
                     "approval": self._approval_view(execution),
                 }
             )
-        # External provider index rows are local pointers only; batch their live
-        # provider reads per project so My Work does not serialize remote calls.
-        if external_index_rows:
-            from app.services.loop_items.external_provider import (
-                external_loop_item_provider,
-            )
-
-            rows_by_project: dict[str, list[LoopItem]] = {}
-            for item in external_index_rows:
-                rows_by_project.setdefault(str(item.cloud_project_id), []).append(item)
-            external_views: dict[str, dict[str, object]] = {}
-            for project_id, project_rows in rows_by_project.items():
-                try:
-                    views = external_loop_item_provider.get_many(
-                        db,
-                        project_id,
-                        user_id,
-                        [item.id for item in project_rows],
-                    )
-                except Exception:
-                    logger.warning(
-                        "[MyWork] Skip external project id=%s",
-                        project_id,
-                        exc_info=True,
-                    )
-                    continue
-                external_views.update(
-                    {
-                        str(view["id"]): view
-                        for view in views
-                        if isinstance(view.get("id"), str)
-                    }
-                )
-            for item in external_index_rows:
-                view = external_views.get(item.id)
-                if view is None:
-                    continue
-                project = project_by_id.get(str(item.cloud_project_id))
-                if project is None:
-                    continue
-                metadata = (
-                    item.metadata_json if isinstance(item.metadata_json, dict) else {}
-                )
-                assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
-                result.append(
-                    {
-                        **view,
-                        "project_key": project.project_key,
-                        "project_name": project.name,
-                        "has_active_task": item.id in active_task_items,
-                        "assignment_history": (
-                            assignment_history
-                            if isinstance(assignment_history, list)
-                            else []
-                        ),
-                        # External provider tasks never carry status history.
-                        "status_history": [],
-                    }
-                )
         return result
 
     @staticmethod
