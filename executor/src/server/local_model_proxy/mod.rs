@@ -437,6 +437,77 @@ pub(crate) fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn retain_for_thread(
+    thread_id: &str,
+    expected_routing_model_id: Option<&str>,
+) -> Result<String, String> {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    prune_registry(&mut registry);
+    let mut matching_tokens = registry
+        .routes
+        .iter()
+        .filter(|(_, registered)| registered.thread_ids.contains(thread_id))
+        .map(|(token, _)| token.clone())
+        .collect::<Vec<_>>();
+    matching_tokens.sort();
+    let token = match matching_tokens.as_slice() {
+        [token] => token.clone(),
+        [] => {
+            return Err(format!(
+                "local model proxy route for Codex thread {thread_id} is not registered"
+            ));
+        }
+        _ => {
+            return Err(format!(
+                "multiple local model proxy routes are bound to Codex thread {thread_id}"
+            ));
+        }
+    };
+    let registered = registry
+        .routes
+        .get_mut(&token)
+        .expect("matched local model proxy route should exist");
+    if let (Some(expected), Some(actual)) = (
+        expected_routing_model_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        registered.upstream.routing_model_id.as_deref(),
+    ) {
+        if expected != actual {
+            return Err(format!(
+                "local model proxy route for Codex thread {thread_id} uses model {actual}, expected {expected}"
+            ));
+        }
+    }
+    registered.active_references += 1;
+    registered.last_used = Instant::now();
+    log_executor_event(
+        "local model proxy retained for task thread",
+        &[
+            ("thread_id", thread_id.to_owned()),
+            (
+                "routing_model_id",
+                registered
+                    .upstream
+                    .routing_model_id
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+            (
+                "auth_present",
+                (!registered.upstream.api_key.is_empty()).to_string(),
+            ),
+            (
+                "active_references",
+                registered.active_references.to_string(),
+            ),
+        ],
+    );
+    Ok(token)
+}
+
 pub(crate) fn unregister(token: &str) {
     let mut registry = registry()
         .lock()
@@ -3488,6 +3559,41 @@ mod tests {
         assert_eq!(error.status, StatusCode::CONFLICT);
 
         drop(entries);
+        unregister(&token);
+    }
+
+    #[test]
+    fn retaining_a_bound_thread_preserves_its_authenticated_upstream() {
+        let token = register(
+            "retained-thread-task-route",
+            LocalModelProxyUpstream {
+                base_url: "https://example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("upstream-model".to_owned()),
+                routing_model_id: Some("routing-model".to_owned()),
+                max_output_tokens: None,
+            },
+        );
+        bind_thread(&token, "retained-thread").expect("source thread should bind");
+
+        let retained = retain_for_thread("retained-thread", Some("routing-model"))
+            .expect("bound route should be retained");
+
+        assert_eq!(retained, token);
+        let entries = registry().lock().expect("registry lock");
+        let route = entries.routes.get(&token).expect("retained route");
+        assert_eq!(route.upstream.api_key, "secret");
+        assert_eq!(route.active_references, 2);
+        drop(entries);
+
+        unregister(&retained);
         unregister(&token);
     }
 

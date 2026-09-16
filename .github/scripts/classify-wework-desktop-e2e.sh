@@ -21,6 +21,7 @@ core_segments=(
   plugin-development
   project-ai-settings
   model-routing
+  fork-provider-preservation
   codex-account-login
   permission-modes
   workbench-mode
@@ -152,7 +153,7 @@ core_shards=(
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
-  model-routing,computer-use,codex-account-login
+  model-routing,fork-provider-preservation,computer-use,codex-account-login
 )
 
 validate_core_shards() {

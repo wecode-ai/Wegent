@@ -2250,6 +2250,18 @@ fn forked_task_inherits_project_routing_metadata() {
     );
     source.runtime_project_key = Some("project-1".to_owned());
     source.runtime_workspace_roots = vec!["/tmp/project".to_owned(), "/tmp/project/api".to_owned()];
+    source.runtime_handle = json!({
+        "executionRequest": {
+            "model_config": {
+                "model": "openai",
+                "model_id": "gpt-5.6-sol",
+            },
+        },
+        "modelSelection": {
+            "modelName": "gpt-5.6-sol",
+            "modelType": "codex-official",
+        },
+    });
 
     let forked = forked_task_link(
         &source,
@@ -2266,6 +2278,14 @@ fn forked_task_inherits_project_routing_metadata() {
     );
     assert_eq!(forked.workspace_path, source.workspace_path);
     assert_eq!(forked.runtime, source.runtime);
+    assert_eq!(
+        forked.runtime_handle["executionRequest"],
+        source.runtime_handle["executionRequest"]
+    );
+    assert_eq!(
+        forked.runtime_handle["modelSelection"],
+        source.runtime_handle["modelSelection"]
+    );
 }
 
 #[test]
