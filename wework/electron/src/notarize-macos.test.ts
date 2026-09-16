@@ -10,10 +10,14 @@ const {
   authorizationArgs,
   formatBytes,
   formatDuration,
+  infoArgs,
   isTransientNotaryFailure,
+  requireSubmission,
   retryAttempts,
   run,
   s3AccelerationArgs,
+  submitArgs,
+  waitArgs,
 } = require('../scripts/notarize-macos.cjs')
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -136,6 +140,65 @@ test('uses S3 acceleration by default and supports explicit standard S3', () => 
   expect(s3AccelerationArgs('true')).toEqual(['--s3-acceleration'])
   expect(s3AccelerationArgs('false')).toEqual(['--no-s3-acceleration'])
   expect(() => s3AccelerationArgs('invalid')).toThrow('must be true or false')
+})
+
+test('separates notarization upload from the processing wait', () => {
+  const environment = {
+    APPLE_API_KEY: '/tmp/AuthKey_TEST.p8',
+    APPLE_API_KEY_ID: 'KEYID',
+    APPLE_API_ISSUER: 'issuer',
+  }
+
+  expect(submitArgs('/tmp/Wework.zip', environment)).toEqual([
+    'notarytool',
+    'submit',
+    '/tmp/Wework.zip',
+    '--key',
+    '/tmp/AuthKey_TEST.p8',
+    '--key-id',
+    'KEYID',
+    '--issuer',
+    'issuer',
+    '--s3-acceleration',
+    '--no-wait',
+    '--output-format',
+    'json',
+  ])
+  expect(waitArgs('submission-id', environment)).toEqual([
+    'notarytool',
+    'wait',
+    'submission-id',
+    '--key',
+    '/tmp/AuthKey_TEST.p8',
+    '--key-id',
+    'KEYID',
+    '--issuer',
+    'issuer',
+    '--timeout',
+    '45m',
+    '--progress',
+  ])
+  expect(infoArgs('submission-id', environment)).toEqual([
+    'notarytool',
+    'info',
+    'submission-id',
+    '--key',
+    '/tmp/AuthKey_TEST.p8',
+    '--key-id',
+    'KEYID',
+    '--issuer',
+    'issuer',
+    '--output-format',
+    'json',
+  ])
+})
+
+test('requires Apple to return a notarization submission ID', () => {
+  expect(requireSubmission({ id: ' submission-id ', status: 'Uploaded' })).toEqual({
+    id: 'submission-id',
+    status: 'Uploaded',
+  })
+  expect(() => requireSubmission({ status: 'Uploaded' })).toThrow('without a submission ID')
 })
 
 test('formats notarization archive sizes and phase durations for CI logs', () => {
