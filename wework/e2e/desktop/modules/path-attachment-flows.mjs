@@ -27,6 +27,7 @@ import {
   mkdir,
   pathToFileURL,
   resultDir,
+  withTimeout,
   writeFile,
 } from './shared.mjs'
 
@@ -178,6 +179,20 @@ async function verifySystemDragPanelLayout(control) {
   }
 }
 
+async function verifySentWorkspacePaths(control, folderName, fileName) {
+  for (const [kind, name] of [
+    ['folder', folderName],
+    ['file', fileName],
+  ]) {
+    const token = name.replace(/[^a-zA-Z0-9_-]/g, '-')
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="sent-${kind}-token-${token}"]`,
+      { text: name, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    )
+  }
+}
+
 async function verifyPastedWorkspacePaths({ composerSelector, control, workspacePath }) {
   control.setScenario('pasted_workspace_paths')
   const folderPath = join(workspacePath, PASTED_PATH_FOLDER_NAME)
@@ -226,6 +241,19 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     text: PASTED_PATH_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifySentWorkspacePaths(control, PASTED_PATH_FOLDER_NAME, PASTED_PATH_FILE_NAME)
+  const readyCount = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCount),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The path reference reload did not reconnect to the desktop controller'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: PASTED_PATH_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await verifySentWorkspacePaths(control, PASTED_PATH_FOLDER_NAME, PASTED_PATH_FILE_NAME)
 }
 
 async function verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath }) {
@@ -439,6 +467,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
     text: DROPPED_PATH_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifySentWorkspacePaths(control, DROPPED_PATH_FOLDER_NAME, DROPPED_PATH_FILE_NAME)
 }
 
 async function verifySideChatAttachmentIsolation({

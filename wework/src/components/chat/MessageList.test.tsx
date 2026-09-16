@@ -3602,7 +3602,7 @@ describe('MessageList', () => {
     expect(token).toHaveTextContent('Browser')
     expect(screen.getByTestId('sent-local-skill-icon-browser')).toBeInTheDocument()
     expect(token).toHaveClass(
-      'h-7',
+      'composer-mention-node',
       'gap-1',
       'rounded-xl',
       'bg-muted',
