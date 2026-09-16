@@ -193,6 +193,22 @@ async function verifySentWorkspacePaths(control, folderName, fileName) {
   }
 }
 
+async function verifyPersistedWorkspacePaths(control, folderName, fileName, completionText) {
+  await verifySentWorkspacePaths(control, folderName, fileName)
+  const readyCount = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCount),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The path reference reload did not reconnect to the desktop controller'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: completionText,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await verifySentWorkspacePaths(control, folderName, fileName)
+}
+
 async function verifyPastedWorkspacePaths({ composerSelector, control, workspacePath }) {
   control.setScenario('pasted_workspace_paths')
   const folderPath = join(workspacePath, PASTED_PATH_FOLDER_NAME)
@@ -241,19 +257,12 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     text: PASTED_PATH_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await verifySentWorkspacePaths(control, PASTED_PATH_FOLDER_NAME, PASTED_PATH_FILE_NAME)
-  const readyCount = control.readyCount
-  await control.command('reloadMainWindow', 'body')
-  await withTimeout(
-    control.awaitReadyAfter(readyCount),
-    WORKBENCH_READY_TIMEOUT_MS,
-    'The path reference reload did not reconnect to the desktop controller'
+  await verifyPersistedWorkspacePaths(
+    control,
+    PASTED_PATH_FOLDER_NAME,
+    PASTED_PATH_FILE_NAME,
+    PASTED_PATH_COMPLETION_TEXT
   )
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: PASTED_PATH_COMPLETION_TEXT,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await verifySentWorkspacePaths(control, PASTED_PATH_FOLDER_NAME, PASTED_PATH_FILE_NAME)
 }
 
 async function verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath }) {
@@ -467,7 +476,12 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
     text: DROPPED_PATH_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await verifySentWorkspacePaths(control, DROPPED_PATH_FOLDER_NAME, DROPPED_PATH_FILE_NAME)
+  await verifyPersistedWorkspacePaths(
+    control,
+    DROPPED_PATH_FOLDER_NAME,
+    DROPPED_PATH_FILE_NAME,
+    DROPPED_PATH_COMPLETION_TEXT
+  )
 }
 
 async function verifySideChatAttachmentIsolation({
