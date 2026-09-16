@@ -1549,6 +1549,7 @@ function WorkspaceSettings({
 
 export function CollaborationPlatformApp({
   api,
+  navigationApis,
   host,
   locale = "zh-CN",
   onCreateTask,
@@ -1558,6 +1559,7 @@ export function CollaborationPlatformApp({
   sidebarFooter,
 }: {
   api: SharedWorkspaceApi;
+  navigationApis?: SharedWorkspaceApi[];
   host: CollaborationPlatformHostAdapter;
   locale?: CollaborationLocale;
   onCreateTask?(
@@ -1577,6 +1579,7 @@ export function CollaborationPlatformApp({
   const translate = createCollaborationTranslator(locale);
   const { state, commands } = useCollaborationPlatformController({
     api,
+    navigationApis,
     location: host.location,
     loadFailedMessage: messages.loadFailed,
   });
