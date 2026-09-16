@@ -50,6 +50,7 @@ core_segments=(
   tray-lifecycle
   conversation-state
   send-key-preference
+  system-proxy
   environment-panel-scroll
   temporary-chat
   workspace-attachments
@@ -139,7 +140,7 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  conversation-state,send-key-preference,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
+  conversation-state,send-key-preference,system-proxy,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors
@@ -297,6 +298,15 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    # System proxy resolution spans Electron, local runtime request routing,
+    # and the proxy settings surface.
+    wework/electron/src/host/system-proxy* | \
+      wework/src/components/settings/ProxySettingsPage* | \
+      wework/src/desktop/systemProxy* | \
+      wework/e2e/desktop/scenarios/system-proxy.scenario.mjs)
+      select_target "core:system-proxy"
+      return
+      ;;
     # Cloud device restart and upgrade actions require the managed Nevis fixture.
     wework/src/components/settings/ConnectionsSettingsPage* | \
       wework/src/components/settings/DeviceVersionBadge* | \

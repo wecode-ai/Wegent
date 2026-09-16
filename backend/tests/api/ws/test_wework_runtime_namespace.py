@@ -161,6 +161,9 @@ async def test_runtime_event_completes_im_channel_callback_on_terminal_event(
     namespace = DeviceNamespace()
     registry = MagicMock()
     registry.handle_task_completed = AsyncMock()
+    registry.get_service_by_name.return_value.accepts_runtime_source = AsyncMock(
+        return_value=True
+    )
     monkeypatch.setattr(local_task_responses, "get_callback_registry", lambda: registry)
 
     result = await _relay_runtime_event(
@@ -197,6 +200,9 @@ async def test_runtime_waiting_result_preserves_terminal_metadata(
     namespace = DeviceNamespace()
     registry = MagicMock()
     registry.handle_task_completed = AsyncMock()
+    registry.get_service_by_name.return_value.accepts_runtime_source = AsyncMock(
+        return_value=True
+    )
     monkeypatch.setattr(local_task_responses, "get_callback_registry", lambda: registry)
 
     result = await _relay_runtime_event(
@@ -238,6 +244,9 @@ async def test_runtime_event_fails_im_channel_callback_on_failed_event(
     namespace = DeviceNamespace()
     registry = MagicMock()
     registry.handle_task_completed = AsyncMock()
+    registry.get_service_by_name.return_value.accepts_runtime_source = AsyncMock(
+        return_value=True
+    )
     monkeypatch.setattr(local_task_responses, "get_callback_registry", lambda: registry)
 
     result = await _relay_runtime_event(

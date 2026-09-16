@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock, Weak,
     },
     time::{Duration, Instant},
@@ -555,6 +555,7 @@ pub struct RuntimeWorkRpcHandler {
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
+    startup_recovery_deferred: Arc<AtomicBool>,
     bundled_plugin_marketplace_reconciliation: Arc<AsyncMutex<()>>,
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
@@ -820,6 +821,7 @@ impl RuntimeWorkRpcHandler {
             codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
                 CodexRuntimeProxyConfig::default(),
             )),
+            startup_recovery_deferred: Arc::new(AtomicBool::new(false)),
             bundled_plugin_marketplace_reconciliation: Arc::new(AsyncMutex::new(())),
             event_tx: None,
             next_execution_id: Arc::new(AtomicU64::new(1)),
@@ -884,6 +886,20 @@ impl RuntimeWorkRpcHandler {
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
     ) -> Self {
+        let handler =
+            Self::with_event_sender_deferred_startup_recovery(device_id, codex_binary, event_tx);
+        handler
+            .startup_recovery_deferred
+            .store(false, Ordering::Release);
+        handler.spawn_startup_worktree_reconciliation();
+        handler
+    }
+
+    pub fn with_event_sender_deferred_startup_recovery(
+        device_id: impl Into<String>,
+        codex_binary: impl Into<String>,
+        event_tx: broadcast::Sender<Value>,
+    ) -> Self {
         let handler = Self {
             event_tx: Some(event_tx),
             ..Self::new(device_id, codex_binary)
@@ -891,7 +907,9 @@ impl RuntimeWorkRpcHandler {
         if let Some(sender) = handler.event_tx.clone() {
             handler.hook_service.set_event_sender(sender);
         }
-        handler.spawn_startup_worktree_reconciliation();
+        handler
+            .startup_recovery_deferred
+            .store(true, Ordering::Release);
         handler.start_automation_scheduler();
         handler
     }
@@ -972,16 +990,15 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
-        if !matches!(
-            method,
-            "runtime.tasks.running_count"
-                | "runtime.worktrees.capabilities"
-                | "runtime.worktrees.preflight"
-        ) && self.reconcile_worktrees_once().await
+        let configure_before_startup_recovery = method == "runtime.codex.runtime_config.update";
+        let startup_recovery_deferred = self.startup_recovery_deferred.load(Ordering::Acquire);
+        if !startup_recovery_deferred
+            && !configure_before_startup_recovery
+            && should_resume_persisted_turns_before_rpc(method)
         {
-            self.resume_persisted_turns().await;
+            self.reconcile_and_resume_persisted_turns().await;
         }
-        match method {
+        let result = match method {
             "runtime.tasks.list" => self.list_tasks(&payload).await,
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
@@ -1139,8 +1156,24 @@ impl RuntimeWorkRpcHandler {
                 "unsupported_method",
                 format!("Unsupported runtime RPC method: {unsupported}"),
             )),
+        };
+        if configure_before_startup_recovery && result.is_ok() {
+            self.startup_recovery_deferred
+                .store(false, Ordering::Release);
+            self.reconcile_and_resume_persisted_turns().await;
         }
+        result
     }
+}
+
+fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
+    !matches!(
+        method,
+        "runtime.tasks.running_count"
+            | "runtime.worktrees.capabilities"
+            | "runtime.worktrees.preflight"
+            | "runtime.codex.runtime_config.update"
+    )
 }
 
 fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {

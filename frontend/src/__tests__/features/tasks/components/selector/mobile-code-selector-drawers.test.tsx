@@ -9,8 +9,18 @@ import MobileRepositorySelector from '@/features/tasks/components/selector/Mobil
 import type { GitBranch, GitRepoInfo } from '@/types/api'
 
 const mockPush = jest.fn()
-const mockResetSearch = jest.fn()
 const mockGetBranches = jest.fn()
+const mockGetRepositories = jest.fn()
+const mockGetLastRepo = jest.fn()
+const mockUser = { git_info: [{ id: 1, name: 'github' }] }
+
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({ user: mockUser }),
+}))
+
+jest.mock('@/utils/userPreferences', () => ({
+  getLastRepo: () => mockGetLastRepo(),
+}))
 
 const mockRepo: GitRepoInfo = {
   git_repo_id: 1,
@@ -40,6 +50,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'mobile_composer.not_selected': '未选择',
         'common:repos.repository': '选择仓库',
         'common:repos.branch': '选择分支',
+        'common:repos.no_workspace_needed': '无需仓库',
         'common:branches.search_repository': '搜索仓库...',
         'common:branches.search_branch': '搜索分支...',
         'common:branches.default': '(默认)',
@@ -50,22 +61,10 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-jest.mock('@/features/tasks/hooks/useRepositorySearch', () => ({
-  useRepositorySearch: () => ({
-    repos: [mockRepo],
-    loading: false,
-    isRefreshing: false,
-    error: null,
-    currentSearchQuery: '',
-    handleSearchChange: jest.fn(),
-    handleRefreshCache: jest.fn(),
-    resetSearch: mockResetSearch,
-  }),
-}))
-
 jest.mock('@/apis/github', () => ({
   githubApis: {
     getBranches: (...args: unknown[]) => mockGetBranches(...args),
+    getRepositories: () => mockGetRepositories(),
   },
 }))
 
@@ -135,11 +134,20 @@ jest.mock('@/components/ui/command', () => ({
 
 function WorkspaceSelectorHarness({
   onSelectorOpenChange,
+  initialRequiresWorkspace = true,
+  onRequiresWorkspaceChange,
+  visible = true,
 }: {
   onSelectorOpenChange: (open: boolean) => void
+  initialRequiresWorkspace?: boolean
+  onRequiresWorkspaceChange?: (requiresWorkspace: boolean) => void
+  visible?: boolean
 }) {
   const [selectedRepo, setSelectedRepo] = React.useState<GitRepoInfo | null>(null)
   const [selectedBranch, setSelectedBranch] = React.useState<GitBranch | null>(null)
+  const [requiresWorkspace, setRequiresWorkspace] = React.useState(initialRequiresWorkspace)
+
+  if (!visible) return null
 
   return (
     <MobileRepositorySelector
@@ -149,14 +157,27 @@ function WorkspaceSelectorHarness({
       handleBranchChange={setSelectedBranch}
       disabled={false}
       onSelectorOpenChange={onSelectorOpenChange}
+      requiresWorkspace={requiresWorkspace}
+      onRequiresWorkspaceChange={value => {
+        setRequiresWorkspace(value)
+        onRequiresWorkspaceChange?.(value)
+      }}
     />
   )
+}
+
+async function openRepositorySelector() {
+  const trigger = screen.getByTestId('mobile-repository-selector-trigger')
+  await waitFor(() => expect(trigger).toBeEnabled())
+  fireEvent.click(trigger)
 }
 
 describe('mobile repository and branch cascade', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockGetBranches.mockResolvedValue([mockBranch])
+    mockGetRepositories.mockResolvedValue([mockRepo])
+    mockGetLastRepo.mockReturnValue(null)
   })
 
   it('selects repository and branch inside one drawer', async () => {
@@ -164,7 +185,7 @@ describe('mobile repository and branch cascade', () => {
 
     render(<WorkspaceSelectorHarness onSelectorOpenChange={onSelectorOpenChange} />)
 
-    fireEvent.click(screen.getByTestId('mobile-repository-selector-trigger'))
+    await openRepositorySelector()
 
     const drawer = screen.getByTestId('mobile-repository-selector-drawer')
     expect(drawer).toHaveClass('max-h-[85vh]', 'bg-[#f2f2f7]')
@@ -186,5 +207,91 @@ describe('mobile repository and branch cascade', () => {
     expect(onSelectorOpenChange).toHaveBeenLastCalledWith(false)
     expect(screen.queryByTestId('mobile-repository-selector-drawer')).not.toBeInTheDocument()
     expect(screen.getByText('wecode-ai/Wegent · main')).toBeInTheDocument()
+  })
+
+  it('enables an optional workspace when selecting a repository and clears both selections', async () => {
+    const onRequiresWorkspaceChange = jest.fn()
+    const onSelectorOpenChange = jest.fn()
+    mockGetLastRepo.mockReturnValue({ repoId: mockRepo.git_repo_id, repoName: mockRepo.git_repo })
+
+    const { rerender } = render(
+      <WorkspaceSelectorHarness
+        initialRequiresWorkspace={false}
+        onRequiresWorkspaceChange={onRequiresWorkspaceChange}
+        onSelectorOpenChange={onSelectorOpenChange}
+      />
+    )
+
+    expect(screen.getByTestId('mobile-repository-selector-trigger')).toHaveTextContent('无需仓库')
+    await openRepositorySelector()
+    expect(screen.queryByTestId('mobile-workspace-clear-selection')).not.toBeInTheDocument()
+    expect(mockGetBranches).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('mobile-repository-option'))
+
+    expect(onRequiresWorkspaceChange).toHaveBeenLastCalledWith(true)
+    fireEvent.click(await screen.findByTestId('mobile-branch-option'))
+    expect(screen.getByTestId('mobile-repository-selector-trigger')).toHaveTextContent(
+      'wecode-ai/Wegent · main'
+    )
+
+    fireEvent.click(screen.getByTestId('mobile-repository-selector-trigger'))
+    fireEvent.click(screen.getByTestId('mobile-workspace-clear-selection'))
+
+    expect(onRequiresWorkspaceChange).toHaveBeenLastCalledWith(false)
+    expect(onSelectorOpenChange).toHaveBeenLastCalledWith(false)
+    expect(screen.queryByTestId('mobile-repository-selector-drawer')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-repository-selector-trigger')).toHaveTextContent('无需仓库')
+
+    rerender(
+      <WorkspaceSelectorHarness visible={false} onSelectorOpenChange={onSelectorOpenChange} />
+    )
+    rerender(<WorkspaceSelectorHarness onSelectorOpenChange={onSelectorOpenChange} />)
+    await openRepositorySelector()
+    expect(screen.getByTestId('mobile-repository-selector-trigger')).toHaveTextContent('无需仓库')
+    expect(mockGetBranches).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByTestId('mobile-repository-option'))
+    await waitFor(() => expect(mockGetBranches).toHaveBeenCalledTimes(2))
+    fireEvent.click(await screen.findByTestId('mobile-branch-option'))
+    expect(screen.getByTestId('mobile-repository-selector-trigger')).toHaveTextContent(
+      'wecode-ai/Wegent · main'
+    )
+  })
+
+  it('allows opting out before selecting a required repository', async () => {
+    const onRequiresWorkspaceChange = jest.fn()
+    render(
+      <WorkspaceSelectorHarness
+        onRequiresWorkspaceChange={onRequiresWorkspaceChange}
+        onSelectorOpenChange={jest.fn()}
+      />
+    )
+
+    await openRepositorySelector()
+    fireEvent.click(screen.getByTestId('mobile-workspace-clear-selection'))
+
+    expect(onRequiresWorkspaceChange).toHaveBeenCalledWith(false)
+    expect(screen.getByTestId('mobile-repository-selector-trigger')).toHaveTextContent('无需仓库')
+  })
+
+  it('keeps an existing task workspace read-only', async () => {
+    const handleRepoChange = jest.fn()
+    const handleBranchChange = jest.fn()
+    render(
+      <MobileRepositorySelector
+        selectedRepo={mockRepo}
+        selectedBranch={mockBranch}
+        handleRepoChange={handleRepoChange}
+        handleBranchChange={handleBranchChange}
+        disabled
+      />
+    )
+
+    expect(screen.getByTestId('mobile-repository-selector-trigger')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('mobile-repository-selector-trigger'))
+    await waitFor(() => expect(mockGetBranches).toHaveBeenCalledWith(mockRepo))
+
+    expect(screen.queryByTestId('mobile-repository-selector-drawer')).not.toBeInTheDocument()
+    expect(handleRepoChange).not.toHaveBeenCalled()
+    expect(handleBranchChange).not.toHaveBeenCalled()
   })
 })

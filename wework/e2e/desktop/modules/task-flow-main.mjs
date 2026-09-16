@@ -874,7 +874,7 @@ async function verifyLocalModelRouting({
     await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
     await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
       visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: initialResponseTimeoutMs,
     })
     const sourceRequestsBeforeSwitch = control.localProtocolStates.get(sourceModel.protocol)
       ?.requests.length
@@ -1161,7 +1161,7 @@ async function main() {
     if (!RUNS_PLUGIN_E2E) {
       await writeCodexConfig(
         codexHome,
-        control.url,
+        desktopScenario?.modelServerUrl ?? control.url,
         `${desktopScenario?.codexConfigToml ?? ''}\n${
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
         }\n${
@@ -1284,7 +1284,9 @@ async function main() {
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
-    const electronLaunchArguments = resolveElectronLaunchArguments()
+    const electronLaunchArguments = resolveElectronLaunchArguments({
+      extraArguments: desktopScenario?.electronLaunchArguments ?? [],
+    })
     let activeAppEnvironment = appEnvironment
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {

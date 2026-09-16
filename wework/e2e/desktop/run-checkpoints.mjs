@@ -63,6 +63,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
   'send-key-preference': './scenarios/send-key-preference.scenario.mjs',
+  'system-proxy': './scenarios/system-proxy.scenario.mjs',
   'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
@@ -108,6 +109,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'browser-annotation-design',
   'external-content-import',
   'send-key-preference',
+  'system-proxy',
   'workbench-mode',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([

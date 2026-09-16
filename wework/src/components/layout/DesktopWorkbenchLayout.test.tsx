@@ -10014,24 +10014,37 @@ describe('DesktopWorkbenchLayout', () => {
     const codeMirrorContent = editor.querySelector('.cm-content')
     expect(codeMirrorContent).toBeInstanceOf(HTMLElement)
 
-    await user.click(codeMirrorContent as HTMLElement)
-    await user.keyboard('{Control>}a{/Control}hello world')
+    const nativeSetTimeout = window.setTimeout.bind(window)
+    let runAutosave: (() => void) | null = null
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation((handler, timeout) => {
+      if (timeout === 3_000 && typeof handler === 'function') {
+        runAutosave = handler
+        return 0
+      }
+      return nativeSetTimeout(handler, timeout)
+    })
+    try {
+      await user.click(codeMirrorContent as HTMLElement)
+      await user.keyboard('{Control>}a{/Control}hello world')
 
-    await waitFor(
-      () =>
+      await waitFor(() => expect(runAutosave).not.toBeNull())
+      act(() => runAutosave?.())
+      await waitFor(() =>
         expect(writeWorkspaceTextFile).toHaveBeenCalledWith(
           'workspace-cloud-device',
           '/workspace/project/README.md',
           'hello world',
           'sha256:old'
-        ),
-      { timeout: 5_000 }
-    )
-    await waitFor(() => {
-      expect(screen.getByTestId('workspace-file-editor')).toBeInTheDocument()
-      expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('workspace-file-edit-button')).not.toBeInTheDocument()
-    })
+        )
+      )
+      await waitFor(() => {
+        expect(screen.getByTestId('workspace-file-editor')).toBeInTheDocument()
+        expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
+        expect(screen.queryByTestId('workspace-file-edit-button')).not.toBeInTheDocument()
+      })
+    } finally {
+      setTimeoutSpy.mockRestore()
+    }
   })
 
   test('workspace file panel saves pending edits before opening another file', async () => {

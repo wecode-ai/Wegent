@@ -376,7 +376,9 @@ async def subscribe_group_stream(
 
         finally:
             # Clean up Redis connections
-            await pubsub.unsubscribe()
-            await redis_client.aclose()
+            try:
+                await pubsub.aclose()
+            finally:
+                await redis_client.aclose()
 
     return EventSourceResponse(event_generator())

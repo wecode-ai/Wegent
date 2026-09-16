@@ -766,23 +766,26 @@ describe('WorkspaceBrowserPanel', () => {
     fireEvent.submit(input.closest('form')!)
     await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
 
-    act(() => {
-      handleLocalFilePreview({
-        label: 'workspace-browser',
-        nativeLabel: 'workspace-browser-native-1',
-        url: 'file:///Users/me/archive.zip',
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        handleLocalFilePreview({
+          label: 'workspace-browser',
+          nativeLabel: 'workspace-browser-native-1',
+          url: 'file:///Users/me/archive.zip',
+        })
       })
-    })
 
-    const notice = screen.getByTestId('transient-notice')
-    expect(notice).toHaveTextContent('此文件无法预览')
+      const notice = screen.getByTestId('transient-notice')
+      expect(notice).toHaveTextContent('此文件无法预览')
 
-    await waitFor(
-      () => {
-        expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
-      },
-      { timeout: 3000 }
-    )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_200)
+      })
+      expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('shows an invalid TLS warning returned during the initial browser open', async () => {

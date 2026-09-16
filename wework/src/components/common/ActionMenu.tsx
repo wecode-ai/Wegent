@@ -8,6 +8,7 @@ import type {
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 import { KeyboardShortcut } from './KeyboardShortcut'
 
 const MENU_GAP = 8
@@ -65,6 +66,7 @@ interface ActionMenuProps {
   itemClassName?: string
   onContextMenuClose?: () => void
   onOpenChange?: (open: boolean) => void
+  showTriggerTooltip?: boolean
 }
 
 export interface MenuPosition {
@@ -88,6 +90,7 @@ export function ActionMenu({
   itemClassName,
   onContextMenuClose,
   onOpenChange,
+  showTriggerTooltip = true,
 }: ActionMenuProps) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -400,32 +403,41 @@ export function ActionMenu({
     }
   }, [closeMenu, menuOpen, openSubmenuId])
 
+  const trigger = (
+    <button
+      ref={triggerRef}
+      type="button"
+      data-testid={testId}
+      disabled={disabled}
+      onClick={handleTriggerClick}
+      onKeyDown={handleTriggerKeyDown}
+      className={
+        triggerClassName ??
+        'flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary'
+      }
+      aria-label={ariaLabel}
+      aria-expanded={menuOpen}
+      aria-haspopup="menu"
+    >
+      <Icon className={variant === 'vertical' ? 'h-4 w-4 rotate-90' : 'h-4 w-4'} />
+      {triggerLabel}
+      {triggerLabel ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+    </button>
+  )
+
   return (
     <div
       ref={containerRef}
       className="relative shrink-0"
       onClick={event => event.stopPropagation()}
     >
-      <button
-        ref={triggerRef}
-        type="button"
-        data-testid={testId}
-        disabled={disabled}
-        onClick={handleTriggerClick}
-        onKeyDown={handleTriggerKeyDown}
-        className={
-          triggerClassName ??
-          'flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary'
-        }
-        aria-label={ariaLabel}
-        title={ariaLabel}
-        aria-expanded={menuOpen}
-        aria-haspopup="menu"
-      >
-        <Icon className={variant === 'vertical' ? 'h-4 w-4 rotate-90' : 'h-4 w-4'} />
-        {triggerLabel}
-        {triggerLabel ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" /> : null}
-      </button>
+      {triggerLabel || !showTriggerTooltip ? (
+        trigger
+      ) : (
+        <Tooltip label={ariaLabel} testId={`${testId}-tooltip`}>
+          {trigger}
+        </Tooltip>
+      )}
       {menuOpen &&
         createPortal(
           <div

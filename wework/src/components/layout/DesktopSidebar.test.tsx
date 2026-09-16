@@ -772,7 +772,8 @@ describe('DesktopSidebar', () => {
     const button = screen.getByTestId('sidebar-app-update-button')
     const action = screen.getByTestId('sidebar-app-update-action')
     expect(button).toHaveClass('h-8', 'w-8')
-    expect(button).toHaveAttribute('title', '更新到 0.1.1')
+    expect(button).toHaveAttribute('aria-label', '更新到 0.1.1')
+    expect(button).not.toHaveAttribute('title')
     expect(action).not.toHaveClass('max-w-0', 'opacity-0', 'overflow-hidden')
     expect(screen.getByTestId('settings-button')).toHaveClass('pr-[72px]')
 
@@ -863,7 +864,7 @@ describe('DesktopSidebar', () => {
     const progress = screen.getByTestId('sidebar-app-update-download-progress')
     expect(progress).toHaveAttribute('aria-valuenow', '40')
     expect(screen.getByTestId('sidebar-app-update-button')).toHaveAttribute(
-      'title',
+      'aria-label',
       '正在下载更新 40%'
     )
   })
@@ -1538,7 +1539,10 @@ describe('DesktopSidebar', () => {
     expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
     expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
 
-    expect(searchButton.parentElement?.parentElement).toHaveClass('h-9', 'justify-between')
+    expect(searchButton.parentElement?.parentElement?.parentElement).toHaveClass(
+      'h-9',
+      'justify-between'
+    )
     expect(pluginsButton.parentElement).toHaveClass('space-y-0.5')
     expect(pluginsButton.parentElement).not.toHaveClass('pt-2')
   })
@@ -4046,6 +4050,10 @@ describe('DesktopSidebar', () => {
       expect(screen.getByTestId('runtime-local-task-hover-actions-codex-1').parentElement).toBe(
         rowChildren[1]
       )
+      const contextMenuTrigger = screen.getByTestId('runtime-local-task-menu-codex-1')
+      expect(contextMenuTrigger).toHaveClass('hidden')
+      expect(contextMenuTrigger.parentElement?.children).toHaveLength(1)
+      expect(contextMenuTrigger.parentElement?.firstElementChild).toBe(contextMenuTrigger)
       expect(screen.getByTestId('runtime-local-task-pin-icon-codex-1')).toBeInTheDocument()
       expect(screen.getByTestId('runtime-local-task-archive-icon-codex-1')).toBeInTheDocument()
       expect(screen.getByTestId('runtime-local-task-hover-actions-codex-1')).toHaveClass(
@@ -4275,6 +4283,80 @@ describe('DesktopSidebar', () => {
       threadId: 'thread-1',
       pinned: false,
     })
+  })
+
+  test('shows shared tooltips for every runtime task hover action', async () => {
+    vi.useFakeTimers()
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project-7', name: 'Wegent', stateDeviceId: 'local-device' },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                tasks: [
+                  {
+                    taskId: 'tooltip-task',
+                    threadId: 'thread-tooltip',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Tooltip coverage',
+                    runtime: 'codex',
+                    updatedAt: '2026-09-15T02:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+      imNotificationSettings: {
+        global: { enabled: false, sessionKey: null, session: null },
+        runtimeTaskSubscriptions: [],
+      },
+      onSetRuntimeTaskPinned: vi.fn().mockResolvedValue(undefined),
+      onArchiveRuntimeTask: vi.fn().mockResolvedValue(undefined),
+      onToggleRuntimeTaskNotification: vi.fn().mockResolvedValue(undefined),
+    })
+
+    fireEvent.click(screen.getByTestId('project-item-button'))
+
+    const actions = [
+      {
+        button: 'runtime-local-task-notify-tooltip-task',
+        tooltip: 'runtime-local-task-notify-tooltip-task-tooltip',
+        label: '订阅任务通知',
+      },
+      {
+        button: 'runtime-local-task-mark-tooltip-task',
+        tooltip: 'runtime-local-task-mark-tooltip-task-tooltip',
+        label: '置顶任务',
+      },
+      {
+        button: 'runtime-local-task-archive-tooltip-task',
+        tooltip: 'runtime-local-task-archive-tooltip-task-tooltip',
+        label: '归档任务',
+      },
+    ]
+
+    for (const [index, action] of actions.entries()) {
+      const button = screen.getByTestId(action.button)
+      expect(button).toHaveAttribute('aria-label', action.label)
+      expect(button).not.toHaveAttribute('title')
+
+      fireEvent.pointerEnter(button.parentElement as HTMLElement)
+      await act(async () => vi.advanceTimersByTime(index === 0 ? 700 : 0))
+      expect(screen.getByTestId(action.tooltip)).toHaveTextContent(action.label)
+      fireEvent.pointerLeave(button.parentElement as HTMLElement)
+    }
   })
 
   test('pins Codex tasks that only expose the thread id as taskId', async () => {
@@ -5013,7 +5095,8 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toHaveClass(
       'lucide-message-circle-off'
     )
-    expect(toggle).toHaveAttribute('title', expect.stringContaining('Telegram'))
+    expect(toggle).toHaveAttribute('aria-label', expect.stringContaining('Telegram'))
+    expect(toggle).not.toHaveAttribute('title')
 
     await user.click(toggle)
     expect(screen.getByTestId('sidebar-global-im-notification-menu')).toHaveTextContent(
@@ -5144,7 +5227,7 @@ describe('DesktopSidebar', () => {
     )
 
     const bell = screen.getByTestId('sidebar-global-im-notification-button')
-    expect(bell).toHaveAttribute('title', '登录云端后可开启离开电脑提醒')
+    expect(bell).toHaveAttribute('aria-label', '登录云端后可开启离开电脑提醒')
     expect(bell).not.toHaveClass('text-red-500')
     expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
 
@@ -5174,7 +5257,7 @@ describe('DesktopSidebar', () => {
 
     const bell = screen.getByTestId('sidebar-global-im-notification-button')
     expect(bell).toBeInTheDocument()
-    expect(bell).toHaveAttribute('title', '登录云端后可开启离开电脑提醒')
+    expect(bell).toHaveAttribute('aria-label', '登录云端后可开启离开电脑提醒')
     expect(bell).not.toHaveClass('text-red-500')
     expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
 
@@ -5210,7 +5293,7 @@ describe('DesktopSidebar', () => {
     )
 
     const bell = screen.getByTestId('sidebar-global-im-notification-button')
-    expect(bell).toHaveAttribute('title', '登录云端后可开启离开电脑提醒')
+    expect(bell).toHaveAttribute('aria-label', '登录云端后可开启离开电脑提醒')
     expect(bell).not.toHaveClass('text-red-500')
     expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
     expect(screen.queryByTestId('sidebar-global-im-notification-indicator')).not.toBeInTheDocument()
