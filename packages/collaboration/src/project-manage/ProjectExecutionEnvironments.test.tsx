@@ -246,6 +246,35 @@ async function render({
   return api;
 }
 
+// Re-renders the mounted component with a refreshed project, mirroring the
+// workspace controller's 15-second poll delivering new props.
+async function rerender(
+  api: SharedWorkspaceApi,
+  {
+    executionEnvironment,
+    version = 2,
+  }: {
+    executionEnvironment?: CollaborationProject["execution_environment"];
+    version?: number;
+  },
+) {
+  await act(async () => {
+    root?.render(
+      <ProjectExecutionEnvironments
+        api={api}
+        project={{
+          ...project,
+          version,
+          ...(executionEnvironment
+            ? { execution_environment: executionEnvironment }
+            : {}),
+        }}
+        translate={createCollaborationTranslator("zh-CN")}
+      />,
+    );
+  });
+}
+
 const workspacePrefix = "collaboration-workspace-execution-environment";
 
 async function renderWorkspaceScope({
@@ -770,5 +799,112 @@ describe("ProjectExecutionEnvironments", () => {
     expect(workspaceElement("-repository-ref-0")).toBeInstanceOf(
       HTMLInputElement,
     );
+  });
+
+  it("follows the refreshed project prop when the environment becomes ready", async () => {
+    const api = await render({
+      assigned: [environment(21, "Assigned online", "online")],
+    });
+
+    expect(element("-21").textContent).toContain("尚未创建环境");
+
+    await rerender(api, {
+      executionEnvironment: {
+        repositories: [],
+        setup_steps: [],
+        status: "ready",
+        fingerprint: "environment-v1",
+        prepared_device_id: "device-21",
+        prepared_workspace_path: "/workspace/project-1",
+        prepared_at: "2026-09-16T00:00:00Z",
+        error: "",
+      },
+    });
+
+    expect(element("-21").textContent).toContain("环境已就绪");
+    expect(element<HTMLButtonElement>("-initialize-21").textContent).toContain(
+      "重新创建",
+    );
+  });
+
+  it("does not clobber in-progress form edits when the project prop refreshes", async () => {
+    const api = await render({
+      assigned: [environment(21, "Assigned online", "online")],
+    });
+
+    await change("-repository-name-0", "Draft name");
+
+    await rerender(api, {
+      executionEnvironment: {
+        repositories: [
+          {
+            name: "Server name",
+            url: "https://github.com/wecode-ai/Wegent.git",
+            ref: "main",
+            path: "wegent",
+            primary: true,
+          },
+        ],
+        setup_steps: [{ command: "pnpm install", working_directory: "wegent" }],
+        status: "ready",
+        fingerprint: "environment-v2",
+        prepared_device_id: "device-21",
+        prepared_workspace_path: "/workspace/project-1",
+        prepared_at: "2026-09-16T00:00:00Z",
+        error: "",
+      },
+    });
+
+    // Server-owned fields follow the prop, but the typed draft survives.
+    expect(element("-21").textContent).toContain("环境已就绪");
+    expect(element<HTMLInputElement>("-repository-name-0").value).toBe(
+      "Draft name",
+    );
+    expect(element<HTMLInputElement>("-repository-url-0").value).toBe("");
+    expect(
+      container?.querySelector(`[data-testid="${prefix}-setup-command-0"]`),
+    ).toBeNull();
+  });
+
+  it("ignores prop refreshes while an initialization is in flight", async () => {
+    const pending = new Promise<never>(() => {});
+    const api = await render({
+      assigned: [
+        environment(1748, "Wework laptop", "online", "app-record-1748"),
+        environment(1824, "Wework desktop", "online", "app-record-1824"),
+      ],
+    });
+    api.projects.initializeExecutionEnvironment.mockImplementationOnce(
+      () => pending,
+    );
+    await change("-repository-name-0", "Wegent");
+    await change(
+      "-repository-url-0",
+      "https://github.com/wecode-ai/Wegent.git",
+    );
+    await change("-repository-path-0", "wegent");
+    await act(async () =>
+      element<HTMLButtonElement>("-initialize-1824").click(),
+    );
+    expect(element("-1824").textContent).toContain("正在创建环境");
+
+    // A racing poll arrives while the create owns the status fields; it must
+    // not flip the other device to ready or replace the in-flight state.
+    await rerender(api, {
+      version: 4,
+      executionEnvironment: {
+        repositories: [],
+        setup_steps: [],
+        status: "ready",
+        fingerprint: "environment-v1",
+        prepared_device_id: "app-record-1748",
+        prepared_workspace_path: "/workspace/project-1",
+        prepared_at: "2026-09-16T00:00:00Z",
+        error: "",
+      },
+    });
+
+    expect(element("-1824").textContent).toContain("正在创建环境");
+    expect(element("-1748").textContent).toContain("尚未创建环境");
   });
 });

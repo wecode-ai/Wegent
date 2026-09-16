@@ -210,6 +210,28 @@ export function ProjectExecutionEnvironments({
   // blocks a second device's button while one initialization is in flight.
   const initializationInFlight = useRef(false);
 
+  const incomingVersion = workspace?.version ?? project!.version;
+  const incomingStatus = initialConfig?.status ?? "uninitialized";
+  const incomingPreparedDeviceId = initialConfig?.prepared_device_id ?? "";
+  const incomingError = initialConfig?.error ?? "";
+
+  // The parent re-fetches the project on a poll, so the server-owned fields
+  // must follow the prop instead of staying stuck at the mount-time values.
+  // While a create is in flight the flow writes these itself from the device
+  // response, and the form drafts are user input and never re-seeded here.
+  useEffect(() => {
+    if (initializationInFlight.current || saving) return;
+    setConfigVersion(incomingVersion);
+    setEnvironmentStatus(incomingStatus);
+    setPreparedDeviceId(incomingPreparedDeviceId);
+    setEnvironmentError(incomingError);
+  }, [
+    incomingVersion,
+    incomingStatus,
+    incomingPreparedDeviceId,
+    incomingError,
+  ]);
+
   const loadRepositoryOptions = useCallback(async () => {
     if (!gitRepositoriesApi) return;
     setRepositoriesLoadFailed(false);
