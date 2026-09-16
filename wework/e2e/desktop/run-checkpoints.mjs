@@ -56,6 +56,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'board-focus-view': './scenarios/board-focus-view.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
+  'cloud-login-proxy': './scenarios/cloud-login-proxy.scenario.mjs',
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
   'collaboration-agent-automation-chain':
     './scenarios/collaboration-agent-automation-chain.scenario.mjs',
@@ -79,6 +80,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'offline-local-project-space',
   'board-focus-view',
   'cloud-context-resilience',
+  'cloud-login-proxy',
   'collaboration-shared-core',
   'collaboration-agent-automation-chain',
   'plugin-development',
