@@ -313,6 +313,23 @@ export function ResourceLibraryPage() {
     })
   }
 
+  const createActionHandled = useRef(false)
+  useEffect(() => {
+    const requestedCreateAgent =
+      searchParams.get('action') === 'create-agent' && resourceType === 'agent'
+
+    if (!requestedCreateAgent) {
+      createActionHandled.current = false
+      return
+    }
+    if (createActionHandled.current) {
+      return
+    }
+    createActionHandled.current = true
+    handleNewCapabilityType('agent')
+    replaceParams({ action: null })
+  }, [replaceParams, resourceType, searchParams])
+
   const handleResourceCreated = () => {
     setCreateRequest(null)
     setManagedRevision(revision => revision + 1)

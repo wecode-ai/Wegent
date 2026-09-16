@@ -31,6 +31,7 @@ import {
 import type { WorkbenchAction } from './workbenchReducer'
 import {
   findRuntimeTask,
+  findRuntimeTaskWorkspace,
   getRuntimeTaskRouteKey,
   getRuntimeTaskWorkspacePath,
   isSameRuntimeTaskAddress,
@@ -45,7 +46,11 @@ import type {
   ArchiveRuntimeConversationsResult,
   RefreshWorkLists,
 } from './workbenchContextTypes'
-import { evictRuntimeConversation } from './runtimeConversationCache'
+import {
+  beginRuntimeConversationHydration,
+  completeRuntimeConversationHydration,
+  evictRuntimeConversation,
+} from './runtimeConversationCache'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { projectRuntimePaneTranscript } from './runtimeTaskLifecycle/projection'
 
@@ -443,6 +448,11 @@ export function useWorkbenchRuntimeTasks({
       }
 
       try {
+        const sourceTask = findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)
+        const sourceWorkspace = findRuntimeTaskWorkspace(
+          state.runtimeWork,
+          state.currentRuntimeTask
+        )
         const response = await executorClient.runtime.forkRuntimeTask({
           source: state.currentRuntimeTask,
           target,
@@ -453,6 +463,42 @@ export function useWorkbenchRuntimeTasks({
           return
         }
 
+        const forkedTranscript = projectRuntimePaneTranscript(response.transcript)
+        const hydrationToken = beginRuntimeConversationHydration(response.target)
+        completeRuntimeConversationHydration(
+          response.target,
+          hydrationToken,
+          forkedTranscript.turns
+        )
+        lifecycleStore.syncTranscript(response.target, forkedTranscript)
+
+        if (sourceTask && sourceWorkspace) {
+          const now = new Date().toISOString()
+          const workspacePath =
+            response.target.workspacePath ||
+            getRuntimeTaskWorkspacePath(sourceWorkspace, sourceTask)
+          dispatch({
+            type: 'runtime_task_optimistic_upserted',
+            project: state.currentProject,
+            workspace: {
+              ...sourceWorkspace,
+              deviceId: response.target.deviceId,
+              workspacePath,
+              tasks: [],
+            },
+            task: {
+              taskId: response.target.taskId,
+              workspacePath,
+              title: options.title ?? sourceTask.title,
+              runtime: response.runtime ?? sourceTask.runtime,
+              status: 'active',
+              running: false,
+              optimistic: true,
+              createdAt: now,
+              updatedAt: now,
+            },
+          })
+        }
         await openRuntimeTask(response.target, {
           fallbackProject: state.currentProject,
         })
@@ -467,10 +513,12 @@ export function useWorkbenchRuntimeTasks({
     [
       dispatch,
       executorClient,
+      lifecycleStore,
       openRuntimeTask,
       refreshWorkLists,
       state.currentProject,
       state.currentRuntimeTask,
+      state.runtimeWork,
     ]
   )
 

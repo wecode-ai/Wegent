@@ -14,6 +14,7 @@ import {
   selectShellToolCommand,
   streamingTextEvents,
 } from '../modules/response-protocol.mjs'
+import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
 
 const PROJECT_NAME = '专注视图验证'
 const ISSUE_NAME = '优化运行中卡片的进度展示'
@@ -157,7 +158,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           timeoutMs: uiTimeoutMs,
         }
       )
-      const localWorkspaceSelector = `${ACTIVE_BOARD} [data-testid="collaboration-workspace-wework-local-workspace"]`
+      const localWorkspaceSelector = inCollaborationSidebar(
+        '[data-testid="collaboration-workspace-wework-local-workspace"]'
+      )
       await control.command('waitFor', localWorkspaceSelector, {
         visible: true,
         timeoutMs: uiTimeoutMs,

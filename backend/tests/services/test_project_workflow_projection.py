@@ -20,6 +20,7 @@ from app.models.user import User
 from app.services.delivery import delivery_service
 from app.services.loop_item_executions.service import runtime_device_identity_ids
 from app.services.project_workflow_projection import (
+    sync_workflow_automation_status,
     update_workflow_node,
     update_workflow_plan_task_status,
     update_workflow_task_status,
@@ -194,6 +195,54 @@ def test_workflow_projection_updates_owning_automation_run(
     test_db.refresh(run)
     assert run.status == "succeeded"
     assert run.completed_at is not None
+
+
+def test_cancelled_workflow_root_is_not_reopened_by_late_projection(
+    test_db: Session,
+    workflow_project: CloudProject,
+) -> None:
+    run = ProjectAutomationRun(
+        cloud_project_id=workflow_project.id,
+        parent_id="automation-rule",
+        task_id="cancelled-workflow-item",
+        source="event",
+        status="cancelled",
+        created_by_user_id=workflow_project.created_by_user_id,
+        metadata_json={"workflow_cancellation_requested": True},
+    )
+    item = LoopItem(
+        id="cancelled-workflow-item",
+        cloud_project_id=workflow_project.id,
+        created_by_user_id=workflow_project.created_by_user_id,
+        title="Cancelled workflow",
+        status="in_progress",
+        priority="none",
+        metadata_json={
+            "workflow_automation": {
+                "rule_id": "automation-rule",
+                "run_id": run.id,
+            },
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "nodes": [],
+            },
+        },
+    )
+    test_db.add_all([run, item])
+    test_db.commit()
+    version = run.version
+
+    sync_workflow_automation_status(
+        test_db,
+        item,
+        run_status="succeeded",
+    )
+    test_db.commit()
+
+    test_db.refresh(run)
+    assert run.status == "cancelled"
+    assert run.version == version
 
 
 def test_direct_robot_task_succeeds_without_automation_rule(

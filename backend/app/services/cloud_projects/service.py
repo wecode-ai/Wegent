@@ -16,6 +16,7 @@ from app.core.provider_credentials import store_provider_config
 from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem, ProjectAutomationRun, loop_datetime_is_unset
 from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -30,7 +31,12 @@ from app.schemas.cloud_project import (
 )
 from app.services.cloud_project_visibility import accessible_cloud_projects
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.execution_environment_initialization import (
+    initialize_execution_environment,
+    preparing_execution_environment,
+)
 from app.services.loop_item_status_history import write_status_change
+from app.services.project_automation_domain import ACTIVE_RUN_STATUSES
 from app.services.workspaces import workspace_service
 from app.services.workspaces.access import require_workspace_role
 from app.services.workspaces.environment_status import execution_environment_statuses
@@ -224,6 +230,7 @@ class CloudProjectService:
             or "ai_automation" in values.model_fields_set
             or "pull_request_automation" in values.model_fields_set
             or "workflow_definition" in values.model_fields_set
+            or "execution_environment" in values.model_fields_set
             or "visibility" in values.model_fields_set
         ):
             metadata = dict(project.metadata_json or {})
@@ -305,6 +312,14 @@ class CloudProjectService:
                 )
                 updates.pop("workflow_definition", None)
             if (
+                "execution_environment" in values.model_fields_set
+                and values.execution_environment is not None
+            ):
+                metadata["execution_environment"] = preparing_execution_environment(
+                    values.execution_environment.model_dump()
+                )
+                updates.pop("execution_environment", None)
+            if (
                 "provider_config" in values.model_fields_set
                 and values.provider_config is not None
             ):
@@ -353,6 +368,51 @@ class CloudProjectService:
         db.refresh(project)
         return project
 
+    async def initialize_execution_environment(
+        self,
+        db: Session,
+        cloud_project_id: int,
+        device_id: int,
+        user_id: int,
+        version: int,
+    ) -> CloudProject:
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
+        project = self._lock_project(db, cloud_project_id)
+        if project.version != version:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Project changed")
+        grant = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.DEVICE.value,
+                ResourceMember.resource_id == device_id,
+                ResourceMember.entity_type == "project",
+                ResourceMember.entity_id == str(cloud_project_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+        )
+        device = db.get(Kind, device_id)
+        if grant is None or device is None or device.kind != "Device":
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Execution device is not available in this Project",
+            )
+        metadata = dict(project.metadata_json or {})
+        definition = metadata.get("execution_environment")
+        definition = definition if isinstance(definition, dict) else {}
+        state = await initialize_execution_environment(
+            db=db,
+            device=device,
+            environment_id=f"project-{cloud_project_id}",
+            definition=definition,
+        )
+        metadata["execution_environment"] = state
+        project.metadata_json = metadata
+        project.version += 1
+        db.commit()
+        db.refresh(project)
+        return project
+
     def archive(self, db: Session, project_id: int, user_id: int, version: int) -> None:
         """Archive a project and remove every future automation trigger."""
 
@@ -363,14 +423,20 @@ class CloudProjectService:
             db.query(ProjectAutomationRun.id)
             .filter(
                 ProjectAutomationRun.cloud_project_id == str(project.id),
-                ProjectAutomationRun.status.in_(
-                    {"pending", "queued", "waiting_device", "running"}
-                ),
+                ProjectAutomationRun.status.in_(ACTIVE_RUN_STATUSES),
                 loop_datetime_is_unset(ProjectAutomationRun.deleted_at),
             )
             .first()
         )
-        if active_run is not None:
+        active_execution = (
+            db.query(LoopItemExecution.id)
+            .filter(
+                LoopItemExecution.cloud_project_id == str(project.id),
+                LoopItemExecution.status.notin_(("completed", "failed", "cancelled")),
+            )
+            .first()
+        )
+        if active_run is not None or active_execution is not None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Stop active automation runs before archiving this project",

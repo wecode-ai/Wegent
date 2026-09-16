@@ -21,7 +21,7 @@ import type {
 
 type WorkspaceDto = object | Record<string, unknown>;
 
-function asRecord(input: WorkspaceDto): Record<string, unknown> {
+function asRecord(input: unknown): Record<string, unknown> {
   return input as Record<string, unknown>;
 }
 
@@ -253,11 +253,18 @@ export function mapCollaborationWorkspaceDto(
   input: WorkspaceDto,
 ): CollaborationWorkspace {
   const row = asRecord(input);
+  const executionEnvironment = asRecord(
+    row.execution_environment ?? row.executionEnvironment ?? {},
+  );
+  const repositories = executionEnvironment.repositories;
+  const setupSteps =
+    executionEnvironment.setup_steps ?? executionEnvironment.setupSteps;
   return {
     id: String(row.id),
     location: "cloud",
     name: String(row.name ?? ""),
     description: String(row.description ?? ""),
+    namespace: String(row.namespace ?? "default"),
     access_role: (row.access_role ??
       row.accessRole ??
       "Member") as CollaborationWorkspace["access_role"],
@@ -266,6 +273,51 @@ export function mapCollaborationWorkspaceDto(
     execution_environment_count: Number(
       row.execution_environment_count ?? row.executionEnvironmentCount ?? 0,
     ),
+    execution_environment: {
+      repositories: Array.isArray(repositories)
+        ? repositories.map((value) => {
+            const repository = asRecord(value);
+            return {
+              name: String(repository.name ?? ""),
+              url: String(repository.url ?? ""),
+              ref: String(repository.ref ?? ""),
+              path: String(repository.path ?? ""),
+              primary: Boolean(repository.primary),
+            };
+          })
+        : [],
+      setup_steps: Array.isArray(setupSteps)
+        ? setupSteps.map((value) => {
+            const step = asRecord(value);
+            return {
+              command: String(step.command ?? ""),
+              working_directory: String(
+                step.working_directory ?? step.workingDirectory ?? "",
+              ),
+            };
+          })
+        : [],
+      status: (executionEnvironment.status ?? "uninitialized") as NonNullable<
+        CollaborationWorkspace["execution_environment"]
+      >["status"],
+      fingerprint: String(executionEnvironment.fingerprint ?? ""),
+      prepared_device_id: String(
+        executionEnvironment.prepared_device_id ??
+          executionEnvironment.preparedDeviceId ??
+          "",
+      ),
+      prepared_workspace_path: String(
+        executionEnvironment.prepared_workspace_path ??
+          executionEnvironment.preparedWorkspacePath ??
+          "",
+      ),
+      prepared_at: nullableString(
+        executionEnvironment.prepared_at ??
+          executionEnvironment.preparedAt ??
+          null,
+      ),
+      error: String(executionEnvironment.error ?? ""),
+    },
     project_count: Number(row.project_count ?? row.projectCount ?? 0),
     created_by_user_id: Number(
       row.created_by_user_id ?? row.createdByUserId ?? 0,

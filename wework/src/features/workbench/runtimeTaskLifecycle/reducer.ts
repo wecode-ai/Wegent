@@ -1,5 +1,9 @@
 import { dequal } from 'dequal'
-import { isRuntimeTaskAuthoritativeCompletion, isRuntimeTaskConfirmedActive } from './projection'
+import {
+  isRuntimeGoalExecutionActive,
+  isRuntimeTaskAuthoritativeCompletion,
+  isRuntimeTaskConfirmedActive,
+} from './projection'
 import type { RuntimeTaskLifecycleEvent, RuntimeTaskLifecycleState } from './types'
 
 export function reduceRuntimeTaskLifecycle(
@@ -8,7 +12,13 @@ export function reduceRuntimeTaskLifecycle(
 ): RuntimeTaskLifecycleState {
   switch (event.type) {
     case 'executor_snapshot_received': {
-      const snapshotRunning = typeof event.task.running === 'boolean' ? event.task.running : null
+      const goalExecutionActive = isRuntimeGoalExecutionActive(event.task)
+      const snapshotRunning =
+        event.task.running === true || goalExecutionActive
+          ? true
+          : typeof event.task.running === 'boolean'
+            ? false
+            : null
       const expectedRunning = state.expectedExecutorRunning
       const hasIdentifiedActiveTurn = state.turnPhase === 'streaming' && state.activeTurnId !== null
       const terminalStatus = isTerminalTaskStatus(event.task.status)
@@ -16,8 +26,15 @@ export function reduceRuntimeTaskLifecycle(
       const completionAdvanced =
         isRuntimeTaskAuthoritativeCompletion(event.task) &&
         event.task.completedAt !== state.task?.completedAt
+      const terminalSnapshotAdvanced =
+        terminalStatus &&
+        (!isTerminalTaskStatus(state.task?.status) ||
+          event.task.status !== state.task?.status ||
+          completionAdvanced)
       const snapshotConfirmsSettlement =
-        terminalStatus && (!hasIdentifiedActiveTurn || completionAdvanced)
+        terminalStatus &&
+        (!hasIdentifiedActiveTurn || completionAdvanced) &&
+        (expectedRunning !== true || terminalSnapshotAdvanced)
       const transitionMismatch =
         snapshotRunning !== null && expectedRunning !== null && snapshotRunning !== expectedRunning
       const snapshotConfirmsAutonomousTurn = isRuntimeTaskConfirmedActive(event.task)
@@ -39,13 +56,15 @@ export function reduceRuntimeTaskLifecycle(
         return state
       }
 
-      const executionPhase = queuedStatus
-        ? 'queued'
-        : terminalStatus || snapshotRunning === false
-          ? 'idle'
-          : snapshotRunning === true
-            ? 'running'
-            : state.executionPhase
+      const executionPhase = goalExecutionActive
+        ? 'running'
+        : queuedStatus
+          ? 'queued'
+          : terminalStatus || snapshotRunning === false
+            ? 'idle'
+            : snapshotRunning === true
+              ? 'running'
+              : state.executionPhase
       const turnPhase =
         queuedStatus || terminalStatus || snapshotRunning === false ? 'idle' : state.turnPhase
       const activeTurnId =
