@@ -3,6 +3,7 @@ import type { UnifiedModelListResponse } from '@/types/api'
 
 export interface ModelApi {
   listModels(options?: HttpRequestOptions): Promise<UnifiedModelListResponse>
+  refresh?(): void
   subscribe?(onChange: () => void): () => void
 }
 

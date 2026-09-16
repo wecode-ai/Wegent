@@ -1390,8 +1390,9 @@ export function createHybridWorkbenchServices(
     },
     modelApi: {
       subscribe: cloudModels.subscribe,
+      refresh: cloudModels.refresh,
       async listModels(): Promise<UnifiedModelListResponse> {
-        cloudModels.refreshIfDue()
+        cloudModels.loadIfNeeded()
         const localModels = await localServices.modelApi.listModels()
         return {
           data: mergeModelCatalogs(annotateLocalModels(localModels.data), cloudModels.getModels()),

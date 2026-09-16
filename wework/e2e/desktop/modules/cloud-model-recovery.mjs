@@ -6,6 +6,7 @@ import {
   ensureModelOptionVisible,
   selectE2EModel,
   stopProcessGroup,
+  waitForSnapshot,
 } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
@@ -23,7 +24,6 @@ export async function verifyCloudModelRecovery(control, cloud, request) {
   const readyCount = control.readyCount
   const draft = 'Cloud model recovery must preserve this unsent draft'
   await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: draft })
-  await ensureModelOptionVisible(control, `model-option-${model.name}`, selector, null)
 
   let backendStopped = false
   let createdModelId = null
@@ -32,9 +32,10 @@ export async function verifyCloudModelRecovery(control, cloud, request) {
     backendStopped = true
     await assert.rejects(fetch(`${cloud.backendUrl}/api/health`))
 
-    // Cross the normal sixty-second catalog refresh while the real server is down.
-    // Assert continuity throughout the outage rather than manually triggering a reload.
-    const offlineUntil = Date.now() + 65_000
+    // Opening the menu requests a refresh; existing models remain visible while offline.
+    await ensureModelOptionVisible(control, `model-option-${model.name}`, selector, null)
+    // Cover the catalog request deadline before attempting a new refresh.
+    const offlineUntil = Date.now() + 11_000
     while (Date.now() < offlineUntil) {
       assert.equal(await control.command('getText', selector), selectedLabel)
       assert.equal(await control.command('getText', ACTIVE_COMPOSER_SELECTOR), draft)
@@ -43,6 +44,12 @@ export async function verifyCloudModelRecovery(control, cloud, request) {
     }
     await captureVerificationScreenshot(control, 'cloud-model-recovery-01-offline.png')
 
+    await control.command('press', 'body', { key: 'Escape' })
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('model-selector-menu'),
+      'The model menu did not close before the next refresh'
+    )
     await cloud.launchBackend()
     backendStopped = false
     const name = `cloud-model-recovery-${process.pid}-${Date.now()}`
@@ -67,10 +74,9 @@ export async function verifyCloudModelRecovery(control, cloud, request) {
     createdModelId = created.created[0]?.id
     assert.ok(createdModelId, 'The recovery model was not persisted by the real Backend')
 
-    // Allow the capped background retry and its request deadline, without user input.
-    await control.command('waitFor', `[data-testid="model-option-${name}"]`, {
-      timeoutMs: 75_000,
-    })
+    // Reopening the menu fetches the updated catalog without restarting the app.
+    await ensureModelOptionVisible(control, `model-option-${model.name}`, selector, null)
+    await control.command('waitFor', `[data-testid="model-option-${name}"]`)
     assert.equal(await control.command('getText', selector), selectedLabel)
     assert.equal(await control.command('getText', ACTIVE_COMPOSER_SELECTOR), draft)
     assert.equal(control.readyCount, readyCount, 'Recovery required a renderer reload')

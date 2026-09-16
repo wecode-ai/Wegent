@@ -34,6 +34,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 
 import { ModelSelector } from './ModelSelector'
+import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
 import { getDesktopModelSelectorCollisionPadding } from './model-selector-layout'
 
 const SHELL_LEFT = 800
@@ -318,6 +319,52 @@ describe('ModelSelector desktop layout', () => {
     expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
     await waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false, 'selection'))
     expect(embeddedBrowserOcclusionMock).toHaveBeenLastCalledWith('model-selector-flyout', false)
+  })
+
+  test('refreshes on each opening and keeps the menu and selection after a failed refresh', async () => {
+    const addedModel = { ...SAMPLE_MODEL, name: 'new-cloud-model', displayName: 'New cloud model' }
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [SAMPLE_MODEL] })
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValue({ data: [SAMPLE_MODEL, addedModel] }),
+    }
+    function ComposerModelMenu() {
+      const selection = useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: { modelName: SAMPLE_MODEL.name, modelType: SAMPLE_MODEL.type },
+      })
+      return (
+        <ModelSelector
+          models={selection.models}
+          selectedModel={selection.selectedModel}
+          selectedModelOptions={selection.selectedModelOptions}
+          disabled={false}
+          onSelectModel={selection.setSelectedModel}
+          onSelectModelOption={selection.setSelectedModelOption}
+          onOpenChange={open => {
+            if (open) selection.refreshModels()
+          }}
+        />
+      )
+    }
+    render(<ComposerModelMenu />)
+    await waitFor(() =>
+      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.5')
+    )
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.5')
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
+    expect(await screen.findByTestId('model-option-new-cloud-model')).toBeInTheDocument()
+    expect(api.listModels).toHaveBeenCalledTimes(3)
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.5')
   })
 
   test('uses the available viewport height for a long model list', async () => {

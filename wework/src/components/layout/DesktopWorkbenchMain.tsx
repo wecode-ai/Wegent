@@ -3015,6 +3015,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }
         : undefined,
       onModelSelectorOpenChange: (open, closeReason) => {
+        projectChat.onModelSelectorOpenChange?.(open, closeReason)
         if (!open && closeReason !== 'selection') pendingModelRetryRef.current = null
       },
       onRefineTrialPrompt: refinePluginTrialPrompt,

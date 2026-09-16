@@ -61,7 +61,6 @@ const CLOUD_AUTHORIZATION_CLOSED_MESSAGE = '云端授权窗口已关闭，请重
 const CLOUD_STARTUP_REQUEST_TIMEOUT_MS = 8000
 const ACCESS_TOKEN_REFRESH_LEAD_MS = 5 * 60 * 1000
 const ACCESS_TOKEN_REFRESH_RETRY_MS = 60 * 1000
-const CLOUD_RECOVERY_RETRY_MS = 5_000
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 
 function resolveCloudRuntimeConfig(
@@ -378,7 +377,6 @@ interface CloudConnectionProviderProps {
 export function CloudConnectionProvider({ children }: CloudConnectionProviderProps) {
   const [snapshot, setSnapshot] = useState<CloudConnectionSnapshot>(() => snapshotFromStored())
   const [desktopRestoreSettled, setDesktopRestoreSettled] = useState(false)
-  const [refreshFailures, setRefreshFailures] = useState(0)
   const initialRefreshStartedRef = useRef(false)
   const desktopRestoreStartedRef = useRef(false)
   const refreshPromiseRef = useRef<Promise<User | null> | null>(null)
@@ -468,7 +466,6 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       socketBaseUrlOverride?: string
     ): Promise<User> => {
       disconnectRequestedRef.current = false
-      setRefreshFailures(0)
       const connectionGeneration = refreshGenerationRef.current + 1
       refreshGenerationRef.current = connectionGeneration
       let config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride)
@@ -586,7 +583,6 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
         if (refreshGenerationRef.current !== refreshGeneration) return null
         const user = await fetchCloudUser(config, accessToken, CLOUD_STARTUP_REQUEST_TIMEOUT_MS)
         if (refreshGenerationRef.current !== refreshGeneration) return null
-        setRefreshFailures(0)
         setSnapshot(current => {
           if (
             disconnectRequestedRef.current ||
@@ -615,7 +611,6 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
             error.status === 401) ||
           (error instanceof DesktopCloudCredentialError &&
             ['cloud_auth_expired', 'credentials_unavailable'].includes(error.code))
-        setRefreshFailures(current => (authExpired ? 0 : current + 1))
         setSnapshot(current =>
           authExpired
             ? {
@@ -651,7 +646,6 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
 
   const disconnect = useCallback(() => {
     disconnectRequestedRef.current = true
-    setRefreshFailures(0)
     refreshGenerationRef.current += 1
     refreshPromiseRef.current = null
     clearStoredCloudConnection()
@@ -688,18 +682,6 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   ])
 
   useEffect(() => {
-    if (!refreshFailures || (snapshot.status !== 'restoring' && snapshot.status !== 'connected')) {
-      return
-    }
-    const delayMs = Math.min(
-      ACCESS_TOKEN_REFRESH_RETRY_MS,
-      CLOUD_RECOVERY_RETRY_MS * 2 ** Math.min(refreshFailures - 1, 4)
-    )
-    const timer = window.setTimeout(() => void refreshUser(), delayMs)
-    return () => window.clearTimeout(timer)
-  }, [refreshFailures, refreshUser, snapshot.status])
-
-  useEffect(() => {
     if (snapshot.status !== 'connected' || !snapshot.tokenExpiresAt) return
     if (snapshot.credentialMode === 'legacy_access_token') {
       let timer: number | undefined
@@ -727,7 +709,6 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
         if (timer !== undefined) window.clearTimeout(timer)
       }
     }
-    if (refreshFailures) return
     const delayMs = Math.min(
       MAX_TIMER_DELAY_MS,
       Math.max(
@@ -739,22 +720,11 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       void refreshUser()
     }, delayMs)
     return () => window.clearTimeout(timer)
-  }, [
-    refreshFailures,
-    refreshUser,
-    snapshot.credentialMode,
-    snapshot.status,
-    snapshot.tokenExpiresAt,
-  ])
+  }, [refreshUser, snapshot.credentialMode, snapshot.status, snapshot.tokenExpiresAt])
 
   useEffect(() => {
     const refresh = () => {
-      if (
-        (snapshot.status === 'connected' || snapshot.status === 'restoring') &&
-        snapshot.apiBaseUrl
-      ) {
-        void refreshUser()
-      }
+      if (snapshot.status === 'connected' && snapshot.apiBaseUrl) void refreshUser()
     }
     const unsubscribeResume = subscribeSystemResume(refresh)
     window.addEventListener('online', refresh)

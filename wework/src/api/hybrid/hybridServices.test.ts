@@ -775,7 +775,7 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
   })
 
-  it('recovers the composer cloud catalog automatically without changing its selected model', async () => {
+  it('refreshes the composer cloud catalog on demand without changing its selected model', async () => {
     vi.useFakeTimers()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     mocks.cloudListModels
@@ -789,7 +789,10 @@ describe('createHybridWorkbenchServices', () => {
       act(() => view.result.current.setSelectedModel(view.result.current.models[0]))
       const selectedName = view.result.current.selectedModel?.name
 
-      await act(() => vi.advanceTimersByTimeAsync(5_000))
+      await act(() => vi.advanceTimersByTimeAsync(600_000))
+      expect(mocks.cloudListModels).toHaveBeenCalledOnce()
+      act(() => view.result.current.refreshModels())
+      await act(() => vi.advanceTimersByTimeAsync(0))
 
       expect(view.result.current.models.map(model => model.name)).toEqual([
         'gpt-5.5',

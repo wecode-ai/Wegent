@@ -14,32 +14,34 @@ afterEach(() => {
   disposers.splice(0).forEach(dispose => dispose())
   vi.useRealTimers()
   vi.restoreAllMocks()
-  delete window.weworkElectronLifecycle
 })
 
-describe('cloud model catalog recovery', () => {
-  it('automatically retries transient failures with capped backoff', async () => {
-    const load = vi.fn().mockRejectedValue(new Error('offline'))
+describe('on-demand cloud model catalog', () => {
+  it('does not poll or retry a failed initial load until explicitly refreshed', async () => {
+    const load = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue([cloudModel])
     const catalog = createCloudModelCatalog(load)
     const changed = vi.fn()
     disposers.push(catalog.subscribe(changed))
+    catalog.loadIfNeeded()
     await vi.advanceTimersByTimeAsync(0)
-
-    for (const delay of [5_000, 10_000, 20_000, 40_000, 60_000, 60_000]) {
-      const attempts = load.mock.calls.length
-      await vi.advanceTimersByTimeAsync(delay - 1)
-      expect(load).toHaveBeenCalledTimes(attempts)
-      await vi.advanceTimersByTimeAsync(1)
-      expect(load).toHaveBeenCalledTimes(attempts + 1)
-    }
+    catalog.loadIfNeeded()
+    window.dispatchEvent(new Event('online'))
+    window.dispatchEvent(new Event('focus'))
+    await vi.advanceTimersByTimeAsync(600_000)
+    expect(load).toHaveBeenCalledOnce()
     expect(changed).not.toHaveBeenCalled()
-    load.mockResolvedValue([cloudModel])
-    await vi.advanceTimersByTimeAsync(60_000)
+    expect(vi.getTimerCount()).toBe(0)
+
+    catalog.refresh()
+    await vi.advanceTimersByTimeAsync(0)
     expect(catalog.getModels()).toEqual([cloudModel])
+    expect(load).toHaveBeenCalledTimes(2)
     expect(changed).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(600_000)
+    expect(load).toHaveBeenCalledTimes(2)
   })
 
-  it('aborts a stalled request and retries without a user action', async () => {
+  it('aborts a stalled request and allows the next explicit refresh', async () => {
     let signal!: AbortSignal
     const load = vi.fn<(signal: AbortSignal) => Promise<UnifiedModel[]>>()
     load.mockImplementationOnce(requestSignal => {
@@ -51,36 +53,42 @@ describe('cloud model catalog recovery', () => {
     load.mockResolvedValue([cloudModel])
     const catalog = createCloudModelCatalog(load)
     disposers.push(catalog.subscribe(vi.fn()))
-    await vi.advanceTimersByTimeAsync(0)
-    expect(catalog.getModels()).toEqual([])
+    catalog.loadIfNeeded()
     await vi.advanceTimersByTimeAsync(10_000)
     expect(signal.aborted).toBe(true)
     expect(signal.reason.name).toBe('TimeoutError')
-    await vi.advanceTimersByTimeAsync(5_000)
-    expect(load).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(600_000)
+    expect(load).toHaveBeenCalledOnce()
+    catalog.refresh()
+    await vi.advanceTimersByTimeAsync(0)
     expect(catalog.getModels()).toEqual([cloudModel])
+    expect(load).toHaveBeenCalledTimes(2)
   })
 
-  it('retains a loaded catalog on refresh failure and applies a later recovery', async () => {
+  it('retains existing models on failure and updates them on the next refresh', async () => {
     const replacement: UnifiedModel = { name: 'new-cloud-model', type: 'public' }
     const load = vi
       .fn()
       .mockResolvedValueOnce([cloudModel])
-      .mockRejectedValueOnce(new Error('network interrupted'))
+      .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValue([cloudModel, replacement])
     const catalog = createCloudModelCatalog(load)
     const changed = vi.fn()
     disposers.push(catalog.subscribe(changed))
+    catalog.loadIfNeeded()
     await vi.advanceTimersByTimeAsync(0)
-    await vi.advanceTimersByTimeAsync(60_000)
+    catalog.refresh()
+    expect(catalog.getModels()).toEqual([cloudModel])
+    await vi.advanceTimersByTimeAsync(0)
     expect(catalog.getModels()).toEqual([cloudModel])
     expect(changed).toHaveBeenCalledOnce()
-    await vi.advanceTimersByTimeAsync(5_000)
+    catalog.refresh()
+    await vi.advanceTimersByTimeAsync(0)
     expect(catalog.getModels()).toEqual([cloudModel, replacement])
     expect(changed).toHaveBeenCalledTimes(2)
   })
 
-  it('revalidates an empty catalog and applies authoritative removals', async () => {
+  it('refreshes a cached empty result and applies successful removals', async () => {
     const load = vi
       .fn()
       .mockResolvedValueOnce([])
@@ -88,33 +96,33 @@ describe('cloud model catalog recovery', () => {
       .mockResolvedValue([])
     const catalog = createCloudModelCatalog(load)
     disposers.push(catalog.subscribe(vi.fn()))
+    catalog.loadIfNeeded()
+    await vi.advanceTimersByTimeAsync(0)
+    catalog.refresh()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(catalog.getModels()).toEqual([cloudModel])
+    catalog.refresh()
     await vi.advanceTimersByTimeAsync(0)
     expect(catalog.getModels()).toEqual([])
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(catalog.getModels()).toEqual([cloudModel])
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(catalog.getModels()).toEqual([])
-    expect(load).toHaveBeenCalledTimes(3)
   })
 
-  it('shares one refresh loop and cancels it when the last consumer leaves', async () => {
-    const load = vi.fn().mockResolvedValue([cloudModel])
+  it('coalesces concurrent refreshes and cancels when the last consumer leaves', async () => {
+    const load = vi
+      .fn<(signal: AbortSignal) => Promise<UnifiedModel[]>>()
+      .mockReturnValue(new Promise(() => undefined))
     const catalog = createCloudModelCatalog(load)
-    const first = vi.fn()
-    const second = vi.fn()
-    const unsubscribeFirst = catalog.subscribe(first)
-    const unsubscribeSecond = catalog.subscribe(second)
+    const unsubscribeFirst = catalog.subscribe(vi.fn())
+    const unsubscribeSecond = catalog.subscribe(vi.fn())
     disposers.push(unsubscribeFirst, unsubscribeSecond)
+    catalog.loadIfNeeded()
+    catalog.refresh()
+    catalog.refresh()
     await vi.advanceTimersByTimeAsync(0)
     expect(load).toHaveBeenCalledOnce()
     unsubscribeFirst()
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(first).toHaveBeenCalledOnce()
-    expect(second).toHaveBeenCalledTimes(2)
+    expect(load.mock.calls[0][0].aborted).toBe(false)
     unsubscribeSecond()
-    await vi.advanceTimersByTimeAsync(120_000)
-    window.dispatchEvent(new Event('online'))
-    expect(load).toHaveBeenCalledTimes(2)
+    expect(load.mock.calls[0][0].aborted).toBe(true)
     expect(vi.getTimerCount()).toBe(0)
   })
 
@@ -131,40 +139,16 @@ describe('cloud model catalog recovery', () => {
       .mockResolvedValue([cloudModel])
     const catalog = createCloudModelCatalog(load)
     const unsubscribe = catalog.subscribe(vi.fn())
+    catalog.loadIfNeeded()
     await vi.advanceTimersByTimeAsync(0)
     unsubscribe()
-    expect(load.mock.calls[0][0].aborted).toBe(true)
     const changed = vi.fn()
     disposers.push(catalog.subscribe(changed))
+    catalog.loadIfNeeded()
     await vi.advanceTimersByTimeAsync(0)
     resolveOld([{ name: 'stale-model', type: 'public' }])
     await vi.advanceTimersByTimeAsync(0)
     expect(catalog.getModels()).toEqual([cloudModel])
     expect(changed).toHaveBeenCalledOnce()
-  })
-
-  it('refreshes immediately after reconnection or system resume', async () => {
-    let resume!: () => void
-    const unsubscribeResume = vi.fn()
-    window.weworkElectronLifecycle = {
-      onSystemResume: listener => {
-        resume = listener
-        return unsubscribeResume
-      },
-    }
-    const load = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue([cloudModel])
-    const catalog = createCloudModelCatalog(load)
-    const unsubscribe = catalog.subscribe(vi.fn())
-    disposers.push(unsubscribe)
-    await vi.advanceTimersByTimeAsync(0)
-    window.dispatchEvent(new Event('online'))
-    await vi.advanceTimersByTimeAsync(0)
-    expect(catalog.getModels()).toEqual([cloudModel])
-    resume()
-    resume()
-    await vi.advanceTimersByTimeAsync(0)
-    expect(load).toHaveBeenCalledTimes(3)
-    unsubscribe()
-    expect(unsubscribeResume).toHaveBeenCalledOnce()
   })
 })

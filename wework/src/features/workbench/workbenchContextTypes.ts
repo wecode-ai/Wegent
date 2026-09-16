@@ -1,4 +1,5 @@
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
+import type { ModelSelectorCloseReason } from '@/components/chat/composer/model-selector-types'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type {
   Attachment,
@@ -214,6 +215,7 @@ export interface WorkbenchContextValue {
     activeModel?: UnifiedModel | null
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
+    onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
     input: string
     composerError?: string | null
     composerErrorByScope?: Readonly<Record<string, string>>
