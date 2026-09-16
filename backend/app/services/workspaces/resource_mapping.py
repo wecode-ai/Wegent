@@ -18,6 +18,7 @@ def agent_values(
     *,
     grant: ResourceMember,
     team: Kind,
+    execution_user_id: int,
 ) -> dict[str, object]:
     owner_type, owner_id, owner_name, owner_user_id = owner_values(
         db, grant=grant, resource=team
@@ -37,7 +38,7 @@ def agent_values(
         "owner_type": owner_type,
         "owner_id": owner_id,
         "owner_name": owner_name,
-        "status": agent_status(team),
+        "status": agent_status(db, team, execution_user_id=execution_user_id),
         "execution_environment_ids": environment_ids,
         "owner_user_id": owner_user_id,
         "added_by_user_id": grant.invited_by_user_id,
@@ -51,6 +52,7 @@ def execution_environment_values(
     grant: ResourceMember,
     device: Kind,
     *,
+    connection_status: str,
     workspace_id: str | None = None,
 ) -> dict[str, object]:
     spec = _kind_spec(device)
@@ -82,7 +84,7 @@ def execution_environment_values(
         "owner_type": owner_type,
         "owner_id": owner_id,
         "owner_name": owner_name,
-        "status": execution_environment_status(device),
+        "status": connection_status,
         "owner_user_id": owner_user_id,
         "added_by_user_id": grant.invited_by_user_id,
         "created_at": grant.created_at,
@@ -93,6 +95,7 @@ def execution_environment_values(
 def personal_environment_values(
     device: Kind,
     *,
+    connection_status: str,
     owner: User,
     workspace_ids: list[str],
 ) -> dict[str, object]:
@@ -108,7 +111,7 @@ def personal_environment_values(
         "owner_type": "user",
         "owner_id": str(owner.id),
         "owner_name": owner.user_name,
-        "status": execution_environment_status(device),
+        "status": connection_status,
         "workspace_ids": workspace_ids,
         "updated_at": device.updated_at,
     }
@@ -150,38 +153,29 @@ def owner_values(
     )
 
 
-def agent_status(team: Kind) -> str:
-    if not team.is_active or not isinstance(team.json, dict):
+def agent_status(
+    db: Session,
+    team: Kind,
+    *,
+    execution_user_id: int,
+) -> str:
+    """Return whether the Agent can execute for the requesting user."""
+    if not team.is_active:
         return "unavailable"
-    status = team.json.get("status")
-    status = status if isinstance(status, dict) else {}
-    if str(status.get("state") or "").lower() == "available":
-        return "available"
-    if str(_kind_spec(team).get("status") or "").lower() in {
-        "available",
-        "active",
-        "ready",
-    }:
-        return "available"
-    return "unavailable"
 
+    from app.services.execution.team_readiness import (
+        validate_team_execution_readiness,
+    )
 
-def execution_environment_status(device: Kind) -> str:
-    if not device.is_active or not isinstance(device.json, dict):
-        return "offline"
-    raw_status = _kind_spec(device).get("status")
-    if not isinstance(raw_status, str):
-        status = device.json.get("status")
-        status = status if isinstance(status, dict) else {}
-        raw_status = status.get("status") or status.get("state")
-    normalized = str(raw_status or "").lower()
-    if normalized in {"online", "busy", "available", "ready"}:
-        return "online"
-    if normalized in {"provisioning", "pending", "creating", "starting"}:
-        return "provisioning"
-    if normalized in {"error", "failed", "unavailable"}:
-        return "error"
-    return "offline"
+    try:
+        validate_team_execution_readiness(
+            db,
+            team=team,
+            execution_user_id=execution_user_id,
+        )
+    except ValueError:
+        return "unavailable"
+    return "available"
 
 
 def execution_environment_kind(device_type: str) -> str:

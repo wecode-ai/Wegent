@@ -12,12 +12,9 @@ import type {
   SharedWorkspaceApi,
   WorkspaceProjectAgent,
 } from "../ports/SharedWorkspaceApi";
-import type {
-  CollaborationExecutionEnvironment,
-  CollaborationOwnedAgent,
-  CollaborationProject,
-} from "../types";
+import type { CollaborationOwnedAgent, CollaborationProject } from "../types";
 import { ProjectAgentConfiguration } from "./ProjectAgentConfiguration";
+import type { ProjectAgentConfigurationHost } from "./types";
 
 const project: CollaborationProject = {
   id: "8869148083931743937",
@@ -48,20 +45,6 @@ const workspaceAgent: CollaborationOwnedAgent = {
   execution_environment_ids: [],
 };
 
-const environment: CollaborationExecutionEnvironment = {
-  id: "environment-1",
-  device_id: 22,
-  device_key: "device-macbook",
-  name: "MacBook Pro",
-  kind: "local_device",
-  coding_tools: ["claude_code", "codex"],
-  owner_type: "user",
-  owner_id: "7",
-  owner_name: "李明",
-  status: "online",
-  updated_at: "2026-09-12T00:00:00Z",
-};
-
 function projectAgent(
   values: Partial<WorkspaceProjectAgent> = {},
 ): WorkspaceProjectAgent {
@@ -78,7 +61,6 @@ function projectAgent(
 function createApi(options?: {
   agents?: WorkspaceProjectAgent[];
   workspaceAgents?: CollaborationOwnedAgent[];
-  environments?: CollaborationExecutionEnvironment[];
 }) {
   const create = vi.fn(async (_projectId, input: Record<string, unknown>) =>
     projectAgent({
@@ -91,11 +73,7 @@ function createApi(options?: {
     projectAgent({ id: agentId, status: "archived", version: 2 }),
   );
   const api = {
-    projects: {
-      listExecutionEnvironments: vi.fn(
-        async () => options?.environments ?? [environment],
-      ),
-    },
+    projects: {},
     resources: {
       list: vi.fn(async () => ({
         agents: [],
@@ -106,6 +84,21 @@ function createApi(options?: {
       list: vi.fn(async () => options?.agents ?? [projectAgent()]),
       create,
       update,
+    },
+    automationExecutionCatalog: {
+      load: vi.fn(async () => ({
+        environments: [],
+        models: [
+          {
+            name: "desktop-e2e-responses-model",
+            label: "Desktop E2E Responses",
+            type: "runtime",
+            options: { providerProfileId: "desktop-e2e-responses" },
+          },
+        ],
+        plugins: [],
+      })),
+      loadPlugins: vi.fn(async () => []),
     },
     workspaces: {
       listAgents: vi.fn(
@@ -143,6 +136,70 @@ async function change(testId: string, value: string) {
   });
 }
 
+const hostedCreationHost: ProjectAgentConfigurationHost = {
+  renderAgentCreator({ namespace, onCreated, workspaceName }) {
+    return (
+      <button
+        data-testid="hosted-agent-create"
+        data-namespace={namespace}
+        data-workspace-name={workspaceName}
+        onClick={() => void onCreated({ name: "空间新智能体", teamId: 91 })}
+        type="button"
+      >
+        创建
+      </button>
+    );
+  },
+  renderDialog({ children, testIds }) {
+    return <div data-testid={testIds.dialog}>{children}</div>;
+  },
+  renderModePicker({ onChange, options }) {
+    return (
+      <div>
+        {options.map((option) => (
+          <button
+            data-testid={option.testId}
+            disabled={option.disabled}
+            key={option.value}
+            onClick={() => onChange(option.value)}
+            type="button"
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    );
+  },
+  renderSelect({ ariaLabel, onChange, options, testId, value }) {
+    return (
+      <select
+        aria-label={ariaLabel}
+        data-testid={testId}
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  },
+  renderPrimaryAction({ children, disabled, onClick, testId }) {
+    return (
+      <button
+        data-testid={testId}
+        disabled={disabled}
+        onClick={onClick}
+        type="button"
+      >
+        {children}
+      </button>
+    );
+  },
+};
+
 describe("ProjectAgentConfiguration", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -171,7 +228,7 @@ describe("ProjectAgentConfiguration", () => {
     });
   }
 
-  it("creates managed Wegent and custom Codex agents through the shared API", async () => {
+  it("adds an existing Agent without exposing a duplicate inline creator", async () => {
     const { api, create } = createApi();
     await render(api);
 
@@ -186,26 +243,51 @@ describe("ProjectAgentConfiguration", () => {
     expect(element("project-agent-row-created-wegent")).toBeTruthy();
 
     await click("project-agent-add");
-    await click("project-agent-mode-codex");
-    await change("project-agent-codex-name", "Codex 产品工程师");
-    await change("project-agent-codex-capability", "实现产品需求");
-    await change("project-agent-codex-prompt", "遵循项目规范");
-    await change("project-agent-codex-environment", environment.id);
-    await click("project-agent-codex-create");
+    expect(
+      document.querySelector('[data-testid="project-agent-mode-create"]'),
+    ).toBeNull();
+    expect(
+      document.querySelector(
+        '[data-testid="project-agent-standard-create-form"]',
+      ),
+    ).toBeNull();
+    expect(create).toHaveBeenCalledTimes(1);
+  });
 
-    expect(create).toHaveBeenNthCalledWith(2, project.id, {
-      name: "Codex 产品工程师",
-      runtime: "codex",
-      capabilityDescription: "实现产品需求",
-      systemPrompt: "遵循项目规范",
-      executionDeviceId: "device-macbook",
-      executionEnvironment: "local",
-      workspaceBinding: {
-        type: "backend_project",
-        projectId: project.id,
-      },
+  it("creates a project Agent through the resource-library host and binds it to the project", async () => {
+    const { api, create } = createApi({ workspaceAgents: [] });
+    await act(async () => {
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          host={hostedCreationHost}
+          project={project}
+          resourceContext={{
+            name: "研发空间",
+            namespace: "engineering",
+          }}
+          onError={vi.fn()}
+          translate={(_key, fallback) => fallback}
+        />,
+      );
     });
-    expect(element("project-agent-row-created-codex")).toBeTruthy();
+
+    await click("project-agent-add");
+    await click("project-agent-mode-create");
+    expect(element("hosted-agent-create").dataset.namespace).toBe(
+      "engineering",
+    );
+    expect(element("hosted-agent-create").dataset.workspaceName).toBe(
+      "研发空间",
+    );
+    await click("hosted-agent-create");
+
+    expect(create).toHaveBeenCalledWith(project.id, {
+      name: "空间新智能体",
+      runtime: "wegent",
+      wegentTeamId: 91,
+    });
+    expect(element("project-agent-row-created-wegent")).toBeTruthy();
   });
 
   it("archives an existing project agent with optimistic concurrency", async () => {
@@ -226,20 +308,59 @@ describe("ProjectAgentConfiguration", () => {
   });
 
   it("keeps project Agent management available without workspace resources", async () => {
-    const { api } = createApi({ workspaceAgents: [], environments: [] });
+    const { api } = createApi({ workspaceAgents: [] });
     await render(api);
     await click("project-agent-add");
     expect(element("project-agent-wegent-empty").textContent).toContain(
       "智能体",
     );
 
-    await click("project-agent-mode-codex");
     expect(
-      element("project-agent-codex-environment-empty").textContent,
-    ).toContain("执行环境");
+      document.querySelector('[data-testid="project-agent-mode-create"]'),
+    ).toBeNull();
+    expect(
+      document.querySelector(
+        '[data-testid="project-agent-standard-create-form"]',
+      ),
+    ).toBeNull();
 
     await render(api, { ...project, workspace_id: null });
     expect(element("project-agent-config")).toBeTruthy();
+  });
+
+  it("does not offer Agents that cannot execute for the current user", async () => {
+    const { api } = createApi({
+      workspaceAgents: [{ ...workspaceAgent, status: "unavailable" }],
+    });
+    await render(api);
+
+    await click("project-agent-add");
+
+    expect(
+      document.querySelector('[data-testid="project-agent-wegent-team"]'),
+    ).toBeNull();
+    expect(element("project-agent-wegent-empty").textContent).toContain(
+      "智能体",
+    );
+  });
+
+  it("shows configured Skill and MCP counts for executable Agents", async () => {
+    const { api } = createApi({
+      agents: [
+        projectAgent({
+          runtime: "claude_code",
+          additionalSkills: [{ name: "review", namespace: "codex" }],
+          mcpServers: {
+            repository: { command: "node", args: ["server.mjs"] },
+          },
+        }),
+      ],
+    });
+    await render(api);
+
+    expect(
+      element("project-agent-capabilities-project-agent-1").textContent,
+    ).toContain("1 Skill · 项目空间 MCP + 1 MCP");
   });
 
   it("keeps creation separate from the configured Agent list", async () => {
@@ -259,31 +380,5 @@ describe("ProjectAgentConfiguration", () => {
       document.querySelector('[data-testid="project-agent-dialog"]'),
     ).toBeNull();
     expect(element("project-agent-list")).toBeTruthy();
-  });
-
-  it("translates execution environment kind and status labels", async () => {
-    const { api } = createApi();
-    await act(async () => {
-      root.render(
-        <ProjectAgentConfiguration
-          api={api}
-          project={project}
-          onError={vi.fn()}
-          translate={(key, fallback) => {
-            const translated: Record<string, string> = {
-              "todo.local_execution_environment": "LOCALIZED LOCAL",
-              "todo.execution_environment_online": "LOCALIZED ONLINE",
-            };
-            return translated[key] ?? fallback;
-          }}
-        />,
-      );
-    });
-
-    await click("project-agent-add");
-    await click("project-agent-mode-codex");
-    expect(element("project-agent-codex-environment").textContent).toContain(
-      "MacBook Pro · LOCALIZED LOCAL · LOCALIZED ONLINE",
-    );
   });
 });

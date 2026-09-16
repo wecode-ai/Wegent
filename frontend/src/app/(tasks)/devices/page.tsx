@@ -115,7 +115,7 @@ export default function DevicesPage() {
   const [isCollapsed, setIsCollapsed] = useState(false)
 
   // Guide visibility state
-  const [showSetupGuide, setShowSetupGuide] = useState(false)
+  const [showSetupGuide, setShowSetupGuide] = useState(searchParams.get('register') === '1')
 
   // Edit alias dialog state
   const [editAliasDevice, setEditAliasDevice] = useState<DeviceInfo | null>(null)
@@ -138,6 +138,10 @@ export default function DevicesPage() {
   useEffect(() => {
     saveLastTab('devices')
   }, [])
+
+  useEffect(() => {
+    if (searchParams.get('register') === '1') setShowSetupGuide(true)
+  }, [searchParams])
 
   useEffect(() => {
     if (highlightedDeviceId === null) return

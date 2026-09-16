@@ -1005,6 +1005,78 @@ describe('runtimeConversationTurns', () => {
     expect(turns[0].items.map(item => item.id)).toEqual(['file-changes-1', 'assistant-item-1'])
   })
 
+  test('places a delayed subagent block before later streaming parent activity', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'tool-before-spawn',
+              type: 'block',
+              block: {
+                id: 'tool-before-spawn',
+                subtaskId: 'turn-1',
+                type: 'tool',
+                toolName: 'exec_command',
+                status: 'done',
+                createdAt: 1000,
+              },
+            },
+            {
+              id: 'parent-progress',
+              type: 'block',
+              block: {
+                id: 'parent-progress',
+                subtaskId: 'turn-1',
+                type: 'text',
+                content: '父代理继续处理。',
+                status: 'streaming',
+                createdAt: 3000,
+              },
+            },
+            {
+              id: 'tool-after-spawn',
+              type: 'block',
+              block: {
+                id: 'tool-after-spawn',
+                subtaskId: 'turn-1',
+                type: 'tool',
+                toolName: 'exec_command',
+                status: 'streaming',
+                createdAt: 4000,
+              },
+            },
+          ],
+          status: 'streaming',
+        },
+      ],
+      {
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        block: {
+          id: 'subagent-agent-1',
+          subtaskId: 'turn-1',
+          type: 'subagent',
+          agentThreadId: 'agent-1',
+          title: 'Explorer',
+          status: 'streaming',
+          createdAt: 2000,
+        },
+      }
+    )
+
+    expect(turns[0].items.map(item => item.id)).toEqual([
+      'tool-before-spawn',
+      'subagent-agent-1',
+      'parent-progress',
+      'tool-after-spawn',
+    ])
+    expect(
+      projectRuntimeConversationTurns(turns)[0].runtimeDisplayItems?.map(item => item.id)
+    ).toEqual(['tool-before-spawn', 'subagent-agent-1', 'parent-progress', 'tool-after-spawn'])
+  })
+
   test('reopens a stale transcript turn when a live tool starts', () => {
     const turns = reduceRuntimeConversationTurns(
       [

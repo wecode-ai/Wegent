@@ -56,6 +56,12 @@ describe('getCompatibleProviderFromAgentType', () => {
     })
   })
 
+  describe('codex mapping', () => {
+    it('maps Codex to OpenAI-compatible providers', () => {
+      expect(getCompatibleProviderFromAgentType('Codex')).toEqual(['openai'])
+    })
+  })
+
   describe('unknown inputs', () => {
     it('returns null for unknown agent type "dify"', () => {
       const result = getCompatibleProviderFromAgentType('dify')

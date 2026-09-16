@@ -47,28 +47,28 @@ export function canUseChatContexts(taskType: TaskType | undefined, team: Team | 
     return true
   }
 
-  return isChatShell(team) || isClaudeCode(team)
+  return isChatShell(team) || isCodingAgent(team)
 }
 
 /**
- * Check if a team uses ClaudeCode Shell type.
- * ClaudeCode tasks do not allow skill modification after task creation.
+ * Check if a team uses a coding-agent Shell type.
  *
  * @param team - Team to check
- * @returns true if the team uses ClaudeCode Shell
+ * @returns true if the team uses Codex or ClaudeCode
  */
-export function isClaudeCode(team: Team | null): boolean {
+export function isCodingAgent(team: Team | null): boolean {
   if (!team) return false
 
-  // Primary check: agent_type field (case-insensitive)
-  if (team.agent_type?.toLowerCase() === 'claudecode') {
+  const agentType = team.agent_type?.toLowerCase()
+  if (agentType === 'codex' || agentType === 'claudecode') {
     return true
   }
 
   // Fallback: check first bot's shell_type (for task detail teams where agent_type may be null)
   if (team.bots && team.bots.length > 0) {
     const firstBot = team.bots[0]
-    if (firstBot.bot?.shell_type?.toLowerCase() === 'claudecode') {
+    const shellType = firstBot.bot?.shell_type?.toLowerCase()
+    if (shellType === 'codex' || shellType === 'claudecode') {
       return true
     }
   }
@@ -79,11 +79,11 @@ export function isClaudeCode(team: Team | null): boolean {
 /**
  * Check whether the model selector should stay enabled after a task has messages.
  *
- * Chat Shell already supports per-message model switching. ClaudeCode receives the selected
- * model through the existing task override path and executor model configuration.
+ * Chat and coding-agent Shells receive the selected model through their
+ * existing task override paths.
  */
 export function canSwitchModelAfterMessages(team: Team | null): boolean {
-  return isChatShell(team) || isClaudeCode(team)
+  return isChatShell(team) || isCodingAgent(team)
 }
 
 /**
@@ -185,7 +185,7 @@ export async function sendMessage(params: {
 
 /**
  * Check if a team requires workspace (code repository).
- * Teams that use local_engine execution type (ClaudeCode, Agno) typically require a workspace.
+ * Teams that use local_engine execution types typically require a workspace.
  * Teams that use external_api execution type (Dify) or Chat Shell typically do not.
  *
  * This function determines requiresWorkspace based on:

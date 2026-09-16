@@ -412,6 +412,7 @@ function requestContainsToolOutput(request, callId) {
     const type = value.type
     const isToolOutput =
       type === 'function_call_output' ||
+      type === 'mcp_tool_call_output' ||
       type === 'custom_tool_call_output' ||
       type === 'tool_search_output'
     if (isToolOutput && (!callId || value.call_id === callId)) return true

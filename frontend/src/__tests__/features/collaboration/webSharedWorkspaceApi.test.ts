@@ -20,6 +20,76 @@ function createClient() {
 }
 
 describe('createWebSharedWorkspaceApi', () => {
+  it.each(['public', 'user', 'group'] as const)(
+    'preserves %s model identity when creating and updating runtime profiles',
+    async modelType => {
+      const client = createClient()
+      const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+      const input = {
+        name: 'Default configuration',
+        executionEnvironment: 'cloud' as const,
+        executionDeviceId: 'cloud-device',
+        model: 'deepseek-v4-flash',
+        modelType,
+        modelOptions: {
+          weworkCloudModelNamespace: modelType === 'group' ? 'team' : 'default',
+          weworkCloudModelResourceUserId: modelType === 'public' ? '0' : '7',
+          reasoning_effort: 'medium',
+        },
+        workspacePolicy: 'project',
+      }
+
+      await api.runtimeProfiles.create(input)
+      await api.runtimeProfiles.update('profile/1', { ...input, version: 2 })
+
+      expect(client.post).toHaveBeenCalledWith('/v1/runtime-profiles', input)
+      expect(client.patch).toHaveBeenCalledWith('/v1/runtime-profiles/profile%2F1', {
+        ...input,
+        version: 2,
+      })
+    }
+  )
+
+  it.each(['modelOptions', 'model_options'])(
+    'preserves opaque %s keys when configuring an issue workflow',
+    async optionsKey => {
+      const client = createClient()
+      const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+      const modelOptions = {
+        weworkCloudModelNamespace: 'team',
+        weworkCloudModelResourceUserId: '7',
+        reasoning_effort: 'medium',
+      }
+      const executionConfig = {
+        executionDeviceId: 'cloud-device',
+        model: 'model',
+        modelType: 'group',
+        [optionsKey]: modelOptions,
+      }
+
+      await api.issues.create('project/1', { title: 'Issue', executionConfig })
+      await api.issues.update('issue/1', {
+        version: 2,
+        workflow: { execution_config: executionConfig },
+      })
+
+      const wireConfig = {
+        execution_device_id: 'cloud-device',
+        model: 'model',
+        model_type: 'group',
+        model_options: modelOptions,
+      }
+      expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1/loop-items', {
+        title: 'Issue',
+        execution_config: wireConfig,
+      })
+      expect(client.patch).toHaveBeenCalledWith('/v1/loop-items/issue%2F1', {
+        version: 2,
+        workflow: { execution_config: wireConfig },
+      })
+    }
+  )
+
   it('requests terminal execution history only when explicitly required', async () => {
     const client = createClient()
     client.get.mockResolvedValue({ items: [] })
@@ -426,9 +496,12 @@ describe('createWebSharedWorkspaceApi', () => {
     ).toBe(true)
   })
 
-  it('does not expose a My Work port from the Web adapter', () => {
-    const api = createWebSharedWorkspaceApi(createClient(), { getBlob: jest.fn() })
+  it('loads My Work from the shared cloud work-item endpoint', async () => {
+    const client = createClient()
+    client.get.mockResolvedValue({ items: [{ id: 'issue-1' }] })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
 
-    expect(api.myWork).toBeUndefined()
+    await expect(api.myWork?.list()).resolves.toEqual([{ id: 'issue-1' }])
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-work-items/my-work')
   })
 })

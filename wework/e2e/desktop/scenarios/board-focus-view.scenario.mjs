@@ -14,6 +14,7 @@ import {
   selectShellToolCommand,
   streamingTextEvents,
 } from '../modules/response-protocol.mjs'
+import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
 
 const PROJECT_NAME = '专注视图验证'
 const ISSUE_NAME = '优化运行中卡片的进度展示'
@@ -157,7 +158,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           timeoutMs: uiTimeoutMs,
         }
       )
-      const localWorkspaceSelector = `${ACTIVE_BOARD} [data-testid="collaboration-workspace-wework-local-workspace"]`
+      const localWorkspaceSelector = inCollaborationSidebar(
+        '[data-testid="collaboration-workspace-wework-local-workspace"]'
+      )
       await control.command('waitFor', localWorkspaceSelector, {
         visible: true,
         timeoutMs: uiTimeoutMs,
@@ -507,9 +510,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       assert.ok(focusedProcessClass.includes('line-clamp-[8]'))
       await captureScreenshot(control, '04-running-card-focus-view.png', ACTIVE_BOARD)
 
-      await control.command('select', '[data-testid="cloud-board-group-by"]', {
-        value: 'priority',
-      })
+      await control.command(
+        'select',
+        `${ACTIVE_BOARD} select[data-testid="cloud-board-group-by"]`,
+        {
+          value: 'priority',
+        }
+      )
       await control.command('waitFor', '[data-testid="cloud-board-focus-running"]', {
         visible: false,
         timeoutMs: uiTimeoutMs,
@@ -526,9 +533,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       await captureScreenshot(control, '05-focus-view-hidden-for-priority-group.png', ACTIVE_BOARD)
 
-      await control.command('select', '[data-testid="cloud-board-group-by"]', {
-        value: 'status',
-      })
+      await control.command(
+        'select',
+        `${ACTIVE_BOARD} select[data-testid="cloud-board-group-by"]`,
+        {
+          value: 'status',
+        }
+      )
       await control.command('waitFor', '[data-testid="cloud-board-focus-running"]', {
         timeoutMs: uiTimeoutMs,
       })

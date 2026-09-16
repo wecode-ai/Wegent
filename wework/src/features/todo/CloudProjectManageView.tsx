@@ -144,15 +144,19 @@ export function CloudProjectManageView({
   api,
   aitableApi,
   dwsApi,
+  embedded = false,
   project,
   boardCardDisplay,
+  section = 'all',
   onProjectUpdated,
 }: {
   api: CloudManageWorkspaceApi
   aitableApi?: AITableApi
   dwsApi?: DwsApi
+  embedded?: boolean
   project: CloudProject
   boardCardDisplay?: BoardCardDisplaySettings
+  section?: 'all' | 'overview' | 'members' | 'agents' | 'board'
   onProjectUpdated?: (project: CloudProject) => void
 }) {
   const { t } = useTranslation('common')
@@ -215,9 +219,11 @@ export function CloudProjectManageView({
   return (
     <ProjectManageView
       api={manageApi}
+      embedded={embedded}
       host={host}
       project={project}
       boardCardDisplay={boardCardDisplay}
+      section={section}
       renderProviderSettings={renderProviderSettings}
       onProjectUpdated={onProjectUpdated}
     />

@@ -482,6 +482,44 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('awaiting')
   })
 
+  test('ignores the previous terminal snapshot while a completed Goal continuation starts', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const completedAt = 1_787_321_634_000
+    const completedTask = task({
+      running: false,
+      status: 'done',
+      completedAt,
+      goalStatus: 'complete',
+    })
+    store.syncRuntimeWork(runtimeWork(completedTask))
+    store.goalStatusReceived(address, 'complete')
+    store.sendRequested(address)
+    store.sendAccepted(address)
+
+    store.syncRuntimeWork(runtimeWork(completedTask))
+
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.turn.phase).toBe('awaiting')
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+          goalStatus: 'complete',
+        })
+      )
+    )
+
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.task).toMatchObject({
+      running: true,
+      status: 'running',
+    })
+  })
+
   test('keeps an explicit continuation running when a completed Goal snapshot arrives late', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(
@@ -1210,6 +1248,67 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.shouldShowUnread).toBe(false)
   })
 
+  test.each(['running', 'recovering'] as const)(
+    'restores running from the executor Goal execution %s state',
+    goalExecutionStatus => {
+      const store = new RuntimeTaskLifecycleStore('test')
+      store.syncRuntimeWork(
+        runtimeWork(
+          task({
+            running: false,
+            goalStatus: 'active',
+            goalExecutionStatus,
+            status: 'active',
+            completedAt: 1_786_676_400_000,
+          })
+        )
+      )
+
+      const snapshot = store.getTask(address)
+      expect(snapshot?.execution.phase).toBe('running')
+      expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+      expect(snapshot?.task?.status).toBe('active')
+    }
+  )
+
+  test('restores running from a real executor queued active Goal snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          goalStatus: 'active',
+          status: 'queued',
+          completedAt: 1_789_483_225_000,
+        })
+      )
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('running')
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(snapshot?.task?.status).toBe('queued')
+  })
+
+  test('keeps a Goal needing attention idle after restart', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          goalStatus: 'active',
+          goalExecutionStatus: 'needsAttention',
+          status: 'active',
+          completedAt: 1_786_676_400_000,
+        })
+      )
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
   test('preserves a known Goal status when a later executor snapshot omits it', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
@@ -1420,6 +1519,52 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.turnSettled(address)
 
     expect(store.getTask(address)?.derived.shouldShowUnread).toBe(false)
+  })
+
+  test('marks background Goal completion unread when Goal inactivity arrives after idle', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+
+    store.executorSettled(address)
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(false)
+
+    store.goalStatusReceived(address, null)
+
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(true)
+  })
+
+  test('does not let a stale active executor snapshot overwrite Goal completion', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+
+    store.goalStatusReceived(address, 'complete')
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: false, goalStatus: 'active', status: 'done' }))
+    )
+
+    expect(store.getTask(address)?.goalStatus).toBe('complete')
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(true)
+  })
+
+  test('does not let a stale active executor snapshot restore an authoritative Goal clear', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+
+    store.goalStatusReceived(address, null)
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+
+    expect(store.getTask(address)?.goalStatus).toBeNull()
+  })
+
+  test('preserves an explicit executor Goal clear against an equal-time stale snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const updatedAt = 1_789_387_200_000
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active', updatedAt })))
+
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: null, updatedAt })))
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active', updatedAt })))
+
+    expect(store.getTask(address)?.goalStatus).toBeNull()
   })
 
   test.each(['paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const)(

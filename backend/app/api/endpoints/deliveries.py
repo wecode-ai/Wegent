@@ -1051,12 +1051,14 @@ async def update_loop_item(
         return LoopItemResponse.model_validate(response)
     existing = loop_item_service.get(db, item_id, current_user.id)
     previous_status = existing.status
+    previous_tags = set(existing.tags)
     project = cloud_project_service.get(
         db,
         int(existing.cloud_project_id),
         current_user.id,
     )
-    selected_automation_id: str | None = None
+    selected_status_automation_id: str | None = None
+    selected_tag_automation_id: str | None = None
     requested_status = (
         values.status
         if "status" in values.model_fields_set and values.status is not None
@@ -1096,9 +1098,45 @@ async def update_loop_item(
             if isinstance(workflow_binding, dict)
             else ""
         )
-        selected_automation_id = _selected_event_automation_id(
+        selected_status_automation_id = _selected_event_automation_id(
             db,
             event,
+            requested_id=values.automation_rule_id,
+            bound_rule_id=bound_rule_id,
+        )
+    requested_tags = (
+        set(values.tags)
+        if "tags" in values.model_fields_set and values.tags is not None
+        else previous_tags
+    )
+    requested_added_tags = requested_tags - previous_tags
+    if requested_added_tags:
+        event_payload = _loop_item_response(
+            db,
+            existing,
+            current_user,
+        ).model_dump(mode="json")
+        event_payload["tags"] = sorted(requested_tags)
+        event_payload["added_tags"] = sorted(requested_added_tags)
+        item_metadata = (
+            existing.metadata_json if isinstance(existing.metadata_json, dict) else {}
+        )
+        workflow_binding = item_metadata.get("workflow_automation")
+        bound_rule_id = (
+            str(workflow_binding.get("rule_id") or "")
+            if isinstance(workflow_binding, dict)
+            else ""
+        )
+        selected_tag_automation_id = _selected_event_automation_id(
+            db,
+            ProjectAutomationEvent(
+                event_type="task.tag_added",
+                project_id=str(existing.cloud_project_id),
+                subject_id=str(existing.id),
+                source="board",
+                actor_user_id=current_user.id,
+                payload=event_payload,
+            ),
             requested_id=values.automation_rule_id,
             bound_rule_id=bound_rule_id,
         )
@@ -1119,7 +1157,7 @@ async def update_loop_item(
         current_status=item.status,
     )
     entered_processing = status_changed and status_transition.entered_processing
-    should_start_workflow = selected_automation_id is None and (
+    should_start_workflow = selected_status_automation_id is None and (
         entered_processing
         or (workflow_updated and is_processing_status(project, item.status))
     )
@@ -1187,7 +1225,7 @@ async def update_loop_item(
                             "previous_status": previous_status,
                         },
                     ),
-                    automation_id=selected_automation_id,
+                    automation_id=selected_status_automation_id,
                 )
             )
             db.refresh(item)
@@ -1227,6 +1265,36 @@ async def update_loop_item(
                 item.id,
                 previous_status,
                 item.status,
+            )
+    added_tags = set(item.tags) - previous_tags
+    if added_tags:
+        try:
+            await project_incoming_hook_service.ingest_internal(
+                db,
+                ProjectAutomationEvent(
+                    event_type="task.tag_added",
+                    project_id=str(item.cloud_project_id),
+                    subject_id=str(item.id),
+                    source="board",
+                    actor_user_id=current_user.id,
+                    payload={
+                        **_loop_item_response(db, item, current_user).model_dump(
+                            mode="json"
+                        ),
+                        "added_tags": sorted(added_tags),
+                    },
+                ),
+                automation_id=selected_tag_automation_id,
+            )
+            db.refresh(item)
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "Project automatic processing failed after tags were added "
+                "project=%s task=%s tags=%s",
+                item.cloud_project_id,
+                item.id,
+                sorted(added_tags),
             )
     publish_loop_item_changed(
         db,

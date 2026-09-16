@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { release } from 'node:os'
-import { delimiter, dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import {
@@ -85,6 +85,7 @@ import {
   createNativeContextMenuActions,
   installContextMenu,
 } from './host/image-context-actions.js'
+import { CODEX_SYSTEM_PROXY_PROBE_URL, proxyRulesToUrl } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
@@ -281,14 +282,19 @@ const systemSleep = new SystemSleepController()
 const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
 const executorHome =
   process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+const configuredExecutorLogFile = process.env.WEGENT_EXECUTOR_LOG_FILE?.trim()
+const runtimeLogDirectories = [
+  app.getPath('logs'),
+  join(executorHome, 'logs'),
+  ...(process.env.WEGENT_EXECUTOR_LOG_DIR?.trim()
+    ? [process.env.WEGENT_EXECUTOR_LOG_DIR.trim()]
+    : []),
+  ...(configuredExecutorLogFile && isAbsolute(configuredExecutorLogFile)
+    ? [dirname(configuredExecutorLogFile)]
+    : []),
+].filter((directory, index, directories) => directories.indexOf(directory) === index)
 const logRetention = new LogRetentionService({
-  directories: [
-    app.getPath('logs'),
-    join(executorHome, 'logs'),
-    ...(process.env.WEGENT_EXECUTOR_LOG_DIR?.trim()
-      ? [process.env.WEGENT_EXECUTOR_LOG_DIR.trim()]
-      : []),
-  ],
+  directories: runtimeLogDirectories,
   onResult: reportLogCleanup,
 })
 autoUpdater.logger = appUpdateLogger
@@ -1234,6 +1240,9 @@ function installIpc(): void {
   ipcMain.handle('runtime:use-builtin-node', async () => {
     await requiredPreferences().update({ nodeExecutablePath: null })
   })
+  ipcMain.handle('runtime:resolve-codex-proxy', async () =>
+    proxyRulesToUrl(await session.defaultSession.resolveProxy(CODEX_SYSTEM_PROXY_PROBE_URL))
+  )
 }
 
 async function shutdown(): Promise<void> {
@@ -1345,7 +1354,7 @@ async function configureDesktopRuntime(): Promise<void> {
     appVersion: () => app.getVersion(),
     cacheDirectory: join(app.getPath('userData'), 'cache'),
     downloadsDirectory,
-    logDirectories: [app.getPath('logs')],
+    logDirectories: runtimeLogDirectories,
   })
   const secureStorage = new SecureValueStore(app.getPath('userData'))
   embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
@@ -1406,6 +1415,7 @@ async function configureDesktopRuntime(): Promise<void> {
     environment,
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
+    onStartupStep: logStartupStep,
     readWorkbenchMode: async () =>
       normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
     createWorkbenchHostPipe: tabId => {
@@ -1551,6 +1561,9 @@ async function configureDesktopRuntime(): Promise<void> {
             visible: Boolean(
               popoutWindow && !popoutWindow.isDestroyed() && popoutWindow.isVisible()
             ),
+            windowId: popoutWindow && !popoutWindow.isDestroyed() ? popoutWindow.id : null,
+            webContentsId:
+              popoutWindow && !popoutWindow.isDestroyed() ? popoutWindow.webContents.id : null,
           }),
           capturePopout: async () => {
             const target = await ensureAuxiliaryWindow('popout-window')
@@ -1782,9 +1795,15 @@ if (hasSingleInstanceLock) {
     } catch (error) {
       console.warn('[popout-window] failed to register global shortcut', error)
     }
-    await createWindow(
-      resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
-    )
+    await Promise.all([
+      createWindow(
+        resolveStartupSplashTheme(
+          startupPreferences.appearanceMode,
+          nativeTheme.shouldUseDarkColors
+        )
+      ),
+      configureDesktopRuntime(),
+    ])
     void startDesktopRuntime()
   })
 }

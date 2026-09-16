@@ -73,6 +73,16 @@ test('wegent cloud catalog rows inherit local wegent installs without marketplac
       enabled: true,
     }),
   ])
+  installed.metadata.namespace = 'wework-personal'
+  installed.spec.source.marketplace = 'wework-personal'
+  installed.spec.source.providerKey = 'wework-personal'
+  installed.spec.sourcePayload = { marketplaceName: 'wework-personal', cloudPluginId: item.id }
+  expect(applyInstalledPluginsToMarketplaceItems([item], [installed])[0]).toMatchObject({
+    installed: true,
+    installedLocally: true,
+  })
+  installed.spec.sourcePayload.cloudPluginId = 12345
+  expect(applyInstalledPluginsToMarketplaceItems([item], [installed])[0].installed).toBe(false)
 })
 
 test('local install overrides a stale failed cloud device state', () => {
@@ -137,7 +147,7 @@ test('local install overrides a stale failed cloud device state', () => {
   expect(applyInstalledPluginsToMarketplaceItems([item], [installed])).toEqual([
     expect.objectContaining({
       installed: true,
-      installedPluginId: 'wegent-sites@wegent',
+      installedPluginId: item.installedPluginId,
       installedLocally: true,
     }),
   ])

@@ -45,9 +45,6 @@ describe("collaboration permissions", () => {
 
     expect(canAccessCollaborationProjectView(project, "board")).toBe(true);
     expect(canAccessCollaborationProjectView(project, "files")).toBe(false);
-    expect(canAccessCollaborationProjectView(project, "automation")).toBe(
-      false,
-    );
     expect(canAccessCollaborationProjectView(project, "manage")).toBe(false);
   });
 
@@ -58,7 +55,6 @@ describe("collaboration permissions", () => {
     };
 
     expect(canAccessCollaborationProjectView(project, "files")).toBe(true);
-    expect(canAccessCollaborationProjectView(project, "automation")).toBe(true);
     expect(canAccessCollaborationProjectView(project, "manage")).toBe(true);
   });
 

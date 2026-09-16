@@ -60,8 +60,6 @@ interface ToolBlockItemProps {
   stateKey?: string
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
   onExpandedChange?: (expanded: boolean) => void
 }
 
@@ -75,8 +73,6 @@ export function ToolBlockItem({
   stateKey,
   onOpenWorkspaceFile,
   onOpenAssistantPlan,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
   onExpandedChange,
 }: ToolBlockItemProps) {
   const { t } = useTranslation('chat')
@@ -260,9 +256,7 @@ export function ToolBlockItem({
         </span>
       </div>
       {expanded ? (
-        <div className="mt-2 min-w-0 overflow-x-clip">
-          {renderBlockDetail(block, { onLoadFullTranscript, loadingFullTranscript })}
-        </div>
+        <div className="mt-2 min-w-0 overflow-x-clip">{renderBlockDetail(block)}</div>
       ) : null}
     </div>
   )
@@ -1251,17 +1245,11 @@ function ToolIcon() {
   )
 }
 
-function renderBlockDetail(
-  block: ToolBlock,
-  options: {
-    onLoadFullTranscript?: () => Promise<void> | void
-    loadingFullTranscript?: boolean
-  }
-) {
+function renderBlockDetail(block: ToolBlock) {
   const name = block.toolName.toLowerCase()
 
   if (isCommandToolName(name)) {
-    return <BashBlockDetail block={block} {...options} />
+    return <BashBlockDetail block={block} />
   }
   if (isFileCreateToolName(name)) {
     return <FileWriteDetail block={block} />
@@ -1482,15 +1470,7 @@ function getWorkspaceFilePath(block: ToolBlock): string | undefined {
   return getFileInputPath(block)
 }
 
-function BashBlockDetail({
-  block,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
-}: {
-  block: ToolBlock
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
-}) {
+function BashBlockDetail({ block }: { block: ToolBlock }) {
   const command = getInputField(block, 'command', 'cmd', 'commandLine')
   const cwd = getInputField(block, 'cwd', 'workdir', 'workingDirectory')
   const output = block.toolOutput
@@ -1564,30 +1544,6 @@ function BashBlockDetail({
       )}
       {outputText && (
         <>
-          {block.toolOutputTruncated ? (
-            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-muted">
-              <span>
-                早期输出已从当前视图卸载
-                {typeof block.toolOutputOriginalChars === 'number'
-                  ? `，原始约 ${block.toolOutputOriginalChars.toLocaleString()} 字`
-                  : typeof block.toolOutputOriginalBytes === 'number'
-                    ? `，原始约 ${block.toolOutputOriginalBytes.toLocaleString()} 字节`
-                    : ''}
-                。
-              </span>
-              {onLoadFullTranscript ? (
-                <button
-                  type="button"
-                  data-testid="load-full-runtime-transcript-button"
-                  onClick={() => void onLoadFullTranscript()}
-                  disabled={loadingFullTranscript}
-                  className="h-8 rounded border border-border bg-base px-2 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
-                >
-                  {loadingFullTranscript ? '正在加载完整输出' : '加载完整输出'}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
           <pre
             ref={outputRef}
             className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary"

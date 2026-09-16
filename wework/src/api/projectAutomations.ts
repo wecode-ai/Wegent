@@ -19,6 +19,7 @@ export type ProjectAutomationRunStatus =
 
 export type ProjectAutomationEventType =
   | 'task.created'
+  | 'task.tag_added'
   | 'task.status_changed'
   | 'change_request.checks_failed'
   | 'change_request.merge_conflict'
@@ -48,6 +49,9 @@ interface ProjectAutomationRuleBase {
   runtimeSource?: 'agent_default' | 'fixed_profile' | 'issue_creator' | 'runtime_user'
   runtimeProfileId?: string | null
   runtimeUserId?: number | null
+  targetKind?: 'human' | 'agent' | 'collaboration_group' | null
+  targetId?: string | null
+  targetName?: string | null
 }
 
 export interface ProjectAutomationRule extends ProjectAutomationRuleBase {
@@ -93,6 +97,8 @@ interface ProjectAutomationInputBase {
   runtimeSource?: 'agent_default' | 'fixed_profile' | 'issue_creator' | 'runtime_user'
   runtimeProfileId?: string | null
   runtimeUserId?: number | null
+  targetKind?: 'human' | 'agent' | 'collaboration_group' | null
+  targetId?: string | null
 }
 
 export interface ProjectAutomationInput extends ProjectAutomationInputBase {

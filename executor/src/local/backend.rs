@@ -27,6 +27,7 @@ use crate::{
     local::{
         app_ipc::{AppIpcError, AppIpcServer, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
+        environment_prepare::execute_environment_prepare,
         event_stream::{event_sequence, ExecutorEventHub},
         session::{LocalSessionHandler, SessionType, TerminalEvent},
         session_gateway::start_session_gateway,
@@ -155,6 +156,7 @@ pub struct LocalBackendRunner<
     runtime_event_hub: Option<ExecutorEventHub>,
     connection_status: Arc<AtomicBool>,
     runtime_pull_lock: Arc<AsyncMutex<()>>,
+    runtime_pull_pending: Arc<AtomicBool>,
 }
 
 impl<T, R> Drop for LocalBackendRunner<T, R>
@@ -323,6 +325,7 @@ where
             runtime_event_hub: None,
             connection_status: Arc::new(AtomicBool::new(false)),
             runtime_pull_lock: Arc::new(AsyncMutex::new(())),
+            runtime_pull_pending: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -691,24 +694,60 @@ where
         let Some(handler) = self.runtime_work_handler.clone() else {
             return;
         };
-        tokio::spawn(poll_available_runtime_work(
+        schedule_runtime_work_poll(
             self.client.clone(),
             handler,
             Arc::clone(&self.runtime_pull_lock),
-        ));
+            Arc::clone(&self.runtime_pull_pending),
+        );
     }
+}
+
+fn schedule_runtime_work_poll<T>(
+    client: LocalBackendClient<T>,
+    handler: Arc<dyn RuntimeWorkHandler>,
+    pull_lock: Arc<AsyncMutex<()>>,
+    pull_pending: Arc<AtomicBool>,
+) where
+    T: LocalBackendTransport,
+{
+    pull_pending.store(true, Ordering::Release);
+    tokio::spawn(poll_available_runtime_work(
+        client,
+        handler,
+        pull_lock,
+        pull_pending,
+    ));
 }
 
 async fn poll_available_runtime_work<T>(
     client: LocalBackendClient<T>,
     handler: Arc<dyn RuntimeWorkHandler>,
     pull_lock: Arc<AsyncMutex<()>>,
+    pull_pending: Arc<AtomicBool>,
 ) where
     T: LocalBackendTransport,
 {
-    let Ok(_guard) = pull_lock.try_lock() else {
-        return;
-    };
+    loop {
+        let Ok(guard) = pull_lock.try_lock() else {
+            return;
+        };
+        pull_pending.store(false, Ordering::Release);
+        drain_available_runtime_work(&client, &handler).await;
+        drop(guard);
+
+        if !pull_pending.swap(false, Ordering::AcqRel) {
+            return;
+        }
+    }
+}
+
+async fn drain_available_runtime_work<T>(
+    client: &LocalBackendClient<T>,
+    handler: &Arc<dyn RuntimeWorkHandler>,
+) where
+    T: LocalBackendTransport,
+{
     let capacity = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.capacity.get",
@@ -843,7 +882,7 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
     let backend_connection_snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
         Arc::new(Mutex::new(None));
     let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
-        RuntimeWorkRpcHandler::with_event_sender(
+        RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
             app_ipc_device_id.clone(),
             resolve_codex_binary(),
             runtime_event_tx.clone(),

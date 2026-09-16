@@ -10,7 +10,7 @@ export * from "./IssueDetailDraft";
 export * from "./IssueDetailCloudSections";
 export * from "./IssueHistoryLists";
 export * from "./IssueWorkflowPlanSection";
-export * from "./IssueWorkflowDag";
+export * from "./IssueWorkflowStages";
 export * from "./WorkflowStageCompletionDialog";
 export * from "./attachmentMarkdown";
 export * from "./createSharedIssueDetailPort";

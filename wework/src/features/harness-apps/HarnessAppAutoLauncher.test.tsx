@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   unregisterProxy: vi.fn(),
   unregisterContext: vi.fn(),
   clearLaunch: vi.fn(),
+  notifyInstallationsChanged: vi.fn(),
 }))
 
 vi.mock('@/api/local/harnessApps', () => ({
@@ -36,6 +37,10 @@ vi.mock('@/features/harness-apps/harnessAppLaunchState', () => ({
   beginHarnessAppLaunch: vi.fn(),
   clearHarnessAppLaunch: mocks.clearLaunch,
   failHarnessAppLaunch: vi.fn(),
+}))
+
+vi.mock('@/features/harness-apps/harnessAppInstallationsChanged', () => ({
+  notifyHarnessAppInstallationsChanged: mocks.notifyInstallationsChanged,
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
@@ -104,6 +109,11 @@ describe('HarnessAppAutoLauncher', () => {
     expect(mocks.storeProxy).toHaveBeenCalledWith('app-1', 'proxy-token')
     expect(mocks.storeContext).toHaveBeenCalledWith('app-1', 'context-token')
     expect(mocks.register).toHaveBeenCalledWith(running)
+    expect(mocks.notifyInstallationsChanged).toHaveBeenCalledWith({
+      type: 'updated',
+      installationId: 'app-1',
+      installation: running,
+    })
     expect(mocks.clearLaunch).toHaveBeenCalledWith('app-1')
   })
 
@@ -119,6 +129,11 @@ describe('HarnessAppAutoLauncher', () => {
 
     await waitFor(() => expect(mocks.register).toHaveBeenCalledWith(running))
     expect(mocks.start).not.toHaveBeenCalled()
+    expect(mocks.notifyInstallationsChanged).toHaveBeenCalledWith({
+      type: 'updated',
+      installationId: 'app-1',
+      installation: running,
+    })
     expect(mocks.clearLaunch).toHaveBeenCalledWith('app-1')
   })
 

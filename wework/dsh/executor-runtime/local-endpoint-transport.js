@@ -5,6 +5,7 @@ import { gunzipSync } from 'node:zlib'
 const MAX_FRAME_BYTES = 16 * 1024 * 1024
 const MAX_DECOMPRESSED_RESPONSE_BYTES = 64 * 1024 * 1024
 const COMPRESSED_ENCODING = 'gzip+base64+json'
+const DEFAULT_START_TIMEOUT_MS = 30_000
 
 export class LocalEndpointTransport extends EventEmitter {
   constructor(options) {
@@ -12,6 +13,7 @@ export class LocalEndpointTransport extends EventEmitter {
     this.endpoint = options.endpoint
     this.token = options.token
     this.reconnectDelayMs = options.reconnectDelayMs ?? 250
+    this.startTimeoutMs = options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS
     this.socket = null
     this.running = false
     this.authenticated = false
@@ -24,7 +26,7 @@ export class LocalEndpointTransport extends EventEmitter {
   async start() {
     if (this.authenticated) return
     this.running = true
-    this.startPromise ??= this.connect()
+    this.startPromise ??= this.connectUntilReady()
     try {
       await this.startPromise
     } finally {
@@ -127,9 +129,24 @@ export class LocalEndpointTransport extends EventEmitter {
         this.authenticated = false
         if (this.socket === socket) this.socket = null
         if (wasAuthenticated) this.emit('close')
-        if (this.running) this.scheduleReconnect()
+        if (this.running && this.hasConnected) this.scheduleReconnect()
       })
     })
+  }
+
+  async connectUntilReady() {
+    const deadline = Date.now() + this.startTimeoutMs
+    for (;;) {
+      try {
+        await this.connect()
+        return
+      } catch (error) {
+        if (!this.running || !isEndpointUnavailable(error) || Date.now() >= deadline) {
+          throw error
+        }
+        await delay(Math.min(this.reconnectDelayMs, Math.max(0, deadline - Date.now())))
+      }
+    }
   }
 
   scheduleReconnect() {
@@ -143,6 +160,18 @@ export class LocalEndpointTransport extends EventEmitter {
     }, this.reconnectDelayMs)
     this.reconnectTimer.unref()
   }
+}
+
+function isEndpointUnavailable(error) {
+  const code = error && typeof error === 'object' ? error.code : null
+  return code === 'ENOENT' || code === 'ECONNREFUSED' || code === 'EPIPE'
+}
+
+function delay(durationMs) {
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, durationMs)
+    timer.unref()
+  })
 }
 
 function decodeResponse(message) {

@@ -547,11 +547,14 @@ def _matching_branch(
     ]
     for branch in candidates:
         event_wait = branch.get("event_wait")
-        if (
-            isinstance(event_wait, dict)
+        configured_subscription_id = (
+            str(event_wait.get("subscription_id") or "")
+            if isinstance(event_wait, dict)
             and event_wait.get("collection_mode") == "webhook"
-            and str(event_wait.get("subscription_id") or "")
-            != str(event.subscription_id or "")
+            else ""
+        )
+        if configured_subscription_id and configured_subscription_id != str(
+            event.subscription_id or ""
         ):
             continue
         conditions = branch.get("branch_conditions") or []

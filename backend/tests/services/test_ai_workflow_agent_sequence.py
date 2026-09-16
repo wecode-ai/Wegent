@@ -134,7 +134,7 @@ async def test_ai_workflow_enforces_claude_then_codex_until_issue_completed(
         project,
         test_user,
         name="Claude agent",
-        runtime="claude",
+        runtime="claude_code",
     )
     codex = _agent(
         test_db,

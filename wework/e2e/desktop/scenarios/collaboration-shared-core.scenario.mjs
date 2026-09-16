@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作共享核心空间'
 const PROJECT_NAME = '协作共享核心验收'
@@ -52,6 +51,10 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
+function terminalExecution(execution) {
+  return ['completed', 'failed', 'cancelled'].includes(execution.status)
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let backendUrl = ''
   let authToken = ''
@@ -69,6 +72,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     if (fixtureArchived) return
     try {
       if (project) {
+        const executions = await request(
+          `/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`
+        )
+        for (const execution of executions.items.filter(
+          candidate => !terminalExecution(candidate)
+        )) {
+          await request(`/api/v1/cloud-projects/${project.id}/executions/${execution.id}/stop`, {
+            method: 'POST',
+          })
+        }
+        await waitForApiValue(
+          () => request(`/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`),
+          response => response.items.every(terminalExecution),
+          'Project executions remained active during fixture cleanup',
+          Math.max(uiTimeoutMs, 30_000)
+        )
         const latestProject = await request(`/api/v1/cloud-projects/${project.id}`)
         if (latestProject.status !== 'archived') {
           await request(`/api/v1/cloud-projects/${project.id}?version=${latestProject.version}`, {

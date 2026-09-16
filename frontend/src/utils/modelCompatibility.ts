@@ -13,6 +13,7 @@ export type CompatibleProvider = 'openai' | 'claude' | 'anthropic'
  *
  * Mapping (case-insensitive):
  * - `'agno'`                       → `['openai']`
+ * - `'codex'`                      → `['openai']`
  * - `'claude'` / `'claudecode'`    → `['claude', 'anthropic']`
  * - any other non-empty string     → `null`
  * - `null` / `undefined` / `''`    → `null`
@@ -32,6 +33,7 @@ export function getCompatibleProviderFromAgentType(
   if (!agentType) return null
   const normalized = agentType.toLowerCase()
   if (normalized === 'agno') return ['openai']
+  if (normalized === 'codex') return ['openai']
   if (normalized === 'claude' || normalized === 'claudecode') {
     return ['claude', 'anthropic']
   }

@@ -79,6 +79,7 @@ REMOTE_MUTATING_COMMAND_KEYS = frozenset(
         "git_push",
         "sync_git_credentials",
         "turn_file_changes_revert",
+        "environment_prepare",
     }
 )
 RUNTIME_AUTH_COMMAND_KEYS = frozenset(
@@ -90,7 +91,9 @@ REMOTE_DEVICE_COMMAND_KEYS = (
     | RUNTIME_AUTH_COMMAND_KEYS
 )
 LOCAL_COMMAND_DEVICE_TYPES = frozenset({DeviceType.LOCAL, DeviceType.APP})
-INTERNAL_DEVICE_COMMAND_KEYS = frozenset({"sync_git_credentials"})
+INTERNAL_DEVICE_COMMAND_KEYS = frozenset(
+    {"environment_prepare", "sync_git_credentials"}
+)
 
 
 class DeviceCommandError(RuntimeError):
@@ -377,6 +380,7 @@ async def execute_configured_device_command(
         "max_output_bytes": max_output_bytes,
     }
     if command_key in {
+        "environment_prepare",
         "git_apply_patch",
         "workspace_tree",
         "workspace_read_text_file",

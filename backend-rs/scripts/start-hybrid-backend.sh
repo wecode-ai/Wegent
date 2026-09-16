@@ -176,7 +176,11 @@ write_state
 
 RS_BINARY="$RS_TARGET_DIR/release/$RS_BINARY_NAME"
 echo "Building Wegent Rust gateway (release)..."
-CARGO_TARGET_DIR="$RS_TARGET_DIR" cargo build \
+# Keep inherited compiler flags and stripping from breaking macOS proc-macro loading.
+env -u RUSTFLAGS -u CARGO_ENCODED_RUSTFLAGS \
+    CARGO_PROFILE_RELEASE_STRIP=false \
+    CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false \
+    CARGO_TARGET_DIR="$RS_TARGET_DIR" cargo build \
     --release \
     --manifest-path "$BACKEND_RS_DIR/Cargo.toml" \
     --bin "$RS_BINARY_NAME" &
@@ -221,7 +225,7 @@ wait_for_python() {
             echo "Error: Python upstream did not become ready within ${timeout}s" >&2
             return 1
         fi
-        sleep 0.25
+        sleep 3
     done
     wait "$PYTHON_PID" || true
     echo "Error: Python upstream exited before becoming ready" >&2
@@ -233,15 +237,41 @@ wait_for_python
 echo "Starting Rust gateway on http://$PUBLIC_HOST:$PUBLIC_PORT"
 echo "Fallback upstream: http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 echo "Route config: $ROUTES_FILE"
-WEGENT_RS_LISTEN_HOST="$PUBLIC_HOST" \
-WEGENT_RS_LISTEN_PORT="$PUBLIC_PORT" \
-WEGENT_PYTHON_UPSTREAM_URL="http://127.0.0.1:$PYTHON_UPSTREAM_PORT" \
-WEGENT_RS_ROUTES_FILE="$ROUTES_FILE" \
-BREEZE_LOG_DIR="$BREEZE_LOG_DIR" \
-BREEZE_PROFILE_LOG_PATH="$BREEZE_PROFILE_LOG_PATH" \
-"$RS_BINARY" &
+(
+    # Rust resolves its default config/example.env relative to the current
+    # working directory. Run it from the Rust project root so
+    # backend-rs/config/example.env is loaded consistently.
+    cd "$BACKEND_RS_DIR"
+    export WEGENT_RS_LISTEN_HOST="$PUBLIC_HOST"
+    export WEGENT_RS_LISTEN_PORT="$PUBLIC_PORT"
+    export WEGENT_PYTHON_UPSTREAM_URL="http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
+    export WEGENT_RS_ROUTES_FILE="$ROUTES_FILE"
+    export BREEZE_LOG_DIR="$BREEZE_LOG_DIR"
+    export BREEZE_PROFILE_LOG_PATH="$BREEZE_PROFILE_LOG_PATH"
+    exec "$RS_BINARY"
+) &
 RUST_PID=$!
 write_state
+
+wait_for_rust() {
+    local timeout=${WEGENT_PYTHON_READY_TIMEOUT:-180}
+    local deadline=$((SECONDS + timeout))
+    while kill -0 "$RUST_PID" 2>/dev/null; do
+        if (exec 3<>"/dev/tcp/127.0.0.1/$PUBLIC_PORT") 2>/dev/null; then
+            return 0
+        fi
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            echo "Error: Rust gateway did not become ready within ${timeout}s" >&2
+            return 1
+        fi
+        sleep 3
+    done
+    wait "$RUST_PID" || true
+    echo "Error: Rust gateway exited before becoming ready" >&2
+    return 1
+}
+
+wait_for_rust
 
 while kill -0 "$PYTHON_PID" 2>/dev/null && kill -0 "$RUST_PID" 2>/dev/null; do
     sleep 1

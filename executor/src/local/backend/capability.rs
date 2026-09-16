@@ -126,6 +126,7 @@ impl HttpPackageProvider {
             request = request.bearer_auth(auth_token);
         }
         let response = request.send().await.map_err(|error| {
+            let error = error.without_url();
             CapabilitySyncError::invalid_payload(format!(
                 "Capability package download failed: {error}"
             ))

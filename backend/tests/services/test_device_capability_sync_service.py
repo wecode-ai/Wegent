@@ -440,3 +440,70 @@ async def test_sync_installed_plugin_to_device_rejects_missing_acknowledgement(
             device_id="device-1",
             installed_plugin_id=installed_plugin.id,
         )
+
+
+@pytest.mark.anyio
+async def test_plugin_sync_preserves_structured_device_failure(
+    test_db, test_user, monkeypatch
+):
+    installed_plugin = _create_installed_plugin(
+        test_db,
+        test_user.id,
+        name="wegent-sites",
+        marketplace="wegent",
+    )
+    fake_sio = FakeSio(
+        {
+            "success": False,
+            "plugins": [
+                {
+                    "id": installed_plugin.id,
+                    "name": "wegent-sites",
+                    "status": "failed",
+                    "stage": "codex_config",
+                    "error_code": "INVALID_CODEX_CONFIG",
+                    "retryable": False,
+                    "error": "Invalid Codex config ~/.codex/config.toml",
+                }
+            ],
+        }
+    )
+
+    async def resolve_route(*, user_id, submitted_device_id):
+        return _runtime_route(logical_device_id=submitted_device_id)
+
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.runtime_route_resolver.resolve",
+        resolve_route,
+    )
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.get_sio",
+        lambda: fake_sio,
+    )
+    service = DeviceCapabilitySyncService()
+
+    response = await service.sync_installed_plugin_to_device_result(
+        test_db,
+        user_id=test_user.id,
+        device_id="device-1",
+        installed_plugin_id=installed_plugin.id,
+    )
+
+    assert response.success is False
+    assert response.plugins[0].stage == "codex_config"
+    assert response.plugins[0].error_code == "INVALID_CODEX_CONFIG"
+    assert response.plugins[0].error == "Invalid Codex config ~/.codex/config.toml"
+    assert response.errors[0]["error"] == (
+        "Plugin wegent-sites failed during codex_config: "
+        "Invalid Codex config ~/.codex/config.toml"
+    )
+    with pytest.raises(
+        DeviceCapabilitySyncError,
+        match="Plugin wegent-sites failed during codex_config",
+    ):
+        await service.sync_installed_plugin_to_device(
+            test_db,
+            user_id=test_user.id,
+            device_id="device-1",
+            installed_plugin_id=installed_plugin.id,
+        )

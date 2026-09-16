@@ -471,7 +471,7 @@ type PersistedReadStateStore = {
 /** Clears the short-lived readState cache. Intended for tests and explicit invalidation. */
 export function clearLocalCodexPluginsReadStateCache(): void {
   cachedState = null
-  cachedStateGeneration = 0
+  cachedStateGeneration = nextReadStateGeneration++
   cachedStateAt = 0
   cachedStateParamsKey = ''
   activeReadStateDeviceId = null
@@ -819,7 +819,7 @@ function resetInMemoryReadStateForDevice(deviceId: string): void {
   if (activeReadStateDeviceId === deviceId) return
   activeReadStateDeviceId = deviceId
   cachedState = null
-  cachedStateGeneration = 0
+  cachedStateGeneration = nextReadStateGeneration++
   cachedStateAt = 0
   cachedStateParamsKey = ''
   inflightReadState.clear()
@@ -1363,6 +1363,7 @@ type WegentStorePluginSummary = {
   defaultPrompt?: PluginInterface['defaultPrompt']
   name: string
   packageId: string
+  installedPluginId?: number | null
   marketplace: string
   version?: string | null
   enabled: boolean
@@ -1374,6 +1375,7 @@ type WegentStorePluginSummary = {
 }
 
 type WegentStoreListResult = {
+  supportsPluginReconciliation?: boolean
   storePath: string
   plugins: WegentStorePluginSummary[]
 }
@@ -1920,7 +1922,7 @@ function toWegentStoreInstalledPlugin(
   const marketplace = isWegentCloudMarketplace(plugin.marketplace)
     ? INTERNAL_DEVICE_MARKETPLACE_ID
     : plugin.marketplace
-  return toInstalledPlugin(
+  const installed = toInstalledPlugin(
     {
       name: marketplace,
       path: storePath || plugin.pluginPath,
@@ -1945,6 +1947,26 @@ function toWegentStoreInstalledPlugin(
       },
     }
   )
+  return {
+    ...installed,
+    spec: {
+      ...installed.spec,
+      sourcePayload: {
+        ...(installed.spec.sourcePayload ?? {}),
+        managedByWegent: true,
+        cloudInstalledPluginId: plugin.installedPluginId ?? null,
+      },
+    },
+  }
+}
+
+/** Read authoritative managed inventory without cached or partial results. */
+export async function readPluginReconciliationInventory(): Promise<InstalledPlugin[]> {
+  const inventory = await requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
+  if (inventory.supportsPluginReconciliation !== true || !Array.isArray(inventory.plugins)) {
+    throw new Error('Update the desktop runtime to check plugin installations')
+  }
+  return inventory.plugins.map(plugin => toWegentStoreInstalledPlugin(plugin, inventory.storePath))
 }
 
 /**
@@ -2330,6 +2352,8 @@ export function applyInstalledPluginsToMarketplaceItems(
   installedPlugins: InstalledPlugin[]
 ): PluginMarketplaceItem[] {
   const installedByIdentity = new Map<string, InstalledPlugin>()
+  const installedByCloudId = new Map<string, InstalledPlugin>()
+  const installedByAccountId = new Map<string, InstalledPlugin>()
   for (const plugin of installedPlugins) {
     const marketplace =
       plugin.spec.source.marketplace ||
@@ -2343,10 +2367,19 @@ export function applyInstalledPluginsToMarketplaceItems(
       marketplaceName
     )
     if (identity) installedByIdentity.set(identity, plugin)
+    const cloudId = plugin.spec.pluginId ?? plugin.spec.sourcePayload?.cloudPluginId
+    if (cloudId != null) installedByCloudId.set(String(cloudId), plugin)
+    const accountId = plugin.spec.sourcePayload?.cloudInstalledPluginId
+    if (accountId != null) installedByAccountId.set(String(accountId), plugin)
   }
 
   return items.map(item => {
-    const installed = installedByIdentity.get(marketplaceItemInstallIdentity(item))
+    const cloudItem = typeof item.id === 'number' && item.latestReleaseId != null
+    const installed =
+      (cloudItem
+        ? (installedByCloudId.get(String(item.id)) ??
+          installedByAccountId.get(String(item.installedPluginId)))
+        : undefined) ?? installedByIdentity.get(marketplaceItemInstallIdentity(item))
     if (!installed) {
       const marketplaceId =
         typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : ''
@@ -2388,7 +2421,9 @@ export function applyInstalledPluginsToMarketplaceItems(
       ...item,
       installed: true,
       installedPluginId:
-        typeof id === 'string' || typeof id === 'number' ? id : item.installedPluginId,
+        item.installedPluginId ??
+        (installed.spec.sourcePayload?.cloudInstalledPluginId as string | number | undefined) ??
+        (typeof id === 'string' || typeof id === 'number' ? id : null),
       installedLocally: item.installedLocally || installedLocally,
       installedVersion: installedVersion || item.installedVersion || null,
       enabled: installed.spec.enabled,
@@ -2557,6 +2592,7 @@ async function loadReadStateSnapshot(
     rememberReadStateSnapshot(paramsKey, state, generation)
     rememberSelectedMarketplaceId(selectedId)
   }
+  if (generation < cachedStateGeneration) return state
   if (!params.skipPersonalReconcile) {
     const migrated = await reconcileCodexPersonalPlugins(state)
     if (migrated) {
@@ -2774,6 +2810,8 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       if (!isElectronRuntime()) {
         throw new Error('External content import requires the Wework desktop app')
       }
+      await ensureLocalExecutorStarted()
+      await ensureBundledPluginMarketplaceRegistered()
       const imported = await requestLocalExecutor<ExternalContentImportResult>(
         'executor.codex_home.import_external_content',
         { source }

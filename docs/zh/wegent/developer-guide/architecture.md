@@ -387,6 +387,8 @@ Rust executor 是唯一的 executor 运行时实现。Backend 的 Chat shell 仍
 
 Executor 准备 Git 工作区时会禁用交互式凭据提示，并同时使用总超时和 Git HTTP low-speed 限制。`WEGENT_GIT_CLONE_TIMEOUT_SECONDS` 控制总超时，默认 600 秒并限制在 1-3600 秒；`WEGENT_GIT_HTTP_LOW_SPEED_LIMIT` 和 `WEGENT_GIT_HTTP_LOW_SPEED_TIME_SECONDS` 默认分别为 1024 字节/秒和 60 秒。总超时后会终止 Git 所在的整个进程组、清理本次 clone 的半成品目录，并向任务返回终态错误；已有工作区也必须通过本地 `HEAD` 校验，避免把中断 clone 留下的 `.git` 目录误判为可用仓库。该流程不会自动重试。
 
+Claude Code 的请求 MCP 配置按任务保留：新一轮未提到的服务继续可用，同名服务由本轮完整配置替换，避免旧地址、请求头或传输参数残留。executor 将合并结果保存在工作区 `.wework/runtime/claude-mcp-cache-<task_id>.json`，并为每轮生成独立的 `claude-mcp-<task_id>-<subtask_id>.json`；不同任务即使共用工作区也不共享缓存。executor 管理的 MCP 凭证仍在每轮重新注入，不写入该缓存。
+
 Claude Code 恢复交互表单会话时，executor 只把与本次已回答表单具有相同 `tool_use_id`、且工具类型仍为交互表单的 defer 视为恢复阶段残留结果。模型随后返回不同 `tool_use_id` 的表单表示新的用户澄清，即使同一响应还包含文本，也必须继续代理到交互 MCP 并等待用户输入，不能按旧 defer 丢弃。
 
 附件在进入 Codex 前由 executor 按类型转换：图片作为本地图片输入，文本附件附带受限预览和完整本地路径，ZIP、PDF 等二进制附件则附带文件名、MIME 类型、大小和本地路径。即使用户只发送附件而正文为空，Codex 仍能从输入上下文定位该文件；不同类型的上下文互斥生成，避免图片或文本附件被重复注入。
@@ -411,7 +413,7 @@ Codex 使用共享 app-server 线程时，取消活动轮次必须先等待 `tur
 
 Codex 失败轮次不保证在线程 transcript 中生成 assistant item。executor 因此会在轮次失败时，将带稳定消息 ID、错误类型和原始错误文本的 failed assistant message 写入本地 runtime handle；读取失败任务时，如果 Codex transcript 缺少该消息，再按稳定 ID 合并本地记录。Wework 重开或切回任务后仍能恢复错误卡片及重试入口，同时避免重复展示 Codex 已经持久化的失败消息。
 
-Wework 的本地模型调用统一以 Codex Responses 协议进入 executor。executor 为自定义模型生成显式 model catalog，并按 `custom`、`function`、`shell` 工具模式决定是否发布 freeform `apply_patch`。原生 Responses 接口由本地模型代理直接转发；OpenAI Chat Completions 和 Anthropic Messages 接口由独立协议模块转换请求、流式事件、推理内容、工具调用、工具结果和用量信息，custom tool 的 grammar 会保存在 function wrapper 中。Anthropic Messages 的总输入用量必须包含 `input_tokens`、`cache_read_input_tokens` 和 `cache_creation_input_tokens`；缓存读取量同时映射为 Responses 的 cached token 明细，确保 Codex 的上下文余量和自动压缩判断使用完整输入量。代理使用有界历史恢复跨请求工具调用，透传非 2xx，并把非 SSE 成功响应转换为标准 Responses SSE；传输截断或上游错误流会产生失败终态，上游明确返回输出长度限制时则产生 `response.incomplete`。云端 Model 的 `context_window` 和 `max_output_tokens` 会沿 Wework 执行请求传入 Codex 与本地模型代理；请求中的显式输出限制优先于模型配置，模型配置优先于默认值。原生 Responses 直通只会在显式配置时转发 `max_output_tokens`；Chat Completions 和 Anthropic Messages 转换在未配置限制时使用 96000 tokens 的代理默认值。未配置时，Codex 上下文窗口仍默认为 256K（262144 tokens）。代理只转发固定白名单内的 Codex 请求头，包括 `originator`、`session-id`、`thread-id` 和轮次元数据，绝不转发 authorization、cookie 或 attestation 头。API Key、附加请求头和出站代理配置只保留在 executor 的本地代理边界，不传入 Codex 进程。代理注册按完整上游配置生成稳定 token、引用计数并在空闲超时后清理，避免 persistent Codex 会话在追问时命中已释放 token。
+Wework 的本地模型调用统一以 Codex Responses 协议进入 executor。executor 为自定义模型生成显式 model catalog，并按 `custom`、`function`、`shell` 工具模式决定是否发布 freeform `apply_patch`。原生 Responses 接口由本地模型代理直接转发；OpenAI Chat Completions 和 Anthropic Messages 接口由独立协议模块转换请求、流式事件、推理内容、工具调用、工具结果和用量信息，custom tool 的 grammar 会保存在 function wrapper 中。Anthropic Messages 的总输入用量必须包含 `input_tokens`、`cache_read_input_tokens` 和 `cache_creation_input_tokens`；缓存读取量同时映射为 Responses 的 cached token 明细，确保 Codex 的上下文余量和自动压缩判断使用完整输入量。代理使用有界历史恢复跨请求工具调用，透传非 2xx，并把非 SSE 成功响应转换为标准 Responses SSE；传输截断或上游错误流会产生失败终态，上游明确返回输出长度限制时则产生 `response.incomplete`。云端 Model 的 `context_window` 和 `max_output_tokens` 会沿 Wework 执行请求传入 Codex 与本地模型代理；请求中的显式输出限制优先于模型配置，模型配置优先于默认值。executor 按 `context_window - max_output_tokens` 推导 Codex 的自动压缩阈值并作为 `model_auto_compact_token_limit` 下发：上游把补全预算和输入记在同一个上下文窗口内，只有按可用输入预算提前压缩，会话才不会在压缩触发之前被上游以超出上下文长度拒绝；Wework 的上下文使用比例使用同一分母。原生 Responses 直通只会在显式配置时转发 `max_output_tokens`；Chat Completions 和 Anthropic Messages 转换在未配置限制时使用 96000 tokens 的代理默认值。未配置时，Codex 上下文窗口仍默认为 256K（262144 tokens）。代理只转发固定白名单内的 Codex 请求头，包括 `originator`、`session-id`、`thread-id` 和轮次元数据，绝不转发 authorization、cookie 或 attestation 头。API Key、附加请求头和出站代理配置只保留在 executor 的本地代理边界，不传入 Codex 进程。代理注册按完整上游配置生成稳定 token、引用计数并在空闲超时后清理，避免 persistent Codex 会话在追问时命中已释放 token。
 
 Codex model catalog 中的 `supports_search_tool` 表示模型可以参与 App 延迟发现流程，不等同于上游接口原生支持 `tool_search` 或 namespace tool。Wework 对官方和自定义模型启用该 catalog 能力，使 Codex 在首轮请求中仅提供轻量 `tool_search`，而不是注入全部 Remote App Schema；搜索命中后才加载对应 App namespace。executor 在协议边界单独维护 `native_tool_search` 和 `native_namespace_tools`。OpenAI Responses 上游默认完整兼容 Codex 工具协议并直接透传；模型配置可以通过 `native_tool_search` 或 `nativeToolSearch` 以及 `native_namespace_tools` 或 `nativeNamespaceTools` 显式配置 `false`，将仅支持标准 Responses function calling 的端点切换到兼容桥接。OpenAI Chat Completions 和 Anthropic Messages 上游始终把 `tool_search` 与 namespace tool 转为普通 function 调用，并在返回 Codex 前恢复原始语义。Responses 兼容桥接会删除 `defer_loading`，并在转换 tool-search 调用和输出 item 时移除其类型专属的 `id`，仅使用 `call_id` 关联调用与结果；原生 Responses 直通会保留原始字段。Wework 设置中的“Codex 工具协议兼容性”控制这一协议边界，而“按需工具搜索”仅控制 catalog 的 `supports_search_tool`，二者不得混用。
 
@@ -427,6 +429,8 @@ Wework 允许用户在发送首条消息前配置任务监督。该配置作为 
 
 监督状态的下次巡检时间由 `lastEvaluatedAt + intervalSeconds` 推导，不额外持久化可漂移的派生字段。用户通过 `runtime.tasks.supervisor.run_now` 请求立即巡检时，executor 必须复用同一并发互斥机制，并强制重新评估当前可见进展，即使内容哈希与上次相同也不能按定时巡检的去重规则跳过。监督模型列表仍只包含具备完整资源身份的云端 Model，但不得使用当前编码任务的 runtime 兼容性标记隐藏这些独立评估模型。
 
+监督器决定继续纠正时，不得把进程内的 Codex 通知路由缓存当作执行配置真相源。executor 会在 runtime task 中持久化一份稳定的 execution request：保留 Agent、模型路由、MCP、Skill、知识范围和权限等可恢复配置，同时清空 prompt、history、message ID、Backend 地址和 task/runtime/skill 临时令牌，并递归移除 API key、Authorization、Cookie、密码、私钥和 header 等秘密字段。任务继续、模型切换和 fork 都要更新或继承这份配置。自动纠正从该配置重建请求，再通过当前 Backend connection 注入有效凭据，因此 Executor 重启或 context compact 后仍保持原模型路由与能力，但不会复用过期令牌。
+
 Wework 的任务运行态按 turn 身份结算，而不是仅按 task 粗粒度结算。流式开始事件使用的临时 subtask ID 可能在终态事件中被 provider 替换为 canonical turn ID；事件适配层必须把两者关联后，将原始开始 ID 传给生命周期状态机。executor 在 execution 所有权切换时同步内存运行态，旧 execution 完成时不得覆盖替代它的新 execution。App IPC、本地后端与监督调度器必须在启动后台任务前注入同一个 runtime handler；禁止先启动带调度器的默认 handler 再替换，否则孤儿调度器发起的自动纠正对任务列表不可见。重复或迟到的旧 turn 终态必须幂等忽略，不能清除已经开始的新 turn，否则侧栏会在监督自动纠正仍在运行时错误显示为空闲。
 
 Codex provider 的 turn 终态是执行事实，也是本地运行态收敛的权威依据。停止或“立即发送”发现 provider 已终态时，executor 必须先结算对应的本地 execution，再继续用户操作；本地停止确认超时只表示清理确认未及时返回，不能向用户返回失败或永久保留 `running`。executor 会强制把当前 execution 结算为已取消，并通过 `cleanupPending` 保留后台清理诊断。所有 Codex 通知、转录写入和终态事件都必须携带并校验 execution generation；旧 generation 的迟到结果不得写入任务、发送终态事件或触发队列继续执行。
@@ -434,6 +438,8 @@ Codex provider 的 turn 终态是执行事实，也是本地运行态收敛的�
 Worktree 的 `executionLease` 是多实例之间共享的执行证据，不是任务运行状态本身。另一个实例或启动重协调可能先清除同一 execution 的 lease，因此当前 generation 完成时发现 lease 已不存在必须视为幂等成功；只有 lease 明确属于不同 execution 时才是所有权冲突。内存中的 active execution、provider turn 事实和共享 lease 必须按上述规则共同收敛，不能因为共享文件中已经没有 lease 就让原实例永久保持运行中。
 
 Codex fork 会重建父线程的历史请求。`reasoning`、`compaction`、`compaction_summary`、`context_compaction` 和 `agent_message` 中的 `encrypted_content` 是绑定实际上游加密上下文的非便携状态；即使逻辑模型和路由名称不变，模型网关背后的凭据或项目上下文也可能无法验证父线程生成的密文。executor 通过 Codex 的 fork 元数据识别这类请求，仅在 fork 边界递归移除上述历史条目中的 `encrypted_content`，同时保留消息、工具调用、工具结果和 reasoning summary。普通继续对话不会执行该清理，也不会通过重试、fallback 或模型切换掩盖上游错误。
+
+从已完成 turn 创建 fork 时，`runtime.tasks.fork_at_turn` 的成功响应必须同时包含 Codex 在该 `lastTurnId` 边界生成的 canonical transcript，并把同一快照写入新任务 runtime handle。Wework 在打开目标任务前先用该响应初始化 conversation cache 和 lifecycle store，不能先导航到空白 pane 再依赖一个可能被项目后台同步请求阻塞的 transcript RPC。快照必须来自 fork 后的新 thread，不能复制源 pane 当前可见消息，否则源任务在 fork 点之后的新回合会泄漏到分支。
 
 云端模型执行会把 Model spec 中的 `modelConfig.env.model_id` 作为独立的 Codex catalog model id 传给 executor。若该 id 与 Codex 官方 catalog 中的模型匹配，Codex 会继承其完整能力元数据和基础指令；模型网关仍使用资源名定位云端 Model CRD，因此 catalog 映射不会改变上游路由。
 

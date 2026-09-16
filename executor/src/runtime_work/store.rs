@@ -88,6 +88,7 @@ struct PersistedRuntimeTask {
     archived: bool,
     continuable: bool,
     goal_status: Option<String>,
+    goal_execution_status: Option<String>,
     supervisor: Option<super::response::RuntimeSupervisorState>,
     created_at: i64,
     updated_at: i64,
@@ -112,6 +113,7 @@ struct PersistedRuntimeTaskInput {
     status: Option<String>,
     continuable: bool,
     goal_status: Option<String>,
+    goal_execution_status: Option<String>,
     supervisor: Option<super::response::RuntimeSupervisorState>,
     created_at: i64,
     updated_at: i64,
@@ -139,6 +141,7 @@ impl From<PersistedRuntimeTaskInput> for PersistedRuntimeTask {
                     .is_some_and(|status| status.eq_ignore_ascii_case("archived")),
             continuable: input.continuable,
             goal_status: input.goal_status,
+            goal_execution_status: input.goal_execution_status,
             supervisor: input.supervisor,
             created_at: input.created_at,
             updated_at: input.updated_at,
@@ -164,6 +167,7 @@ impl PersistedRuntimeTask {
             archived: link.status == "archived",
             continuable: link.continuable,
             goal_status: link.goal_status.clone(),
+            goal_execution_status: link.goal_execution_status.clone(),
             supervisor: link.supervisor.clone(),
             created_at: link.created_at,
             updated_at: link.updated_at,
@@ -194,6 +198,7 @@ impl PersistedRuntimeTask {
             thread_status: "notLoaded".to_owned(),
             turn_status: None,
             goal_status: self.goal_status,
+            goal_execution_status: self.goal_execution_status,
             supervisor: self.supervisor,
             git_info: None,
             created_at: self.created_at,
@@ -222,6 +227,7 @@ impl PersistedRuntimeTask {
         task.runtime = self.runtime;
         task.continuable = self.continuable;
         task.goal_status = self.goal_status;
+        task.goal_execution_status = self.goal_execution_status;
         task.supervisor = self.supervisor;
         task.created_at = self.created_at;
         task.updated_at = self.updated_at;

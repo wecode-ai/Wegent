@@ -2,6 +2,7 @@ import type { InstalledPlugin } from '@/types/api'
 import { isLocalPluginUninstallCleanupError } from '@/api/local/pluginUninstallError'
 import {
   isCloudManagedInstalledPlugin,
+  isWegentManagedStorePlugin,
   linkedCloudInstalledPluginId,
   linkedCloudPluginId,
 } from './installedPluginMerge'
@@ -38,8 +39,18 @@ export async function uninstallPluginIdentities(
     return { warnings: [] }
   }
 
-  const warnings: Error[] = []
   const cloudInstalledPluginId = linkedCloudInstalledPluginId(plugin)
+  if (isWegentManagedStorePlugin(plugin)) {
+    if (cloudInstalledPluginId === null) {
+      throw new Error(
+        'Managed plugin account install id is unavailable; refresh installed plugins and retry uninstall'
+      )
+    }
+    await operations.uninstallCloud(cloudInstalledPluginId, deviceId)
+    return { warnings: [] }
+  }
+
+  const warnings: Error[] = []
   const cloudPluginId = linkedCloudPluginId(plugin)
   if (cloudInstalledPluginId !== null) {
     // Account desired state must be cleared before local removal; otherwise

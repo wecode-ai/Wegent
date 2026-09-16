@@ -49,6 +49,7 @@ from app.schemas.delivery import (
     LoopItemUpdate,
 )
 from app.schemas.issue_workflow import (
+    IssueWorkflowInstance,
     ProjectWorkflowDefinition,
     instantiate_workflow,
     workflow_node_execution_mode,
@@ -542,6 +543,14 @@ class LoopItemService:
                                 )
                             )
                     task_metadata["workflow"] = workflow.model_dump()
+        if "workflow" in task_metadata:
+            workflow = IssueWorkflowInstance.model_validate(task_metadata["workflow"])
+            if workflow.advancement_policy == "ai" and workflow.ai_automation_rule_id:
+                from app.services.issue_execution_configuration import (
+                    require_coordinator_execution_config,
+                )
+
+                require_coordinator_execution_config(workflow.execution_config)
         if explicit_execution_config is not None:
             task_metadata["execution_config"] = explicit_execution_config.model_dump(
                 mode="json"
@@ -2833,6 +2842,7 @@ class LoopItemService:
                 team=team,
                 assigner_user_id=user_id,
                 priority=priority,
+                automation_context=automation_context,
             )
         return cancelled_runs
 

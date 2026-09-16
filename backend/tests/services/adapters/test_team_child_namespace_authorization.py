@@ -249,9 +249,10 @@ def test_child_group_team_list_includes_authorized_parent_team(test_db: Session)
         test_db
     )
 
-    teams = team_kinds_service.get_user_teams(
+    teams, total = team_kinds_service.get_user_teams_page(
         test_db,
         user_id=child_member.id,
+        limit=1,
         scope="group",
         group_name=child.name,
     )
@@ -262,12 +263,7 @@ def test_child_group_team_list_includes_authorized_parent_team(test_db: Session)
     # share_status=2 means the team is shared from others.
     assert listed_team["share_status"] == 2
     assert listed_team["access_source"] == "namespace_authorization"
-    assert team_kinds_service.count_user_teams(
-        test_db,
-        user_id=child_member.id,
-        scope="group",
-        group_name=child.name,
-    ) == len(teams)
+    assert total == len(teams)
 
 
 def test_team_list_deduplicates_direct_share_and_namespace_authorization(
@@ -292,20 +288,17 @@ def test_team_list_deduplicates_direct_share_and_namespace_authorization(
     )
     test_db.commit()
 
-    teams = team_kinds_service.get_user_teams(
+    teams, total = team_kinds_service.get_user_teams_page(
         test_db,
         user_id=child_member.id,
+        limit=1,
         scope="all",
     )
 
     matching_teams = [item for item in teams if item["id"] == team.id]
     assert len(matching_teams) == 1
     assert matching_teams[0]["access_source"] == "user_share"
-    assert team_kinds_service.count_user_teams(
-        test_db,
-        user_id=child_member.id,
-        scope="all",
-    ) == len(teams)
+    assert total == len(teams)
 
 
 def test_child_member_can_create_task_with_authorized_parent_team_and_use_skills(

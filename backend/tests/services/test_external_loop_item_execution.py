@@ -42,6 +42,7 @@ from app.services.loop_items.external_provider import (
 )
 from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.project_chat.service import project_chat_service
+from tests.utils.agent_resources import create_runnable_wegent_team
 
 
 @pytest.fixture(autouse=True)
@@ -506,17 +507,11 @@ def test_assign_wegent_runtime_robot_on_gitlab_keeps_robot_identity(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _make_gitlab_project(test_db, test_user)
-    team = Kind(
-        kind="Team",
-        name=f"external-team-{uuid.uuid4().hex[:8]}",
-        namespace="default",
+    team = create_runnable_wegent_team(
+        test_db,
         user_id=test_user.id,
-        is_active=True,
-        json={},
+        name_prefix="external",
     )
-    test_db.add(team)
-    test_db.commit()
-    test_db.refresh(team)
     _mock_issue(monkeypatch)
     bot = _make_bot(
         test_db,
@@ -554,17 +549,11 @@ def test_create_gitlab_item_for_wegent_robot_returns_dispatchable_index(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _make_gitlab_project(test_db, test_user)
-    team = Kind(
-        kind="Team",
-        name=f"external-team-{uuid.uuid4().hex[:8]}",
-        namespace="default",
+    team = create_runnable_wegent_team(
+        test_db,
         user_id=test_user.id,
-        is_active=True,
-        json={},
+        name_prefix="external",
     )
-    test_db.add(team)
-    test_db.commit()
-    test_db.refresh(team)
     _mock_issue(monkeypatch)
     bot = _make_bot(
         test_db,

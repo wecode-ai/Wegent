@@ -752,17 +752,26 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     [onLocalHarnessSessionClose, removeLocalHarnessSession]
   )
   const [resourceOwnersByPane, setResourceOwnersByPane] = useState<Record<string, string[]>>({})
+  const [pendingBrowserOpenRequests, setPendingBrowserOpenRequests] = useState<
+    Record<string, EmbeddedBrowserOpenRequest>
+  >({})
   const paneWorkspaceStateRef = useRef(new Map<string, WorkbenchPaneWorkspaceState>())
-  const retainedResourceKeys = useMemo(
-    () => Object.keys(resourceOwnersByPane).filter(key => resourceOwnersByPane[key].length > 0),
-    [resourceOwnersByPane]
-  )
   const runtimePaneKeys = useMemo(
     () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
     [state.runtimeWork]
   )
   const runtimePaneKeySet = useMemo(() => new Set(runtimePaneKeys), [runtimePaneKeys])
   const activePaneKey = getWorkbenchPaneKey(props.activePane)
+  const retainedResourceKeys = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...Object.keys(resourceOwnersByPane).filter(key => resourceOwnersByPane[key].length > 0),
+          ...Object.keys(pendingBrowserOpenRequests),
+        ])
+      ),
+    [pendingBrowserOpenRequests, resourceOwnersByPane]
+  )
   const setPaneResourceRetained = useCallback(
     (paneKey: string, owner: string, retained: boolean) => {
       setResourceOwnersByPane(current => {
@@ -859,6 +868,47 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       state.runtimeWork,
     ]
   )
+  const resolveBrowserOpenRequestPaneKey = useCallback(
+    (request: EmbeddedBrowserOpenRequest) => {
+      const requestBaseLabel = request.baseLabel || request.label || DEFAULT_EMBEDDED_BROWSER_LABEL
+      if (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL) {
+        return props.visible === false ? null : activePaneKey
+      }
+      return (
+        Array.from(new Set([activePaneKey, ...runtimePaneKeys])).find(paneKey => {
+          const pane = resolvePane(paneKey)
+          const labelSegment = pane?.currentRuntimeTask?.taskId ?? paneKey
+          return (
+            pane !== null &&
+            requestBaseLabel ===
+              `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(labelSegment)}`
+          )
+        }) ?? null
+      )
+    },
+    [activePaneKey, props.visible, resolvePane, runtimePaneKeys]
+  )
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserOpenRequests(request => {
+      const paneKey = resolveBrowserOpenRequestPaneKey(request)
+      if (!paneKey) return
+      setPendingBrowserOpenRequests(current => ({
+        ...current,
+        [paneKey]: request,
+      }))
+    })
+    return () => {
+      void listener?.then(unlisten => unlisten())
+    }
+  }, [resolveBrowserOpenRequestPaneKey])
+  const markBrowserOpenRequestHandled = useCallback((paneKey: string, requestId: string) => {
+    setPendingBrowserOpenRequests(current => {
+      if (current[paneKey]?.id !== requestId) return current
+      const next = { ...current }
+      delete next[paneKey]
+      return next
+    })
+  }, [])
   const getPaneTitle = useCallback(
     (pane: WorkbenchPaneIdentity) => {
       if (!pane.currentRuntimeTask) {
@@ -895,6 +945,8 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         onSidebarCollapsedChange={props.onSidebarCollapsedChange}
         onEnvironmentInfoVisibilityChange={updateEnvironmentInfoVisibility}
         onPaneResourceRetained={setPaneResourceRetained}
+        pendingBrowserOpenRequest={pendingBrowserOpenRequests[getWorkbenchPaneKey(pane)] ?? null}
+        onBrowserOpenRequestHandled={markBrowserOpenRequestHandled}
         initialWorkspaceState={paneWorkspaceStateRef.current.get(getWorkbenchPaneKey(pane))}
         onWorkspaceStateChange={rememberPaneWorkspaceState}
         onRuntimeTaskCreated={transferPaneWorkspaceState}
@@ -918,9 +970,11 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       props.sidebarCollapsed,
       props.sidebarResizing,
       props.visible,
+      pendingBrowserOpenRequests,
       registerLocalHarnessSession,
       rememberPaneWorkspaceState,
       removeLocalHarnessSession,
+      markBrowserOpenRequestHandled,
       setPaneResourceRetained,
       sharedWorkbenchContentWidth,
       splitMode,
@@ -1005,6 +1059,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onSidebarCollapsedChange,
   onEnvironmentInfoVisibilityChange,
   onPaneResourceRetained,
+  pendingBrowserOpenRequest,
+  onBrowserOpenRequestHandled,
   initialWorkspaceState,
   onWorkspaceStateChange,
   onRuntimeTaskCreated,
@@ -1028,6 +1084,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     patch: Partial<EnvironmentInfoVisibilityState>
   ) => void
   onPaneResourceRetained: (paneKey: string, owner: string, retained: boolean) => void
+  pendingBrowserOpenRequest: EmbeddedBrowserOpenRequest | null
+  onBrowserOpenRequestHandled: (paneKey: string, requestId: string) => void
   initialWorkspaceState?: WorkbenchPaneWorkspaceState
   onWorkspaceStateChange: (paneKey: string, state: WorkbenchPaneWorkspaceState) => void
   onRuntimeTaskCreated: (paneKey: string, address: RuntimeTaskAddress) => void
@@ -1050,6 +1108,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const environmentInfoPinned = environmentInfoVisibility.pinned
   const environmentInfoOverlayOpen = environmentInfoVisibility.overlayOpen
   const paneActiveRef = useRef(paneActive)
+  const routedBrowserOpenRequestIdRef = useRef<string | null>(null)
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appPreferences = useAppPreferencesState()
   const appearanceContext = useOptionalAppearance()
@@ -1248,7 +1307,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     associateRuntimeTaskWithExistingItem,
     associateRuntimeTaskWithNewItem,
     boundCloudItem,
-    boundCloudItemStatusOverride,
     boundCloudProject,
     boundProjectSpaceApi,
     clearCloudActionNotice,
@@ -3157,7 +3215,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         integrated
         project={boundCloudProject}
         item={boundCloudItem}
-        statusOverride={boundCloudItemStatusOverride}
         api={boundProjectSpaceApi}
         currentTask={currentProjectSpaceRuntimeTask}
         projects={availableWorkItemProjects}
@@ -3501,15 +3558,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       const installationIds = new Set<string>()
       Object.entries(browserStatesRef.current).forEach(([tab, browserState]) => {
-        if (!browserState) return
-        if (browserState.developmentPreview) {
-          installationIds.add(browserState.developmentPreview.installationId)
-          const browserTab = tab as RightWorkspaceBrowserTab
-          previewRequests.set(browserTab, (previewRequests.get(browserTab) ?? 0) + 1)
-        }
+        if (!browserState?.developmentPreview) return
+        installationIds.add(browserState.developmentPreview.installationId)
+        const browserTab = tab as RightWorkspaceBrowserTab
+        previewRequests.set(browserTab, (previewRequests.get(browserTab) ?? 0) + 1)
         void closeEmbeddedBrowser(browserState.label, browserState.nativeLabel ?? undefined).catch(
           error => {
-            console.error('Failed to close embedded browser during workbench disposal:', error)
+            console.error('Failed to close Smart app browser during workbench disposal:', error)
           }
         )
       })
@@ -3700,7 +3755,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => window.removeEventListener('keydown', focusComposerForPasteShortcut)
   }, [hasConversation, paneActive, paneVisible, workbenchVisible])
   const routeEmbeddedBrowserOpenRequest = useCallback(
-    (request: EmbeddedBrowserOpenRequest) => {
+    (request: EmbeddedBrowserOpenRequest, assignedToPane = false) => {
       const states = browserStatesRef.current
       const targetByLabel = findBrowserTabByPopupParent(
         states,
@@ -3708,8 +3763,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       )
       const requestBaseLabel = request.baseLabel || request.label || DEFAULT_EMBEDDED_BROWSER_LABEL
       const baseLabelMatchesPane =
-        requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL ||
         requestBaseLabel === defaultEmbeddedBrowserLabel ||
+        (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL && assignedToPane) ||
         Boolean(targetByLabel)
       if (!baseLabelMatchesPane) {
         logBrowserOpenDiagnostic('routeRequestDropped', {
@@ -3753,25 +3808,28 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [defaultEmbeddedBrowserLabel, openBrowserTab, rightPanelView]
   )
   useEffect(() => {
-    if (!paneActive) return undefined
-
-    const listener = listenEmbeddedBrowserOpenRequests(request => {
-      if (!paneActiveRef.current) return
-      logBrowserOpenDiagnostic('openRequestReceived', {
-        requestId: request.id,
-        url: request.url,
-        label: request.label ?? null,
-        source: request.source ?? null,
-      })
-      routeEmbeddedBrowserOpenRequest(request)
+    if (!pendingBrowserOpenRequest) return
+    if (routedBrowserOpenRequestIdRef.current === pendingBrowserOpenRequest.id) return
+    routedBrowserOpenRequestIdRef.current = pendingBrowserOpenRequest.id
+    logBrowserOpenDiagnostic('openRequestReceived', {
+      requestId: pendingBrowserOpenRequest.id,
+      url: pendingBrowserOpenRequest.url,
+      label: pendingBrowserOpenRequest.label ?? null,
+      source: pendingBrowserOpenRequest.source ?? null,
     })
-
-    return () => {
-      void listener?.then(unlisten => unlisten())
-    }
-  }, [paneActive, routeEmbeddedBrowserOpenRequest])
+    routeEmbeddedBrowserOpenRequest(pendingBrowserOpenRequest, true)
+  }, [pendingBrowserOpenRequest, routeEmbeddedBrowserOpenRequest])
   useEffect(() => {
-    if (!paneActive || typeof listenEmbeddedBrowserPopupRequests !== 'function') return
+    if (!pendingBrowserOpenRequest) return
+    const handled = Object.values(browserStates).some(
+      browserState => browserState?.openRequest?.id === pendingBrowserOpenRequest.id
+    )
+    if (handled) {
+      onBrowserOpenRequestHandled(paneKey, pendingBrowserOpenRequest.id)
+    }
+  }, [browserStates, onBrowserOpenRequestHandled, paneKey, pendingBrowserOpenRequest])
+  useEffect(() => {
+    if (typeof listenEmbeddedBrowserPopupRequests !== 'function') return
     const listener = listenEmbeddedBrowserPopupRequests(request => {
       const parentTab = findBrowserTabByPopupParent(
         browserStatesRef.current,
@@ -3801,7 +3859,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       void listener?.then(unlisten => unlisten())
     }
-  }, [defaultEmbeddedBrowserLabel, paneActive, routeEmbeddedBrowserOpenRequest])
+  }, [defaultEmbeddedBrowserLabel, routeEmbeddedBrowserOpenRequest])
   const openAssistantPlan = useCallback(
     (request: AssistantPlanOpenRequest) => {
       setSelectedAssistantPlan({
@@ -4954,8 +5012,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
                     autoScrollSuspended={!paneVisible || !workbenchVisible}
                     onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
-                    onLoadFullTranscript={paneSession.loadFullTranscript}
-                    loadingFullTranscript={paneSession.transcriptLoadingFullContent}
                     onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
                     onLoadTranscriptGap={paneSession.loadTranscriptGap}
                     conversationKey={
@@ -5144,6 +5200,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         }
                                         goal={paneSession.goal}
                                         goalContinuing={paneSession.goalContinuing}
+                                        goalExecutionStatus={paneSession.goalExecutionStatus}
                                         taskPlan={paneSession.taskPlan}
                                         goalDraftActive={paneSession.goalDraftActive}
                                         onSetGoal={
@@ -5417,6 +5474,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           }
                           goal={paneSession.goal}
                           goalContinuing={paneSession.goalContinuing}
+                          goalExecutionStatus={paneSession.goalExecutionStatus}
                           taskPlan={paneSession.taskPlan}
                           goalDraftActive={paneSession.goalDraftActive}
                           onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}

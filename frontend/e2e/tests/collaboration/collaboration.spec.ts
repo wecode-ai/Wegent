@@ -131,9 +131,12 @@ test.describe('Collaboration module', () => {
     )
     await expect(page.getByTestId('workspace-settings-shell')).toBeVisible()
     await expect(page.getByTestId('collaboration-workspace-settings-save')).toBeVisible()
-    await page.getByTestId('collaboration-workspace-nav-members').click()
+    await page.getByTestId('collaboration-workspace-nav-participants').click()
+    await page.getByTestId('collaboration-workspace-participants-tab-members').click()
     await expect(page).toHaveURL(
-      new RegExp(`/collaboration/workspaces/${escaped(encodeURIComponent(workspaceId))}/members$`)
+      new RegExp(
+        `/collaboration/workspaces/${escaped(encodeURIComponent(workspaceId))}/participants$`
+      )
     )
     await capture(page, testInfo, '01-workspace-resources')
 
@@ -202,7 +205,16 @@ test.describe('Collaboration module', () => {
     await page.getByTestId('collaboration-issue-comment').click()
     await page.getByTestId('collaboration-issue-mention-trigger').click()
     await page.getByTestId(`collaboration-issue-mention-member-${assignedMember.user_id}`).click()
-    await page.getByTestId('collaboration-issue-comment').pressSequentially(assignmentComment)
+    const assignmentComposer = page.getByTestId('collaboration-issue-comment')
+    await expect(assignmentComposer).toHaveValue(`@${assignedMemberName} `)
+    await expect(assignmentComposer).toBeFocused()
+    await expect
+      .poll(() =>
+        assignmentComposer.evaluate((element: HTMLTextAreaElement) => element.selectionStart)
+      )
+      .toBe(assignedMemberName.length + 2)
+    await assignmentComposer.pressSequentially(assignmentComment)
+    await expect(assignmentComposer).toHaveValue(`@${assignedMemberName} ${assignmentComment}`)
     await page.getByTestId('collaboration-issue-comment-submit').click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignmentComment)
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignedMemberName)
