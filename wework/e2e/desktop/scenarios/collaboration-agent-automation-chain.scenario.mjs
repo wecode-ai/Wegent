@@ -906,8 +906,9 @@ export async function createDesktopScenario({
 
   async function selectGroupTarget(control) {
     await control.command(
-      'click',
-      scoped('[data-testid="automatic-processing-target-kind-collaboration_group"]')
+      'clickWhenEnabled',
+      scoped('[data-testid="automatic-processing-target-kind-collaboration_group"]'),
+      { timeoutMs: uiTimeoutMs }
     )
     await control.command('click', scoped('[data-testid="automatic-processing-target"]'))
     await control.command(
