@@ -17,12 +17,16 @@ import uuid
 from dataclasses import dataclass, field
 
 import pytest
+from llama_index.core.schema import TextNode
 from pymilvus import MilvusClient
 
+from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.milvus_backend import MilvusBackend
 from knowledge_engine.storage.milvus_native import INDEX_BINDING_COLLECTION
 
 CONTRACT_URI_ENV = "MILVUS_CONTRACT_URI"
+CONTRACT_DIMENSION = 1536
+CONTRACT_CREATED_AT = "2026-01-01T00:00:00Z"
 
 
 class DeterministicEmbedding:
@@ -48,6 +52,34 @@ class DeterministicEmbedding:
 
     def get_query_embedding(self, query: str) -> list[float]:
         return self._vector(query)
+
+
+def index_nodes(
+    backend: MilvusBackend,
+    *,
+    knowledge_id: str,
+    doc_ref: str,
+    nodes: list[TextNode],
+    created_at: str = CONTRACT_CREATED_AT,
+    dimension: int = CONTRACT_DIMENSION,
+) -> None:
+    """Write prepared nodes through the storage entry the document service uses.
+
+    The caller owns the node text and metadata, so a contract test can index a
+    document with real chunk shapes without going through file ingestion.
+    """
+    chunk_metadata = ChunkMetadata(
+        knowledge_id=knowledge_id,
+        doc_ref=doc_ref,
+        source_file=f"document-{doc_ref}.txt",
+        created_at=created_at,
+    )
+    chunk_metadata.apply_to_nodes(nodes)
+    backend.index_with_metadata(
+        nodes=nodes,
+        chunk_metadata=chunk_metadata,
+        embed_model=DeterministicEmbedding(dimension),
+    )
 
 
 def is_milvus_lite(uri: str) -> bool:

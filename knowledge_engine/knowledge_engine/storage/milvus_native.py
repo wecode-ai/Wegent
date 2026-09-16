@@ -819,7 +819,14 @@ class MilvusDocumentStore:
         *,
         output_fields: Sequence[str] | None = None,
         limit: int,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
+        """Read one page of matching rows.
+
+        Milvus does not order a query result, so ``offset`` continues the
+        server's own order: it pages a static collection the way ``limit``
+        alone cannot, and the caller owns any order it promises on top.
+        """
         if not client.has_collection(collection_name):
             return []
         return list(
@@ -828,6 +835,7 @@ class MilvusDocumentStore:
                 filter=filter_expr,
                 output_fields=list(output_fields or ROW_OUTPUT_FIELDS),
                 limit=limit,
+                offset=offset,
                 consistency_level="Strong",
             )
         )

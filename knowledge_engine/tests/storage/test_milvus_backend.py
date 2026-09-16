@@ -4,7 +4,9 @@
 
 """Unit tests for the native MilvusBackend adapter (storage layer faked)."""
 
+import re
 from contextlib import contextmanager
+from typing import Any, Dict, List, Optional
 
 import pytest
 from llama_index.core.schema import TextNode
@@ -27,7 +29,104 @@ from knowledge_engine.storage.milvus_native import (
     SCHEMA_VERSION,
     SOURCE_FILE_FIELD,
 )
+from knowledge_engine.storage.milvus_rows import MAX_READ_LIMIT
 from shared.models import RetrievalScope
+
+_CLAUSE_SEPARATOR = re.compile(r"\s+(and|or)\s+")
+_JSON_CLAUSE = re.compile(
+    r'^metadata\["(?P<key>.+?)"\] (?P<operator>==|!=|in|not in|>=|<=|>|<) '
+    r"(?P<value>.+)$"
+)
+_JSON_MEMBERSHIP_CLAUSE = re.compile(
+    r'^json_contains\(metadata\["(?P<key>.+?)"\], (?P<value>.+)\)$'
+)
+_JSON_SUBSTRING_CLAUSE = re.compile(
+    r'^metadata\["(?P<key>.+?)"\] like "%(?P<value>.*)%"$'
+)
+_COLUMN_CLAUSE = re.compile(
+    r"^(?P<key>\w+) (?P<operator>==|!=|in|not in|>=|<=|>|<) (?P<value>.+)$"
+)
+
+
+def _split_expression(expression: str, operator: str) -> list[str]:
+    """Split one boolean expression on its top level ``operator``."""
+    parts: list[str] = []
+    current = ""
+    depth = 0
+    index = 0
+    while index < len(expression):
+        character = expression[index]
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+        if depth == 0 and current:
+            match = _CLAUSE_SEPARATOR.match(expression, index)
+            if match and match.group(1) == operator:
+                parts.append(current)
+                current = ""
+                index = match.end()
+                continue
+        current += character
+        index += 1
+    parts.append(current)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _parse_literal(raw_literal: str) -> Any:
+    text = raw_literal.strip()
+    if text.startswith("[") and text.endswith("]"):
+        inner = text[1:-1].strip()
+        return [] if not inner else [_parse_literal(item) for item in inner.split(",")]
+    if text == "true":
+        return True
+    if text == "false":
+        return False
+    if text.startswith('"') and text.endswith('"'):
+        return text[1:-1]
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
+def _compare(actual: Any, operator: str, expected: Any) -> bool:
+    if operator == "==":
+        return actual == expected
+    if operator == "!=":
+        return actual != expected
+    if operator == "in":
+        return actual in expected
+    if operator == "not in":
+        return actual not in expected
+    if not _is_number(actual) or not _is_number(expected):
+        return False
+    comparisons = {
+        ">": lambda left, right: left > right,
+        ">=": lambda left, right: left >= right,
+        "<": lambda left, right: left < right,
+        "<=": lambda left, right: left <= right,
+    }
+    return comparisons[operator](actual, expected)
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _enclosing_group(expression: str) -> Optional[str]:
+    """Return the inside of the parentheses that wrap the whole expression."""
+    if not (expression.startswith("(") and expression.endswith(")")):
+        return None
+    depth = 0
+    for index, character in enumerate(expression):
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0 and index != len(expression) - 1:
+                return None
+    return expression[1:-1]
 
 
 class FakeEmbedModel:
@@ -172,15 +271,28 @@ class FakeStore:
         ]
 
     def query_rows(
-        self, client, collection_name, filter_expr, *, output_fields=None, limit
+        self,
+        client,
+        collection_name,
+        filter_expr,
+        *,
+        output_fields=None,
+        limit,
+        offset=0,
     ):
+        """Answer one page the way Milvus does: filter, then offset and limit."""
         self.queries.append(
-            {"filter": filter_expr, "fields": output_fields, "limit": limit}
+            {
+                "filter": filter_expr,
+                "fields": output_fields,
+                "limit": limit,
+                "offset": offset,
+            }
         )
+        matching = [row for row in self.rows if self._filter_matches(row, filter_expr)]
         return [
             {key: value for key, value in row.items() if key in (output_fields or row)}
-            for row in self.rows
-            if self._filter_matches(row, filter_expr)
+            for row in matching[offset : offset + limit]
         ]
 
     def search(
@@ -216,20 +328,64 @@ class FakeStore:
         )
         return self.sparse_hits[:limit]
 
+    @classmethod
+    def _filter_matches(cls, row: Dict[str, Any], filter_expr: str) -> bool:
+        """Evaluate a filter with the semantics the compiled clauses promise.
+
+        The double understands exactly the clause shapes the Milvus compiler
+        emits for the reading and delete paths. An unknown shape raises, so a
+        test can never pass against a filter this double silently ignores.
+        """
+        return cls._expression_matches(row, filter_expr)
+
+    @classmethod
+    def _expression_matches(cls, row: Dict[str, Any], expression: str) -> bool:
+        """Evaluate one boolean expression, innermost groups first."""
+        expression = expression.strip()
+        conjuncts = _split_expression(expression, "and")
+        if len(conjuncts) > 1:
+            return all(cls._expression_matches(row, part) for part in conjuncts)
+        inner = _enclosing_group(expression)
+        if inner is not None:
+            alternates = _split_expression(inner, "or")
+            if len(alternates) > 1:
+                return any(cls._expression_matches(row, part) for part in alternates)
+            return cls._expression_matches(row, inner)
+        return cls._clause_matches(row, expression)
+
+    @classmethod
+    def _clause_matches(cls, row: Dict[str, Any], clause: str) -> bool:
+        membership = _JSON_MEMBERSHIP_CLAUSE.match(clause)
+        if membership:
+            return cls._metadata_value(row, membership.group("key")) == _parse_literal(
+                membership.group("value")
+            )
+        substring = _JSON_SUBSTRING_CLAUSE.match(clause)
+        if substring:
+            return substring.group("value") in str(
+                cls._metadata_value(row, substring.group("key")) or ""
+            )
+        for pattern in (_JSON_CLAUSE, _COLUMN_CLAUSE):
+            match = pattern.match(clause)
+            if not match:
+                continue
+            key = match.group("key")
+            if key == "knowledge_id":
+                # The double's rows already live inside the requested index.
+                return True
+            if pattern is _JSON_CLAUSE:
+                actual = cls._metadata_value(row, key)
+            else:
+                actual = row.get(key)
+            return _compare(
+                actual, match.group("operator"), _parse_literal(match.group("value"))
+            )
+        raise AssertionError(f"the fake store cannot evaluate the clause {clause!r}")
+
     @staticmethod
-    def _filter_matches(row, filter_expr):
-        if "published == true" in filter_expr and not row.get(PUBLISHED_FIELD):
-            return False
-        if "attempt_id ==" in filter_expr:
-            attempt = filter_expr.split('attempt_id == "', 1)[1].split('"', 1)[0]
-            if row.get("attempt_id") != attempt:
-                return False
-        if "doc_ref in [" in filter_expr:
-            refs = filter_expr.split("doc_ref in [", 1)[1].split("]", 1)[0]
-            allowed = [ref.strip().strip('"') for ref in refs.split(",")]
-            if str(row.get("doc_ref")) not in allowed:
-                return False
-        return True
+    def _metadata_value(row: Dict[str, Any], key: str) -> Any:
+        metadata = row.get(METADATA_FIELD) or {}
+        return metadata.get(key)
 
 
 def _backend(**ext):
@@ -1464,6 +1620,71 @@ def test_get_document_missing_raises_without_creating():
         backend.get_document("1", "42")
 
 
+def _chunk_rows(
+    doc_ref: str,
+    chunk_indexes,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    return [
+        {
+            "doc_ref": doc_ref,
+            "source_file": f"{doc_ref}.txt",
+            "chunk_index": index,
+            DISPLAY_TEXT_FIELD: f"chunk {index}",
+            METADATA_FIELD: dict(metadata or {}),
+            PUBLISHED_FIELD: True,
+        }
+        for index in chunk_indexes
+    ]
+
+
+def test_get_document_reads_every_chunk_across_pages():
+    """A document longer than one internal page is still complete."""
+    backend = _backend()
+    backend._store = FakeStore(rows=_chunk_rows("42", range(2500)))
+
+    document = backend.get_document("1", "42")
+
+    assert document["chunk_count"] == 2500
+    assert [chunk["chunk_index"] for chunk in document["chunks"]] == list(range(2500))
+
+
+def test_get_document_fails_when_the_document_exceeds_the_read_budget():
+    """A truncated document must not be reported as the complete one."""
+    backend = _backend()
+    backend._store = FakeStore(rows=_chunk_rows("42", range(MAX_READ_LIMIT + 1)))
+
+    with pytest.raises(StorageBackendError):
+        backend.get_document("1", "42")
+
+
+def test_get_document_group_order_does_not_follow_the_arrival_order():
+    """Equal chunk indexes keep one order across reads of the same rows."""
+    rows = [
+        {
+            "id": row_id,
+            "doc_ref": "42",
+            "source_file": "42.txt",
+            "chunk_index": 0,
+            DISPLAY_TEXT_FIELD: f"chunk {row_id}",
+            METADATA_FIELD: {},
+            PUBLISHED_FIELD: True,
+        }
+        for row_id in ("row-b", "row-a")
+    ]
+
+    backend = _backend()
+    backend._store = FakeStore(rows=rows)
+    first = backend.get_document("1", "42")
+    backend._store = FakeStore(rows=list(reversed(rows)))
+    second = backend.get_document("1", "42")
+
+    assert [chunk["content"] for chunk in first["chunks"]] == [
+        chunk["content"] for chunk in second["chunks"]
+    ]
+
+
 def test_reads_reject_a_collection_without_a_contract():
     backend = _backend()
     backend._store = FakeStore(has_contract=False)
@@ -1512,6 +1733,71 @@ def test_get_all_chunks_only_returns_published_rows():
     assert [chunk["content"] for chunk in chunks] == ["first", "second"]
 
 
+def test_get_all_chunks_keeps_a_match_behind_the_read_limit():
+    """The metadata condition narrows the read, not the truncated page."""
+    backend = _backend()
+    store = FakeStore(
+        rows=_chunk_rows("42", range(5), metadata={"tag": "other"})
+        + _chunk_rows("42", [99], metadata={"tag": "keep"})
+    )
+    backend._store = store
+
+    chunks = backend.get_all_chunks(
+        "1",
+        max_chunks=2,
+        metadata_condition={
+            "operator": "and",
+            "conditions": [{"key": "tag", "operator": "eq", "value": "keep"}],
+        },
+    )
+
+    assert [chunk["chunk_id"] for chunk in chunks] == [99]
+    # The condition reaches the database, so the limit applies to matches.
+    assert 'metadata["tag"] == "keep"' in store.queries[-1]["filter"]
+
+
+def test_get_all_chunks_compiles_the_shared_condition_contract():
+    """Text and numeric conditions both narrow the database read."""
+    backend = _backend()
+    store = FakeStore(
+        rows=_chunk_rows("42", range(6), metadata={"tag": "release-2026"})
+    )
+    backend._store = store
+
+    chunks = backend.get_all_chunks(
+        "1",
+        max_chunks=10,
+        metadata_condition={
+            "operator": "and",
+            "conditions": [
+                {"key": "tag", "operator": "contains", "value": "2026"},
+                {"key": "chunk_index", "operator": "gte", "value": 3},
+            ],
+        },
+    )
+
+    assert [chunk["chunk_id"] for chunk in chunks] == [3, 4, 5]
+
+
+def test_get_all_chunks_allows_a_doc_ref_condition_inside_the_knowledge_base():
+    """The read path keeps the listing contract the other backends serve."""
+    backend = _backend()
+    store = FakeStore(rows=_chunk_rows("42", [0]) + _chunk_rows("43", [0, 1]))
+    backend._store = store
+
+    chunks = backend.get_all_chunks(
+        "1",
+        max_chunks=10,
+        metadata_condition={
+            "operator": "and",
+            "conditions": [{"key": "doc_ref", "operator": "eq", "value": "43"}],
+        },
+    )
+
+    assert {chunk["doc_ref"] for chunk in chunks} == {"43"}
+    assert 'doc_ref == "43"' in store.queries[-1]["filter"]
+
+
 def test_list_documents_aggregates_published_rows():
     backend = _backend()
     store = FakeStore(
@@ -1546,3 +1832,67 @@ def test_list_documents_aggregates_published_rows():
     assert result["total"] == 2
     assert result["documents"][0]["doc_ref"] == "42"
     assert result["documents"][0]["chunk_count"] == 2
+
+
+def _document_rows(
+    doc_refs, *, created_at: str = "2026-01-01T00:00:00Z"
+) -> List[Dict[str, Any]]:
+    """One published chunk per document, so each doc_ref appears once."""
+    return [
+        {
+            "doc_ref": doc_ref,
+            "source_file": f"{doc_ref}.txt",
+            "created_at": created_at,
+            "chunk_index": 0,
+            PUBLISHED_FIELD: True,
+        }
+        for doc_ref in doc_refs
+    ]
+
+
+def test_list_documents_page_order_does_not_follow_the_arrival_order():
+    """Milvus answers rows in no promised order, so the page order is ours."""
+    doc_refs = ["10", "20", "30", "40"]
+    backend = _backend()
+
+    backend._store = FakeStore(rows=_document_rows(doc_refs))
+    forward = backend.list_documents("1", page=1, page_size=2)
+    backend._store = FakeStore(rows=_document_rows(list(reversed(doc_refs))))
+    reversed_arrival = backend.list_documents("1", page=1, page_size=2)
+
+    assert [doc["doc_ref"] for doc in forward["documents"]] == [
+        doc["doc_ref"] for doc in reversed_arrival["documents"]
+    ]
+
+
+def test_list_documents_pages_every_document_exactly_once():
+    """Repeated paging over static data has no gap and no repeat."""
+    doc_refs = ["10", "20", "30", "40"]
+    backend = _backend()
+    backend._store = FakeStore(rows=_document_rows(doc_refs))
+
+    pages = [backend.list_documents("1", page=page, page_size=2) for page in (1, 2)]
+    collected = [doc["doc_ref"] for page in pages for doc in page["documents"]]
+
+    assert collected == doc_refs
+    assert [page["total"] for page in pages] == [len(doc_refs)] * 2
+
+
+def test_list_documents_fails_instead_of_reporting_a_truncated_total():
+    """Beyond the read budget the total would be a lie, so the read fails."""
+    backend = _backend()
+    backend._store = FakeStore(rows=_chunk_rows("42", range(MAX_READ_LIMIT + 1)))
+
+    with pytest.raises(StorageBackendError):
+        backend.list_documents("1")
+
+
+def test_list_documents_reports_the_total_at_the_read_budget():
+    """Exactly at the budget the complete result is still returned."""
+    backend = _backend()
+    backend._store = FakeStore(rows=_chunk_rows("42", range(MAX_READ_LIMIT)))
+
+    result = backend.list_documents("1")
+
+    assert result["total"] == 1
+    assert result["documents"][0]["chunk_count"] == MAX_READ_LIMIT

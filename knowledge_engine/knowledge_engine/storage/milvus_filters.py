@@ -58,23 +58,33 @@ LiteralKind = Literal["numeric", "text", "json"]
 
 def compile_metadata_conditions(
     metadata_condition: Dict[str, Any] | None,
+    *,
+    allow_document_scope: bool = False,
 ) -> List[str]:
     """Compile the supported flat metadata condition into Milvus filters.
 
     The result is composed with the mandatory scope filter by the caller, so a
     metadata condition can only narrow the knowledge base, document and
     publication scope - never widen it.
+
+    ``allow_document_scope`` exists for the reading paths: they take no
+    separate document scope, so a ``doc_ref`` condition narrows the same query
+    instead of being rejected. Retrieval keeps rejecting it, because there the
+    document scope is an explicit input that a condition must not impersonate.
     """
     if not metadata_condition:
         return []
 
-    validate_metadata_condition(metadata_condition, reject_document_scope=True)
+    validate_metadata_condition(
+        metadata_condition,
+        reject_document_scope=not allow_document_scope,
+    )
     operator = str(metadata_condition.get("operator") or "and").strip().lower()
     if operator not in {"and", "or"}:
         raise ValueError(f"metadata_condition operator '{operator}' is not supported.")
 
     terms = [
-        _compile_condition(condition)
+        _compile_condition(condition, allow_document_scope=allow_document_scope)
         for condition in iter_valid_conditions(metadata_condition)
     ]
     if not terms:
@@ -85,9 +95,13 @@ def compile_metadata_conditions(
     return [f"({joined})"]
 
 
-def _compile_condition(condition: Dict[str, Any]) -> str:
+def _compile_condition(
+    condition: Dict[str, Any], *, allow_document_scope: bool = False
+) -> str:
     key = str(condition.get("key"))
-    field, literal_kind = _condition_target(key)
+    field, literal_kind = _condition_target(
+        key, allow_document_scope=allow_document_scope
+    )
     operator = normalize_metadata_operator(condition.get("operator"))
     value = condition.get("value")
 
@@ -109,9 +123,13 @@ def _compile_condition(condition: Dict[str, Any]) -> str:
     raise ValueError(f"metadata_condition operator '{operator}' is not supported.")
 
 
-def _condition_target(key: str) -> Tuple[str, LiteralKind]:
+def _condition_target(
+    key: str, *, allow_document_scope: bool = False
+) -> Tuple[str, LiteralKind]:
     """Resolve one condition key to its field expression and literal type."""
     if key == DOC_REF_FIELD:
+        if allow_document_scope:
+            return DOC_REF_FIELD, "text"
         raise ValueError(
             "Document scope must use document_ids or "
             "RetrievalScope.document_ids, not metadata_condition doc_ref."
