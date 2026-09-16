@@ -13,6 +13,7 @@ import {
   Globe2,
   GitCompareArrows,
   Laptop,
+  ListTodo,
   Loader2,
   MessageCircle,
   MessageCircleOff,
@@ -99,7 +100,7 @@ import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import {
-  isEditableShortcutTarget,
+  shouldIgnoreWorkbenchShortcut,
   keybindingFromKeyboardEvent,
   TOGGLE_PRIORITY_FILTER_COMMAND,
 } from '@/lib/keybindings'
@@ -212,6 +213,7 @@ interface DesktopSidebarProps {
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
   activeItem?: 'chat' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
+  taskView?: 'workbench' | 'default-work-items'
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
   collapsed?: boolean
@@ -230,6 +232,7 @@ interface DesktopSidebarProps {
   onOpenLocalHarnessSession?: (sessionId: string) => void
   onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
   onOpenSearch?: () => void
+  onOpenMyWork?: () => void
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -1500,6 +1503,9 @@ function RuntimeTaskRow({
   const hasActiveGoal = taskLifecycle?.goalStatus === 'active'
   const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
   const queued = isRuntimeTaskQueued(task)
+  const showQueuePausedStatus =
+    queuePaused && !(queued && taskLifecycle?.derived.shouldShowSidebarRunning)
+  const showQueuedStatus = queued && !taskLifecycle?.derived.shouldShowSidebarRunning
   const queuePosition =
     queued && Number.isInteger(task.queuePosition) && Number(task.queuePosition) > 0
       ? Number(task.queuePosition)
@@ -1828,7 +1834,7 @@ function RuntimeTaskRow({
                   `runtime-local-task-notify-icon-${task.taskId}`
                 )}
               <span className="flex h-[30px] w-[30px] items-center justify-center">
-                {queued ? (
+                {showQueuedStatus ? (
                   <span
                     data-testid={`runtime-local-task-queued-${task.taskId}`}
                     role="status"
@@ -1862,7 +1868,7 @@ function RuntimeTaskRow({
                       </span>
                     ) : null}
                   </span>
-                ) : queuePaused ? (
+                ) : showQueuePausedStatus ? (
                   <span
                     data-testid={`runtime-local-task-queue-paused-${task.taskId}`}
                     role="status"
@@ -3032,6 +3038,7 @@ export function DesktopSidebar({
   unreadRuntimeTaskKeys,
   preferredDeviceId,
   activeItem = 'chat',
+  taskView = 'workbench',
   localHarnessSessions = [],
   activeLocalHarnessSessionId = null,
   onNewChat,
@@ -3039,6 +3046,7 @@ export function DesktopSidebar({
   onOpenLocalHarnessSession,
   onCloseLocalHarnessSession,
   onOpenSearch,
+  onOpenMyWork,
   onStartNewProjectChat,
   onOpenRuntimeTask,
   onMarkRuntimeTaskRead,
@@ -3932,17 +3940,18 @@ export function DesktopSidebar({
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (
         event.defaultPrevented ||
-        isEditableShortcutTarget(event.target) ||
+        shouldIgnoreWorkbenchShortcut(event) ||
         !priorityFilterShortcut ||
         keybindingFromKeyboardEvent(event) !== priorityFilterShortcut
       )
         return
       event.preventDefault()
+      event.stopPropagation()
       togglePriorityFilter()
     }
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [priorityFilterShortcut, togglePriorityFilter])
 
   useEffect(() => {
@@ -4093,6 +4102,15 @@ export function DesktopSidebar({
             )}
           >
             <nav className="mb-4 space-y-0.5">
+              {onOpenMyWork ? (
+                <DesktopSidebarNavItem
+                  icon={ListTodo}
+                  label={t('workbench.work_item_create_title', '看板')}
+                  testId="task-my-work-button"
+                  selected={taskView === 'default-work-items'}
+                  onClick={onOpenMyWork}
+                />
+              ) : null}
               {sidebarNavigation.map(item => {
                 if (item.surface === 'module') {
                   return (

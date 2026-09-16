@@ -141,6 +141,49 @@ describe('local codex plugin readState cache', () => {
     ).rejects.toThrow('Store unavailable')
   })
 
+  test('waits for bundled plugin initialization before replacing imported Codex config', async () => {
+    let finishExecutorStartup: (() => void) | undefined
+    let finishMarketplaceReconciliation: (() => void) | undefined
+    mocks.ensureLocalExecutorStarted.mockReturnValue(
+      new Promise(resolve => {
+        finishExecutorStartup = () => resolve({ deviceId: 'local-device' })
+      })
+    )
+    mocks.ensureBundledPluginMarketplaceRegistered.mockReturnValue(
+      new Promise(resolve => {
+        finishMarketplaceReconciliation = () => resolve(undefined)
+      })
+    )
+    mocks.requestLocalExecutor.mockResolvedValue({
+      source: 'codex',
+      sourcePath: '/home/user/.codex',
+      destinationPath: '/executor/codex',
+      importedEntries: ['config.toml'],
+    })
+
+    const importing = createLocalCodexPluginApi().importExternalContent('codex')
+
+    expect(mocks.ensureLocalExecutorStarted).toHaveBeenCalledOnce()
+    expect(mocks.ensureBundledPluginMarketplaceRegistered).not.toHaveBeenCalled()
+    expect(mocks.requestLocalExecutor).not.toHaveBeenCalled()
+
+    finishExecutorStartup?.()
+    await vi.waitFor(() =>
+      expect(mocks.ensureBundledPluginMarketplaceRegistered).toHaveBeenCalledOnce()
+    )
+    expect(mocks.requestLocalExecutor).not.toHaveBeenCalled()
+
+    finishMarketplaceReconciliation?.()
+    await expect(importing).resolves.toMatchObject({
+      source: 'codex',
+      importedEntries: ['config.toml'],
+    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.codex_home.import_external_content',
+      { source: 'codex' }
+    )
+  })
+
   test('membership summaries preserve managed plugins default prompts', async () => {
     const original = mocks.requestLocalExecutor.getMockImplementation()!
     mocks.requestLocalExecutor.mockImplementation(async (method, params) => {
@@ -809,6 +852,32 @@ describe('local codex plugin readState cache', () => {
     )
   })
 
+  test('explicit invalidation prevents an in-flight snapshot from reviving stale membership', async () => {
+    let finish: ((value: unknown) => void) | undefined
+    mocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params: { method?: string }) => {
+        if (method === 'codex.app_server_request' && params.method === 'plugin/installed') {
+          return { marketplaces: [personalMarketplace] }
+        }
+        if (method === 'codex.app_server_request' && params.method === 'plugin/list') {
+          return await new Promise(resolve => {
+            finish = resolve
+          })
+        }
+        throw new Error(`Unexpected request ${method}`)
+      }
+    )
+    const pending = createLocalCodexPluginApi().readState({
+      mergeAllMarketplaces: true,
+      refresh: true,
+    })
+    await vi.waitFor(() => expect(finish).toBeDefined())
+    clearLocalCodexPluginsReadStateCache()
+    finish!({ marketplaces: [personalMarketplace] })
+    await pending
+    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
+  })
+
   test('retains the cached OpenAI catalog when a refresh omits that marketplace', async () => {
     const openAiMarketplace = {
       name: 'openai-curated-remote',
@@ -1128,6 +1197,8 @@ describe('local codex plugin readState cache', () => {
                 {
                   slug: 'dingtalk',
                   authPolicy: 'on_install',
+                  displayName: 'example.test',
+                  authorizationGroup: { id: 'sites', displayName: 'Sites' },
                   accountAuth: {
                     protocolVersion: 1,
                     credentialType: 'oauth2',
@@ -1166,6 +1237,12 @@ describe('local codex plugin readState cache', () => {
         health: ['auth', 'health'],
         start: ['auth', 'login'],
       })
+    )
+    expect(
+      peeked?.installedPlugins[0]?.spec.components.connectors?.[0]?.authorizationGroup
+    ).toEqual({ id: 'sites', displayName: 'Sites' })
+    expect(peeked?.installedPlugins[0]?.spec.components.connectors?.[0]?.displayName).toBe(
+      'example.test'
     )
     expect(peeked?.installedPlugins[0]?.spec.components.connectors?.[0]?.accountAuth).toEqual({
       protocolVersion: 1,

@@ -26,6 +26,7 @@ import type {
   WorkbenchPaneContextValue,
 } from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import {
   WorkspaceTabsContext,
   type WorkspaceTabsContextValue,
@@ -81,19 +82,172 @@ const deliveryApiMock = vi.hoisted(() => ({
   findCloudContextForTask: vi.fn(),
   trackProjectTask: vi.fn(),
 }))
+const sharedWorkspaceApiMock = {
+  workspaces: {
+    async list() {
+      const response = await deliveryApiMock.listCloudProjects()
+      const workspaceIds = [
+        ...new Set(
+          response.items.flatMap(project =>
+            typeof project.workspace_id === 'string' ? [project.workspace_id] : []
+          )
+        ),
+      ]
+      return workspaceIds.map(workspaceId => ({
+        id: workspaceId,
+        name: 'Test Workspace',
+        description: '',
+        owner_user_id: 1,
+        current_user_role: 'Owner',
+        member_count: 1,
+        agent_count: 0,
+        execution_environment_count: 0,
+        project_count: response.items.filter(project => project.workspace_id === workspaceId)
+          .length,
+        version: 1,
+        created_at: '2026-09-11T00:00:00Z',
+        updated_at: '2026-09-11T00:00:00Z',
+      }))
+    },
+    async get(workspaceId: string) {
+      const workspaces = await this.list()
+      const workspace = workspaces.find(candidate => candidate.id === workspaceId)
+      if (!workspace) throw new Error(`Workspace ${workspaceId} was not found`)
+      return workspace
+    },
+    async listMembers() {
+      return []
+    },
+    async listAgents() {
+      return []
+    },
+    async listExecutionEnvironments() {
+      return []
+    },
+  },
+  resources: {
+    async list() {
+      return { agents: [], execution_environments: [] }
+    },
+  },
+  projects: {
+    async list() {
+      const response = await deliveryApiMock.listCloudProjects()
+      return response.items.map(project => ({ ...project, id: String(project.id) }))
+    },
+    async get(projectId: string) {
+      const response = await deliveryApiMock.listCloudProjects()
+      const project = response.items.find(candidate => String(candidate.id) === projectId)
+      if (!project) throw new Error(`Project ${projectId} was not found`)
+      return { ...project, id: String(project.id) }
+    },
+    async listExecutionEnvironments() {
+      return []
+    },
+  },
+  issues: {
+    async getBoardSnapshot(projectId: string) {
+      const response = await deliveryApiMock.listLoopItems(projectId)
+      return {
+        items: response.items.map(item => ({
+          ...item,
+          id: String(item.id),
+          cloud_project_id: String(item.cloud_project_id),
+        })),
+        taskBindings: [],
+        members: [],
+        agents: [],
+      }
+    },
+    async update(_issueId: string, input: Record<string, unknown>) {
+      return input
+    },
+  },
+  members: {
+    async list() {
+      return []
+    },
+    async searchUsers() {
+      return []
+    },
+    async add() {
+      throw new Error('Not implemented in layout test')
+    },
+    async update() {
+      throw new Error('Not implemented in layout test')
+    },
+    async remove() {},
+  },
+  agents: {
+    async list() {
+      return []
+    },
+    async create() {
+      throw new Error('Not implemented in layout test')
+    },
+    async update() {
+      throw new Error('Not implemented in layout test')
+    },
+  },
+  files: {
+    async list() {
+      return []
+    },
+    async listDeliveryFiles() {
+      return []
+    },
+    async createFolder() {
+      throw new Error('Not implemented in layout test')
+    },
+    async upload() {
+      throw new Error('Not implemented in layout test')
+    },
+    async access() {
+      throw new Error('Not implemented in layout test')
+    },
+    async read() {
+      throw new Error('Not implemented in layout test')
+    },
+    async move() {
+      throw new Error('Not implemented in layout test')
+    },
+    async remove() {},
+    async accessDeliveryFile() {
+      throw new Error('Not implemented in layout test')
+    },
+    async readDeliveryFile() {
+      throw new Error('Not implemented in layout test')
+    },
+  },
+  attachments: {
+    async list() {
+      return []
+    },
+  },
+} as unknown as SharedWorkspaceApi
 const embeddedBrowserMocks = vi.hoisted(() => ({
   closeEmbeddedBrowser: vi.fn().mockResolvedValue(undefined),
   setEmbeddedBrowserActiveTab: vi.fn().mockResolvedValue(undefined),
 }))
-const desktopHostMocks = vi.hoisted(() => ({
-  invoke: vi.fn(async (capability: string): Promise<unknown> => {
-    if (capability === 'browser.open') {
-      return { nativeLabel: 'embedded-browser-native-test', title: null, url: null }
-    }
-    if (capability === 'window.getState') return { maximized: false }
-    return {}
-  }),
-}))
+const desktopHostMocks = vi.hoisted(() => {
+  const subscribers = new Set<(event: Record<string, unknown>) => void>()
+  return {
+    emit(event: Record<string, unknown>) {
+      subscribers.forEach(handler => handler(event))
+    },
+    invoke: vi.fn(async (capability: string): Promise<unknown> => {
+      if (capability === 'browser.open') {
+        return { nativeLabel: 'embedded-browser-native-test', title: null, url: null }
+      }
+      if (capability === 'window.getState') return { maximized: false }
+      return {}
+    }),
+    subscribe: vi.fn((handler: (event: Record<string, unknown>) => void) => {
+      subscribers.add(handler)
+      return () => subscribers.delete(handler)
+    }),
+  }
+})
 const harnessAppMocks = vi.hoisted(() => ({
   addPlugin: vi.fn(),
   inspectVerification: vi.fn(),
@@ -202,7 +356,7 @@ vi.mock('./useWorkbenchPaneSession', () => ({
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: desktopHostMocks.invoke,
-  subscribeDesktopHostEvents: vi.fn(() => () => {}),
+  subscribeDesktopHostEvents: desktopHostMocks.subscribe,
 }))
 
 function createPaneStatus({
@@ -1049,6 +1203,7 @@ describe('DesktopWorkbenchLayout', () => {
     onOpenStandaloneWorkspace?: (...args: unknown[]) => Promise<void> | void
     onOpenRuntimeTask?: (...args: unknown[]) => Promise<void> | void
     onSearchRuntimeWork?: (...args: unknown[]) => Promise<unknown>
+    onLoadRuntimeTranscriptForPane?: WorkbenchContextValue['loadRuntimeTranscriptForPane']
     onCancelRuntimePaneTask?: WorkbenchContextValue['cancelRuntimePaneTask']
     onForkCurrentRuntimeTask?: WorkbenchContextValue['forkCurrentRuntimeTask']
     onListImPrivateSessions?: () => Promise<unknown>
@@ -1270,6 +1425,7 @@ describe('DesktopWorkbenchLayout', () => {
                 findCloudContextForTask: deliveryApiMock.findCloudContextForTask,
                 trackProjectTask: deliveryApiMock.trackProjectTask,
               },
+              sharedWorkspaceApi: sharedWorkspaceApiMock,
             }
           : {}),
         attachmentApi: {
@@ -1324,7 +1480,8 @@ describe('DesktopWorkbenchLayout', () => {
       startNewProjectChat: props.onStartNewProjectChat ?? baseProps.onStartNewProjectChat,
       openRuntimeTask: props.onOpenRuntimeTask ?? vi.fn().mockResolvedValue(undefined),
       searchRuntimeWork: props.onSearchRuntimeWork ?? vi.fn().mockResolvedValue({ items: [] }),
-      loadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({ messages: [] }),
+      loadRuntimeTranscriptForPane:
+        props.onLoadRuntimeTranscriptForPane ?? vi.fn().mockResolvedValue({ messages: [] }),
       subscribeRuntimeTaskStream: subscribeRuntimeTaskStreamMock,
       renameRuntimeTask: vi.fn().mockResolvedValue(undefined),
       archiveRuntimeTask: vi.fn().mockResolvedValue(undefined),
@@ -1521,7 +1678,15 @@ describe('DesktopWorkbenchLayout', () => {
     mainWidth,
     withAppearance = false,
     messages,
-  }: { mainWidth?: number; withAppearance?: boolean; messages?: WorkbenchMessage[] } = {}) {
+    currentRuntimeTask = null,
+    onLoadRuntimeTranscriptForPane,
+  }: {
+    mainWidth?: number
+    withAppearance?: boolean
+    messages?: WorkbenchMessage[]
+    currentRuntimeTask?: RuntimeTaskAddress | null
+    onLoadRuntimeTranscriptForPane?: WorkbenchContextValue['loadRuntimeTranscriptForPane']
+  } = {}) {
     if (mainWidth) {
       mockDesktopWorkbenchMainWidth(mainWidth)
     }
@@ -1531,9 +1696,11 @@ describe('DesktopWorkbenchLayout', () => {
       <DesktopWorkbenchLayout
         {...baseProps}
         messages={messages}
+        onLoadRuntimeTranscriptForPane={onLoadRuntimeTranscriptForPane}
         state={{
           ...baseProps.state,
           ...workspacePanelState,
+          currentRuntimeTask,
         }}
         projectWork={{
           ...baseProps.projectWork,
@@ -1659,10 +1826,121 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
   })
 
+  test('opens a newly added board tab in the collaboration platform', () => {
+    deliveryApiMock.available = true
+    const boardTab = {
+      id: 'board-new',
+      kind: 'board' as const,
+      title: '协作',
+      contentRoute: '/todo',
+      fixed: false,
+    }
+    const workspaceTabs = {
+      tabs: [boardTab],
+      activeTabId: boardTab.id,
+      activeTab: boardTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } as unknown as WorkspaceTabsContextValue
+    window.history.pushState({}, '', '/todo')
+
+    render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          surfaceKind="board"
+          workspaceTabId={boardTab.id}
+          state={{
+            ...baseProps.state,
+            user: {
+              id: 1,
+              user_name: 'local',
+              email: 'local@example.com',
+            },
+          }}
+        />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.getByTestId('wework-collaboration-platform')).toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-platform-root')).toBeInTheDocument()
+  })
+
+  test('routes a retained My Tasks board to the dedicated work-items surface', () => {
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          public_id: 'default-work-items',
+          project_key: 'WORK',
+          name: '我的任务',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-09-14T00:00:00Z',
+          updated_at: '2026-09-14T00:00:00Z',
+          metadata: { system_kind: 'default_work_items' },
+        },
+      ],
+    })
+    const boardTab = {
+      id: 'board-my-tasks',
+      kind: 'board' as const,
+      title: '我的任务',
+      contentRoute: '/todo?projectStore=local&projectId=default-work-items',
+      fixed: false,
+    }
+    const workspaceTabs = {
+      tabs: [boardTab],
+      activeTabId: boardTab.id,
+      activeTab: boardTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } as unknown as WorkspaceTabsContextValue
+
+    render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          surfaceKind="board"
+          workspaceTabId={boardTab.id}
+          state={{
+            ...baseProps.state,
+            user: {
+              id: 1,
+              user_name: 'local',
+              email: 'local@example.com',
+            },
+          }}
+        />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.getByTestId('cloud-todo-workspace')).toHaveAttribute('data-embedded', 'true')
+    expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
+  })
+
   test('keeps a retained board bound to its own workspace tab route', async () => {
     deliveryApiMock.available = true
     const project = {
       id: 'project-1',
+      workspace_id: 'workspace-1',
       public_id: 'public-project-1',
       project_key: 'PROJECT-1',
       name: 'Retained Project',
@@ -1671,6 +1949,7 @@ describe('DesktopWorkbenchLayout', () => {
       task_provider: 'local',
       provider_config: {},
       created_by_user_id: 1,
+      access_role: 'Owner',
       status: 'active',
       tags: [],
       version: 1,
@@ -1727,8 +2006,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
-    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    await userEvent.click(screen.getByTestId('collaboration-board-settings'))
+    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '看板设置' })).toBeInTheDocument()
 
     view.rerender(
       <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
@@ -1737,7 +2017,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
     expect(actions.updateActiveTab).not.toHaveBeenCalled()
 
     view.rerender(
@@ -1747,7 +2027,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
   })
 
   test('returns to the workspace after opening settings from its account menu', async () => {
@@ -1775,7 +2055,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(await screen.findByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('returns to the exact previous workspace route after opening settings', async () => {
@@ -1804,7 +2084,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(window.location.pathname).toBe('/todo')
     expect(window.location.search).toContain('projectId=project-1')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(await screen.findByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('returns to the previous page after opening settings through direct navigation', async () => {
@@ -1831,7 +2111,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(await screen.findByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('keeps the active task return route when an inactive project space is retained', () => {
@@ -1927,7 +2207,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(await screen.findByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('keeps the settings return path when the layout remounts at the settings route', async () => {
@@ -1986,7 +2266,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(await screen.findByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('uses the independent board tab instead of a work-items sidebar destination', () => {
@@ -2469,6 +2749,56 @@ describe('DesktopWorkbenchLayout', () => {
     )
   }
 
+  test('focuses the home composer when the startup device becomes available', async () => {
+    const localDevice = createLocalSkillDevice()
+    const layout = (ready: boolean) => (
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...baseProps.state, standaloneDeviceId: localDevice.device_id }}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: ready ? [localDevice] : [],
+          currentStandaloneDeviceId: localDevice.device_id,
+        }}
+      />
+    )
+    const { rerender } = render(layout(false))
+    const composer = screen.getByTestId('chat-message-input')
+    expect(composer).toHaveAttribute('contenteditable', 'false')
+    composer.blur()
+    expect(composer).not.toHaveFocus()
+
+    rerender(layout(true))
+
+    expect(screen.getByTestId('chat-message-input')).toBe(composer)
+    expect(composer).toHaveAttribute('contenteditable', 'true')
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('refocuses the home composer when the app window becomes active', async () => {
+    renderWorkspacePanelLayout()
+    const composer = screen.getByTestId('chat-message-input')
+    await waitFor(() => expect(composer).toHaveFocus())
+    composer.blur()
+
+    window.dispatchEvent(new Event('blur'))
+    window.dispatchEvent(new Event('focus'))
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('preserves an explicitly focused home control on window activation', async () => {
+    renderWorkspacePanelLayout()
+    const modelButton = screen.getByTestId('model-selector-button')
+    modelButton.focus()
+
+    window.dispatchEvent(new Event('blur'))
+    window.dispatchEvent(new Event('focus'))
+    await waitForComposerFocusRequest()
+
+    expect(modelButton).toHaveFocus()
+  })
+
   test('focuses a restored conversation when its composer mounts', async () => {
     const { composer } = renderFocusableConversation()
 
@@ -2559,7 +2889,7 @@ describe('DesktopWorkbenchLayout', () => {
     selection?.removeAllRanges()
   })
 
-  test('renders subagent status below the top bar without shifting messages', () => {
+  test('does not render subagent status as a permanent environment panel card', () => {
     mockDesktopWorkbenchMainWidth(1024)
     render(
       <DesktopWorkbenchLayout
@@ -2588,9 +2918,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
-    const statusRow = screen.getByTestId('workbench-subagent-status-row')
-    expect(statusRow).toContainElement(screen.getByTestId('subagent-status-toggle-button'))
-    expect(statusRow).toHaveClass('ml-2', 'mt-3', 'w-[300px]')
+    expect(screen.queryByTestId('workbench-subagent-status-row')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('subagent-status-toggle-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-11')
   })
 
@@ -2787,6 +3116,45 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent('我的任务')
+  })
+
+  test('opens the existing My Tasks board inside the fixed task tab', async () => {
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          public_id: 'default-work-items',
+          project_key: 'WORK',
+          name: '我的任务',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+          metadata: { system_kind: 'default_work_items' },
+        },
+      ],
+    })
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(await screen.findByTestId('task-my-work-button'))
+
+    expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent('我的任务')
+    expect(screen.getByTestId('cloud-todo-workspace')).toHaveAttribute('data-embedded', 'true')
+    expect(screen.queryByTestId('cloud-my-work-view')).not.toBeInTheDocument()
+    expect(window.location.pathname).toBe('/')
+    expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('new-chat-button'))
+
+    expect(screen.queryByTestId('cloud-todo-workspace')).not.toBeInTheDocument()
+    expect(baseProps.onNewChat).toHaveBeenCalled()
   })
 
   test('shows cloud project space entries in the @ menu while experimental features are enabled', async () => {
@@ -6470,6 +6838,144 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
 
+  test('restores the environment after closing subagents while another tab remains', async () => {
+    const loadRuntimeTranscriptForPane = vi.fn().mockResolvedValue({
+      messages: [
+        {
+          id: 'restored-child-assistant',
+          role: 'assistant',
+          content: 'Loaded from the persisted child thread',
+          status: 'done',
+          createdAt: '2026-09-10T08:00:01.000Z',
+        },
+      ],
+    })
+    renderWorkspacePanelLayout({
+      mainWidth: 1000,
+      currentRuntimeTask: {
+        deviceId: 'workspace-cloud-device',
+        taskId: 'runtime-subagent-panel',
+        workspacePath: '/workspace/project',
+      },
+      onLoadRuntimeTranscriptForPane: loadRuntimeTranscriptForPane,
+      messages: [
+        {
+          id: 'assistant-with-subagent',
+          role: 'assistant',
+          content: '',
+          status: 'done',
+          createdAt: '2026-09-10T08:00:00.000Z',
+          blocks: [
+            {
+              id: 'subagent-thread-1',
+              subtaskId: 'turn-1',
+              type: 'subagent',
+              agentThreadId: 'thread-1',
+              agentType: 'Explorer',
+              description: 'Inspect the runtime event flow',
+              status: 'done',
+              createdAt: 1770000000000,
+              children: [
+                {
+                  id: 'child-text-1',
+                  subtaskId: 'turn-1',
+                  parentToolUseId: 'subagent-thread-1',
+                  type: 'text',
+                  content: 'Tracing child message deltas',
+                  status: 'done',
+                  createdAt: 1770000000100,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+    expect(screen.getByTestId('environment-subagents-section')).toHaveTextContent('1 已完成')
+    expect(screen.getByTestId('open-subagents-panel-button')).toHaveAccessibleName(
+      '打开子代理（1）'
+    )
+
+    await userEvent.click(screen.getByTestId('open-subagents-panel-button'))
+
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+    expect(screen.getByTestId('subagent-overview-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-subagents-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+
+    await userEvent.click(screen.getByTestId('subagent-overview-item'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('subagent-conversation-panel')).toHaveTextContent(
+        'Loaded from the persisted child thread'
+      )
+    })
+    expect(loadRuntimeTranscriptForPane).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'runtime-subagent-panel',
+        threadId: 'thread-1',
+      }),
+      { includeFullContent: true }
+    )
+    expect(screen.getByTestId('right-workspace-panel')).toContainElement(
+      screen.getByTestId('subagent-conversation-panel')
+    )
+    expect(screen.getByTestId('right-workspace-subagents-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+
+    await userEvent.click(screen.getByTestId('subagent-conversation-back'))
+
+    expect(screen.queryByTestId('subagent-conversation-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('subagent-overview-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('subagent-overview-item')).toHaveTextContent(
+      'Inspect the runtime event flow'
+    )
+    expect(screen.getByTestId('right-workspace-subagents-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    await userEvent.click(
+      within(screen.getByTestId('right-workspace-new-tab-menu')).getByTestId(
+        'right-workspace-review-option'
+      )
+    )
+    expect(await screen.findByTestId('file-changes-review-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-review-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+
+    await userEvent.click(screen.getByTestId('right-workspace-subagents-tab'))
+    expect(screen.getByTestId('subagent-overview-panel')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('right-workspace-subagents-tab-close-button'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('environment-subagents-section')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-review-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+  })
+
   test('expands the right workspace panel without the composer and restores chat', async () => {
     renderWorkspacePanelLayout({
       mainWidth: 1000,
@@ -6628,10 +7134,12 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('uses separate browser shortcuts for the closed and open right panel', async () => {
     renderWorkspacePanelLayout()
+    const composer = screen.getByTestId('chat-message-input')
+    composer.focus()
 
     expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute('aria-hidden', 'true')
 
-    fireEvent.keyDown(window, { key: 'b', metaKey: true, shiftKey: true })
+    fireEvent.keyDown(composer, { key: 'b', metaKey: true, shiftKey: true })
 
     expect(await screen.findByTestId('right-workspace-browser-tab-1')).toHaveAttribute(
       'aria-selected',
@@ -6643,14 +7151,14 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('workspace-browser-url-input')).toBeInTheDocument()
 
-    fireEvent.keyDown(window, { key: 't', metaKey: true })
+    fireEvent.keyDown(composer, { key: 't', metaKey: true })
 
     expect(await screen.findByTestId('right-workspace-browser-tab-2')).toHaveAttribute(
       'aria-selected',
       'true'
     )
 
-    fireEvent.keyDown(window, { key: 'b', metaKey: true, shiftKey: true })
+    fireEvent.keyDown(composer, { key: 'b', metaKey: true, shiftKey: true })
 
     expect(screen.queryByTestId('right-workspace-browser-tab-3')).not.toBeInTheDocument()
   })
@@ -6773,6 +7281,20 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(screen.queryByTestId('workspace-browser-loading')).not.toBeInTheDocument()
+  })
+
+  test('does not close an ordinary browser when its workbench surface is disposed', async () => {
+    runtimeMocks.electron = true
+    const { unmount } = renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    expect(screen.getByTestId('right-workspace-browser-tab-1')).toBeInTheDocument()
+    embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
+
+    unmount()
+
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
   })
 
   test('adds browser pages from the right workspace new tab menu', async () => {
@@ -7309,7 +7831,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
 
-    fireEvent.keyDown(window, { key: 'f', metaKey: true, altKey: true })
+    fireEvent.keyDown(screen.getByTestId('chat-message-input'), {
+      key: 'f',
+      metaKey: true,
+      altKey: true,
+    })
 
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
@@ -12029,6 +12555,138 @@ describe('DesktopWorkbenchLayout', () => {
     unmount()
     await new Promise(resolve => setTimeout(resolve, 1_100))
   }, 10_000)
+
+  test('opens an embedded browser requested by an inactive runtime task', async () => {
+    runtimeMocks.electron = true
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+    desktopHostMocks.invoke.mockClear()
+
+    act(() => {
+      desktopHostMocks.emit({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 1,
+          type: 'open-request',
+          payload: {
+            id: 'agent-open-inactive-task',
+            baseLabel: 'workspace-browser-runtime-a',
+            source: 'agent',
+            disposition: 'current-tab',
+            targetLabel: 'workspace-browser-runtime-a',
+            label: 'workspace-browser-runtime-a',
+            url: 'https://example.com/',
+          },
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-runtime-a',
+          url: 'about:blank',
+          visible: false,
+        })
+      )
+    })
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith(
+      'browser.open',
+      expect.objectContaining({
+        label: 'workspace-browser-runtime-b',
+      })
+    )
+  })
+
+  test('opens an embedded browser requested by the active blank pane', async () => {
+    runtimeMocks.electron = true
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+    desktopHostMocks.invoke.mockClear()
+
+    act(() => {
+      desktopHostMocks.emit({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 1,
+          type: 'open-request',
+          payload: {
+            id: 'agent-open-blank-pane',
+            baseLabel: 'workspace-browser-blank-0',
+            source: 'agent',
+            disposition: 'current-tab',
+            targetLabel: 'workspace-browser-blank-0',
+            label: 'workspace-browser-blank-0',
+            url: 'https://example.com/',
+          },
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-blank-0',
+          url: 'about:blank',
+        })
+      )
+    })
+  })
+
+  test('keeps a default browser request assigned to the task active when it arrived', async () => {
+    runtimeMocks.electron = true
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+    desktopHostMocks.invoke.mockClear()
+
+    act(() => {
+      desktopHostMocks.emit({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 1,
+          type: 'open-request',
+          payload: {
+            id: 'user-open-before-task-switch',
+            baseLabel: 'workspace-browser',
+            source: 'user',
+            disposition: 'new-tab',
+            label: 'workspace-browser',
+            url: 'https://example.com/',
+          },
+        },
+      })
+      rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+    })
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-runtime-a',
+          url: 'https://example.com/',
+          visible: false,
+        })
+      )
+    })
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith(
+      'browser.open',
+      expect.objectContaining({
+        label: 'workspace-browser-runtime-a-2',
+      })
+    )
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith(
+      'browser.open',
+      expect.objectContaining({
+        label: 'workspace-browser-runtime-b',
+      })
+    )
+  })
 
   test('preserves the open file when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()

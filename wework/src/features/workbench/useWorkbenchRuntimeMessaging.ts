@@ -946,7 +946,8 @@ export function useWorkbenchRuntimeMessaging({
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
       const sourceBlankChatKey = state.currentRuntimeTask ? null : state.standaloneChatKey
       const projectId = intent.projectId
-      const requestedManagedWorkspace = Boolean(intent.execution?.workspace)
+      const workspaceExecution = options?.sideSource ? undefined : intent.execution
+      const requestedManagedWorkspace = Boolean(workspaceExecution?.workspace)
       const hasOverrideSelection = Boolean(
         options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
       )
@@ -1197,7 +1198,7 @@ export function useWorkbenchRuntimeMessaging({
         additionalSkills: intent.additionalSkills ?? [],
         attachmentIds: preparedAttachments.attachmentIds,
         attachments: preparedAttachments.attachments,
-        execution: intent.execution,
+        execution: workspaceExecution,
         ...(selectedRuntimeProject
           ? {
               ...(selectedRuntimeProject.aiSettings?.instructions?.trim()
@@ -1814,9 +1815,15 @@ export function useWorkbenchRuntimeMessaging({
             modelOptions: taskRequest.modelOptions,
           }
         : options.executionModel
-      const baseIntent = taskRequest
-        ? { ...prepared.intent, execution: taskRequest.execution }
-        : prepared.intent
+      const workspaceExecution = taskRequest
+        ? taskRequest.execution
+        : Object.prototype.hasOwnProperty.call(options, 'workspaceExecution')
+          ? (options.workspaceExecution ?? undefined)
+          : prepared.intent.execution
+      const baseIntent = {
+        ...prepared.intent,
+        execution: workspaceExecution,
+      }
       const intent = executionModel
         ? applyExecutionModelOverride(baseIntent, executionModel)
         : options.modelId

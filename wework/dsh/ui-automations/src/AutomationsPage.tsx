@@ -33,7 +33,7 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isCloudDevice } from '@/lib/device-capabilities'
+import { canUseForProjectCreation, isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
@@ -119,11 +119,11 @@ export function AutomationsPage() {
   }, [refreshWorkLists])
 
   const localDevices = useMemo(
-    () => state.devices.filter(device => !isCloudDevice(device)),
+    () => state.devices.filter(device => !isCloudDevice(device) && !isRemoteDevice(device)),
     [state.devices]
   )
   const cloudDevices = useMemo(
-    () => state.devices.filter(device => isCloudDevice(device)),
+    () => state.devices.filter(device => isCloudDevice(device) || isRemoteDevice(device)),
     [state.devices]
   )
   const loadAutomations = useCallback(async () => {
@@ -249,8 +249,8 @@ export function AutomationsPage() {
   const openCreate = (
     template?: Pick<AutomationDraft, 'name' | 'prompt' | 'cronExpression' | 'cronTime'>
   ) => {
-    const device = localDevices[0]
-    const deviceId = device?.device_id ?? state.standaloneDeviceId ?? 'local-device'
+    const device = localDevices.find(canUseForProjectCreation)
+    const deviceId = device?.device_id ?? ''
     const nextDraft = emptyAutomationDraft(
       'local',
       deviceId,
@@ -280,7 +280,7 @@ export function AutomationsPage() {
   const changeSource = (source: AutomationSource) => {
     if (!draft || editing) return
     const devices = source === 'cloud' ? cloudDevices : localDevices
-    const deviceId = devices[0]?.device_id ?? ''
+    const deviceId = devices.find(canUseForProjectCreation)?.device_id ?? ''
     setDraft(current =>
       current
         ? {
@@ -310,7 +310,7 @@ export function AutomationsPage() {
     }
     const initialGoal = initialGoalFromAutomationDraft(draft)
     if (draft.conversationMode === 'continue_thread' && !draft.continuationAddress) {
-      throw new Error(t('workbench.automation_target_task_required', '请选择一个已固定的本地任务'))
+      throw new Error(t('workbench.automation_target_task_required', '请选择一个可用的已固定任务'))
     }
     if (!draft.deviceId) {
       throw new Error(t('workbench.automation_target_required', '请选择设备'))
@@ -594,7 +594,7 @@ export function AutomationsPage() {
                 automation={editing}
                 runs={runs}
                 locale={locale}
-                devices={draft.source === 'cloud' ? cloudDevices : localDevices}
+                devices={state.devices}
                 projects={state.runtimeWork?.projects ?? []}
                 models={projectChat.models}
                 currentRuntimeTask={state.currentRuntimeTask}

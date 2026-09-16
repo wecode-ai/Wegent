@@ -1,0 +1,196 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  buildCollaborationProjectViewOptions,
+  resolveCollaborationProjectView,
+  synchronizeCollaborationProjectView,
+  type CollaborationProjectViewExtension,
+  type CollaborationProjectViewSlots,
+} from "./CollaborationProjectViewShell";
+
+const labels = {
+  board: "Board",
+  table: "Table",
+  files: "Files",
+  manage: "Manage",
+};
+
+const testIds = {
+  board: "board",
+  table: "table",
+  files: "files",
+  manage: "manage",
+};
+
+const slots: CollaborationProjectViewSlots = {
+  board: "board-content",
+  table: "table-content",
+  files: "files-content",
+  manage: "manage-content",
+};
+
+const extensions: CollaborationProjectViewExtension[] = [];
+
+describe("CollaborationProjectViewShell permissions", () => {
+  it.each(["files", "manage"] as const)(
+    "falls back to board instead of mounting RestrictedAnalyst %s content",
+    (view) => {
+      const options = buildCollaborationProjectViewOptions({
+        project: { access_role: "RestrictedAnalyst" },
+        labels,
+        testIds,
+      });
+
+      expect(
+        resolveCollaborationProjectView({
+          extensions,
+          options,
+          slots,
+          view,
+        }),
+      ).toEqual({
+        content: "board-content",
+        view: "board",
+        viewChanged: true,
+      });
+    },
+  );
+
+  it("honors an exact files extension", () => {
+    const fileExtension: CollaborationProjectViewExtension = {
+      id: "files",
+      label: "Files",
+      testId: "files-extension",
+      content: "host-files-content",
+    };
+    const options = buildCollaborationProjectViewOptions({
+      project: { access_role: "Owner" },
+      labels,
+      testIds,
+      extensions: [fileExtension],
+    });
+
+    expect(
+      resolveCollaborationProjectView({
+        extensions: [fileExtension],
+        options,
+        slots,
+        view: "files",
+      }),
+    ).toEqual({
+      content: "host-files-content",
+      view: "files",
+      viewChanged: false,
+    });
+  });
+
+  it("renders files through the standard project tab when no host extension exists", () => {
+    const options = buildCollaborationProjectViewOptions({
+      project: { access_role: "Owner" },
+      labels,
+      testIds,
+    });
+
+    expect(options.map((option) => option.id)).toEqual([
+      "board",
+      "table",
+      "files",
+      "manage",
+    ]);
+    expect(
+      resolveCollaborationProjectView({
+        extensions,
+        options,
+        slots,
+        view: "files",
+      }),
+    ).toEqual({
+      content: "files-content",
+      view: "files",
+      viewChanged: false,
+    });
+  });
+
+  it("limits a system board to its explicitly enabled standard views", () => {
+    const options = buildCollaborationProjectViewOptions({
+      project: { access_role: "Owner" },
+      labels,
+      testIds,
+      enabledStandardViews: ["board"],
+    });
+
+    expect(options.map((option) => option.id)).toEqual(["board"]);
+    expect(
+      resolveCollaborationProjectView({
+        extensions,
+        options,
+        slots,
+        view: "files",
+      }),
+    ).toEqual({
+      content: "board-content",
+      view: "board",
+      viewChanged: true,
+    });
+  });
+
+  it("notifies the host to replace an inaccessible view with board", () => {
+    const onViewChange = vi.fn();
+
+    synchronizeCollaborationProjectView(
+      {
+        content: "board-content",
+        view: "board",
+        viewChanged: true,
+      },
+      onViewChange,
+    );
+
+    expect(onViewChange).toHaveBeenCalledOnce();
+    expect(onViewChange).toHaveBeenCalledWith("board");
+  });
+
+  it("keeps an accessible view without requesting a host state correction", () => {
+    const options = buildCollaborationProjectViewOptions({
+      project: { access_role: "Owner" },
+      labels,
+      testIds,
+    });
+
+    const resolved = resolveCollaborationProjectView({
+      extensions,
+      options,
+      slots,
+      view: "table",
+    });
+    const onViewChange = vi.fn();
+
+    synchronizeCollaborationProjectView(resolved, onViewChange);
+
+    expect(resolved).toEqual({
+      content: "table-content",
+      view: "table",
+      viewChanged: false,
+    });
+    expect(onViewChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps desktop-only views available for explicitly local projects", () => {
+    const options = buildCollaborationProjectViewOptions({
+      project: { access_role: undefined, project_store: "local" },
+      labels,
+      testIds,
+    });
+
+    expect(options.map((option) => option.id)).toEqual([
+      "board",
+      "table",
+      "files",
+      "manage",
+    ]);
+  });
+});

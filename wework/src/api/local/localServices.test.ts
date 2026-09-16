@@ -14,6 +14,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import type { LocalExecutorStatus } from '@/desktop/localExecutor'
 import type { TurnFileChangesSummary, User } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
@@ -772,6 +773,43 @@ describe('createLocalAppServices', () => {
 
     resolveRestart?.({ restarted: true })
     await Promise.all([firstDevices, secondDevices])
+  })
+
+  test('loads devices and runtime work before Codex startup completes', async () => {
+    const available = vi.fn().mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+      version: '1.9.0',
+      runtimeInstanceId: 'runtime-1',
+    })
+    const ensure = vi.fn(
+      () =>
+        new Promise<LocalExecutorStatus>(() => {
+          // Keep Codex initialization pending to prove shell data does not depend on it.
+        })
+    )
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.list') {
+        return { projects: [], chats: [], totalTasks: 0 }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      available,
+      ensure,
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(services.deviceApi.listDevices()).resolves.toHaveLength(1)
+    await expect(services.runtimeWorkApi?.listRuntimeWork()).resolves.toMatchObject({
+      totalTasks: 0,
+    })
+
+    expect(available).toHaveBeenCalled()
+    expect(ensure).not.toHaveBeenCalled()
+    expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
   test('serializes catalog reconciliation while the runtime identity becomes available', async () => {
@@ -3275,15 +3313,56 @@ describe('createLocalAppServices', () => {
           upstream_api_format: 'openai-responses',
           tool_profile: 'custom',
           codex_catalog_model_id: catalogModelId,
+          native_tool_search: true,
+          native_namespace_tools: true,
           model_context_window: 1_048_576,
           reasoning: { effort: 'high' },
         })
       )
-      expect(payload.executionRequest.model_config).not.toHaveProperty('native_tool_search')
-      expect(payload.executionRequest.model_config).not.toHaveProperty('native_namespace_tools')
       expect(payload.executionRequest.model_config).not.toHaveProperty('vision_sidecar')
     }
   )
+
+  test('bridges Codex tools for a standard Responses local model', async () => {
+    saveLocalModelConfig({
+      id: 'azure-standard-responses',
+      providerProfileId: 'custom',
+      displayName: 'Azure Responses',
+      modelId: 'gpt-deployment',
+      baseUrl: 'https://azure.example/openai/v1',
+      apiFormat: 'openai-responses',
+      codexToolCompatibility: 'standard',
+      toolProfile: 'custom',
+      requestPath: '/responses',
+      apiKey: 'azure-key',
+      catalogReady: true,
+    })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-azure-standard-responses',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Azure Responses',
+      modelId: 'local-model:azure-standard-responses',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        upstream_api_format: 'openai-responses',
+        native_tool_search: false,
+        native_namespace_tools: false,
+      })
+    )
+  })
 
   test('routes DeepSeek images through a configured vision proxy model', async () => {
     const visionCatalog = createDefaultLocalModelCatalogEntry({
@@ -4241,6 +4320,7 @@ describe('createLocalAppServices', () => {
               title: 'Build',
               runtime: 'codex',
               goal_status: 'active',
+              goal_execution_status: 'recovering',
               continuable: true,
               thread_status: 'idle',
               turn_status: 'completed',
@@ -4257,6 +4337,7 @@ describe('createLocalAppServices', () => {
               workspacePath: '/Users/me/chat',
               title: 'Chat',
               runtime: 'codex',
+              goal_status: null,
               workspaceKind: 'chat',
             },
           ],
@@ -4316,6 +4397,7 @@ describe('createLocalAppServices', () => {
                   workspaceKind: 'worktree',
                   worktreeId: '42',
                   goalStatus: 'active',
+                  goalExecutionStatus: 'recovering',
                   continuable: true,
                   threadStatus: 'idle',
                   turnStatus: 'completed',
@@ -4334,11 +4416,51 @@ describe('createLocalAppServices', () => {
           tasks: [
             expect.objectContaining({
               taskId: 'chat-1',
+              goalStatus: null,
             }),
           ],
         }),
       ],
       totalTasks: 2,
+    })
+  })
+
+  test('uses the remote executor project identity for a local sidebar descriptor', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      workspaces: [
+        {
+          workspacePath: '/srv/project',
+          label: 'Remote project',
+          workspaceSource: 'remote',
+          remoteHostId: 'remote-device',
+          projectKey: 'wegent-remote:remote-device:%2Fsrv%2Fproject',
+          projectKind: 'remote',
+          projectSource: 'remote_project',
+          tasks: [],
+        },
+      ],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const response = await services.runtimeWorkApi?.listRuntimeWork()
+    const project = response?.projects[0]
+
+    expect(project?.project.id).toBe(project?.deviceWorkspaces[0].id)
+    expect(project?.project).toMatchObject({
+      key: 'wegent-remote:remote-device:%2Fsrv%2Fproject',
+      sidebarStateKey: 'wegent-remote:remote-device:%2Fsrv%2Fproject',
+      stateDeviceId: 'local-device',
+    })
+    expect(project?.deviceWorkspaces[0]).toMatchObject({
+      deviceId: 'remote-device',
+      workspacePath: '/srv/project',
+      workspaceSource: 'remote',
+      remoteHostId: 'remote-device',
     })
   })
 

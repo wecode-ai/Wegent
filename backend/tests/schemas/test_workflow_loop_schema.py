@@ -193,6 +193,32 @@ def test_loop_allows_multiple_branches():
     assert len(branches) == 2
 
 
+def test_webhook_branch_allows_resource_matched_subscription() -> None:
+    branch = WorkflowNodeDefinition(
+        id="branch",
+        name="多平台事件分支",
+        node_type="branch",
+        event_wait={"collection_mode": "webhook"},
+        branch_conditions=[
+            {
+                "source_type": "github",
+                "event_type": "change_request.checks_failed",
+                "handler_node_ids": [],
+            },
+            {
+                "source_type": "gitlab",
+                "event_type": "change_request.comment_created",
+                "handler_node_ids": [],
+            },
+        ],
+    )
+
+    assert branch.event_wait is not None
+    assert branch.event_wait.collection_mode == "webhook"
+    assert branch.event_wait.subscription_id is None
+    assert branch.event_wait.poll_interval_seconds is None
+
+
 def test_body_node_cannot_depend_outside_loop():
     body = _loop_body()
     body[0]["depends_on"] = ["outside"]

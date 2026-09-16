@@ -422,6 +422,20 @@ describe('ResourceLibraryPage', () => {
     )
   })
 
+  it('opens the standard agent creator when requested by project settings', async () => {
+    mockSearchParams = new URLSearchParams('tab=mine&type=agent&scope=personal&action=create-agent')
+
+    render(<ResourceLibraryPage />)
+
+    expect(screen.getAllByTestId('my-resource-management').at(-1)).toHaveTextContent('personal')
+    await waitFor(() =>
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/resource-library?tab=mine&type=agent&scope=personal',
+        { scroll: false }
+      )
+    )
+  })
+
   it.each([
     ['model', '搜索模型名称'],
     ['shell', '搜索执行器名称'],

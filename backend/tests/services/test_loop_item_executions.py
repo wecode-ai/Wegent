@@ -33,10 +33,17 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.models.user import User
+from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import LoopItemAssign
 from app.schemas.runtime_profile import RuntimeProfileCreate
 from app.services.board_team_execution import dispatch_board_robot_execution
+from app.services.issue_execution_configuration import (
+    execution_context,
+    project_robot_execution_config,
+)
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.loop_item_executions.profile import WeworkExecutionProfile
 from app.services.loop_item_executions.service import (
@@ -162,24 +169,172 @@ def _make_bot(
 def _make_wegent_bot(
     db: Session, project: CloudProject, user: User
 ) -> tuple[ProjectChatAgent, Kind]:
-    team = Kind(
-        kind="Team",
-        name=f"board-team-{uuid.uuid4().hex[:8]}",
+    return _make_native_team_binding(db, project, user, shell_type="Chat")
+
+
+def _make_native_team_binding(
+    db: Session,
+    project: CloudProject,
+    user: User,
+    *,
+    shell_type: str,
+) -> tuple[ProjectChatAgent, Kind]:
+    suffix = uuid.uuid4().hex[:8]
+    skill = Kind(
+        kind="Skill",
+        name=f"review-skill-{suffix}",
         namespace="default",
         user_id=user.id,
         is_active=True,
-        json={},
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Skill",
+            "metadata": {
+                "name": f"review-skill-{suffix}",
+                "namespace": "default",
+            },
+            "spec": {
+                "description": "Review the project result.",
+                "prompt": "Review every changed file.",
+                "bindShells": [shell_type],
+            },
+        },
+    )
+    db.add(skill)
+    db.flush()
+    ghost_name = f"native-ghost-{suffix}"
+    ghost = Kind(
+        kind="Ghost",
+        name=ghost_name,
+        namespace="default",
+        user_id=user.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Ghost",
+            "metadata": {"name": ghost_name, "namespace": "default"},
+            "spec": {
+                "systemPrompt": "Follow the referenced AgentSpec.",
+                "skills": [skill.name],
+                "skill_refs": {
+                    skill.name: {
+                        "skill_id": skill.id,
+                        "namespace": "default",
+                        "is_public": False,
+                    }
+                },
+                "mcpServers": {
+                    "repo": {
+                        "command": "node",
+                        "args": ["repo-server.mjs"],
+                    }
+                },
+            },
+        },
+    )
+    shell = Kind(
+        kind="Shell",
+        name=f"{shell_type}-{suffix}",
+        namespace="default",
+        user_id=user.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Shell",
+            "metadata": {
+                "name": f"{shell_type}-{suffix}",
+                "namespace": "default",
+            },
+            "spec": {
+                "shellType": shell_type,
+                "baseImage": "native-runtime:test",
+            },
+            "status": {"state": "Available"},
+        },
+    )
+    model = Kind(
+        kind="Model",
+        name=f"native-model-{suffix}",
+        namespace="default",
+        user_id=user.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {
+                "name": f"native-model-{suffix}",
+                "namespace": "default",
+            },
+            "spec": {
+                "modelConfig": {
+                    "env": {
+                        "model": "claude" if shell_type == "ClaudeCode" else "codex",
+                        "model_id": f"runtime-model-{suffix}",
+                        "api_key": "test-key",
+                        "base_url": "https://gateway.example.test",
+                    }
+                }
+            },
+        },
+    )
+    db.add_all([ghost, shell, model])
+    db.flush()
+    bot_name = f"native-bot-{suffix}"
+    native_bot = Kind(
+        kind="Bot",
+        name=bot_name,
+        namespace="default",
+        user_id=user.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": bot_name, "namespace": "default"},
+            "spec": {
+                "ghostRef": {"name": ghost.name, "namespace": "default"},
+                "shellRef": {"name": shell.name, "namespace": "default"},
+                "modelRef": {"name": model.name, "namespace": "default"},
+            },
+        },
+    )
+    db.add(native_bot)
+    db.flush()
+    team_name = f"native-team-{suffix}"
+    team = Kind(
+        kind="Team",
+        name=team_name,
+        namespace="default",
+        user_id=user.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {"name": team_name, "namespace": "default"},
+            "spec": {
+                "collaborationModel": "solo",
+                "members": [
+                    {
+                        "botRef": {
+                            "name": native_bot.name,
+                            "namespace": "default",
+                        },
+                        "prompt": "Apply the project-specific responsibility.",
+                        "role": "worker",
+                    }
+                ],
+            },
+        },
     )
     db.add(team)
     db.flush()
-    bot = ProjectChatAgent(
+    binding = ProjectChatAgent(
         id=f"B{uuid.uuid4().hex[:10]}",
         cloud_project_id=project.id,
-        title="Wegent Execution Bot",
-        name="Wegent Execution Bot",
+        title=f"{shell_type} Agent",
+        name=f"{shell_type} Agent",
         status="active",
         created_by_user_id=user.id,
-        device_id="",
+        device_id=None,
         metadata_json={
             "runtime": "wegent",
             "wegent_team_id": team.id,
@@ -187,11 +342,11 @@ def _make_wegent_bot(
             "visibility": "public",
         },
     )
-    db.add(bot)
+    db.add(binding)
     db.commit()
-    db.refresh(bot)
+    db.refresh(binding)
     db.refresh(team)
-    return bot, team
+    return binding, team
 
 
 def _make_item(
@@ -271,6 +426,26 @@ def _ensure_device(
     db.commit()
     db.refresh(device)
     return device
+
+
+def _authorize_project_device(
+    db: Session,
+    project: CloudProject,
+    device: Kind,
+    user: User,
+) -> None:
+    db.add(
+        ResourceMember(
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=user.id,
+        )
+    )
+    db.commit()
 
 
 def _make_execution(
@@ -1151,9 +1326,20 @@ def test_runtime_retry_uses_a_new_execution_attempt(
 ) -> None:
     project = _make_project(test_db, test_user)
     bot = _make_bot(test_db, project, test_user)
+    run_owner = User(
+        user_name="runtime-retry-owner",
+        password_hash="unused",
+        email="runtime-retry-owner@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(run_owner)
+    test_db.commit()
+    test_db.refresh(run_owner)
     original = _make_execution(
         test_db, _make_item(test_db, project, test_user), bot, test_user
     )
+    original.executor_owner_user_id = run_owner.id
     original.execution_payload = (
         loop_item_execution_service._serialize_execution_intent(
             runtime_selection={
@@ -1174,7 +1360,7 @@ def test_runtime_retry_uses_a_new_execution_attempt(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
-        owner_user_id=test_user.id,
+        owner_user_id=run_owner.id,
         runtime_instance_id="runtime-1",
         device_capacity=1,
         runtime_active=0,
@@ -1203,6 +1389,8 @@ def test_runtime_retry_uses_a_new_execution_attempt(
     assert retry.status == "queued"
     assert retry.attempt_no == 2
     assert retry.previous_execution_id == original.id
+    assert retry.executor_owner_user_id == run_owner.id
+    assert retry.executor_owner_user_id != bot.created_by_user_id
     assert retry.runtime_task_id != claimed.runtime_task_id
     assert retry.runtime_selection == {
         "model": "public-model",
@@ -1217,6 +1405,92 @@ def test_runtime_retry_uses_a_new_execution_attempt(
     test_db.refresh(original)
     assert original.status == "failed"
     assert original.last_event_seq == 2
+
+
+def test_claim_filters_by_execution_owner_not_agent_creator(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    run_owner = User(
+        user_name="runtime-claim-owner",
+        password_hash="unused",
+        email="runtime-claim-owner@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(run_owner)
+    test_db.commit()
+    test_db.refresh(run_owner)
+    _ensure_device(test_db, run_owner, "cloud-device-1")
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    execution.executor_owner_user_id = run_owner.id
+    test_db.commit()
+
+    creator_claim = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="creator-runtime",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    owner_claim = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=run_owner.id,
+        runtime_instance_id="owner-runtime",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+
+    assert creator_claim is None
+    assert owner_claim is not None
+    assert owner_claim.id == execution.id
+    assert owner_claim.executor_owner_user_id == run_owner.id
+
+
+def test_infrastructure_resume_preserves_execution_owner(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    run_owner = User(
+        user_name="runtime-resume-owner",
+        password_hash="unused",
+        email="runtime-resume-owner@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(run_owner)
+    test_db.commit()
+    test_db.refresh(run_owner)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    execution.executor_owner_user_id = run_owner.id
+    test_db.commit()
+
+    resumed = loop_item_execution_service.fail(
+        test_db,
+        execution_id=execution.id,
+        error="device temporarily unavailable",
+        requeue_infra=True,
+    )
+
+    assert resumed is not None
+    assert resumed.id == execution.id
+    assert resumed.status == "queued"
+    assert resumed.executor_owner_user_id == run_owner.id
+    assert resumed.executor_owner_user_id != bot.created_by_user_id
 
 
 def test_reordered_runtime_event_cannot_overwrite_newer_truth(
@@ -1938,6 +2212,61 @@ def test_approve_accepts_complete_issue_runtime_without_profile(
     assert approved.approval_status == "approved"
 
 
+def test_inherited_stage_pins_queue_to_predecessor_runtime_device(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    _ensure_device(test_db, test_user, "predecessor-device")
+    _ensure_device(test_db, test_user, "agent-default-device")
+
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="cloud",
+        execution_device_id="agent-default-device",
+        priority="medium",
+        automation_context={
+            "runtime_source": "issue_snapshot",
+            "execution_device_id": "agent-default-device",
+            "model": "test-model",
+            "model_type": "runtime",
+            "model_options": {},
+            "workspace_binding": {"type": "standalone"},
+            "workflow_stage_input": {
+                "target_stage": {
+                    "id": "review",
+                    "workspace_policy": "inherit",
+                },
+                "dependencies": [
+                    {
+                        "stage_id": "implement",
+                        "runtime_tasks": [
+                            {
+                                "device_id": "predecessor-device",
+                                "task_id": "previous-runtime-task",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+    test_db.commit()
+
+    assert execution.execution_device_id == "predecessor-device"
+    assert execution.runtime_request["deviceId"] == "predecessor-device"
+    assert execution.runtime_request["workspaceSourceTask"] == {
+        "deviceId": "predecessor-device",
+        "taskId": "previous-runtime-task",
+    }
+
+
 def test_claimed_run_builds_runtime_payload_for_executor(
     test_db: Session, test_user: User
 ) -> None:
@@ -1999,7 +2328,7 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     assert execution_request["task_id"]
     assert execution_request["bot"][0]["id"] == bot.id
     assert "system_prompt" not in execution_request["bot"][0]
-    assert "system_prompt" not in execution_request
+    assert execution_request["system_prompt"] == "Verify before reporting completion."
     assert "Build the landing page" not in execution_request["prompt"]
     assert "Create three subtasks for testing." not in execution_request["prompt"]
     visible_prompt = (
@@ -2007,8 +2336,7 @@ def test_claimed_run_builds_runtime_payload_for_executor(
         f"task_id: {item.id}\n"
         f"execution_id: {claimed.id}\n\n"
         f"看板任务数据位于 cloud://projects/{project.id}/todos/{item.id}，"
-        "请通过看板工具自行查看。\n\n"
-        "Verify before reporting completion."
+        "请通过看板工具自行查看。"
     )
     assert execution_request["prompt"].endswith(visible_prompt)
     assert "projectSpaceCapability" in execution_request["prompt"]
@@ -2031,6 +2359,357 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     assert "ephemeral" not in payload
     assert "continuable" not in payload
     assert payload["runtime"] == "codex"
+
+
+@pytest.mark.parametrize(
+    ("runtime", "shell_type"),
+    [
+        ("codex", "Codex"),
+        ("claude_code", "ClaudeCode"),
+    ],
+)
+def test_project_agent_runtime_and_capabilities_reach_runtime_request(
+    test_db: Session,
+    test_user: User,
+    runtime: str,
+    shell_type: str,
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    bot.metadata_json = {
+        **dict(bot.metadata_json or {}),
+        "runtime": runtime,
+        "system_prompt": "Use the configured project capabilities.",
+        "additional_skills": [
+            {"name": "project-review", "namespace": "default"},
+        ],
+        "mcp_servers": {
+            "repo": {
+                "command": "node",
+                "args": ["repo-server.mjs"],
+            }
+        },
+    }
+    test_db.commit()
+    item = _make_item(test_db, project, test_user)
+
+    config = project_robot_execution_config(test_db, bot)
+    assert config.runtime == runtime
+    assert config.system_prompt == "Use the configured project capabilities."
+    assert config.additional_skills == [
+        {"name": "project-review", "namespace": "default"}
+    ]
+    assert config.mcp_servers == {
+        "repo": {
+            "command": "node",
+            "args": ["repo-server.mjs"],
+        }
+    }
+    context = execution_context(
+        config,
+        runtime_subject_user_id=test_user.id,
+    )
+
+    request = WeworkExecutionProfile.for_project_robot(bot).build_runtime_request(
+        test_db,
+        execution_id=321,
+        runtime_task_id=f"{runtime}-runtime-task",
+        task=TaskContext(
+            id=item.id,
+            cloud_project_id=str(project.id),
+            title=item.title,
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context=context,
+        execution_device_id="cloud-device-1",
+    )
+
+    assert request.runtime == runtime
+    assert request.project_instructions == "Use the configured project capabilities."
+    assert request.additional_skills == [
+        {"name": "project-review", "namespace": "default"}
+    ]
+    assert request.bot == [
+        {
+            "id": bot.id,
+            "name": "Execution Bot",
+            "shell_type": shell_type,
+            "mcp_servers": [
+                {
+                    "name": "repo",
+                    "command": "node",
+                    "args": ["repo-server.mjs"],
+                }
+            ],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("shell_type", "runtime"),
+    [
+        ("Codex", "codex"),
+        ("ClaudeCode", "claude_code"),
+    ],
+)
+def test_team_reference_compiles_to_native_project_runtime(
+    test_db: Session,
+    test_user: User,
+    shell_type: str,
+    runtime: str,
+) -> None:
+    project = _make_project(test_db, test_user)
+    agent, team = _make_native_team_binding(
+        test_db,
+        project,
+        test_user,
+        shell_type=shell_type,
+    )
+    item = _make_item(test_db, project, test_user)
+    _ensure_device(test_db, test_user, "cloud-device-1")
+
+    config = project_robot_execution_config(test_db, agent)
+
+    assert agent.metadata_json == {
+        "runtime": "wegent",
+        "wegent_team_id": team.id,
+        "execution_mode": "auto",
+        "visibility": "public",
+    }
+    assert config.runtime == runtime
+    assert config.model and config.model.startswith("native-model-")
+    assert config.model_type == "user"
+    assert config.model_options == {
+        "weworkCloudModelNamespace": "default",
+        "weworkCloudModelResourceUserId": str(test_user.id),
+    }
+    assert config.system_prompt == (
+        "<base_prompt>\n"
+        "Follow the referenced AgentSpec.\n\n"
+        "Apply the project-specific responsibility.\n"
+        "</base_prompt>"
+    )
+    assert config.additional_skills == [
+        {
+            "name": next(
+                row.name
+                for row in test_db.query(Kind).filter(Kind.kind == "Skill").all()
+                if row.name.startswith("review-skill-")
+            ),
+            "namespace": "default",
+        }
+    ]
+    assert config.mcp_servers == {
+        "repo": {
+            "command": "node",
+            "args": ["repo-server.mjs"],
+        }
+    }
+
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=agent,
+        assigner_user_id=test_user.id,
+        environment="cloud",
+        execution_device_id="cloud-device-1",
+        priority=item.priority,
+        automation_context=execution_context(
+            config,
+            runtime_subject_user_id=test_user.id,
+        ),
+    )
+
+    assert execution.optional_team_id is None
+    assert execution.execution_environment == "cloud"
+    assert execution.execution_device_id == "cloud-device-1"
+    assert execution.runtime_selection["model"] == config.model
+    request = execution.runtime_request
+    assert request["runtime"] == runtime
+    assert request["deviceId"] == "cloud-device-1"
+    assert request["modelId"] == config.model
+    assert request["projectInstructions"] == config.system_prompt
+    assert request["additionalSkills"] == config.additional_skills
+    assert request["bot"] == [
+        {
+            "id": agent.id,
+            "name": f"{shell_type} Agent",
+            "shell_type": shell_type,
+            "mcp_servers": [
+                {
+                    "name": "repo",
+                    "command": "node",
+                    "args": ["repo-server.mjs"],
+                }
+            ],
+        }
+    ]
+
+
+def test_project_execution_environment_reaches_runtime_request(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    metadata = dict(project.metadata_json or {})
+    metadata["execution_environment"] = {
+        "repositories": [
+            {
+                "name": "Wegent",
+                "url": "https://github.com/wecode-ai/Wegent.git",
+                "ref": "main",
+                "path": "wegent",
+                "primary": True,
+            },
+            {
+                "name": "SDK",
+                "url": "https://github.com/example/sdk.git",
+                "ref": "v2",
+                "path": "deps/sdk",
+                "primary": False,
+            },
+        ],
+        "setup_steps": [
+            {"command": "corepack enable", "working_directory": "wegent"},
+            {"command": "pnpm install", "working_directory": "wegent"},
+        ],
+        "status": "ready",
+        "fingerprint": "environment-v1",
+        "prepared_device_id": "cloud-device-1",
+        "prepared_workspace_path": "/workspace/environments/project-1",
+    }
+    project.metadata_json = metadata
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    test_db.commit()
+
+    request = WeworkExecutionProfile.for_project_robot(bot).build_runtime_request(
+        test_db,
+        execution_id=322,
+        runtime_task_id="environment-runtime-task",
+        task=TaskContext(
+            id=item.id,
+            cloud_project_id=str(project.id),
+            title=item.title,
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={},
+        execution_device_id="cloud-device-1",
+    )
+    payload = request.model_dump(by_alias=True, exclude_none=True)
+
+    assert payload["execution"] == {
+        "workspace": {
+            "source": "git_worktree",
+            "repositories": [
+                {
+                    "name": "Wegent",
+                    "url": "https://github.com/wecode-ai/Wegent.git",
+                    "ref": "main",
+                    "path": "wegent",
+                    "primary": True,
+                },
+                {
+                    "name": "SDK",
+                    "url": "https://github.com/example/sdk.git",
+                    "ref": "v2",
+                    "path": "deps/sdk",
+                    "primary": False,
+                },
+            ],
+        },
+        "setup": {
+            "steps": [
+                {"command": "corepack enable", "workingDirectory": "wegent"},
+                {"command": "pnpm install", "workingDirectory": "wegent"},
+            ],
+            "fingerprint": "environment-v1",
+        },
+    }
+    assert payload["origin"]["executionEnvironment"] == {
+        "repositories": [
+            {
+                "name": "Wegent",
+                "url": "https://github.com/wecode-ai/Wegent.git",
+                "ref": "main",
+                "path": "wegent",
+                "primary": True,
+            },
+            {
+                "name": "SDK",
+                "url": "https://github.com/example/sdk.git",
+                "ref": "v2",
+                "path": "deps/sdk",
+                "primary": False,
+            },
+        ],
+        "setup_steps": [
+            {"command": "corepack enable", "workingDirectory": "wegent"},
+            {"command": "pnpm install", "workingDirectory": "wegent"},
+        ],
+        "status": "ready",
+        "fingerprint": "environment-v1",
+        "prepared_device_id": "cloud-device-1",
+        "prepared_workspace_path": "/workspace/environments/project-1",
+    }
+    assert payload["workspacePath"] == "/workspace/environments/project-1"
+
+
+def test_claude_code_project_agent_compiles_executor_payload(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    bot.metadata_json = {
+        **dict(bot.metadata_json or {}),
+        "runtime": "claude_code",
+        "model": "test-model",
+        "additional_skills": [{"name": "project-review"}],
+        "mcp_servers": {
+            "repo": {
+                "command": "node",
+                "args": ["repo-server.mjs"],
+            }
+        },
+    }
+    test_db.commit()
+    item = _make_item(test_db, project, test_user)
+    config = project_robot_execution_config(test_db, bot)
+    execution = _make_execution(
+        test_db,
+        item,
+        bot,
+        test_user,
+        automation_context=execution_context(
+            config,
+            runtime_subject_user_id=test_user.id,
+        ),
+    )
+
+    payload = loop_item_execution_service.build_runtime_payload(
+        test_db,
+        execution=execution,
+    )
+
+    assert payload["runtime"] == "claude_code"
+    execution_request = payload["executionRequest"]
+    assert execution_request["bot"][0]["shell_type"] == "ClaudeCode"
+    assert execution_request["bot"][0]["mcp_servers"] == [
+        {
+            "name": "repo",
+            "command": "node",
+            "args": ["repo-server.mjs"],
+        }
+    ]
+    assert execution_request["preload_skills"] == [{"name": "project-review"}]
 
 
 def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project(
@@ -3038,6 +3717,76 @@ def test_inherited_stage_requires_the_executor_that_owns_the_workspace(
             execution_target_id="electron-app-device",
             executor_device_id="executor-runtime-device",
         )
+
+
+def test_executor_payload_accepts_aliases_for_the_same_app_device(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user, title="Send message")
+    execution = _make_execution(test_db, item, bot, test_user)
+    device = Kind(
+        kind="Device",
+        name="device-runtime",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {
+                "deviceType": "app",
+                "deviceId": "device-runtime",
+                "appDeviceId": "electron-app-device",
+            }
+        },
+    )
+    test_db.add(device)
+    test_db.flush()
+    record_route = f"app-record-{device.id}"
+    request = WeworkExecutionProfile.for_project_robot(bot).build_runtime_request(
+        test_db,
+        execution_id=execution.id,
+        runtime_task_id=execution.runtime_task_id,
+        task=TaskContext(
+            id=item.id,
+            cloud_project_id=str(project.id),
+            title=item.title,
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={},
+        execution_device_id=record_route,
+    )
+    execution.execution_environment = "cloud"
+    execution.execution_device_id = record_route
+    execution.execution_payload = (
+        loop_item_execution_service._serialize_execution_intent(
+            runtime_selection=dict(execution.runtime_selection),
+            origin_context={},
+            runtime_request=request.model_dump(by_alias=True, exclude_none=True),
+        )
+    )
+    test_db.commit()
+
+    compiled = MagicMock()
+    compiled.payload = {"executionRequest": {}}
+    compiled.target.device_id = record_route
+    with patch(
+        "app.services.runtime_work_service.compile_runtime_task_create",
+        return_value=compiled,
+    ) as compile_runtime:
+        payload = loop_item_execution_service.build_executor_runtime_payload(
+            test_db,
+            execution=execution,
+            execution_target_id="electron-app-device",
+            executor_device_id=record_route,
+        )
+
+    assert payload == compiled.payload
+    compiled_request = compile_runtime.call_args.kwargs["request"]
+    assert compiled_request.device_id == record_route
 
 
 def test_claim_batch_moves_queued_to_claimed_within_capacity(
@@ -4494,20 +5243,23 @@ def test_public_cloud_model_uses_backend_gateway_config(
     assert payload["executionRequest"]["enable_deep_thinking"] is False
 
 
-def test_unbound_project_robot_waits_for_runtime_selection(
+def test_unbound_project_robot_is_claimed_by_project_authorized_device(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
+    device = _ensure_device(test_db, test_user, "local-device", device_type="local")
+    _authorize_project_device(test_db, project, device, test_user)
     bot = ProjectChatAgent(
         id=f"B{uuid.uuid4().hex[:10]}",
         cloud_project_id=project.id,
-        title="Old Local Bot",
-        name="Old Local Bot",
+        title="Unbound Local Bot",
+        name="Unbound Local Bot",
         status="active",
         created_by_user_id=test_user.id,
         device_id="",
         metadata_json={
             "runtime": "codex",
+            "model": "test-model",
             "execution_mode": "auto",
             "visibility": "public",
         },
@@ -4528,20 +5280,297 @@ def test_unbound_project_robot_waits_for_runtime_selection(
     )
     test_db.commit()
 
-    claimed = loop_item_execution_service.claim_next_unbound_local(
+    assert execution.status == "queued"
+    assert execution.execution_device_id == ""
+
+    claimed = loop_item_execution_service.claim_next_for_device(
         test_db,
         owner_user_id=test_user.id,
         execution_device_id="local-device",
+        environment="local",
         runtime_instance_id="runtime-1",
         device_capacity=1,
         runtime_active=0,
         runtime_active_task_ids=set(),
     )
 
-    assert claimed is None
-    assert execution.status == "waiting_runtime"
-    assert execution.execution_device_id == ""
-    assert execution.executor_owner_user_id == test_user.id
+    assert claimed is not None
+    assert claimed.id == execution.id
+    assert claimed.status == "claimed"
+    assert claimed.execution_device_id == "local-device"
+    assert claimed.runtime_device_id == "local-device"
+
+
+def test_unbound_project_robot_allows_owned_device_when_project_has_no_allowlist(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    _ensure_device(test_db, test_user, "unapproved-device", device_type="local")
+    bot = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Unbound Local Bot",
+        name="Unbound Local Bot",
+        status="active",
+        created_by_user_id=test_user.id,
+        device_id="",
+        metadata_json={
+            "runtime": "codex",
+            "model": "test-model",
+            "execution_mode": "auto",
+            "visibility": "public",
+        },
+    )
+    test_db.add(bot)
+    test_db.commit()
+    item = _make_item(test_db, project, test_user)
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=item.cloud_project_id,
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="local",
+        execution_device_id="",
+        priority="medium",
+    )
+    test_db.commit()
+
+    claimed = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        owner_user_id=test_user.id,
+        execution_device_id="unapproved-device",
+        environment="local",
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+
+    assert claimed is not None
+    assert claimed.id == execution.id
+    assert claimed.execution_device_id == "unapproved-device"
+
+
+def test_unbound_project_robot_enforces_explicit_project_device_allowlist(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    allowed_device = _ensure_device(
+        test_db, test_user, "allowlisted-device", device_type="local"
+    )
+    _ensure_device(test_db, test_user, "other-owned-device", device_type="local")
+    _authorize_project_device(test_db, project, allowed_device, test_user)
+    bot = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Allowlisted Bot",
+        name="Allowlisted Bot",
+        status="active",
+        created_by_user_id=test_user.id,
+        device_id="",
+        metadata_json={
+            "runtime": "codex",
+            "model": "test-model",
+            "execution_mode": "auto",
+            "visibility": "public",
+        },
+    )
+    test_db.add(bot)
+    test_db.commit()
+    item = _make_item(test_db, project, test_user)
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=item.cloud_project_id,
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="local",
+        execution_device_id="",
+        priority="medium",
+    )
+    test_db.commit()
+
+    rejected = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        owner_user_id=test_user.id,
+        execution_device_id="other-owned-device",
+        environment="local",
+        runtime_instance_id="runtime-other",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    claimed = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        owner_user_id=test_user.id,
+        execution_device_id="allowlisted-device",
+        environment="local",
+        runtime_instance_id="runtime-allowed",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+
+    assert rejected is None
+    assert claimed is not None
+    assert claimed.id == execution.id
+    assert claimed.execution_device_id == "allowlisted-device"
+
+
+def test_unbound_execution_keeps_issue_on_latest_runtime_device(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    first_device = _ensure_device(
+        test_db, test_user, "issue-device-a", device_type="local"
+    )
+    second_device = _ensure_device(
+        test_db, test_user, "issue-device-b", device_type="local"
+    )
+    _authorize_project_device(test_db, project, first_device, test_user)
+    _authorize_project_device(test_db, project, second_device, test_user)
+    bot = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Affinity Bot",
+        name="Affinity Bot",
+        status="active",
+        created_by_user_id=test_user.id,
+        device_id="",
+        metadata_json={
+            "runtime": "codex",
+            "model": "test-model",
+            "execution_mode": "auto",
+            "visibility": "public",
+        },
+    )
+    test_db.add(bot)
+    test_db.commit()
+    item = _make_item(test_db, project, test_user)
+    previous = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        executor_owner_user_id=test_user.id,
+        agent_id=bot.id,
+        execution_environment="local",
+        execution_device_id="issue-device-a",
+        runtime_device_id="issue-device-a",
+        status="completed",
+    )
+    test_db.add(previous)
+    test_db.commit()
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="local",
+        execution_device_id="",
+        priority="medium",
+    )
+    test_db.commit()
+
+    wrong_device_claim = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        owner_user_id=test_user.id,
+        execution_device_id="issue-device-b",
+        environment="local",
+        runtime_instance_id="runtime-b",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    right_device_claim = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        owner_user_id=test_user.id,
+        execution_device_id="issue-device-a",
+        environment="local",
+        runtime_instance_id="runtime-a",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+
+    assert wrong_device_claim is None
+    assert right_device_claim is not None
+    assert right_device_claim.id == execution.id
+    assert right_device_claim.execution_device_id == "issue-device-a"
+    assert right_device_claim.runtime_device_id == "issue-device-a"
+
+
+def test_waiting_runtime_rejects_plugin_credentials_before_creating_execution(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    bot.device_id = ""
+    bot.metadata_json = {
+        "runtime": "codex",
+        "execution_mode": "auto",
+        "visibility": "public",
+    }
+    test_db.commit()
+    item = _make_item(test_db, project, test_user)
+
+    with pytest.raises(ValueError, match="use credential_refs"):
+        loop_item_execution_service.create_for_assignment(
+            test_db,
+            loop_item_id=item.id,
+            cloud_project_id=item.cloud_project_id,
+            agent=bot,
+            assigner_user_id=test_user.id,
+            environment="local",
+            execution_device_id="",
+            priority="medium",
+            automation_context={
+                "project_plugins": [
+                    {
+                        "id": "github@openai",
+                        "config": {"access_token": "plaintext"},
+                    }
+                ]
+            },
+        )
+
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == item.id)
+        .count()
+        == 0
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload_field", "plugins"),
+    [
+        (
+            "origin_context",
+            [{"id": "github@openai", "config": {"access_token": "plaintext"}}],
+        ),
+        (
+            "runtime_request",
+            [{"id": "github@openai", "config": {"privateKey": "plaintext"}}],
+        ),
+    ],
+)
+def test_execution_intent_rejects_plugin_credentials_before_persistence(
+    payload_field: str,
+    plugins: list[dict[str, object]],
+) -> None:
+    kwargs: dict[str, object] = {
+        "runtime_selection": {},
+        "origin_context": {},
+    }
+    if payload_field == "origin_context":
+        kwargs["origin_context"] = {"project_plugins": plugins}
+    else:
+        kwargs["runtime_request"] = {"projectPlugins": plugins}
+
+    with pytest.raises(ValueError, match="use credential_refs"):
+        loop_item_execution_service._serialize_execution_intent(**kwargs)
 
 
 def test_automation_assignment_schedules_wegent_runtime_after_commit(
@@ -4600,12 +5629,13 @@ def test_automation_assignment_schedules_wegent_runtime_after_commit(
     schedule.assert_called_once_with(test_db, execution)
 
 
+@pytest.mark.parametrize("mode", ["auto", "manual_approval"])
 def test_waiting_execution_can_select_owned_runtime_once(
-    test_db: Session, test_user: User
+    test_db: Session, test_user: User, mode: str
 ) -> None:
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
-    bot = _make_bot(test_db, project, test_user)
+    bot = _make_bot(test_db, project, test_user, mode=mode)
     _ensure_device(test_db, test_user, "cloud-device-1")
     execution = loop_item_execution_service.create_for_assignment(
         test_db,
@@ -4639,7 +5669,9 @@ def test_waiting_execution_can_select_owned_runtime_once(
         version=initial_version,
     )
 
-    assert selected.status == "queued"
+    assert selected.status == (
+        "pending_approval" if mode == "manual_approval" else "queued"
+    )
     assert selected.runtime_selection == {
         "runtime_source": "selected",
         "runtime_profile_id": profile["id"],
@@ -4879,8 +5911,7 @@ async def test_wegent_runtime_activation_uses_exact_execution_and_is_idempotent(
         f"task_id: {item.id}\n"
         f"execution_id: {execution.id}\n\n"
         f"看板任务数据位于 cloud://projects/{project.id}/todos/{item.id}，"
-        "请通过看板工具自行查看。\n\n"
-        "Robot-defined execution prompt."
+        "请通过看板工具自行查看。"
     )
 
 
@@ -5987,3 +7018,63 @@ def test_enqueue_generic_robot_normalizes_app_device_id(
 
     assert execution.execution_device_id == f"app-record-{device.id}"
     assert execution.execution_environment == "local"
+
+
+def test_enqueue_generic_robot_uses_codex_runtime_default_model(
+    test_db: Session, test_user: User
+) -> None:
+    """A workflow robot may defer model selection to the Codex Runtime."""
+
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    _ensure_device(test_db, test_user, "local-device", device_type="app")
+    rule = ProjectAutomationRule(
+        id="generic-default-model-rule",
+        cloud_project_id=project.id,
+        title="Generic default model rule",
+        description="Handle this task",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json=_automation_metadata(action="execute"),
+    )
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        status="queued",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger": "workflow",
+            "workflow_node_id": "node-1",
+            "instruction_override": "Handle this task",
+        },
+    )
+    test_db.add_all([rule, run])
+    test_db.flush()
+
+    execution = loop_item_execution_service.enqueue_generic_robot(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        runtime_subject_user_id=test_user.id,
+        runtime_profile=None,
+        execution_device_id="local-device",
+        model=None,
+        model_type=None,
+        model_options={},
+        assigner_user_id=test_user.id,
+        priority="medium",
+        automation_context={
+            "runtime_source": "runtime_user",
+            "run_id": str(run.id),
+            "workspace_binding": {"type": "standalone"},
+        },
+    )
+
+    assert execution.status == "queued"
+    assert execution.runtime_selection["model"] is None
+    profile, _ = loop_item_execution_service._runtime_profile_and_context(
+        test_db,
+        execution=execution,
+    )
+    assert profile.model == ""

@@ -922,7 +922,7 @@ async def test_weibo_runtime_message_registers_stream_without_status_prefix(
 
 
 @pytest.mark.asyncio
-async def test_task_mode_runtime_reply_uses_notification_target_without_rebinding(
+async def test_task_mode_dingtalk_quoted_notification_switches_runtime_task(
     monkeypatch: pytest.MonkeyPatch,
     test_db: Session,
     test_user: User,
@@ -951,7 +951,7 @@ async def test_task_mode_runtime_reply_uses_notification_target_without_rebindin
     )
     await im_session_service.save_runtime_task_reply_target(
         session=session,
-        message_id=901,
+        message_id="notification-query-key",
         runtime_task={
             "deviceId": "device-notified",
             "workspacePath": "/repo/Notified",
@@ -988,7 +988,7 @@ async def test_task_mode_runtime_reply_uses_notification_target_without_rebindin
     handled = await handler.handle_message(
         _message(
             "回复通知",
-            extra_data={"reply_to_message_id": 901},
+            extra_data={"reply_to_message_id": "notification-query-key"},
         )
     )
 
@@ -998,8 +998,9 @@ async def test_task_mode_runtime_reply_uses_notification_target_without_rebindin
     assert calls["send"]["request"].address.device_id == "device-notified"
     assert calls["send"]["request"].address.local_task_id == "codex-notified"
     refreshed = await _private_session(test_db, test_user)
-    assert refreshed.active_runtime_task["deviceId"] == "device-active"
-    assert refreshed.active_runtime_task["localTaskId"] == "codex-active"
+    assert refreshed.mode == IMSessionMode.TASK
+    assert refreshed.active_runtime_task["deviceId"] == "device-notified"
+    assert refreshed.active_runtime_task["localTaskId"] == "codex-notified"
 
 
 @pytest.mark.asyncio
@@ -1066,6 +1067,10 @@ async def test_runtime_notification_reply_continues_task_from_chat_mode(
     assert handler.replies == []
     assert calls["callback"] == "runtime:device-notified:codex-notified"
     assert calls["send"]["request"].address.local_task_id == "codex-notified"
+    refreshed = await _private_session(test_db, test_user)
+    assert refreshed.mode == IMSessionMode.TASK
+    assert refreshed.active_runtime_task["deviceId"] == "device-notified"
+    assert refreshed.active_runtime_task["localTaskId"] == "codex-notified"
 
 
 @pytest.mark.asyncio
@@ -1323,3 +1328,158 @@ async def test_private_task_creation_uses_task_type_task_and_binds_new_task(
     assert session.active_task_id == 710
     assert session.state == IMSessionState.IDLE
     assert session.pending_payload == {}
+
+
+def _create_restricted_team(
+    test_db: Session,
+    test_user: User,
+    *,
+    allowed_model_name: str,
+) -> Kind:
+    bot = Kind(
+        user_id=test_user.id,
+        kind="Bot",
+        name="restricted-bot",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": "restricted-bot", "namespace": "default"},
+            "spec": {
+                "ghostRef": {"name": "ghost", "namespace": "default"},
+                "shellRef": {"name": "Chat", "namespace": "default"},
+                "agent_config": {
+                    "bind_model": allowed_model_name,
+                    "allowed_models": [
+                        {
+                            "name": allowed_model_name,
+                            "type": "public",
+                            "namespace": "default",
+                        }
+                    ],
+                },
+            },
+        },
+    )
+    test_db.add(bot)
+    team = Kind(
+        user_id=test_user.id,
+        kind="Team",
+        name="wegent-wework",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {"name": "wegent-wework", "namespace": "default"},
+            "spec": {
+                "displayName": "Wegent Wework",
+                "collaborationModel": "solo",
+                "members": [
+                    {
+                        "botRef": {"name": "restricted-bot", "namespace": "default"},
+                        "role": "worker",
+                    }
+                ],
+            },
+        },
+    )
+    test_db.add(team)
+    test_db.commit()
+    test_db.refresh(team)
+    return team
+
+
+@pytest.mark.parametrize(
+    ("allowed_model_name", "expected_model_id"),
+    [
+        ("allowed-model", None),
+        ("openai-gpt-5.1(overseas)", "openai-gpt-5.1(overseas)"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_private_task_creation_honors_agent_model_restriction(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+    allowed_model_name: str,
+    expected_model_id: str | None,
+) -> None:
+    """An agent's allowed_models whitelist wins over the Wework model preference."""
+    team = _create_restricted_team(
+        test_db, test_user, allowed_model_name=allowed_model_name
+    )
+    test_user.preferences = json.dumps(
+        {
+            "wework_new_chat_model_selection": {
+                "modelName": "openai-gpt-5.1(overseas)",
+                "modelType": "public",
+                "options": {"reasoning": "high"},
+            }
+        }
+    )
+    test_db.add(test_user)
+    test_db.commit()
+    handler = FakeChannelHandler(test_user, channel_type=ChannelType.TELEGRAM)
+    calls: dict[str, Any] = {}
+
+    async def fake_create_chat_task(
+        db: Session,
+        user: User,
+        team: Kind,
+        message: str,
+        params: Any,
+        task_id: int | None = None,
+        should_trigger_ai: bool = True,
+        rag_prompt: str | None = None,
+        source: str = "web",
+    ):
+        calls["params"] = params
+        return SimpleNamespace(
+            task=SimpleNamespace(id=810),
+            user_subtask=SimpleNamespace(id=811),
+            assistant_subtask=SimpleNamespace(id=812),
+        )
+
+    async def fake_trigger_ai_response_unified(**kwargs):
+        calls["trigger"] = kwargs
+
+    class FakeStreamingEmitter:
+        async def emit_start(self, **kwargs):
+            calls["emit_start"] = kwargs
+
+        def set_shared_content_key(self, key: str):
+            calls["shared_content_key"] = key
+
+    async def fake_create_streaming_emitter(message_context: MessageContext):
+        return FakeStreamingEmitter()
+
+    monkeypatch.setattr(handler, "_get_task_mode_team", lambda db, user_id: team)
+    monkeypatch.setattr(
+        "app.services.chat.storage.task_manager.create_chat_task",
+        fake_create_chat_task,
+    )
+    monkeypatch.setattr(
+        "app.services.chat.trigger.trigger_ai_response_unified",
+        fake_trigger_ai_response_unified,
+    )
+    monkeypatch.setattr(
+        handler,
+        "create_streaming_emitter",
+        fake_create_streaming_emitter,
+    )
+
+    await handler.handle_message(_message("/task"))
+    await handler.handle_message(_message("new"))
+    await handler.handle_message(_message("0"))
+    handled = await handler.handle_message(_message("继续这个需求"))
+
+    assert handled is True
+    params = calls["params"]
+    assert params.model_id == expected_model_id
+    assert params.force_override_bot_model is (expected_model_id is not None)
+    if expected_model_id is None:
+        assert params.force_override_bot_model_type is None
+        assert params.model_options is None

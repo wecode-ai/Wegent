@@ -19,6 +19,7 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.loop_items.service import loop_item_service
+from tests.utils.agent_resources import create_runnable_wegent_team
 
 
 @pytest.fixture(autouse=True)
@@ -177,17 +178,11 @@ def test_assign_to_wegent_runtime_robot_keeps_robot_as_queue_identity(
 ) -> None:
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
-    team = Kind(
-        kind="Team",
-        name=f"board-team-{uuid.uuid4().hex[:8]}",
-        namespace="default",
+    team = create_runnable_wegent_team(
+        test_db,
         user_id=test_user.id,
-        is_active=True,
-        json={},
+        name_prefix="board",
     )
-    test_db.add(team)
-    test_db.commit()
-    test_db.refresh(team)
     bot = _make_bot(
         test_db,
         project,
@@ -228,20 +223,26 @@ def test_assign_to_member_records_chain(test_db: Session, test_user: User) -> No
     member = _make_member(test_db, project, "assignee", BaseRole.Developer)
     item = _make_item(test_db, project, test_user)
 
-    updated = loop_item_service.assign(
-        test_db,
-        project_id=int(project.id),
-        item_id=item.id,
-        user_id=test_user.id,
-        values=LoopItemAssign(
-            version=item.version,
-            assignee_type="user",
-            assignee_id=str(member.id),
-        ),
-    )
+    with patch(
+        "app.services.loop_items.service.loop_node_non_nullable_attributes",
+        return_value=frozenset(),
+    ) as nullable_contract:
+        updated = loop_item_service.assign(
+            test_db,
+            project_id=int(project.id),
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                version=item.version,
+                assignee_type="user",
+                assignee_id=str(member.id),
+            ),
+        )
 
+    nullable_contract.assert_called_once()
     assert updated.assignee_user_id == member.id
     assert updated.assignee_agent_id == ""
+    assert updated.assignee_team_id is None
     metadata = updated.metadata_json or {}
     assert metadata["assignment_history"][-1]["to_type"] == "user"
     assert metadata["assignment_history"][-1]["to_name"] == "assignee"

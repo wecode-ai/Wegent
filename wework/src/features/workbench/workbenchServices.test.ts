@@ -41,13 +41,16 @@ const mocks = vi.hoisted(() => {
     })),
   }
   const localDeliveryApi = {}
+  const sharedWorkspaceApi = { projects: { list: vi.fn() } }
   return {
     project,
     backendDeliveryApi,
     externalIssueApi,
     localDeliveryApi,
+    sharedWorkspaceApi,
     backendServices: {
       deliveryApi: backendDeliveryApi,
+      sharedWorkspaceApi,
       projectSpaceApis: {
         cloud: backendDeliveryApi,
         defaultLocation: 'cloud' as const,
@@ -59,6 +62,7 @@ const mocks = vi.hoisted(() => {
     },
     hybridServices: {
       deliveryApi: backendDeliveryApi,
+      sharedWorkspaceApi,
       projectSpaceApis: {
         local: localDeliveryApi,
         cloud: backendDeliveryApi,
@@ -121,6 +125,7 @@ describe('default workbench project-space services', () => {
     expect(mocks.externalIssueApi.configureProject).not.toHaveBeenCalled()
     expect(mocks.externalIssueApi.createLoopItem).not.toHaveBeenCalled()
     expect(services.projectSpaceApis?.local).toBe(mocks.localDeliveryApi)
+    expect(services.sharedWorkspaceApi).toBe(mocks.sharedWorkspaceApi)
   })
 
   test('adds build-time feedback submission to an offline local workbench', () => {

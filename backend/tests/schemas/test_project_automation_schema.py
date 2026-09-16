@@ -113,11 +113,15 @@ def test_workflow_trigger_accepts_a_robot_profile_without_schedule_fields() -> N
     assert value.cron_expression is None
 
 
-def test_partial_update_requires_mode_when_changing_manager_configuration() -> None:
-    with pytest.raises(ValidationError, match="assignment_mode is required"):
-        ProjectAutomationUpdate.model_validate(
-            {"version": 2, "executionDeviceId": "device-b"}
-        )
+def test_partial_update_allows_changing_execution_device_without_assignment_mode() -> (
+    None
+):
+    update = ProjectAutomationUpdate.model_validate(
+        {"version": 2, "executionDeviceId": "device-b"}
+    )
+
+    assert update.assignment_mode is None
+    assert update.execution_device_id == "device-b"
 
 
 def test_ai_managed_requires_manager_source() -> None:

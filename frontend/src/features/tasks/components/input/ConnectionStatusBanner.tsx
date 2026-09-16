@@ -5,6 +5,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { WifiOff, Wifi, Check } from 'lucide-react'
 import { useSocket } from '@/contexts/SocketContext'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -66,37 +67,41 @@ export function ConnectionStatusBanner() {
     }
   }, [isConnected, showDisconnected])
 
-  // Don't render anything when connected and no success message to show
-  if (isConnected && !showReconnected) return null
-
-  // Reconnection success message
+  let banner: ReactNode = null
   if (isConnected && showReconnected) {
-    return (
+    banner = (
       <div className="mx-4 mb-2 px-3 py-2 rounded-lg bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 text-sm flex items-center gap-2 animate-in fade-in duration-200">
         <Check className="h-4 w-4" />
         <span>{t('status.reconnected')}</span>
       </div>
     )
+  } else if (!isConnected && showDisconnected) {
+    banner = (
+      <div className="mx-4 mb-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm flex items-center gap-2 animate-in fade-in duration-200">
+        {reconnectAttempts > 0 ? (
+          <>
+            <Wifi className="h-4 w-4 animate-pulse" />
+            <span>{t('status.reconnecting', { count: reconnectAttempts })}</span>
+          </>
+        ) : (
+          <>
+            <WifiOff className="h-4 w-4" />
+            <span>{t('status.disconnected')}</span>
+          </>
+        )}
+      </div>
+    )
   }
 
-  // Don't show disconnection banner until delay has passed
-  if (!showDisconnected) return null
-
-  // Disconnected or reconnecting state
   return (
-    <div className="mx-4 mb-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm flex items-center gap-2 animate-in fade-in duration-200">
-      {reconnectAttempts > 0 ? (
-        <>
-          <Wifi className="h-4 w-4 animate-pulse" />
-          <span>{t('status.reconnecting', { count: reconnectAttempts })}</span>
-        </>
-      ) : (
-        <>
-          <WifiOff className="h-4 w-4" />
-          <span>{t('status.disconnected')}</span>
-        </>
-      )}
-    </div>
+    <>
+      <span
+        data-testid="socket-connection-status"
+        data-connected={isConnected ? 'true' : 'false'}
+        className="sr-only"
+      />
+      {banner}
+    </>
   )
 }
 

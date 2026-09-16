@@ -29,9 +29,12 @@ use crate::{
     process::CommandSpec,
     protocol::ExecutionRequest,
     services::skill_deployer::{
-        build_skill_deployment_plan, SkillDeploymentOptions, SkillDeploymentPlan, SkillRef,
+        build_skill_deployment_plan, validate_skill_name, SkillDeploymentOptions,
+        SkillDeploymentPlan, SkillRef,
     },
 };
+
+use super::claude_code::has_task_skill_names;
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
@@ -39,7 +42,11 @@ const DOWNLOAD_ATTEMPTS: usize = 3;
 const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
 
 pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> ExecutionRequest {
-    if request.extra.get("interactive_form_answer").is_some() {
+    if request
+        .extra
+        .get("interactive_form_answer")
+        .is_some_and(|answer| !answer.is_null())
+    {
         return request;
     }
     let attachments = attachment_records(&request);
@@ -357,6 +364,22 @@ pub async fn prepare_claude_runtime(
         .get("SKILLS_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| config_dir.join("skills"));
+    if has_task_skill_names(request) && skills_dir.starts_with(&task_dir) {
+        if skills_dir.exists() {
+            fs::remove_dir_all(&skills_dir).map_err(|error| {
+                format!(
+                    "failed to reset Claude task skills dir {}: {error}",
+                    skills_dir.display()
+                )
+            })?;
+        }
+        fs::create_dir_all(&skills_dir).map_err(|error| {
+            format!(
+                "failed to create Claude task skills dir {}: {error}",
+                skills_dir.display()
+            )
+        })?;
+    }
     deploy_request_skills(request, &skills_dir).await?;
 
     let global_mcps = load_global_mcp_records();
@@ -375,9 +398,15 @@ pub async fn prepare_claude_runtime(
             ),
         ],
     );
-    let claude_options = extract_claude_options(request, &global_mcps);
+    if managed_wework_mcp_required(request) {
+        crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    }
+    let mut claude_options = extract_claude_options(request, &global_mcps);
+    inject_managed_wework_mcps(request, &mut claude_options.mcp_servers)?;
     if !claude_options.mcp_servers.is_empty() {
-        let mcp_config_path = config_dir.join("mcp.json");
+        let mcp_config_path = task_dir
+            .join(".wework/runtime")
+            .join(claude_mcp_config_file_name(request));
         let content = json!({"mcpServers": claude_options.mcp_servers});
         if write_json_file(&mcp_config_path, &content).is_ok() {
             spec = spec
@@ -405,6 +434,60 @@ pub async fn prepare_claude_runtime(
     }
 
     Ok(spec)
+}
+
+fn managed_wework_mcp_required(request: &ExecutionRequest) -> bool {
+    let notifications_available = request
+        .backend_url
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+        && request
+            .auth_token
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty());
+    notifications_available
+        || crate::task_runtime::mcp::encoded_space_context_grant(request).is_some()
+}
+
+fn inject_managed_wework_mcps(
+    request: &ExecutionRequest,
+    mcp_servers: &mut BTreeMap<String, Value>,
+) -> Result<(), String> {
+    if let Some(config) = crate::task_runtime::mcp::notifications_mcp_client_config(request)? {
+        let headers = config
+            .headers
+            .into_iter()
+            .map(|(name, value)| (name, Value::String(value)))
+            .collect::<Map<String, Value>>();
+        mcp_servers.insert(
+            crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME.to_owned(),
+            json!({
+                "type": "http",
+                "url": config.url,
+                "headers": headers,
+                "timeout": crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000,
+            }),
+        );
+    }
+    if crate::task_runtime::mcp::encoded_space_context_grant(request).is_none() {
+        return Ok(());
+    }
+    let config = crate::task_runtime::mcp::space_mcp_client_config(request)?;
+    let headers = config
+        .headers
+        .into_iter()
+        .map(|(name, value)| (name, Value::String(value)))
+        .collect::<Map<String, Value>>();
+    mcp_servers.insert(
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME.to_owned(),
+        json!({
+            "type": "http",
+            "url": config.url,
+            "headers": headers,
+            "timeout": crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000,
+        }),
+    );
+    Ok(())
 }
 
 pub async fn prepare_codex_runtime(request: &ExecutionRequest) {
@@ -907,7 +990,41 @@ async fn deploy_skills(
         .map(|skill| {
             let client = &client;
             async move {
+                if let Err(error) = validate_skill_name(&skill) {
+                    return SkillDeploymentResult {
+                        skill_name: skill,
+                        success: false,
+                        installed: None,
+                        failure_reason: Some(error),
+                    };
+                }
                 let target = plan.skills_dir.join(&skill);
+                if let Some(source) = local_codex_skill_source(plan, &skill) {
+                    return match stage_local_skill(&source, &target) {
+                        Ok(()) => {
+                            log_executor_event(
+                                "local Codex Skill staged",
+                                &[
+                                    ("skill", skill.clone()),
+                                    ("source", source.display().to_string()),
+                                    ("target", target.display().to_string()),
+                                ],
+                            );
+                            SkillDeploymentResult {
+                                skill_name: skill,
+                                success: true,
+                                installed: None,
+                                failure_reason: None,
+                            }
+                        }
+                        Err(error) => SkillDeploymentResult {
+                            skill_name: skill,
+                            success: false,
+                            installed: None,
+                            failure_reason: Some(error),
+                        },
+                    };
+                }
                 let skill_ref = plan.resolved_skill_map.get(&skill);
                 let cache_miss_reason =
                     match skill_cache_miss_reason(&plan.skills_dir, &skill, skill_ref) {
@@ -1019,6 +1136,65 @@ async fn deploy_skills(
         failed_skills,
         failed_skill_reasons,
     })
+}
+
+fn local_codex_skill_source(plan: &SkillDeploymentPlan, skill_name: &str) -> Option<PathBuf> {
+    (plan.skill_namespaces.get(skill_name).map(String::as_str) == Some("codex"))
+        .then(|| {
+            super::codex::wework_codex_home()
+                .join("skills")
+                .join(skill_name)
+        })
+        .filter(|source| source.join("SKILL.md").is_file())
+}
+
+fn stage_local_skill(source: &Path, target: &Path) -> Result<(), String> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("Skill target has no parent: {}", target.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create Skill target directory: {error}"))?;
+    let staging = tempfile::Builder::new()
+        .prefix(".wegent-skill-stage-")
+        .tempdir_in(parent)
+        .map_err(|error| format!("failed to create Skill staging directory: {error}"))?;
+    copy_skill_directory(source, staging.path())?;
+    if target.exists() {
+        fs::remove_dir_all(target)
+            .map_err(|error| format!("failed to replace existing Skill: {error}"))?;
+    }
+    let staging_path = staging.keep();
+    fs::rename(&staging_path, target).map_err(|error| {
+        let _ = fs::remove_dir_all(&staging_path);
+        format!("failed to activate staged Skill: {error}")
+    })
+}
+
+fn copy_skill_directory(source: &Path, target: &Path) -> Result<(), String> {
+    for entry in fs::read_dir(source)
+        .map_err(|error| format!("failed to read Skill source {}: {error}", source.display()))?
+    {
+        let entry = entry.map_err(|error| format!("failed to read Skill entry: {error}"))?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("failed to inspect Skill entry: {error}"))?;
+        if file_type.is_dir() {
+            fs::create_dir_all(&target_path)
+                .map_err(|error| format!("failed to create Skill directory: {error}"))?;
+            copy_skill_directory(&source_path, &target_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&source_path, &target_path)
+                .map_err(|error| format!("failed to copy Skill file: {error}"))?;
+        } else {
+            return Err(format!(
+                "unsupported Skill entry type: {}",
+                source_path.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1375,7 +1551,10 @@ pub(super) async fn resolve_skill(
 
     let mut path = format!(
         "/api/v1/kinds/skills?name={skill_name}&namespace={}",
-        plan.team_namespace
+        plan.skill_namespaces
+            .get(skill_name)
+            .map(String::as_str)
+            .unwrap_or(&plan.team_namespace)
     );
     if let Some(task_id) = &plan.task_id {
         path.push_str(&format!("&task_id={task_id}"));
@@ -1628,10 +1807,7 @@ fn attachment_record(value: &Value) -> Option<AttachmentRecord> {
         subtask_id: value
             .get("subtask_id")
             .or_else(|| value.get("subtaskId"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned),
+            .and_then(value_id_string),
         error: value
             .get("error")
             .and_then(|value| value_string(Some(value))),
@@ -1692,10 +1868,7 @@ fn attachment_subtask_id(attachments: &[AttachmentRecord], request: &ExecutionRe
                 .extra
                 .get("user_subtask_id")
                 .or_else(|| request.extra.get("userSubtaskId"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
+                .and_then(value_id_string)
         })
         .unwrap_or_else(|| request.subtask_id.clone())
 }
@@ -2282,7 +2455,41 @@ fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
     }
     let content = serde_json::to_string_pretty(value)
         .map_err(|error| format!("failed to serialize JSON: {error}"))?;
-    fs::write(path, content).map_err(|error| format!("failed to write {}: {error}", path.display()))
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|error| format!("failed to open {}: {error}", path.display()))?;
+    use std::io::Write;
+    file.write_all(content.as_bytes())
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+}
+
+fn claude_mcp_config_file_name(request: &ExecutionRequest) -> String {
+    fn safe_component(value: &str) -> String {
+        let value = value
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+            .take(64)
+            .collect::<String>();
+        if value.is_empty() {
+            "unknown".to_owned()
+        } else {
+            value
+        }
+    }
+
+    format!(
+        "claude-mcp-{}-{}.json",
+        safe_component(&request.task_id),
+        safe_component(&request.subtask_id)
+    )
 }
 
 fn primary_bot(request: &ExecutionRequest) -> Option<&Value> {
@@ -2373,6 +2580,17 @@ fn value_string(value: Option<&Value>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn value_id_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => {
+            let value = value.trim();
+            (!value.is_empty()).then(|| value.to_owned())
+        }
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
 fn toml_key_path(segments: &[&str]) -> String {
     segments
         .iter()
@@ -2422,6 +2640,101 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    #[test]
+    fn injects_executor_owned_project_space_mcp_for_claude_board_task() {
+        let mut request = ExecutionRequest {
+            task_id: "runtime-task-claude".to_owned(),
+            backend_url: Some("https://wework.example.com".to_owned()),
+            auth_token: Some("runtime-token".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "origin".to_owned(),
+            json!({
+                "type": "board_task",
+                "cloudProjectId": "space-claude",
+                "loopItemId": "issue-claude",
+            }),
+        );
+        let mut servers = BTreeMap::from([(
+            crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME.to_owned(),
+            json!({
+                "type": "stdio",
+                "command": "untrusted-space-server",
+            }),
+        )]);
+
+        inject_managed_wework_mcps(&request, &mut servers)
+            .expect("project-space MCP should be injected");
+
+        let server = &servers[crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME];
+        assert_eq!(server["type"], "http");
+        assert_eq!(server["url"], "http://127.0.0.1:1/mcp");
+        assert_eq!(server["timeout"], 60_000);
+        assert_eq!(
+            server["headers"]["Authorization"],
+            "Bearer test-space-mcp-instance-token"
+        );
+        assert_eq!(
+            server["headers"]["X-Wework-Mcp-Context"],
+            "test-space-mcp-context-handle"
+        );
+        let serialized = serde_json::to_string(server).expect("serialized Claude MCP config");
+        assert!(!serialized.contains("https://wework.example.com"));
+        assert!(!serialized.contains("runtime-token"));
+        assert!(!serialized.contains("runtime-task-claude"));
+        assert!(!serialized.contains("space-claude"));
+        assert!(!serialized.contains("issue-claude"));
+        assert!(server.get("command").is_none());
+    }
+
+    #[test]
+    fn injects_notifications_without_project_context_for_claude_chat() {
+        let request = ExecutionRequest {
+            task_id: "runtime-task-notification".to_owned(),
+            backend_url: Some("https://wework.example.com".to_owned()),
+            auth_token: Some("runtime-token".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        let mut servers = BTreeMap::new();
+
+        inject_managed_wework_mcps(&request, &mut servers)
+            .expect("notifications MCP should be injected");
+
+        assert!(!servers.contains_key(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME));
+        let server = &servers[crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME];
+        assert_eq!(server["type"], "http");
+        assert_eq!(server["url"], "http://127.0.0.1:1/notifications/mcp");
+        assert_eq!(
+            server["headers"]["X-Wework-Mcp-Context"],
+            "test-space-mcp-context-handle"
+        );
+        let serialized = serde_json::to_string(server).expect("serialized Claude MCP config");
+        assert!(!serialized.contains("https://wework.example.com"));
+        assert!(!serialized.contains("runtime-token"));
+    }
+
+    #[test]
+    fn stages_local_codex_skill_for_any_runtime() {
+        let temp = tempfile::tempdir().expect("temporary Skill directory");
+        let source = temp.path().join("source");
+        let target = temp.path().join("target");
+        fs::create_dir_all(source.join("references")).expect("nested source directory");
+        fs::write(source.join("SKILL.md"), "# Shared Skill").expect("Skill file");
+        fs::write(source.join("references/guide.md"), "guide").expect("reference file");
+
+        stage_local_skill(&source, &target).expect("local Skill should stage");
+
+        assert_eq!(
+            fs::read_to_string(target.join("SKILL.md")).expect("staged Skill"),
+            "# Shared Skill"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("references/guide.md")).expect("staged reference"),
+            "guide"
+        );
+    }
 
     #[test]
     fn attachment_filenames_are_disambiguated_on_collision() {
@@ -2619,6 +2932,102 @@ mod tests {
     }
 
     #[test]
+    fn null_interactive_form_answer_keeps_claude_attachment_processing() {
+        let _lock = crate::test_env::lock();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let temp = env::temp_dir().join(format!(
+                "claude-null-interactive-attachment-{}",
+                std::process::id()
+            ));
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buffer = vec![0; 8192];
+                let read = stream.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..read]);
+                assert!(request.starts_with("GET /api/attachments/1/executor-download "));
+                assert!(request.contains("authorization: Bearer test-token\r\n"));
+                let body = b"image-bytes";
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(header.as_bytes()).await.unwrap();
+                stream.write_all(body).await.unwrap();
+            });
+            let _workspace = EnvGuard::set("WORKSPACE_ROOT", temp.to_str().unwrap());
+            let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
+            let _task_api = EnvGuard::remove("TASK_API_DOMAIN");
+            let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+            let request: ExecutionRequest = serde_json::from_value(json!({
+                "task_id": 72,
+                "subtask_id": 204,
+                "prompt": "Read /home/user/72:executor:attachments/203/image.png",
+                "auth_token": "test-token",
+                "backend_url": format!("http://{address}"),
+                "interactive_form_answer": null,
+                "attachments": [{
+                    "id": 1,
+                    "original_filename": "image.png",
+                    "file_size": 12,
+                    "mime_type": "image/png",
+                    "subtask_id": 203
+                }]
+            }))
+            .unwrap();
+
+            let prepared = prepare_claude_execution_request(request).await;
+            let prompt = prepared.prompt.as_str().unwrap();
+            let downloaded = temp
+                .join("72")
+                .join("72:executor:attachments")
+                .join("203")
+                .join("image.png");
+
+            tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .expect("mock attachment server timed out")
+                .unwrap();
+            assert_eq!(fs::read(&downloaded).unwrap(), b"image-bytes");
+            assert!(prompt.contains(downloaded.to_str().unwrap()));
+            assert!(!prompt.contains("/home/user/72:executor:attachments/203/image.png"));
+            let _ = fs::remove_dir_all(temp);
+        });
+    }
+
+    #[tokio::test]
+    async fn populated_interactive_form_answer_skips_claude_attachment_processing() {
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "task_id": 72,
+            "subtask_id": 204,
+            "prompt": "Read /home/user/72:executor:attachments/203/image.png",
+            "interactive_form_answer": {"tool_use_id": "tool-1", "answers": {}},
+            "attachments": [{
+                "id": 1,
+                "original_filename": "image.png",
+                "status": "success",
+                "local_path": "/workspace/image.png",
+                "file_size": 12,
+                "mime_type": "image/png",
+                "subtask_id": 203
+            }]
+        }))
+        .unwrap();
+
+        let prepared = prepare_claude_execution_request(request).await;
+
+        assert_eq!(
+            prepared.prompt,
+            Value::String("Read /home/user/72:executor:attachments/203/image.png".to_owned())
+        );
+    }
+
+    #[test]
     fn merge_synced_attachments_preserves_local_items_and_replaces_downloaded_items() {
         let original = vec![
             json!({
@@ -2772,9 +3181,10 @@ mod tests {
         .unwrap();
         let plan = SkillDeploymentPlan {
             skills: vec!["agent-skill".to_owned()],
+            skill_namespaces: BTreeMap::new(),
             auth_token: "token".to_owned(),
             team_namespace: "default".to_owned(),
-            task_id: Some("88".to_owned()),
+            task_id: Some(88),
             skills_dir: skills_dir.clone(),
             clear_cache: true,
             skip_existing: false,
@@ -2811,9 +3221,10 @@ mod tests {
         .await;
         let plan = SkillDeploymentPlan {
             skills: vec!["agent-skill-a".to_owned(), "agent-skill-b".to_owned()],
+            skill_namespaces: BTreeMap::new(),
             auth_token: "token".to_owned(),
             team_namespace: "default".to_owned(),
-            task_id: Some("88".to_owned()),
+            task_id: Some(88),
             skills_dir: skills_dir.clone(),
             clear_cache: true,
             skip_existing: false,

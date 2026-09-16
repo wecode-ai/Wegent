@@ -18,6 +18,15 @@ import type {
   ResourceLibraryReferenceUsage,
 } from '@/features/resource-library/types'
 import type { MarketplaceTagsResponse } from '@/types/marketplace'
+import type { Team } from '@/types/api'
+
+export interface ResourceSearchPage {
+  resource_type: 'agent'
+  items: Team[]
+  has_more: boolean
+  next_cursor: string | null
+  limit: number
+}
 
 const RESOURCE_LIBRARY_BASE_PATH = '/resource-library'
 
@@ -67,6 +76,36 @@ function toInstallApiRequest(
 }
 
 export const resourceLibraryApi = {
+  searchResources(
+    params: {
+      keyword: string
+      resourceType: 'agent'
+      ownedOnly?: boolean
+      scope?: 'personal' | 'group' | 'all'
+      groupName?: string
+      groupNames?: string[]
+      sourceFilter?: 'all' | 'mine' | 'personal' | 'group' | 'system'
+      mode?: 'all' | 'chat' | 'code' | 'task' | 'knowledge' | 'video' | 'image'
+      cursor?: string
+      limit?: number
+    },
+    signal?: AbortSignal
+  ): Promise<ResourceSearchPage> {
+    const query = new URLSearchParams({
+      keyword: params.keyword,
+      resource_type: params.resourceType,
+    })
+    appendQueryParam(query, 'scope', params.scope)
+    appendQueryParam(query, 'owned_only', params.ownedOnly)
+    appendQueryParam(query, 'group_name', params.groupName)
+    params.groupNames?.forEach(name => query.append('group_names', name))
+    appendQueryParam(query, 'source_filter', params.sourceFilter)
+    appendQueryParam(query, 'mode', params.mode)
+    appendQueryParam(query, 'cursor', params.cursor)
+    appendQueryParam(query, 'limit', params.limit)
+    return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/search?${query}`, { signal })
+  },
+
   getMarketplaceTags(): Promise<MarketplaceTagsResponse> {
     return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/tags`)
   },

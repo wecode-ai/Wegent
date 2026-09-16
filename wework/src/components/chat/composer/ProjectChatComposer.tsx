@@ -45,7 +45,11 @@ import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
-import type { ComposerExternalMentionCandidate } from './composerTextareaTypes'
+import {
+  primaryComposerSubmitOptions,
+  type ComposerExternalMentionCandidate,
+  type ComposerFollowUpBehavior,
+} from './composerTextareaTypes'
 import type { ModelSelectorCloseReason } from './model-selector-types'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import styles from './ProjectChatComposer.module.css'
@@ -122,6 +126,8 @@ interface ProjectChatComposerProps {
   projectWorkBarTrailingContext?: ReactNode
   projectWorkBarEndContext?: ReactNode
   modelSelectorOverride?: ReactNode
+  sendKey?: 'enter' | 'cmd_enter'
+  followUpBehavior?: ComposerFollowUpBehavior
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -205,6 +211,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       projectWorkBarTrailingContext,
       projectWorkBarEndContext,
       modelSelectorOverride,
+      sendKey = 'enter',
+      followUpBehavior = 'queue',
     },
     ref
   ) {
@@ -235,7 +243,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
     )
     const textareaRef = useAutoResizeTextarea(value, 112)
     const canSend =
-      (hasText || attachments.length > 0 || codeComments.length > 0) && !disabled && !submitDisabled
+      (hasText || attachments.length > 0 || codeComments.length > 0) &&
+      isModelSelectionReady &&
+      !disabled &&
+      !submitDisabled
     const canCollapseInShortPane =
       attachments.length === 0 &&
       uploadingFiles.size === 0 &&
@@ -397,7 +408,14 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               disabled,
               isStreaming,
             })
-            if (canSend) onSubmit(submittedValue)
+            if (canSend) {
+              const options = primaryComposerSubmitOptions(isStreaming, followUpBehavior)
+              if (options) {
+                onSubmit(submittedValue, options)
+              } else {
+                onSubmit(submittedValue)
+              }
+            }
           }}
         >
           <AttachmentBadges
@@ -497,6 +515,9 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onSelectModel={onSelectModel}
             onBlockedModelSelect={onBlockedModelSelect}
             isModelSelectionReady={isModelSelectionReady}
+            sendKey={sendKey}
+            followUpBehavior={followUpBehavior}
+            isStreaming={isStreaming}
           />
           <ComposerToolbar
             className={styles.toolbar}
@@ -546,6 +567,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onQuickPhraseSelect={handleQuickPhraseSelect}
             projectPhrases={projectPhrases}
             onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
+            sendKey={sendKey}
+            followUpBehavior={followUpBehavior}
             leadingContext={toolbarLeadingContext}
             onListLocalApps={onListLocalApps}
             workspaceTarget={workspaceTarget}

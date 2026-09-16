@@ -13,6 +13,7 @@ import {
   takeHarnessAppProxyToken,
   unregisterHarnessAppTab,
 } from '@/features/harness-apps/harnessAppTabs'
+import { notifyHarnessAppInstallationsChanged } from './harnessAppInstallationsChanged'
 import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -66,6 +67,11 @@ export function HarnessAppAutoLauncher({
         }
         if (installation.state === 'running' && installation.webUrl) {
           registerHarnessAppTab(installation)
+          notifyHarnessAppInstallationsChanged({
+            type: 'updated',
+            installationId,
+            installation,
+          })
           if (isElectronRuntime()) clearHarnessAppLaunch(installationId)
           return
         }
@@ -107,6 +113,11 @@ export function HarnessAppAutoLauncher({
           await storeHarnessAppProxyToken(installationId, launch.proxyToken)
           if (contextToken) await storeHarnessAppContextToken(installationId, contextToken)
           registerHarnessAppTab(running)
+          notifyHarnessAppInstallationsChanged({
+            type: 'updated',
+            installationId,
+            installation: running,
+          })
           if (isElectronRuntime()) clearHarnessAppLaunch(installationId)
         } catch (error) {
           console.warn(`[Wework] failed to auto-launch Smart app ${installationId}`, error)

@@ -728,6 +728,28 @@ describe('ComposerProseMirrorEditor', () => {
     expect(editorRef.current?.getSnapshot().value).toBe(GMAIL_REFERENCE)
   })
 
+  test('converts a complete qualified skill reference inserted as one text input', () => {
+    const qualifiedReference =
+      '[$openai-developers:openai-platform-api-key](/tmp/openai-platform-api-key/SKILL.md)'
+    const value = `${qualifiedReference} Verify the sent qualified skill mention.`
+    const { editorRef, onChange } = renderEditor('')
+    const editor = screen.getByTestId('composer-editor')
+    const event = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: value,
+      inputType: 'insertText',
+    })
+
+    expect(editor.dispatchEvent(event)).toBe(false)
+    expect(event.defaultPrevented).toBe(true)
+    expect(editorRef.current?.getSnapshot().value).toBe(value)
+    expect(
+      screen.getByTestId('local-skill-chip-openai-developers-openai-platform-api-key')
+    ).toBeInTheDocument()
+    expect(onChange).toHaveBeenLastCalledWith(value)
+  })
+
   test('prevents the paragraph event emitted after a consumed autocomplete Enter', () => {
     const onBeforeInput = vi.fn((event: InputEvent) => event.inputType === 'insertParagraph')
     renderEditor(GMAIL_REFERENCE, onBeforeInput)

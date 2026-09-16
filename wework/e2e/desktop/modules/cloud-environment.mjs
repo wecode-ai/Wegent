@@ -11,6 +11,7 @@ import {
   CLOUD_MODEL_CASES,
   CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_PUBLIC_MODEL_NAME,
+  CLOUD_PUBLIC_MODEL_OPTIONS,
   CLOUD_VISION_SIDECAR_CASE,
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_API_KEY,
@@ -44,11 +45,6 @@ const REDIS_START_ATTEMPTS = 5
 const REDIS_READY_PATTERN = /Ready to accept connections/
 const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
 const MANAGED_CLOUD_SANDBOX_ID = 'wework-e2e-managed-cloud-sandbox'
-const CLOUD_PUBLIC_MODEL_OPTIONS = {
-  weworkCloudModelNamespace: 'default',
-  weworkCloudModelResourceUserId: '0',
-  weworkCloudModelUpstreamApiFormat: 'openai-responses',
-}
 const E2E_ERP_DEPARTMENT = {
   department_id: 'wework-e2e-erp-department',
   name: 'Wework E2E ERP Department',
@@ -181,6 +177,79 @@ class LocalErpOpenSearch {
   }
 }
 
+class LocalNevisSandboxService {
+  constructor() {
+    this.restartRequests = []
+  }
+
+  async start() {
+    this.port = await reservePort()
+    this.server = createServer((request, response) => {
+      void this.handle(request, response).catch(error => {
+        if (response.headersSent) {
+          response.destroy(error instanceof Error ? error : undefined)
+          return
+        }
+        response.writeHead(500)
+        response.end()
+      })
+    })
+    await new Promise((resolvePromise, reject) => {
+      this.server.once('error', reject)
+      this.server.listen(this.port, '127.0.0.1', resolvePromise)
+    })
+    this.endpoint = `http://127.0.0.1:${this.port}`
+  }
+
+  sendJson(response, body) {
+    response.writeHead(200, { 'Content-Type': 'application/json' })
+    response.end(JSON.stringify(body))
+  }
+
+  async handle(request, response) {
+    const url = new URL(request.url ?? '/', this.endpoint)
+    const restartMatch = url.pathname.match(
+      /^\/apis\/sandboxes\/v1\/managers\/([^/]+)\/sandboxes\/([^/]+)\/restart$/
+    )
+    if (request.method === 'POST' && restartMatch) {
+      request.resume()
+      const restartRequest = {
+        managerId: decodeURIComponent(restartMatch[1]),
+        sandboxId: decodeURIComponent(restartMatch[2]),
+      }
+      this.restartRequests.push(restartRequest)
+      this.sendJson(response, { id: restartRequest.sandboxId, status: 'restarting' })
+      return
+    }
+    if (request.method === 'POST' && url.pathname.endsWith('/metrics/raw_query')) {
+      request.resume()
+      this.sendJson(response, { data: { data: { result: [] } } })
+      return
+    }
+    response.writeHead(404)
+    response.end()
+  }
+
+  async waitForRestartRequest(afterCount) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+      if (this.restartRequests.length > afterCount) {
+        return this.restartRequests[afterCount]
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+    }
+    throw new Error('The local Nevis service did not receive a restart request')
+  }
+
+  async stop() {
+    if (!this.server) return
+    await new Promise(resolvePromise => {
+      this.server.close(resolvePromise)
+      this.server.closeAllConnections?.()
+    })
+  }
+}
+
 class RealCloudEnvironment {
   constructor({
     claudeBinary,
@@ -213,6 +282,8 @@ class RealCloudEnvironment {
     await this.pluginObjectStorage.start()
     this.erpOpenSearch = new LocalErpOpenSearch()
     await this.erpOpenSearch.start()
+    this.nevisSandboxService = new LocalNevisSandboxService()
+    await this.nevisSandboxService.start()
 
     const redisServer = await startRedisServer(this.redisLogPath)
     this.redisPort = redisServer.port
@@ -243,6 +314,7 @@ class RealCloudEnvironment {
       CHAT_SHELL_MODE: 'package',
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
       WEGENT_SOCKET_URL: this.socketUrl,
+      FLOW_SCHEDULER_INTERVAL_SECONDS: '5',
       ...remoteDeviceE2EExtension.backendEnv,
       TERMINAL_PROTOCOL_V2_ENABLED: 'true',
       PYTHONIOENCODING: 'utf-8',
@@ -258,6 +330,10 @@ class RealCloudEnvironment {
       ERP_OPENSEARCH_BASE_URL: this.erpOpenSearch.endpoint,
       ERP_CLIENT_ID: 'wework-e2e-client',
       ERP_CLIENT_secret: 'wework-e2e-secret',
+      NEVIS_BASE_URL: this.nevisSandboxService.endpoint,
+      NEVIS_MANAGER_ID: 'wework-e2e-manager',
+      NEVIS_IMAGE_ID: 'wework-e2e-image',
+      NEVIS_SIGNATURE: 'wework-e2e-signature',
     }
     this.backendEnv = backendEnv
     await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
@@ -328,6 +404,17 @@ class RealCloudEnvironment {
       { fromOffset, timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
     )
     await this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath)
+  }
+
+  async restartBackendWithFrontendUrl(frontendUrl) {
+    assert.ok(frontendUrl, 'The cloud frontend URL is required')
+    assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')
+    await stopProcessGroup(this.backend)
+    this.backendEnv = {
+      ...this.backendEnv,
+      FRONTEND_URL: frontendUrl,
+    }
+    await this.launchBackend()
   }
 
   async publishOfficialSmartApp(sourcePath) {
@@ -752,6 +839,22 @@ class RealCloudEnvironment {
     return devices.find(device => device.device_id === deviceId) ?? null
   }
 
+  async setExecutorLatestVersion(version) {
+    await runChecked(
+      'redis-cli',
+      [
+        '-h',
+        '127.0.0.1',
+        '-p',
+        String(this.redisPort),
+        'SET',
+        'executor:latest_version',
+        JSON.stringify(version),
+      ],
+      { env: this.backendEnv }
+    )
+  }
+
   async devices() {
     const devices = await fetchJson(`${this.backendUrl}/api/devices`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
@@ -932,6 +1035,15 @@ class RealCloudEnvironment {
       runtimeInstanceId: device.runtime_instance_id,
       logOffset: previousLog.length,
     }
+  }
+
+  nevisRestartRequestCount() {
+    return this.nevisSandboxService?.restartRequests.length ?? 0
+  }
+
+  async waitForNevisRestartRequest(afterCount) {
+    assert.ok(this.nevisSandboxService, 'The local Nevis service is not running')
+    return this.nevisSandboxService.waitForRestartRequest(afterCount)
   }
 
   async startGeneratedRemoteDevice({
@@ -1281,6 +1393,7 @@ class RealCloudEnvironment {
     await stopProcessGroup(this.backend)
     await this.pluginObjectStorage?.stop()
     await this.erpOpenSearch?.stop()
+    await this.nevisSandboxService?.stop()
     await stopProcess(this.redis)
   }
 }

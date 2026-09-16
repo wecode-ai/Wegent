@@ -127,15 +127,47 @@ impl ResponsesEventBuilder {
     }
 
     pub fn response_text_delta(&self, delta: &str, offset: usize) -> EventEnvelope {
+        self.response_text_delta_for_item(&self.item_id, delta, offset)
+    }
+
+    pub fn response_text_delta_for_item(
+        &self,
+        item_id: &str,
+        delta: &str,
+        offset: usize,
+    ) -> EventEnvelope {
         self.envelope(
             "response.output_text.delta",
             json!({
                 "type": "response.output_text.delta",
-                "item_id": self.item_id,
+                "item_id": item_id,
                 "output_index": 0,
                 "content_index": 0,
                 "delta": delta,
                 "offset": offset
+            }),
+        )
+    }
+
+    pub fn response_process_block_created(
+        &self,
+        block_id: &str,
+        block_type: &str,
+        process_kind: &str,
+        content: &str,
+    ) -> EventEnvelope {
+        self.envelope(
+            "response.block.created",
+            json!({
+                "type": "response.block.created",
+                "block": {
+                    "id": block_id,
+                    "type": block_type,
+                    "process_kind": process_kind,
+                    "content": content,
+                    "status": "done",
+                    "timestamp": current_epoch_millis()
+                }
             }),
         )
     }

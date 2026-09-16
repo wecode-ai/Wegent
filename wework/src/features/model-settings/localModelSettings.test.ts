@@ -25,7 +25,9 @@ describe('localModelSettings', () => {
     })
 
     expect(responses.toolProfile).toBe('custom')
+    expect(responses.codexToolCompatibility).toBe('native')
     expect(chat.toolProfile).toBe('function')
+    expect(chat.codexToolCompatibility).toBe('standard')
     expect(() =>
       saveLocalModelConfig({
         modelId: 'invalid-custom',
@@ -41,6 +43,18 @@ describe('localModelSettings', () => {
       toolProfile: 'function',
     })
     expect(functionResponses.toolProfile).toBe('function')
+  })
+
+  test('persists an explicit standard Responses compatibility override', () => {
+    const model = saveLocalModelConfig({
+      modelId: 'azure-responses-model',
+      baseUrl: 'https://azure.example/openai/v1',
+      apiFormat: 'openai-responses',
+      codexToolCompatibility: 'standard',
+    })
+
+    expect(model.codexToolCompatibility).toBe('standard')
+    expect(listLocalModelConfigs()[0].codexToolCompatibility).toBe('standard')
   })
 
   beforeEach(() => {

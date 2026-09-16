@@ -14,6 +14,8 @@ import type {
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 import { WORKSPACE_PATH_DRAG_TYPE } from '@/lib/workspace-path-transfer'
 import { SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -286,6 +288,27 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
   })
 
+  test.each(['desktop', 'compact'] as const)(
+    'keeps the %s send action disabled until model selection is ready',
+    async variant => {
+      const onSubmit = vi.fn()
+      render(
+        <ChatInput
+          value="new task"
+          onChange={vi.fn()}
+          onSubmit={onSubmit}
+          disabled={false}
+          variant={variant}
+          projectChat={projectChatControls({ isModelSelectionReady: false })}
+        />
+      )
+
+      expect(screen.getByTestId('send-message-button')).toBeDisabled()
+      await userEvent.click(screen.getByTestId('send-message-button'))
+      expect(onSubmit).not.toHaveBeenCalled()
+    }
+  )
+
   test('does not move selection when an unfocused composer syncs its value', async () => {
     const renderComposers = (backgroundValue?: string) => (
       <>
@@ -554,17 +577,21 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         variant="desktop"
+        collapseWhenIdle
         isStreaming
         onPause={onPause}
       />
     )
 
+    const form = screen.getByTestId('project-chat-composer-form')
+    expect(form).toHaveAttribute('data-short-expanded', 'false')
     expect(screen.getByTestId('pause-response-button')).toBeInTheDocument()
     expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('pause-response-button'))
 
     expect(onPause).toHaveBeenCalledTimes(1)
+    expect(form).toHaveAttribute('data-short-expanded', 'true')
   })
 
   test('shows desktop send button for a draft while the assistant is streaming', async () => {
@@ -587,6 +614,46 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('send-message-button'))
 
     expect(onSubmit).toHaveBeenCalledWith('继续修复')
+  })
+
+  test('uses the selected follow-up behavior for the primary streaming action', async () => {
+    const onSubmit = vi.fn()
+
+    render(
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {},
+            state: {
+              user: {
+                id: 1,
+                user_name: 'alice',
+                email: 'alice@example.com',
+                preferences: {
+                  send_key: 'cmd_enter',
+                  follow_up_behavior: 'guide',
+                },
+              },
+            },
+          } as WorkbenchContextValue
+        }
+      >
+        <ChatInput
+          value="调整当前回复"
+          onChange={vi.fn()}
+          onSubmit={onSubmit}
+          disabled={false}
+          variant="desktop"
+          isStreaming
+        />
+      </WorkbenchContext.Provider>
+    )
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+
+    expect(onSubmit).toHaveBeenCalledWith('调整当前回复', {
+      guideWhenBusy: true,
+    })
   })
 
   test('offers interrupt-and-send while the assistant is streaming', async () => {
@@ -613,7 +680,9 @@ describe('ChatInput', () => {
     ).toBeInTheDocument()
     const sendAfterTurnOption = screen.getByTestId('send-after-turn-option')
     expect(sendAfterTurnOption.querySelector('.lucide-corner-down-left')).toBeInTheDocument()
-    expect(screen.getByTestId('guide-current-turn-option')).toHaveTextContent('⌘')
+    expect(
+      screen.getByTestId('guide-current-turn-option').querySelector('.lucide-corner-down-left')
+    ).not.toBeInTheDocument()
     expect(screen.getByTestId('interrupt-and-send-option')).toHaveTextContent('⇧')
     await userEvent.click(screen.getByTestId('interrupt-and-send-option'))
 
@@ -3466,7 +3535,7 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('goal-status-bar')).not.toHaveTextContent('继续执行中')
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('正在开始下一轮')
     expect(screen.getByTestId('pause-goal-button')).toBeInTheDocument()
   })
 
@@ -4042,6 +4111,7 @@ describe('ChatInput', () => {
   })
 
   test('shows no-project transition from the standalone entry', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
 
     render(
@@ -4071,6 +4141,7 @@ describe('ChatInput', () => {
             },
           ],
           currentProjectId: 7,
+          onSelectProject,
           onSelectStandaloneDevice,
         })}
       />
@@ -4079,10 +4150,12 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
   test('shows no-project option before selecting a concrete project', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
 
     render(
@@ -4095,6 +4168,7 @@ describe('ChatInput', () => {
         projectWork={projectWorkControls({
           projects: [{ id: 7, name: 'Wegent', tasks: [] }],
           currentProjectId: undefined,
+          onSelectProject,
           onSelectStandaloneDevice,
         })}
       />
@@ -4106,10 +4180,12 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
-  test('hides standalone devices and selects the local device for no-project mode', async () => {
+  test('hides standalone devices and clears the project for no-project mode', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
     const devices: DeviceInfo[] = [
       {
@@ -4152,6 +4228,7 @@ describe('ChatInput', () => {
           projects: [{ id: 7, name: 'Wegent', tasks: [] }],
           devices,
           currentProjectId: 7,
+          onSelectProject,
           onSelectStandaloneDevice,
         })}
       />
@@ -4164,7 +4241,8 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('standalone-device-option-local-online')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('no-project-option'))
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('local-online')
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
   test('marks the current project instead of a remembered standalone device', async () => {

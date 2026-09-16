@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { CloudWorkPage } from './CloudWorkPage'
@@ -161,6 +161,12 @@ vi.mock('@/components/layout/workbenchShellEvents', () => ({
 describe('CloudWorkPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  test('refreshes devices when the cloud work page opens', async () => {
+    render(<CloudWorkPage />)
+
+    await waitFor(() => expect(workbenchMock.value.refreshDevices).toHaveBeenCalledOnce())
   })
 
   test('shows cloud devices and cloud projects without local resources', () => {

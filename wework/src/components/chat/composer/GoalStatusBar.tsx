@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CircleDot, Pause, Pencil, Play, Target, Trash2 } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { RuntimeGoal, RuntimeGoalStatus } from '@/types/api'
+import type { RuntimeGoal, RuntimeGoalExecutionStatus, RuntimeGoalStatus } from '@/types/api'
 
 interface GoalStatusBarProps {
   goal: RuntimeGoal
   continuing?: boolean
+  executionStatus?: RuntimeGoalExecutionStatus | null
   onEditGoal?: () => void
   onPauseGoal?: () => void
   onResumeGoal?: () => void
@@ -25,6 +27,7 @@ const goalStatusLabelKeys: Record<RuntimeGoalStatus, { key: string; fallback: st
 export function GoalStatusBar({
   goal,
   continuing = false,
+  executionStatus = null,
   onEditGoal,
   onPauseGoal,
   onResumeGoal,
@@ -32,9 +35,14 @@ export function GoalStatusBar({
   integrated = false,
 }: GoalStatusBarProps) {
   const { t } = useTranslation('common')
-  const statusLabel = continuing
-    ? { key: 'workbench.goal_status_compact_continuing', fallback: '继续执行中' }
-    : (goalStatusLabelKeys[goal.status] ?? goalStatusLabelKeys.active)
+  const statusLabel =
+    executionStatus === 'recovering'
+      ? { key: 'workbench.goal_status_compact_recovering', fallback: '正在恢复' }
+      : executionStatus === 'needsAttention'
+        ? { key: 'workbench.goal_status_compact_needs_attention', fallback: '需要恢复' }
+        : continuing
+          ? { key: 'workbench.goal_status_compact_continuing', fallback: '正在开始下一轮' }
+          : (goalStatusLabelKeys[goal.status] ?? goalStatusLabelKeys.active)
   const timerKey = goalTimerKey(goal)
   const [timerState, setTimerState] = useState(() => createTimerState(timerKey, Date.now()))
   const [actionsRevealed, setActionsRevealed] = useState(false)
@@ -43,8 +51,10 @@ export function GoalStatusBar({
     [goal, timerKey, timerState]
   )
   const elapsed = formatGoalElapsed(elapsedSeconds)
-  const resumable = goal.status === 'paused' || goal.status === 'blocked'
+  const resumable =
+    goal.status === 'paused' || goal.status === 'blocked' || executionStatus === 'needsAttention'
   const canToggle = goal.status === 'active' || resumable
+  const showStatus = !canToggle || continuing || executionStatus !== null
   const ToggleIcon = resumable ? Play : Pause
   const toggleLabel = resumable
     ? t('workbench.goal_start', '开始目标')
@@ -84,9 +94,18 @@ export function GoalStatusBar({
         <span className="shrink-0 font-semibold text-text-primary">
           {t('workbench.goal_chip', '目标')}
         </span>
-        <span className="ml-1 min-w-0 truncate text-text-secondary">· {goal.objective}</span>
+        <Tooltip
+          label={goal.objective}
+          align="start"
+          testId="goal-objective-tooltip"
+          className="ml-1 min-w-0 flex-1 shrink overflow-hidden"
+        >
+          <span data-testid="goal-objective" className="block min-w-0 truncate text-text-secondary">
+            · {goal.objective}
+          </span>
+        </Tooltip>
       </div>
-      {!canToggle && (
+      {showStatus && (
         <span className="shrink-0 text-text-muted">{t(statusLabel.key, statusLabel.fallback)}</span>
       )}
       {elapsed && <span className="shrink-0 text-text-muted">{elapsed}</span>}

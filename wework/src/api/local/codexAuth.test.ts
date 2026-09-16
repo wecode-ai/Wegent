@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { cancelLocalCodexLogin, hasLocalCodexAccount, startLocalCodexLogin } from './codexAuth'
+import {
+  cancelLocalCodexLogin,
+  listLocalCodexAccounts,
+  startLocalCodexLogin,
+  switchLocalCodexAccount,
+} from './codexAuth'
 import { ensureLocalExecutorStarted } from '@/desktop/localExecutor'
 
 vi.mock('@/desktop/localExecutor', () => ({
@@ -45,19 +50,59 @@ describe('local Codex auth', () => {
     )
   })
 
-  test('reads account state and cancels the matching login', async () => {
+  test('lists saved accounts and switches the active auth file', async () => {
     const request = vi
       .fn()
-      .mockResolvedValueOnce({ account: null })
-      .mockResolvedValueOnce({ account: { type: 'chatgpt' } })
+      .mockResolvedValueOnce({
+        activeAccountId: 'account-1',
+        accounts: [
+          {
+            id: 'account-1',
+            accountType: 'chatgpt',
+            email: 'one@example.com',
+            planType: 'pro',
+            createdAt: 1,
+            lastUsedAt: 2,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        activeAccountId: 'account-2',
+        accounts: [
+          {
+            id: 'account-2',
+            accountType: 'chatgpt',
+            email: 'two@example.com',
+            planType: null,
+            createdAt: 3,
+            lastUsedAt: 4,
+          },
+        ],
+      })
       .mockResolvedValueOnce({ status: 'canceled' })
 
-    await expect(hasLocalCodexAccount(request)).resolves.toBe(false)
-    await expect(hasLocalCodexAccount(request)).resolves.toBe(true)
+    await expect(listLocalCodexAccounts(request)).resolves.toEqual({
+      activeAccountId: 'account-1',
+      accounts: [
+        {
+          id: 'account-1',
+          accountType: 'chatgpt',
+          email: 'one@example.com',
+          planType: 'pro',
+          createdAt: 1,
+          lastUsedAt: 2,
+        },
+      ],
+    })
+    await expect(switchLocalCodexAccount(' account-2 ', request)).resolves.toMatchObject({
+      activeAccountId: 'account-2',
+    })
     await cancelLocalCodexLogin(' login-1 ', request)
 
-    expect(request).toHaveBeenNthCalledWith(1, 'runtime.codex.auth.read')
-    expect(request).toHaveBeenNthCalledWith(2, 'runtime.codex.auth.read')
+    expect(request).toHaveBeenNthCalledWith(1, 'runtime.codex.accounts.list')
+    expect(request).toHaveBeenNthCalledWith(2, 'runtime.codex.accounts.switch', {
+      accountId: 'account-2',
+    })
     expect(request).toHaveBeenLastCalledWith('runtime.codex.auth.login.cancel', {
       loginId: 'login-1',
     })

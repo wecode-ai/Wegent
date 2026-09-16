@@ -304,6 +304,12 @@
         "executor_description": "Controls the runtime environment used to handle tasks."
       },
       "bind_mode": {
+        "advanced_title": "Advanced settings",
+        "available_modules": "Available modules",
+        "automatic": "Automatic (based on how it runs)",
+        "selected": "Selected",
+        "automatic_hint": "Leave every module unselected to choose automatically from the runtime. Once selected, exactly those modules are saved.",
+        "summary_separator": ", ",
         "more_modes": "More modes",
         "collapse_more_modes": "Collapse more modes",
         "chat": {
@@ -328,23 +334,32 @@
         }
       },
       "executor": {
-        "title": "Executor",
-        "required": "Choose an available executor",
-        "requires_complex_hint": "Code and device modes need Claude Code capability, so the complex executor is preferred.",
-        "custom_shell_placeholder": "Choose custom executor",
-        "no_custom_shells": "No custom executors available",
-        "manage_custom_shells_hint": "Manage custom executors in Resource Library - Executors.",
+        "title": "How it runs",
+        "required": "Choose an available runtime",
+        "requires_coding_agent_hint": "Code and device modes require a coding engine.",
+        "custom_shell_placeholder": "Choose a custom runtime",
+        "no_custom_shells": "No custom runtimes available",
+        "manage_custom_shells_hint": "Add custom runtimes in Resource Library - Executors.",
         "simple": {
-          "title": "Simple",
-          "description": "Uses the Chat executor for conversation and lightweight Q&A."
+          "title": "Everyday chat",
+          "description": "Best for conversations, knowledge Q&A, and lightweight tasks."
         },
         "complex": {
-          "title": "Complex",
-          "description": "Complex executor for code tasks, device tasks, or multi-step complex tasks."
+          "title": "Complex tasks and coding",
+          "description": "For multi-step tasks, code changes, files, commands, and tools."
+        },
+        "coding_runtime_label": "Coding engine",
+        "codex": {
+          "title": "Codex",
+          "description": "Best for agentic coding and tools with OpenAI models."
+        },
+        "claude_code": {
+          "title": "Claude Code",
+          "description": "Best for coding and tools with Anthropic models."
         },
         "custom": {
-          "title": "Custom",
-          "description": "Uses an executor you created for a specialized runtime."
+          "title": "Advanced custom",
+          "description": "Use a runtime you created for specialized needs."
         }
       }
     }

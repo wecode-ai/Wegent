@@ -640,7 +640,7 @@ export function useWorkbenchDataRefresh({
       })
       void timedWorkbenchBootstrapRequest(
         'runtimeWork',
-        executorClient.runtime.listRuntimeWork()
+        executorClient.runtime.listRuntimeWork({ preferCached: true })
       ).then(runtimeWorkResult => {
         if (cancelled) return
         console.info('[startup][renderer]', {

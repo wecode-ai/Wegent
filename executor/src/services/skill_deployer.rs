@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Component, Path, PathBuf},
+};
 
 use serde_json::Value;
 
@@ -26,9 +29,10 @@ pub struct SkillDeploymentOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillDeploymentPlan {
     pub skills: Vec<String>,
+    pub skill_namespaces: BTreeMap<String, String>,
     pub auth_token: String,
     pub team_namespace: String,
-    pub task_id: Option<String>,
+    pub task_id: Option<i64>,
     pub skills_dir: PathBuf,
     pub clear_cache: bool,
     pub skip_existing: bool,
@@ -95,6 +99,7 @@ pub fn collect_skill_names_for_deployment(
 
     add_skill_names(&mut names, request.extra.get("skill_names"));
     add_skill_names(&mut names, request.extra.get("preload_skills"));
+    add_configured_skill_names(&mut names, request.extra.get("additional_skills"));
     names
 }
 
@@ -145,11 +150,18 @@ pub fn build_skill_deployment_plan(
     }
 
     let auth_token = request
-        .auth_token
+        .skill_identity_token
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())?
-        .to_owned();
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            request
+                .auth_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .map(ToOwned::to_owned)?;
     let team_namespace = request
         .team_namespace
         .clone()
@@ -171,14 +183,64 @@ pub fn build_skill_deployment_plan(
 
     Some(SkillDeploymentPlan {
         skills,
+        skill_namespaces: configured_skill_namespaces(request.extra.get("additional_skills")),
         auth_token,
         team_namespace,
-        task_id: (!request.task_id.trim().is_empty()).then_some(request.task_id.clone()),
+        task_id: request
+            .task_id
+            .trim()
+            .parse::<i64>()
+            .ok()
+            .filter(|task_id| *task_id > 0),
         skills_dir: options.skills_dir,
         clear_cache: options.clear_cache,
         skip_existing: options.skip_existing,
         resolved_skill_map,
     })
+}
+
+fn add_configured_skill_names(names: &mut Vec<String>, value: Option<&Value>) {
+    let Some(skills) = value.and_then(Value::as_array) else {
+        return;
+    };
+    for skill in skills {
+        let name = skill
+            .as_str()
+            .or_else(|| skill.get("name").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+        if let Some(name) = name {
+            let name = name.to_owned();
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+}
+
+pub fn validate_skill_name(name: &str) -> Result<(), String> {
+    let mut components = Path::new(name).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(component)), None) if component == name => Ok(()),
+        _ => Err(format!(
+            "invalid Skill name '{name}': expected one safe directory name"
+        )),
+    }
+}
+
+fn configured_skill_namespaces(value: Option<&Value>) -> BTreeMap<String, String> {
+    let Some(skills) = value.and_then(Value::as_array) else {
+        return BTreeMap::new();
+    };
+    skills
+        .iter()
+        .filter_map(|skill| {
+            let name = skill.get("name")?.as_str()?.trim();
+            let namespace = skill.get("namespace")?.as_str()?.trim();
+            (!name.is_empty() && !namespace.is_empty())
+                .then(|| (name.to_owned(), namespace.to_owned()))
+        })
+        .collect()
 }
 
 fn skill_config_map(skill_configs: &[Value]) -> BTreeMap<String, SkillRef> {
@@ -281,4 +343,59 @@ fn request_mode(request: &ExecutionRequest) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_ascii_lowercase)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn deployment_plan(request: &ExecutionRequest) -> SkillDeploymentPlan {
+        build_skill_deployment_plan(
+            &json!({"skills": ["test-skill"]}),
+            request,
+            SkillDeploymentOptions {
+                skills_dir: PathBuf::from("/tmp/skills"),
+                clear_cache: false,
+                skip_existing: false,
+            },
+        )
+        .expect("deployment plan")
+    }
+
+    #[test]
+    fn skill_name_must_be_one_safe_directory_component() {
+        for name in ["../outside", "/tmp/outside", "nested/skill", ".", ".."] {
+            assert!(validate_skill_name(name).is_err(), "{name}");
+        }
+        assert!(validate_skill_name("wework-plugin-creator").is_ok());
+    }
+
+    #[test]
+    fn prefers_skill_identity_token_for_skill_api_requests() {
+        let request = ExecutionRequest {
+            task_id: "42".to_owned(),
+            auth_token: Some("task-token".to_owned()),
+            skill_identity_token: Some("skill-identity-token".to_owned()),
+            ..ExecutionRequest::default()
+        };
+
+        let plan = deployment_plan(&request);
+
+        assert_eq!(plan.auth_token, "skill-identity-token");
+        assert_eq!(plan.task_id, Some(42));
+    }
+
+    #[test]
+    fn omits_non_numeric_runtime_task_id_from_skill_api_queries() {
+        let request = ExecutionRequest {
+            task_id: "codex-queue-2".to_owned(),
+            skill_identity_token: Some("skill-identity-token".to_owned()),
+            ..ExecutionRequest::default()
+        };
+
+        let plan = deployment_plan(&request);
+
+        assert_eq!(plan.task_id, None);
+    }
 }

@@ -2,6 +2,7 @@ import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } fro
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
+import type { ComposerFollowUpBehavior } from './composerTextareaTypes'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { LocalDeviceApp, ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
@@ -66,6 +67,8 @@ interface ComposerToolbarProps {
   leadingContext?: ReactNode
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   workspaceTarget?: WorkspaceTarget | null
+  sendKey?: 'enter' | 'cmd_enter'
+  followUpBehavior?: ComposerFollowUpBehavior
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -112,6 +115,8 @@ export function ComposerToolbar({
   leadingContext,
   onListLocalApps,
   workspaceTarget,
+  sendKey = 'enter',
+  followUpBehavior = 'queue',
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -125,6 +130,11 @@ export function ComposerToolbar({
   const activeModelLabel = activeModel?.displayName || activeModel?.name
   const selectedModelLabel =
     selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
+  const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'Command+Enter'
+  const primaryBusyLabel =
+    followUpBehavior === 'guide'
+      ? t('workbench.guide_current_turn', '引导当前回复')
+      : t('workbench.send_after_turn', '当前回复结束后发送')
 
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current
@@ -145,11 +155,14 @@ export function ComposerToolbar({
       data-testid="composer-toolbar"
       data-compact={compact ? 'true' : 'false'}
       className={cn(
-        'mt-auto flex min-h-8 min-w-0 items-center justify-between gap-2 pt-1',
+        'mt-auto flex min-h-8 min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 pt-1',
         className
       )}
     >
-      <div data-composer-toolbar-group="features" className="flex min-w-0 items-center gap-2">
+      <div
+        data-composer-toolbar-group="features"
+        className="flex min-w-0 flex-auto flex-wrap items-center gap-x-2 gap-y-1"
+      >
         <AddContextMenu
           disabled={disabled}
           onFileSelect={onFileSelect}
@@ -197,7 +210,10 @@ export function ComposerToolbar({
           />
         ) : null}
       </div>
-      <div data-composer-toolbar-group="actions" className="flex min-w-0 items-center gap-1.5">
+      <div
+        data-composer-toolbar-group="actions"
+        className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5"
+      >
         {showExecutionTools ? (
           <>
             <PermissionModeSelector
@@ -255,18 +271,14 @@ export function ComposerToolbar({
           </Tooltip>
         ) : isStreaming && canSend ? (
           <div className="flex items-center rounded-full bg-text-primary text-background">
-            <Tooltip
-              label={t('workbench.send_after_turn', '当前回复结束后发送')}
-              align="end"
-              testId="composer-send-after-turn-tooltip"
-            >
+            <Tooltip label={primaryBusyLabel} align="end" testId="composer-send-after-turn-tooltip">
               <button
                 type="submit"
                 data-composer-primary-action="true"
                 data-testid={sendButtonTestId}
                 onMouseDown={event => event.preventDefault()}
                 className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-text-primary/90"
-                aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
+                aria-label={primaryBusyLabel}
               >
                 <ArrowUp className="h-4 w-4" />
               </button>
@@ -282,7 +294,7 @@ export function ComposerToolbar({
                   icon: Clock3,
                   testId: 'send-after-turn-option',
                   onSelect: () => onSubmit(),
-                  shortcut: 'Enter',
+                  shortcut: followUpBehavior === 'queue' ? primarySendShortcut : undefined,
                 },
                 {
                   label:
@@ -298,7 +310,7 @@ export function ComposerToolbar({
                   icon: CornerDownRight,
                   testId: 'guide-current-turn-option',
                   onSelect: () => onSubmit({ guideWhenBusy: true }),
-                  shortcut: 'Command+Enter',
+                  shortcut: followUpBehavior === 'guide' ? primarySendShortcut : undefined,
                 },
                 {
                   label:

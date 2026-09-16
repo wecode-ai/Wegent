@@ -1,0 +1,37 @@
+[package]
+name = "wegent-backend-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Incremental Rust migration gateway for the Wegent backend"
+license = "Apache-2.0"
+
+[dependencies]
+brz-http-gateway = "=0.1.0"
+brz-http-server = "=0.0.13"
+brz-logs = "=0.0.6"
+# Keep every Wegent Rust component on the registry-owning metrics revision.
+# Metrics are only registered by future migrated APIs; this dependency does
+# not enable request instrumentation by itself.
+brz-metrics = "=0.0.5"
+http = "1"
+hyper = { version = "1", features = ["http1", "server"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+[lib]
+name = "wegent_backend_rs"
+
+[[bin]]
+name = "wegent-backend-rs"
+path = "src/main.rs"

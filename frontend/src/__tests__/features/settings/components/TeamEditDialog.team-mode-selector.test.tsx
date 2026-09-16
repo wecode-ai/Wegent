@@ -42,7 +42,7 @@ jest.mock('@/features/settings/services/teams', () => ({
 jest.mock('@/features/settings/components/team-modes', () => ({
   getSelectableTeamModes: () => ['solo', 'pipeline', 'coordinate'],
   getAllowedAgentsForTeamMode: (mode: string) => {
-    if (mode === 'pipeline' || mode === 'coordinate') return ['ClaudeCode']
+    if (mode === 'pipeline' || mode === 'coordinate') return ['Codex', 'ClaudeCode']
     return undefined
   },
   getFilteredBotsForMode: (bots: unknown[]) => bots,
@@ -80,7 +80,7 @@ jest.mock('@/apis/skills', () => ({
 
 jest.mock('@/contexts/TeamContext', () => ({
   useTeamContext: () => ({
-    refreshTeams: jest.fn(),
+    invalidateTeams: jest.fn(),
   }),
 }))
 

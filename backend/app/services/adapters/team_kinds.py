@@ -51,6 +51,7 @@ from app.services.base import BaseService
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
 from app.stores.tasks import task_store
+from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
 
@@ -319,6 +320,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         user_id: int,
         scope: str = "personal",
         group_name: Optional[str] = None,
+        filters: Optional[List[Any]] = None,
+        group_names: Optional[List[str]] = None,
+        shared_only: bool = False,
     ) -> Optional[tuple[Any, Any]]:
         """Build the deduplicated accessible-Team query shared by list views."""
         from app.services.group_permission import get_user_group_roles
@@ -329,7 +333,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if scope == "personal":
             namespaces_to_query = ["default"]
         elif scope == "group":
-            if group_name:
+            if group_names is not None:
+                namespaces_to_query = group_names
+            elif group_name:
                 namespaces_to_query = [group_name]
             else:
                 effective_roles = get_user_group_roles(db, user_id)
@@ -503,6 +509,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if not queries:
             return None
 
+        if filters:
+            queries = [query.filter(*filters) for query in queries]
+
         if len(queries) == 1:
             combined_query = queries[0].subquery()
         else:
@@ -531,21 +540,26 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 .label("access_row_number"),
             )
         ).subquery()
-        return (
-            db.query(
-                ranked_query.c.team_id,
-                ranked_query.c.team_user_id,
-                ranked_query.c.team_name,
-                ranked_query.c.team_namespace,
-                ranked_query.c.team_json,
-                ranked_query.c.team_created_at,
-                ranked_query.c.team_updated_at,
-                ranked_query.c.share_status,
-                ranked_query.c.context_user_id,
-                ranked_query.c.access_source,
-            ).filter(ranked_query.c.access_row_number == 1),
-            ranked_query,
-        )
+        base_query = db.query(
+            ranked_query.c.team_id,
+            ranked_query.c.team_user_id,
+            ranked_query.c.team_name,
+            ranked_query.c.team_namespace,
+            ranked_query.c.team_json,
+            ranked_query.c.team_created_at,
+            ranked_query.c.team_updated_at,
+            ranked_query.c.share_status,
+            ranked_query.c.context_user_id,
+            ranked_query.c.access_source,
+        ).filter(ranked_query.c.access_row_number == 1)
+        if shared_only:
+            base_query = base_query.filter(
+                or_(
+                    ranked_query.c.team_namespace != "default",
+                    ranked_query.c.share_status == 2,
+                )
+            )
+        return base_query, ranked_query
 
     def get_recent_accessible_teams(
         self,
@@ -855,6 +869,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         limit: int = 100,
         scope: str = "personal",
         group_name: Optional[str] = None,
+        filters: Optional[List[Any]] = None,
+        group_names: Optional[List[str]] = None,
+        shared_only: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Get user's Team list (only active teams) including shared teams and public teams.
@@ -865,13 +882,89 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         - scope='group': group teams + public teams (requires group_name)
         - scope='all': personal + public + shared + all user's groups
         """
-        total_start = time.time()
         accessible_query = self._build_accessible_teams_query(
             db,
             user_id=user_id,
             scope=scope,
             group_name=group_name,
+            filters=filters,
+            group_names=group_names,
+            shared_only=shared_only,
         )
+        return self._load_teams_from_query(
+            db,
+            user_id=user_id,
+            accessible_query=accessible_query,
+            skip=skip,
+            limit=limit,
+        )
+
+    @trace_sync(span_name="teams.list_page", tracer_name="backend.teams")
+    def get_user_teams_page(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 100,
+        scope: str = "all",
+        group_name: Optional[str] = None,
+        filters: Optional[List[Any]] = None,
+        group_names: Optional[List[str]] = None,
+        shared_only: bool = False,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Load and count a page using one request-local authorization query."""
+        started = time.time()
+        accessible_query = self._build_accessible_teams_query(
+            db,
+            user_id=user_id,
+            scope=scope,
+            group_name=group_name,
+            filters=filters,
+            group_names=group_names,
+            shared_only=shared_only,
+        )
+        items = self._load_teams_from_query(
+            db,
+            user_id=user_id,
+            accessible_query=accessible_query,
+            skip=skip,
+            limit=limit,
+        )
+        logger.info(
+            "[list_teams] get_user_teams took %.3fs, returned %s items",
+            time.time() - started,
+            len(items),
+        )
+        if accessible_query is None:
+            total = 0
+        elif len(items) < limit and (items or skip == 0):
+            total = skip + len(items)
+        else:
+            started = time.time()
+            total = accessible_query[0].count()
+            logger.info(
+                "[list_teams] count_user_teams took %.3fs, total=%s",
+                time.time() - started,
+                total,
+            )
+            return items, total
+        logger.info(
+            "[list_teams] count_user_teams skipped, source=page_result, total=%s", total
+        )
+        return items, total
+
+    def _load_teams_from_query(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        accessible_query: Optional[tuple[Any, Any]],
+        skip: int,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        """Fetch and hydrate a page from an already-authorized query."""
+        total_start = time.time()
         if accessible_query is None:
             return []
         base_query, ranked_query = accessible_query
@@ -1248,11 +1341,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         detailed_bots = []
         for bot_info in team_dict["bots"]:
             bot_id = bot_info["bot_id"]
-            # Get bot from kinds table
-            bot = kindReader.get_by_id(db, KindType.BOT, bot_id)
+            from app.services.adapters.bot_kinds import bot_kinds_service
 
-            if bot:
-                bot_dict = self._convert_bot_to_dict(bot, db, bot.user_id)
+            bot_dict = bot_kinds_service.get_by_id_and_user(
+                db,
+                bot_id=bot_id,
+                user_id=team_owner_id,
+            )
+            if bot_dict:
                 detailed_bots.append(
                     {
                         "bot": bot_dict,
@@ -1625,145 +1721,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         db.delete(team)
         db.commit()
-
-    def count_user_teams(
-        self,
-        db: Session,
-        *,
-        user_id: int,
-        scope: str = "personal",
-        group_name: Optional[str] = None,
-    ) -> int:
-        """
-        Count user's active teams based on scope.
-
-        Scope behavior:
-        - scope='personal' (default): personal teams + shared teams
-        - scope='group': group teams (requires group_name)
-        - scope='all': personal + shared + all user's groups
-        """
-        from app.services.group_permission import get_user_groups
-
-        # Determine which namespaces to count based on scope
-        namespaces_to_count = []
-
-        if scope == "personal":
-            namespaces_to_count = ["default"]
-        elif scope == "group":
-            # Group teams - if group_name not provided, count all user's groups
-            if group_name:
-                namespaces_to_count = [group_name]
-            else:
-                # Count all user's groups (excluding default)
-                user_groups = get_user_groups(db, user_id)
-                namespaces_to_count = user_groups if user_groups else []
-        elif scope == "all":
-            namespaces_to_count = ["default"] + get_user_groups(db, user_id)
-        else:
-            raise ValueError(f"Invalid scope: {scope}")
-
-        count_queries = []
-        team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
-        approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
-
-        for namespace in namespaces_to_count:
-            if namespace == "default":
-                count_queries.append(
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == user_id,
-                        Kind.kind == "Team",
-                        Kind.namespace == "default",
-                        Kind.is_active == True,
-                    )
-                    .with_entities(Kind.id.label("team_id"))
-                )
-
-                if scope in ("personal", "all"):
-                    count_queries.append(
-                        db.query(ResourceMember)
-                        .join(
-                            Kind,
-                            (ResourceMember.resource_id == Kind.id)
-                            & (
-                                ResourceMember.resource_type.in_(
-                                    team_resource_type_variants
-                                )
-                            ),
-                        )
-                        .filter(
-                            ResourceMember.entity_type == "user",
-                            ResourceMember.entity_id == str(user_id),
-                            ResourceMember.status.in_(approved_status_variants),
-                            Kind.is_active == True,
-                            Kind.kind == "Team",
-                        )
-                        .with_entities(Kind.id.label("team_id"))
-                    )
-
-                    count_queries.append(
-                        db.query(Kind)
-                        .filter(
-                            Kind.user_id == 0,
-                            Kind.kind == "Team",
-                            Kind.namespace == "default",
-                            Kind.is_active == True,
-                        )
-                        .with_entities(Kind.id.label("team_id"))
-                    )
-            else:
-                count_queries.append(
-                    db.query(Kind)
-                    .filter(
-                        Kind.kind == "Team",
-                        Kind.namespace == namespace,
-                        Kind.is_active == True,
-                    )
-                    .with_entities(Kind.id.label("team_id"))
-                )
-
-        group_namespaces = [ns for ns in namespaces_to_count if ns != "default"]
-        authorized_namespace_ids = self._get_accessible_authorization_namespace_ids(
-            db, user_id, group_namespaces
-        )
-        if authorized_namespace_ids:
-            authorized_namespace_entity_ids = [
-                str(ns_id) for ns_id in authorized_namespace_ids
-            ]
-            authorized_member_exists = (
-                db.query(ResourceMember.id)
-                .filter(
-                    ResourceMember.resource_id == Kind.id,
-                    ResourceMember.resource_type.in_(team_resource_type_variants),
-                    ResourceMember.entity_type == "namespace",
-                    ResourceMember.entity_id.in_(authorized_namespace_entity_ids),
-                    ResourceMember.status.in_(approved_status_variants),
-                )
-                .exists()
-            )
-            count_queries.append(
-                db.query(Kind.id)
-                .filter(
-                    authorized_member_exists,
-                    Kind.kind == "Team",
-                    Kind.is_active.is_(True),
-                    ~Kind.namespace.in_(group_namespaces),
-                )
-                .with_entities(Kind.id.label("team_id"))
-            )
-
-        if not count_queries:
-            return 0
-
-        combined_count_query = (
-            count_queries[0].subquery()
-            if len(count_queries) == 1
-            else union_all(*count_queries).alias("combined_team_counts")
-        )
-        return (
-            db.query(func.count(func.distinct(combined_count_query.c.team_id))).scalar()
-            or 0
-        )
 
     def _validate_bots(self, db: Session, bots: List[BotInfo], user_id: int) -> None:
         """
@@ -2445,75 +2402,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         logger.debug(f"[_get_bot_summary] Returning: {result}")
         return result
-
-    def _convert_bot_to_dict(
-        self, bot: Kind, db: Session, user_id: int
-    ) -> Dict[str, Any]:
-        """
-        Convert kinds Bot to bot-like dictionary (simplified version)
-        """
-        bot_crd = Bot.model_validate(bot.json)
-
-        # Get ghost
-        ghost = kindReader.get_by_name_and_namespace(
-            db,
-            user_id,
-            KindType.GHOST,
-            bot_crd.spec.ghostRef.namespace,
-            bot_crd.spec.ghostRef.name,
-        )
-
-        # Get shell (with public fallback)
-        shell = kindReader.get_by_name_and_namespace(
-            db,
-            user_id,
-            KindType.SHELL,
-            bot_crd.spec.shellRef.namespace,
-            bot_crd.spec.shellRef.name,
-        )
-
-        # Get model - modelRef is optional (with public fallback)
-        model = None
-        if bot_crd.spec.modelRef:
-            model = kindReader.get_by_name_and_namespace(
-                db,
-                user_id,
-                KindType.MODEL,
-                bot_crd.spec.modelRef.namespace,
-                bot_crd.spec.modelRef.name,
-            )
-
-        # Extract data from components
-        system_prompt = ""
-        mcp_servers = {}
-        shell_type = ""
-        agent_config = {}
-
-        if ghost and ghost.json:
-            ghost_crd = Ghost.model_validate(ghost.json)
-            system_prompt = ghost_crd.spec.systemPrompt
-            mcp_servers = ghost_crd.spec.mcpServers or {}
-
-        if shell and shell.json:
-            shell_crd = Shell.model_validate(shell.json)
-            shell_type = shell_crd.spec.shellType
-
-        if model and model.json:
-            model_crd = Model.model_validate(model.json)
-            agent_config = model_crd.spec.modelConfig
-
-        return {
-            "id": bot.id,
-            "user_id": bot.user_id,
-            "name": bot.name,
-            "shell_type": shell_type,
-            "agent_config": agent_config,
-            "system_prompt": system_prompt,
-            "mcp_servers": mcp_servers,
-            "is_active": bot.is_active,
-            "created_at": bot.created_at,
-            "updated_at": bot.updated_at,
-        }
 
     def get_team_input_parameters(
         self, db: Session, *, team_id: int, user_id: int

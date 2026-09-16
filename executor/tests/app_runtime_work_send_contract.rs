@@ -858,6 +858,12 @@ async fn runtime_tasks_create_ephemeral_codex_thread_hidden_from_task_list() {
                 "workspacePath": "/tmp/project",
                 "message": "quick side question",
                 "ephemeral": true,
+                "execution": {
+                    "workspace": {
+                        "source": "git_worktree",
+                        "branch": "feature/side-chat"
+                    }
+                },
                 "sideSource": {
                     "deviceId": "device-1",
                     "taskId": "main-task-1",
@@ -872,6 +878,7 @@ async fn runtime_tasks_create_ephemeral_codex_thread_hidden_from_task_list() {
                     "subtask_id": "side-turn-1",
                     "prompt": "quick side question",
                     "project_workspace_path": "/tmp/project",
+                    "workspace_source": "git_worktree",
                     "ephemeral": true,
                     "bot": [{"shell_type": "ClaudeCode"}],
                     "model_config": {
@@ -933,6 +940,130 @@ async fn runtime_tasks_create_ephemeral_codex_thread_hidden_from_task_list() {
     assert!(listed["workspaces"]
         .as_array()
         .is_some_and(|workspaces| workspaces.is_empty()));
+}
+
+#[tokio::test]
+async fn runtime_tasks_reject_side_source_workspace_conflicts() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-side-workspace-conflict-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-side-workspace-conflict-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-side-workspace-conflict-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let error = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "side-chat-conflict",
+                "workspacePath": "/tmp/other-project",
+                "message": "quick side question",
+                "ephemeral": true,
+                "sideSource": {
+                    "deviceId": "device-1",
+                    "taskId": "main-task-1",
+                    "workspacePath": "/tmp/project",
+                    "runtimeHandle": {
+                        "threadId": "parent-thread-1"
+                    }
+                },
+                "executionRequest": {
+                    "task_id": "side-chat-conflict",
+                    "subtask_id": "side-turn-conflict",
+                    "prompt": "quick side question",
+                    "project_workspace_path": "/tmp/other-project",
+                    "ephemeral": true,
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect_err("conflicting side source workspace should be rejected");
+
+    assert_eq!(error.code, "bad_request");
+    assert_eq!(
+        error.message,
+        "sideSource workspacePath conflicts with the requested workspace"
+    );
+    assert!(
+        read_json_lines(&log_path).is_empty(),
+        "a rejected side conversation must not call Codex"
+    );
+}
+
+#[tokio::test]
+async fn runtime_tasks_reject_side_source_without_parent_workspace() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-side-missing-workspace-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-side-missing-workspace-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-side-missing-workspace-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let error = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "side-chat-missing-workspace",
+                "workspacePath": "/tmp/fallback-project",
+                "message": "quick side question",
+                "ephemeral": true,
+                "sideSource": {
+                    "deviceId": "device-1",
+                    "taskId": "main-task-1",
+                    "runtimeHandle": {
+                        "threadId": "parent-thread-1"
+                    }
+                },
+                "executionRequest": {
+                    "task_id": "side-chat-missing-workspace",
+                    "subtask_id": "side-turn-missing-workspace",
+                    "prompt": "quick side question",
+                    "project_workspace_path": "/tmp/fallback-project",
+                    "ephemeral": true,
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect_err("side source without its parent workspace should be rejected");
+
+    assert_eq!(error.code, "bad_request");
+    assert_eq!(error.message, "sideSource workspacePath is required");
+    assert!(
+        read_json_lines(&log_path).is_empty(),
+        "a rejected side conversation must not call Codex"
+    );
 }
 
 #[tokio::test]

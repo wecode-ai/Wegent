@@ -31,8 +31,10 @@ AutomationRuntimeSource = Literal[
     "issue_creator",
     "runtime_user",
 ]
+AutomationTargetKind = Literal["human", "agent", "collaboration_group"]
 AutomationEventType = Literal[
     "task.created",
+    "task.tag_added",
     "task.status_changed",
     "change_request.checks_failed",
     "change_request.merge_conflict",
@@ -70,16 +72,17 @@ def _validate_assignment_fields(
     role_source: AutomationRoleSource = "agent",
 ) -> None:
     if assignment_mode == "manual":
-        if role_source == "agent" and not agent_id:
-            raise ValueError("agent_id is required for manual assignment")
-        if role_source == "generic" and agent_id:
+        if role_source == "agent":
+            if not agent_id:
+                raise ValueError("agent_id is required for manual assignment")
+            if model or execution_environment or execution_device_id:
+                raise ValueError("agent roles use the agent Runtime")
+        elif agent_id:
             raise ValueError("generic role does not accept agent_id")
         if manager_type is not None:
             raise ValueError("manager_type is only valid for AI-managed assignment")
         if wegent_team_id is not None:
             raise ValueError("wegent_team_id is only valid for a Wegent manager")
-        if model or execution_environment or execution_device_id:
-            raise ValueError("custom manager configuration requires AI management")
         return
     if agent_id:
         raise ValueError("agent_id is only valid for manual assignment")
@@ -101,7 +104,7 @@ def _validate_assignment_fields(
 class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
     name: str = Field(min_length=1, max_length=255)
     prompt: str = Field(min_length=1, max_length=100_000)
-    trigger_type: Literal["schedule", "event", "workflow"] = "schedule"
+    trigger_type: Literal["manual", "schedule", "event", "workflow"] = "schedule"
     event_type: AutomationEventType | None = None
     event_config: dict[str, Any] = Field(default_factory=dict)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
@@ -113,6 +116,8 @@ class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
     model: str | None = Field(default=None, max_length=255)
     execution_environment: Literal["local", "cloud"] | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
+    target_kind: AutomationTargetKind | None = None
+    target_id: str | None = Field(default=None, min_length=1, max_length=128)
     enabled: bool = True
     role_source: AutomationRoleSource = "agent"
     runtime_source: AutomationRuntimeSource = "agent_default"
@@ -121,6 +126,12 @@ class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
 
     @model_validator(mode="after")
     def validate_assignment(self) -> Self:
+        if (self.target_kind is None) != (self.target_id is None):
+            raise ValueError("target_kind and target_id must be configured together")
+        if self.target_kind is not None:
+            if self.target_kind == "human" and self.execution_device_id:
+                raise ValueError("human targets do not use an execution device")
+            return self
         _validate_assignment_fields(
             assignment_mode=self.assignment_mode,
             manager_type=self.manager_type,
@@ -165,7 +176,7 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
     version: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=255)
     prompt: str | None = Field(default=None, min_length=1, max_length=100_000)
-    trigger_type: Literal["schedule", "event", "workflow"] | None = None
+    trigger_type: Literal["manual", "schedule", "event", "workflow"] | None = None
     event_type: AutomationEventType | None = None
     event_config: dict[str, Any] | None = None
     assignment_mode: AutomationAssignmentMode | None = None
@@ -177,6 +188,8 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
     model: str | None = Field(default=None, max_length=255)
     execution_environment: Literal["local", "cloud"] | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
+    target_kind: AutomationTargetKind | None = None
+    target_id: str | None = Field(default=None, min_length=1, max_length=128)
     enabled: bool | None = None
     role_source: AutomationRoleSource | None = None
     runtime_source: AutomationRuntimeSource | None = None
@@ -185,13 +198,20 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
 
     @model_validator(mode="after")
     def validate_assignment_switch(self) -> Self:
+        target_fields = {"target_kind", "target_id"}
+        changed_target_fields = target_fields.intersection(self.model_fields_set)
+        if changed_target_fields:
+            if changed_target_fields != target_fields:
+                raise ValueError("target_kind and target_id must be changed together")
+            if self.target_kind == "human" and self.execution_device_id:
+                raise ValueError("human targets do not use an execution device")
+            return self
         assignment_fields = {
             "manager_type",
             "agent_id",
             "wegent_team_id",
             "model",
             "execution_environment",
-            "execution_device_id",
         }
         if self.assignment_mode is None:
             if assignment_fields.intersection(self.model_fields_set):
@@ -225,7 +245,7 @@ class ProjectAutomationView(ProjectChatSchema):
     project_id: str
     name: str
     prompt: str
-    trigger_type: Literal["schedule", "event", "workflow"]
+    trigger_type: Literal["manual", "schedule", "event", "workflow"]
     event_type: AutomationEventType | None
     event_config: dict[str, Any]
     assignment_mode: AutomationAssignmentMode
@@ -238,6 +258,9 @@ class ProjectAutomationView(ProjectChatSchema):
     agent_name: str
     execution_environment: Literal["local", "cloud", "managed"]
     execution_device_id: str | None
+    target_kind: AutomationTargetKind | None = None
+    target_id: str | None = None
+    target_name: str | None = None
     role_source: AutomationRoleSource = "agent"
     runtime_source: AutomationRuntimeSource = "agent_default"
     runtime_profile_id: str | None = None

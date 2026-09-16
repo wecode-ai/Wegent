@@ -224,6 +224,9 @@ describe('desktop resource migration', () => {
     expect(source).toContain('sourceSha,')
     expect(source).toContain('path: `bin/${dwsName}`')
     expect(source).toContain("path: 'codex'")
+    expect(source).toContain(
+      'cp(codexSource, codexResources, { recursive: true, dereference: true })'
+    )
     expect(source).toContain('sha256: await hashComponentPath(codexResources)')
     expect(source).not.toContain('path: `codex/${codexRuntime.binaryPath}`')
     expect(source).toContain("version: weworkPackage.devDependencies['dingtalk-workspace-cli']")

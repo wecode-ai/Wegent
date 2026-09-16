@@ -1,4 +1,5 @@
 import {
+  Bot,
   CheckCircle2,
   CircleAlert,
   File,
@@ -56,7 +57,7 @@ import {
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import type { GitPatchAction } from '@/api/environment'
 import type { DesktopReviewMode } from '../desktopWorkbenchPaneTypes'
-import { isEditableShortcutTarget } from '@/lib/keybindings'
+import { shouldIgnoreWorkbenchShortcut } from '@/lib/keybindings'
 import { FileWorkspacePanel, type FileWorkspacePanelSelection } from './FileWorkspacePanel'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
@@ -102,6 +103,7 @@ export type RightWorkspacePanelTab =
   | 'review'
   | 'files'
   | 'plan'
+  | 'subagents'
   | 'work-item'
   | RightWorkspaceChatTab
   | RightWorkspaceBrowserTab
@@ -205,6 +207,7 @@ interface RightWorkspacePanelProps {
   workspaceTargetError?: string | null
   review: RightWorkspaceReviewState
   planContent?: string | null
+  subagentPanel?: ReactNode
   workItemPanel?: ReactNode
   extensionTabs?: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
   extensionScope: WeworkWorkspaceScope
@@ -526,6 +529,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   workspaceTargetError,
   review,
   planContent,
+  subagentPanel,
   workItemPanel,
   extensionTabs = {},
   extensionScope,
@@ -633,7 +637,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     if (!visible) return
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || isEditableShortcutTarget(event.target)) return
+      if (event.defaultPrevented || shouldIgnoreWorkbenchShortcut(event)) return
 
       const key = event.key.toLowerCase()
       const primaryPressed =
@@ -643,6 +647,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
 
       if (primaryPressed && !event.altKey && key === 't') {
         event.preventDefault()
+        event.stopPropagation()
         onSelectBrowser()
         return
       }
@@ -651,18 +656,21 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
 
       if (key === 'r' && canOpenReview) {
         event.preventDefault()
+        event.stopPropagation()
         onSelectReview()
       } else if (key === 's' && allowTemporaryChat) {
         event.preventDefault()
+        event.stopPropagation()
         onSelectChat()
       } else if (key === 'f' && canBrowseFiles) {
         event.preventDefault()
+        event.stopPropagation()
         onSelectFiles()
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [
     allowTemporaryChat,
     canBrowseFiles,
@@ -870,6 +878,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'plan' ? (
           <PlanWorkspacePanel content={planContent ?? ''} />
+        ) : !isRightWorkspaceChatTab(activeView) && activeView === 'subagents' ? (
+          subagentPanel
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'work-item' ? (
           workItemPanel
         ) : activeView === 'files' && workspaceTargetError ? (
@@ -1447,6 +1457,7 @@ function getRightWorkspaceTabLabel(
     )
   }
   if (tab === 'plan') return t('workbench.workspace_tab_plan', '计划')
+  if (tab === 'subagents') return t('workbench.workspace_tab_subagents', '子代理')
   if (tab === 'work-item') return t('workbench.work_item_detail', 'Issue 详情')
   return t('workbench.workspace_tab_files', '文件')
 }
@@ -1482,6 +1493,7 @@ function getRightWorkspaceTabIcon(tab: RightWorkspacePanelTab) {
   if (isRightWorkspaceChatTab(tab)) return MessageCircle
   if (isRightWorkspaceHarnessTab(tab)) return SquareTerminal
   if (tab === 'plan') return ListChecks
+  if (tab === 'subagents') return Bot
   if (tab === 'work-item') return LayoutDashboard
   return File
 }

@@ -256,6 +256,7 @@ describe('ProjectSpaceChatSidebar', () => {
       '管理当前项目',
       expect.objectContaining({
         project: expect.objectContaining({ id: 91 }),
+        workspaceExecution: null,
         runtime: 'codex',
         optimisticUserMessage: expect.objectContaining({
           id: 'queued-side-chat-1',

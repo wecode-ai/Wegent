@@ -5,6 +5,7 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { RuntimeTranscriptLoader, WorkbenchMessage } from '@/types/workbench'
+import { encodeUriComponentStrict } from './uri-component'
 
 const CONVERSATION_MENTION_SCHEME = 'wework-conversation://'
 const CONVERSATION_MENTION_PATTERN = /\[\$([^\]]+)]\((wework-conversation:\/\/[^)\n]+)\)/g
@@ -27,7 +28,8 @@ export function createConversationMentionReference(
   address: RuntimeTaskAddress
 ): string {
   const safeTitle = title.replace(/[\]\r\n]/g, ' ').trim() || address.taskId
-  return `[$${safeTitle}](${CONVERSATION_MENTION_SCHEME}${encodeURIComponent(JSON.stringify(address))})`
+  const encodedAddress = encodeUriComponentStrict(JSON.stringify(address))
+  return `[$${safeTitle}](${CONVERSATION_MENTION_SCHEME}${encodedAddress})`
 }
 
 export function parseConversationMentions(value: string): ConversationMention[] {

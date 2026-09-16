@@ -87,7 +87,7 @@ import {
   dispatchStepFontSizeShortcut,
   dispatchResetFontSizeShortcut,
   dispatchBuiltinShortcutCommand,
-  isEditableShortcutTarget,
+  shouldIgnoreWorkbenchShortcut,
   isBuiltinShortcutCommand,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
@@ -201,14 +201,20 @@ function workspaceTabIframe(
   tab: WorkspaceTab,
   wegentUrl: string | null | undefined
 ): { appKey: string; embeddedBrowserLabel?: string; src: string; title: string } | null {
-  const match = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)
-  if (!match) return null
-  const app = resolveDshApp(match[1])
+  const tabUrl = new URL(tab.contentRoute, window.location.origin)
+  const tabPath = stripAppBasePath(tabUrl.pathname)
+  const appId = tabPath.match(/^\/app\/([^/]+)/)?.[1]
+  if (!appId) return null
+  const app = resolveDshApp(appId)
   if (app?.mode === 'iframe') {
-    const src = app.urlSource === 'cloud-web' ? wegentUrl : app.url
+    const appPrefix = `/app/${appId}`
+    const requestedCloudPath = tabPath.slice(appPrefix.length)
+    const cloudPath = requestedCloudPath || app.cloudPath || ''
+    const destination = `${cloudPath}${tabUrl.search}`
+    const src = app.urlSource === 'cloud-web' ? resolveCloudAppUrl(wegentUrl, destination) : app.url
     return src ? { appKey: app.id, src, title: app.label } : null
   }
-  const harnessApp = resolveRunningHarnessApp(match[1])
+  const harnessApp = resolveRunningHarnessApp(appId)
   return harnessApp
     ? {
         appKey: harnessApp.key,
@@ -217,6 +223,24 @@ function workspaceTabIframe(
         title: harnessApp.title,
       }
     : null
+}
+
+function resolveCloudAppUrl(
+  wegentUrl: string | null | undefined,
+  destination: string | undefined
+): string | null {
+  if (!wegentUrl) return null
+  if (!destination) return wegentUrl
+
+  const url = new URL(wegentUrl)
+  if (url.pathname.endsWith('/login/oidc')) {
+    url.searchParams.set('redirect', destination)
+    return url.toString()
+  }
+  const requested = new URL(destination, 'https://wework.invalid')
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}${requested.pathname}`
+  url.search = requested.search
+  return url.toString()
 }
 
 function workspaceTabDshApp(
@@ -785,7 +809,7 @@ function AppShell() {
   const workspaceTabLabels = useMemo(
     () => ({
       task: t('workbench.workspace_tab_task', '任务'),
-      board: t('workbench.workspace_tab_board', '工作空间'),
+      board: t('workbench.workspace_tab_board', '协作'),
       agent: t('workbench.workspace_tab_agent', '智能体'),
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
       auxiliaryRoutes: Object.fromEntries(
@@ -1007,8 +1031,9 @@ function AppShell() {
       if (!command) return
       const executable = isBuiltinShortcutCommand(command) || isDshCommandEnabled(command)
       if (!executable) return
-      if (isEditableShortcutTarget(event.target)) return
+      if (shouldIgnoreWorkbenchShortcut(event)) return
       event.preventDefault()
+      event.stopPropagation()
       executeShortcutCommand(command, 'keybinding')
     }
 
@@ -1026,14 +1051,15 @@ function AppShell() {
     }
 
     const unsubscribeExtensions = subscribeDshExtensions(applyKeybindings)
-    window.addEventListener('keydown', handleKeyDown)
+    // Run registered commands before ProseMirror suppresses native formatting keys.
+    window.addEventListener('keydown', handleKeyDown, true)
     window.addEventListener('mouseup', handleMouseUp)
     window.addEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
     void loadKeybindings()
 
     return () => {
       disposed = true
-      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keydown', handleKeyDown, true)
       window.removeEventListener('mouseup', handleMouseUp)
       window.removeEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
       unsubscribeExtensions()

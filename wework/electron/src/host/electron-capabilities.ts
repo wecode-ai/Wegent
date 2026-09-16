@@ -31,7 +31,7 @@ import type { ComputerUseService } from './computer-use-service.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
-import { sendE2EKey } from './e2e-keyboard.js'
+import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import {
   extractFilePathsFromNativePayloads,
   inspectWorkspacePaths,
@@ -204,6 +204,8 @@ export interface ElectronE2EHost {
     exists: boolean
     focused: boolean
     visible: boolean
+    windowId: number | null
+    webContentsId: number | null
   }
   setSystemDragContext: (context: { conversationTitle: string | null }) => void
   setSystemSleepEnabled: (enabled: boolean) => void
@@ -259,7 +261,13 @@ export function createElectronCapabilityRouter(
     traySnapshot: () => null,
     scheduleCoreDshRestart: () => undefined,
     openWorkspace: () => Promise.reject(new Error('Workspace windows are unavailable')),
-    popoutWindowSnapshot: () => ({ exists: false, focused: false, visible: false }),
+    popoutWindowSnapshot: () => ({
+      exists: false,
+      focused: false,
+      visible: false,
+      windowId: null,
+      webContentsId: null,
+    }),
     setSystemDragContext: () => undefined,
     setSystemSleepEnabled: () => undefined,
     setSystemSleepTaskActive: () => undefined,
@@ -548,17 +556,53 @@ export function createElectronCapabilityRouter(
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')
   })
-  router.register('e2e.pressKey', params => {
+  router.register('e2e.insertText', params => {
     const label = optionalStringParam(params, 'windowLabel') ?? 'main'
     const contents = e2eHost.captureTarget(label)
     if (!contents) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
     }
-    return sendE2EKey(contents, stringParam(params, 'key'), () =>
-      label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)
+    return sendE2EText(
+      contents,
+      stringParam(params, 'text'),
+      () => (label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)),
+      process.env
+    )
+  })
+  router.register('e2e.pressKey', params => {
+    const label = optionalStringParam(params, 'windowLabel') ?? 'main'
+    const phase = optionalStringParam(params, 'phase') ?? 'press'
+    if (!['press', 'down', 'up'].includes(phase)) {
+      throw new HostCapabilityError('e2e_invalid_key_phase', 'Unsupported verification key phase')
+    }
+    const contents = e2eHost.captureTarget(label)
+    if (!contents) {
+      throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
+    }
+    return sendE2EKey(
+      contents,
+      stringParam(params, 'key'),
+      () => (label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)),
+      process.env,
+      phase as E2EKeyPhase
     )
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
+  router.register('e2e.getRendererHeapUsage', async () => {
+    const contents = e2eHost.captureTarget('main')
+    if (!contents || contents.isDestroyed()) {
+      throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
+    }
+    const debugSession = contents.debugger
+    const alreadyAttached = debugSession.isAttached()
+    if (!alreadyAttached) debugSession.attach('1.3')
+    try {
+      await debugSession.sendCommand('HeapProfiler.collectGarbage')
+      return await debugSession.sendCommand('Runtime.getHeapUsage')
+    } finally {
+      if (!alreadyAttached && debugSession.isAttached()) debugSession.detach()
+    }
+  })
   router.register('e2e.getRuntimeDiagnostics', () => e2eHost.runtimeDiagnostics())
   router.register('e2e.getClipboardText', () => clipboard.readText())
   router.register('e2e.getWindowFocusSnapshot', () => {
@@ -569,6 +613,8 @@ export function createElectronCapabilityRouter(
       popoutExists: popout.exists,
       popoutFocused: popout.focused,
       popoutVisible: popout.visible,
+      popoutWindowId: popout.windowId,
+      popoutWebContentsId: popout.webContentsId,
       workspaceWindows: e2eHost.workspaceWindowSnapshots(),
     }
   })

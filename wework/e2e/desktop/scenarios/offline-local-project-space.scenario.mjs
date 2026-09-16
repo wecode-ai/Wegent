@@ -1,262 +1,365 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { captureVerificationScreenshot } from '../modules/workspace-flows.mjs'
+import {
+  captureVerificationScreenshot,
+  inCollaborationSidebar,
+} from '../modules/workspace-flows.mjs'
 
+const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
+const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
+const CLOUD_WORKSPACE_ID = 'offline-cloud-workspace'
 const PROJECT_NAME = '离线本地项目空间'
-const TASK_NAME = '离线本地任务'
-const UPDATED_TASK_NAME = '离线本地任务（已更新）'
+const ISSUE_NAME = '离线本地 Issue'
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json' })
   response.end(JSON.stringify(body))
 }
 
-export function createDesktopScenario({ uiTimeoutMs }) {
-  let cloudProjectListFailures = 0
-  const cloudDetailRequests = []
+function scoped(selector) {
+  return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
+}
+
+function sidebarScoped(selector) {
+  return inCollaborationSidebar(selector)
+}
+
+async function snapshot(control) {
+  return JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+}
+
+export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) {
+  let cloudOffline = false
+  let cloudWorkspaceListFailures = 0
+  const cloudAgentMutationRequests = []
+  const cloudProjectDetailRequests = []
+  const assertLocalIsolation = () =>
+    assert.deepEqual(
+      cloudProjectDetailRequests,
+      [],
+      `Local project operations unexpectedly called cloud project detail APIs: ${cloudProjectDetailRequests.join(', ')}`
+    )
 
   return {
     async handleHttp(request, response, url) {
-      if (request.method === 'GET' && url.pathname === '/api/v1/cloud-projects') {
-        cloudProjectListFailures += 1
-        json(response, 503, { detail: 'Desktop E2E cloud project service is unavailable' })
+      if (request.method === 'GET' && url.pathname === '/api/v1/workspaces') {
+        if (cloudOffline) {
+          cloudWorkspaceListFailures += 1
+          json(response, 503, { detail: 'Desktop E2E cloud workspace service is unavailable' })
+          return true
+        }
+        json(response, 200, {
+          items: [
+            {
+              id: CLOUD_WORKSPACE_ID,
+              name: '云端空间',
+              description: '保存在云端并可跨设备访问的协作空间。',
+              access_role: 'Owner',
+              member_count: 1,
+              agent_count: 0,
+              execution_environment_count: 0,
+              project_count: 0,
+              created_by_user_id: 1,
+              version: 1,
+              created_at: '2026-09-13T00:00:00Z',
+              updated_at: '2026-09-13T00:00:00Z',
+            },
+          ],
+        })
         return true
       }
+      if (request.method === 'GET' && url.pathname === '/api/v1/resources') {
+        json(response, 200, { agents: [], execution_environments: [] })
+        return true
+      }
+      if (request.method === 'GET' && url.pathname === '/api/teams') {
+        json(response, 200, { items: [], total: 0 })
+        return true
+      }
+      if (request.method === 'GET' && url.pathname === '/api/devices') {
+        json(response, 200, { items: [] })
+        return true
+      }
+      if (request.method === 'GET' && url.pathname === '/api/models/unified') {
+        json(response, 503, {
+          detail: 'Desktop E2E cloud model service is unavailable',
+        })
+        return true
+      }
+      if (
+        request.method === 'POST' &&
+        (url.pathname === '/api/bots' || url.pathname === '/api/teams')
+      ) {
+        cloudAgentMutationRequests.push(`${request.method} ${url.pathname}`)
+      }
       if (url.pathname.startsWith('/api/v1/cloud-projects/')) {
-        cloudDetailRequests.push(`${request.method} ${url.pathname}`)
+        cloudProjectDetailRequests.push(`${request.method} ${url.pathname}`)
       }
       return false
     },
 
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
-      await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
+      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command('waitFor', scoped('[data-testid="wework-collaboration-platform"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="workspace-tab-add"]')
-      await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+      await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="workspace-tab-add-board"]')
-      await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="cloud-project-add"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-
-      await control.command('click', '[data-testid="cloud-project-add"]')
-      await control.command('waitFor', '[data-testid="cloud-project-name"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('fill', '[data-testid="cloud-project-name"]', {
-        value: PROJECT_NAME,
-      })
-      await control.command('click', '[data-testid="cloud-project-location-local"]')
-      await control.command('click', '[data-testid="cloud-project-task-provider-local"]')
-      await control.command('clickWhenEnabled', '[data-testid="cloud-project-create-confirm"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="cloud-project-name"]', {
-        visible: false,
-        stableMs: 250,
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="cloud-project-header-title"]', {
-        text: PROJECT_NAME,
-        visible: true,
-        timeoutMs: uiTimeoutMs,
-      })
-
-      await control.command('waitFor', '[data-testid="cloud-todo-column-empty-add-inbox"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="cloud-board-quick-start"]', {
-        text: '快速上手',
-        timeoutMs: uiTimeoutMs,
-      })
-      const emptyGuideSnapshot = JSON.parse(
-        await control.command('snapshot', '[data-testid="cloud-board-quick-start"]')
+      await control.command(
+        'waitFor',
+        sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`),
+        {
+          text: '本地空间',
+          timeoutMs: uiTimeoutMs,
+        }
       )
+      await control.command(
+        'waitFor',
+        sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
+        {
+          text: '云端空间',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+
+      const platformSnapshot = await snapshot(control)
       assert.ok(
-        emptyGuideSnapshot.text.includes('创建第一个 Issue'),
-        'The empty board guide did not explain the first creation step'
+        platformSnapshot.testIds.includes('wework-collaboration-platform') &&
+          platformSnapshot.testIds.includes('collaboration-platform-root'),
+        'Collaboration did not render through the shared native Wework module'
+      )
+      assert.equal(
+        platformSnapshot.testIds.some(testId => testId.startsWith('app-iframe-')),
+        false,
+        'Collaboration unexpectedly rendered through an iframe host'
       )
       await captureVerificationScreenshot(
         control,
-        'board-quick-start-01-empty-board.png',
-        '[data-testid="cloud-todo-workspace"]'
+        'offline-local-project-space-01-local-and-cloud-spaces.png',
+        ACTIVE_WORKBENCH_SELECTOR
       )
-      await control.command('click', '[data-testid="cloud-board-quick-start-create-action"]')
-      await control.command('waitFor', '[data-testid="workspace-issue-composer"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="workspace-issue-templates"]', {
-        text: '从模板开始',
-        timeoutMs: uiTimeoutMs,
-      })
-      await captureVerificationScreenshot(
-        control,
-        'board-quick-start-02-creation-templates.png',
-        '[data-testid="workspace-issue-composer"]'
+
+      cloudOffline = true
+      await control.command(
+        'click',
+        sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`)
       )
-      await control.command('press', 'body', { key: 'Escape' })
-      await control.command('click', '[data-testid="cloud-todo-column-empty-add-inbox"]')
-      await control.command('waitFor', '[data-testid="cloud-todo-column-quick-create-inbox"]', {
+      const localWorkspaceTree = sidebarScoped(
+        `[data-testid="collaboration-workspace-tree-${LOCAL_WORKSPACE_ID}"]`
+      )
+      const activeLocalWorkspace = `${localWorkspaceTree} [data-testid="collaboration-workspace-nav-projects"]`
+      await control.command('waitFor', `${activeLocalWorkspace}[aria-current="page"]`, {
+        text: '本地空间',
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('fill', '[data-testid="cloud-todo-column-quick-create-input-inbox"]', {
-        value: '需要补充详情的任务',
-      })
-      await control.command('click', '[data-testid="cloud-todo-column-quick-create-full-inbox"]')
-      await control.command('waitFor', '[data-testid="workspace-issue-composer"]', {
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="collaboration-workspace-project-create"]'),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      assert.equal(
+        await control.command('getAttribute', activeLocalWorkspace, {
+          value: 'aria-current',
+        }),
+        'page',
+        'The offline flow did not enter the device-owned local workspace'
+      )
+
+      await control.command(
+        'click',
+        scoped('[data-testid="collaboration-workspace-project-create"]')
+      )
+      await control.command('waitFor', scoped('[data-testid="collaboration-project-name-input"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('press', 'body', { key: 'Escape' })
-      await control.command('waitFor', '[data-testid="cloud-todo-column-empty-add-inbox"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', '[data-testid="cloud-todo-column-empty-add-inbox"]')
-      await control.command('waitFor', '[data-testid="cloud-todo-column-quick-create-inbox"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('fill', '[data-testid="cloud-todo-column-quick-create-input-inbox"]', {
-        value: TASK_NAME,
+      const createSnapshot = await snapshot(control)
+      assert.ok(
+        createSnapshot.testIds.includes('cloud-project-location-local'),
+        'The local workspace project dialog did not identify local storage'
+      )
+      assert.equal(
+        createSnapshot.testIds.includes('cloud-project-location-cloud'),
+        false,
+        'The local workspace project dialog incorrectly offered cloud storage'
+      )
+      await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
+        value: PROJECT_NAME,
       })
       await control.command(
         'clickWhenEnabled',
-        '[data-testid="cloud-todo-column-quick-create-confirm-inbox"]',
+        scoped('[data-testid="collaboration-project-create-confirm"]'),
         {
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command('waitFor', '[data-testid^="cloud-todo-card-"]', {
-        text: TASK_NAME,
+      await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
+        text: PROJECT_NAME,
         timeoutMs: uiTimeoutMs,
       })
-      const boardSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-      const taskCardTestId = boardSnapshot.testIds.find(
-        testId =>
-          testId.startsWith('cloud-todo-card-') &&
-          ![
-            'cloud-todo-card-add-child-',
-            'cloud-todo-card-assignee-',
-            'cloud-todo-card-archive-',
-            'cloud-todo-card-drop-',
-            'cloud-todo-card-menu-',
-            'cloud-todo-card-more-',
-          ].some(prefix => testId.startsWith(prefix))
+      await control.command('waitFor', scoped('[data-testid="collaboration-root"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.ok(
+        cloudWorkspaceListFailures > 0,
+        'Entering the local workspace did not exercise the unavailable cloud workspace service'
       )
-      assert.ok(taskCardTestId, 'The newly created local task card was not present in the board')
-      await control.command('waitFor', '[data-testid="cloud-board-quick-start-create"]', {
+      assertLocalIsolation()
+
+      await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
+        value: ISSUE_NAME,
+      })
+      await control.command(
+        'clickWhenEnabled',
+        scoped('[data-testid="cloud-todo-create-confirm"]'),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(
-        await control.command('getAttribute', '[data-testid="cloud-board-quick-start-create"]', {
-          value: 'data-complete',
-        }),
-        'true',
-        'Creating the first board item did not complete the guide creation step'
+        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
+        ISSUE_NAME,
+        'The newly created local Issue did not open in the shared Issue detail'
       )
-      await control.command('click', `[data-testid="${taskCardTestId}"]`)
-      await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
+      await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+      await control.command('waitFor', scoped('[data-testid^="collaboration-issue-"]'), {
+        text: ISSUE_NAME,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="cloud-board-quick-start-open"]', {
+      assertLocalIsolation()
+
+      await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+      await control.command('waitFor', scoped('[data-testid="project-settings-shell"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      const settingsSnapshot = await snapshot(control)
+      assert.equal(
+        settingsSnapshot.testIds.includes('collaboration-tab-automation'),
+        false,
+        'Automation must not remain a top-level project view'
+      )
+
+      await control.command(
+        'click',
+        scoped('[data-testid="collaboration-project-settings-participants"]')
+      )
+      await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="project-agent-mode-create"]')
+      await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="wework-agent-model-load-error"]', {
+        text: 'Desktop E2E cloud model service is unavailable',
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.notEqual(
+        await control.command('getAttribute', '[data-testid="wework-agent-resource-create"]', {
+          value: 'disabled',
+        }),
+        null,
+        'Agent creation must remain disabled without an available model'
+      )
+      assert.deepEqual(
+        cloudAgentMutationRequests,
+        [],
+        'Unavailable model metadata must not trigger a cloud Agent mutation'
+      )
+      await control.command('click', '[data-testid="wework-agent-resource-creator-close"]')
+      await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+        visible: false,
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(
-        await control.command('getAttribute', '[data-testid="cloud-board-quick-start-open"]', {
-          value: 'data-complete',
-        }),
-        'true',
-        'Opening the first board item did not complete the guide detail step'
+        Number(
+          await control.command('getElementCount', scoped('[data-testid^="project-agent-row-"]'))
+        ),
+        0,
+        'A failed offline cloud resource creation must not create a project Agent binding'
       )
-      await captureVerificationScreenshot(
-        control,
-        'board-quick-start-03-item-details.png',
-        '[data-testid="cloud-todo-workspace"]'
+
+      await control.command(
+        'click',
+        scoped('[data-testid="collaboration-project-settings-automatic-processing"]')
       )
-      await control.command('fill', '[data-testid="cloud-todo-detail-title"]', {
-        value: UPDATED_TASK_NAME,
-      })
-      await control.command('clickWhenEnabled', '[data-testid="cloud-todo-save"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', '[data-testid="cloud-todo-detail-close"]')
-      await control.command('waitFor', `[data-testid="${taskCardTestId}"]`, {
-        text: UPDATED_TASK_NAME,
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('drag', `[data-testid="${taskCardTestId}"]`, {
-        target: '[data-testid="cloud-todo-column-dropzone-pending"]',
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="cloud-board-quick-start-complete"]', {
-        text: '快速上手已完成',
-        timeoutMs: uiTimeoutMs,
-      })
-      await captureVerificationScreenshot(
-        control,
-        'board-quick-start-04-advanced.png',
-        '[data-testid="cloud-todo-workspace"]'
-      )
-      let advancedSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-      if (advancedSnapshot.testIds.includes('ai-chat-modal-close')) {
-        await control.command('click', '[data-testid="ai-chat-modal-close"]')
-        advancedSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-      }
-      if (advancedSnapshot.testIds.includes('cloud-todo-detail-close')) {
-        await control.command('click', '[data-testid="cloud-todo-detail-close"]')
-      }
       await control.command(
         'waitFor',
-        '[data-testid="cloud-todo-column-pending"] [data-testid^="cloud-todo-card-"]',
+        scoped('[data-testid="collaboration-project-automatic-processing-page"]'),
         {
-          text: UPDATED_TASK_NAME,
           timeoutMs: uiTimeoutMs,
         }
       )
+      await control.command('waitFor', scoped('[data-testid="automatic-processing"]'), {
+        text: '暂无自动处理规则',
+        timeoutMs: uiTimeoutMs,
+      })
       await captureVerificationScreenshot(
         control,
-        'board-quick-start-05-ready-column.png',
-        '[data-testid="cloud-todo-workspace"]'
+        'offline-local-project-space-02-local-project-settings.png',
+        ACTIVE_WORKBENCH_SELECTOR
       )
-      await control.command('click', '[data-testid="cloud-project-files-view"]')
-      await control.command('waitFor', '[data-testid="cloud-files-upload"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', '[data-testid="cloud-project-manage-view"]')
-      await control.command('waitFor', '[data-testid="cloud-project-members-toggle"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', '[data-testid="cloud-project-automation-view"]')
-      await control.command('waitFor', '[data-testid="project-automation-view"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
-      await control.command('waitFor', '[data-testid="automation-button"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', '[data-testid="automation-button"]')
-      await control.command('waitFor', '[data-testid="create-automation-button"]', {
+      assertLocalIsolation()
+      await control.command('click', scoped('[data-testid="collaboration-tab-files"]'))
+      await control.command('waitFor', scoped('[data-testid="cloud-files-view"]'), {
         timeoutMs: uiTimeoutMs,
       })
 
+      await control.command('click', activeLocalWorkspace)
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="collaboration-workspace-project-create"]'),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      assert.equal(
+        await control.command('getAttribute', activeLocalWorkspace, {
+          value: 'aria-current',
+        }),
+        'page',
+        'The local Workspace tree lost its active state after leaving Project settings'
+      )
+      await control.command('waitFor', localWorkspaceTree, {
+        text: '本地空间',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'waitFor',
+        sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
+        {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+
       assert.ok(
-        cloudProjectListFailures > 0,
-        'The scenario did not exercise an unavailable cloud project list'
+        cloudWorkspaceListFailures > 0,
+        'Returning to all spaces did not exercise the unavailable cloud workspace service'
       )
-      assert.deepEqual(
-        cloudDetailRequests,
-        [],
-        `Local project details unexpectedly called cloud APIs: ${cloudDetailRequests.join(', ')}`
-      )
+      assertLocalIsolation()
     },
 
     diagnostics() {
-      return { cloudDetailRequests, cloudProjectListFailures }
+      return {
+        cloudAgentMutationRequests,
+        cloudProjectDetailRequests,
+        cloudWorkspaceListFailures,
+      }
     },
   }
 }

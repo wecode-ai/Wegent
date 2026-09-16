@@ -350,8 +350,16 @@ impl RuntimeWorkRpcHandler {
                     &link.local_task_id,
                     string_field(&goal, "status"),
                 );
+                let resumed = if string_field(&goal, "status").as_deref() == Some("active") {
+                    self.resume_goal_needing_attention(&link.local_task_id)
+                        .await
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
                 let mut response = task_action_success(&link);
                 response["goal"] = goal;
+                response["resumed"] = Value::Bool(resumed);
                 Ok(response)
             }
             Err(error) => Ok(task_action_failure(&link, error)),

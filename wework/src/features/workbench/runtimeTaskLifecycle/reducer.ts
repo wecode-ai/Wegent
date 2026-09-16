@@ -1,5 +1,9 @@
 import { dequal } from 'dequal'
-import { isRuntimeTaskAuthoritativeCompletion, isRuntimeTaskConfirmedActive } from './projection'
+import {
+  isRuntimeGoalExecutionActive,
+  isRuntimeTaskAuthoritativeCompletion,
+  isRuntimeTaskConfirmedActive,
+} from './projection'
 import type { RuntimeTaskLifecycleEvent, RuntimeTaskLifecycleState } from './types'
 
 export function reduceRuntimeTaskLifecycle(
@@ -8,7 +12,13 @@ export function reduceRuntimeTaskLifecycle(
 ): RuntimeTaskLifecycleState {
   switch (event.type) {
     case 'executor_snapshot_received': {
-      const snapshotRunning = typeof event.task.running === 'boolean' ? event.task.running : null
+      const goalExecutionActive = isRuntimeGoalExecutionActive(event.task)
+      const snapshotRunning =
+        event.task.running === true || goalExecutionActive
+          ? true
+          : typeof event.task.running === 'boolean'
+            ? false
+            : null
       const expectedRunning = state.expectedExecutorRunning
       const hasIdentifiedActiveTurn = state.turnPhase === 'streaming' && state.activeTurnId !== null
       const terminalStatus = isTerminalTaskStatus(event.task.status)
@@ -39,13 +49,15 @@ export function reduceRuntimeTaskLifecycle(
         return state
       }
 
-      const executionPhase = queuedStatus
-        ? 'queued'
-        : terminalStatus || snapshotRunning === false
-          ? 'idle'
-          : snapshotRunning === true
-            ? 'running'
-            : state.executionPhase
+      const executionPhase = goalExecutionActive
+        ? 'running'
+        : queuedStatus
+          ? 'queued'
+          : terminalStatus || snapshotRunning === false
+            ? 'idle'
+            : snapshotRunning === true
+              ? 'running'
+              : state.executionPhase
       const turnPhase =
         queuedStatus || terminalStatus || snapshotRunning === false ? 'idle' : state.turnPhase
       const activeTurnId =
@@ -58,7 +70,12 @@ export function reduceRuntimeTaskLifecycle(
         executionPhase,
         turnPhase,
         activeTurnId,
-        goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
+        goalStatus:
+          event.task.goalStatus === undefined || state.hasAuthoritativeGoalStatus
+            ? state.goalStatus
+            : event.task.goalStatus,
+        hasAuthoritativeGoalStatus:
+          state.hasAuthoritativeGoalStatus || event.task.goalStatus === null,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
           snapshotRunning !== null && event.task.optimistic !== true ? null : expectedRunning,
@@ -207,20 +224,28 @@ export function reduceRuntimeTaskLifecycle(
           }
         : state
 
-    case 'goal_status_received':
-      return event.goalStatus !== null && event.goalStatus !== 'active'
+    case 'goal_status_received': {
+      const goalJustSettled =
+        state.goalStatus === 'active' &&
+        event.goalStatus !== null &&
+        event.goalStatus !== 'active' &&
+        (event.goalStatus !== 'complete' || state.turnPhase === 'idle')
+      return goalJustSettled
         ? {
             ...state,
             executionPhase: 'idle',
             turnPhase: 'idle',
             activeTurnId: null,
             goalStatus: event.goalStatus,
+            hasAuthoritativeGoalStatus: true,
             expectedExecutorRunning: false,
           }
         : {
             ...state,
             goalStatus: event.goalStatus,
+            hasAuthoritativeGoalStatus: true,
           }
+    }
 
     case 'marked_read':
       return state.unread ? { ...state, unread: false } : state

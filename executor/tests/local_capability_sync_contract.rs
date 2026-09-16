@@ -1114,6 +1114,9 @@ async fn cloud_plugin_update_and_removal_restore_local_state_when_codex_config_i
 
     assert_eq!(update["success"], false);
     assert_eq!(update["plugins"][0]["status"], "failed");
+    assert_eq!(update["plugins"][0]["stage"], "codex_config");
+    assert_eq!(update["plugins"][0]["error_code"], "INVALID_CODEX_CONFIG");
+    assert_eq!(update["plugins"][0]["retryable"], false);
     assert!(update["plugins"][0]["error"]
         .as_str()
         .unwrap()
@@ -2034,6 +2037,74 @@ fn reporter_marks_local_and_managed_capabilities_and_falls_back_to_plugin_store(
 }
 
 #[test]
+fn reporter_uses_managed_manifest_when_plugin_registry_is_missing() {
+    let temp = TempRoot::new("capability-report-managed-plugin-without-registry");
+    let skills_dir = temp.path().join(".claude/skills");
+    let plugins_dir = temp.path().join(".claude/plugins");
+    let store_path = temp
+        .path()
+        .join("capabilities/store/plugins/42-wework-dingtalk-0.2.2");
+    let codex_link = temp.path().join(".codex/plugins/dingtalk-wework");
+    let manifest_path = temp.path().join("capabilities/manifest.json");
+    fs::create_dir_all(store_path.join("skills/store-only")).unwrap();
+    fs::write(
+        store_path.join("skills/store-only/SKILL.md"),
+        "---\nname: store-only\n---\n",
+    )
+    .unwrap();
+    fs::create_dir_all(codex_link.join("skills/dws")).unwrap();
+    fs::write(
+        codex_link.join("skills/dws/SKILL.md"),
+        "---\nname: dws\ndescription: Manage DingTalk capabilities.\n---\n",
+    )
+    .unwrap();
+    let manifest = ManagedCapabilityManifest::new(manifest_path);
+    manifest
+        .save(json!({
+            "version": 1,
+            "revision": 3,
+            "skills": {},
+            "plugins": {
+                "dingtalk@wework": {
+                    "name": "dingtalk",
+                    "key": "dingtalk@wework",
+                    "marketplace": "wework",
+                    "installed_plugin_id": 42,
+                    "managed": true,
+                    "version": "0.2.2",
+                    "store_path": store_path.display().to_string(),
+                    "runtime": {
+                        "codex_link": codex_link.display().to_string()
+                    }
+                }
+            },
+            "mcps": {}
+        }))
+        .unwrap();
+    let reporter = GlobalCapabilityReporter::new(skills_dir, plugins_dir.clone(), manifest);
+
+    let report = reporter.build_report(true).unwrap();
+
+    assert!(!plugins_dir.join("installed_plugins.json").exists());
+    assert_eq!(
+        report["plugins"],
+        json!([{
+            "name": "dingtalk",
+            "marketplace": "wework",
+            "scope": "user",
+            "version": "0.2.2",
+            "source": "wegent",
+            "installed_plugin_id": 42,
+            "skills": [{
+                "name": "dws",
+                "description": "Manage DingTalk capabilities.",
+                "path": "skills/dws"
+            }]
+        }])
+    );
+}
+
+#[test]
 fn global_capability_helpers_match_project_and_device_config_contract() {
     let temp = TempRoot::new("capability-sync-global");
     let _home = EnvGuard::set("HOME", temp.path().display().to_string());
@@ -2321,4 +2392,164 @@ fn write_u16(output: &mut Vec<u8>, value: u16) {
 
 fn write_u32(output: &mut Vec<u8>, value: u32) {
     output.extend_from_slice(&value.to_le_bytes());
+}
+
+#[tokio::test]
+async fn plugin_reconciliation_preserves_skills_mcps_and_personal_packages() {
+    let temp = TempRoot::new("plugin-reconciliation-scope");
+    let manifest_path = temp.path().join("capabilities.json");
+    let skills_dir = temp.path().join("skills");
+    let store_dir = temp.path().join("store");
+    let personal = temp
+        .path()
+        .join("codex/plugins/cache/wework-personal/example/1.0.0");
+    fs::create_dir_all(&personal).unwrap();
+    fs::write(personal.join("marker"), "personal content").unwrap();
+    let initial = json!({"version":1,"revision":1,
+        "skills":{"keep":{"managed":true,"skill_id":1}},
+        "mcps":{"keep":{"installed_mcp_id":2}},
+        "plugins":{}});
+    fs::write(&manifest_path, initial.to_string()).unwrap();
+    let store = GlobalCapabilityStore::new(manifest_path.clone(), skills_dir)
+        .with_codex_plugins_dir(temp.path().join("codex/plugins"))
+        .with_store_dir(store_dir);
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store,
+        StaticPackageProvider::default(),
+    );
+    let invalid = handler
+        .apply_sync(json!({"scope":"plugins","mode":"merge"}))
+        .await;
+    assert!(
+        invalid.is_err(),
+        "Missing plugins must not mean uninstall everything"
+    );
+    let result = handler
+        .apply_sync(json!({"scope":"plugins","mode":"merge","plugins":[]}))
+        .await
+        .unwrap();
+    assert_eq!(result["success"], true);
+    assert_eq!(result["scope"], "plugins");
+    let actual = read_json(&manifest_path);
+    assert_eq!(actual["skills"], initial["skills"]);
+    assert_eq!(actual["mcps"], initial["mcps"]);
+    assert_eq!(
+        fs::read_to_string(personal.join("marker")).unwrap(),
+        "personal content"
+    );
+}
+
+#[tokio::test]
+async fn plugin_reconciliation_removes_only_identified_cloud_installations() {
+    let temp = TempRoot::new("plugin-reconciliation-removal");
+    let manifest_path = temp.path().join("capabilities.json");
+    let store_dir = temp.path().join("store");
+    let codex_plugins_dir = temp.path().join("codex/plugins");
+    let package = zip_bytes(&[(
+        ".codex-plugin/plugin.json",
+        r#"{"name":"example","version":"1.0.0"}"#,
+    )]);
+    let shared_package = zip_bytes(&[(
+        ".codex-plugin/plugin.json",
+        r#"{"name":"shared-example","version":"1.0.0"}"#,
+    )]);
+    let checksum = sha256_hex(&package);
+    let shared_checksum = sha256_hex(&shared_package);
+    let provider = StaticPackageProvider::default()
+        .with_plugin("/package", package)
+        .with_plugin("/shared-package", shared_package);
+    let store = GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join("skills"))
+        .with_plugins_dir(temp.path().join("claude/plugins"))
+        .with_codex_plugins_dir(codex_plugins_dir.clone())
+        .with_store_dir(store_dir.clone());
+    let handler = CapabilitySyncHandler::with_package_provider("token", store, provider);
+    let installed = handler
+        .apply_sync(json!({"scope":"plugins","mode":"merge","plugins":[
+            {
+                "installed_plugin_id":9,"name":"example","marketplace":"wegent","version":"1.0.0",
+                "download_path":"/package","checksum":checksum
+            },
+            {
+                "installed_plugin_id":10,"name":"shared-example","marketplace":"wework-personal","version":"1.0.0",
+                "download_path":"/shared-package","checksum":shared_checksum
+            }
+        ]}))
+        .await
+        .unwrap();
+    assert_eq!(installed["success"], true, "{installed}");
+    let mut manifest = read_json(&manifest_path);
+    let store_path = PathBuf::from(
+        manifest["plugins"]["example@wegent"]["store_path"]
+            .as_str()
+            .unwrap(),
+    );
+    let shared_store_path = PathBuf::from(
+        manifest["plugins"]["shared-example@wework-personal"]["store_path"]
+            .as_str()
+            .unwrap(),
+    );
+    let personal_marketplace_path =
+        codex_plugins_dir.join("marketplaces/wework-personal/.agents/plugins/marketplace.json");
+    let author_plugin_path =
+        codex_plugins_dir.join("marketplaces/wework-personal/plugins/author-plugin");
+    fs::create_dir_all(&author_plugin_path).unwrap();
+    fs::write(author_plugin_path.join("marker"), "author content").unwrap();
+    let mut personal_marketplace = read_json(&personal_marketplace_path);
+    personal_marketplace["plugins"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"author-plugin","source":{"source":"local","path":"./plugins/author-plugin"}}));
+    fs::write(&personal_marketplace_path, personal_marketplace.to_string()).unwrap();
+    manifest["plugins"]["unknown@wework-personal"] =
+        json!({"name":"unknown","marketplace":"wework-personal","managed":true});
+    fs::write(&manifest_path, manifest.to_string()).unwrap();
+    let result = handler
+        .apply_sync(json!({"scope":"plugins","mode":"merge","plugins":[]}))
+        .await
+        .unwrap();
+    assert_eq!(result["success"], true);
+    let actual = read_json(&manifest_path);
+    assert!(actual["plugins"].get("example@wegent").is_none());
+    assert!(actual["plugins"]
+        .get("shared-example@wework-personal")
+        .is_none());
+    assert_eq!(
+        actual["plugins"]["unknown@wework-personal"],
+        manifest["plugins"]["unknown@wework-personal"]
+    );
+    assert!(!store_path.exists());
+    assert!(!shared_store_path.exists());
+    assert!(!codex_plugins_dir
+        .join("cache/wegent/example/1.0.0")
+        .exists());
+    assert!(!codex_plugins_dir
+        .join("cache/wework-personal/shared-example/1.0.0")
+        .exists());
+    assert_eq!(
+        read_toml(codex_plugins_dir.parent().unwrap().join("config.toml"))["marketplaces"]
+            ["wework-personal"]["source_type"]
+            .as_str(),
+        Some("local")
+    );
+    let personal_marketplace = read_json(personal_marketplace_path);
+    assert!(personal_marketplace["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|plugin| plugin["name"] != "shared-example"));
+    assert!(personal_marketplace["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|plugin| plugin["name"] == "author-plugin"));
+    assert_eq!(
+        fs::read_to_string(author_plugin_path.join("marker")).unwrap(),
+        "author content"
+    );
+    let again = handler
+        .apply_sync(json!({"scope":"plugins","mode":"merge","plugins":[]}))
+        .await
+        .unwrap();
+    assert_eq!(again["success"], true);
 }

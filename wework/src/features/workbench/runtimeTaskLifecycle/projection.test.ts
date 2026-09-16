@@ -95,6 +95,68 @@ describe('runtimeTaskProjection', () => {
     ).toBe(false)
   })
 
+  test.each(['running', 'recovering'] as const)(
+    'recognizes an executor-reported Goal execution in %s state',
+    goalExecutionStatus => {
+      expect(
+        isRuntimeTaskExecutionRunning(
+          task({
+            running: false,
+            status: 'active',
+            completedAt: 1_786_676_400_000,
+            goalStatus: 'active',
+            goalExecutionStatus,
+          })
+        )
+      ).toBe(true)
+    }
+  )
+
+  test('does not treat a Goal needing attention as running', () => {
+    expect(
+      isRuntimeTaskExecutionRunning(
+        task({
+          running: false,
+          status: 'active',
+          completedAt: 1_786_676_400_000,
+          goalStatus: 'active',
+          goalExecutionStatus: 'needsAttention',
+        })
+      )
+    ).toBe(false)
+  })
+
+  test('recognizes a real executor queued active Goal recovery without execution status', () => {
+    expect(
+      isRuntimeTaskExecutionRunning(
+        task({
+          running: false,
+          status: 'queued',
+          completedAt: 1_789_483_225_000,
+          goalStatus: 'active',
+        })
+      )
+    ).toBe(true)
+  })
+
+  test('does not normalize an actively recovering Goal as completed', () => {
+    expect(
+      normalizeRuntimeTaskSummary(
+        task({
+          running: false,
+          status: 'active',
+          completedAt: 1_786_676_400_000,
+          goalStatus: 'active',
+          goalExecutionStatus: 'recovering',
+        })
+      )
+    ).toMatchObject({
+      running: false,
+      status: 'active',
+      goalExecutionStatus: 'recovering',
+    })
+  })
+
   test('always prefers executor state over a persisted sidebar projection', () => {
     const cached = task({
       cachedProjection: true,

@@ -51,6 +51,9 @@ export const paths = {
   inbox: {
     getHref: () => '/inbox',
   },
+  collaboration: {
+    getHref: () => '/collaboration',
+  },
   resourceLibrary: {
     getHref: () => '/resource-library',
   },

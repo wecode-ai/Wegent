@@ -125,8 +125,9 @@
     "wiki": "Knowledge",
     "flow": "Automation",
     "inbox": "Inbox",
+    "collaboration": "Collaboration",
     "more": "More",
-    "more_summary": "Devices · Inbox",
+    "more_summary": "Devices · Collaboration",
     "settings": "Settings",
     "docs": "Docs",
     "feature_docs": "Feature Docs",
@@ -134,6 +135,16 @@
     "feedback": "Feedback",
     "admin": "Admin",
     "evaluation": "AI Evaluation"
+  },
+  "collaboration_sidebar": {
+    "back_to_workbench": "Back to workbench",
+    "title": "Collaboration",
+    "aria_label": "Collaboration navigation",
+    "close_navigation": "Close collaboration navigation",
+    "home": "Collaboration home",
+    "my_work": "My work",
+    "inbox": "Inbox",
+    "run_center": "Run center"
   },
   "sidebar": {
     "recent_visits": "Recent Visits",
@@ -327,6 +338,8 @@
     "download": "Download"
   },
   "teams": {
+    "create_target": "Create in",
+    "create_target_description": "The agent will be created as a shared resource of this collaboration workspace.",
     "title": "Team List",
     "description": "Agent = Bot + Collaboration Mode. Combine different bots and collaboration patterns to accomplish various tasks",
     "loading": "Loading teams...",
@@ -362,6 +375,10 @@
     "no_teams": "No teams available",
     "no_teams_title": "No Agents Available",
     "no_teams_description": "Create your first agent to start intelligent conversations",
+    "load_failed_title": "Failed to load agents",
+    "load_failed_description": "Something went wrong. Please try again.",
+    "retry": "Retry",
+    "refresh_page": "Refresh page",
     "create_first_team": "Create Agent",
     "system_recommended": "Recommended",
     "quick_access_title": "Favorite agents",

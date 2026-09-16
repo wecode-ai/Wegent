@@ -21,10 +21,12 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches ./patches
 COPY wework/package.json ./wework/package.json
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
+COPY packages/collaboration/package.json ./packages/collaboration/package.json
 RUN pnpm --filter wework... install --frozen-lockfile
 
 COPY wework ./wework
 COPY packages/chat-core ./packages/chat-core
+COPY packages/collaboration ./packages/collaboration
 COPY shared/assets ./shared/assets
 
 ENV VITE_LOGIN_MODE=oidc

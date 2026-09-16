@@ -6,6 +6,7 @@ import {
   projectSpaceRouteMatchesProject,
   projectSpaceRouteParam,
   projectSpaceRouteRequestsDefaultProject,
+  projectSpaceRouteTargetsDefaultWorkItems,
 } from './projectSpaceRoute'
 
 describe('projectSpaceRoute', () => {
@@ -22,6 +23,7 @@ describe('projectSpaceRoute', () => {
     const route = defaultProjectSpaceContentRoute()
 
     expect(projectSpaceRouteRequestsDefaultProject(route)).toBe(true)
+    expect(projectSpaceRouteTargetsDefaultWorkItems(route)).toBe(true)
     expect(projectSpaceRefFromRoute(route)).toBeNull()
     expect(
       projectSpaceRouteMatchesProject(route, {
@@ -52,11 +54,24 @@ describe('projectSpaceRoute', () => {
       projectId: 'default-work-items',
     })
 
+    expect(projectSpaceRouteRequestsDefaultProject(route)).toBe(false)
+    expect(projectSpaceRouteTargetsDefaultWorkItems(route)).toBe(true)
     expect(
       projectSpaceRouteMatchesProject(route, {
         projectStore: 'backend',
         projectId: 'default-work-items',
       })
+    ).toBe(false)
+  })
+
+  test('does not target My Tasks for an ordinary concrete project route', () => {
+    expect(
+      projectSpaceRouteTargetsDefaultWorkItems(
+        projectSpaceContentRoute({
+          projectStore: 'local',
+          projectId: 'project-1',
+        })
+      )
     ).toBe(false)
   })
 })

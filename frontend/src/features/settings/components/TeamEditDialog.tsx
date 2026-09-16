@@ -62,14 +62,18 @@ import TeamModeEditor from './team-edit/TeamModeEditor'
 import TeamModeChangeDialog from './team-edit/TeamModeChangeDialog'
 import SimpleTeamEditForm from './team-edit/SimpleTeamEditForm'
 import {
-  bindModeRequiresClaudeCode,
+  bindModeRequiresCodingAgent,
+  DEFAULT_CODING_EXECUTOR_RUNTIME,
   getDefaultSimpleBindMode,
   getModelCategoryTypeForBindMode,
-  isClaudeCodeShell,
+  isCodingAgentShell,
+  matchesAutomaticSimpleBindMode,
   normalizeExecutorForBindMode,
+  resolveSimpleBindMode,
   resolveSimpleExecutorFromBot,
   resolveShellForExecutor,
   shellSupportsPreloadSkills,
+  type CodingExecutorRuntime,
   type SimpleExecutorMode,
 } from './team-edit/simple-team-edit-utils'
 import { buildSimpleBotRequest, buildSimpleTeamRequest } from './team-edit/simple-team-edit-save'
@@ -124,6 +128,7 @@ interface TeamEditDialogProps {
     publishAfterCreate: boolean,
     marketplaceTags: string[]
   ) => void
+  fixedCreateTargetLabel?: string
 }
 
 const SIMPLE_BIND_MODES = new Set<TaskType>(['chat', 'code', 'task', 'video', 'image'])
@@ -149,8 +154,11 @@ function normalizeSimpleBindMode(team: Team): TaskType[] {
   return getDefaultSimpleBindMode()
 }
 
-function getInitialBindMode(team: Team): TaskType[] {
-  if (team.bind_mode && Array.isArray(team.bind_mode) && team.bind_mode.length > 0) {
+function getInitialBindMode(team: Team, allowAutomatic: boolean): TaskType[] {
+  if (Array.isArray(team.bind_mode)) {
+    if (team.bind_mode.length === 0) {
+      return allowAutomatic ? [] : normalizeSimpleBindMode(team)
+    }
     const hasNonSimpleMode = team.bind_mode.some(mode => !SIMPLE_BIND_MODES.has(mode))
     return hasNonSimpleMode ? team.bind_mode : normalizeSimpleBindMode(team)
   }
@@ -176,10 +184,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     writableGroups = [],
     publishAfterCreate = false,
     onCreateOptionsChange,
+    fixedCreateTargetLabel,
   } = props
 
   const { t } = useTranslation()
-  const { refreshTeams } = useTeamContext()
+  const { invalidateTeams } = useTeamContext({ enabled: false })
 
   // Current editing object (0 means create new)
   const editingTeam: Team | null =
@@ -198,7 +207,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [quickPhrases, setQuickPhrases] = useState<string[]>([])
   const [inputPlaceholder, setInputPlaceholder] = useState<TeamInputPlaceholder>({})
   const [mode, setMode] = useState<TeamMode>('solo')
-  const [bindMode, setBindMode] = useState<TaskType[]>(['chat', 'code'])
+  const [bindMode, setBindMode] = useState<TaskType[]>([])
   const [icon, setIcon] = useState<string | null>(null)
   const [requiresWorkspace, setRequiresWorkspace] = useState<boolean | null>(null)
 
@@ -207,8 +216,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [leaderBotId, setLeaderBotId] = useState<number | null>(null)
 
   const [saving, setSaving] = useState(false)
-  const [creatingPublishTarget, setCreatingPublishTarget] =
-    useState<CapabilityPublishTarget>('personal')
+  const [creatingPublishTarget, setCreatingPublishTarget] = useState<CapabilityPublishTarget>(
+    createTarget.scope === 'group' ? 'team' : 'personal'
+  )
   const [editingPublishTarget, setEditingPublishTarget] =
     useState<CapabilityPublishTarget>('personal')
   const [editingGroupNames, setEditingGroupNames] = useState<string[]>([])
@@ -344,7 +354,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       }
 
       await onSaved?.(team)
-      refreshTeams().catch(err => console.error('Failed to refresh teams after save:', err))
+      invalidateTeams()
       setUnsavedPrompts({})
       onClose()
     },
@@ -359,7 +369,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       onSaved,
       publishGroupNames,
       publishTarget,
-      refreshTeams,
+      invalidateTeams,
       t,
       toast,
     ]
@@ -381,6 +391,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   // Simplified editor state
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [simpleExecutorMode, setSimpleExecutorMode] = useState<SimpleExecutorMode>('simple')
+  const [simpleCodingRuntime, setSimpleCodingRuntime] = useState<CodingExecutorRuntime>(
+    DEFAULT_CODING_EXECUTOR_RUNTIME
+  )
   const [simpleCustomShellName, setSimpleCustomShellName] = useState('')
   const [simpleBotName, setSimpleBotName] = useState('')
   const [simpleModelName, setSimpleModelName] = useState('')
@@ -459,21 +472,33 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const useSimpleEditor = !advancedOpen && !isNonSoloTeam
 
   const selectedSimpleShell = useMemo(
-    () => resolveShellForExecutor(shells, simpleExecutorMode, simpleCustomShellName),
-    [shells, simpleCustomShellName, simpleExecutorMode]
+    () =>
+      resolveShellForExecutor(
+        shells,
+        simpleExecutorMode,
+        simpleCustomShellName,
+        simpleCodingRuntime
+      ),
+    [shells, simpleCodingRuntime, simpleCustomShellName, simpleExecutorMode]
+  )
+  const effectiveSimpleBindMode = useMemo(
+    () => resolveSimpleBindMode(bindMode, simpleExecutorMode, selectedSimpleShell),
+    [bindMode, selectedSimpleShell, simpleExecutorMode]
   )
 
   const simpleMcpAgentType = useMemo<McpAgentType | undefined>(() => {
     const shellType = selectedSimpleShell?.shellType || selectedSimpleShell?.name
-    return shellType === 'ClaudeCode' || shellType === 'Agno' ? shellType : undefined
+    return shellType === 'Codex' || shellType === 'ClaudeCode' || shellType === 'Agno'
+      ? shellType
+      : undefined
   }, [selectedSimpleShell])
   const simpleSupportsPreloadSkills = useMemo(() => {
     return shellSupportsPreloadSkills(selectedSimpleShell)
   }, [selectedSimpleShell])
 
-  const simpleExecutorNeedsComplex = bindModeRequiresClaudeCode(bindMode)
-  const simpleExecutorHelperText = simpleExecutorNeedsComplex
-    ? t('settings:team.simple.executor.requires_complex_hint')
+  const simpleExecutorNeedsCodingAgent = bindModeRequiresCodingAgent(bindMode)
+  const simpleExecutorHelperText = simpleExecutorNeedsCodingAgent
+    ? t('settings:team.simple.executor.requires_coding_agent_hint')
     : null
   const skillLoadingFailedTitle = t('common:skills.loading_failed')
   const modelLoadingFailedTitle = t('common:bot.errors.fetch_models_failed')
@@ -521,14 +546,21 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       const m = (formTeam.workflow?.mode as TeamMode) || 'solo'
       setMode(m)
       setAdvancedOpen(m !== 'solo')
-      setBindMode(getInitialBindMode(formTeam))
       const ids = formTeam.bots.map(b => String(b.bot_id))
       setSelectedBotKeys(ids)
       const leaderBot = formTeam.bots.find(b => b.role === 'leader') || formTeam.bots[0]
       setLeaderBotId(leaderBot?.bot_id ?? null)
       const fullLeaderBot = bots.find(bot => bot.id === leaderBot?.bot_id)
       const executor = resolveSimpleExecutorFromBot(fullLeaderBot)
+      const initialBindMode = getInitialBindMode(formTeam, m === 'solo')
+      const usesAutomaticBindMode =
+        m === 'solo' &&
+        matchesAutomaticSimpleBindMode(initialBindMode, executor.mode, {
+          shellType: fullLeaderBot?.shell_type || '',
+        })
+      setBindMode(usesAutomaticBindMode ? [] : initialBindMode)
       setSimpleExecutorMode(executor.mode)
+      setSimpleCodingRuntime(executor.codingRuntime)
       setSimpleCustomShellName(executor.customShellName)
       setSimpleBotName(fullLeaderBot?.name || '')
       setSimplePrompt(fullLeaderBot?.system_prompt || '')
@@ -594,12 +626,13 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setIcon(null)
       setMode('solo')
       setAdvancedOpen(false)
-      setBindMode(getDefaultSimpleBindMode())
+      setBindMode([])
       setSelectedBotKeys([])
       setLeaderBotId(null)
       setRequireConfirmationMap({})
       setContextPassingMap({})
       setSimpleExecutorMode('simple')
+      setSimpleCodingRuntime(DEFAULT_CODING_EXECUTOR_RUNTIME)
       setSimpleCustomShellName('')
       setSimpleBotName('')
       setSimpleModelName('')
@@ -699,13 +732,24 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       simpleExecutorMode,
       bindMode,
       shells,
-      simpleCustomShellName
+      simpleCustomShellName,
+      simpleCodingRuntime
     )
 
     if (normalized.mode !== simpleExecutorMode) {
       setSimpleExecutorMode(normalized.mode)
     }
-  }, [bindMode, shells, simpleCustomShellName, simpleExecutorMode, useSimpleEditor])
+    if (normalized.codingRuntime !== simpleCodingRuntime) {
+      setSimpleCodingRuntime(normalized.codingRuntime)
+    }
+  }, [
+    bindMode,
+    shells,
+    simpleCodingRuntime,
+    simpleCustomShellName,
+    simpleExecutorMode,
+    useSimpleEditor,
+  ])
 
   const reloadSimpleSkills = useCallback(async () => {
     if (!useSimpleEditor) return
@@ -858,8 +902,19 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   }
 
   const handleSimpleBindModeChange = (nextBindMode: TaskType[]) => {
+    const currentEffectiveBindMode = resolveSimpleBindMode(
+      bindMode,
+      simpleExecutorMode,
+      selectedSimpleShell
+    )
+    const nextEffectiveBindMode = resolveSimpleBindMode(
+      nextBindMode,
+      simpleExecutorMode,
+      selectedSimpleShell
+    )
     if (
-      getModelCategoryTypeForBindMode(bindMode) !== getModelCategoryTypeForBindMode(nextBindMode)
+      getModelCategoryTypeForBindMode(currentEffectiveBindMode) !==
+      getModelCategoryTypeForBindMode(nextEffectiveBindMode)
     ) {
       setSimpleModelName('')
       setSimpleModelType(undefined)
@@ -949,7 +1004,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   }
 
   const handleSimpleSave = async (confirmation?: TeamIdentityConfirmation) => {
-    const selectedShell = resolveShellForExecutor(shells, simpleExecutorMode, simpleCustomShellName)
+    const selectedShell = resolveShellForExecutor(
+      shells,
+      simpleExecutorMode,
+      simpleCustomShellName,
+      simpleCodingRuntime
+    )
     if (!selectedShell) {
       toast({
         variant: 'destructive',
@@ -958,10 +1018,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       return
     }
 
-    if (bindModeRequiresClaudeCode(bindMode) && !isClaudeCodeShell(selectedShell)) {
+    const resolvedBindMode = resolveSimpleBindMode(bindMode, simpleExecutorMode, selectedShell)
+
+    if (bindModeRequiresCodingAgent(resolvedBindMode) && !isCodingAgentShell(selectedShell)) {
       toast({
         variant: 'destructive',
-        title: t('settings:team.simple.executor.requires_complex_hint'),
+        title: t('settings:team.simple.executor.requires_coding_agent_hint'),
       })
       return
     }
@@ -1031,7 +1093,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           description,
           quickPhrases,
           inputPlaceholder,
-          bindMode,
+          bindMode: resolvedBindMode,
           showFinalAnswerOnly,
           icon,
           requiresWorkspace,
@@ -1081,8 +1143,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       return
     }
 
-    // Validate bind_mode is not empty
-    if (bindMode.length === 0) {
+    // The simplified editor resolves an empty selection from the executor.
+    if (!useSimpleEditor && bindMode.length === 0) {
       toast({
         variant: 'destructive',
         title: t('team.bind_mode_required'),
@@ -1449,7 +1511,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 </div>
                 <Switch
                   checked={advancedOpen}
-                  onCheckedChange={checked => setAdvancedOpen(checked)}
+                  onCheckedChange={checked => {
+                    if (checked && bindMode.length === 0) {
+                      setBindMode(effectiveSimpleBindMode)
+                    }
+                    setAdvancedOpen(checked)
+                  }}
                   data-testid="advanced-mode-switch"
                 />
               </div>
@@ -1479,6 +1546,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   inputPlaceholder={inputPlaceholder}
                   onInputPlaceholderChange={setInputPlaceholder}
                   bindMode={bindMode}
+                  effectiveBindMode={effectiveSimpleBindMode}
                   setBindMode={handleSimpleBindModeChange}
                   icon={icon}
                   setIcon={setIcon}
@@ -1486,11 +1554,13 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   setRequiresWorkspace={setRequiresWorkspace}
                   executorMode={simpleExecutorMode}
                   setExecutorMode={setSimpleExecutorMode}
+                  codingRuntime={simpleCodingRuntime}
+                  setCodingRuntime={setSimpleCodingRuntime}
                   shells={shells}
                   customShellName={simpleCustomShellName}
                   setCustomShellName={setSimpleCustomShellName}
                   executorHelperText={simpleExecutorHelperText}
-                  disabledExecutorModes={simpleExecutorNeedsComplex ? ['simple'] : []}
+                  disabledExecutorModes={simpleExecutorNeedsCodingAgent ? ['simple'] : []}
                   modelName={simpleModelName}
                   modelType={simpleModelType}
                   modelNamespace={simpleModelNamespace}
@@ -1610,17 +1680,32 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               </>
             )}
 
-            <div data-testid="team-publish-scope-section">
-              <CapabilityScopeSelector
-                value={publishTarget}
-                groups={writableGroups}
-                groupName={publishGroupName}
-                groupNames={publishGroupNames}
-                onChange={handlePublishTargetChange}
-                existingResource={isEditing}
-                multipleGroups
-              />
-            </div>
+            {fixedCreateTargetLabel && !isEditing ? (
+              <div
+                className="rounded-lg border border-border bg-surface px-4 py-3"
+                data-testid="team-fixed-create-target"
+              >
+                <div className="text-sm font-medium text-text-primary">
+                  {t('common:teams.create_target')}
+                </div>
+                <div className="mt-1 text-sm text-text-secondary">{fixedCreateTargetLabel}</div>
+                <div className="mt-1 text-xs text-text-muted">
+                  {t('common:teams.create_target_description')}
+                </div>
+              </div>
+            ) : (
+              <div data-testid="team-publish-scope-section">
+                <CapabilityScopeSelector
+                  value={publishTarget}
+                  groups={writableGroups}
+                  groupName={publishGroupName}
+                  groupNames={publishGroupNames}
+                  onChange={handlePublishTargetChange}
+                  existingResource={isEditing}
+                  multipleGroups
+                />
+              </div>
+            )}
             {publishTarget === 'marketplace' && (
               <>
                 <div className="space-y-2" data-testid="team-marketplace-tags-section">

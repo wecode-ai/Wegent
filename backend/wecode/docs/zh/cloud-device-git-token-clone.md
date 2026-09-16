@@ -14,9 +14,13 @@ sidebar_position: 1
 | `GIT_STAFF_SINA_COM_CN_TOKEN` | `git.staff.sina.com.cn` | 云设备内访问对应 GitLab 仓库 |
 | `GITLAB_WEIBO_CN_TOKEN`       | `gitlab.weibo.cn`       | 云设备内访问对应 GitLab 仓库 |
 
-启动脚本会为 `ubuntu` 用户配置 Git：支持域名的 `ssh://git@...` 和 `git@...:` 仓库地址会通过 `url.*.insteadOf` 自动改写为 HTTPS，并通过 `~/.wecode/git-askpass.sh` 使用当前 Wegent 用户名和 Token 认证。
+启动脚本会为 `ubuntu` 用户写入与手动同步相同的 Wegent 托管配置。支持域名的 `ssh://git@...` 和 `git@...:` 仓库地址会通过 `url.*.insteadOf` 自动改写为 HTTPS，并由 `~/.wecode/git-auth/` 下的 credential helper 使用对应域的 Git 用户名和 Token 认证。
 
-为保证后续新开的交互式 Shell 也可执行 clone，启动脚本会把 Git 用户名和 Token 环境变量写入 `~/.wecode/git-token-env` 并设置 `0600` 权限，再通过 `~/.bashrc` 自动加载。Token 不会写入 Git remote URL、Device CRD、数据库或日志。Token 获取失败不会阻断云设备创建。
+每个 Git 域会使用 Token 校验结果中的 `git_login` 和 `git_email` 生成独立提交身份，并通过 Git 条件 include 按仓库 remote 生效，不设置全局 `user.name` 或 `user.email`。如果 GitLab 未返回完整身份，Token 认证和设备创建仍会继续，日志仅记录缺少身份的域名；该域的仓库需要用户自行补充提交身份。
+
+Token 文件权限为 `0600`，不会写入 Git remote URL、Device CRD、数据库或日志。启动脚本中的敏感载荷在关闭 shell xtrace 后应用。
+
+创建云设备前，后端会通过对应 GitLab 域验证所有待注入 Token。未配置支持的 Token、Token 被 GitLab 拒绝时，创建请求返回 `400`；Secret 服务或 GitLab 校验暂时不可用时返回 `503`。只有全部 Token 校验成功后，后端才会创建设备 API Key 和 Nevis Sandbox，避免生成无法 clone 私有仓库的云设备。日志只记录用户名、域名、状态码和异常类型，不记录 Token。设备保存的是创建时的 Token 和身份快照；后续账号信息更新需要通过手动同步写入已有设备。
 
 ## 手动同步指定设备
 

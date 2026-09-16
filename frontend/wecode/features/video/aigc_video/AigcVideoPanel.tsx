@@ -266,6 +266,11 @@ export function AigcVideoPanel({
                 sessionId={sessionId}
                 taskUuid={target.taskUuid}
                 onContinue={onChatButtonClick ? handleContinue : undefined}
+                onRender={
+                  !shareToken && onChatButtonClick
+                    ? () => onChatButtonClick(t('materialEditor.timeline.render'))
+                    : undefined
+                }
                 autoOpenOpenCut={autoOpenOpenCut && target.panel === 'timeline'}
                 onOpenCutClose={autoOpenOpenCut ? onClose : undefined}
               />

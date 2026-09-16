@@ -76,6 +76,7 @@ import {
   verifyActiveGoalIdleUnreadLifecycle,
   verifyBusyTurnGoalHandoff,
   verifyGoalRestartRecoveryLifecycle,
+  verifyMissingGoalSnapshotReconciliation,
   verifyTaskSupervisorLifecycle,
 } from './goal-flows.mjs'
 
@@ -1138,6 +1139,7 @@ async function main() {
         backendUrl: cloudEnvironment.backendUrl,
         databasePath: cloudEnvironment.databasePath,
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
+        setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),
       })
     } else {
       executorBinary = await buildExecutor()
@@ -1768,7 +1770,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         restartDesktopApp,
         TURN_NAVIGATION_ONLY_TURN_COUNT
       )
-      await verifyTurnNavigationTracksVisibleTurnMessages(control, 2)
+      await verifyTurnNavigationTracksVisibleTurnMessages(control)
       console.log(`Wework desktop turn-navigation E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -2326,6 +2328,25 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       text: 'workspace',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
+
+    phase = 'composer-clear-project-preserves-draft'
+    const clearProjectDraft = 'WEWORK_DESKTOP_E2E_CLEAR_PROJECT_PRESERVES_DRAFT'
+    await control.command('fill', composerSelector, { value: clearProjectDraft })
+    await control.command('click', '[data-testid="project-work-button"]')
+    await control.command('waitFor', '[data-testid="no-project-option"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="no-project-option"]')
+    await control.command('waitFor', composerSelector, {
+      text: clearProjectDraft,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    assert.equal(
+      await control.command('getValue', composerSelector),
+      clearProjectDraft,
+      'Clearing the selected project discarded the unsent composer draft'
+    )
+    await control.command('fill', composerSelector, { value: '' })
 
     phase = 'project-folder-remove-immediately'
     await control.command('click', `[data-testid="${projectMenuTestId}"]`)
@@ -3182,6 +3203,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
 
     if (shouldRunDesktopCheckpoint('goal-lifecycle')) {
+      phase = 'goal-missing-snapshot-reconciliation'
+      await verifyMissingGoalSnapshotReconciliation({
+        composerSelector,
+        control,
+      })
+
       phase = 'goal-busy-handoff'
       await verifyBusyTurnGoalHandoff({
         composerSelector,

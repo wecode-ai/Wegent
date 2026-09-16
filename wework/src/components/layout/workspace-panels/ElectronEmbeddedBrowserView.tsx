@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  listenEmbeddedBrowserCloseRequests,
   notifyEmbeddedBrowserAgentCursorArrived,
   type EmbeddedBrowserAgentCursorEvent,
 } from '@/lib/embedded-browser'
@@ -11,7 +10,6 @@ import {
   positionElectronEmbeddedBrowserView,
   relabelElectronEmbeddedBrowserView,
   releaseElectronEmbeddedBrowserView,
-  resetElectronEmbeddedBrowserView,
   syncElectronEmbeddedBrowserView,
   type HostedElectronWebview,
 } from './electronEmbeddedBrowserHost'
@@ -43,6 +41,20 @@ interface CursorPoint {
   y: number
 }
 
+function positionHostFromPlaceholder(
+  host: HostedElectronWebview,
+  owner: symbol,
+  placeholder: HTMLElement
+) {
+  const rect = placeholder.getBoundingClientRect()
+  positionElectronEmbeddedBrowserView(host, owner, {
+    height: Math.max(0, rect.height),
+    left: rect.left,
+    top: rect.top,
+    width: Math.max(0, rect.width),
+  })
+}
+
 export function ElectronEmbeddedBrowserView({
   active,
   interactionBlocked,
@@ -56,7 +68,6 @@ export function ElectronEmbeddedBrowserView({
   const initialLabelRef = useRef(label)
   const initialTransferFromLabelRef = useRef(transferFromLabel)
   const hostRef = useRef<HostedElectronWebview | null>(null)
-  const labelRef = useRef(label)
   const ownerRef = useRef(Symbol('electron-embedded-browser-view'))
   const [cursorOverlayHost, setCursorOverlayHost] = useState<HTMLDivElement | null>(null)
 
@@ -72,15 +83,7 @@ export function ElectronEmbeddedBrowserView({
     hostRef.current = host
     setCursorOverlayHost(host.cursorHost)
 
-    const syncBounds = () => {
-      const rect = placeholder.getBoundingClientRect()
-      positionElectronEmbeddedBrowserView(host, owner, {
-        height: Math.max(0, rect.height),
-        left: rect.left,
-        top: rect.top,
-        width: Math.max(0, rect.width),
-      })
-    }
+    const syncBounds = () => positionHostFromPlaceholder(host, owner, placeholder)
 
     syncBounds()
     const handleViewportChange = () => syncBounds()
@@ -100,7 +103,13 @@ export function ElectronEmbeddedBrowserView({
   }, [])
 
   useLayoutEffect(() => {
-    labelRef.current = label
+    const host = hostRef.current
+    const placeholder = placeholderRef.current
+    if (!host || !placeholder) return
+    positionHostFromPlaceholder(host, ownerRef.current, placeholder)
+  })
+
+  useLayoutEffect(() => {
     const host = hostRef.current
     if (!host) return
     relabelElectronEmbeddedBrowserView(host, ownerRef.current, label)
@@ -111,29 +120,6 @@ export function ElectronEmbeddedBrowserView({
     if (!host) return
     syncElectronEmbeddedBrowserView(host, ownerRef.current, active, interactionBlocked)
   }, [active, interactionBlocked])
-
-  useEffect(() => {
-    const listener = listenEmbeddedBrowserCloseRequests(event => {
-      if (event.label !== labelRef.current) return
-      const host = hostRef.current
-      if (!host) return
-      resetElectronEmbeddedBrowserView(host, ownerRef.current)
-    })
-    if (!listener) return undefined
-    let disposed = false
-    let unlisten: (() => void) | null = null
-    void listener.then(nextUnlisten => {
-      if (disposed) {
-        nextUnlisten()
-        return
-      }
-      unlisten = nextUnlisten
-    })
-    return () => {
-      disposed = true
-      unlisten?.()
-    }
-  }, [])
 
   return (
     <>

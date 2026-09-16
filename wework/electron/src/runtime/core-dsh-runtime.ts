@@ -38,6 +38,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-home-focus', 'wework-ui-home-focus'],
   ['@wegent/dsh-ui-home-developer', 'wework-ui-home-developer'],
   ['@wegent/dsh-ui-git', 'wework-ui-git'],
+  ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
 ] as const
 type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
 const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
@@ -66,6 +67,7 @@ const CORE_UI_BUNDLES = [
   '@wegent/dsh-ui-home-focus',
   '@wegent/dsh-ui-home-developer',
   '@wegent/dsh-ui-git',
+  '@wegent/dsh-ui-outputs',
 ] as const
 const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 
@@ -109,11 +111,21 @@ export interface CoreDshLaunch {
   sourceFingerprint: string
 }
 
-export interface PrepareCoreDshOptions {
+export interface PreparedCoreDshRuntime {
+  command: string
+  entry: string
+  cwd: string
+  dshHome: string
+  environment: NodeJS.ProcessEnv
+  profile: string
+  version: string
+  sourceFingerprint: string
+}
+
+export interface PrepareCoreDshRuntimeOptions {
   runtimeRoot: string
   dataDirectory: string
   environment: NodeJS.ProcessEnv
-  port: number
 }
 
 export type CommandRunner = (
@@ -122,7 +134,9 @@ export type CommandRunner = (
   options: { cwd: string; env: NodeJS.ProcessEnv }
 ) => Promise<void>
 
-export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Promise<CoreDshLaunch> {
+export async function prepareCoreDshRuntime(
+  options: PrepareCoreDshRuntimeOptions
+): Promise<PreparedCoreDshRuntime> {
   const pluginsRoot = options.environment.WEWORK_CORE_PLUGIN_ROOT?.trim()
   if (!pluginsRoot) {
     throw new Error('WEWORK_CORE_PLUGIN_ROOT is required for the packaged Core DSH runtime')
@@ -143,14 +157,6 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
   return {
     command: nodeCommand,
     entry: runtime.entry,
-    args: runtimeNodeArgs(options.environment, [
-      runtime.entry,
-      '--profile',
-      PROFILE_NAME,
-      '--no-open',
-      '--port',
-      String(options.port),
-    ]),
     cwd: runtime.root,
     dshHome,
     environment: {
@@ -164,6 +170,20 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
     profile: PROFILE_NAME,
     version: runtime.version,
     sourceFingerprint: runtime.sourceFingerprint,
+  }
+}
+
+export function createCoreDshLaunch(runtime: PreparedCoreDshRuntime, port: number): CoreDshLaunch {
+  return {
+    ...runtime,
+    args: runtimeNodeArgs(runtime.environment, [
+      runtime.entry,
+      '--profile',
+      PROFILE_NAME,
+      '--no-open',
+      '--port',
+      String(port),
+    ]),
   }
 }
 
@@ -241,12 +261,6 @@ async function prepareProfile(options: {
   const currentDependencies = stringRecord(currentManifestRoot.dependencies)
   const currentProfile = objectRecord(objectRecord(currentManifestRoot.dsh).profile)
   const currentBundles = stringArray(currentProfile.bundles)
-  const recoveredUserPlugins = await recoverInstalledDshDependencies(
-    profileRoot,
-    currentDependencies,
-    currentBundles,
-    new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
-  )
   const removedDependencies = new Set<string>(
     REMOVED_CORE_DEPENDENCIES.filter(
       name => Object.hasOwn(currentDependencies, name) || currentBundles.includes(name)
@@ -258,16 +272,16 @@ async function prepareProfile(options: {
     managedDependencies
   )
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
-  if (
-    stampIsCurrent &&
-    removedDependencies.size === 0 &&
-    recoveredUserPlugins.dependencies.size === 0 &&
-    coreDependenciesAreCurrent
-  ) {
-    await ensureCoreWorkspace(workspacePath)
+  if (stampIsCurrent && removedDependencies.size === 0 && coreDependenciesAreCurrent) {
     return
   }
 
+  const recoveredUserPlugins = await recoverInstalledDshDependencies(
+    profileRoot,
+    currentDependencies,
+    currentBundles,
+    new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
+  )
   await mkdir(profileRoot, { recursive: true, mode: 0o700 })
   if (
     currentManifest &&

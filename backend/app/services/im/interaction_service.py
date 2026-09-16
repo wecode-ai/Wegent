@@ -96,6 +96,14 @@ class IMInteractionService:
             and (message_context.content or "").strip()
             and parse_command(message_context.content) is None
         ):
+            runtime_task = runtime_reply_target
+            if im_session.channel_type == "dingtalk":
+                await im_session_service.bind_active_runtime_task(
+                    db,
+                    session=im_session,
+                    runtime_task=runtime_reply_target,
+                )
+                runtime_task = None
             await port.execute_private_im_continue_task(
                 db=db,
                 user=user,
@@ -103,7 +111,7 @@ class IMInteractionService:
                 task_id=None,
                 message=message_context.content,
                 message_context=message_context,
-                runtime_task=runtime_reply_target,
+                runtime_task=runtime_task,
             )
             return True
 
@@ -184,7 +192,16 @@ class IMInteractionService:
             session=im_session,
             message_id=reply_to_message_id,
         )
-        active_runtime_task = im_session.active_runtime_task
+        return self._merge_active_runtime_task_context(
+            im_session.active_runtime_task,
+            reply_target,
+        )
+
+    def _merge_active_runtime_task_context(
+        self,
+        active_runtime_task: dict | None,
+        reply_target: dict | None,
+    ) -> dict | None:
         if reply_target is None or not isinstance(active_runtime_task, dict):
             return reply_target
         try:

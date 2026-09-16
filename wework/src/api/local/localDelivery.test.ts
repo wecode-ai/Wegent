@@ -187,7 +187,9 @@ describe('local delivery API', () => {
     })
     const api = createLocalDeliveryApi(request)
 
-    await expect(api.listLoopItemExecutions('project-1')).resolves.toEqual({
+    await expect(
+      api.listLoopItemExecutions('project-1', { include_terminal: true })
+    ).resolves.toEqual({
       items: [
         {
           ...execution,
@@ -202,6 +204,7 @@ describe('local delivery API', () => {
       project_id: 'project-1',
       agent_id: null,
       status: null,
+      include_terminal: true,
     })
   })
 
@@ -419,6 +422,37 @@ describe('local delivery API', () => {
     expect(request).toHaveBeenCalledWith('projects.archive', {
       project_id: 'project-1',
       version: 2,
+    })
+  })
+
+  test('preserves a local project version conflict for field-aware resolution', async () => {
+    const conflict = Object.assign(new Error('task changed'), {
+      code: 'version_conflict',
+    })
+    const request = vi.fn().mockRejectedValue(conflict)
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.updateCloudProject('project-1', {
+        version: 1,
+        board_config: {
+          group_by: 'priority',
+          processing_start_status_id: 'pending',
+          statuses: [],
+        },
+      })
+    ).rejects.toBe(conflict)
+    expect(request).toHaveBeenCalledOnce()
+    expect(request).toHaveBeenCalledWith('projects.update', {
+      project_id: 'project-1',
+      project: {
+        version: 1,
+        board_config: {
+          group_by: 'priority',
+          processing_start_status_id: 'pending',
+          statuses: [],
+        },
+      },
     })
   })
 

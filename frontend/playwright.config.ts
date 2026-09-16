@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const EXECUTOR_REGRESSION_SPEC =
-  /tasks\/(agent-conversation-regression|provider-native-claudecode)\.spec\.ts/
+  /(tasks\/(agent-conversation-regression|provider-native-claudecode)|collaboration\/collaboration-agent-execution)\.spec\.ts/
 // Specs that share the mock provider MCP server and must run serially.
 const PROVIDER_NATIVE_CHAT_SPEC =
   /(tasks\/provider-native-(chat|dingtalk|state-and-contract)|knowledge\/dingtalk-import)\.spec\.ts/
@@ -107,6 +107,9 @@ export default defineConfig({
     {
       name: 'executor-chromium',
       testMatch: EXECUTOR_REGRESSION_SPEC,
+      // Executor regression specs share administrator DingTalk configuration and
+      // the provider mock's global MCP call state, so files must not overlap.
+      workers: 1,
       use: {
         ...devices['Desktop Chrome'],
         storageState: './e2e/.auth/user.json',

@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Square,
 } from 'lucide-react'
+import { activityDisplayBody } from '@wegent/collaboration'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
@@ -53,7 +54,7 @@ import {
 } from './taskAiExecution'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { CardCommentComposer, type CardCommentSendResult } from './CardCommentComposer'
-import { executionDisplayStatus, isExecutionFailed } from './executionStatus'
+import { executionDisplayStatus, isExecutionFailed, isExecutionTerminal } from './executionStatus'
 
 interface TaskActivityViewProps {
   client?: ProjectChatClient
@@ -76,7 +77,7 @@ interface TaskActivityViewProps {
   onWorkflowManagerFinished?: () => void
   taskBindings?: LoopItemTaskBinding[]
   onOpenTask?: (task: LoopItemTaskBinding) => void
-  onRefreshTaskBindings?: () => void | Promise<void>
+  onRefreshExecutionArtifacts?: () => void | Promise<void>
 }
 
 interface TaskCardQueuedReply extends RuntimePaneQueuedMessage {
@@ -109,7 +110,7 @@ export function TaskActivityView({
   onWorkflowManagerFinished,
   taskBindings = [],
   onOpenTask,
-  onRefreshTaskBindings,
+  onRefreshExecutionArtifacts,
 }: TaskActivityViewProps) {
   const { t } = useTranslation('common')
   const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
@@ -432,7 +433,7 @@ export function TaskActivityView({
     }
     const terminalResponse = messages.find(message => {
       if (message.taskId !== task.id || message.sender.type !== 'agent') return false
-      if (message.status !== 'completed' && message.status !== 'failed') return false
+      if (!isExecutionTerminal(message.status)) return false
       return !refreshedRunIds.current.has(message.messageId)
     })
     if (!terminalResponse) {
@@ -463,9 +464,8 @@ export function TaskActivityView({
       runtimeDeviceId: terminalResponse.runtimeAddress?.deviceId,
       runtimeTaskId: terminalResponse.runtimeAddress?.taskId,
     })
-    void projectDeliveryApi
-      .getLoopItem(task.id)
-      .then(updated => {
+    void Promise.all([
+      projectDeliveryApi.getLoopItem(task.id).then(updated => {
         console.info('[Wework] Task activity refreshed task after terminal AI message', {
           taskId: updated.id,
           taskStatus: updated.status,
@@ -474,12 +474,14 @@ export function TaskActivityView({
           runtimeTaskId: updated.ai_state?.runtime_task_id,
         })
         onTaskUpdated?.(updated)
-      })
-      .catch(cause => {
-        setError(cause instanceof Error ? cause.message : t('workbench.project_chat_load_failed'))
-      })
+      }),
+      onRefreshExecutionArtifacts?.(),
+    ]).catch(cause => {
+      setError(cause instanceof Error ? cause.message : t('workbench.project_chat_load_failed'))
+    })
   }, [
     messages,
+    onRefreshExecutionArtifacts,
     onTaskUpdated,
     projectDeliveryApi,
     t,
@@ -573,7 +575,7 @@ export function TaskActivityView({
   const rawExecutionStatus = task.execution_state ?? task.ai_state?.status
   const aiTerminalFailure = isExecutionFailed(rawExecutionStatus)
   useEffect(() => {
-    if (!onRefreshTaskBindings) return
+    if (!onRefreshExecutionArtifacts) return
     const missingAddress = messages
       .flatMap(message =>
         message.sender.type === 'agent' && message.runtimeAddress ? [message.runtimeAddress] : []
@@ -587,10 +589,10 @@ export function TaskActivityView({
     if (!missingAddress) return
     const key = `${missingAddress.deviceId}:${missingAddress.taskId}`
     requestedTaskBindingAddresses.current.add(key)
-    void Promise.resolve(onRefreshTaskBindings()).catch(() => {
+    void Promise.resolve(onRefreshExecutionArtifacts()).catch(() => {
       requestedTaskBindingAddresses.current.delete(key)
     })
-  }, [messages, onRefreshTaskBindings, taskBindings])
+  }, [messages, onRefreshExecutionArtifacts, taskBindings])
   const commentCards = useMemo(() => {
     const ordered: { root: ProjectChatMessage; replies: ProjectChatMessage[] }[] = []
     const byRoot = new Map<string, { root: ProjectChatMessage; replies: ProjectChatMessage[] }>()
@@ -1761,7 +1763,7 @@ function ChatMessage({
   stopping?: boolean
 }) {
   const { t } = useTranslation('common')
-  const text = message.content
+  const text = activityDisplayBody(message.content, '')
   const isAgent = message.sender.type === 'agent'
   const isSubagent = message.metadata.kind === 'task_ai_subagent'
   const runId = typeof message.metadata.run_id === 'string' ? message.metadata.run_id : null

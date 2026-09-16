@@ -1,9 +1,207 @@
 import { describe, expect, test } from 'vitest'
 import {
+  limitWorkbenchProcessingBlock,
+  nestWorkbenchProcessingBlocks,
   normalizeWorkbenchBlockStatus,
+  projectWorkbenchSubagentActivity,
   reduceWorkbenchMessages,
   type WorkbenchMessage
 } from './index'
+
+test('bounds subagent text fields and nested processing blocks', () => {
+  const block = limitWorkbenchProcessingBlock({
+    id: 'subagent-1',
+    subtaskId: 'turn-1',
+    type: 'subagent',
+    title: `${'t'.repeat(120_000)}title-tail`,
+    description: `${'d'.repeat(120_000)}description-tail`,
+    output: `${'o'.repeat(120_000)}output-tail`,
+    summary: `${'s'.repeat(120_000)}summary-tail`,
+    children: Array.from({ length: 300 }, (_, index) => ({
+      id: `child-${index}`,
+      subtaskId: 'turn-1',
+      type: 'text' as const,
+      content: `child ${index}`,
+      status: 'done' as const,
+      createdAt: index
+    })),
+    status: 'streaming',
+    createdAt: 1
+  })
+
+  expect(block.type).toBe('subagent')
+  if (block.type !== 'subagent') return
+  expect(block.title).toHaveLength(120_000)
+  expect(block.title?.endsWith('title-tail')).toBe(true)
+  expect(block.description).toHaveLength(120_000)
+  expect(block.description?.endsWith('description-tail')).toBe(true)
+  expect(block.output).toHaveLength(120_000)
+  expect(block.output?.endsWith('output-tail')).toBe(true)
+  expect(block.summary).toHaveLength(120_000)
+  expect(block.summary?.endsWith('summary-tail')).toBe(true)
+  expect(block.children).toHaveLength(256)
+  expect(block.children?.[0]?.id).toBe('child-44')
+  expect(block.contentTruncated).toBe(true)
+})
+
+test('nests streamed child blocks under their subagent', () => {
+  const nested = nestWorkbenchProcessingBlocks([
+    {
+      id: 'subagent-thread-1',
+      subtaskId: 'turn-1',
+      type: 'subagent',
+      agentThreadId: 'thread-1',
+      status: 'streaming',
+      createdAt: 1
+    },
+    {
+      id: 'child-text',
+      subtaskId: 'turn-1',
+      parentToolUseId: 'subagent-thread-1',
+      type: 'text',
+      content: 'Streaming child output',
+      status: 'streaming',
+      createdAt: 2
+    }
+  ])
+
+  expect(nested).toHaveLength(1)
+  expect(nested[0]).toMatchObject({
+    type: 'subagent',
+    children: [
+      {
+        id: 'child-text',
+        content: 'Streaming child output'
+      }
+    ]
+  })
+})
+
+test('projects persisted spawn and wait tools into a completed subagent activity', () => {
+  const projected = projectWorkbenchSubagentActivity([
+    {
+      id: 'spawn-1',
+      subtaskId: 'turn-1',
+      type: 'tool',
+      toolName: 'multi_agent_v1.spawn_agent',
+      toolInput: {
+        message: 'Say hello',
+        agent_type: 'explorer'
+      },
+      toolOutput: JSON.stringify({ agent_id: 'agent-1' }),
+      status: 'done',
+      createdAt: 1
+    },
+    {
+      id: 'wait-1',
+      subtaskId: 'turn-1',
+      type: 'tool',
+      toolName: 'multi_agent_v1.wait_agent',
+      toolInput: { targets: ['agent-1'] },
+      toolOutput: JSON.stringify({ status: 'completed' }),
+      status: 'done',
+      createdAt: 2
+    }
+  ])
+
+  expect(projected).toEqual([
+    expect.objectContaining({
+      id: 'subagent-agent-1',
+      type: 'subagent',
+      agentId: 'agent-1',
+      agentThreadId: 'agent-1',
+      description: 'Say hello',
+      status: 'done',
+      agentStatus: 'done'
+    })
+  ])
+})
+
+test('merges streamed child content into the canonical persisted subagent projection', () => {
+  const projected = projectWorkbenchSubagentActivity([
+    {
+      id: 'spawn-1',
+      subtaskId: 'turn-1',
+      type: 'tool',
+      toolName: 'spawnAgent',
+      toolInput: { prompt: 'Inspect the stream' },
+      toolOutput: { agentId: 'agent-1' },
+      status: 'done',
+      createdAt: 1
+    },
+    {
+      id: 'subagent-agent-1',
+      subtaskId: 'turn-1',
+      type: 'subagent',
+      agentThreadId: 'agent-1',
+      description: 'Inspect the stream',
+      status: 'streaming',
+      createdAt: 2,
+      children: [
+        {
+          id: 'child-text',
+          subtaskId: 'turn-1',
+          type: 'text',
+          content: 'Partial child output',
+          status: 'streaming',
+          createdAt: 3
+        }
+      ]
+    }
+  ])
+
+  expect(projected).toHaveLength(1)
+  expect(projected[0]).toMatchObject({
+    id: 'subagent-agent-1',
+    anchorBlockId: 'spawn-1',
+    type: 'subagent',
+    status: 'streaming',
+    children: [{ content: 'Partial child output' }]
+  })
+})
+
+test('anchors merged subagent activity at the original spawn block', () => {
+  const projected = projectWorkbenchSubagentActivity([
+    {
+      id: 'spawn-1',
+      subtaskId: 'turn-1',
+      type: 'tool',
+      toolName: 'spawnAgent',
+      toolInput: { prompt: 'Inspect the stream' },
+      toolOutput: { agentId: 'agent-1' },
+      status: 'done',
+      createdAt: 1
+    },
+    {
+      id: 'assistant-progress',
+      subtaskId: 'turn-1',
+      type: 'text',
+      content: 'Continuing parent work',
+      status: 'streaming',
+      createdAt: 2
+    },
+    {
+      id: 'subagent-agent-1',
+      subtaskId: 'turn-1',
+      type: 'subagent',
+      agentThreadId: 'agent-1',
+      status: 'streaming',
+      createdAt: 3
+    }
+  ])
+
+  expect(projected).toEqual([
+    expect.objectContaining({
+      id: 'subagent-agent-1',
+      anchorBlockId: 'spawn-1',
+      agentThreadId: 'agent-1'
+    }),
+    expect.objectContaining({
+      id: 'assistant-progress',
+      type: 'text'
+    })
+  ])
+})
 
 describe('reduceWorkbenchMessages', () => {
   test('keeps only a preview window for very long assistant content', () => {

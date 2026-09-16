@@ -91,7 +91,7 @@ export class FeedbackBundleManager {
     private readonly options: {
       appVersion: () => string
       cacheDirectory: string
-      downloadsDirectory: string
+      downloadsDirectory: () => string
       logDirectories: string[]
     }
   ) {}
@@ -116,11 +116,9 @@ export class FeedbackBundleManager {
 
   async confirm(stagingIdInput: string): Promise<{ reportId: string; path: string }> {
     const { stagingId, staged } = await this.resolveStaged(stagingIdInput)
-    await mkdir(this.options.downloadsDirectory, { recursive: true })
-    const destination = join(
-      this.options.downloadsDirectory,
-      `wework-feedback-${staged.reportId}.zip`
-    )
+    const downloadsDirectory = this.options.downloadsDirectory()
+    await mkdir(downloadsDirectory, { recursive: true })
+    const destination = join(downloadsDirectory, `wework-feedback-${staged.reportId}.zip`)
     try {
       await rename(staged.path, destination)
     } catch (moveError) {
@@ -322,7 +320,7 @@ export class FeedbackBundleManager {
         return []
       })
       for (const entry of directoryEntries) {
-        if (!entry.isFile() || extname(entry.name) !== '.log') continue
+        if (!entry.isFile() || !isRuntimeLogFile(entry.name)) continue
         const path = join(directory, entry.name)
         if (seen.has(path)) continue
         seen.add(path)
@@ -347,6 +345,10 @@ export class FeedbackBundleManager {
       }
     }
   }
+}
+
+function isRuntimeLogFile(fileName: string): boolean {
+  return /\.log(?:\.\d+)?$/i.test(fileName)
 }
 
 async function writeBundleArchive(bundle: PendingBundle, destination: string): Promise<void> {

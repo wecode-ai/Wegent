@@ -4,6 +4,7 @@ import {
   currentPluginLogoAppearanceMode,
   resolvePluginLogo,
 } from '@/components/plugins/plugin-assets'
+import { encodeUriComponentStrict } from '@/lib/uri-component'
 import { getComposerApps } from './composerAppsSnapshot'
 import { COMPOSER_SKILL_ICON_PATHS } from './composerSkillIconPaths'
 
@@ -175,10 +176,7 @@ export function resolveComposerWorkspacePath(root: string, path: string): string
 export function createComposerPathReference(path: string, directory: boolean): string {
   const normalized = path.replaceAll('\\', '/')
   const name = normalized.split('/').filter(Boolean).at(-1) ?? normalized
-  const encodedPath = encodeURIComponent(path).replace(
-    /[!'()*]/g,
-    character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`
-  )
+  const encodedPath = encodeUriComponentStrict(path)
   return `[$${name}](${directory ? 'folder' : 'file'}://${encodedPath})`
 }
 

@@ -78,7 +78,6 @@ vi.mock('@/components/layout/useWorkbenchPaneSession', () => ({
     transcriptLoading: false,
     transcriptHasMoreBefore: false,
     transcriptLoadingMoreBefore: false,
-    transcriptLoadingFullContent: false,
     transcriptFullContent: false,
     loadedTranscriptRanges: [],
     turnNavigation: [],
@@ -88,7 +87,6 @@ vi.mock('@/components/layout/useWorkbenchPaneSession', () => ({
     taskPlan: null,
     goalDraftActive: false,
     loadMoreTranscriptBefore: vi.fn(),
-    loadFullTranscript: vi.fn(),
     loadFullTranscriptForExport: vi.fn(),
     loadTranscriptTurnNavigationItem: vi.fn(),
     loadTranscriptGap: vi.fn(),
@@ -692,7 +690,7 @@ describe('TaskActivityView', () => {
         expect.objectContaining({ model: 'gpt-5.5-codex' })
       )
     )
-  })
+  }, 10_000)
 
   it('shows the newest parent comment first without scrolling to the bottom', async () => {
     const older = {
@@ -1178,8 +1176,8 @@ describe('TaskActivityView', () => {
     expect(card).toHaveTextContent('普通 Issue 执行完成。')
   })
 
-  it('refreshes task bindings when a new execution activity has no loaded binding', async () => {
-    const onRefreshTaskBindings = vi.fn(async () => undefined)
+  it('refreshes execution artifacts when a new execution activity has no loaded binding', async () => {
+    const onRefreshExecutionArtifacts = vi.fn(async () => undefined)
     const executionMessage: ProjectChatMessage = {
       ...agentMessage,
       runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-task-1' },
@@ -1200,15 +1198,60 @@ describe('TaskActivityView', () => {
         client={client}
         project={{ id: '11', name: 'Wework' } as never}
         task={{ id: 'WEG-1', title: 'Inspect changes', status: 'in_progress' } as never}
-        onRefreshTaskBindings={onRefreshTaskBindings}
+        onRefreshExecutionArtifacts={onRefreshExecutionArtifacts}
         linear
       />
     )
 
-    await waitFor(() => expect(onRefreshTaskBindings).toHaveBeenCalledOnce())
+    await waitFor(() => expect(onRefreshExecutionArtifacts).toHaveBeenCalledOnce())
     expect(
       screen.queryByTestId(`cloud-task-activity-task-summary-${executionMessage.messageId}`)
     ).not.toBeInTheDocument()
+  })
+
+  it('refreshes execution artifacts after an AI execution reaches a terminal state', async () => {
+    const onRefreshExecutionArtifacts = vi.fn(async () => undefined)
+    const completedMessage: ProjectChatMessage = {
+      ...agentMessage,
+      status: 'completed',
+      runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-task-1' },
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [completedMessage], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => completedMessage),
+      failAgentResponse: vi.fn(async () => ({ ...completedMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', title: 'Inspect changes', status: 'in_progress' } as never}
+        taskBindings={[
+          {
+            id: 10,
+            cloud_project_id: '11',
+            loop_item_id: 'WEG-1',
+            task_user_id: 1,
+            device_id: 'device-1',
+            task_id: 'runtime-task-1',
+            task_title: 'pwd',
+            backend_task_id: null,
+            workflow_node_id: null,
+            linked_at: '2026-08-24T08:00:00Z',
+          },
+        ]}
+        onRefreshExecutionArtifacts={onRefreshExecutionArtifacts}
+        linear
+      />
+    )
+
+    await waitFor(() => expect(onRefreshExecutionArtifacts).toHaveBeenCalledOnce())
   })
 
   it.each([

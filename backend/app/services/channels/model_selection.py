@@ -142,7 +142,7 @@ model_selection_manager = ModelSelectionManager()
 
 
 def is_claude_provider(provider: Optional[str]) -> bool:
-    """Check if a provider is Claude/Anthropic (required for device mode)."""
+    """Check if a provider is Claude/Anthropic (required by Claude Code modes)."""
     if not provider:
         return False
     provider_lower = provider.lower()

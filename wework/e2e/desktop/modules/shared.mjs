@@ -41,6 +41,7 @@ const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
   10_000,
   'WEWORK_E2E_STEP_TIMEOUT_MS'
 )
+const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 const DESKTOP_MODEL_SERVER_PORT = readOptionalPort(
   process.env.WEWORK_E2E_MODEL_SERVER_PORT,
   'WEWORK_E2E_MODEL_SERVER_PORT'
@@ -67,6 +68,20 @@ function readPositiveTimeout(value, fallback, name) {
     `${name} must be a positive number of milliseconds`
   )
   return timeoutMs
+}
+
+function readPositiveInteger(value, fallback, name) {
+  if (value === undefined) return fallback
+  const parsed = Number(value)
+  assert.ok(Number.isInteger(parsed) && parsed > 0, `${name} must be a positive integer`)
+  return parsed
+}
+
+function readNonNegativeNumber(value, fallback, name) {
+  if (value === undefined) return fallback
+  const parsed = Number(value)
+  assert.ok(Number.isFinite(parsed) && parsed >= 0, `${name} must be a finite non-negative number`)
+  return parsed
 }
 
 function readOptionalPort(value, name) {
@@ -122,6 +137,10 @@ const GUIDANCE_SCROLL_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_COMP
 const EMBEDDED_BROWSER_SETUP_PROMPT =
   'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_SETUP: create a local task before opening the browser.'
 const EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_SETUP_COMPLETE'
+const EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT =
+  'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_BRIDGE_COLLISION: open the browser after another live bridge replaces the shared runtime record.'
+const EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETE'
 const QUEUE_DIRECT_INITIAL = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_INITIAL'
 const QUEUE_DIRECT_FIRST = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_FIRST'
 const QUEUE_DIRECT_SECOND = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_SECOND'
@@ -151,6 +170,12 @@ const GOAL_IDLE_PROMPT =
   'WEWORK_DESKTOP_E2E_GOAL_IDLE: create an active goal and keep it active for one continuation.'
 const GOAL_IDLE_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
 const GOAL_IDLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_COMPLETE'
+const GOAL_IDLE_FOLLOW_UP_PROMPT =
+  'WEWORK_DESKTOP_E2E_GOAL_IDLE_FOLLOW_UP: keep this ordinary continuation running.'
+const GOAL_IDLE_FOLLOW_UP_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_FOLLOW_UP_COMPLETE'
+const GOAL_SNAPSHOT_RECONCILIATION_PROMPT =
+  'WEWORK_DESKTOP_E2E_GOAL_SNAPSHOT_RECONCILIATION: hold this turn while the executor clears the goal.'
+const GOAL_SNAPSHOT_RECONCILIATION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_SNAPSHOT_RECONCILIATION_COMPLETE'
 const GOAL_BUSY_PLAN_PROMPT =
   'WEWORK_DESKTOP_E2E_GOAL_BUSY_PLAN: keep this planning turn open while Goal is enabled.'
 const GOAL_BUSY_PLAN_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_BUSY_PLAN_COMPLETE'
@@ -160,8 +185,11 @@ const GOAL_BUSY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_BUSY_COMPLETE'
 const GOAL_RESTART_PROMPT =
   'WEWORK_DESKTOP_E2E_GOAL_RESTART: keep this active goal running until Wework restarts.'
 const GOAL_RESTART_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_INITIAL_COMPLETE'
-const GOAL_RESTART_RESUME_PROMPT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_RESUME'
 const GOAL_RESTART_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_COMPLETE'
+const GOAL_RESTART_BLOCKER_PROMPT =
+  'WEWORK_DESKTOP_E2E_GOAL_RESTART_BLOCKER: occupy one executor slot across restart.'
+const GOAL_RESTART_BLOCKER_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_BLOCKER_INITIAL_COMPLETE'
+const GOAL_RESTART_BLOCKER_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_BLOCKER_COMPLETE'
 const SUPERVISOR_PROMPT =
   'WEWORK_DESKTOP_E2E_SUPERVISOR: complete this task so supervision can inspect it.'
 const SUPERVISOR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SUPERVISOR_COMPLETE'
@@ -248,6 +276,11 @@ const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
 )
 const MEMORY_MAX_SETTLED_DOM_NODE_GROWTH = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODE_GROWTH ?? 512
+)
+const MEMORY_MAX_JS_HEAP_BYTES = readNonNegativeNumber(
+  process.env.WEWORK_E2E_MEMORY_MAX_JS_HEAP_BYTES,
+  200 * 1024 * 1024,
+  'WEWORK_E2E_MEMORY_MAX_JS_HEAP_BYTES'
 )
 const MEMORY_MIN_BASELINE_SAMPLES = 5
 const MEMORY_MAX_BASELINE_SAMPLES = 15
@@ -442,6 +475,11 @@ const TELEMETRY_FORBIDDEN_PROPERTY_PATTERN =
   /(authorization|code|content|credential|email|file|message|path|prompt|repository|response|task_id|token|url|user_id|workspace)/i
 const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
 const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
+const CLOUD_PUBLIC_MODEL_OPTIONS = {
+  weworkCloudModelNamespace: 'default',
+  weworkCloudModelResourceUserId: '0',
+  weworkCloudModelUpstreamApiFormat: 'openai-responses',
+}
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const REMOTE_DOCKER_DEVICE_ID = 'wework-e2e-remote-docker-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
@@ -1197,9 +1235,9 @@ async function sendPromptUntilScenarioRequest(
   selector,
   prompt,
   scenario,
-  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+  timeoutMs = MODEL_REQUEST_TIMEOUT_MS
 ) {
-  const scenarioRequest = control.awaitScenarioRequest(scenario)
+  const scenarioRequest = control.awaitNextScenarioRequest(scenario, timeoutMs)
   await sendPrompt(control, selector, prompt)
   return withTimeout(
     scenarioRequest,
@@ -1443,12 +1481,15 @@ async function selectE2EModel(
       'The model selector did not retain the expected provider'
     )
   }
-  await control.command('press', 'body', { key: 'Escape' })
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes('model-selector-menu'),
-    'The model selector menu did not close after selecting the E2E model'
-  )
+  const menuSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (menuSnapshot.testIds.includes('model-selector-menu')) {
+    await control.command('press', 'body', { key: 'Escape' })
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('model-selector-menu'),
+      'The model selector menu did not close after selecting the E2E model'
+    )
+  }
 }
 
 async function waitForE2EModelLabel(
@@ -1509,6 +1550,8 @@ export {
   DESKTOP_CONTROL_RESULT_GRACE_MS,
   QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS,
   readPositiveTimeout,
+  readPositiveInteger,
+  readNonNegativeNumber,
   readOptionalPort,
   TASK_PROMPT,
   COMPLETION_TEXT,
@@ -1543,6 +1586,8 @@ export {
   GUIDANCE_SCROLL_COMPLETION_TEXT,
   EMBEDDED_BROWSER_SETUP_PROMPT,
   EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
+  EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
+  EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   QUEUE_DIRECT_INITIAL,
   QUEUE_DIRECT_FIRST,
   QUEUE_DIRECT_SECOND,
@@ -1567,14 +1612,20 @@ export {
   GOAL_IDLE_PROMPT,
   GOAL_IDLE_INITIAL_TEXT,
   GOAL_IDLE_COMPLETION_TEXT,
+  GOAL_IDLE_FOLLOW_UP_PROMPT,
+  GOAL_IDLE_FOLLOW_UP_TEXT,
+  GOAL_SNAPSHOT_RECONCILIATION_PROMPT,
+  GOAL_SNAPSHOT_RECONCILIATION_TEXT,
   GOAL_BUSY_PLAN_PROMPT,
   GOAL_BUSY_PLAN_TEXT,
   GOAL_BUSY_OBJECTIVE,
   GOAL_BUSY_COMPLETION_TEXT,
   GOAL_RESTART_PROMPT,
   GOAL_RESTART_INITIAL_TEXT,
-  GOAL_RESTART_RESUME_PROMPT,
   GOAL_RESTART_COMPLETION_TEXT,
+  GOAL_RESTART_BLOCKER_PROMPT,
+  GOAL_RESTART_BLOCKER_INITIAL_TEXT,
+  GOAL_RESTART_BLOCKER_COMPLETION_TEXT,
   SUPERVISOR_PROMPT,
   SUPERVISOR_COMPLETION_TEXT,
   SUPERVISOR_PRINCIPLES,
@@ -1625,6 +1676,7 @@ export {
   MEMORY_MAX_PEAK_GROWTH_KIB,
   MEMORY_MAX_SETTLED_GROWTH_KIB,
   MEMORY_MAX_SETTLED_DOM_NODE_GROWTH,
+  MEMORY_MAX_JS_HEAP_BYTES,
   MEMORY_MIN_BASELINE_SAMPLES,
   MEMORY_MAX_BASELINE_SAMPLES,
   MEMORY_MIN_SETTLED_SAMPLES,
@@ -1695,6 +1747,7 @@ export {
   TELEMETRY_FORBIDDEN_PROPERTY_PATTERN,
   CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_PUBLIC_MODEL_LABEL,
+  CLOUD_PUBLIC_MODEL_OPTIONS,
   CLOUD_DEVICE_ID,
   REMOTE_DOCKER_DEVICE_ID,
   FRESH_CHAT_PROMPT,

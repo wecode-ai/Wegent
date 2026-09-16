@@ -42,13 +42,20 @@ from wecode.schemas.cloud_device import (
     NevisSandboxStatus,
     VncConfigResponse,
 )
+from wecode.service.cloud_device_git_tokens import build_cloud_device_git_accounts
 from wecode.service.cloud_device_ip_index import (
     CloudDeviceIpTarget,
     cloud_device_ip_index_service,
     normalize_nevis_ip,
 )
 from wecode.service.cloud_device_provider import cloud_device_provider
-from wecode.service.get_user_gitinfo import get_user_gitinfo
+from wecode.service.get_user_gitinfo import (
+    GitTokenNotConfiguredError,
+    GitTokenRejectedError,
+    GitTokenSourceUnavailableError,
+    GitTokenValidationUnavailableError,
+    get_user_gitinfo,
+)
 from wecode.service.nevis_client import NevisClientError
 
 logger = logging.getLogger(__name__)
@@ -98,17 +105,62 @@ def _get_bearer_token(request: Request) -> str:
 
 
 async def _get_current_user_git_tokens(user_name: str) -> list[dict[str, Any]]:
-    """Fetch current user's real git tokens without blocking device creation."""
+    """Fetch and validate the Git tokens required by cloud-device creation."""
     try:
-        return await run_in_threadpool(get_user_gitinfo.get_real_git_tokens, user_name)
-    except Exception as e:
-        logger.warning(
-            "[CloudDevice] Failed to fetch git tokens for cloud device: "
-            "user_name=%s, error_type=%s",
+        git_tokens = await run_in_threadpool(
+            get_user_gitinfo.get_validated_real_git_tokens,
             user_name,
-            type(e).__name__,
         )
-        return []
+        git_accounts = build_cloud_device_git_accounts(git_tokens)
+        identity_warning_domains = [
+            account["domain"]
+            for account in git_accounts
+            if not account["identity_name"] or not account["identity_email"]
+        ]
+        if identity_warning_domains:
+            logger.warning(
+                "[CloudDevice] Git commit identity is incomplete: "
+                "user_name=%s, domains=%s",
+                user_name,
+                ",".join(identity_warning_domains),
+            )
+        return git_accounts
+    except GitTokenNotConfiguredError as error:
+        logger.warning(
+            "[CloudDevice] Git token is not configured: user_name=%s",
+            user_name,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A valid Git token is required to create a cloud device",
+        ) from error
+    except GitTokenRejectedError as error:
+        logger.warning(
+            "[CloudDevice] Git token was rejected: user_name=%s, domain=%s",
+            user_name,
+            error.domain,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Git token for {error.domain} is invalid or expired; "
+                "update the token before creating a cloud device"
+            ),
+        ) from error
+    except (
+        GitTokenSourceUnavailableError,
+        GitTokenValidationUnavailableError,
+    ) as error:
+        logger.warning(
+            "[CloudDevice] Git token validation unavailable: user_name=%s, "
+            "error_type=%s",
+            user_name,
+            type(error).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Git token validation is temporarily unavailable; try again later",
+        ) from error
 
 
 def _resolve_target_user_id(
@@ -215,6 +267,9 @@ async def create_cloud_device(
         # Get backend URL for executor to connect
         backend_url = _get_backend_url(request)
 
+        # Validate Git credentials before creating any cloud-device resources.
+        git_tokens = await _get_current_user_git_tokens(current_user.user_name)
+
         # Get user's API key for executor authentication
         from wecode.service.api_key_service import create_api_key_for_cloud_device
 
@@ -229,7 +284,7 @@ async def create_cloud_device(
             auth_token=auth_token,
             backend_url=backend_url,
             user_jwt_token=_get_bearer_token(request),
-            git_tokens=await _get_current_user_git_tokens(current_user.user_name),
+            git_tokens=git_tokens,
             mail_email=body.mail_email or "",
             mail_password=body.mail_password or "",
         )
@@ -240,6 +295,9 @@ async def create_cloud_device(
         )
 
         return CloudDeviceResponse(**result)
+
+    except HTTPException:
+        raise
 
     except ValueError as e:
         error_msg = str(e)

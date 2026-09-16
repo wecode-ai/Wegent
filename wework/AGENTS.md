@@ -31,6 +31,7 @@ Before changing a Wework flow, identify the affected product area and trace its 
 - Preserve platform text-navigation semantics in the ProseMirror chat composer. Register only composer-specific key bindings instead of the document-level `baseKeymap`, and scope mention caret workarounds to unmodified arrow keys.
 - Focus popup composers through their exact editor target; a mixed `querySelector` returns the first matching element in DOM order, not the first selector in the list. In WKWebView, keep a completely empty contenteditable position native instead of replacing it with a decoration widget so programmatic focus can start the platform text input session.
 - Keep model selector controls mounted while refreshing an already-loaded model catalog. Reserve loading placeholders for the initial catalog load so background refreshes do not create blank composer actions.
+- In project-board hover conversations, handle self-contained actions such as sending, retrying, answering runtime input, and loading or reverting diffs inside the popup. Actions that require workbench UI, including opening files, skills, reviews, plans, or switching the retry model, must navigate to the bound Runtime task. Never render an enabled conversation action without a real handler.
 
 ## i18n
 

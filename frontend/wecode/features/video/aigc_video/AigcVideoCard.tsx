@@ -13,12 +13,14 @@ import {
   VideoDirectorGenerationCard,
 } from '@/features/cards/VideoDirectorGenerationCard'
 import type { CardRendererProps } from '@/features/cards/types'
+import { VideoPlayer } from '@/features/tasks/components/message/VideoPlayer'
 import { useShareToken } from '@/contexts/ShareTokenContext'
 import { openTaskRightPanel } from '@/features/tasks/components/right-panel'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { AigcVideoPanelPayload } from './AigcVideoPanel'
 import { getAigcVideoImageUrl, getAigcVideoPlaybackUrl } from './mediaUrls'
 import { parseAigcVideoCardData, type AigcVideoButton } from './types'
+import { HighlightCardActions } from './HighlightCardActions'
 
 export default function AigcVideoCard({
   block: card,
@@ -34,7 +36,9 @@ export default function AigcVideoCard({
   const previewText = data.preview_content?.text || ''
   const buttons = useMemo(() => (Array.isArray(data.buttons) ? data.buttons : []), [data.buttons])
   const detailUrl = safeCardUrl(data.link)
-  const canOpenPanel = Boolean(detailUrl || previewText)
+  const hasInlineEditor = card.card_data?.editor_type === 'opencut'
+  const isVideoResultCard = card.card_type === 'video_short_generation'
+  const canOpenPanel = !hasInlineEditor && !isVideoResultCard && Boolean(detailUrl || previewText)
   const opensTimeline = detailUrl
     ? new URL(detailUrl).searchParams.get('openPanel') === 'timeline'
     : false
@@ -242,7 +246,17 @@ export default function AigcVideoCard({
 
   return (
     <>
-      {usePublicMediaCard ? (
+      {(hasInlineEditor || isVideoResultCard) && (videoUrl || previewVideoUrl) ? (
+        <div className="w-full max-w-sm" data-testid="card-video-director-generation">
+          <VideoPlayer
+            videoUrl={getAigcVideoPlaybackUrl(videoUrl || previewVideoUrl || '')}
+            coverUrl={getAigcVideoImageUrl(coverUrl || previewCoverUrl || undefined)}
+            duration={data.duration}
+            videoTestId="card-video-director-player"
+            className="max-w-sm"
+          />
+        </div>
+      ) : usePublicMediaCard ? (
         <VideoDirectorGenerationCard
           block={mediaCard}
           taskId={taskId}
@@ -252,6 +266,9 @@ export default function AigcVideoCard({
       ) : (
         compactCard
       )}
+      {card.card_status === 'populated' && !shareToken ? (
+        <HighlightCardActions data={card.card_data} onChatButtonClick={onChatButtonClick} />
+      ) : null}
     </>
   )
 }

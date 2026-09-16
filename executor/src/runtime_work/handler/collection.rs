@@ -94,6 +94,38 @@ impl RuntimeWorkRpcHandler {
             ],
         );
 
+        self.merge_local_task_links(
+            archived,
+            &mut links,
+            &discovered_thread_ids,
+            &discovered_local_task_ids,
+            started_at,
+        );
+
+        links
+    }
+
+    pub(super) fn collect_cached_links(&self, archived: bool) -> Vec<RuntimeTaskLink> {
+        let started_at = Instant::now();
+        let mut links = Vec::new();
+        self.merge_local_task_links(
+            archived,
+            &mut links,
+            &HashSet::new(),
+            &HashSet::new(),
+            started_at,
+        );
+        links
+    }
+
+    fn merge_local_task_links(
+        &self,
+        archived: bool,
+        links: &mut Vec<RuntimeTaskLink>,
+        discovered_thread_ids: &HashSet<String>,
+        discovered_local_task_ids: &HashSet<String>,
+        started_at: Instant,
+    ) {
         let stage_started_at = Instant::now();
         for mut link in self.local_task_links(true) {
             if self.archived_link_is_deleted(&link) {
@@ -106,7 +138,7 @@ impl RuntimeWorkRpcHandler {
             if link_archived != archived {
                 continue;
             }
-            if is_cached_codex_link_hidden(&link, &discovered_thread_ids) {
+            if is_cached_codex_link_hidden(&link, discovered_thread_ids) {
                 continue;
             }
             if discovered_local_task_ids.contains(&link.local_task_id) {
@@ -132,8 +164,6 @@ impl RuntimeWorkRpcHandler {
             stage_started_at,
             &[("links", links.len().to_string())],
         );
-
-        links
     }
 
     pub(super) async fn codex_threads(&self, archived: bool) -> Vec<Value> {
@@ -1239,6 +1269,7 @@ impl RuntimeWorkRpcHandler {
         goal_status: Option<String>,
         update_activity_time: bool,
     ) {
+        let goal_is_active = goal_status.as_deref() == Some("active");
         self.store.update_task(local_task_id, |link| {
             if link.goal_status == goal_status {
                 return;
@@ -1248,6 +1279,9 @@ impl RuntimeWorkRpcHandler {
                 link.updated_at = now_ms();
             }
         });
+        if !goal_is_active {
+            self.clear_active_goal_turn(local_task_id);
+        }
     }
 }
 

@@ -8,7 +8,8 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.schemas.project_chat import ProjectChatWorkspaceBinding
+from app.schemas.plugin_config import validate_non_secret_plugin_configs
+from app.schemas.project_chat import BotRuntime, ProjectChatWorkspaceBinding
 from app.schemas.runtime_work import (
     RuntimeGoalCreateInput,
     RuntimeSupervisorCreateInput,
@@ -72,11 +73,13 @@ class WorkflowExecutionConfig(BaseModel):
     """Execution choices snapshotted with a workflow or one Issue."""
 
     agent_id: str | None = Field(default=None, max_length=64)
+    runtime: BotRuntime | None = None
     runtime_profile_id: str | None = Field(default=None, max_length=64)
     execution_device_id: str | None = Field(default=None, max_length=100)
     model: str | None = Field(default=None, max_length=255)
     model_type: Literal["public", "user", "group", "runtime"] | None = None
     model_options: dict[str, str] = Field(default_factory=dict)
+    system_prompt: str | None = None
     workspace_binding: ProjectChatWorkspaceBinding | None = None
     runtime_permission_mode: (
         Literal[
@@ -92,6 +95,7 @@ class WorkflowExecutionConfig(BaseModel):
     initial_goal: RuntimeGoalCreateInput | None = None
     initial_supervisor: RuntimeSupervisorCreateInput | None = None
     additional_skills: list[Any] | None = None
+    mcp_servers: dict[str, Any] | None = None
     attachment_ids: list[int] | None = None
     attachments: list[dict[str, Any]] | None = None
     project_plugins: list[dict[str, Any]] | None = None
@@ -108,12 +112,16 @@ class WorkflowExecutionConfig(BaseModel):
             self.execution_device_id.strip() if self.execution_device_id else None
         )
         self.model = self.model.strip() if self.model else None
+        validate_non_secret_plugin_configs(
+            self.project_plugins,
+            field_name="project_plugins",
+        )
         return self
 
-    def is_complete(self) -> bool:
+    def is_complete(self, *, require_model: bool = True) -> bool:
         return bool(
             (self.agent_id or self.execution_device_id)
-            and self.model
+            and (self.model or not require_model)
             and self.workspace_binding
         )
 
@@ -123,6 +131,7 @@ class WorkflowExecutionConfig(BaseModel):
         model_overridden = bool(override.model)
         return WorkflowExecutionConfig(
             agent_id=override.agent_id or self.agent_id,
+            runtime=override.runtime or self.runtime,
             runtime_profile_id=(override.runtime_profile_id or self.runtime_profile_id),
             execution_device_id=(
                 override.execution_device_id or self.execution_device_id
@@ -131,6 +140,11 @@ class WorkflowExecutionConfig(BaseModel):
             model_type=(override.model_type if model_overridden else self.model_type),
             model_options=(
                 override.model_options if model_overridden else self.model_options
+            ),
+            system_prompt=(
+                override.system_prompt
+                if override.system_prompt is not None
+                else self.system_prompt
             ),
             workspace_binding=override.workspace_binding or self.workspace_binding,
             runtime_permission_mode=(
@@ -143,6 +157,11 @@ class WorkflowExecutionConfig(BaseModel):
                 override.additional_skills
                 if override.additional_skills is not None
                 else self.additional_skills
+            ),
+            mcp_servers=(
+                override.mcp_servers
+                if override.mcp_servers is not None
+                else self.mcp_servers
             ),
             attachment_ids=(
                 override.attachment_ids
@@ -173,6 +192,8 @@ class WorkflowExecutionConfig(BaseModel):
         """Return only producer-facing RuntimeTaskCreateRequest capabilities."""
 
         return {
+            "runtime": self.runtime,
+            "system_prompt": self.system_prompt,
             "runtime_permission_mode": self.runtime_permission_mode,
             "execution": self.execution,
             "initial_goal": (
@@ -186,6 +207,7 @@ class WorkflowExecutionConfig(BaseModel):
                 else None
             ),
             "additional_skills": self.additional_skills,
+            "mcp_servers": self.mcp_servers,
             "attachment_ids": self.attachment_ids,
             "attachments": self.attachments,
             "project_plugins": self.project_plugins,
@@ -281,8 +303,6 @@ class WorkflowEventWaitConfig(BaseModel):
             self.subscription_id = None
         else:
             self.poll_interval_seconds = None
-            if not self.subscription_id:
-                raise ValueError("webhook branch wait requires subscription_id")
         return self
 
 
@@ -355,6 +375,8 @@ class WorkflowNodeDefinition(BaseModel):
     )
     workspace_policy: Literal["none", "composer", "inherit"] = "composer"
     automation_rule_id: str | None = Field(default=None, max_length=64)
+    required_assignee_type: WorkflowPlanItemAssigneeType | None = None
+    required_assignee_id: str | None = Field(default=None, min_length=1, max_length=128)
     execution_config: WorkflowExecutionConfig | None = None
     execution_config_override: bool = False
 
@@ -404,6 +426,10 @@ class WorkflowNodeDefinition(BaseModel):
                 self.event_wait = WorkflowEventWaitConfig()
         if self.automation_rule_id and self.execution_mode != "robot":
             raise ValueError("workflow automation rule requires robot execution")
+        if bool(self.required_assignee_type) != bool(self.required_assignee_id):
+            raise ValueError(
+                "workflow stage assignee constraint requires both type and id"
+            )
         if unknown := set(self.dependency_context) - set(self.depends_on):
             raise ValueError(
                 "workflow dependency context references non-dependencies: "
@@ -711,12 +737,7 @@ class IssueWorkflowInstance(BaseModel):
         if node.execution_mode != "robot":
             return False
         config = self.execution_config_for(node)
-        if config is None or not config.is_complete():
-            return True
-        if node.workspace_policy == "composer":
-            binding = config.workspace_binding
-            return binding is None or binding.type == "standalone"
-        return False
+        return config is None or not config.is_complete(require_model=False)
 
 
 def instantiate_workflow(
