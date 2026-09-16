@@ -49,6 +49,10 @@ PATCH_PATHS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+REWRITE_WORKTREES_PATH = Path(
+    "backend-rs-intra/.traffic-e2e/local/rewrite-worktrees"
+)
+
 
 @dataclass(frozen=True)
 class Change:
@@ -109,8 +113,15 @@ def repository_root(path: Path) -> Path:
     return root.resolve()
 
 
-def ensure_clean(repository: Path, label: str) -> None:
-    status = git_text(repository, "status", "--porcelain", "--untracked-files=all")
+def ensure_clean(
+    repository: Path,
+    label: str,
+    *,
+    exclude_pathspecs: Sequence[str] = (),
+) -> None:
+    arguments = ["status", "--porcelain", "--untracked-files=all", "--", "."]
+    arguments.extend(exclude_pathspecs)
+    status = git_text(repository, *arguments)
     if status:
         raise SplitError(
             f"{label} must have a clean worktree before apply:\n{status}"
@@ -136,6 +147,67 @@ def ensure_identity(repository: Path, label: str) -> None:
     email = git_text(repository, "config", "--get", "user.email")
     if not name or not email:
         raise SplitError(f"configure git user.name and user.email in {label} before apply")
+
+
+def registered_worktrees(repository: Path) -> list[Path]:
+    return [
+        Path(line.removeprefix("worktree ")).resolve()
+        for line in git_text(repository, "worktree", "list", "--porcelain").splitlines()
+        if line.startswith("worktree ")
+    ]
+
+
+def is_path_under(path: Path, directory: Path) -> bool:
+    try:
+        path.relative_to(directory)
+    except ValueError:
+        return False
+    return True
+
+
+def remove_empty_rewrite_parents(path: Path, rewrite_root: Path) -> None:
+    current = path
+    while current != rewrite_root and is_path_under(current, rewrite_root):
+        if not current.exists():
+            current = current.parent
+            continue
+        try:
+            current.rmdir()
+        except OSError:
+            break
+        current = current.parent
+
+
+def cleanup_rewrite_worktrees(repository: Path) -> list[str]:
+    """Remove clean, registered E2E rewrite worktrees without deleting branches."""
+    rewrite_root = (repository / REWRITE_WORKTREES_PATH).resolve()
+    targets = [
+        path
+        for path in registered_worktrees(repository)
+        if path != rewrite_root and is_path_under(path, rewrite_root)
+    ]
+
+    dirty: list[str] = []
+    for path in targets:
+        if not path.exists():
+            continue
+        status = git_text(path, "status", "--porcelain", "--untracked-files=all")
+        if status:
+            dirty.append(f"{path}\n{status}")
+    if dirty:
+        raise SplitError(
+            "rewrite worktrees contain uncommitted changes; clean them before "
+            "rebase-back:\n" + "\n".join(dirty)
+        )
+
+    removed: list[str] = []
+    for path in targets:
+        if path.exists():
+            git(repository, "worktree", "remove", str(path))
+            remove_empty_rewrite_parents(path, rewrite_root)
+            removed.append(str(path))
+    git(repository, "worktree", "prune")
+    return removed
 
 
 def ensure_existing_branch(repository: Path, branch: str, label: str) -> None:
@@ -451,6 +523,145 @@ def default_backup_name(source_branch: str) -> str:
     return f"backup/{source_branch}-before-migration-split-{stamp}"
 
 
+def default_rebase_back_backup_name(source_branch: str) -> str:
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return f"backup/{source_branch}-before-rebase-back-{stamp}"
+
+
+def write_rebase_back_manifest(
+    output_directory: Path, manifest: dict[str, object]
+) -> None:
+    if output_directory.exists():
+        raise SplitError(f"output directory already exists: {output_directory}")
+    output_directory.mkdir(parents=True)
+    (output_directory / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
+    )
+
+
+def rebase_back(*, args: argparse.Namespace, intra_repository: Path) -> None:
+    """Rebuild the migration branch from develop with one traffic commit."""
+    current_branch = git_text(intra_repository, "branch", "--show-current")
+    if current_branch != args.source:
+        raise SplitError(
+            f"rebase-back must run with {args.source} checked out; current branch is "
+            f"{current_branch or 'detached HEAD'}"
+        )
+
+    source_sha = git_revision(intra_repository, args.source)
+    base_sha = git_revision(intra_repository, args.base)
+    rewrite_worktree_pathspecs = (
+        f":(exclude){REWRITE_WORKTREES_PATH}",
+        f":(exclude,glob){REWRITE_WORKTREES_PATH}/**",
+    )
+    ensure_clean(
+        intra_repository,
+        "Wegent-intra",
+        exclude_pathspecs=rewrite_worktree_pathspecs,
+    )
+    ensure_identity(intra_repository, "Wegent-intra")
+    output_directory = args.output_dir.resolve() if args.output_dir else None
+    if output_directory is not None and output_directory.exists():
+        raise SplitError(f"output directory already exists: {output_directory}")
+
+    merge_base_sha = git_text(
+        intra_repository, "merge-base", base_sha, source_sha
+    )
+    changes = changed_paths(intra_repository, merge_base_sha, source_sha)
+    unsafe_changes = [
+        change for change in changes if change.group != GROUP_TRAFFIC
+    ]
+    if unsafe_changes:
+        rendered = "\n".join(
+            f"{change.status} {' -> '.join(change.paths)} ({change.group})"
+            for change in unsafe_changes
+        )
+        raise SplitError(
+            "rebase-back found non-traffic changes in the source branch since its "
+            "common ancestor with develop; "
+            "resolve or split these paths before rewriting the branch:\n" + rendered
+        )
+
+    traffic_patch = make_patch(
+        intra_repository, merge_base_sha, source_sha, GROUP_TRAFFIC
+    )
+    verify_patch_is_clean(
+        intra_repository, base_sha, traffic_patch, "traffic rebase-back"
+    )
+
+    removed_worktrees = cleanup_rewrite_worktrees(intra_repository)
+
+    backup_branch = args.backup_branch or default_rebase_back_backup_name(
+        current_branch
+    )
+    ensure_branch_name(intra_repository, backup_branch, "backup")
+    git(intra_repository, "branch", backup_branch, source_sha)
+
+    # Move HEAD to develop while keeping the backup branch above. Restore the
+    # develop tree, then apply only the source branch's local traffic patch.
+    git(intra_repository, "reset", "--soft", base_sha)
+    git(
+        intra_repository,
+        "restore",
+        "--source=HEAD",
+        "--staged",
+        "--worktree",
+        "--",
+        ".",
+    )
+
+    traffic_commit: str | None = None
+    if traffic_patch:
+        git(
+            intra_repository,
+            "apply",
+            "--index",
+            "--3way",
+            "-",
+            input_bytes=traffic_patch,
+        )
+        git(intra_repository, "diff", "--cached", "--check")
+        git(intra_repository, "commit", "-m", args.message)
+        traffic_commit = git_revision(intra_repository, "HEAD")
+
+    manifest = {
+        "format_version": 1,
+        "operation": "rebase-back",
+        "source": {"ref": args.source, "sha": source_sha},
+        "develop_base": {"ref": args.base, "sha": base_sha},
+        "source_common_ancestor": {"sha": merge_base_sha},
+        "changed_files": [change.as_dict() for change in changes],
+        "traffic_commit": traffic_commit,
+        "backup_branch": backup_branch,
+        "removed_rewrite_worktrees": removed_worktrees,
+        "push_required": (
+            f"Wegent-intra:{current_branch} (force-with-lease)"
+            if traffic_commit
+            else None
+        ),
+    }
+    if output_directory is not None:
+        write_rebase_back_manifest(output_directory, manifest)
+
+    print("Rebase-back applied locally. No branch was pushed.")
+    print(f"  source branch: {current_branch}")
+    print(f"  develop base: {args.base} ({base_sha[:12]})")
+    if traffic_commit:
+        print(f"  traffic commit: {traffic_commit}")
+        print(f"  push when reviewed: {current_branch} (force-with-lease)")
+    else:
+        print("  traffic commit: none; the source branch now matches develop")
+    if removed_worktrees:
+        print("  removed rewrite worktrees:")
+        for path in removed_worktrees:
+            print(f"    {path}")
+    else:
+        print("  rewrite worktrees: none")
+    print(f"  backup branch: {backup_branch}")
+    if output_directory is not None:
+        print(f"  manifest: {output_directory / 'manifest.json'}")
+
+
 def apply_split(
     *,
     args: argparse.Namespace,
@@ -674,6 +885,26 @@ def parse_arguments() -> argparse.Namespace:
         type=Path,
         help="existing worktree path for the internal MR branch",
     )
+
+    rebase_back = subparsers.add_parser(
+        "rebase-back",
+        help="rebuild the migration branch from develop with one traffic commit",
+    )
+    rebase_back.add_argument("--intra-repo", type=Path, default=default_intra)
+    rebase_back.add_argument("--source", default="dev-migration")
+    rebase_back.add_argument("--base", default="origin/develop")
+    rebase_back.add_argument(
+        "--backup-branch",
+        help="backup branch name; defaults to a timestamped backup branch",
+    )
+    rebase_back.add_argument(
+        "--message", default="chore(traffic-e2e): retain migration verification"
+    )
+    rebase_back.add_argument(
+        "--output-dir",
+        type=Path,
+        help="optional new directory for the rebase-back manifest",
+    )
     return parser.parse_args()
 
 
@@ -681,6 +912,10 @@ def main() -> int:
     args = parse_arguments()
     try:
         intra_repository = repository_root(args.intra_repo)
+        if args.command == "rebase-back":
+            rebase_back(args=args, intra_repository=intra_repository)
+            return 0
+
         github_repository = repository_root(args.github_repo)
         if args.command == "rollback":
             rollback_split(
