@@ -150,7 +150,13 @@ async function waitForTaskAddress(control, taskId, timeoutMs) {
   while (Date.now() < deadline) {
     const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
     const address = state?.currentRuntimeTask
-    if (address?.taskId === taskId && address.threadId) return address
+    if (
+      address?.taskId === taskId &&
+      state.activeTask?.taskId === taskId &&
+      state.activeTask.threadId
+    ) {
+      return { ...address, threadId: state.activeTask.threadId }
+    }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error('The source task did not resolve its session before moving')
@@ -164,7 +170,7 @@ async function assertMovedProject(control, projectKey, address, timeoutMs) {
       assert.equal(state.currentRuntimeTask.taskId, address.taskId)
       assert.equal(state.currentRuntimeTask.workspacePath, address.workspacePath)
       assert.equal(state.currentRuntimeTask.deviceId, address.deviceId)
-      assert.equal(state.currentRuntimeTask.threadId, address.threadId)
+      assert.equal(state.activeTask?.threadId, address.threadId)
       return
     }
     await new Promise(resolve => setTimeout(resolve, 100))
