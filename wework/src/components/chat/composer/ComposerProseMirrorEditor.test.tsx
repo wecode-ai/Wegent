@@ -62,7 +62,7 @@ function renderEditor(
 
 describe('ComposerProseMirrorEditor', () => {
   test('keeps native input after a pasted URL outside the link', async () => {
-    const url = 'https://weibo.com/1192966660/Riodm8zUo'
+    const url = 'https://example.com/1192966660/Riodm8zUo'
     const { editorRef } = renderEditor('')
     const editor = screen.getByTestId('composer-editor')
     pasteMarkdown(editor, url)

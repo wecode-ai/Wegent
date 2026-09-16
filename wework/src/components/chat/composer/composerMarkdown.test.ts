@@ -13,7 +13,7 @@ describe('composer Markdown', () => {
   test.each(['哈哈哈哈', 'more text', '科技汉江红果发就开始\n科技海峰卡说红果看'])(
     'keeps appended text outside an existing URL: %s',
     suffix => {
-      const url = 'https://weibo.com/1192966660/Riodm8zUo'
+      const url = 'https://example.com/1192966660/Riodm8zUo'
       const state = EditorState.create({ doc: createComposerDocument(url) })
       const doc = state.apply(state.tr.insertText(suffix, url.length + 1)).doc
       expect(doc.firstChild?.lastChild?.marks).toEqual([])

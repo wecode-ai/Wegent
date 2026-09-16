@@ -43,7 +43,7 @@ vi.mock('@/lib/embedded-browser', () => ({
 
 describe('MessageList', () => {
   test('keeps appended text outside the sent link and opens only the original URL', () => {
-    const url = 'https://weibo.com/1192966660/Riodm8zUo'
+    const url = 'https://example.com/1192966660/Riodm8zUo'
     openExternalUrlMock.mockClear()
     render(
       <MessageList
