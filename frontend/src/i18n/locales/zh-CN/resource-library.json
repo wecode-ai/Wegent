@@ -113,6 +113,10 @@
     "group_section": "团队",
     "select": "选择"
   },
+  "agent_saved": {
+    "created": "智能体创建成功",
+    "updated": "已保存"
+  },
   "actions": {
     "install": "安装",
     "use": "立即使用",

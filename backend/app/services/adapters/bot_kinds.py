@@ -5,7 +5,6 @@
 import copy
 import json
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -32,6 +31,7 @@ from app.services.group_permission import check_group_permission
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.skill_binding_service import skill_binding_service
 from app.services.skill_resolution import build_skill_ref_meta
+from shared.models.db.kind import utc_now_naive
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 
@@ -1194,13 +1194,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             db.add(ghost)
 
         # Update timestamps
-        bot.updated_at = datetime.now()
+        bot.updated_at = utc_now_naive()
         if ghost:
-            ghost.updated_at = datetime.now()
+            ghost.updated_at = utc_now_naive()
         # Note: shell is now a reference to user's custom shell or public shell,
         # we don't update its timestamp as it's not owned by this bot
         if model and hasattr(model, "updated_at"):
-            model.updated_at = datetime.now()
+            model.updated_at = utc_now_naive()
 
         db.commit()
         db.refresh(bot)
