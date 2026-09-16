@@ -49,11 +49,9 @@ import {
   isTextAttachment,
 } from '@/lib/attachments'
 import { openLocalFile } from '@/lib/local-terminal'
-import { getRecognizedLink } from '@/lib/link-preview'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
-import { ComposerLinkChip } from './ComposerLinkChip'
 import { ComposerTextarea } from './composer/ComposerTextarea'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
@@ -1123,7 +1121,7 @@ function UserMessage({
               data-testid="user-message-content"
               data-message-selectable-text
               className={[
-                'relative overflow-hidden break-words whitespace-pre-wrap bg-muted px-4 py-1.5',
+                'relative overflow-hidden break-words bg-muted px-4 py-1.5',
                 shouldCollapse && !isExpanded ? 'max-h-44' : '',
               ].join(' ')}
             >
@@ -1715,7 +1713,6 @@ function MessageHoverActions({
 
 const CODEX_MENTION_LINK_PATTERN =
   /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
-const COMPOSER_LINK_PATTERN = /\[([^\]]*)\]\(([a-z][a-z0-9+.-]*:\/\/[^\s)\]]+)\)/gi
 
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -1753,133 +1750,108 @@ function renderUserContent(
   onOpenLocalSkillFile?: (path: string) => void,
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 ) {
-  const parts: ReactNode[] = []
-  let offset = 0
-
-  for (const match of content.matchAll(CODEX_MENTION_LINK_PATTERN)) {
-    const start = match.index ?? 0
-    const text = content.slice(offset, start)
-    if (text) {
-      parts.push(...renderUserTextWithLinks(text, offset))
-    }
-
-    const mentionName = match[2]
-    const href = match[3]
-    const skillFilePath = composerSkillFilePath(match[0])
-    const pathReference = composerPathReference(match[0])
-    const mentionKind = codexMentionKind(href)
-    const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
-    const brandIconUrl =
-      mentionKind === 'plugin' || mentionKind === 'app'
-        ? resolveComposerMentionBrandIconUrl(href)
-        : null
-    const tokenTestId = codexMentionTokenTestId(mentionName)
-    const testId =
-      mentionKind === 'skill'
-        ? `sent-local-skill-token-${tokenTestId}`
-        : `sent-${mentionKind}-token-${tokenTestId}`
-    const iconTestId =
-      mentionKind === 'skill'
-        ? `sent-local-skill-icon-${tokenTestId}`
-        : `sent-${mentionKind}-icon-${tokenTestId}`
-    parts.push(
-      <a
-        key={`${mentionKind}-${start}`}
-        href={href}
-        data-testid={testId}
-        data-cloud-resource-kind={cloudKind}
-        className="composer-mention-node gap-1 rounded-xl bg-muted text-blue-600 no-underline [&>:first-child]:self-center"
-        onClick={event => {
-          event.preventDefault()
-          if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
-          if (pathReference) {
-            onOpenWorkspaceFile?.(
-              pathReference.path,
-              pathReference.directory ? { isDirectory: true } : undefined
-            )
-          }
-          const pluginReference = parsePluginUri(href)
-          if (pluginReference) navigateTo(buildPluginDetailRoute(pluginReference))
-        }}
-      >
-        {mentionKind === 'folder' ? (
-          <Folder data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        ) : mentionKind === 'file' ? (
-          <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        ) : mentionKind === 'cloud' ? (
-          cloudKind === 'todo' ? (
-            <ListTodo data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-          ) : cloudKind === 'file' ? (
-            <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-          ) : cloudKind === 'delivery' ? (
-            <PackageOpen data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-          ) : (
-            <LibraryBig data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-          )
-        ) : mentionKind === 'conversation' ? (
-          <MessageCircle data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        ) : brandIconUrl ? (
-          <img
-            data-testid={iconTestId}
-            src={brandIconUrl}
-            alt=""
-            className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
-          />
-        ) : mentionKind === 'plugin' || mentionKind === 'app' ? (
-          <span
-            data-testid={iconTestId}
-            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm bg-blue-600/10 text-xs font-medium leading-none text-blue-600"
+  return (
+    <AssistantMarkdown
+      content={content}
+      variant="user"
+      onOpenFile={onOpenWorkspaceFile}
+      renderLink={(linkHref, text) => {
+        const reference = '[' + text + '](' + linkHref + ')'
+        const match = Array.from(reference.matchAll(CODEX_MENTION_LINK_PATTERN))[0]
+        if (!match) return undefined
+        const mentionName = match[2]
+        const href = match[3]
+        const skillFilePath = composerSkillFilePath(match[0])
+        const pathReference = composerPathReference(match[0])
+        const mentionKind = codexMentionKind(href)
+        const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
+        const brandIconUrl =
+          mentionKind === 'plugin' || mentionKind === 'app'
+            ? resolveComposerMentionBrandIconUrl(href)
+            : null
+        const tokenTestId = codexMentionTokenTestId(mentionName)
+        const testId =
+          mentionKind === 'skill'
+            ? `sent-local-skill-token-${tokenTestId}`
+            : `sent-${mentionKind}-token-${tokenTestId}`
+        const iconTestId =
+          mentionKind === 'skill'
+            ? `sent-local-skill-icon-${tokenTestId}`
+            : `sent-${mentionKind}-icon-${tokenTestId}`
+        return (
+          <a
+            href={href}
+            data-testid={testId}
+            data-cloud-resource-kind={cloudKind}
+            className="composer-mention-node gap-1 rounded-xl bg-muted text-blue-600 no-underline [&>:first-child]:self-center"
+            onClick={event => {
+              event.preventDefault()
+              if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
+              if (pathReference) {
+                onOpenWorkspaceFile?.(
+                  pathReference.path,
+                  pathReference.directory ? { isDirectory: true } : undefined
+                )
+              }
+              const pluginReference = parsePluginUri(href)
+              if (pluginReference) navigateTo(buildPluginDetailRoute(pluginReference))
+            }}
           >
-            <span className="scale-75">{pluginNameInitial(mentionName)}</span>
-          </span>
-        ) : (
-          <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        )}
-        <span className="min-w-0 truncate">
-          {mentionKind === 'file' ||
-          mentionKind === 'folder' ||
-          mentionKind === 'cloud' ||
-          mentionKind === 'conversation'
-            ? mentionName
-            : displayCodexMentionName(mentionName)}
-        </span>
-      </a>
-    )
-    offset = start + match[0].length
-  }
-
-  const remainingText = content.slice(offset)
-  if (remainingText) {
-    parts.push(...renderUserTextWithLinks(remainingText, offset))
-  }
-
-  return parts
-}
-function renderUserTextWithLinks(text: string, baseOffset: number): ReactNode[] {
-  const nodes: ReactNode[] = []
-  let localOffset = 0
-  for (const match of text.matchAll(COMPOSER_LINK_PATTERN)) {
-    const start = match.index ?? 0
-    const url = match[2] ?? ''
-    if (!getRecognizedLink(url)) continue
-    const before = text.slice(localOffset, start)
-    if (before) {
-      nodes.push(<span key={`text-${baseOffset}-${localOffset}`}>{before}</span>)
-    }
-    const label = match[1] ?? ''
-    nodes.push(
-      <ComposerLinkChip
-        key={`link-${baseOffset}-${start}`}
-        payload={{ url, label: label || url }}
-      />
-    )
-    localOffset = start + match[0].length
-  }
-  const tail = text.slice(localOffset)
-  if (tail) {
-    nodes.push(<span key={`text-${baseOffset}-${localOffset}`}>{tail}</span>)
-  }
-  return nodes
+            {mentionKind === 'folder' ? (
+              <Folder data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+            ) : mentionKind === 'file' ? (
+              <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+            ) : mentionKind === 'cloud' ? (
+              cloudKind === 'todo' ? (
+                <ListTodo data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+              ) : cloudKind === 'file' ? (
+                <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+              ) : cloudKind === 'delivery' ? (
+                <PackageOpen
+                  data-testid={iconTestId}
+                  className="h-3.5 w-3.5 shrink-0 text-blue-600"
+                />
+              ) : (
+                <LibraryBig
+                  data-testid={iconTestId}
+                  className="h-3.5 w-3.5 shrink-0 text-blue-600"
+                />
+              )
+            ) : mentionKind === 'conversation' ? (
+              <MessageCircle
+                data-testid={iconTestId}
+                className="h-3.5 w-3.5 shrink-0 text-blue-600"
+              />
+            ) : brandIconUrl ? (
+              <img
+                data-testid={iconTestId}
+                src={brandIconUrl}
+                alt=""
+                className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
+              />
+            ) : mentionKind === 'plugin' || mentionKind === 'app' ? (
+              <span
+                data-testid={iconTestId}
+                className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm bg-blue-600/10 text-xs font-medium leading-none text-blue-600"
+              >
+                <span className="scale-75">{pluginNameInitial(mentionName)}</span>
+              </span>
+            ) : (
+              <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+            )}
+            <span className="min-w-0 truncate">
+              {mentionKind === 'file' ||
+              mentionKind === 'folder' ||
+              mentionKind === 'cloud' ||
+              mentionKind === 'conversation'
+                ? mentionName
+                : displayCodexMentionName(mentionName)}
+            </span>
+          </a>
+        )
+      }}
+    />
+  )
 }
 
 const RAW_FAILED_MESSAGE_PATTERNS = [

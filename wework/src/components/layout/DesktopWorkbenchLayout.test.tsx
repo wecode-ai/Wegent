@@ -9331,7 +9331,10 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await user.click(await screen.findByTestId('sent-local-skill-token-gmail'))
+    const skillLink = await screen.findByTestId('sent-local-skill-token-gmail')
+    await user.hover(skillLink)
+    expect(screen.getByTestId('sent-local-skill-token-gmail')).toBe(skillLink)
+    await user.click(skillLink)
 
     expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('Gmail')
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
