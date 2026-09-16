@@ -33,7 +33,13 @@ fn runtime_proxy_configuration_precedes_persisted_turn_recovery() {
 
 #[tokio::test]
 async fn runtime_proxy_configuration_releases_deferred_startup_recovery() {
-    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let (event_tx, _) = broadcast::channel(1);
+    let handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+        "device-1",
+        "/bin/false",
+        event_tx,
+    );
+    assert!(handler.startup_recovery_deferred.load(Ordering::Acquire));
 
     handler
         .dispatch(
@@ -51,6 +57,7 @@ async fn runtime_proxy_configuration_releases_deferred_startup_recovery() {
         handler.worktree_reconciliation_state.lock().await.completed,
         "successful runtime proxy configuration should release deferred recovery"
     );
+    assert!(!handler.startup_recovery_deferred.load(Ordering::Acquire));
 }
 
 #[test]
