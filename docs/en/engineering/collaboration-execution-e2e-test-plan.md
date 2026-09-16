@@ -591,11 +591,17 @@ execution environment on a Wework device:
 3. Add the Wework device associated with the desktop App from Project settings, enter a valid
    repository and setup step, and click Create Environment.
 4. The environment preparation command must target the selected device record's
-   `app-record-{id}` route, reach `ready`, and keep the logical device ID in the persisted
-   `prepared_device_id`.
+   `app-record-{id}` route, reach `ready`, and persist its state under that route in the
+   execution environment's `devices` map.
 5. After removing that Wework device, initialize the real cloud Executor and complete the
    existing two-agent automation chain, proving that record-scoped routing does not break
    subsequent scheduling.
+
+Environment preparation clones repositories with the Git credentials configured on the device,
+matching how tasks dispatched to a device behave: the Backend sends no task-scoped token because
+one execution environment may hold repositories from several domains. A private repository
+therefore requires the Git accounts to be synchronized to that device first, otherwise the clone
+fails for missing credentials.
 
 ### `cloud-device-lifecycle`
 

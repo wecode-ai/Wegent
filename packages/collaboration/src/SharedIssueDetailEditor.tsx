@@ -589,6 +589,11 @@ export type TodoEditorProps = {
   taskRefreshKey?: string | number;
   initialTaskBindings?: SharedIssueDetailTaskBinding[];
   headerActions?: ReactNode;
+  /**
+   * Delete this Issue. Rendered inside the header overflow menu so the
+   * destructive action stays away from the primary edit and save controls.
+   */
+  onDelete?: () => void;
   selectedTaskId?: string | null;
   onCreateTask?: (workflowNodeId?: string) => void;
   onOpenTaskConversation?: (task: SharedIssueDetailTaskBinding) => void;
@@ -2433,6 +2438,16 @@ export function TodoEditor(props: TodoEditorProps) {
               </summary>
               <div className="task-detail-more-menu-popover">
                 {workspaceProperties}
+                {editable && props.onDelete ? (
+                  <button
+                    className="task-detail-more-menu-danger"
+                    data-testid="cloud-todo-detail-delete"
+                    onClick={props.onDelete}
+                    type="button"
+                  >
+                    {t("todo.delete_issue", "删除任务")}
+                  </button>
+                ) : null}
               </div>
             </details>
           ) : null}

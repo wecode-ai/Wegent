@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle, X } from 'lucide-react'
 
-import type { createAgentResourceApi, UnifiedAgentRuntime } from '@/api/agentResources'
+import type {
+  AgentResourceDetail,
+  createAgentResourceApi,
+  UnifiedAgentRuntime,
+  UnifiedAgentSpec,
+} from '@/api/agentResources'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -9,11 +14,13 @@ import type { UnifiedModel, UnifiedSkill } from '@/types/api'
 
 type AgentResourceApi = ReturnType<typeof createAgentResourceApi>
 
-interface WeworkAgentResourceCreatorProps {
+interface WeworkAgentResourceFormProps {
   api: AgentResourceApi
+  /** Team id of the Agent resource to edit. Omit to create a new resource. */
+  editingTeamId?: number
   namespace: string
   onClose(): void
-  onCreated(agent: { name: string; teamId: number }): Promise<void>
+  onSaved(agent: { name: string; teamId: number }): Promise<void>
   workspaceName: string
 }
 
@@ -28,14 +35,35 @@ function parseMcpServers(value: string): Record<string, unknown> {
   return parsed as Record<string, unknown>
 }
 
-export function WeworkAgentResourceCreator({
+function modelIndex(models: UnifiedModel[], model: AgentResourceDetail['model']): string {
+  if (!model.name) return ''
+  const exact = models.findIndex(
+    candidate =>
+      candidate.name === model.name &&
+      (model.type ? candidate.type === model.type : true) &&
+      (candidate.namespace || 'default') === (model.namespace || 'default')
+  )
+  const found = exact >= 0 ? exact : models.findIndex(candidate => candidate.name === model.name)
+  return found >= 0 ? String(found) : ''
+}
+
+/** Resolve bound Skill names to catalog ids; refs written by older clients may lack ids. */
+function boundSkillIds(detail: AgentResourceDetail, catalog: UnifiedSkill[]): number[] {
+  return detail.skills
+    .map(skill => skill.skillId || catalog.find(entry => entry.name === skill.name)?.id || 0)
+    .filter(skillId => skillId > 0)
+}
+
+export function WeworkAgentResourceForm({
   api,
+  editingTeamId,
   namespace,
   onClose,
-  onCreated,
+  onSaved,
   workspaceName,
-}: WeworkAgentResourceCreatorProps) {
+}: WeworkAgentResourceFormProps) {
   const { t } = useTranslation()
+  const editing = editingTeamId != null
   const [name, setName] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [runtime, setRuntime] = useState<UnifiedAgentRuntime>('Codex')
@@ -45,12 +73,17 @@ export function WeworkAgentResourceCreator({
   const [mcpConfig, setMcpConfig] = useState('{}')
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
   const [selectedSkillIds, setSelectedSkillIds] = useState<number[]>([])
+  const [detail, setDetail] = useState<AgentResourceDetail | null>(null)
+  const [loadingDetail, setLoadingDetail] = useState(editing)
   const [loadingModels, setLoadingModels] = useState(true)
   const [loadingSkills, setLoadingSkills] = useState(true)
+  const [detailLoadError, setDetailLoadError] = useState<string | null>(null)
   const [modelLoadError, setModelLoadError] = useState<string | null>(null)
   const [skillLoadError, setSkillLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const modelPrefilled = useRef(false)
+  const skillsPrefilled = useRef(false)
 
   useEffect(() => {
     let active = true
@@ -97,12 +130,54 @@ export function WeworkAgentResourceCreator({
     }
   }, [api, t])
 
+  useEffect(() => {
+    if (editingTeamId == null) return
+    let active = true
+    void api
+      .getAgent(editingTeamId)
+      .then(loaded => {
+        if (!active) return
+        setDetail(loaded)
+        setName(loaded.name)
+        setDisplayName(loaded.displayName)
+        if (loaded.runtime) setRuntime(loaded.runtime)
+        setSystemPrompt(loaded.systemPrompt)
+        setMcpConfig(JSON.stringify(loaded.mcpServers ?? {}, null, 2))
+      })
+      .catch(cause => {
+        if (!active) return
+        setDetailLoadError(
+          cause instanceof Error
+            ? cause.message
+            : t('workbench.agent_editor_load_failed', '加载智能体配置失败')
+        )
+      })
+      .finally(() => {
+        if (active) setLoadingDetail(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [api, editingTeamId, t])
+
+  useEffect(() => {
+    if (!detail || modelPrefilled.current || loadingModels) return
+    modelPrefilled.current = true
+    setSelectedModelIndex(modelIndex(models, detail.model))
+  }, [detail, loadingModels, models])
+
+  useEffect(() => {
+    if (!detail || skillsPrefilled.current || loadingSkills) return
+    skillsPrefilled.current = true
+    setSelectedSkillIds(boundSkillIds(detail, skills))
+  }, [detail, loadingSkills, skills])
+
   const availableSkills = useMemo(() => skills.filter(skill => skill.visible !== false), [skills])
   const selectedSkillSet = useMemo(() => new Set(selectedSkillIds), [selectedSkillIds])
   const selectedModel =
     selectedModelIndex === '' ? null : (models[Number(selectedModelIndex)] ?? null)
 
-  const createAgent = async () => {
+  const saveAgent = async () => {
     const technicalName = name.trim()
     if (!technicalName) {
       setError(t('workbench.agent_creator_name_required', '请输入资源名称'))
@@ -121,44 +196,54 @@ export function WeworkAgentResourceCreator({
       return
     }
 
+    const spec: UnifiedAgentSpec = {
+      name: technicalName,
+      displayName,
+      namespace: detail?.namespace ?? namespace,
+      runtime,
+      model: {
+        name: selectedModel.name,
+        type: selectedModel.type,
+        namespace: selectedModel.namespace,
+      },
+      systemPrompt,
+      skills: availableSkills
+        .filter(skill => selectedSkillSet.has(skill.id))
+        .map(skill => ({
+          skillId: skill.id,
+          name: skill.name,
+          namespace: skill.namespace || 'default',
+          isPublic: skill.is_public,
+        })),
+      mcpServers,
+    }
+
     setSaving(true)
     setError(null)
     try {
-      const created = await api.createAgent({
-        name: technicalName,
-        displayName,
-        namespace,
-        runtime,
-        model: {
-          name: selectedModel.name,
-          type: selectedModel.type,
-          namespace: selectedModel.namespace,
-        },
-        systemPrompt,
-        skills: availableSkills
-          .filter(skill => selectedSkillSet.has(skill.id))
-          .map(skill => ({
-            skillId: skill.id,
-            name: skill.name,
-            namespace: skill.namespace || 'default',
-            isPublic: skill.is_public,
-          })),
-        mcpServers,
-      })
-      await onCreated({
-        name: created.displayName || created.name,
-        teamId: created.id,
+      const saved = detail
+        ? await api.updateAgent({ teamId: detail.teamId, botId: detail.botId }, spec)
+        : await api.createAgent(spec)
+      await onSaved({
+        name: saved.displayName || saved.name,
+        teamId: saved.id,
       })
     } catch (cause) {
       setError(
         cause instanceof Error
           ? cause.message
-          : t('workbench.agent_creator_create_failed', '创建智能体失败')
+          : editing
+            ? t('workbench.agent_editor_save_failed', '保存智能体失败')
+            : t('workbench.agent_creator_create_failed', '创建智能体失败')
       )
     } finally {
       setSaving(false)
     }
   }
+
+  const busy = saving || loadingDetail
+  // A Shell this form cannot represent must not be silently rewritten on save.
+  const unsupportedRuntime = Boolean(detail && !detail.runtime)
 
   return (
     <div
@@ -181,13 +266,20 @@ export function WeworkAgentResourceCreator({
               className="text-heading-sm font-medium text-text-primary"
               id="wework-agent-resource-creator-title"
             >
-              {t('workbench.agent_creator_title', '新建智能体')}
+              {editing
+                ? t('workbench.agent_editor_title', '编辑智能体')
+                : t('workbench.agent_creator_title', '新建智能体')}
             </h2>
             <p className="text-sm leading-5 text-text-muted">
-              {t(
-                'workbench.agent_creator_description',
-                '创建统一智能体资源，配置执行器、Skill 和 MCP 后加入当前项目。'
-              )}
+              {editing
+                ? t(
+                    'workbench.agent_editor_description',
+                    '修改智能体资源的执行器、模型、Skill 和 MCP，保存后立即对项目生效。'
+                  )
+                : t(
+                    'workbench.agent_creator_description',
+                    '创建统一智能体资源，配置执行器、Skill 和 MCP 后加入当前项目。'
+                  )}
             </p>
           </div>
           <button
@@ -203,6 +295,37 @@ export function WeworkAgentResourceCreator({
         </header>
 
         <div className="min-h-0 space-y-5 overflow-y-auto px-5 py-5">
+          {loadingDetail ? (
+            <p
+              className="flex items-center gap-2 text-sm text-text-muted"
+              data-testid="wework-agent-resource-form-loading"
+            >
+              <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
+              {t('workbench.agent_editor_loading', '正在加载智能体配置…')}
+            </p>
+          ) : null}
+          {detailLoadError ? (
+            <p
+              className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500"
+              data-testid="wework-agent-resource-form-load-error"
+              role="alert"
+            >
+              {detailLoadError}
+            </p>
+          ) : null}
+          {unsupportedRuntime ? (
+            <p
+              className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500"
+              data-testid="wework-agent-resource-form-unsupported"
+              role="alert"
+            >
+              {t(
+                'workbench.agent_editor_unsupported_runtime',
+                '这个智能体使用此表单不支持的执行器，请在 Wegent 资源库中修改。'
+              )}
+              {` (${detail?.shellName || 'unknown'})`}
+            </p>
+          ) : null}
           <section className="space-y-3">
             <h3 className="text-base font-medium text-text-primary">
               {t('workbench.agent_creator_identity', '基本信息')}
@@ -213,18 +336,23 @@ export function WeworkAgentResourceCreator({
                 <input
                   className={cn('h-10', fieldClassName)}
                   data-testid="wework-agent-resource-name"
-                  disabled={saving}
+                  disabled={busy || editing}
                   onChange={event => setName(event.target.value)}
                   placeholder="code-review-agent"
                   value={name}
                 />
+                {editing ? (
+                  <span className="block text-xs text-text-muted">
+                    {t('workbench.agent_editor_name_locked', '资源名称创建后不可修改')}
+                  </span>
+                ) : null}
               </label>
               <label className="space-y-1.5 text-sm text-text-secondary">
                 <span>{t('workbench.agent_creator_display_name', '显示名称')}</span>
                 <input
                   className={cn('h-10', fieldClassName)}
                   data-testid="wework-agent-display-name"
-                  disabled={saving}
+                  disabled={busy}
                   onChange={event => setDisplayName(event.target.value)}
                   placeholder={t('workbench.agent_creator_display_name_placeholder', '代码评审')}
                   value={displayName}
@@ -236,7 +364,9 @@ export function WeworkAgentResourceCreator({
                 {t('workbench.agent_creator_owner', '资源归属')}
               </div>
               <div className="mt-1 text-sm text-text-secondary">{workspaceName}</div>
-              <div className="mt-1 text-xs text-text-muted">namespace: {namespace}</div>
+              <div className="mt-1 text-xs text-text-muted">
+                namespace: {detail?.namespace ?? namespace}
+              </div>
             </div>
           </section>
 
@@ -249,7 +379,7 @@ export function WeworkAgentResourceCreator({
               <select
                 className={cn('wework-native-select h-10', fieldClassName)}
                 data-testid="wework-agent-runtime"
-                disabled={saving}
+                disabled={busy}
                 onChange={event => setRuntime(event.target.value as UnifiedAgentRuntime)}
                 value={runtime}
               >
@@ -263,7 +393,7 @@ export function WeworkAgentResourceCreator({
               <select
                 className={cn('wework-native-select h-10', fieldClassName)}
                 data-testid="wework-agent-model"
-                disabled={saving || loadingModels}
+                disabled={busy || loadingModels}
                 onChange={event => setSelectedModelIndex(event.target.value)}
                 value={selectedModelIndex}
               >
@@ -311,7 +441,7 @@ export function WeworkAgentResourceCreator({
                         checked={selectedSkillSet.has(skill.id)}
                         className="mt-0.5"
                         data-testid={`wework-agent-skill-${skill.id}`}
-                        disabled={saving}
+                        disabled={busy}
                         onChange={event => {
                           setSelectedSkillIds(current =>
                             event.target.checked
@@ -353,7 +483,7 @@ export function WeworkAgentResourceCreator({
               <textarea
                 className={cn('min-h-24 resize-y py-2.5', fieldClassName)}
                 data-testid="wework-agent-system-prompt"
-                disabled={saving}
+                disabled={busy}
                 onChange={event => setSystemPrompt(event.target.value)}
                 placeholder={t(
                   'workbench.agent_creator_prompt_placeholder',
@@ -368,7 +498,7 @@ export function WeworkAgentResourceCreator({
               <textarea
                 className={cn('min-h-28 resize-y py-2.5 font-mono text-code', fieldClassName)}
                 data-testid="wework-agent-mcp"
-                disabled={saving}
+                disabled={busy}
                 onChange={event => setMcpConfig(event.target.value)}
                 placeholder='{"server":{"command":"node","args":["server.mjs"]}}'
                 value={mcpConfig}
@@ -400,15 +530,25 @@ export function WeworkAgentResourceCreator({
             </Button>
             <Button
               data-testid="wework-agent-resource-create"
-              disabled={saving || loadingModels || !selectedModel}
-              onClick={() => void createAgent()}
+              disabled={
+                busy ||
+                loadingModels ||
+                unsupportedRuntime ||
+                !selectedModel ||
+                (editing && !detail)
+              }
+              onClick={() => void saveAgent()}
               type="button"
               variant="primary"
             >
               {saving ? <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /> : null}
               {saving
-                ? t('workbench.agent_creator_creating', '创建中…')
-                : t('workbench.agent_creator_create', '创建智能体')}
+                ? editing
+                  ? t('workbench.agent_editor_saving', '保存中…')
+                  : t('workbench.agent_creator_creating', '创建中…')
+                : editing
+                  ? t('workbench.agent_editor_save', '保存')
+                  : t('workbench.agent_creator_create', '创建智能体')}
             </Button>
           </div>
         </footer>

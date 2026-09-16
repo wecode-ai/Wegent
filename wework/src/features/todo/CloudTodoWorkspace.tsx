@@ -1,6 +1,5 @@
 import { RuntimeConfigurationProvider } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import {
   useCallback,
@@ -822,7 +821,6 @@ export function CloudTodoWorkspace({
   const notificationChoice = useAssignmentNotificationChoice()
   const { t, i18n } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
-  const cloudConnection = useOptionalCloudConnection()
   const taskStatusExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.taskStatus)
   const preferences = useAppPreferencesState()
   const changeRequestStatusEnabled =
@@ -835,20 +833,9 @@ export function CloudTodoWorkspace({
     [changeRequestStatusEnabled, services.deviceApi]
   )
   const cloudWorkspaceApi = services.sharedWorkspaceApi
-  const existingCloudAgentsAvailable = cloudConnection.isConnected && Boolean(cloudWorkspaceApi)
   const projectAgentConfigurationHost = useMemo(
-    () => ({
-      ...createWeworkProjectAgentConfigurationHost(services.agentResourceApi),
-      existingAgentSelection: existingCloudAgentsAvailable
-        ? undefined
-        : {
-            disabled: true,
-            description: i18n.language.startsWith('zh')
-              ? '登录并连接云端后可选择已有智能体'
-              : 'Sign in and connect to cloud to select an existing Agent',
-          },
-    }),
-    [existingCloudAgentsAvailable, i18n.language, services.agentResourceApi]
+    () => createWeworkProjectAgentConfigurationHost(services.agentResourceApi),
+    [services.agentResourceApi]
   )
   const [internalSelectedProjectRef, setSelectedProjectRef] =
     useState<RuntimeProjectSpaceRef | null>(null)

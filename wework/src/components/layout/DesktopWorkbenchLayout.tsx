@@ -155,6 +155,7 @@ export function DesktopWorkbenchLayout({
     archiveProjectConversations: onArchiveProjectConversations,
     archiveProjectsConversations: onArchiveProjectsConversations,
     archiveChatConversations: onArchiveChatConversations,
+    cancelRuntimeTask: onCancelRuntimeTask,
     refreshDevices: onRefreshDevices,
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
@@ -1178,6 +1179,7 @@ export function DesktopWorkbenchLayout({
                   startupActive={routeActive && routeWorkItemsOpen}
                   onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                   onArchiveRuntimeTasks={onArchiveChatConversations}
+                  onCancelRuntimeTask={onCancelRuntimeTask}
                   onOpenSettings={options => openSettings(options)}
                   onLogout={onLogout}
                   activeProjectRef={

@@ -184,6 +184,15 @@
   animation: collaboration-issue-backdrop-enter 160ms ease-out both;
 }
 
+/* A task conversation panel opened from the issue detail is laid out beside the
+   board instead of inside this fixed drawer, so the drawer has to collapse
+   while the conversation is visible. Mirrors
+   `.todo-panel-stack.has-conversation .task-detail-workspace-panel-shell`. The
+   drawer stays mounted so returning from the conversation keeps its state. */
+.collaboration-dialog-backdrop.collaboration-issue-detail-backdrop.has-conversation {
+  display: none;
+}
+
 .collaboration-issue-detail-shared-host {
   position: fixed;
   top: 0;

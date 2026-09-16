@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useReducer, useRef } from "react";
 
+import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
 import type {
   SharedWorkspaceApi,
   WorkspaceBoardSnapshot,
@@ -111,7 +112,10 @@ export interface CollaborationWorkspaceControllerCommands {
     issueId: string,
     input: WorkspaceIssueAssignmentInput,
   ): Promise<CollaborationIssue | null>;
-  archiveIssue(issueId: string): Promise<boolean>;
+  archiveIssue(
+    issueId: string,
+    options?: { throwOnError?: boolean },
+  ): Promise<boolean>;
   reorderIssue(input: {
     issue: CollaborationIssue;
     status: string;
@@ -573,21 +577,25 @@ export function collaborationWorkspaceControllerReducer(
           ).map((item) => (item.id === action.issue.id ? action.issue : item)),
         },
       };
-    case "remove-issue":
+    case "remove-issue": {
+      // The server soft deletes the whole subtree, so drop descendants too.
+      const removedIds = collectIssueSubtreeIds(state.issues, action.issueId);
       return {
         ...state,
         selectedIssue:
-          state.selectedIssue?.id === action.issueId
+          state.selectedIssue && removedIds.has(state.selectedIssue.id)
             ? null
             : state.selectedIssue,
-        issues: state.issues.filter((item) => item.id !== action.issueId),
+        issues: removeIssueSubtree(state.issues, action.issueId),
+        myWork: state.myWork.filter((item) => !removedIds.has(item.id)),
         projectItems: Object.fromEntries(
           Object.entries(state.projectItems).map(([projectId, items]) => [
             projectId,
-            items.filter((item) => item.id !== action.issueId),
+            removeIssueSubtree(items, action.issueId),
           ]),
         ),
       };
+    }
     case "replace-attachments":
       return { ...state, attachments: action.attachments };
     case "replace-comments":
@@ -1240,7 +1248,7 @@ export function createCollaborationWorkspaceControllerCommands({
         return null;
       }
     },
-    async archiveIssue(issueId) {
+    async archiveIssue(issueId, options) {
       try {
         const archivedIssue = getExternalBoardState().issues.find(
           (candidate) => candidate.id === issueId,
@@ -1249,8 +1257,9 @@ export function createCollaborationWorkspaceControllerCommands({
         if (archivedIssue) markProjectMutated(archivedIssue.cloud_project_id);
         dispatch({ type: "remove-issue", issueId });
         return true;
-      } catch {
+      } catch (error) {
         reportError(messages.saveFailed);
+        if (options?.throwOnError) throw error;
         return false;
       }
     },

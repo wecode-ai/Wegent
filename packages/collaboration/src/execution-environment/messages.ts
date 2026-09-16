@@ -29,12 +29,19 @@ export const executionEnvironmentMessages: Record<
     "todo.repository_name": "名称",
     "todo.repository_path": "目录",
     "todo.repository_url": "Git 仓库",
+    "todo.repository_select_placeholder": "选择仓库",
+    "todo.repository_ref_placeholder": "选择分支或 Tag",
+    "todo.execution_environment_repository_ref": "分支或 Tag",
+    "todo.repositories_load_failed": "仓库列表加载失败，可直接填写仓库地址。",
+    "todo.repository_branches_load_failed": "分支加载失败，可手动填写。",
     "todo.execution_environment_setup": "初始化步骤",
     "todo.execution_environment_setup_description":
       "步骤按顺序执行；工作目录为空时在主仓库执行，也可以指定任一仓库目录。",
     "todo.add_setup_step": "添加步骤",
     "todo.no_setup_steps": "没有初始化步骤，仓库克隆完成后即可使用。",
     "todo.execution_environment_create": "创建环境",
+    "todo.execution_environment_primary_repository_required":
+      "请先为主仓库选择 Git 仓库，再创建环境。",
     "todo.execution_environment_reinitialize": "重新创建",
     "todo.execution_environment_create_hint":
       "填写配置后，在一台在线设备上点击“创建环境”；创建过程会同时保存配置并完成初始化。",
@@ -76,6 +83,13 @@ export const executionEnvironmentMessages: Record<
     "todo.repository_name": "Name",
     "todo.repository_path": "Directory",
     "todo.repository_url": "Git repository",
+    "todo.repository_select_placeholder": "Select a repository",
+    "todo.repository_ref_placeholder": "Select a branch or tag",
+    "todo.execution_environment_repository_ref": "Branch or tag",
+    "todo.repositories_load_failed":
+      "Failed to load repositories. You can still enter a repository URL.",
+    "todo.repository_branches_load_failed":
+      "Failed to load branches. You can still enter one.",
     "todo.execution_environment_setup": "Initialization steps",
     "todo.execution_environment_setup_description":
       "Steps run in order. An empty working directory uses the primary repository, or you can select a path inside any configured repository.",
@@ -83,6 +97,8 @@ export const executionEnvironmentMessages: Record<
     "todo.no_setup_steps":
       "No initialization steps. The environment is ready after repositories are cloned.",
     "todo.execution_environment_create": "Create environment",
+    "todo.execution_environment_primary_repository_required":
+      "Select a Git repository for the primary repository before creating the environment.",
     "todo.execution_environment_reinitialize": "Recreate",
     "todo.execution_environment_create_hint":
       "Complete the configuration, then create the environment on an online device. Creation saves the configuration and initializes it.",

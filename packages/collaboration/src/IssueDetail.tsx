@@ -63,6 +63,8 @@ interface IssueDetailProps {
   messages: Messages;
   translate?: CollaborationTranslate;
   onClose(): void;
+  /** Present only when the host enabled Issue deletion. */
+  onDelete?(): void;
   onChange(issue: CollaborationIssue): void;
   onCommentsChange(comments: CollaborationComment[]): void;
   onAssignmentsChange?(assignments: CollaborationAssignment[]): void;
@@ -195,6 +197,7 @@ export function IssueDetail({
   messages,
   translate,
   onClose,
+  onDelete,
   onChange,
   onCommentsChange,
   onAssignmentsChange = () => undefined,
@@ -232,6 +235,7 @@ export function IssueDetail({
           project={project as SharedEditorProject}
           allItems={allIssues as SharedEditorIssue[]}
           onClose={onClose}
+          onDelete={onDelete}
           onUpdated={(updated) => onChange(updated)}
           presentation="workspace-panel"
           workspacePanelFill
