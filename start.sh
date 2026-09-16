@@ -1365,7 +1365,7 @@ Configuration File:
 
     Other Settings:
       WEGENT_BACKEND_MODE  - Backend mode: hybrid (default) or python
-      WEGENT_BACKEND_RS_DIR - Rust Backend directory used by hybrid mode (default: backend-rs)
+      WEGENT_BACKEND_RS_DIR - Rust Backend directory used by hybrid mode (default: backend-rs-intra)
       WEGENT_PYTHON_UPSTREAM_PORT - Hybrid Python port (default: 8004)
       EXECUTOR_IMAGE        - Docker image for executor
       WEGENT_SOCKET_URL     - WebSocket URL (auto-computed: http://LOCAL_IP:BACKEND_PORT)
@@ -2212,7 +2212,7 @@ start_services() {
     fi
 
     local backend_mode=${WEGENT_BACKEND_MODE:-hybrid}
-    local backend_rs_dir=${WEGENT_BACKEND_RS_DIR:-backend-rs}
+    local backend_rs_dir=${WEGENT_BACKEND_RS_DIR:-backend-rs-intra}
     local backend_rs_launcher="$SCRIPT_DIR/$backend_rs_dir/scripts/start-hybrid-backend.sh"
     if [ "$start_backend" = true ]; then
         case "$backend_mode" in
