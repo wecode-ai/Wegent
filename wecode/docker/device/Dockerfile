@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 #
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 #
