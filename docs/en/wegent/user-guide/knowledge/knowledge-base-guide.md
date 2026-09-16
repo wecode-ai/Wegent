@@ -274,7 +274,7 @@ The previous owner is downgraded to Maintainer, and the new owner gains full con
 
 ## Automatic DingTalk document updates
 
-Enable **Automatically update DingTalk documents** under **Advanced settings** when creating or editing a knowledge base (off by default). A daily scan checks the source update time of existing and subsequently imported DingTalk copies. Successful, available copies with an unchanged saved timestamp are skipped; other copies are reimported. Older copies without a baseline refresh once to establish it. The first check runs during the next scan; completion is not tied to a fixed clock time.
+Enable **Automatically update DingTalk documents** under **Advanced settings** when creating or editing a knowledge base (off by default). A daily scan checks the source update time of existing and subsequently imported DingTalk copies. Successful, available copies are skipped when the saved timestamp is unchanged, or when the source reports no update time while a baseline exists; all other copies are reimported, including copies without a baseline, and the refresh establishes that baseline only when DingTalk reports an update time. The first check runs during the next scan; completion is not tied to a fixed clock time.
 
 - Each copy uses its original importer's DingTalk authorization. That account must remain active and retain permission to maintain documents in the target knowledge base.
 - Copies remain shared under the target knowledge base's permissions. New documents in source folders are not imported automatically. Source deletion or revoked access does not delete the Wegent document record.
@@ -282,7 +282,7 @@ Enable **Automatically update DingTalk documents** under **Advanced settings** w
 - Disabling the setting skips automatic jobs that have not started; processing already underway finishes. Manual reimport remains available.
 - A failed timestamp probe preserves the available copy. Failed processing remains retryable even if the source timestamp is unchanged. Manual reimport always updates and invalidates the old automatic comparison baseline.
 
-This first version accepts delayed DingTalk MCP `updateTime` values: content may change before the timestamp does, causing a scan to skip it. After rollout, observe timestamp delays by format, persistently unchanged nodes, and actual content freshness. This behavior was observed with online documents; recovery on the next cycle is not guaranteed. Use manual reimport when an immediate update is needed; the backend sync trigger still applies timestamp comparison.
+This first version accepts delayed DingTalk MCP `updateTime` values: content may change before the timestamp does, causing a scan to skip it; a copy whose source stops reporting a time keeps its saved baseline and stays skipped until a time is reported again. After rollout, observe timestamp delays by format, persistently unchanged nodes, and actual content freshness. This behavior was observed with online documents; recovery on the next cycle is not guaranteed. Use manual reimport when an immediate update is needed; the backend sync trigger still applies timestamp comparison.
 
 Deployment requires `SCHEDULED_TASKS_ENABLED`, Celery Beat, and a Worker consuming the default queue. Restart these processes after upgrading to load the new tasks. No database migration is needed.
 

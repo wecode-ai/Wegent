@@ -126,12 +126,40 @@ def test_unchanged_copy_stays_available_without_fetching_content(
     assert import_dispatches == []
 
 
+def test_missing_live_timestamp_keeps_an_available_copy(
+    test_db, imported_copy, live_update_time, import_dispatches, caplog
+):
+    """A probe without a live time is no evidence that the copy changed."""
+    from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
+
+    imported_copy.is_active = True
+    imported_copy.attachment_id = 1234
+    imported_copy.update_external_source_config(source_update_time=1789562644000)
+    test_db.commit()
+    live_update_time.return_value = None
+    generation = imported_copy.index_generation
+
+    with caplog.at_level(logging.INFO):
+        assert refresh_dingtalk_copy(test_db, imported_copy.id, generation) is False
+
+    test_db.refresh(imported_copy)
+    assert imported_copy.is_active is True
+    assert imported_copy.attachment_id == 1234
+    assert imported_copy.index_generation == generation
+    assert imported_copy.external_source_config["source_update_time"] == 1789562644000
+    assert import_dispatches == []
+    line = _decision_line(caplog, "unchanged")
+    assert "baseline_update_time=1789562644000" in line
+    assert "live_update_time=unavailable" in line
+
+
 @pytest.mark.parametrize(
     "reason",
     [
         "changed",
         "missing_baseline",
-        "missing_time",
+        "missing_time_without_baseline",
+        "missing_time_failed",
         "failed",
         "inactive",
         "no_attachment",
@@ -148,13 +176,17 @@ def test_copy_needing_update_is_not_skipped(
     imported_copy.is_active = reason != "inactive"
     imported_copy.attachment_id = 0 if reason == "no_attachment" else 1234
     imported_copy.update_external_source_config(
-        source_update_time=None if reason == "missing_baseline" else 1789562644000
+        source_update_time=(
+            None
+            if reason in ("missing_baseline", "missing_time_without_baseline")
+            else 1789562644000
+        )
     )
     if reason == "changed":
         live_update_time.return_value = 1789562645000
-    if reason == "missing_time":
+    if reason in ("missing_time_without_baseline", "missing_time_failed"):
         live_update_time.return_value = None
-    if reason == "failed":
+    if reason in ("failed", "missing_time_failed"):
         imported_copy.index_status = DocumentIndexStatus.FAILED
     test_db.commit()
     generation = imported_copy.index_generation
@@ -522,7 +554,6 @@ def test_missing_live_timestamp_is_marked_in_the_refresh_decision(
 
     imported_copy.is_active = True
     imported_copy.attachment_id = 1234
-    imported_copy.update_external_source_config(source_update_time=1789562644000)
     test_db.commit()
     live_update_time.return_value = None
 
@@ -536,7 +567,6 @@ def test_missing_live_timestamp_is_marked_in_the_refresh_decision(
 
     line = _decision_line(caplog, "refresh")
     assert "live_update_time=unavailable" in line
-    assert "baseline_update_time=1789562644000" in line
 
 
 def test_probe_failure_logs_its_cause_as_a_warning(

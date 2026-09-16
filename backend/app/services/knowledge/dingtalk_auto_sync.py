@@ -79,6 +79,11 @@ def _status_name(status: object) -> str:
     return str(getattr(status, "value", status) or "")
 
 
+def _live_time_label(update_time: int | None) -> int | str:
+    """Render a probe result, keeping a missing live time visible."""
+    return update_time if update_time is not None else "unavailable"
+
+
 def _resolve_copy_context(
     db: Session, document_id: int, expected_generation: int
 ) -> _CopyContext:
@@ -174,12 +179,17 @@ def refresh_dingtalk_copy(
     document, user = context.document, context.user
     baseline = document.external_source_config.get("source_update_time")
     status_before = _status_name(document.index_status)
+    # A probe without a live time is no evidence of change: it keeps an
+    # available copy that already has a baseline, while a copy without one
+    # still refreshes because only a refresh can establish that baseline.
+    no_evidence_of_change = (
+        baseline is not None if update_time is None else baseline == update_time
+    )
     if (
-        update_time is not None
+        no_evidence_of_change
         and document.index_status == DocumentIndexStatus.SUCCESS
         and document.is_active
         and document.attachment_id
-        and baseline == update_time
     ):
         log_sync_decision(
             "unchanged",
@@ -187,7 +197,7 @@ def refresh_dingtalk_copy(
             kb_id=document.kind_id,
             generation=expected_generation,
             baseline_update_time=baseline,
-            live_update_time=update_time,
+            live_update_time=_live_time_label(update_time),
             attachment_id=document.attachment_id,
         )
         return False
@@ -206,8 +216,7 @@ def refresh_dingtalk_copy(
         kb_id=document.kind_id,
         generation=expected_generation,
         baseline_update_time=baseline,
-        # A missing live timestamp is itself the reason to refresh, not a gap.
-        live_update_time=update_time if update_time is not None else "unavailable",
+        live_update_time=_live_time_label(update_time),
         index_status_before=status_before,
         previous_attachment_id=document.attachment_id,
         next_generation=result.document.index_generation if result.started else None,
