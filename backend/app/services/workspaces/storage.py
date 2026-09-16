@@ -14,6 +14,7 @@ from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
+from app.schemas.workspace import ExecutionEnvironmentConfig
 
 COLLABORATION_WORKSPACE_KIND = "CollaborationWorkspace"
 WORKSPACE_ENTITY_TYPE = "workspace"
@@ -27,8 +28,10 @@ class CollaborationWorkspace:
     public_id: str
     name: str
     description: str
+    namespace: str
     created_by_user_id: int
     is_default: bool
+    execution_environment: dict[str, Any]
     status: str
     version: int
     created_at: datetime
@@ -48,8 +51,12 @@ def workspace_from_kind(kind: Kind) -> CollaborationWorkspace:
         public_id=str(metadata.get("publicId") or kind.id),
         name=kind.name,
         description=str(spec.get("description") or ""),
+        namespace=kind.namespace,
         created_by_user_id=int(kind.user_id),
         is_default=bool(spec.get("isDefault")),
+        execution_environment=ExecutionEnvironmentConfig.model_validate(
+            spec.get("executionEnvironment") or {}
+        ).model_dump(),
         status="active" if kind.is_active else "archived",
         version=int(status_value.get("version") or 1),
         created_at=kind.created_at,
@@ -61,8 +68,10 @@ def workspace_kind_payload(
     *,
     name: str,
     description: str,
+    namespace: str,
     public_id: str,
     is_default: bool,
+    execution_environment: dict[str, Any] | None = None,
     version: int = 1,
 ) -> dict[str, Any]:
     return {
@@ -70,12 +79,13 @@ def workspace_kind_payload(
         "kind": COLLABORATION_WORKSPACE_KIND,
         "metadata": {
             "name": name,
-            "namespace": "default",
+            "namespace": namespace,
             "publicId": public_id,
         },
         "spec": {
             "description": description,
             "isDefault": is_default,
+            "executionEnvironment": execution_environment or {},
         },
         "status": {
             "state": "active",

@@ -1394,6 +1394,7 @@ export function createHybridWorkbenchServices(
         : undefined,
     },
     pluginApi: projectPluginApi,
+    agentResourceApi: cloudServices.agentResourceApi,
     teamApi: {
       // Wegent Teams are exposed only for explicitly selected Wegent execution.
       listTeams: cloudServices.teamApi.listTeams,

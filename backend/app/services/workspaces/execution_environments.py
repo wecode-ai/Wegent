@@ -11,12 +11,18 @@ from app.models.resource_member import ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceExecutionEnvironmentCreate
+from app.services.execution_environment_initialization import (
+    initialize_execution_environment,
+)
 from app.services.workspaces.access import require_workspace_role
 from app.services.workspaces.environment_status import execution_environment_statuses
 from app.services.workspaces.resource_mapping import execution_environment_values
 from app.services.workspaces.storage import (
     ensure_resource_grant,
+    get_workspace_kind,
     resource_grant,
+    workspace_from_kind,
+    workspace_kind_payload,
 )
 from shared.telemetry.decorators import trace_async
 
@@ -162,6 +168,46 @@ class WorkspaceExecutionEnvironmentService:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         db.delete(grant)
         db.commit()
+
+    async def initialize_execution_environment(
+        self,
+        db: Session,
+        workspace_id: int,
+        device_id: int,
+        user_id: int,
+        version: int,
+    ):
+        require_workspace_role(db, workspace_id, user_id, BaseRole.Maintainer)
+        kind = get_workspace_kind(db, workspace_id)
+        if kind is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+        current = workspace_from_kind(kind)
+        if current.version != version:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Workspace changed")
+        grant, device = _get_execution_environment(db, workspace_id, device_id)
+        if grant is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Execution device is not available in this Workspace",
+            )
+        state = await initialize_execution_environment(
+            db=db,
+            device=device,
+            environment_id=f"workspace-{workspace_id}",
+            definition=current.execution_environment,
+        )
+        kind.json = workspace_kind_payload(
+            name=current.name,
+            description=current.description,
+            namespace=current.namespace,
+            public_id=current.public_id,
+            is_default=current.is_default,
+            execution_environment=state,
+            version=current.version + 1,
+        )
+        db.commit()
+        db.refresh(kind)
+        return workspace_from_kind(kind)
 
 
 def _get_execution_environment(

@@ -314,6 +314,27 @@ def _task_model_override_available(
     return model_spec is not None
 
 
+def _task_model_override_allowed_for_team(
+    db: "Session",
+    *,
+    team: Kind,
+    model_name: str,
+    user_id: int,
+) -> bool:
+    """Return whether the team's model restriction allows the override.
+
+    Forcing a model the selected agent restricts makes execution request
+    building fail, which leaves IM cards open, so callers that can fall back
+    must check this before consuming any override - including runtime (Codex)
+    overrides that skip model resolution altogether.
+    """
+
+    from app.services.chat.config.model_resolver import allowed_model_names_for_team
+
+    allowed_names = allowed_model_names_for_team(db, team=team, user_id=user_id)
+    return allowed_names is None or model_name in allowed_names
+
+
 def _model_has_explicit_provider_credentials(model_config: Dict[str, Any]) -> bool:
     """Return True when the model config already carries its own endpoint credentials."""
     base_url = str(model_config.get("base_url") or "").strip()
@@ -942,6 +963,29 @@ async def build_execution_request(
                 catalog_model_id,
             )
 
+        # The agent's model restriction wins over a persisted task override for
+        # every override type, including runtime ones: those skip model
+        # resolution below and would otherwise bypass the restriction.
+        if (
+            force_override
+            and override_model_name
+            and _should_ignore_unavailable_task_model_override(payload)
+            and not _task_model_override_allowed_for_team(
+                db,
+                team=team,
+                model_name=override_model_name,
+                user_id=user.id,
+            )
+        ):
+            logger.info(
+                f"[build_execution_request] Ignoring task model override blocked by "
+                f"the agent model restriction: task_id={task.id}, "
+                f"subtask_id={assistant_subtask.id}, user_id={user.id}, "
+                f"modelId={override_model_name}, team_id={getattr(team, 'id', None)}"
+            )
+            override_model_name = None
+            force_override = False
+
         if (
             force_override
             and override_model_name
@@ -972,9 +1016,10 @@ async def build_execution_request(
             )
         ):
             logger.info(
-                "[build_execution_request] Ignoring unavailable task model "
-                "override for payload fallback: modelId=%s",
-                override_model_name,
+                f"[build_execution_request] Ignoring unavailable task model override "
+                f"for payload fallback: task_id={task.id}, "
+                f"subtask_id={assistant_subtask.id}, user_id={user.id}, "
+                f"modelId={override_model_name}"
             )
             override_model_name = None
             force_override = False

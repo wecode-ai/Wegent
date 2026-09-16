@@ -221,7 +221,6 @@ impl RuntimeWorkRpcHandler {
                     "threadId": source_thread_id,
                     "lastTurnId": last_turn_id,
                     "cwd": source.workspace_path,
-                    "excludeTurns": true,
                 }),
             )
             .await
@@ -246,10 +245,26 @@ impl RuntimeWorkRpcHandler {
         })?;
         let local_task_id = thread_id.clone();
         let title = string_field(&payload, "title").unwrap_or_else(|| source.title.clone());
-        let link = forked_task_link(
+        let messages = transcript_messages(thread, &self.device_id);
+        let transcript = transcript_response(TranscriptResponseInput {
+            local_task_id: local_task_id.clone(),
+            workspace_path: source.workspace_path.clone(),
+            runtime: "codex".to_owned(),
+            messages: messages.clone(),
+            context_usage: transcript_context_usage(thread),
+            running: codex_thread_has_in_progress_turn(thread),
+            pagination: TranscriptPagination::Opaque {
+                before_cursor: None,
+                after_cursor: None,
+            },
+            full_content: false,
+            turn_item_source: TranscriptTurnItemSource::CodexItems,
+            turn_navigation: transcript_turn_navigation(&messages),
+        });
+        let mut link = forked_task_link(
             &source,
             local_task_id.clone(),
-            thread_id,
+            thread_id.clone(),
             title,
             json!({
                 "taskId": source.local_task_id,
@@ -257,6 +272,7 @@ impl RuntimeWorkRpcHandler {
                 "lastTurnId": last_turn_id,
             }),
         );
+        set_transcript_snapshot_messages(&mut link.runtime_handle, &thread_id, messages);
         self.upsert_local_task(link);
         log_executor_event(
             "runtime task fork completed",
@@ -279,6 +295,7 @@ impl RuntimeWorkRpcHandler {
                 "workspacePath": source.workspace_path,
             },
             "runtime": "codex",
+            "transcript": transcript,
         }))
     }
 
@@ -555,6 +572,7 @@ impl RuntimeWorkRpcHandler {
         link.project_instructions = request.system_prompt.clone();
         link.project_plugin_ids = project_plugin_ids(&request);
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
+        store_runtime_execution_request(&mut link.runtime_handle, &request);
         if let (Some(runtime_handle), Some(payload_handle)) = (
             link.runtime_handle.as_object_mut(),
             payload
@@ -1006,6 +1024,9 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
+        self.store.update_task(&local_task_id, |link| {
+            store_runtime_execution_request(&mut link.runtime_handle, &request);
+        });
         if let Some(turn_id) = retry_source_turn_id(&payload) {
             self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
         }
@@ -1902,6 +1923,13 @@ pub(super) fn forked_task_link(
     link.runtime_workspace_roots = source.runtime_workspace_roots.clone();
     link.project_instructions = source.project_instructions.clone();
     link.project_plugin_ids = source.project_plugin_ids.clone();
+    if let Some(execution_request) = source
+        .runtime_handle
+        .get("executionRequest")
+        .or_else(|| source.runtime_handle.get("execution_request"))
+    {
+        link.runtime_handle["executionRequest"] = execution_request.clone();
+    }
     link
 }
 

@@ -19,10 +19,11 @@ type VirtualizerOptions<TScrollElement extends HTMLElement, TItemElement extends
   'getScrollElement' | 'initialOffset' | 'initialRect'
 > & {
   bottomOrigin: boolean
-  bottomOriginAppendOnlyItemKeys?: ReadonlySet<string | number | bigint>
+  bottomOriginAnchorItemKeys?: ReadonlySet<string | number | bigint>
   initialContentHeightPx: number
   initialDistanceFromBottomPx: number
   positionKey?: string | number | null
+  preserveBottomOriginItemResizeAnchor?: boolean
   scrollElementRef?: RefObject<TScrollElement | null>
   shouldAdjustScrollPositionOnItemSizeChange?: ReactVirtualizer<
     TScrollElement,
@@ -35,10 +36,11 @@ export function useBottomOriginVirtualizer<
   TItemElement extends Element,
 >({
   bottomOrigin,
-  bottomOriginAppendOnlyItemKeys,
+  bottomOriginAnchorItemKeys,
   initialContentHeightPx,
   initialDistanceFromBottomPx,
   positionKey,
+  preserveBottomOriginItemResizeAnchor = false,
   scrollElementRef,
   shouldAdjustScrollPositionOnItemSizeChange,
   ...options
@@ -121,26 +123,27 @@ export function useBottomOriginVirtualizer<
     ? (item, delta, instance) => {
         const element = instance.scrollElement
         if (
+          !preserveBottomOriginItemResizeAnchor ||
           !element ||
           element.scrollTop >= -0.5 ||
           delta <= 0 ||
-          !bottomOriginAppendOnlyItemKeys?.has(item.key)
+          !bottomOriginAnchorItemKeys?.has(item.key)
         ) {
           return false
         }
 
         const offset = getVirtualizerOffset(instance, element)
-        if (item.start < offset) {
-          const itemElement = instance.elementsCache.get(item.key)
-          const listElement = itemElement?.parentElement
-          if (listElement instanceof HTMLElement) {
-            const currentHeight =
-              Number.parseFloat(listElement.style.height) ||
-              listElement.getBoundingClientRect().height
-            listElement.style.height = `${Math.max(0, currentHeight + delta)}px`
-          }
-          element.scrollTop -= delta
+        if (item.start >= offset) return false
+
+        const itemElement = instance.elementsCache.get(item.key)
+        const listElement = itemElement?.parentElement
+        if (listElement instanceof HTMLElement) {
+          const currentHeight =
+            Number.parseFloat(listElement.style.height) ||
+            listElement.getBoundingClientRect().height
+          listElement.style.height = `${Math.max(0, currentHeight + delta)}px`
         }
+        element.scrollTop -= delta
         return false
       }
     : shouldAdjustScrollPositionOnItemSizeChange

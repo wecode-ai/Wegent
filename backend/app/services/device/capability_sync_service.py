@@ -14,9 +14,13 @@ from sqlalchemy.orm import Session
 
 from app.core.socketio import get_sio
 from app.models.kind import Kind
-from app.models.plugin_marketplace import PluginDeviceInstallation, PluginRelease
+from app.models.plugin_marketplace import PluginRelease
 from app.models.user import User
-from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
+from app.schemas.device import (
+    DeviceCapabilityItemResult,
+    DeviceCapabilitySyncResponse,
+    DeviceCapabilitySyncResult,
+)
 from app.services.device.runtime_route import RuntimeRouteError, runtime_route_resolver
 from app.services.device_service import device_service
 from app.services.plugin_device_identity import plugin_device_rows
@@ -238,12 +242,11 @@ class DeviceCapabilitySyncService:
         installed_plugin_id: int,
     ) -> DeviceCapabilitySyncResponse:
         """Merge one installed plugin and require its explicit acknowledgement."""
-        response = await self.sync_device_selected_capabilities(
+        response = await self.sync_installed_plugin_to_device_result(
             db,
             user_id=user_id,
             device_id=device_id,
-            installed_plugin_ids=[installed_plugin_id],
-            mode="merge",
+            installed_plugin_id=installed_plugin_id,
         )
         plugin_result = next(
             (
@@ -254,10 +257,35 @@ class DeviceCapabilitySyncService:
             None,
         )
         if not plugin_result or plugin_result.status != "synced":
+            detail = self._item_failure_message(plugin_result)
             raise DeviceCapabilitySyncError(
-                f"InstalledPlugin was not acknowledged by the device: {installed_plugin_id}"
+                detail
+                or f"InstalledPlugin was not acknowledged by the device: {installed_plugin_id}"
             )
         return response
+
+    async def sync_installed_plugin_to_device_result(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str,
+        installed_plugin_id: int,
+    ) -> DeviceCapabilitySyncResponse:
+        """Merge one plugin and preserve its item-level failure in the response."""
+        payload = self.resolve_payload(
+            db,
+            user=User(id=user_id),
+            skill_ids=[],
+            installed_plugin_ids=[installed_plugin_id],
+            mode="merge",
+        )
+        result = await self.sync_device_payload(
+            user_id=user_id,
+            device_id=device_id,
+            payload=payload,
+        )
+        return self._aggregate_response([result], skipped=0, mode="merge")
 
     async def sync_device_payload(
         self,
@@ -348,7 +376,11 @@ class DeviceCapabilitySyncService:
             return DeviceCapabilitySyncResult(
                 device_id=device_id,
                 success=False,
-                error=str(response.get("error") or "device rejected sync"),
+                error=str(
+                    response.get("error")
+                    or self._raw_item_failure_message(response)
+                    or "device rejected sync"
+                ),
                 skills=response.get("skills", []),
                 plugins=response.get("plugins", []),
                 mcps=response.get("mcps", []),
@@ -843,6 +875,36 @@ class DeviceCapabilitySyncService:
             skipped=skipped,
             results=results,
         )
+
+    @staticmethod
+    def _item_failure_message(item: DeviceCapabilityItemResult | None) -> str | None:
+        if item is None:
+            return None
+        error = (item.error or "").strip()
+        if not error:
+            return None
+        name = (item.name or str(item.id or "plugin")).strip()
+        stage = (item.stage or "").strip()
+        location = f" during {stage}" if stage else ""
+        return f"Plugin {name} failed{location}: {error}"
+
+    @staticmethod
+    def _raw_item_failure_message(response: dict[str, Any]) -> str | None:
+        for field in ("plugins", "skills", "mcps"):
+            for item in response.get(field) or []:
+                if not isinstance(item, dict) or item.get("status") not in {
+                    "failed",
+                    "error",
+                }:
+                    continue
+                error = str(item.get("error") or "").strip()
+                if not error:
+                    continue
+                name = str(item.get("name") or item.get("id") or field[:-1])
+                stage = str(item.get("stage") or "").strip()
+                location = f" during {stage}" if stage else ""
+                return f"{field[:-1].title()} {name} failed{location}: {error}"
+        return None
 
     def _extract_device_id(self, device: dict[str, Any]) -> Optional[str]:
         value = (

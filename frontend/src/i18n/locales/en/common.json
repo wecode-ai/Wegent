@@ -136,6 +136,16 @@
     "admin": "Admin",
     "evaluation": "AI Evaluation"
   },
+  "collaboration_sidebar": {
+    "back_to_workbench": "Back to workbench",
+    "title": "Collaboration",
+    "aria_label": "Collaboration navigation",
+    "close_navigation": "Close collaboration navigation",
+    "home": "Collaboration home",
+    "my_work": "My work",
+    "inbox": "Inbox",
+    "run_center": "Run center"
+  },
   "sidebar": {
     "recent_visits": "Recent Visits",
     "light_mode": "Light Mode",
@@ -328,6 +338,8 @@
     "download": "Download"
   },
   "teams": {
+    "create_target": "Create in",
+    "create_target_description": "The agent will be created as a shared resource of this collaboration workspace.",
     "title": "Team List",
     "description": "Agent = Bot + Collaboration Mode. Combine different bots and collaboration patterns to accomplish various tasks",
     "loading": "Loading teams...",

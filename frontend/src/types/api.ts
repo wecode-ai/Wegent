@@ -15,6 +15,7 @@ export interface QuickAccessConfig {
 
 export interface UserPreferences {
   send_key: 'enter' | 'cmd_enter'
+  follow_up_behavior?: 'queue' | 'guide'
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
   quick_access?: QuickAccessConfig
   memory_enabled?: boolean

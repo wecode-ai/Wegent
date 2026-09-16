@@ -16,6 +16,7 @@ import { ProjectShell, type ProjectShellProps } from "./ProjectShell";
 export const collaborationProjectViewIds = [
   "board",
   "table",
+  "files",
   "manage",
 ] as const;
 
@@ -26,7 +27,6 @@ export interface CollaborationProjectViewLabels {
   board: string;
   table: string;
   files: string;
-  automation: string;
   manage: string;
 }
 
@@ -34,7 +34,6 @@ export interface CollaborationProjectViewTestIds {
   board: string;
   table: string;
   files: string;
-  automation: string;
   manage: string;
 }
 
@@ -50,7 +49,6 @@ export interface CollaborationProjectViewSlots {
   board: ReactNode;
   table: ReactNode;
   files: ReactNode;
-  automation: ReactNode;
   manage: ReactNode;
 }
 
@@ -71,16 +69,8 @@ export function resolveCollaborationProjectView({
   slots: CollaborationProjectViewSlots;
   view: CollaborationProjectView;
 }): ResolvedCollaborationProjectView {
-  const exactExtension = extensions.find(
-    (extension) => extension.id === view && extension.available !== false,
-  );
-  const requestedView = exactExtension
+  const accessibleView = options.some((option) => option.id === view)
     ? view
-    : view === "automation" || view === "files"
-      ? "manage"
-      : view;
-  const accessibleView = options.some((option) => option.id === requestedView)
-    ? requestedView
     : "board";
   const extensionContent = extensions.find(
     (extension) => extension.id === accessibleView,
@@ -111,14 +101,12 @@ export function buildCollaborationProjectViewOptions({
   project,
   labels,
   testIds,
-  automationSupported,
   enabledStandardViews = collaborationProjectViewIds,
   extensions = [],
 }: {
   project: Pick<CollaborationProject, "access_role" | "project_store">;
   labels: CollaborationProjectViewLabels;
   testIds: CollaborationProjectViewTestIds;
-  automationSupported: boolean;
   enabledStandardViews?: readonly StandardCollaborationProjectView[];
   extensions?: CollaborationProjectViewExtension[];
 }): CollaborationProjectViewOption[] {
@@ -127,7 +115,7 @@ export function buildCollaborationProjectViewOptions({
     .filter(
       (view) =>
         enabledStandardViewIds.has(view) &&
-        canAccessCollaborationProjectView(project, view, automationSupported),
+        canAccessCollaborationProjectView(project, view),
     )
     .map((view) => ({
       id: view,
@@ -162,7 +150,6 @@ export interface CollaborationProjectViewShellProps extends Omit<
   labels: CollaborationProjectViewLabels;
   testIds: CollaborationProjectViewTestIds;
   slots: CollaborationProjectViewSlots;
-  automationSupported?: boolean;
   enabledStandardViews?: readonly StandardCollaborationProjectView[];
   extensions?: CollaborationProjectViewExtension[];
   switcherAriaLabel?: string;
@@ -176,7 +163,6 @@ export function CollaborationProjectViewShell({
   labels,
   testIds,
   slots,
-  automationSupported = true,
   enabledStandardViews,
   extensions = [],
   switcherAriaLabel,
@@ -188,7 +174,6 @@ export function CollaborationProjectViewShell({
     project,
     labels,
     testIds,
-    automationSupported,
     enabledStandardViews,
     extensions,
   });

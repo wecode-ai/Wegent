@@ -46,6 +46,7 @@ export interface CollaborationProject {
   project_store: "local" | "backend";
   task_provider: string;
   provider_config: Record<string, unknown>;
+  execution_environment?: CollaborationExecutionEnvironmentConfig;
   board_config?: {
     group_by: "status" | "priority" | "assignee" | "tag";
     processing_start_status_id: string | null;
@@ -57,6 +58,8 @@ export interface CollaborationProject {
     show_tags: boolean;
     show_date: boolean;
   };
+  collaboration_groups?: CollaborationGroup[];
+  automatic_processing_rules?: import("./ports/SharedWorkspaceApi").WorkspaceAutomationRule[];
   created_by_user_id: number;
   current_user_id?: number;
   current_user_name?: string;
@@ -100,6 +103,7 @@ export interface CollaborationIssue {
   due_at: string | null;
   tags: string[];
   sort_order: number;
+  current_delivery_id?: string | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -151,15 +155,41 @@ export interface CollaborationWorkspace {
   location: "local" | "cloud";
   name: string;
   description: string;
+  namespace: string;
   access_role: CollaborationRole | "Member";
   member_count: number;
   agent_count: number;
   execution_environment_count: number;
+  execution_environment?: CollaborationExecutionEnvironmentConfig;
   project_count: number;
   created_by_user_id: number;
   version: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface CollaborationExecutionEnvironmentConfig {
+  repositories: CollaborationExecutionEnvironmentRepository[];
+  setup_steps: CollaborationExecutionEnvironmentSetupStep[];
+  status?: "uninitialized" | "preparing" | "ready" | "error";
+  fingerprint?: string;
+  prepared_device_id?: string;
+  prepared_workspace_path?: string;
+  prepared_at?: string | null;
+  error?: string;
+}
+
+export interface CollaborationExecutionEnvironmentRepository {
+  name: string;
+  url: string;
+  ref: string;
+  path: string;
+  primary: boolean;
+}
+
+export interface CollaborationExecutionEnvironmentSetupStep {
+  command: string;
+  working_directory: string;
 }
 
 export interface CollaborationWorkspaceNavigationContext {
@@ -184,6 +214,7 @@ export interface CollaborationExecutionEnvironment {
 }
 
 export interface CollaborationOwnedAgent extends CollaborationAgent {
+  location?: "local" | "cloud";
   owner_type: "user" | "workspace";
   owner_id: string;
   owner_name: string;
@@ -194,6 +225,40 @@ export interface CollaborationOwnedAgent extends CollaborationAgent {
 export interface CollaborationPlatformResources {
   agents: CollaborationOwnedAgent[];
   execution_environments: CollaborationExecutionEnvironment[];
+}
+
+export interface CollaborationGroupMember {
+  kind: "human" | "agent";
+  id: string;
+  responsibility: string;
+}
+
+export interface CollaborationGroupStage {
+  id: string;
+  name: string;
+  description: string;
+  assignee: CollaborationGroupMember | null;
+}
+
+export interface CollaborationGroup {
+  id: string;
+  workspace_id: string;
+  owner_type: "workspace" | "project";
+  owner_id: string;
+  name: string;
+  description: string;
+  instructions?: string;
+  leader: CollaborationGroupMember;
+  members: CollaborationGroupMember[];
+  coordination_mode: "manager";
+  stages: CollaborationGroupStage[];
+  execution_requirements?: {
+    required_tags: string[];
+  };
+  version: number;
+  created_by_user_id: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export type EditableLocalCollaborationIssue = CollaborationIssue & {
@@ -320,14 +385,10 @@ export interface CollaborationCapabilities {
   myWork?: boolean;
   automation: boolean;
   dingtalkAitable: boolean;
+  projectLocation?: "cloud" | "local";
 }
 
-export type CollaborationView =
-  | "board"
-  | "table"
-  | "files"
-  | "automation"
-  | "manage";
+export type CollaborationView = "board" | "table" | "files" | "manage";
 export type CollaborationRootView = "home" | "my-work";
 
 export interface CollaborationLocation {
@@ -341,10 +402,15 @@ export interface CollaborationHostAdapter {
   capabilities: CollaborationCapabilities;
   location: CollaborationLocation;
   navigate(location: CollaborationLocation): void;
+  manageResource?(kind: "agents" | "environments", resourceId?: string): void;
   onProjectsChange?(projects: CollaborationProject[]): void;
   openExternal?(url: string): void;
   notify?(message: string, kind?: "success" | "error"): void;
   projectAgentConfiguration?: ProjectAgentConfigurationHost;
+  projectAgentResourceContext?: {
+    name: string;
+    namespace: string;
+  };
   projectCreate?: ProjectCreateHostAdapter;
   projectActions?: Array<{
     id: string;

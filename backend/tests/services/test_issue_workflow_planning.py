@@ -493,7 +493,7 @@ def test_approve_review_persists_and_pushes_two_stage_completion_activity(
         project,
         test_user,
         name="Claude agent",
-        runtime="claude",
+        runtime="claude_code",
     )
     codex = _robot(
         test_db,

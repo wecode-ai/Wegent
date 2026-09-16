@@ -19,6 +19,7 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.loop_items.service import loop_item_service
+from tests.utils.agent_resources import create_runnable_wegent_team
 
 
 @pytest.fixture(autouse=True)
@@ -177,17 +178,11 @@ def test_assign_to_wegent_runtime_robot_keeps_robot_as_queue_identity(
 ) -> None:
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
-    team = Kind(
-        kind="Team",
-        name=f"board-team-{uuid.uuid4().hex[:8]}",
-        namespace="default",
+    team = create_runnable_wegent_team(
+        test_db,
         user_id=test_user.id,
-        is_active=True,
-        json={},
+        name_prefix="board",
     )
-    test_db.add(team)
-    test_db.commit()
-    test_db.refresh(team)
     bot = _make_bot(
         test_db,
         project,

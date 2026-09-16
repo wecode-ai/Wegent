@@ -348,7 +348,35 @@ describe('ComposerTextarea', () => {
     expect(composerRef.current?.getValue()).toBe('Send this\n')
 
     fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter', metaKey: true })
-    expect(onSubmit).toHaveBeenCalledWith('Send this\n', { guideWhenBusy: true })
+    expect(onSubmit).toHaveBeenCalledWith('Send this\n', undefined)
+  })
+
+  test('applies the configured follow-up behavior while a response is streaming', () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onSubmit = vi.fn()
+
+    render(
+      <ComposerTextarea
+        value="Adjust the response"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        canSend
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+        sendKey="cmd_enter"
+        followUpBehavior="guide"
+        isStreaming
+      />
+    )
+
+    const editor = screen.getByTestId('chat-message-input')
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter', metaKey: true })
+
+    expect(onSubmit).toHaveBeenCalledWith('Adjust the response', {
+      guideWhenBusy: true,
+    })
   })
 
   test('consumes the Enter that selects a skill without adding a line break', async () => {

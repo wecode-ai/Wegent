@@ -267,6 +267,59 @@ async def test_add_block_preserves_existing_block_content_key():
 
 
 @pytest.mark.asyncio
+async def test_add_block_appends_content_delta_to_inline_block_content():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_block(
+        subtask_id=707,
+        block={
+            "id": "text-1",
+            "type": "text",
+            "content": "part1",
+            "status": "streaming",
+        },
+    )
+    await manager.add_block(
+        subtask_id=707,
+        block={
+            "id": "text-1",
+            "type": "text",
+            "content": "part1",
+            "content_delta": "part2",
+        },
+    )
+
+    blocks = await manager.get_blocks(707)
+    assert blocks[0]["content"] == "part1part2"
+    assert "content_delta" not in blocks[0]
+
+
+@pytest.mark.asyncio
+async def test_add_block_appends_content_delta_to_dedicated_content_key():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_text_content(subtask_id=808, content="old")
+    blocks = await manager.get_blocks(808)
+    content_key = json.loads(redis_client.lists["chat:streaming:blocks:808"][0])[
+        "_content_key"
+    ]
+
+    blocks[0]["content_delta"] = "delta"
+    await manager.add_block(subtask_id=808, block=blocks[0])
+
+    raw_block = json.loads(redis_client.lists["chat:streaming:blocks:808"][0])
+    updated_blocks = await manager.get_blocks(808)
+
+    assert raw_block["_content_key"] == content_key
+    assert redis_client.values[content_key] == "olddelta"
+    assert updated_blocks[0]["content"] == "olddelta"
+
+
+@pytest.mark.asyncio
 async def test_finalize_and_get_blocks_marks_unresolved_preview_tool_blocks_error():
     manager = SessionManager()
     redis_client = FakeRedisClient()

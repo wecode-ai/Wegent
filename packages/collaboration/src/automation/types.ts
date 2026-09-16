@@ -11,6 +11,7 @@ export type AutomationRunStatus =
 
 export type AutomationEventType =
   | "task.created"
+  | "task.tag_added"
   | "task.status_changed"
   | "change_request.checks_failed"
   | "change_request.merge_conflict"
@@ -63,6 +64,9 @@ export interface AutomationBackendRule {
   agentName: string;
   executionEnvironment: "local" | "cloud" | "managed";
   executionDeviceId: string | null;
+  targetKind?: "human" | "agent" | "collaboration_group" | null;
+  targetId?: string | null;
+  targetName?: string | null;
   enabled: boolean;
   nextRunAt: string | null;
   lastRunAt: string | null;

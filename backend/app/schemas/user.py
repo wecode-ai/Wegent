@@ -71,6 +71,7 @@ class UserPreferences(BaseModel):
 
     employee_id: Optional[str] = None
     send_key: Literal["enter", "cmd_enter"] = "enter"
+    follow_up_behavior: Literal["queue", "guide"] = "queue"
     search_key: Literal["cmd_k", "cmd_f", "disabled"] = "cmd_k"
     memory_enabled: bool = False
     chat_status_items: Optional[List[str]] = None

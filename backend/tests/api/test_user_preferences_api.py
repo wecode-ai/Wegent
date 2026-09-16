@@ -68,6 +68,7 @@ def test_update_user_preferences_preserves_quick_access(
         json={
             "preferences": {
                 "send_key": "enter",
+                "follow_up_behavior": "guide",
                 "search_key": "cmd_k",
                 "memory_enabled": False,
                 "mcp_provider_keys": None,
@@ -91,10 +92,12 @@ def test_update_user_preferences_preserves_quick_access(
 
     assert response.status_code == 200
     assert response.json()["preferences"]["quick_access"]["teams"] == [188]
+    assert response.json()["preferences"]["follow_up_behavior"] == "guide"
 
     test_db.refresh(test_user)
     stored_preferences = json.loads(test_user.preferences)
     assert stored_preferences["quick_access"]["teams"] == [188]
+    assert stored_preferences["follow_up_behavior"] == "guide"
     assert stored_preferences["wework_new_chat_model_selection"]["options"] == {
         "reasoning": "medium"
     }

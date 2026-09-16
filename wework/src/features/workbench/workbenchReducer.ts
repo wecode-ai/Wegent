@@ -15,6 +15,7 @@ import type {
   UserPreferences,
 } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
+import type { DeviceSlotUpdatePayload } from '@/types/device-events'
 import {
   normalizeRuntimeWorkspacePath,
   runtimeProjectToProject,
@@ -94,6 +95,10 @@ export type WorkbenchAction =
       deviceId: string
       status: WorkbenchDeviceStatus
       name?: string | null
+    }
+  | {
+      type: 'device_slot_updated'
+      payload: DeviceSlotUpdatePayload
     }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_created'; project: ProjectWithTasks }
@@ -1083,6 +1088,19 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.status,
           matchedDevice
         ),
+      }
+    }
+    case 'device_slot_updated': {
+      const { device_id: deviceId, ...slotState } = action.payload
+      return {
+        ...state,
+        devices: state.devices.map(device => {
+          if (!workbenchDeviceMatchesId(device, deviceId)) return device
+          return {
+            ...device,
+            ...slotState,
+          }
+        }),
       }
     }
     case 'bootstrap_failed':

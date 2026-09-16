@@ -15,6 +15,10 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceCreate, WorkspaceUpdate
+from app.services.execution_environment_initialization import (
+    preparing_execution_environment,
+)
+from app.services.group_permission import check_group_permission
 from app.services.workspaces.access import (
     WorkspaceAccess,
     require_workspace_navigation_context,
@@ -38,16 +42,27 @@ class WorkspaceLifecycleService:
     def create(
         self, db: Session, user_id: int, values: WorkspaceCreate
     ) -> CollaborationWorkspace:
-        is_default = values.is_default or not self._owned_active_kinds(db, user_id)
+        if values.namespace != "default" and not check_group_permission(
+            db, user_id, values.namespace, BaseRole.Developer
+        ):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Insufficient permission to create a Workspace in this Group",
+            )
+        personal_workspaces = self._owned_active_kinds(db, user_id, namespace="default")
+        is_default = values.namespace == "default" and (
+            values.is_default or not personal_workspaces
+        )
         public_id = str(uuid.uuid4())
         kind = Kind(
             user_id=user_id,
             kind=COLLABORATION_WORKSPACE_KIND,
             name=values.name,
-            namespace="default",
+            namespace=values.namespace,
             json=workspace_kind_payload(
                 name=values.name,
                 description=values.description,
+                namespace=values.namespace,
                 public_id=public_id,
                 is_default=is_default,
             ),
@@ -71,7 +86,7 @@ class WorkspaceLifecycleService:
     def get_or_create_default(
         self, db: Session, user_id: int
     ) -> CollaborationWorkspace:
-        owned = self._owned_active_kinds(db, user_id)
+        owned = self._owned_active_kinds(db, user_id, namespace="default")
         for kind in owned:
             workspace = workspace_from_kind(kind)
             if workspace.is_default:
@@ -186,12 +201,24 @@ class WorkspaceLifecycleService:
             values.is_default if values.is_default is not None else current.is_default
         )
         if next_default:
+            if current.namespace != "default":
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "A Group Workspace cannot be the personal default Workspace",
+                )
             self._clear_other_defaults(db, current.created_by_user_id, workspace_id)
         self._set_kind_values(
             kind,
             name=values.name,
             description=values.description,
             is_default=next_default,
+            execution_environment=(
+                preparing_execution_environment(
+                    values.execution_environment.model_dump()
+                )
+                if values.execution_environment is not None
+                else None
+            ),
         )
         db.commit()
         db.refresh(kind)
@@ -227,6 +254,7 @@ class WorkspaceLifecycleService:
             json=workspace_kind_payload(
                 name="默认协作空间",
                 description="",
+                namespace="default",
                 public_id=public_id,
                 is_default=True,
             ),
@@ -258,17 +286,17 @@ class WorkspaceLifecycleService:
         return int(query.scalar() or 0)
 
     @staticmethod
-    def _owned_active_kinds(db: Session, user_id: int) -> list[Kind]:
-        return (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == COLLABORATION_WORKSPACE_KIND,
-                Kind.is_active.is_(True),
-            )
-            .order_by(Kind.id)
-            .all()
+    def _owned_active_kinds(
+        db: Session, user_id: int, *, namespace: str | None = None
+    ) -> list[Kind]:
+        query = db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == COLLABORATION_WORKSPACE_KIND,
+            Kind.is_active.is_(True),
         )
+        if namespace is not None:
+            query = query.filter(Kind.namespace == namespace)
+        return query.order_by(Kind.id).all()
 
     @staticmethod
     def _set_kind_values(
@@ -277,6 +305,7 @@ class WorkspaceLifecycleService:
         name: str | None = None,
         description: str | None = None,
         is_default: bool | None = None,
+        execution_environment: dict | None = None,
         state: str = "active",
     ) -> None:
         current = workspace_from_kind(kind)
@@ -287,8 +316,14 @@ class WorkspaceLifecycleService:
             description=(
                 description if description is not None else current.description
             ),
+            namespace=current.namespace,
             public_id=current.public_id,
             is_default=(is_default if is_default is not None else current.is_default),
+            execution_environment=(
+                execution_environment
+                if execution_environment is not None
+                else current.execution_environment
+            ),
             version=current.version + 1,
         )
         kind.json["status"]["state"] = state
@@ -296,7 +331,7 @@ class WorkspaceLifecycleService:
     def _clear_other_defaults(
         self, db: Session, user_id: int, workspace_id: int
     ) -> None:
-        for kind in self._owned_active_kinds(db, user_id):
+        for kind in self._owned_active_kinds(db, user_id, namespace="default"):
             if int(kind.id) != workspace_id and workspace_from_kind(kind).is_default:
                 self._set_kind_values(kind, is_default=False)
 

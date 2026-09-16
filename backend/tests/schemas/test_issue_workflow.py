@@ -328,7 +328,7 @@ def test_workflow_node_preserves_unconfigured_robot_execution() -> None:
     assert workflow.node_needs_execution_config(workflow.nodes[0])
 
 
-def test_composer_robot_stage_requires_bound_workspace() -> None:
+def test_composer_robot_stage_can_create_a_standalone_workspace() -> None:
     definition = ProjectWorkflowDefinition.model_validate(
         {
             "version": 1,
@@ -354,7 +354,7 @@ def test_composer_robot_stage_requires_bound_workspace() -> None:
 
     workflow = instantiate_workflow(definition)
 
-    assert workflow.node_needs_execution_config(workflow.nodes[0])
+    assert not workflow.node_needs_execution_config(workflow.nodes[0])
 
 
 def test_composer_robot_stage_is_ready_when_bound_to_a_workspace() -> None:
