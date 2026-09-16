@@ -74,15 +74,21 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-function currentSessionContext(body) {
+export function currentSessionContext(body) {
   const texts = (body?.input ?? []).flatMap(item =>
     Array.isArray(item.content) ? item.content.map(part => part.text ?? '') : [item.content ?? '']
   )
   const contexts = texts.flatMap(text =>
-    text.split('\n').filter(line => line.startsWith('{') && line.includes('"conversation_id":'))
+    Array.from(
+      text.matchAll(/<wework\.session\.current>([\s\S]*?)<\/wework\.session\.current>/gu),
+      match => match[1]
+    )
   )
   assert.ok(contexts.length > 0, 'The model request did not receive current session context')
-  const context = JSON.parse(contexts.at(-1))
+  const content = contexts.at(-1)
+  const jsonStart = content.indexOf('\n')
+  assert.ok(jsonStart >= 0, 'The current session context is missing its JSON payload')
+  const context = JSON.parse(content.slice(jsonStart).trim())
   assert.match(context.conversation_id, /^conv_/)
   assert.match(context.response_id, /^resp_/)
   const conversation = JSON.parse(Buffer.from(context.conversation_id.slice(5), 'base64url'))
