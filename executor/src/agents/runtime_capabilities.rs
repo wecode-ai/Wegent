@@ -20,7 +20,7 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     agents::{
-        backend_url::{is_local_mode, request_backend_url_or_default},
+        backend_url::{backend_http_client, is_local_mode, request_backend_url_or_default},
         claude_config_dir,
         claude_options::merge_claude_mcp_servers,
         claude_task_dir, extract_claude_options,
@@ -846,7 +846,19 @@ async fn download_attachments(
     subtask_id: &str,
 ) -> AttachmentDownloadOutcome {
     let _ = fs::create_dir_all(attachments_dir);
-    let client = reqwest::Client::new();
+    let client = match backend_http_client() {
+        Ok(client) => client,
+        Err(error) => {
+            log_executor_event(
+                "attachment download client unavailable",
+                &[("task_id", task_id.to_string()), ("error", error)],
+            );
+            return AttachmentDownloadOutcome {
+                success: Vec::new(),
+                failed: attachments.to_vec(),
+            };
+        }
+    };
     let mut success = Vec::new();
     let mut failed = Vec::new();
     let mut used_filenames = HashMap::new();
@@ -990,7 +1002,7 @@ async fn deploy_skills(
         )
     })?;
 
-    let client = reqwest::Client::new();
+    let client = backend_http_client()?;
     let results = stream::iter(plan.skills.iter().cloned())
         .map(|skill| {
             let client = &client;

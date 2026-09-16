@@ -988,6 +988,7 @@ impl RuntimeWorkRpcHandler {
         {
             request.runtime_auth_token = Some(connection.runtime_auth_token);
         }
+        crate::agents::rewrite_loopback_model_gateway(request, &connection.backend_url);
     }
 
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {

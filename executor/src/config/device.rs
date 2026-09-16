@@ -231,14 +231,14 @@ impl DeviceConfig {
     /// reuse its origin for HTTP callbacks and cloud model proxy calls.
     fn derive_backend_url_from_socket(&mut self) {
         let backend_url = self.connection.backend_url.trim();
-        if backend_url.is_empty() || !url_host_is_loopback(backend_url) {
+        if backend_url.is_empty() || !crate::url_origin::host_is_loopback(backend_url) {
             return;
         }
         let socket_url = self.connection.socket_url.trim();
-        if socket_url.is_empty() || url_host_is_loopback(socket_url) {
+        if socket_url.is_empty() || crate::url_origin::host_is_loopback(socket_url) {
             return;
         }
-        if let Some(origin) = http_origin_from_socket(socket_url) {
+        if let Some(origin) = crate::url_origin::http_origin(socket_url) {
             eprintln!(
                 "[device-config] backend_url {backend_url} is loopback; \
                  deriving {origin} from socket_url"
@@ -246,29 +246,6 @@ impl DeviceConfig {
             self.connection.backend_url = origin;
         }
     }
-}
-
-fn url_host_is_loopback(raw: &str) -> bool {
-    url::Url::parse(raw)
-        .ok()
-        .and_then(|parsed| parsed.host_str().map(str::to_owned))
-        .is_some_and(|host| {
-            host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
-        })
-}
-
-fn http_origin_from_socket(raw: &str) -> Option<String> {
-    let mut parsed = url::Url::parse(raw).ok()?;
-    match parsed.scheme() {
-        "ws" => parsed.set_scheme("http").ok()?,
-        "wss" => parsed.set_scheme("https").ok()?,
-        "http" | "https" => {}
-        _ => return None,
-    }
-    parsed.set_path("");
-    parsed.set_query(None);
-    parsed.set_fragment(None);
-    Some(parsed.to_string().trim_end_matches('/').to_owned())
 }
 
 pub(crate) fn worktree_persistent_storage_verified() -> bool {
@@ -512,9 +489,7 @@ fn default_log_backup_count() -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        worktree_persistent_storage_verified_for, DeviceConfig,
-    };
+    use super::{worktree_persistent_storage_verified_for, DeviceConfig};
 
     #[test]
     fn local_and_app_worktrees_default_to_verified_storage() {
@@ -561,8 +536,7 @@ mod tests {
 
     #[test]
     fn loopback_backend_url_is_derived_from_remote_socket_url() {
-        let mut config =
-            config_with_urls("http://localhost:8000", "wss://backend.example.com/ws");
+        let mut config = config_with_urls("http://localhost:8000", "wss://backend.example.com/ws");
         config.derive_backend_url_from_socket();
         assert_eq!(config.connection.backend_url, "https://backend.example.com");
     }
@@ -580,8 +554,7 @@ mod tests {
 
     #[test]
     fn non_loopback_backend_url_is_never_rewritten() {
-        let mut config =
-            config_with_urls("https://api.internal", "wss://socket.other.example");
+        let mut config = config_with_urls("https://api.internal", "wss://socket.other.example");
         config.derive_backend_url_from_socket();
         assert_eq!(config.connection.backend_url, "https://api.internal");
     }
