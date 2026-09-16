@@ -2,6 +2,7 @@ import { layout, prepare } from '@chenglou/pretext'
 import type { Attachment } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { isImageAttachment } from '@/lib/attachments'
+import { COLLAPSED_PROCESSING_HEIGHT } from './blocks/ToolBlocksDisplay'
 
 const DEFAULT_LAYOUT_WIDTH = 720
 const MIN_TEXT_WIDTH = 160
@@ -21,7 +22,6 @@ const IMAGE_ATTACHMENT_HEIGHT = 80
 const DOCUMENT_ATTACHMENT_HEIGHT = 34
 const FAILED_ASSISTANT_CARD_HEIGHT = 128
 const FINAL_ARTIFACT_CARD_HEIGHT = 76
-const PROCESSING_BLOCK_HEIGHT = 48
 const MESSAGE_VERTICAL_BUFFER = 12
 const WIDTH_BUCKET_SIZE = 32
 const MAX_LAYOUT_CACHE_SIZE = 1200
@@ -107,7 +107,11 @@ function estimateAssistantMessageHeight(message: WorkbenchMessage, containerWidt
   const textHeight = message.content.trim()
     ? measureAssistantMarkdownHeight(message.content, containerWidth)
     : 0
-  const blockHeight = (message.blocks?.length ?? 0) * PROCESSING_BLOCK_HEIGHT
+  // A finished turn renders its process section collapsed: one summary row, however many blocks it ran.
+  // The per-block rows only exist once the reader opens it, and that re-measure is a real layout change,
+  // so budgeting a block row per block counted heights that were never on screen — the conversation's
+  // height then fell by exactly that much as each row was reached and measured.
+  const blockHeight = (message.blocks?.length ?? 0) > 0 ? COLLAPSED_PROCESSING_HEIGHT : 0
   const finalArtifactsHeight =
     (message.references?.length || message.memoryCitations?.length || message.fileChanges
       ? FINAL_ARTIFACT_CARD_HEIGHT

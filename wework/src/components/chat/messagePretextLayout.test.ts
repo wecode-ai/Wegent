@@ -212,4 +212,46 @@ describe('messagePretextLayout', () => {
     expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(104)
     expect(mockedPrepare).toHaveBeenCalledTimes(1)
   })
+
+  test('budgets a collapsed process section once, however many blocks a turn holds', () => {
+    const blocks = Array.from({ length: 54 }, (_, index) => ({
+      id: `tool-${index}`,
+      subtaskId: 'turn-1',
+      type: 'tool' as const,
+      toolName: 'shell',
+      status: 'done' as const,
+      createdAt: 1,
+    }))
+    const manyBlocks: WorkbenchMessage = {
+      id: 'assistant-many-blocks',
+      role: 'assistant',
+      content: 'Done',
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+      blocks,
+    }
+    const oneBlock: WorkbenchMessage = {
+      ...manyBlocks,
+      id: 'assistant-one-block',
+      blocks: blocks.slice(0, 1),
+    }
+
+    // Prose (mocked at three lines) plus one collapsed summary row and the assistant row's own hover
+    // action and vertical buffer — the block count no longer adds height of its own.
+    expect(getMessagePretextIntrinsicHeight(manyBlocks, 500)).toBe(72 + 44 + 32)
+    expect(getMessagePretextIntrinsicHeight(oneBlock, 500)).toBe(72 + 44 + 32)
+  })
+
+  test('adds nothing for a turn that ran no blocks', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-no-blocks',
+      role: 'assistant',
+      content: 'Done',
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+      blocks: [],
+    }
+
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(72 + 32)
+  })
 })
