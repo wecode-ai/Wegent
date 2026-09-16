@@ -96,6 +96,7 @@ from app.stores.tasks import task_store
 
 TASK_AI_STATE_KEY = "ai_state"
 ASSIGNMENT_HISTORY_KEY = "assignment_history"
+MY_WORK_ITEM_LIMIT = 100
 
 logger = logging.getLogger(__name__)
 
@@ -2455,7 +2456,15 @@ class LoopItemService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Linked TODO not found")
         return self.get(db, binding.loop_item_id, user_id)
 
-    def list_my_work(self, db: Session, user_id: int) -> list[dict[str, object]]:
+    def list_my_work(
+        self,
+        db: Session,
+        user_id: int,
+        *,
+        limit: int = MY_WORK_ITEM_LIMIT,
+    ) -> list[dict[str, object]]:
+        if limit < 1 or limit > MY_WORK_ITEM_LIMIT:
+            raise ValueError(f"limit must be between 1 and {MY_WORK_ITEM_LIMIT}")
         memberships = select(ResourceMember.resource_id).where(
             ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
             ResourceMember.entity_type == "user",
@@ -2474,43 +2483,25 @@ class LoopItemService:
         if not projects:
             return []
         project_by_id = {project.id: project for project in projects}
-        active_task_items = {
-            item_id
-            for (item_id,) in db.query(LoopItemTaskBinding.loop_item_id)
-            .filter(
-                LoopItemTaskBinding.task_user_id == user_id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .all()
-            if item_id
-        }
-        collaborator_items = {
-            item_id
-            for (item_id,) in db.query(LoopItemCollaborator.loop_item_id)
-            .filter(LoopItemCollaborator.user_id == user_id)
-            .all()
-        }
-        my_agent_ids = {
-            agent_id
-            for (agent_id,) in db.query(ProjectChatAgent.id)
-            .filter(
-                ProjectChatAgent.created_by_user_id == user_id,
-                ProjectChatAgent.status == "active",
-                loop_datetime_is_unset(ProjectChatAgent.deleted_at),
-            )
-            .all()
-            if agent_id
-        }
+        active_task_item_ids = select(LoopItemTaskBinding.loop_item_id).where(
+            LoopItemTaskBinding.task_user_id == user_id,
+            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+        )
+        collaborator_item_ids = select(LoopItemCollaborator.loop_item_id).where(
+            LoopItemCollaborator.user_id == user_id
+        )
+        my_agent_ids = select(ProjectChatAgent.id).where(
+            ProjectChatAgent.created_by_user_id == user_id,
+            ProjectChatAgent.status == "active",
+            loop_datetime_is_unset(ProjectChatAgent.deleted_at),
+        )
         my_work_membership = or_(
             LoopItem.created_by_user_id == user_id,
             LoopItem.assignee_user_id == user_id,
-            LoopItem.id.in_(active_task_items),
-            LoopItem.id.in_(collaborator_items),
+            LoopItem.id.in_(active_task_item_ids),
+            LoopItem.id.in_(collaborator_item_ids),
+            LoopItem.assignee_agent_id.in_(my_agent_ids),
         )
-        if my_agent_ids:
-            my_work_membership = or_(
-                my_work_membership, LoopItem.assignee_agent_id.in_(my_agent_ids)
-            )
         my_work_filters = [
             LoopItem.cloud_project_id.in_(project_by_id),
             loop_datetime_is_unset(LoopItem.deleted_at),
@@ -2519,11 +2510,27 @@ class LoopItemService:
         items = (
             db.query(LoopItem)
             .filter(*my_work_filters)
-            .order_by(LoopItem.updated_at.desc())
+            .order_by(LoopItem.updated_at.desc(), LoopItem.id.desc())
+            .limit(limit)
             .all()
         )
         result: list[dict[str, object]] = []
         item_ids = [item.id for item in items]
+        active_task_items = (
+            {
+                item_id
+                for (item_id,) in db.query(LoopItemTaskBinding.loop_item_id)
+                .filter(
+                    LoopItemTaskBinding.loop_item_id.in_(item_ids),
+                    LoopItemTaskBinding.task_user_id == user_id,
+                    loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+                )
+                .all()
+                if item_id
+            }
+            if item_ids
+            else set()
+        )
         executions_by_item: dict[str, object] = {}
         if item_ids:
             from app.models.loop_item_execution import LoopItemExecution
@@ -2538,7 +2545,49 @@ class LoopItemService:
             )
             for execution in execution_rows:
                 executions_by_item.setdefault(execution.loop_item_id, execution)
-        external_index_rows: list[LoopItem] = []
+        external_index_rows = [
+            item
+            for item in items
+            if isinstance(item.metadata_json, dict)
+            and (
+                item.metadata_json.get("external_index") is True
+                or item.metadata_json.get("external_shadow") is True
+            )
+        ]
+        external_views: dict[str, dict[str, object]] = {}
+        # External provider index rows are local pointers only; batch their live
+        # provider reads per project so My Work does not serialize remote calls.
+        if external_index_rows:
+            from app.services.loop_items.external_provider import (
+                external_loop_item_provider,
+            )
+
+            rows_by_project: dict[str, list[LoopItem]] = {}
+            for item in external_index_rows:
+                rows_by_project.setdefault(str(item.cloud_project_id), []).append(item)
+            for project_id, project_rows in rows_by_project.items():
+                try:
+                    views = external_loop_item_provider.get_many(
+                        db,
+                        project_id,
+                        user_id,
+                        [item.id for item in project_rows],
+                    )
+                except Exception:
+                    logger.warning(
+                        "[MyWork] Skip external project id=%s",
+                        project_id,
+                        exc_info=True,
+                    )
+                    continue
+                external_views.update(
+                    {
+                        str(view["id"]): view
+                        for view in views
+                        if isinstance(view.get("id"), str)
+                    }
+                )
+
         for item in items:
             metadata = (
                 item.metadata_json if isinstance(item.metadata_json, dict) else {}
@@ -2547,7 +2596,31 @@ class LoopItemService:
                 metadata.get("external_index") is True
                 or metadata.get("external_shadow") is True
             ):
-                external_index_rows.append(item)
+                view = external_views.get(item.id)
+                if view is None:
+                    continue
+                project = project_by_id.get(str(item.cloud_project_id))
+                if project is None:
+                    continue
+                metadata = (
+                    item.metadata_json if isinstance(item.metadata_json, dict) else {}
+                )
+                assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
+                result.append(
+                    {
+                        **view,
+                        "project_key": project.project_key,
+                        "project_name": project.name,
+                        "has_active_task": item.id in active_task_items,
+                        "assignment_history": (
+                            assignment_history
+                            if isinstance(assignment_history, list)
+                            else []
+                        ),
+                        # External provider tasks never carry status history.
+                        "status_history": [],
+                    }
+                )
                 continue
             assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
             status_history = metadata.get(STATUS_HISTORY_KEY)
@@ -2609,45 +2682,6 @@ class LoopItemService:
                     "approval": self._approval_view(execution),
                 }
             )
-        # External provider index rows are local pointers only; their display
-        # data comes from the live provider issue (one GET per assigned task).
-        if external_index_rows:
-            from app.services.loop_items.external_provider import (
-                external_loop_item_provider,
-            )
-
-            for item in external_index_rows:
-                try:
-                    view = external_loop_item_provider.get(db, item.id, user_id)
-                except Exception:
-                    logger.warning(
-                        "[MyWork] Skip external index row id=%s",
-                        item.id,
-                        exc_info=True,
-                    )
-                    continue
-                project = project_by_id.get(str(item.cloud_project_id))
-                if project is None:
-                    continue
-                metadata = (
-                    item.metadata_json if isinstance(item.metadata_json, dict) else {}
-                )
-                assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
-                result.append(
-                    {
-                        **view,
-                        "project_key": project.project_key,
-                        "project_name": project.name,
-                        "has_active_task": item.id in active_task_items,
-                        "assignment_history": (
-                            assignment_history
-                            if isinstance(assignment_history, list)
-                            else []
-                        ),
-                        # External provider tasks never carry status history.
-                        "status_history": [],
-                    }
-                )
         return result
 
     @staticmethod
