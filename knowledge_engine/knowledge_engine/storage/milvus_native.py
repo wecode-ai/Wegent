@@ -772,6 +772,12 @@ class MilvusDocumentStore:
         collection_name: str,
         rows: Sequence[Dict[str, Any]],
     ) -> int:
+        """Write rows without waiting for a server-side flush.
+
+        Callers own their durability stance: the write path relies on the
+        server's background flush and a Strong consistency read, while the
+        delete path flushes the collection explicitly.
+        """
         if not rows:
             return 0
         client.upsert(collection_name=collection_name, data=list(rows))
@@ -825,10 +831,6 @@ class MilvusDocumentStore:
                 consistency_level="Strong",
             )
         )
-
-    def flush(self, client: MilvusClient, collection_name: str) -> None:
-        if client.has_collection(collection_name):
-            client.flush(collection_name)
 
     def search(
         self,

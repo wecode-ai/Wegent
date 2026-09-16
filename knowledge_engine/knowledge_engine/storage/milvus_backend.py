@@ -326,7 +326,6 @@ class MilvusBackend(BaseStorageBackend):
             self._store.upsert_rows(
                 client, collection_name, self._with_publication(rows, published=False)
             )
-            self._store.flush(client, collection_name)
         self._assert_visible_row_count(
             collection_name, execution_filter, expected=len(rows), stage="write"
         )
@@ -345,6 +344,15 @@ class MilvusBackend(BaseStorageBackend):
         failure afterwards is rolled back by removing this execution's rows:
         the caller sees the failure and the index does not stay readable for a
         document the business state never marked successful.
+
+        Neither this write nor the staged one waits for a server-side flush.
+        The check below proves what publication promises - a separate client
+        with Strong consistency sees the rows - but not that the segment is
+        sealed, its index built, or the rows durable: Milvus persists in the
+        background, so a crash before that flush can lose rows this write
+        already reported as published. The Elasticsearch backend issues no
+        per-document flush either, and the parity spec asks for nothing
+        stronger.
         """
         try:
             with self._store.client() as client:
@@ -353,7 +361,6 @@ class MilvusBackend(BaseStorageBackend):
                     collection_name,
                     self._with_publication(rows, published=True),
                 )
-                self._store.flush(client, collection_name)
             self._assert_visible_row_count(
                 collection_name, published_filter, expected=len(rows), stage="publish"
             )

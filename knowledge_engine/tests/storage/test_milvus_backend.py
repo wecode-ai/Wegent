@@ -152,6 +152,7 @@ class FakeStore:
         return len(rows)
 
     def flush(self, client, collection_name):
+        # Recorded so a reintroduced write-path flush fails the test below.
         self.calls.append(("flush", collection_name))
 
     def count_rows(self, client, collection_name, filter_expr):
@@ -358,6 +359,29 @@ def test_index_writes_unpublished_then_publishes_after_verification():
     assert result["dimension"] == 2
     assert result["index_name"] == "test_kb_1"
     assert result["status"] == "success"
+
+
+def test_index_publishes_without_waiting_for_a_flush():
+    """Publication is proven by the verification read, not by a flush.
+
+    The reasoning behind dropping the per-document flush is recorded on
+    ``MilvusBackend._publish_rows``.
+    """
+    backend = _backend()
+    store = FakeStore()
+    backend._store = store
+
+    backend.index_with_metadata(
+        nodes=_nodes(),
+        chunk_metadata=_chunk_metadata(),
+        embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+    )
+
+    assert all(call[0] != "flush" for call in store.calls)
+    published = [
+        query for query in store.queries if "published == true" in query["filter"]
+    ]
+    assert published, "the publish is still verified, just not by flushing"
 
 
 def test_index_reuses_existing_node_embeddings_without_calling_the_model():
