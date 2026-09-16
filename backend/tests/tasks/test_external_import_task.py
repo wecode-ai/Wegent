@@ -114,7 +114,7 @@ def test_task_imports_document_content(
     _run_task(document.id)
 
     provider.fetch_content.assert_awaited_once_with(
-        task_db, test_user, document.external_resource_id, source_metadata=None
+        task_db, test_user, document.external_resource_id
     )
     assert attached["document"].id == document.id
     assert attached["content"] is content
@@ -253,7 +253,7 @@ def test_redelivery_during_fetch_does_not_read_source_again(
 
     redelivered = []
 
-    async def fetch(*args, source_metadata=None):
+    async def fetch(*args):
         _run_task(document.id)
         redelivered.append(document.id)
         raise RuntimeError("source unavailable")

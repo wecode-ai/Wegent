@@ -19,6 +19,7 @@ from app.schemas.knowledge import (
 )
 from app.services.knowledge.external_document_import import (
     external_document_import_service,
+    run_external_document_import,
 )
 from app.services.knowledge.external_document_providers import (
     ExternalDocumentContent,
@@ -27,6 +28,20 @@ from app.services.knowledge.external_document_providers import (
 from app.services.knowledge.knowledge_service import KnowledgeService
 
 from .conftest import create_external_import_kb, create_synced_node
+
+
+@pytest.fixture
+def import_dispatches(monkeypatch) -> list[dict]:
+    """Record queued import attempts instead of publishing to the broker."""
+    from app.tasks import knowledge_tasks
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        knowledge_tasks,
+        "import_external_document_task",
+        SimpleNamespace(delay=lambda **kwargs: calls.append(kwargs)),
+    )
+    return calls
 
 
 @pytest.fixture(autouse=True)
@@ -55,7 +70,7 @@ def test_auto_sync_defaults_off_and_can_be_enabled_and_disabled(test_db, test_us
 
 
 @pytest.fixture
-def imported_copy(test_db, test_user, configured_dingtalk, dispatched):
+def imported_copy(test_db, test_user, configured_dingtalk, import_dispatches):
     kb_id = create_external_import_kb(test_db, test_user.id)
     node = create_synced_node(test_db, test_user.id, "auto-copy")
     document = external_document_import_service.import_document(
@@ -80,11 +95,12 @@ def imported_copy(test_db, test_user, configured_dingtalk, dispatched):
         test_user.id,
         KnowledgeBaseUpdate(dingtalk_auto_sync_enabled=True),
     )
+    import_dispatches.clear()
     return document
 
 
 def test_unchanged_copy_stays_available_without_fetching_content(
-    test_db, test_user, imported_copy, monkeypatch
+    test_db, test_user, imported_copy, monkeypatch, import_dispatches
 ):
     from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
 
@@ -106,6 +122,7 @@ def test_unchanged_copy_stays_available_without_fetching_content(
     assert imported_copy.index_status == DocumentIndexStatus.SUCCESS
     assert imported_copy.index_generation == generation
     fetch.assert_not_awaited()
+    assert import_dispatches == []
 
 
 @pytest.mark.parametrize(
@@ -120,7 +137,7 @@ def test_unchanged_copy_stays_available_without_fetching_content(
     ],
 )
 def test_copy_needing_update_is_not_skipped(
-    test_db, imported_copy, monkeypatch, live_update_time, reason
+    test_db, imported_copy, monkeypatch, live_update_time, import_dispatches, reason
 ):
     from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
     from app.services.knowledge.external_document_providers import (
@@ -139,14 +156,17 @@ def test_copy_needing_update_is_not_skipped(
     if reason == "failed":
         imported_copy.index_status = DocumentIndexStatus.FAILED
     test_db.commit()
+    generation = imported_copy.index_generation
     fetch = AsyncMock(side_effect=ExternalDocumentFetchError("Source fetch attempted"))
     monkeypatch.setattr(
         get_external_document_provider("dingtalk"), "fetch_content", fetch
     )
-    assert refresh_dingtalk_copy(
-        test_db, imported_copy.id, imported_copy.index_generation
-    )
-    fetch.assert_awaited_once()
+    assert refresh_dingtalk_copy(test_db, imported_copy.id, generation) is True
+    test_db.refresh(imported_copy)
+    assert imported_copy.is_active is False
+    assert [call["document_id"] for call in import_dispatches] == [imported_copy.id]
+    # The probe only decides; the body belongs to the queued worker.
+    fetch.assert_not_awaited()
 
 
 def test_probe_failure_preserves_available_copy(
@@ -185,7 +205,7 @@ def test_manual_reimport_invalidates_automatic_baseline(
 
 
 def test_failed_body_fetch_cannot_mark_old_attachment_as_current(
-    test_db, imported_copy, monkeypatch
+    test_db, test_user, imported_copy, monkeypatch, import_dispatches
 ):
     from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
     from app.services.knowledge.external_document_providers import (
@@ -207,27 +227,32 @@ def test_failed_body_fetch_cannot_mark_old_attachment_as_current(
     assert refresh_dingtalk_copy(
         test_db, imported_copy.id, imported_copy.index_generation
     )
+    # The queued task owns the body fetch; drive that same body here.
+    run_external_document_import(
+        test_db, imported_copy, test_user, generation=imported_copy.index_generation
+    )
+    test_db.refresh(imported_copy)
     assert imported_copy.attachment_id == 1234
+    assert imported_copy.index_status == DocumentIndexStatus.FAILED
     assert "source_update_time" not in imported_copy.external_source_config
     # Reindexing the retained attachment must not turn a failed fetch into a baseline.
     decision = prepare_document_index_enqueue(test_db, imported_copy.id)
     assert mark_document_index_succeeded(test_db, imported_copy.id, decision.generation)
     test_db.refresh(imported_copy)
     assert imported_copy.index_status == DocumentIndexStatus.SUCCESS
+    import_dispatches.clear()
     assert refresh_dingtalk_copy(
         test_db, imported_copy.id, imported_copy.index_generation
     )
-    assert fetch.await_count == 2
+    assert [call["document_id"] for call in import_dispatches] == [imported_copy.id]
+    assert fetch.await_count == 1
 
 
-def test_auto_update_refreshes_same_copy_once_without_directory_cache(
-    test_db, test_user, imported_copy, monkeypatch
+def test_auto_update_refreshes_a_changed_copy_once(
+    test_db, test_user, imported_copy, monkeypatch, import_dispatches
 ):
-    from app.models.dingtalk_doc import DingtalkSyncedNode
     from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
 
-    test_db.query(DingtalkSyncedNode).delete()
-    test_db.commit()
     fetch = AsyncMock(
         return_value=ExternalDocumentContent(
             name="Updated source",
@@ -248,6 +273,11 @@ def test_auto_update_refreshes_same_copy_once_without_directory_cache(
     )
     generation = imported_copy.index_generation
     assert refresh_dingtalk_copy(test_db, imported_copy.id, generation) is True
+    assert [call["document_id"] for call in import_dispatches] == [imported_copy.id]
+    # The queued task owns the body fetch; drive that same body here.
+    run_external_document_import(
+        test_db, imported_copy, test_user, generation=imported_copy.index_generation
+    )
     current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
     index_task.assert_called_once()
     assert current.index_status == DocumentIndexStatus.QUEUED
@@ -259,7 +289,11 @@ def test_auto_update_refreshes_same_copy_once_without_directory_cache(
     assert current.external_resource_id == "auto-copy"
     assert current.external_source_config["last_success_at"]
     assert current.external_source_config["source_update_time"] == 1789562644000
-    assert refresh_dingtalk_copy(test_db, imported_copy.id, generation) is False
+    # The next cycle compares that baseline against the live timestamp and skips.
+    test_db.refresh(current)
+    current.is_active = True
+    test_db.commit()
+    assert refresh_dingtalk_copy(test_db, current.id, current.index_generation) is False
     fetch.assert_awaited_once()
 
 
@@ -267,7 +301,7 @@ def test_auto_update_refreshes_same_copy_once_without_directory_cache(
     "reason", ["disabled", "deleted", "permission", "inactive_user", "processing"]
 )
 def test_auto_update_rechecks_eligibility_at_execution(
-    test_db, test_user, imported_copy, monkeypatch, reason
+    test_db, test_user, imported_copy, monkeypatch, import_dispatches, reason
 ):
     from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
 
@@ -296,10 +330,11 @@ def test_auto_update_rechecks_eligibility_at_execution(
     )
     assert refresh_dingtalk_copy(test_db, doc_id, generation) is False
     fetch.assert_not_awaited()
+    assert import_dispatches == []
 
 
 def test_scan_pages_enabled_copies_and_isolates_dispatch_failure(
-    test_db, test_user, imported_copy, monkeypatch, dispatched
+    test_db, test_user, imported_copy, monkeypatch, import_dispatches
 ):
     from app.tasks import dingtalk_auto_sync_tasks as tasks
 
@@ -348,7 +383,7 @@ def test_scan_pages_enabled_copies_and_isolates_dispatch_failure(
 
 
 def test_failed_source_keeps_copy_and_can_update_next_cycle(
-    test_db, test_user, imported_copy, monkeypatch
+    test_db, test_user, imported_copy, monkeypatch, import_dispatches
 ):
     from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
     from app.services.knowledge.external_document_providers import (
@@ -362,16 +397,22 @@ def test_failed_source_keeps_copy_and_can_update_next_cycle(
     assert refresh_dingtalk_copy(
         test_db, imported_copy.id, imported_copy.index_generation
     )
+    # The queued task owns the body fetch; drive that same body here.
+    run_external_document_import(
+        test_db, imported_copy, test_user, generation=imported_copy.index_generation
+    )
     current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
     assert current.index_status == DocumentIndexStatus.FAILED
     assert current.external_source_config["status"] == "inaccessible"
+    import_dispatches.clear()
     assert refresh_dingtalk_copy(test_db, current.id, current.index_generation)
-    assert fetch.await_count == 2
+    assert [call["document_id"] for call in import_dispatches] == [current.id]
+    assert fetch.await_count == 1
 
 
 @pytest.mark.parametrize("change", ["disable", "delete", "new_generation"])
 def test_changes_during_probe_prevent_refresh(
-    test_db, imported_copy, monkeypatch, live_update_time, change
+    test_db, imported_copy, monkeypatch, live_update_time, import_dispatches, change
 ):
     from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
 
@@ -398,6 +439,7 @@ def test_changes_during_probe_prevent_refresh(
     )
     assert refresh_dingtalk_copy(test_db, document_id, generation) is False
     fetch.assert_not_awaited()
+    assert import_dispatches == []
 
 
 @pytest.mark.parametrize("enabled", [True, False])

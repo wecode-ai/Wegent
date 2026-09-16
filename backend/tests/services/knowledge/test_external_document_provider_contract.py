@@ -206,35 +206,28 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         )
 
     @pytest.mark.asyncio
-    async def test_existing_copy_reads_live_source_without_cached_directory(
+    async def test_fetch_reports_the_live_source_timestamp(
         self, test_db, test_user, monkeypatch
     ):
         provider = self.make_provider()
         self.configure_user(monkeypatch, test_user)
-        self.mock_fetch_body(monkeypatch, provider, "updated body")
-        content = await provider.fetch_content(
-            test_db,
-            test_user,
-            "not-in-cache",
-            source_metadata={"title": "Existing copy", "resource_id": "not-in-cache"},
-        )
-        assert content.content == b"updated body"
+        self.create_resource(test_db, test_user, "timestamped-copy", "Timestamped Doc")
+        self.mock_fetch_body(monkeypatch, provider, "body")
 
-        monkeypatch.setattr(
-            "app.services.dingtalk_doc_service.DingTalkDocService.get_user_dingtalk_mcp_url",
-            lambda user: None,
-        )
-        from app.services.knowledge.external_document_providers import (
-            ExternalDocumentFetchError,
-        )
+        content = await provider.fetch_content(test_db, test_user, "timestamped-copy")
 
-        with pytest.raises(ExternalDocumentFetchError):
-            await provider.fetch_content(
-                test_db,
-                test_user,
-                "not-in-cache",
-                source_metadata={"title": "Existing copy"},
-            )
+        assert content.metadata["source_update_time"] == 1789562644000
+
+    @pytest.mark.asyncio
+    async def test_fetch_requires_a_node_in_the_user_directory(
+        self, test_db, test_user, monkeypatch
+    ):
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.mock_fetch_body(monkeypatch, provider, "body")
+
+        with pytest.raises(ExternalSourceUnavailableError):
+            await provider.fetch_content(test_db, test_user, "not-in-cache")
 
     def make_provider(self):
         from app.services.knowledge.external_document_providers import (
@@ -304,8 +297,8 @@ class TestDingTalkProviderContract(ProviderContractSuite):
     ) -> None:
         async def fake_fetch(
             mcp_url: str, node_id: str, user: User
-        ) -> tuple[str, bytes]:
-            return "md", markdown.encode("utf-8")
+        ) -> tuple[str, bytes, int | None]:
+            return "md", markdown.encode("utf-8"), 1789562644000
 
         monkeypatch.setattr(provider, "_fetch_document_content", fake_fetch)
 
@@ -349,6 +342,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
                         "nodeType": "file",
                         "contentType": "ALIDOC",
                         "extension": "adoc",
+                        "updateTime": 1789562644000,
                     }
                     if name == "get_document_info"
                     else {"success": True, "markdown": "# Imported"}
@@ -362,13 +356,14 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         monkeypatch.setattr(mcp, "ClientSession", FakeClientSession)
 
         provider = self.make_provider()
-        extension, content = await provider._fetch_document_content(
+        extension, content, update_time = await provider._fetch_document_content(
             "https://mcp.example.test/dingtalk",
             "node-1",
             SimpleNamespace(),
         )
 
         assert (extension, content) == ("md", b"# Imported")
+        assert update_time == 1789562644000
         assert observed["transport"] == {
             "url": "https://mcp.example.test/dingtalk",
             "sse_read_timeout": 180,

@@ -9,24 +9,37 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.user import User
 from app.services.knowledge.external_document_import import (
     external_document_import_service,
-    run_external_document_import,
 )
 from app.services.knowledge.external_document_providers import (
     ExternalDocumentFetchError,
     get_external_document_provider,
 )
-from app.services.knowledge.index_state_machine import (
-    ACTIVE_INDEX_STATUSES,
-    begin_external_import_attempt,
-)
+from app.services.knowledge.index_state_machine import ACTIVE_INDEX_STATUSES
 from app.services.knowledge.knowledge_service import KnowledgeService
 from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
+
+
+def is_copy_sync_enabled(knowledge_base: Kind) -> bool:
+    """Whether a knowledge base has opted into daily copy refreshes."""
+    spec = knowledge_base.json.get("spec", {})
+    return bool(spec.get("dingtalkAutoSyncEnabled", False))
+
+
+def queue_dingtalk_scan(knowledge_base_id: int | None = None) -> str:
+    """Queue the daily scan for one knowledge base, or for every enabled one."""
+    from app.tasks.dingtalk_auto_sync_tasks import scan_dingtalk_copies
+
+    task = scan_dingtalk_copies.apply_async(
+        args=[knowledge_base_id], expires=24 * 60 * 60
+    )
+    return task.id
 
 
 def _eligible_copy(
@@ -48,7 +61,7 @@ def _eligible_copy(
     if (
         not kb
         or not has_access
-        or not kb.json.get("spec", {}).get("dingtalkAutoSyncEnabled", False)
+        or not is_copy_sync_enabled(kb)
         or not KnowledgeService.can_manage_knowledge_base_documents(
             db, document.kind_id, user.id
         )
@@ -62,7 +75,11 @@ def _eligible_copy(
 def refresh_dingtalk_copy(
     db: Session, document_id: int, expected_generation: int
 ) -> bool:
-    """Probe before invalidating a copy, then reuse the existing import pipeline."""
+    """Probe before invalidating a copy, then queue the regular refresh.
+
+    The queued refresh is the same path a manual reimport takes, so the body
+    fetch stays the single owner of the imported content and its baseline.
+    """
     context = _eligible_copy(db, document_id, expected_generation)
     if context is None:
         return False
@@ -94,17 +111,8 @@ def refresh_dingtalk_copy(
         "resource_id": document.external_resource_id,
         "title": document.external_source_config.get("title") or document.name,
         "url": document.external_source_config.get("url", ""),
-        "source_update_time": update_time,
     }
     result = external_document_import_service.refresh_existing_document(
-        db, document, metadata, dispatch=False, expected_generation=expected_generation
+        db, document, metadata, expected_generation=expected_generation
     )
-    if not result.started:
-        return False
-    attempt = begin_external_import_attempt(db, document_id, document.index_generation)
-    if not attempt.should_execute:
-        return False
-    run_external_document_import(
-        db, document, user, generation=attempt.generation, source_metadata=metadata
-    )
-    return True
+    return result.started

@@ -81,6 +81,10 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
+from app.services.knowledge.dingtalk_auto_sync import (
+    is_copy_sync_enabled,
+    queue_dingtalk_scan,
+)
 from app.services.knowledge.document_download_policy import (
     is_original_download_allowed,
 )
@@ -202,8 +206,6 @@ def trigger_dingtalk_copy_sync(
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
     """Queue the same daily scan for one managed KB without waiting for Beat."""
-    from app.tasks.dingtalk_auto_sync_tasks import scan_dingtalk_copies
-
     kb = _validate_knowledge_base_access_or_raise(
         db, knowledge_base_id=knowledge_base_id, user=current_user
     )
@@ -211,16 +213,16 @@ def trigger_dingtalk_copy_sync(
         raise HTTPException(
             status_code=403, detail="Knowledge base management required"
         )
-    if not kb.json.get("spec", {}).get("dingtalkAutoSyncEnabled", False):
+    if not is_copy_sync_enabled(kb):
         raise HTTPException(status_code=400, detail="Enable DingTalk auto sync first")
     try:
-        task = scan_dingtalk_copies.apply_async(args=[kb.id], expires=24 * 60 * 60)
+        task_id = queue_dingtalk_scan(kb.id)
     except Exception as exc:
         logger.exception("Failed to queue DingTalk sync for knowledge base %s", kb.id)
         raise HTTPException(
             status_code=503, detail="Could not queue DingTalk sync"
         ) from exc
-    return {"task_id": task.id, "status": "queued"}
+    return {"task_id": task_id, "status": "queued"}
 
 
 @router.get("", response_model=KnowledgeBaseListResponse)

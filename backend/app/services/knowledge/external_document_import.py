@@ -134,10 +134,14 @@ class ExternalDocumentImportService:
         document: KnowledgeDocument,
         external_meta: dict,
         *,
-        dispatch: bool = True,
         expected_generation: int | None = None,
     ) -> ExternalDocumentRefreshResult:
-        """Queue a single-version refresh while preserving local organization."""
+        """Queue a single-version refresh while preserving local organization.
+
+        Every caller — a manual reimport and an automatic refresh alike —
+        goes through the same dispatched task, so there is one way to start
+        an import attempt.
+        """
         decision = prepare_document_index_enqueue(
             db=db,
             document_id=document.id,
@@ -162,8 +166,7 @@ class ExternalDocumentImportService:
         )
         db.commit()
         db.refresh(document)
-        if dispatch:
-            self._dispatch_import_task(db, document)
+        self._dispatch_import_task(db, document)
         return ExternalDocumentRefreshResult(document, started=True)
 
     def import_documents(
@@ -495,7 +498,6 @@ def run_external_document_import(
     user: User,
     *,
     generation: int,
-    source_metadata: dict | None = None,
 ) -> None:
     """
     Fetch the external body, attach it, and start indexing.
@@ -526,12 +528,7 @@ def run_external_document_import(
                 f"Owner user {owner_user_id} no longer exists"
             )
         content: ExternalDocumentContent = asyncio.run(
-            provider.fetch_content(
-                db,
-                user,
-                resource_id,
-                source_metadata=source_metadata,
-            )
+            provider.fetch_content(db, user, resource_id)
         )
         knowledge_orchestrator.attach_external_document_content(
             db=db,

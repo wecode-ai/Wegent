@@ -1187,7 +1187,7 @@ class TestAttachExternalDocumentContent:
         )
 
         provider.fetch_content.assert_awaited_once_with(
-            test_db, test_user, document.external_resource_id, source_metadata=None
+            test_db, test_user, document.external_resource_id
         )
         test_db.refresh(document)
         assert document.attachment_id == 2222

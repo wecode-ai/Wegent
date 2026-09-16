@@ -175,15 +175,22 @@ class ExternalDocumentProvider(ABC):
         db: Session,
         user: User,
         external_resource_id: str,
-        *,
-        source_metadata: dict[str, Any] | None = None,
     ) -> ExternalDocumentContent:
         """Fetch the document body as attachment-ready content.
+
+        Reports ``source_update_time`` in ``metadata`` when the provider can
+        tell when the fetched body was last changed, so an automatic refresh
+        can keep a baseline that belongs to the body it just landed.
 
         Raises ExternalSourceUnavailableError when the provider can tell the
         resource is gone or access was revoked, ExternalDocumentFetchError
         for transient failures.
         """
+
+
+def _positive_update_time(value: Any) -> int | None:
+    """Accept only a real positive epoch timestamp, never a bool or a string."""
+    return value if type(value) is int and value > 0 else None
 
 
 class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
@@ -210,8 +217,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                     )
         except Exception:
             raise ExternalDocumentFetchError("DingTalk metadata read failed") from None
-        value = info.get("updateTime")
-        return value if type(value) is int and value > 0 else None
+        return _positive_update_time(info.get("updateTime"))
 
     def resolve_importable(
         self,
@@ -271,18 +277,11 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         db: Session,
         user: User,
         external_resource_id: str,
-        *,
-        source_metadata: dict[str, Any] | None = None,
     ) -> ExternalDocumentContent:
         from app.services.dingtalk_doc_service import DingTalkDocService
 
         try:
-            # Existing copies use live provider authorization, not directory freshness.
-            metadata = (
-                source_metadata
-                if source_metadata is not None
-                else self.resolve_importable(db, user, external_resource_id)
-            )
+            metadata = self.resolve_importable(db, user, external_resource_id)
         except ExternalDocumentImportError as exc:
             if exc.status_code == 404:
                 # The synced node is gone or inactive: the source itself is
@@ -296,7 +295,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             )
         try:
             async with asyncio.timeout(EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS):
-                extension, content = await self._fetch_document_content(
+                extension, content, update_time = await self._fetch_document_content(
                     mcp_url, external_resource_id, user
                 )
         except TimeoutError:
@@ -305,6 +304,8 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             raise
         except Exception:
             raise ExternalDocumentFetchError("DingTalk content read failed") from None
+        if update_time is not None:
+            metadata = {**metadata, "source_update_time": update_time}
         return ExternalDocumentContent(
             name=metadata["title"],
             file_extension=extension,
@@ -314,8 +315,12 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
 
     async def _fetch_document_content(
         self, mcp_url: str, node_id: str, user: User
-    ) -> tuple[str, bytes]:
-        """Verify live metadata before selecting the source reader."""
+    ) -> tuple[str, bytes, int | None]:
+        """Verify live metadata before selecting the source reader.
+
+        Returns the body plus the live source timestamp read in the same
+        session, so the caller can record a baseline matching this body.
+        """
         from app.services.dingtalk_doc_service import DingTalkDocService
 
         async with open_dingtalk_session(mcp_url) as session:
@@ -323,6 +328,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                 await session.call_tool("get_document_info", {"nodeId": node_id}),
                 "get_document_info",
             )
+            update_time = _positive_update_time(info.get("updateTime"))
             extension = get_import_extension(info)
             if not extension:
                 raise ExternalDocumentFetchError(
@@ -341,7 +347,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                     raise ExternalDocumentFetchError(
                         "DingTalk document content is empty or unreadable"
                     )
-                return "md", markdown.encode("utf-8")
+                return "md", markdown.encode("utf-8"), update_time
             if str(info.get("contentType")).strip().upper() == "ALIDOC":
                 source_extension = str(info.get("extension")).strip().lower()
                 service, label = _SPREADSHEET_MCP_SERVICES[source_extension]
@@ -355,14 +361,15 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                     if source_extension == "axls"
                     else self._export_ai_table
                 )
-                return "xlsx", await export(export_url, node_id)
+                return "xlsx", await export(export_url, node_id), update_time
             payload = self._parse_mcp_response(
                 await session.call_tool("download_file", {"nodeId": node_id}),
                 "download_file",
             )
         urls = payload.get("resourceUrl")
         url = urls[0] if isinstance(urls, list) and urls else urls
-        return extension, await download_content(url, payload.get("headers"))
+        body = await download_content(url, payload.get("headers"))
+        return extension, body, update_time
 
     async def _export_sheet(self, url: str, node_id: str) -> bytes:
         """Export one workbook within fetch_content's existing timeout budget."""
