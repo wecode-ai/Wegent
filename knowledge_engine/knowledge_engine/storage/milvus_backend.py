@@ -145,7 +145,11 @@ class MilvusBackend(BaseStorageBackend):
             store_for=lambda: self._store,
             collection_name_for=self.get_index_name,
             parent_collection_name_for=self.get_parent_store_name,
-            parent_delete=self.delete_parent_nodes,
+            # Resolved per call so the storage interface stays the seam a
+            # caller (or a test) can replace, not the sidecar behind it.
+            parent_delete=lambda knowledge_id, doc_ref, **kwargs: (
+                self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
+            ),
             ensure_can_drop_physical_index=self._ensure_can_drop_physical_index,
         )
 
@@ -228,6 +232,8 @@ class MilvusBackend(BaseStorageBackend):
         self._write_unpublished(
             collection_name,
             rows,
+            knowledge_id=knowledge_id,
+            doc_ref=doc_ref,
             dimension=dimension,
             embedding_space=embedding_space,
             execution_filter=self._execution_filter(
@@ -268,11 +274,20 @@ class MilvusBackend(BaseStorageBackend):
         collection_name: str,
         rows: List[Dict[str, Any]],
         *,
+        knowledge_id: str,
+        doc_ref: str,
         dimension: int,
         embedding_space: str,
         execution_filter: str,
     ) -> None:
-        """Create the index if needed and stage every row unpublished."""
+        """Create the index if needed and stage every row unpublished.
+
+        A rewrite drops whatever this document stored before it stages the new
+        rows, so the version a caller reads is always one version of one
+        document. ``MilvusCleanup.clear_document_rows`` owns why that is
+        required, which scope it honours and why the index contract is
+        confirmed by ``ensure_index`` first.
+        """
         with self._store.client() as client:
             self._store.ensure_index(
                 client,
@@ -280,6 +295,14 @@ class MilvusBackend(BaseStorageBackend):
                 dimension=dimension,
                 embedding_space=embedding_space,
             )
+        self._cleanup.clear_document_rows(
+            collection_name,
+            knowledge_id,
+            doc_ref,
+            require_bound=False,
+            flush=False,
+        )
+        with self._store.client() as client:
             self._store.upsert_rows(
                 client, collection_name, self._with_publication(rows, published=False)
             )

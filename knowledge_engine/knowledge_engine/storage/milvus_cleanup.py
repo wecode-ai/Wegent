@@ -46,12 +46,9 @@ class MilvusCleanup:
     def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """Delete one document; a missing document is an idempotent no-op."""
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
-        filter_expr = build_scope_filter(
-            knowledge_id=knowledge_id,
-            doc_refs=[doc_ref],
-            published=False,
+        deleted_chunks = self.clear_document_rows(
+            collection_name, knowledge_id, doc_ref
         )
-        deleted_chunks = self._delete_verified(collection_name, filter_expr)
         self._parent_delete(knowledge_id, doc_ref, **kwargs)
         return {
             "doc_ref": doc_ref,
@@ -59,6 +56,50 @@ class MilvusCleanup:
             "deleted_chunks": deleted_chunks,
             "status": "deleted",
         }
+
+    def clear_document_rows(
+        self,
+        collection_name: str,
+        knowledge_id: str,
+        doc_ref: str,
+        *,
+        require_bound: bool = True,
+        flush: bool = True,
+    ) -> int:
+        """Remove every stored row of one document and prove it is gone.
+
+        A rewrite calls this before staging the new version. The public
+        indexing flow deletes the old index first, but that delete is allowed
+        to fail and is only logged, and rows are keyed by knowledge base,
+        document, execution and chunk index: without this the previous version
+        of a document that got shorter stays readable next to the new one, or
+        the write's own visibility check reports rows the rewrite never wrote.
+        The scope is one knowledge base and one document, so a shared physical
+        collection keeps every other document.
+
+        Every execution of the document is removed, not only the one being
+        rewritten: two writers of the same document are not coordinated, so an
+        attempt that is still in flight when a rewrite starts loses the rows it
+        already staged and the last writer wins. The parity spec accepts that
+        window and promises the normal ordered flow only.
+
+        ``require_bound`` is False for the write path, which confirmed the
+        index contract of this collection earlier in the same write.
+        ``flush`` is False there too: the write path proves the removal with a
+        Strong consistency read and must not seal the segment on every
+        rewrite, while the delete entry point keeps flushing.
+        """
+        filter_expr = build_scope_filter(
+            knowledge_id=knowledge_id,
+            doc_refs=[doc_ref],
+            published=False,
+        )
+        return self._delete_verified(
+            collection_name,
+            filter_expr,
+            require_bound=require_bound,
+            flush=flush,
+        )
 
     def delete_knowledge(self, knowledge_id: str, **kwargs) -> Dict:
         """Delete every chunk and parent node of one knowledge base."""
@@ -113,6 +154,7 @@ class MilvusCleanup:
         filter_expr: str,
         *,
         require_bound: bool = True,
+        flush: bool = True,
     ) -> int:
         store = self._store_for()
         with store.client() as client:
@@ -122,7 +164,9 @@ class MilvusCleanup:
                 # The parent sidecar is not part of the retrieval contract.
                 store.require_bound(client, collection_name)
             deleted = store.count_rows(client, collection_name, filter_expr)
-            store.delete_rows(client, collection_name, filter_expr)
+            if not deleted:
+                return 0
+            store.delete_rows(client, collection_name, filter_expr, flush=flush)
         with store.client() as reader:
             remaining = store.count_rows(reader, collection_name, filter_expr)
         if remaining:

@@ -784,12 +784,25 @@ class MilvusDocumentStore:
         return len(rows)
 
     def delete_rows(
-        self, client: MilvusClient, collection_name: str, filter_expr: str
+        self,
+        client: MilvusClient,
+        collection_name: str,
+        filter_expr: str,
+        *,
+        flush: bool = True,
     ) -> None:
+        """Delete the matching rows, flushing unless the caller says otherwise.
+
+        The delete entry point flushes so the removal is durable before it is
+        reported. The write path passes ``flush=False``: it re-reads the scope
+        through a separate Strong consistency client to prove the rows are
+        gone, and it must not seal the segment on every rewrite.
+        """
         if not client.has_collection(collection_name):
             return
         client.delete(collection_name=collection_name, filter=filter_expr)
-        client.flush(collection_name)
+        if flush:
+            client.flush(collection_name)
 
     def count_rows(
         self, client: MilvusClient, collection_name: str, filter_expr: str

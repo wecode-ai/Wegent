@@ -87,6 +87,22 @@ def is_milvus_lite(uri: str) -> bool:
     return not uri.startswith(("http://", "https://", "tcp://", "unix:"))
 
 
+def drop_collection_with_contract(uri: str, collection_name: str) -> None:
+    """Drop one published collection, its parent sidecar and its contract."""
+    client = MilvusClient(uri=uri)
+    try:
+        for name in (collection_name, f"{collection_name}__parents"):
+            if client.has_collection(name):
+                client.drop_collection(name)
+        if client.has_collection(INDEX_BINDING_COLLECTION):
+            client.delete(
+                collection_name=INDEX_BINDING_COLLECTION,
+                filter=f'collection_name == "{collection_name}"',
+            )
+    finally:
+        client.close()
+
+
 @dataclass
 class MilvusContractEnv:
     """Creates isolated knowledge bases and removes them afterwards."""
@@ -122,24 +138,8 @@ class MilvusContractEnv:
             client.close()
 
     def cleanup(self) -> None:
-        client = MilvusClient(uri=self.uri)
-        try:
-            for knowledge_id in self.created_knowledge_ids:
-                for name in (
-                    self.collection_name(knowledge_id),
-                    f"{self.collection_name(knowledge_id)}__parents",
-                ):
-                    if client.has_collection(name):
-                        client.drop_collection(name)
-                if client.has_collection(INDEX_BINDING_COLLECTION):
-                    client.delete(
-                        collection_name=INDEX_BINDING_COLLECTION,
-                        filter=(
-                            f'collection_name == "{self.collection_name(knowledge_id)}"'
-                        ),
-                    )
-        finally:
-            client.close()
+        for knowledge_id in self.created_knowledge_ids:
+            drop_collection_with_contract(self.uri, self.collection_name(knowledge_id))
 
 
 @pytest.fixture(scope="session")

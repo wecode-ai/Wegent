@@ -264,8 +264,13 @@ class FakeStore:
             )
         return sum(1 for row in self.rows if self._filter_matches(row, filter_expr))
 
-    def delete_rows(self, client, collection_name, filter_expr):
+    def delete_rows(
+        self, client, collection_name, filter_expr, *, flush: bool = True
+    ) -> None:
+        self.calls.append(("delete_rows", collection_name, filter_expr))
         self.deleted_filters.append(filter_expr)
+        if flush:
+            self.flush(client, collection_name)
         self.rows = [
             row for row in self.rows if not self._filter_matches(row, filter_expr)
         ]
@@ -588,6 +593,91 @@ def test_index_resend_keeps_stable_primary_keys():
 
     assert first_pass[:2] == second_pass[:2]
     assert len(set(second_pass)) == 2
+
+
+def _stored_chunk_row(doc_ref: str, chunk_index: int, *, published: bool = True):
+    """A row as a previous index of ``doc_ref`` would have left it."""
+    return {
+        "id": f"{doc_ref}-{chunk_index}",
+        "knowledge_id": "1",
+        "doc_ref": doc_ref,
+        "chunk_index": chunk_index,
+        RETRIEVAL_TEXT_FIELD: "stale",
+        DISPLAY_TEXT_FIELD: "stale tail",
+        METADATA_FIELD: {},
+        PUBLISHED_FIELD: published,
+    }
+
+
+def test_rewrite_drops_the_documents_previous_rows_before_staging():
+    """A rewrite replaces one document instead of layering versions."""
+    backend = _backend()
+    store = FakeStore(
+        rows=[
+            _stored_chunk_row("42", 0),
+            _stored_chunk_row("42", 2),
+            # A previous attempt that never published its rows still has to go.
+            _stored_chunk_row("42", 5, published=False),
+            _stored_chunk_row("43", 0),
+        ]
+    )
+    backend._store = store
+
+    backend.index_with_metadata(
+        nodes=_nodes(),
+        chunk_metadata=_chunk_metadata(),
+        embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+    )
+
+    remaining_ids = {row.get("id") for row in store.rows}
+    assert {"42-0", "42-2", "42-5"}.isdisjoint(remaining_ids)
+    assert "43-0" in remaining_ids
+    scope = store.deleted_filters[0]
+    assert 'knowledge_id == "1"' in scope
+    assert 'doc_ref in ["42"]' in scope
+    # The document that owns the rows is dropped before the new rows land.
+    deletions = [i for i, call in enumerate(store.calls) if call[0] == "delete_rows"]
+    staging = [i for i, call in enumerate(store.calls) if call[0] == "upsert_rows"]
+    assert deletions and deletions[0] < staging[0]
+    assert all(call[0] != "flush" for call in store.calls)
+
+
+def test_rewrite_of_a_document_without_rows_issues_no_delete():
+    """The common first write does not pay for a cleanup nobody needs."""
+    backend = _backend()
+    store = FakeStore(rows=[_stored_chunk_row("43", 0)])
+    backend._store = store
+
+    backend.index_with_metadata(
+        nodes=_nodes(),
+        chunk_metadata=_chunk_metadata(),
+        embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+    )
+
+    assert store.deleted_filters == []
+
+
+def test_rewrite_fails_when_the_previous_rows_cannot_be_removed():
+    """An unverified cleanup fails loudly instead of publishing mixed content."""
+
+    backend = _backend()
+    store = FakeStore(rows=[_stored_chunk_row("42", 7)])
+    backend._store = store
+
+    def keep_rows(client, collection_name, filter_expr, *, flush=True):
+        store.calls.append(("delete_rows", collection_name, filter_expr))
+        store.deleted_filters.append(filter_expr)
+
+    store.delete_rows = keep_rows
+
+    with pytest.raises(StorageBackendError):
+        backend.index_with_metadata(
+            nodes=_nodes(),
+            chunk_metadata=_chunk_metadata(),
+            embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+        )
+
+    assert all(call[0] != "upsert_rows" for call in store.calls)
 
 
 def test_index_rejects_configured_dimension_mismatch():
@@ -1609,6 +1699,60 @@ def test_delete_document_removes_rows_and_verifies_absence():
         {"doc_ref": "43", "attempt_id": "gen1", PUBLISHED_FIELD: True}
     ]
     assert len(store.deleted_filters) >= 1
+    # The delete entry point promises a durable removal, unlike a rewrite.
+    assert ("flush", "test_kb_1") in store.calls
+
+
+def test_delete_document_never_prepares_vectors(monkeypatch):
+    """Removing stored rows must not reach for the embedding provider."""
+    import knowledge_engine.embedding.vectors as vectors
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("delete must not prepare an embedding vector")
+
+    monkeypatch.setattr(vectors, "prepare_text_vectors", forbidden)
+    monkeypatch.setattr(vectors, "prepare_query_vector", forbidden)
+
+    backend = _backend()
+    store = FakeStore(rows=[_stored_chunk_row("42", 0)])
+    backend._store = store
+    backend.delete_parent_nodes = lambda *args, **kwargs: 0
+
+    result = backend.delete_document("1", "42")
+
+    assert result["deleted_chunks"] == 1
+
+
+def test_delete_knowledge_clears_only_the_knowledge_base_scope():
+    backend = _backend()
+    store = FakeStore(rows=[_stored_chunk_row("42", 0), _stored_chunk_row("42", 1)])
+    backend._store = store
+
+    result = backend.delete_knowledge("1")
+
+    assert result["deleted_chunks"] == 2
+    assert result["status"] == "deleted"
+    assert store.rows == []
+    assert store.deleted_filters, "the chunks and the parent store are cleared"
+    assert all('knowledge_id == "1"' in expr for expr in store.deleted_filters)
+
+
+def test_drop_knowledge_index_refuses_a_shared_collection():
+    """Only a collection the knowledge base owns may be dropped."""
+    backend = MilvusBackend(
+        {
+            "url": "http://localhost:19530/default",
+            "indexStrategy": {"mode": "per_user", "prefix": "test"},
+            "ext": {},
+        }
+    )
+    store = FakeStore()
+    backend._store = store
+
+    with pytest.raises(ValueError):
+        backend.drop_knowledge_index("1", user_id=7)
+
+    assert store.calls == []
 
 
 def test_get_document_missing_raises_without_creating():
