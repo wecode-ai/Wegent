@@ -167,8 +167,8 @@ export class WeworkSync {
   async enqueue(turn) {
     const target = this.outbox.target(turn)
     const knownSequence = this.state.value.transcripts[target]?.currentSequence ?? 0
-    this.outbox.enqueue(turn, knownSequence)
-    if (this.enabled) this.schedule(0)
+    const enqueued = this.outbox.enqueue(turn, knownSequence)
+    if (enqueued !== false && this.enabled) this.schedule(0)
   }
 
   flush() {
@@ -218,40 +218,30 @@ export class WeworkSync {
   }
 
   async flushPending() {
-    const failures = []
     for (const sessionId of this.outbox.sessionIds()) {
-      try {
-        await this.flushPendingSession(sessionId)
-      } catch (error) {
-        if (error?.code === 'transcript_task_missing') {
-          const discarded = this.outbox.discardSession(sessionId)
-          console.warn('[wework-transcript-sync] discarded orphaned transcript session', {
-            sessionId,
-            discarded,
-          })
-          continue
-        }
-        if (error?.code === 'transcript_turn_missing') {
-          failures.push(error)
-          console.error('[wework-transcript-sync] transcript session is blocked', {
-            sessionId,
-            error,
-          })
-          continue
-        }
-        throw error
-      }
-    }
-    if (failures.length === 1) throw failures[0]
-    if (failures.length > 1) {
-      throw new AggregateError(failures, 'Some transcript sessions could not be exported')
+      await this.flushPendingSession(sessionId)
     }
   }
 
   async flushPendingSession(sessionId) {
     let pending
     while (this.enabled && (pending = this.outbox.firstForSession(sessionId))) {
-      await this.flushPendingTurn(pending)
+      try {
+        await this.flushPendingTurn(pending)
+      } catch (error) {
+        if (
+          error?.code !== 'transcript_turn_missing' &&
+          error?.code !== 'transcript_task_missing'
+        ) {
+          throw error
+        }
+        this.outbox.discardTurn(pending)
+        console.warn('[wework-transcript-sync] skipped unavailable transcript turn', {
+          sessionId,
+          turnId: pending.turnId,
+          executorTurnId: pending.executorTurnId,
+        })
+      }
     }
   }
 
