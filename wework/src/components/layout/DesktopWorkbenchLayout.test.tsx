@@ -6667,10 +6667,9 @@ describe('DesktopWorkbenchLayout', () => {
   test('keeps projects and chats in the scrollable sidebar region above settings', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
+    expect(screen.getByTestId('sidebar-worklists-scroll-area')).toHaveClass('flex-1')
+    expect(screen.getByTestId('sidebar-worklists-scroll')).toHaveStyle({ overflowY: 'scroll' })
     expect(screen.getByTestId('sidebar-worklists-scroll')).toHaveClass(
-      'flex-1',
-      'overflow-y-auto',
-      'scrollbar-none',
       'border-t',
       'border-transparent',
       '[overflow-anchor:none]'
