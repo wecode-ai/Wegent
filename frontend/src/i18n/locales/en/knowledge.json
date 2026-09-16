@@ -1234,6 +1234,7 @@
       "button": "Scheduled update",
       "description": "Periodically checks the repository. Failures remain visible and retry next cycle. Disabling preserves the settings.",
       "draftDescription": "Changes are applied when you save this knowledge base.",
+      "readOnly": "Only the knowledge-base owner or a system administrator can change scheduled updates.",
       "pendingConfigure": "Scheduled update changes will take effect after you save the knowledge base.",
       "pendingDelete": "The scheduled update will be deleted after you save the knowledge base.",
       "pendingDeleteDescription": "Deletion is currently staged. Editing and applying these settings cancels the pending deletion; you must still save the knowledge base.",

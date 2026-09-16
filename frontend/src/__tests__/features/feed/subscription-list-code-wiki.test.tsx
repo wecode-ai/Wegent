@@ -98,6 +98,8 @@ describe('Code Wiki subscription row', () => {
     expect(screen.getByTestId('code-wiki-subscription-meta')).toHaveTextContent('status_completed')
     const executionCount = screen.getByTestId('code-wiki-subscription-execution-count')
     expect(executionCount).toHaveTextContent('5executions')
+    expect(executionCount).toHaveClass('min-h-11', 'md:min-h-0')
+    expect(links[0]).toHaveClass('h-11', 'w-11', 'md:h-8')
     expect(screen.getByTestId('code-wiki-subscription-enabled-indicator')).toHaveAttribute(
       'aria-label',
       'enabled'

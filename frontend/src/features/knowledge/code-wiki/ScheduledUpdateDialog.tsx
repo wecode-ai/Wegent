@@ -131,7 +131,7 @@ export function ScheduledUpdateDialog({
         : { ...value, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
       setPlan(draft ? { ...loadedPlan, ...draft } : loadedPlan)
       setSelectedRunners([])
-      const runnerId = draft?.execution_principal_user_id ?? value.execution_principal_user_id
+      const runnerId = draft ? draft.execution_principal_user_id : value.execution_principal_user_id
       setExecutionPrincipalUserId(runnerId ?? null)
       if (runnerId) {
         try {
@@ -159,7 +159,7 @@ export function ScheduledUpdateDialog({
   }, [loadPlan, open])
 
   const saveDraft = () => {
-    if (!plan) return
+    if (!plan?.can_configure) return
     if (
       plan.cadence === 'custom' &&
       (!Number.isInteger(plan.interval_days) || plan.interval_days < 2 || plan.interval_days > 365)
@@ -181,6 +181,7 @@ export function ScheduledUpdateDialog({
   }
 
   const deletePlan = () => {
+    if (!plan?.can_configure) return
     onDeleteRequested()
     onOpenChange(false)
   }
@@ -199,7 +200,12 @@ export function ScheduledUpdateDialog({
           </DialogDescription>
         </DialogHeader>
         {plan && (
-          <div className="space-y-4 py-2">
+          <fieldset disabled={!plan.can_configure} className="space-y-4 py-2">
+            {!plan.can_configure && (
+              <p className="text-sm text-text-muted" data-testid="code-wiki-scheduled-read-only">
+                {t('codeWiki.scheduledUpdate.readOnly')}
+              </p>
+            )}
             <div className="flex items-center justify-between gap-4">
               <Label htmlFor="code-wiki-scheduled-enabled">
                 {t('codeWiki.scheduledUpdate.enabled')}
@@ -379,7 +385,7 @@ export function ScheduledUpdateDialog({
                 />
               </div>
             </details>
-          </div>
+          </fieldset>
         )}
         {loadError && (
           <div className="space-y-3 py-2">
@@ -396,7 +402,7 @@ export function ScheduledUpdateDialog({
           </div>
         )}
         <DialogFooter>
-          {plan?.configured && (
+          {plan?.configured && plan.can_configure && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button
@@ -438,7 +444,7 @@ export function ScheduledUpdateDialog({
           <Button
             variant="primary"
             onClick={saveDraft}
-            disabled={!plan}
+            disabled={!plan?.can_configure}
             data-testid="code-wiki-scheduled-save"
           >
             {t('codeWiki.scheduledUpdate.apply')}

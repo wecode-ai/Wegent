@@ -1234,6 +1234,7 @@
       "button": "定期更新",
       "description": "定期检查仓库；失败会记录原因并在下个周期继续尝试。关闭不会清除设置。",
       "draftDescription": "保存此知识库后才会应用这些修改。",
+      "readOnly": "只有知识库所有者或系统管理员可以修改定期更新。",
       "pendingConfigure": "定期更新修改将在保存知识库后生效。",
       "pendingDelete": "定期更新将在保存知识库后删除。",
       "pendingDeleteDescription": "当前已选择删除定期更新。修改并应用这里的设置会取消待删除状态；最终仍需保存知识库。",

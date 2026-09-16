@@ -455,6 +455,21 @@ def _knowledge_base_of(db: Session, generation: WikiGeneration) -> Optional[Kind
     return knowledge_base
 
 
+def assert_runner_can_execute_in_namespace(
+    db: Session, knowledge_base: Kind, runner: User
+) -> None:
+    """Require the same namespace role needed to create knowledge content."""
+    from app.services.knowledge.permission_policy import (
+        can_create_namespace_knowledge_base,
+    )
+
+    if not can_create_namespace_knowledge_base(db, runner, knowledge_base.namespace):
+        raise CodeWikiRunError(
+            "NAMESPACE_ACCESS_DENIED: generation runner requires a Developer role "
+            "in the knowledge-base namespace"
+        )
+
+
 def _resolve_execution_context(
     db: Session,
     knowledge_base: Kind,
@@ -491,6 +506,7 @@ def _resolve_execution_context(
             if configured_user_id
             else f"Code wiki {knowledge_base.id} has no active owner to execute its generation"
         )
+    assert_runner_can_execute_in_namespace(db, knowledge_base, task_user)
     if configured_user_id:
         from app.services.knowledge.code_wiki.source import (
             SourceAccessDenied,

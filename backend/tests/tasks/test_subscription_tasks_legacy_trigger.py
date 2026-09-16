@@ -6,6 +6,7 @@
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,6 +31,34 @@ from app.tasks.subscription_tasks import (
     check_due_subscriptions,
     check_due_subscriptions_sync,
 )
+
+
+def test_sync_code_wiki_dispatch_captures_trace_context() -> None:
+    from app.tasks import subscription_tasks
+
+    with (
+        patch("threading.Thread") as thread,
+        patch.object(
+            subscription_tasks,
+            "capture_trace_context",
+            return_value={"traceparent": "context"},
+        ),
+        patch(
+            "app.services.knowledge.code_wiki.scheduled_update.is_code_wiki_scheduled_update",
+            return_value=True,
+        ),
+    ):
+        subscription_tasks._dispatch_scheduled_execution(
+            SimpleNamespace(id=12), SimpleNamespace(id=34), MagicMock(), use_sync=True
+        )
+
+    thread.assert_called_once_with(
+        target=subscription_tasks._run_code_wiki_scheduled_update,
+        args=(12, 34),
+        kwargs={"trace_context": {"traceparent": "context"}},
+        daemon=True,
+    )
+    thread.return_value.start.assert_called_once()
 
 
 def test_code_wiki_execution_uses_subscription_timeout(

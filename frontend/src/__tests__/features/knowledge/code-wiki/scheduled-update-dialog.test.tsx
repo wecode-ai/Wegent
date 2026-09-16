@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 
 import { codeWikiApi } from '@/apis/code-wiki'
+import { userApis } from '@/apis/user'
 import { ScheduledUpdateDialog } from '@/features/knowledge/code-wiki/ScheduledUpdateDialog'
 import type { CodeWikiScheduledUpdate } from '@/types/code-wiki'
 
@@ -87,6 +88,57 @@ async function renderDialog() {
 
 describe('Code Wiki scheduled update details', () => {
   beforeEach(() => jest.clearAllMocks())
+
+  it('preserves explicitly clearing a runner when reopening an unapplied draft', async () => {
+    jest.mocked(codeWikiApi.scheduledUpdate).mockResolvedValue({
+      ...PLAN,
+      execution_principal_user_id: 23,
+    })
+    const onDraftSaved = jest.fn()
+    render(
+      <ScheduledUpdateDialog
+        knowledgeBaseId={7}
+        open
+        draft={{ ...PLAN, execution_principal_user_id: null }}
+        onOpenChange={jest.fn()}
+        onDraftSaved={onDraftSaved}
+        onDeleteRequested={jest.fn()}
+      />
+    )
+
+    const save = await screen.findByTestId('code-wiki-scheduled-time')
+    expect(save).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('code-wiki-scheduled-save'))
+    expect(onDraftSaved).toHaveBeenCalledWith(
+      expect.objectContaining({ execution_principal_user_id: null })
+    )
+    expect(userApis.getUsersByIds).not.toHaveBeenCalled()
+  })
+
+  it('keeps non-owner schedule settings read-only without staging mutations', async () => {
+    jest.mocked(codeWikiApi.scheduledUpdate).mockResolvedValue({ ...PLAN, can_configure: false })
+    const onDraftSaved = jest.fn()
+    const onDeleteRequested = jest.fn()
+    render(
+      <ScheduledUpdateDialog
+        knowledgeBaseId={7}
+        open
+        onOpenChange={jest.fn()}
+        onDraftSaved={onDraftSaved}
+        onDeleteRequested={onDeleteRequested}
+      />
+    )
+
+    await screen.findByTestId('code-wiki-scheduled-read-only')
+    expect(screen.getByTestId('code-wiki-scheduled-enabled')).toBeDisabled()
+    expect(screen.getByTestId('code-wiki-scheduled-time')).toBeDisabled()
+    const save = screen.getByTestId('code-wiki-scheduled-save')
+    expect(save).toBeDisabled()
+    fireEvent.click(save)
+    expect(onDraftSaved).not.toHaveBeenCalled()
+    expect(onDeleteRequested).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('code-wiki-scheduled-delete')).not.toBeInTheDocument()
+  })
 
   it('places the borderless advanced section after ordinary schedule information', async () => {
     const advanced = await renderDialog()

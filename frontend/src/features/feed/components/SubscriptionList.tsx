@@ -522,7 +522,7 @@ export function SubscriptionList({
                       >
                         <button
                           onClick={() => loadExecutionHistory(subscription.id, true)}
-                          className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
+                          className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-text-muted transition-colors hover:bg-surface hover:text-text-primary md:min-h-0"
                           disabled={isLoadingHistory}
                           aria-expanded={isExpanded}
                           data-testid="code-wiki-subscription-execution-count"
@@ -552,7 +552,7 @@ export function SubscriptionList({
                         </Badge>
                         <a
                           href={`/knowledge?type=document&kb=${subscription.code_wiki_id}`}
-                          className="inline-flex h-8 w-9 shrink-0 items-center justify-center gap-1 rounded-md text-xs text-text-muted transition-colors hover:bg-surface hover:text-text-primary sm:w-32 sm:px-2"
+                          className="inline-flex h-11 w-11 shrink-0 items-center justify-center gap-1 rounded-md text-xs text-text-muted transition-colors hover:bg-surface hover:text-text-primary sm:w-32 sm:px-2 md:h-8"
                           aria-label={t('code_wiki_scheduled_update_hint')}
                           data-testid="code-wiki-subscription-management"
                         >

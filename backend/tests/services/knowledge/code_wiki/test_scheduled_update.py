@@ -51,6 +51,45 @@ def test_first_weekly_slot_never_uses_the_creation_day() -> None:
     assert result == datetime(2026, 9, 7, 1, 0)
 
 
+@pytest.mark.parametrize("role", [None, "Reporter", "Developer", "Maintainer"])
+def test_runner_requires_a_content_role_in_the_wiki_namespace(
+    test_db: Session,
+    test_user: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    role: str | None,
+) -> None:
+    from app.schemas.base_role import BaseRole
+    from app.services.knowledge import permission_policy
+    from app.services.knowledge.code_wiki import scheduled_update
+
+    wiki = Kind(namespace="team", user_id=test_user.id, json={"spec": {}})
+    monkeypatch.setattr(
+        scheduled_update,
+        "validate_runner_for_source",
+        lambda *args, **kwargs: test_user,
+    )
+    monkeypatch.setattr(
+        permission_policy,
+        "get_effective_role_in_group",
+        lambda *args: BaseRole(role) if role else None,
+    )
+    monkeypatch.setattr(scheduled_update, "source_of", lambda wiki: None)
+    monkeypatch.setattr(
+        scheduled_update,
+        "strategy_for_run",
+        lambda *args, **kwargs: SimpleNamespace(strategy_id="legacy"),
+    )
+    monkeypatch.setattr(
+        scheduled_update, "strategy_team_readiness_many", lambda *args: {}
+    )
+
+    if role in {"Developer", "Maintainer"}:
+        assert validate_runner(test_db, wiki, test_user.id) == test_user
+    else:
+        with pytest.raises(CodeWikiRunError, match="NAMESPACE_ACCESS_DENIED"):
+            validate_runner(test_db, wiki, test_user.id)
+
+
 def test_first_daily_slot_is_the_next_local_calendar_day() -> None:
     result = first_scheduled_time(
         schedule(cadence="daily", interval_days=1),

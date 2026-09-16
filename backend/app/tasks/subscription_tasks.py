@@ -30,6 +30,7 @@ from app.core.config import settings
 from app.services.subscription.helpers import validate_subscription_for_read
 from app.stores.tasks import task_store
 from shared.telemetry.context import get_request_id, set_request_context
+from shared.telemetry.decorators import capture_trace_context, trace_background
 
 logger = logging.getLogger(__name__)
 
@@ -742,7 +743,12 @@ def _handle_execution_failure(
 SUBSCRIPTION_BATCH_SIZE = 100
 
 
-def _run_code_wiki_scheduled_update(subscription_id: int, execution_id: int) -> None:
+@trace_background("code_wiki_scheduled_update", "knowledge.scheduler")
+def _run_code_wiki_scheduled_update(
+    subscription_id: int,
+    execution_id: int,
+    trace_context: Optional[Dict[str, str]] = None,
+) -> None:
     """Launch one Code Wiki update using a session owned by this worker."""
     from app.db.session import SessionLocal
     from app.services.knowledge.code_wiki.scheduled_update import (
@@ -783,6 +789,7 @@ def _dispatch_scheduled_execution(
         threading.Thread(
             target=_run_code_wiki_scheduled_update,
             args=(subscription.id, execution.id),
+            kwargs={"trace_context": capture_trace_context()},
             daemon=True,
         ).start()
         return

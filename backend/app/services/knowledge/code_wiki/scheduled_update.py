@@ -31,6 +31,7 @@ from app.services.knowledge.code_wiki.generation_strategy import (
 )
 from app.services.knowledge.code_wiki.runner import (
     CodeWikiRunError,
+    assert_runner_can_execute_in_namespace,
     source_of,
     start_run,
     strategy_team_readiness_many,
@@ -156,6 +157,7 @@ def validate_runner(db: Session, knowledge_base: Kind, user_id: int) -> User:
     runner = validate_runner_for_source(
         db, user_id=user_id, source=source_of(knowledge_base)
     )
+    assert_runner_can_execute_in_namespace(db, knowledge_base, runner)
     stored_strategy_id = ((knowledge_base.json or {}).get("spec") or {}).get(
         GENERATION_STRATEGY_SPEC_KEY
     )
