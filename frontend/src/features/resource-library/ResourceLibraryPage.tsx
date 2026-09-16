@@ -39,9 +39,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { canEditContent } from '@/types/base-role'
 import type { Group } from '@/types/group'
+import type { Team } from '@/types/api'
 import { listSkillMarketProviders, type SkillMarketProvider } from '@/apis/skillMarketplace'
 import { DiscoverResources } from './components/DiscoverResources'
 import { FeaturedScenarios } from './components/FeaturedScenarios'
@@ -114,6 +116,7 @@ function TeamSkillResources({
         selectedGroup={groupName}
         groups={groups}
         sourceFilter="group"
+        sortMode="latest"
         showAutoEnabledSkills={false}
         hideCreateActions
         hideEmptyState
@@ -144,6 +147,7 @@ function TeamSkillResources({
 
 export function ResourceLibraryPage() {
   const { t } = useTranslation('resource-library')
+  const { toast } = useToast()
   const skillMarketProvidersLoadFailedLabel = t('external_skill_market.providers_load_failed')
   const router = useRouter()
   const pathname = usePathname()
@@ -208,6 +212,7 @@ export function ResourceLibraryPage() {
     searchParams.get('teamAction') === 'add'
   const [searchInput, setSearchInput] = useState(keywordParam)
   const [managedRevision, setManagedRevision] = useState(0)
+  const contentRef = useRef<HTMLElement>(null)
   const [publishedRevision, setPublishedRevision] = useState(0)
   const [isAdvancedCreateOpen, setIsAdvancedCreateOpen] = useState(false)
   const [skillMarketProviders, setSkillMarketProviders] = useState<SkillMarketProvider[]>([])
@@ -334,6 +339,27 @@ export function ResourceLibraryPage() {
     setCreateRequest(null)
     setManagedRevision(revision => revision + 1)
     setPublishedRevision(revision => revision + 1)
+  }
+
+  const handleTeamSaved = (_team: Team, created: boolean) => {
+    toast({ title: t(created ? 'agent_saved.created' : 'agent_saved.updated') })
+    if (!created) return
+
+    replaceParams({
+      tab: 'mine',
+      type: 'agent',
+      source: 'mine',
+      sort: 'latest',
+      keyword: null,
+      group: null,
+      scope: null,
+      mode: null,
+      tag: null,
+      teamAction: null,
+      action: null,
+      modelCategory: null,
+    })
+    if (contentRef.current) contentRef.current.scrollTop = 0
   }
 
   const handleCreateRequestClose = () => {
@@ -543,6 +569,7 @@ export function ResourceLibraryPage() {
       if (managedResourceType === 'agent') {
         return (
           <MyResources
+            onTeamSaved={handleTeamSaved}
             key={`${managedRevision}:agent:group:${selectedGroupName || 'all'}`}
             allowedTypes={['agent']}
             fixedSource="group"
@@ -580,6 +607,7 @@ export function ResourceLibraryPage() {
     const fixedSource = effectiveSource as Exclude<MineSource, 'installed'>
     return (
       <MyResources
+        onTeamSaved={handleTeamSaved}
         key={`${managedRevision}:${managedResourceType}:${effectiveSource}:${selectedGroupName || 'all'}`}
         allowedTypes={[managedResourceType]}
         fixedSource={fixedSource}
@@ -611,7 +639,7 @@ export function ResourceLibraryPage() {
       : 'search.placeholder'
 
   return (
-    <main className="h-full overflow-y-auto bg-base text-text-primary">
+    <main ref={contentRef} className="h-full overflow-y-auto bg-base text-text-primary">
       <div className="mx-auto flex w-full max-w-[1600px] flex-col px-4 pb-8 pt-5 sm:px-6 lg:px-8">
         <section className="flex flex-col gap-5" data-testid="resource-library-header">
           <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -874,6 +902,7 @@ export function ResourceLibraryPage() {
 
       {createRequest && (
         <MyResources
+          onTeamSaved={handleTeamSaved}
           allowedTypes={[createRequest.type]}
           fixedSource="personal"
           hideSourceControls

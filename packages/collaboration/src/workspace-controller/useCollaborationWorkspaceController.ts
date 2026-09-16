@@ -1136,9 +1136,14 @@ export function createCollaborationWorkspaceControllerCommands({
             : Promise.resolve([]),
         ]);
         if (revision !== selectedIssueLoadRevision) return null;
+        const currentIssue = getSelectedIssue();
+        const resolvedIssue =
+          currentIssue?.id === issue.id && currentIssue.version > issue.version
+            ? currentIssue
+            : issue;
         dispatch({
           type: "issue-loaded",
-          issue,
+          issue: resolvedIssue,
           attachments,
           comments,
           assignments: loadedAssignments,
@@ -1153,7 +1158,7 @@ export function createCollaborationWorkspaceControllerCommands({
             assignmentsRevision !==
             collectionRevision(selectedIssueAssignmentsRevisions, issueId),
         });
-        return issue;
+        return resolvedIssue;
       } catch {
         if (revision !== selectedIssueLoadRevision) return null;
         reportError(messages.loadFailed, "load");

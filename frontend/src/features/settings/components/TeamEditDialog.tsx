@@ -278,6 +278,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   const handleAfterTeamSave = useCallback(
     async (team: Team) => {
+      let publicationFailed = false
       try {
         if (isEditing) {
           if (editingPublishTarget === 'marketplace') {
@@ -346,13 +347,17 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         }
       } catch (error) {
         console.error('Failed to update Agent publication after save:', error)
+        publicationFailed = true
+      }
+
+      await onSaved?.(team)
+      if (publicationFailed) {
         toast({
           variant: 'destructive',
           title: t('resource-library:messages.agent_saved_publication_failed'),
         })
       }
 
-      await onSaved?.(team)
       invalidateTeams()
       setUnsavedPrompts({})
       onClose()
