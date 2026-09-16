@@ -94,8 +94,32 @@ from app.stores.tasks import task_store
 
 TASK_AI_STATE_KEY = "ai_state"
 ASSIGNMENT_HISTORY_KEY = "assignment_history"
+# Statuses in which a Run may still own a real process, so replacing or
+# deleting its Issue has to request cancellation first.
+CANCELLABLE_EXECUTION_STATUSES = {
+    "pending_approval",
+    "queued",
+    "waiting_runtime",
+    "waiting_device",
+    "claimed",
+    "running",
+    "cancel_requested",
+}
 
 logger = logging.getLogger(__name__)
+
+
+def _execution_needs_runtime_cancellation(execution: Any) -> bool:
+    """Report whether a cancelled Run still has a runtime to stop."""
+
+    return bool(
+        (
+            execution.status == "cancel_requested"
+            and execution.runtime_device_id
+            and execution.runtime_task_id
+        )
+        or (execution.team_id and execution.backend_task_id)
+    )
 
 
 def _task_binding_metadata(
@@ -1932,12 +1956,55 @@ class LoopItemService:
             )
             pending_parent_ids = [child.id for child in children]
             archived_items.extend(children)
+        # A deleted Issue must not leave a Run owning a real process. Cancel
+        # every cancellable Run of the archived subtree in the same transaction
+        # so the recycle-bin rows never disagree with the execution queue.
+        cancelled_runs = self._cancel_runs_for_items(
+            db,
+            item_ids=[archived_item.id for archived_item in archived_items],
+            note="Issue was deleted while the Run was active",
+        )
         for archived_item in archived_items:
             archived_item.deleted_at = archived_at
             archived_item.version += 1
         db.commit()
         db.refresh(item)
+        if cancelled_runs:
+            from app.services.board_team_execution import (
+                request_execution_cancellations,
+            )
+
+            request_execution_cancellations(cancelled_runs)
         return item
+
+    def _cancel_runs_for_items(
+        self, db: Session, *, item_ids: list[str], note: str
+    ) -> list:
+        """Request cancellation for every cancellable Run of these TODOs."""
+
+        from app.models.loop_item_execution import LoopItemExecution
+
+        if not item_ids:
+            return []
+        active = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.loop_item_id.in_(item_ids),
+                LoopItemExecution.status.in_(CANCELLABLE_EXECUTION_STATUSES),
+            )
+            .all()
+        )
+        cancelled_runs = []
+        for execution in active:
+            cancelled = loop_item_execution_service.cancel(
+                db,
+                execution_id=execution.id,
+                note=note,
+                commit=False,
+            )
+            if _execution_needs_runtime_cancellation(cancelled):
+                cancelled_runs.append(cancelled)
+        return cancelled_runs
 
     def restore(self, db: Session, item_id: str, user_id: int) -> LoopItem:
         """Restore a soft-deleted TODO from the recycle bin."""
@@ -2718,17 +2785,7 @@ class LoopItemService:
                 db.query(LoopItemExecution)
                 .filter(
                     LoopItemExecution.loop_item_id == item.id,
-                    LoopItemExecution.status.in_(
-                        {
-                            "pending_approval",
-                            "queued",
-                            "waiting_runtime",
-                            "waiting_device",
-                            "claimed",
-                            "running",
-                            "cancel_requested",
-                        }
-                    ),
+                    LoopItemExecution.status.in_(CANCELLABLE_EXECUTION_STATUSES),
                 )
                 .all()
             )
@@ -2745,11 +2802,7 @@ class LoopItemService:
                     note="Execution configuration changed before the Run finished",
                     commit=False,
                 )
-                if (
-                    cancelled.status == "cancel_requested"
-                    and cancelled.runtime_device_id
-                    and cancelled.runtime_task_id
-                ) or (cancelled.team_id and cancelled.backend_task_id):
+                if _execution_needs_runtime_cancellation(cancelled):
                     cancelled_runs.append(cancelled)
         project = db.get(CloudProject, item.cloud_project_id)
         if project is None:

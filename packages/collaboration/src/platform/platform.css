@@ -2899,6 +2899,40 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+.collaboration-issue-table-actions-head,
+.collaboration-issue-table-actions {
+  width: 72px;
+  text-align: right;
+}
+
+.collaboration-issue-table-delete {
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0 8px;
+  color: rgb(var(--color-text-muted));
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.collaboration-issue-table tbody tr:hover .collaboration-issue-table-delete {
+  border-color: rgb(var(--color-border));
+  color: rgb(220 38 38);
+}
+
+.collaboration-issue-table-delete:hover {
+  border-color: rgb(var(--color-border));
+  color: rgb(220 38 38);
+  background: rgb(var(--color-muted));
+}
+
+.collaboration-issue-table-delete:focus-visible {
+  outline: 2px solid rgb(var(--color-primary));
+  outline-offset: 2px;
+}
+
 .collaboration-activity-list article time {
   color: rgb(var(--color-text-muted));
   font-size: 10px;
