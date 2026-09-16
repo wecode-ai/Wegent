@@ -84,6 +84,31 @@ def _subtask(
     )
 
 
+def test_ordered_history_includes_actual_sender_name(test_db: Session) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(442, owner_id=5, is_group_chat=True))
+    test_db.add(
+        User(
+            id=7,
+            user_name="212680",
+            password_hash="hash",
+            email="b@example.com",
+            is_active=True,
+        )
+    )
+    test_db.add(
+        _subtask(subtask_id=661, task_id=442, user_id=5, sender_user_id=7, message_id=1)
+    )
+    test_db.commit()
+    for order in ("id", "message_id", "created_at"):
+        rows = store.list_by_task_ordered(
+            test_db, task_id=442, owner_user_id=5, order_by=order
+        )
+        assert rows[0].sender_user_id == 7
+        assert rows[0].sender_user_name == "212680"
+        assert rows[0].user_id == 5
+
+
 def test_list_by_task_ordered_excludes_subtasks(test_db: Session) -> None:
     store = SqlAlchemySubtaskStore()
     test_db.add(_task(6, owner_id=10))
