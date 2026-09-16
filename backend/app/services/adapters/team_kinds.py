@@ -27,7 +27,7 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
-from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.base_role import has_permission
 from app.schemas.kind import (
     Bot,
     Ghost,
@@ -46,8 +46,10 @@ from app.services.adapters.pipeline_context import normalize_context_passing
 from app.services.adapters.shell_utils import get_shell_type
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
+from app.services.group_permission import get_restricted_analyst_groups
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
+from app.services.team_access_policy import TEAM_USE_ROLE, team_usage_summary
 from app.stores.tasks import task_store
 from shared.models.db.kind import utc_now_naive
 from shared.telemetry.decorators import trace_sync
@@ -100,7 +102,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             for namespace in group_namespaces
             if (
                 (role := effective_roles.get(namespace)) is not None
-                and has_permission(role, BaseRole.Reporter.value)
+                and has_permission(role, TEAM_USE_ROLE)
             )
         ]
         if not accessible_namespaces:
@@ -975,6 +977,17 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Execute the query
         t1 = time.time()
         teams_data = final_query.all()
+        restricted_namespaces = get_restricted_analyst_groups(
+            db,
+            user_id,
+            list(
+                {
+                    row.team_namespace
+                    for row in teams_data
+                    if row.team_namespace != "default" and row.team_user_id != user_id
+                }
+            ),
+        )
         logger.info(
             f"[get_user_teams] main query took {time.time() - t1:.3f}s, returned {len(teams_data)} teams"
         )
@@ -1275,6 +1288,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "user_name": team_user.user_name,
                 }
 
+            if (
+                team_data.team_namespace in restricted_namespaces
+                and team_data.team_user_id != user_id
+            ):
+                team_dict = team_usage_summary(team_dict)
             result.append(team_dict)
 
         logger.info(
@@ -2388,32 +2406,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         Get input parameters required by the team's external API bots
         Returns parameter schema if team has external API bots, otherwise empty
         """
-        # Get team details
-        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+        from app.services.share.team_share_service import team_share_service
+
+        team = team_share_service.get_resource_for_use(db, team_id, user_id)
 
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
-
-        # Check if user has access to this team
-        is_author = team.user_id == user_id
-
-        if not is_author:
-            # Check if user has shared access via ResourceMember
-            shared_member = (
-                db.query(ResourceMember)
-                .filter(
-                    ResourceMember.resource_type == ResourceType.TEAM,
-                    ResourceMember.resource_id == team_id,
-                    ResourceMember.entity_type == "user",
-                    ResourceMember.entity_id == str(user_id),
-                    ResourceMember.status == MemberStatus.APPROVED,
-                )
-                .first()
-            )
-            if not shared_member:
-                raise HTTPException(
-                    status_code=403, detail="Access denied to this team"
-                )
 
         # Get team owner's context for loading related resources
         team_owner_id = team.user_id
@@ -2575,34 +2573,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         Raises:
             HTTPException: If team not found or access denied
         """
-        # Get team
-        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+        from app.services.share.team_share_service import team_share_service
+
+        team = team_share_service.get_resource_for_use(db, team_id, user_id)
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
-
-        # Check if user has access to this team
-        # Access is granted if:
-        # 1. User is the owner (team.user_id == user_id)
-        # 2. Team is public (team.user_id == 0)
-        # 3. User has shared access via ResourceMember
-        is_public_team = team.user_id == 0
-        is_author = team.user_id == user_id
-        if not is_author and not is_public_team:
-            shared_member = (
-                db.query(ResourceMember)
-                .filter(
-                    ResourceMember.resource_type == ResourceType.TEAM,
-                    ResourceMember.resource_id == team_id,
-                    ResourceMember.entity_type == "user",
-                    ResourceMember.entity_id == str(user_id),
-                    ResourceMember.status == MemberStatus.APPROVED,
-                )
-                .first()
-            )
-            if not shared_member:
-                raise HTTPException(
-                    status_code=403, detail="Access denied to this team"
-                )
 
         team_crd = Team.model_validate(team.json)
         all_skills = set()
