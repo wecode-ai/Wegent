@@ -32,12 +32,50 @@ Usage:
 """
 
 import logging
+import os
 from typing import Optional
 
 import httpx
 import requests
 
 logger = logging.getLogger(__name__)
+
+_NO_PROXY_ENV_VARS = ("NO_PROXY", "no_proxy")
+
+
+def sanitize_no_proxy_env() -> list[str]:
+    """Drop NO_PROXY entries that httpx cannot parse.
+
+    httpx converts every NO_PROXY entry into a URL pattern when a client is
+    constructed. CIDR ranges such as ``fc00::/7`` are classified as IPv6
+    hostnames, so the generated pattern ``all://[fc00::/7]`` fails with
+    ``httpx.InvalidURL: Invalid port: ':'`` and aborts client construction
+    before any request is sent. Host patterns cannot express CIDR ranges
+    anyway, so dropping those entries keeps the supported bypass rules intact.
+
+    Returns:
+        The removed entries, for logging and assertions.
+    """
+    removed: list[str] = []
+    for name in _NO_PROXY_ENV_VARS:
+        raw_value = os.environ.get(name)
+        if not raw_value:
+            continue
+
+        entries = [entry.strip() for entry in raw_value.split(",")]
+        unsupported = [entry for entry in entries if entry and "/" in entry]
+        if not unsupported:
+            continue
+
+        removed.extend(unsupported)
+        os.environ[name] = ",".join(
+            entry for entry in entries if entry not in unsupported
+        )
+        logger.info(
+            "Dropped %s entries unsupported by httpx: %s", name, ",".join(unsupported)
+        )
+
+    return removed
 
 
 def _inject_trace_headers(headers: dict) -> dict:
@@ -111,6 +149,8 @@ def traced_async_client(timeout: Optional[float] = None, **kwargs) -> httpx.Asyn
     Returns:
         httpx.AsyncClient with trace context event hook
     """
+    sanitize_no_proxy_env()
+
     event_hooks = kwargs.pop("event_hooks", {})
     existing_request_hooks = event_hooks.get("request", [])
     event_hooks["request"] = [_async_httpx_request_hook] + list(existing_request_hooks)
@@ -131,6 +171,8 @@ def traced_sync_client(timeout: Optional[float] = None, **kwargs) -> httpx.Clien
     Returns:
         httpx.Client with trace context event hook
     """
+    sanitize_no_proxy_env()
+
     event_hooks = kwargs.pop("event_hooks", {})
     existing_request_hooks = event_hooks.get("request", [])
     event_hooks["request"] = [_httpx_request_hook] + list(existing_request_hooks)
