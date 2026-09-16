@@ -320,29 +320,30 @@ async function verifyMultilineComposerCaret(control, captureScreenshot) {
 async function verifyComposerLineNavigation(control) {
   const firstLine = `${COMPOSER} > p:first-child`
   const emptyLine = `${COMPOSER} > p:last-child`
+  // Synthetic keyboard events do not trigger Chromium's native caret movement.
   await control.command('fill', COMPOSER, { value: 'first' })
-  await control.command('press', COMPOSER, { key: 'Shift+Enter' })
+  await control.command('nativePress', COMPOSER, { key: 'Shift+Enter' })
   assert.equal(await control.command('getValue', COMPOSER), 'first\n')
 
-  await control.command('press', COMPOSER, { key: 'ArrowLeft' })
+  await control.command('nativePress', COMPOSER, { key: 'ArrowLeft' })
   assert.equal(
     Number(await control.command('getSelectionOffset', firstLine)),
     5,
     'Left from a new empty line did not move to the previous line'
   )
-  await control.command('press', COMPOSER, { key: 'ArrowRight' })
+  await control.command('nativePress', COMPOSER, { key: 'ArrowRight' })
   assert.equal(
     Number(await control.command('getSelectionOffset', emptyLine)),
     0,
     'Right from the previous line did not move back to the empty line'
   )
-  await control.command('press', COMPOSER, { key: 'ArrowUp' })
+  await control.command('nativePress', COMPOSER, { key: 'ArrowUp' })
   const previousLineOffset = Number(await control.command('getSelectionOffset', firstLine))
   assert.ok(
     previousLineOffset >= 0 && previousLineOffset <= 5,
     'Up did not reach the previous line'
   )
-  await control.command('press', COMPOSER, { key: 'ArrowDown' })
+  await control.command('nativePress', COMPOSER, { key: 'ArrowDown' })
   assert.equal(
     Number(await control.command('getSelectionOffset', emptyLine)),
     0,
