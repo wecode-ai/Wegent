@@ -97,6 +97,7 @@ interface MessageListProps {
   messages: WorkbenchMessage[]
   scrollElementRef?: RefObject<HTMLDivElement | null>
   initialDistanceFromBottomPx?: number
+  onBeforeUserMessageToggle?: () => void
   className?: string
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
@@ -205,6 +206,7 @@ export const MessageList = memo(function MessageList({
   messages,
   scrollElementRef,
   initialDistanceFromBottomPx = 0,
+  onBeforeUserMessageToggle,
   className,
   conversationKey,
   isWaitingForAssistant = false,
@@ -601,6 +603,7 @@ export const MessageList = memo(function MessageList({
             {message.role === 'user' ? (
               <UserMessage
                 message={message}
+                onBeforeToggle={onBeforeUserMessageToggle}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenLocalSkillFile={onOpenLocalSkillFile}
                 editable={message.id === editableLastUserMessageId}
@@ -947,6 +950,7 @@ function formatMessageTime(createdAt: string) {
 
 function UserMessage({
   message,
+  onBeforeToggle,
   onOpenWorkspaceFile,
   onOpenLocalSkillFile,
   editable = false,
@@ -957,6 +961,7 @@ function UserMessage({
   onSubmitEdit,
 }: {
   message: WorkbenchMessage
+  onBeforeToggle?: () => void
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenLocalSkillFile?: (path: string) => void
   editable?: boolean
@@ -1157,7 +1162,10 @@ function UserMessage({
                 type="button"
                 data-testid="toggle-user-message-button"
                 aria-expanded={isExpanded}
-                onClick={() => setIsExpanded(value => !value)}
+                onClick={() => {
+                  onBeforeToggle?.()
+                  setIsExpanded(value => !value)
+                }}
                 className="flex h-9 w-full items-center justify-center gap-1 border-t border-border/60 text-xs font-medium text-text-secondary transition-colors hover:bg-surface"
               >
                 {isExpanded ? (
