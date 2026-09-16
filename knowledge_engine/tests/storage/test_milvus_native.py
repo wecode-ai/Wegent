@@ -227,10 +227,7 @@ def test_read_only_verify_does_not_create_resources():
     )
 
     with store.client() as client:
-        assert (
-            store.verify_index(client, "wegent_kb_1", dimension=8, embedding_space="s")
-            is None
-        )
+        assert store.require_bound(client, "wegent_kb_1") is None
 
     assert len(created) == 1
     assert created[0].closed is True
@@ -314,22 +311,58 @@ def test_keyword_search_on_a_missing_collection_returns_nothing():
     assert client.searches == []
 
 
-def test_keyword_contract_read_is_read_only_and_analyzer_bound():
-    """A read-only keyword check never creates a collection."""
+def test_keyword_capability_check_follows_the_stored_analyzer():
+    """A contract without the keyword analyzer never answers keyword queries."""
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
-    assert store.verify_keyword_index(_SparseSearchClient(exists=False), "kb") is None
+    assert store.verify_keyword_binding("wegent_kb_1", _binding()) is None
 
-    store.read_binding = lambda client, name: None
     with pytest.raises(IndexContractIncompatibleError):
-        store.verify_keyword_index(_SparseSearchClient(), "kb")
+        store.verify_keyword_binding("wegent_kb_1", _binding(analyzer=""))
 
-    store.read_binding = lambda client, name: _binding()
-    assert store.verify_keyword_index(_SparseSearchClient(), "kb") == _binding()
 
-    store.read_binding = lambda client, name: _binding(analyzer="")
-    with pytest.raises(IndexContractIncompatibleError):
-        store.verify_keyword_index(_SparseSearchClient(), "kb")
+class _ContractCheckClient:
+    """Records the calls a contract verification makes on a live collection."""
+
+    def __init__(self, *, dimension: int = 1536) -> None:
+        self.dimension = dimension
+        self.queries: list[dict] = []
+        self.descriptions = 0
+
+    def has_collection(self, collection_name: str) -> bool:
+        return True
+
+    def describe_collection(self, collection_name: str) -> dict:
+        self.descriptions += 1
+        return {
+            "fields": [
+                {
+                    "name": DENSE_VECTOR_FIELD,
+                    "params": {"dim": self.dimension},
+                }
+            ]
+        }
+
+    def query(self, **kwargs):
+        self.queries.append(kwargs)
+        return []
+
+
+def test_verifying_a_read_contract_never_reads_the_registry_again():
+    """One request reads the stored contract once and reuses it."""
+    client = _ContractCheckClient()
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    store.verify_bound_contract(
+        client,
+        "wegent_kb_1",
+        _binding(),
+        dimension=1536,
+        embedding_space="sha256:abc",
+    )
+
+    assert client.queries == []
+    assert client.descriptions == 1
 
 
 class _CollectionClient:

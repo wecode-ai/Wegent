@@ -69,6 +69,7 @@ from knowledge_engine.storage.milvus_native import (
     SCHEMA_VERSION,
     SOURCE_FILE_FIELD,
     MilvusDocumentStore,
+    MilvusIndexBinding,
     build_scope_filter,
     contract_token_field,
     node_row_id,
@@ -576,11 +577,14 @@ class MilvusBackend(BaseStorageBackend):
             else (None, None)
         )
 
-        # An empty knowledge base answers empty without calling the embedding
-        # provider: only a real index justifies a provider request.
+        # The contract is read once for the whole request and reused by the
+        # mode that answers. An empty knowledge base answers empty without
+        # calling the embedding provider: only a real index justifies a
+        # provider request.
         with self._store.client() as client:
-            if self._index_is_absent(client, collection_name):
-                return {"records": []}
+            binding = self._read_bound_index(client, collection_name)
+        if binding is None:
+            return {"records": []}
 
         # A zero-weight endpoint is not a hybrid request: it runs the surviving
         # branch alone, so the keyword-only endpoint never builds a query
@@ -592,6 +596,7 @@ class MilvusBackend(BaseStorageBackend):
 
         if retrieval_mode == "keyword":
             return self._keyword_retrieve(
+                binding=binding,
                 collection_name=collection_name,
                 sparse_query=resolved_queries.sparse_query,
                 filter_expr=filter_expr,
@@ -601,6 +606,7 @@ class MilvusBackend(BaseStorageBackend):
 
         if retrieval_mode == "hybrid":
             return self._hybrid_retrieve(
+                binding=binding,
                 collection_name=collection_name,
                 dense_query=resolved_queries.dense_query,
                 sparse_query=resolved_queries.sparse_query,
@@ -615,6 +621,7 @@ class MilvusBackend(BaseStorageBackend):
         query_vector = prepare_query_vector(embed_model, resolved_queries.dense_query)
 
         hits = self._dense_search(
+            binding=binding,
             collection_name=collection_name,
             query_vector=query_vector,
             embed_model=embed_model,
@@ -627,17 +634,19 @@ class MilvusBackend(BaseStorageBackend):
     def _dense_search(
         self,
         *,
+        binding: MilvusIndexBinding,
         collection_name: str,
         query_vector: Sequence[float],
         embed_model,
         filter_expr: str,
         top_k: int,
     ) -> List[Dict[str, Any]]:
-        """Verify the bound index and run one dense search inside it."""
+        """Verify the request's contract and run one dense search inside it."""
         with self._store.client() as client:
             self._require_bound_index(
                 client,
                 collection_name,
+                binding=binding,
                 dimension=len(query_vector),
                 embedding_space=compute_embedding_space(embed_model),
             )
@@ -654,17 +663,25 @@ class MilvusBackend(BaseStorageBackend):
         client: MilvusClient,
         collection_name: str,
         *,
+        binding: MilvusIndexBinding,
         dimension: int,
         embedding_space: str,
     ) -> None:
-        """Fail when the contract exists but its collection disappeared."""
-        binding = self._store.verify_index(
+        """Verify the request's contract still serves the requested space."""
+        self._require_live_collection(client, collection_name)
+        self._store.verify_bound_contract(
             client,
             collection_name,
+            binding,
             dimension=dimension,
             embedding_space=embedding_space,
         )
-        if binding is None:
+
+    def _require_live_collection(
+        self, client: MilvusClient, collection_name: str
+    ) -> None:
+        """Fail when the collection confirmed for this request is gone."""
+        if not self._store.has_collection(client, collection_name):
             raise IndexMissingError(
                 collection_name,
                 "the bound collection disappeared during the query",
@@ -673,6 +690,7 @@ class MilvusBackend(BaseStorageBackend):
     def _hybrid_retrieve(
         self,
         *,
+        binding: MilvusIndexBinding,
         collection_name: str,
         dense_query: str,
         sparse_query: str,
@@ -703,6 +721,7 @@ class MilvusBackend(BaseStorageBackend):
             self._require_bound_index(
                 client,
                 collection_name,
+                binding=binding,
                 dimension=len(query_vector),
                 embedding_space=compute_embedding_space(embed_model),
             )
@@ -795,6 +814,7 @@ class MilvusBackend(BaseStorageBackend):
     def _keyword_retrieve(
         self,
         *,
+        binding: MilvusIndexBinding,
         collection_name: str,
         sparse_query: str,
         filter_expr: str,
@@ -807,12 +827,8 @@ class MilvusBackend(BaseStorageBackend):
         analyzed and indexed by the server when the document was written.
         """
         with self._store.client() as client:
-            binding = self._store.verify_keyword_index(client, collection_name)
-            if binding is None:
-                raise IndexMissingError(
-                    collection_name,
-                    "the bound collection disappeared during the query",
-                )
+            self._require_live_collection(client, collection_name)
+            self._store.verify_keyword_binding(collection_name, binding)
             hits = self._store.sparse_search(
                 client,
                 collection_name,
@@ -1141,7 +1157,7 @@ class MilvusBackend(BaseStorageBackend):
     ) -> List[Dict[str, Any]]:
         """Read published rows without ever creating or adopting a collection."""
         with self._store.client() as client:
-            if self._index_is_absent(client, collection_name):
+            if self._read_bound_index(client, collection_name) is None:
                 return []
             return self._store.query_rows(
                 client,
@@ -1151,8 +1167,10 @@ class MilvusBackend(BaseStorageBackend):
                 limit=limit,
             )
 
-    def _index_is_absent(self, client: MilvusClient, collection_name: str) -> bool:
-        """Distinguish a never-indexed knowledge base from a lost index.
+    def _read_bound_index(
+        self, client: MilvusClient, collection_name: str
+    ) -> Optional[MilvusIndexBinding]:
+        """Read this request's index contract, or None when never indexed.
 
         No stored contract and no collection means the knowledge base was
         never indexed, which is a valid empty result. A stored contract whose
@@ -1165,28 +1183,32 @@ class MilvusBackend(BaseStorageBackend):
         """
         binding = self._store.read_binding(client, collection_name)
         exists = self._store.has_collection(client, collection_name)
-        if binding is None and not exists:
+        if binding is None:
+            if exists:
+                raise IndexContractIncompatibleError(
+                    collection_name,
+                    "the collection has no stored index contract",
+                )
             logger.info(
                 "[Milvus] Query on never-indexed knowledge base returns empty: %s",
                 collection_name,
             )
-            return True
-        if binding is not None and not exists:
+            return None
+        if not exists:
             raise IndexMissingError(
                 collection_name,
                 "a confirmed index contract exists but its collection is gone",
             )
-        bound = self._store.require_bound(client, collection_name)
-        if bound is not None and bound.schema_version != SCHEMA_VERSION:
+        if binding.schema_version != SCHEMA_VERSION:
             raise IndexContractIncompatibleError(
                 collection_name,
                 "the stored index contract was written by an older schema",
                 details={
-                    "bound_schema_version": bound.schema_version,
+                    "bound_schema_version": binding.schema_version,
                     "schema_version": SCHEMA_VERSION,
                 },
             )
-        return False
+        return binding
 
     def delete_parent_nodes(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
         return self._parent_store.delete(knowledge_id, doc_ref, **kwargs)

@@ -632,52 +632,48 @@ class MilvusDocumentStore:
                 )
             time.sleep(CONCURRENT_BINDING_POLL_SECONDS)
 
-    def verify_index(
+    def verify_bound_contract(
         self,
         client: MilvusClient,
         collection_name: str,
+        binding: MilvusIndexBinding,
         *,
         dimension: int,
         embedding_space: str,
-    ) -> MilvusIndexBinding | None:
-        """Read-only contract check; None means the index does not exist."""
-        if not client.has_collection(collection_name):
-            return None
+    ) -> None:
+        """Verify the contract a caller read for this request and space.
+
+        A caller that read the stored contract once verifies it here instead of
+        paying a second registry read. The contract itself is not re-read, so a
+        collection dropped and rebuilt inside the same request window - same
+        dimension, different embedding space - is not detected. The read paths
+        never promised cross-process linearity.
+        """
         requested = self.build_binding(
             collection_name,
             dimension=dimension,
             embedding_space=embedding_space,
         )
-        return self._verify_existing(client, requested)
+        binding.assert_compatible(requested)
+        self._assert_collection_dimension(client, requested)
 
-    def verify_keyword_index(
-        self,
-        client: MilvusClient,
-        collection_name: str,
-    ) -> MilvusIndexBinding | None:
-        """Read-only keyword capability check; None means no index exists.
+    def verify_keyword_binding(
+        self, collection_name: str, binding: MilvusIndexBinding
+    ) -> None:
+        """Verify the keyword capability of a contract the caller already read.
 
-        Keyword retrieval never consults the embedding model, so this reads the
-        stored contract instead of rebuilding the requested one. A collection
-        whose contract predates the BM25 analyzer fails explicitly: an index
-        without the keyword capability must not answer keyword queries with an
-        empty result set.
+        Keyword retrieval never consults the embedding model, so the stored
+        contract alone decides the capability and no client is needed here. A
+        bound index whose contract predates the BM25 analyzer fails explicitly:
+        an index without the keyword capability must not answer keyword queries
+        with an empty result set.
         """
-        if not client.has_collection(collection_name):
-            return None
-        bound = self.read_binding(client, collection_name)
-        if bound is None:
-            raise IndexContractIncompatibleError(
-                collection_name,
-                "the collection has no stored index contract",
-            )
-        if not bound.analyzer:
+        if not binding.analyzer:
             raise IndexContractIncompatibleError(
                 collection_name,
                 "the bound index was created without a keyword analyzer",
-                details={"analyzer": bound.analyzer},
+                details={"analyzer": binding.analyzer},
             )
-        return bound
 
     def require_bound(
         self, client: MilvusClient, collection_name: str
@@ -750,8 +746,13 @@ class MilvusDocumentStore:
                 requested.collection_name,
                 "the collection has no stored index contract",
             )
-        bound.assert_compatible(requested)
-        self._assert_collection_dimension(client, requested)
+        self.verify_bound_contract(
+            client,
+            requested.collection_name,
+            bound,
+            dimension=requested.dimension,
+            embedding_space=requested.embedding_space,
+        )
         return bound
 
     def _assert_collection_dimension(

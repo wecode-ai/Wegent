@@ -84,6 +84,9 @@ class FakeStore:
         else:
             self.binding = binding or FakeBinding()
         self.calls: list[tuple] = []
+        # Every contract lookup below reads the shared registry in the real
+        # store, so one request costs one registry read per lookup.
+        self.contract_reads = 0
         self.deleted_filters: list[str] = []
         self.queries: list[dict] = []
         self.searches: list[dict] = []
@@ -105,16 +108,21 @@ class FakeStore:
         self.binding = "bound"
         return self.binding
 
-    def verify_index(self, client, collection_name, *, dimension, embedding_space):
-        self.calls.append(("verify_index", collection_name, dimension, embedding_space))
-        return self.binding
+    def verify_bound_contract(
+        self, client, collection_name, binding, *, dimension, embedding_space
+    ):
+        self.calls.append(
+            ("verify_bound_contract", collection_name, dimension, embedding_space)
+        )
 
     def read_binding(self, client, collection_name):
         self.calls.append(("read_binding", collection_name))
+        self.contract_reads += 1
         return self.binding if self.collection_exists else None
 
     def require_bound(self, client, collection_name):
         self.calls.append(("require_bound", collection_name))
+        self.contract_reads += 1
         if not self.collection_exists:
             return None
         if self.binding is None:
@@ -123,20 +131,13 @@ class FakeStore:
             )
         return self.binding
 
-    def verify_keyword_index(self, client, collection_name):
-        self.calls.append(("verify_keyword_index", collection_name))
-        if not self.collection_exists:
-            return None
-        if self.binding is None:
-            raise IndexContractIncompatibleError(
-                collection_name, "the collection has no stored index contract"
-            )
-        if not self.binding.analyzer:
+    def verify_keyword_binding(self, collection_name, binding):
+        self.calls.append(("verify_keyword_binding", collection_name, binding.analyzer))
+        if not binding.analyzer:
             raise IndexContractIncompatibleError(
                 collection_name,
                 "the bound index was created without a keyword analyzer",
             )
-        return self.binding
 
     def upsert_rows(self, client, collection_name, rows):
         self.calls.append(("upsert_rows", collection_name, list(rows)))
@@ -542,6 +543,33 @@ def test_retrieve_missing_index_does_not_call_the_embedding_provider():
     )
 
     assert result == {"records": []}
+
+
+@pytest.mark.parametrize("retrieval_mode", ["vector", "keyword", "hybrid"])
+def test_one_retrieve_reads_the_stored_contract_once(retrieval_mode):
+    """One request reads the registry once and reuses that contract.
+
+    The stored contract cannot change while a single request is in flight, so
+    asking the registry again inside the same request only adds a Strong
+    consistency round trip.
+    """
+    backend = _backend()
+    store = _hybrid_store()
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="深度学习模型训练 zebra_pipeline_99",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={
+            "retrieval_mode": retrieval_mode,
+            "top_k": 5,
+            "score_threshold": 0.0,
+        },
+    )
+
+    assert store.contract_reads == 1
+    assert store.searches or store.sparse_searches
 
 
 def test_retrieve_unsupported_mode_fails_loudly():
