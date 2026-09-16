@@ -671,15 +671,13 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   WorkbenchProvider: ({
     children,
     onStartupReadyChange,
-    prewarmComposerApps,
   }: {
     children: React.ReactNode
     onStartupReadyChange?: (ready: boolean) => void
-    prewarmComposerApps?: boolean
   }) => {
     useEffect(() => {
-      workbenchProviderMocks.mounts(prewarmComposerApps)
-    }, [prewarmComposerApps])
+      workbenchProviderMocks.mounts()
+    }, [])
     if (workbenchProviderMocks.autoReady) {
       queueMicrotask(() => onStartupReadyChange?.(true))
     }
@@ -1101,7 +1099,6 @@ describe('App plugins route', () => {
 
     await screen.findByTestId('app-shell')
     await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
-    expect(workbenchProviderMocks.mounts).toHaveBeenCalledWith(true)
   })
 
   test('does not assign legacy generic features to smart app locations', () => {

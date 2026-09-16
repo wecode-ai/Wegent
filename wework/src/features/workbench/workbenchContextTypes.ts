@@ -501,7 +501,6 @@ export interface WorkbenchProviderProps {
   debugSnapshotEnabled?: boolean
   consumePluginTrials?: boolean
   loadTaskComposerCatalogs?: boolean
-  prewarmComposerApps?: boolean
   publishDebugSnapshots?: boolean
   syncCoreDshModels?: boolean
   syncRemoteProjects?: boolean

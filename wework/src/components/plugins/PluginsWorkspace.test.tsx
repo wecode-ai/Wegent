@@ -2235,7 +2235,8 @@ describe('PluginsWorkspace', () => {
       })
     )
 
-    let resolveList: ((value: unknown) => void) | null = null
+    let resolveLocalList: ((value: unknown) => void) | null = null
+    let unrestrictedPluginListStarted = false
     vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
       if (command === 'local_executor_ensure_started') {
         return Promise.resolve({ running: true, ready: true, deviceId: 'local-device' })
@@ -2246,11 +2247,15 @@ describe('PluginsWorkspace', () => {
       if (command !== 'codex.app_server_request') return Promise.resolve(undefined)
       const request = args as {
         method?: string
-        params?: { method?: string }
+        params?: { method?: string; params?: { marketplaceKinds?: string[] } }
       }
       if (request.method === 'plugin/list') {
+        if (request.params?.marketplaceKinds == null) {
+          unrestrictedPluginListStarted = true
+          return new Promise(() => undefined)
+        }
         return new Promise(resolve => {
-          resolveList = resolve
+          resolveLocalList = resolve
         })
       }
       if (request.method === 'plugin/installed') {
@@ -2284,7 +2289,8 @@ describe('PluginsWorkspace', () => {
     // rows skip GitHub plugin/list so chat send is not blocked on reconcile.
     expect(screen.queryByTestId('plugins-marketplace-loading')).not.toBeInTheDocument()
     expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled()
-    expect(resolveList).toBeNull()
+    await waitFor(() => expect(resolveLocalList).not.toBeNull())
+    expect(unrestrictedPluginListStarted).toBe(false)
 
     const marketplaceFetchesBeforeFocus = vi
       .mocked(fetch)
@@ -2301,7 +2307,7 @@ describe('PluginsWorkspace', () => {
     // It must update cloud rows without deleting the already-painted official list.
     expect(screen.getByText('Gmail')).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-openai-official-empty')).not.toBeInTheDocument()
-    expect(resolveList).toBeNull()
+    expect(unrestrictedPluginListStarted).toBe(false)
   })
 
   test('keeps OpenAI official installed strip from durable peek when plugin/installed omits it', async () => {
@@ -4259,19 +4265,24 @@ describe('PluginsWorkspace', () => {
     const pendingInstalled = new Promise(resolve => {
       resolveInstalled = resolve
     })
-    let pluginListStarted = false
+    let localPluginListStarted = false
+    let unrestrictedPluginListStarted = false
     const previousInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()
     vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
       if (command === 'codex.app_server_request') {
         const request = args as {
           method?: string
-          params?: { method?: string }
+          params?: { marketplaceKinds?: string[] }
         }
         if (request.method === 'plugin/installed') {
           return pendingInstalled
         }
         if (request.method === 'plugin/list') {
-          pluginListStarted = true
+          if (request.params?.marketplaceKinds?.includes('local')) {
+            localPluginListStarted = true
+          } else {
+            unrestrictedPluginListStarted = true
+          }
         }
       }
       return previousInvoke?.(command, args) as Promise<unknown>
@@ -4280,7 +4291,8 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
-    expect(pluginListStarted).toBe(false)
+    expect(localPluginListStarted).toBe(false)
+    expect(unrestrictedPluginListStarted).toBe(false)
     expect(marketplaceMock.getSyncDeviceCalls()).toBe(0)
 
     resolveInstalled?.({
@@ -4294,7 +4306,8 @@ describe('PluginsWorkspace', () => {
       ],
     })
 
-    await waitFor(() => expect(pluginListStarted).toBe(true))
+    await waitFor(() => expect(localPluginListStarted).toBe(true))
+    expect(unrestrictedPluginListStarted).toBe(false)
     expect(marketplaceMock.getSyncDeviceCalls()).toBe(0)
   })
 
@@ -4311,19 +4324,24 @@ describe('PluginsWorkspace', () => {
     const pendingInstalled = new Promise(resolve => {
       resolveInstalled = resolve
     })
-    let pluginListStarted = false
+    let localPluginListStarted = false
+    let unrestrictedPluginListStarted = false
     const previousInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()
     vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
       if (command === 'codex.app_server_request') {
         const request = args as {
           method?: string
-          params?: { method?: string }
+          params?: { marketplaceKinds?: string[] }
         }
         if (request.method === 'plugin/installed') {
           return pendingInstalled
         }
         if (request.method === 'plugin/list') {
-          pluginListStarted = true
+          if (request.params?.marketplaceKinds?.includes('local')) {
+            localPluginListStarted = true
+          } else {
+            unrestrictedPluginListStarted = true
+          }
         }
       }
       return previousInvoke?.(command, args) as Promise<unknown>
@@ -4332,7 +4350,8 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
-    expect(pluginListStarted).toBe(false)
+    expect(localPluginListStarted).toBe(false)
+    expect(unrestrictedPluginListStarted).toBe(false)
 
     resolveInstalled?.({
       marketplaces: [
@@ -4349,11 +4368,12 @@ describe('PluginsWorkspace', () => {
     expect(
       await screen.findByTestId('plugin-marketplace-row-github@openai-curated-remote')
     ).toBeInTheDocument()
-    expect(pluginListStarted).toBe(false)
+    await waitFor(() => expect(localPluginListStarted).toBe(true))
+    expect(unrestrictedPluginListStarted).toBe(false)
     expect(marketplaceMock.getSyncDeviceCalls()).toBe(0)
 
     await userEvent.click(screen.getByTestId('plugins-refresh-button'))
-    await waitFor(() => expect(pluginListStarted).toBe(true))
+    await waitFor(() => expect(unrestrictedPluginListStarted).toBe(true))
   })
 
   test('does not start plugin/list until personal-created disk listing finishes', async () => {
