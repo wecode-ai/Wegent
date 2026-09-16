@@ -56,6 +56,9 @@ interface CodeWikiReaderProps {
   onConfigure?: () => void
 }
 
+const PAGE_TREE_RETRY_INTERVAL_MS = 1_000
+const PAGE_TREE_RETRY_ATTEMPTS = 30
+
 /** Depth-first, so "the first page" means the first one the reader would see. */
 const firstReadable = (nodes: CodeWikiPageNode[]): CodeWikiPageNode | null => {
   for (const node of nodes) {
@@ -212,7 +215,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   // page it was just asked to show.
   const [navigationOpen, setNavigationOpen] = useState(false)
   const pagesRequest = useRef(0)
-  const pageTreeGenerationId = useRef<number | null>(null)
+  const [pageTreeGenerationId, setPageTreeGenerationId] = useState<number | null>(null)
   const projectName = String(
     (wiki.source as { projectName?: string } | undefined)?.projectName ?? ''
   )
@@ -230,13 +233,15 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
         const response = await codeWikiApi.pages(wiki.id)
         if (pagesRequest.current !== request) return
 
-        pageTreeGenerationId.current = response.published_generation_id ?? 0
+        const publishedGenerationId = response.published_generation_id ?? 0
+        setPageTreeGenerationId(publishedGenerationId)
         setPages(response.pages)
         const first = firstReadable(response.pages)
         setActivePath(current => {
           const stillExists = current ? findByPath(response.pages, current) : null
           return stillExists?.has_content ? current : (first?.path ?? '')
         })
+        return publishedGenerationId
       } catch (error) {
         if (showError && pagesRequest.current === request) {
           toast.error(error instanceof Error ? error.message : String(error))
@@ -264,14 +269,34 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
 
   useEffect(() => {
     if (runState !== 'completed' || runGenerationId === undefined) return
-    if (pageTreeGenerationId.current === runGenerationId) return
+    if (pageTreeGenerationId === runGenerationId) return
 
-    // Status is intentionally the only thing polled during a long run. Compare its
-    // completed version with the version the tree actually came from instead of
-    // inferring a transition from this component's lifetime: the reader may mount
-    // after completion, and the first tree request may have started before publish.
-    void reloadPages(true, false).catch(() => undefined)
-  }, [reloadPages, runGenerationId, runState])
+    // Status is intentionally the only thing polled during a long run. Once it ends,
+    // keep reconciling the cheaper tree until it exposes that exact published
+    // generation. One failed or stale response must not leave a completed first run
+    // looking empty until the reader reloads the browser.
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let attempts = PAGE_TREE_RETRY_ATTEMPTS
+    const reconcile = async () => {
+      let observedGenerationId: number | undefined
+      try {
+        observedGenerationId = await reloadPages(false, false)
+      } catch {
+        // A later attempt handles a transient tree read failure.
+      }
+      attempts -= 1
+      if (!cancelled && observedGenerationId !== runGenerationId && attempts > 0) {
+        timer = setTimeout(() => void reconcile(), PAGE_TREE_RETRY_INTERVAL_MS)
+      }
+    }
+    void reconcile()
+
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [pageTreeGenerationId, reloadPages, runGenerationId, runState])
 
   const handleRepublished = useCallback(async () => {
     // A restore replaces the whole published version. Re-fetch its tree so both
@@ -662,6 +687,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                       onNavigate={openPage}
                       onScrollHostChange={setScrollHost}
                       onEmptyStateChange={handleChatEmptyStateChange}
+                      publishedGenerationId={pageTreeGenerationId ?? 0}
                     />
                   }
                 />
@@ -690,6 +716,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                       knownPaths={knownPaths}
                       onNavigate={openPage}
                       onScrollHostChange={setScrollHost}
+                      publishedGenerationId={pageTreeGenerationId ?? 0}
                     />
                   </div>
                 </div>
@@ -713,6 +740,7 @@ interface WikiPageBodyProps {
   knownPaths: ReadonlySet<string>
   onNavigate: (path: string) => void
   onScrollHostChange: (host: HTMLElement | null) => void
+  publishedGenerationId: number
   /**
    * Whether the chat is still showing its empty state. Passed only by the instance
    * the chat renders — the overlay copy must not answer for the chat, which is
@@ -737,6 +765,7 @@ function WikiPageBody({
   knownPaths,
   onNavigate,
   onScrollHostChange,
+  publishedGenerationId,
   onEmptyStateChange,
 }: WikiPageBodyProps) {
   return (
@@ -755,6 +784,7 @@ function WikiPageBody({
         onContentChange={onContentChange}
         knownPaths={knownPaths}
         onNavigate={onNavigate}
+        publishedGenerationId={publishedGenerationId}
       />
     </div>
   )

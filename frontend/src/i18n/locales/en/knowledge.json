@@ -1256,6 +1256,14 @@
       "runnerHint": "Leave empty to use the knowledge-base owner. This affects future runs only; history, current files, and KB ownership stay unchanged.",
       "runnerPlaceholder": "Search users; leave empty for owner",
       "history": "Recent checks",
+      "results": {
+        "repositoryUnchanged": "Repository unchanged",
+        "deleted": "Skipped because the scheduled update was deleted",
+        "disabled": "Skipped because the scheduled update was disabled",
+        "generationRunning": "Skipped because another generation is running",
+        "wikiUnavailable": "The Code Wiki is no longer available or its reference changed",
+        "generationStarted": "{{mode}} started"
+      },
       "weekdays": {
         "0": "Monday",
         "1": "Tuesday",

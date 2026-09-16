@@ -5,6 +5,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -40,8 +41,43 @@ import { codeWikiApi } from '@/apis/code-wiki'
 import { userApis } from '@/apis/user'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import { useTranslation } from '@/hooks/useTranslation'
+import { parseUTCDate } from '@/lib/utils'
 import type { CodeWikiScheduledUpdate, CodeWikiScheduledUpdateRequest } from '@/types/code-wiki'
 import type { SearchUser } from '@/types/api'
+
+const EXECUTION_STATUS_KEYS: Record<string, string> = {
+  PENDING: 'feed:status_pending',
+  RUNNING: 'feed:status_running',
+  COMPLETED: 'feed:status_completed',
+  COMPLETED_SILENT: 'feed:status_completed_silent',
+  FAILED: 'feed:status_failed',
+  RETRYING: 'feed:status_retrying',
+  CANCELLED: 'feed:status_cancelled',
+}
+
+const EXECUTION_RESULT_KEYS: Record<string, string> = {
+  'repository unchanged since last run': 'codeWiki.scheduledUpdate.results.repositoryUnchanged',
+  'Skipped because scheduled update was deleted': 'codeWiki.scheduledUpdate.results.deleted',
+  'Skipped because scheduled update was disabled': 'codeWiki.scheduledUpdate.results.disabled',
+  'Skipped because another generation is running':
+    'codeWiki.scheduledUpdate.results.generationRunning',
+  'Code Wiki no longer exists or its reference no longer matches':
+    'codeWiki.scheduledUpdate.results.wikiUnavailable',
+}
+
+function formatDateTime(value: string, timezone: string, locale: string): string {
+  const date = parseUTCDate(value)
+  if (!date || Number.isNaN(date.getTime())) return '-'
+  try {
+    return new Intl.DateTimeFormat(locale, {
+      dateStyle: 'medium',
+      timeStyle: 'medium',
+      timeZone: timezone,
+    }).format(date)
+  } catch {
+    return '-'
+  }
+}
 
 interface Props {
   knowledgeBaseId: number
@@ -64,12 +100,25 @@ export function ScheduledUpdateDialog({
   onDraftSaved,
   onDeleteRequested,
 }: Props) {
-  const { t } = useTranslation('knowledge')
+  const { t, i18n } = useTranslation('knowledge')
   const [plan, setPlan] = useState<CodeWikiScheduledUpdate | null>(null)
   const [selectedRunners, setSelectedRunners] = useState<SearchUser[]>([])
   const [executionPrincipalUserId, setExecutionPrincipalUserId] = useState<number | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const loadRequestId = useRef(0)
+
+  const localizeResultSummary = (summary: string) => {
+    const key = EXECUTION_RESULT_KEYS[summary]
+    if (key) return t(key)
+
+    const started = /^(full|incremental) generation started$/.exec(summary)
+    if (started) {
+      return t('codeWiki.scheduledUpdate.results.generationStarted', {
+        mode: t(`codeWiki.history.mode.${started[1]}`),
+      })
+    }
+    return summary
+  }
 
   const loadPlan = useCallback(async () => {
     const requestId = ++loadRequestId.current
@@ -210,30 +259,6 @@ export function ScheduledUpdateDialog({
                 />
               )}
             </div>
-            <details className="rounded-md border border-border p-3">
-              <summary
-                className="cursor-pointer text-sm font-medium"
-                data-testid="code-wiki-scheduled-advanced"
-              >
-                {t('codeWiki.scheduledUpdate.advanced')}
-              </summary>
-              <div className="mt-3 space-y-2">
-                <Label>{t('codeWiki.scheduledUpdate.runner')}</Label>
-                <p className="text-xs text-text-secondary">
-                  {t('codeWiki.scheduledUpdate.runnerHint')}
-                </p>
-                <UserSearchSelect
-                  selectedUsers={selectedRunners}
-                  onSelectedUsersChange={users => {
-                    setSelectedRunners(users)
-                    setExecutionPrincipalUserId(users[0]?.id ?? null)
-                  }}
-                  multiple={false}
-                  placeholder={t('codeWiki.scheduledUpdate.runnerPlaceholder')}
-                  inputTestId="code-wiki-scheduled-runner"
-                />
-              </div>
-            </details>
             <div className="grid grid-cols-2 gap-3">
               {['weekly', 'biweekly', 'four_weeks'].includes(plan.cadence) && (
                 <div className="space-y-2">
@@ -290,7 +315,7 @@ export function ScheduledUpdateDialog({
             <p className="text-xs text-text-secondary">
               {t('codeWiki.scheduledUpdate.next', {
                 when: plan.next_execution_time
-                  ? new Date(plan.next_execution_time).toLocaleString()
+                  ? formatDateTime(plan.next_execution_time, plan.timezone, i18n.language)
                   : t('codeWiki.scheduledUpdate.afterSave'),
               })}
             </p>
@@ -306,14 +331,19 @@ export function ScheduledUpdateDialog({
                   {plan.executions.map(execution => (
                     <li key={execution.id} className="py-2 text-xs">
                       <div className="flex justify-between gap-3">
-                        <span>{execution.status}</span>
+                        <span>
+                          {EXECUTION_STATUS_KEYS[execution.status]
+                            ? t(EXECUTION_STATUS_KEYS[execution.status])
+                            : execution.status}
+                        </span>
                         <span className="text-text-tertiary">
-                          {new Date(execution.created_at).toLocaleString()}
+                          {formatDateTime(execution.created_at, plan.timezone, i18n.language)}
                         </span>
                       </div>
                       {(execution.error_message || execution.result_summary) && (
                         <p className="mt-1 break-words text-text-secondary">
-                          {execution.error_message || execution.result_summary}
+                          {execution.error_message ||
+                            localizeResultSummary(execution.result_summary)}
                         </p>
                       )}
                     </li>
@@ -321,6 +351,34 @@ export function ScheduledUpdateDialog({
                 </ul>
               </div>
             )}
+            <details className="group space-y-3">
+              <summary
+                className="flex w-full cursor-pointer list-none items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 [&::-webkit-details-marker]:hidden"
+                data-testid="code-wiki-scheduled-advanced"
+              >
+                <span className="shrink-0 text-sm font-semibold text-text-primary">
+                  {t('codeWiki.scheduledUpdate.advanced')}
+                </span>
+                <span className="h-px flex-1 bg-border transition-colors group-hover:bg-primary/40" />
+                <ChevronDown className="h-4 w-4 shrink-0 -rotate-90 text-text-muted transition-transform duration-200 group-open:rotate-0" />
+              </summary>
+              <div className="space-y-2">
+                <Label>{t('codeWiki.scheduledUpdate.runner')}</Label>
+                <p className="text-xs text-text-secondary">
+                  {t('codeWiki.scheduledUpdate.runnerHint')}
+                </p>
+                <UserSearchSelect
+                  selectedUsers={selectedRunners}
+                  onSelectedUsersChange={users => {
+                    setSelectedRunners(users)
+                    setExecutionPrincipalUserId(users[0]?.id ?? null)
+                  }}
+                  multiple={false}
+                  placeholder={t('codeWiki.scheduledUpdate.runnerPlaceholder')}
+                  inputTestId="code-wiki-scheduled-runner"
+                />
+              </div>
+            </details>
           </div>
         )}
         {loadError && (

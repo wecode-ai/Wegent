@@ -230,6 +230,15 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
   // Handle WebSocket background execution updates
   const handleBackgroundExecutionUpdate = useCallback(
     (data: BackgroundExecutionUpdatePayload) => {
+      if (
+        data.status === 'COMPLETED' ||
+        data.status === 'COMPLETED_SILENT' ||
+        data.status === 'FAILED' ||
+        data.status === 'CANCELLED'
+      ) {
+        void refreshSubscriptions()
+      }
+
       setExecutions(prev => {
         // Check if this execution already exists
         const existingIndex = prev.findIndex(e => e.id === data.execution_id)
@@ -279,7 +288,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
         }
       })
     },
-    [showSilentExecutions]
+    [refreshSubscriptions, showSilentExecutions]
   )
 
   // Subscribe to WebSocket background execution events

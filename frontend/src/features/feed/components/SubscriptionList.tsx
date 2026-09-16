@@ -14,6 +14,7 @@ import {
   CalendarClock,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Clock,
   Copy,
@@ -169,7 +170,7 @@ export function SubscriptionList({
 
   // Load execution history for a subscription
   const loadExecutionHistory = useCallback(
-    async (subscriptionId: number) => {
+    async (subscriptionId: number, includeSilent = false) => {
       if (executionHistory[subscriptionId]) {
         // Already loaded, just toggle
         setExpandedSubscriptionId(prev => (prev === subscriptionId ? null : subscriptionId))
@@ -178,7 +179,14 @@ export function SubscriptionList({
 
       setExecutionHistoryLoading(subscriptionId)
       try {
-        const response = await subscriptionApis.getExecutions({ page: 1, limit: 5 }, subscriptionId)
+        const response = await subscriptionApis.getExecutions(
+          { page: 1, limit: 5 },
+          subscriptionId,
+          undefined,
+          undefined,
+          undefined,
+          includeSilent
+        )
         setExecutionHistory(prev => ({
           ...prev,
           [subscriptionId]: response.items,
@@ -349,6 +357,76 @@ export function SubscriptionList({
     }
   }
 
+  const renderExecutionHistory = (
+    history: BackgroundExecution[],
+    localizeCodeWikiMessages = false
+  ) => (
+    <div className="bg-surface/30 border-t border-border px-4 py-3">
+      <div className="flex items-center gap-2 mb-3">
+        <History className="h-4 w-4 text-text-muted" />
+        <span className="text-sm font-medium text-text-secondary">{t('recent_executions')}</span>
+      </div>
+
+      {history.length === 0 ? (
+        <div className="text-sm text-text-muted py-2">{t('no_executions')}</div>
+      ) : (
+        <div className="space-y-2">
+          {history.map(exec => {
+            const status = statusConfig[exec.status]
+            const resultMessageKey =
+              localizeCodeWikiMessages && exec.result_summary
+                ? codeWikiExecutionMessageKeys[exec.result_summary]
+                : undefined
+            return (
+              <div
+                key={exec.id}
+                className="flex items-center gap-3 p-2 rounded-lg bg-base hover:bg-surface/50 transition-colors"
+              >
+                <div className={`flex-shrink-0 ${status.color}`}>{status.icon}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className={status.color}>{t(status.text)}</span>
+                    <span className="text-text-muted">·</span>
+                    <span className="text-text-muted text-xs">
+                      {formatRelativeTime(exec.created_at)}
+                    </span>
+                    {exec.trigger_reason && (
+                      <>
+                        <span className="text-text-muted">·</span>
+                        <span className="text-text-muted text-xs truncate">
+                          {exec.trigger_reason}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {exec.result_summary && (
+                    <div className="text-xs text-text-muted mt-1 line-clamp-2">
+                      {resultMessageKey ? t(resultMessageKey) : exec.result_summary}
+                    </div>
+                  )}
+                  {exec.error_message && (
+                    <div className="text-xs text-red-500 mt-1 line-clamp-2">
+                      {exec.error_message}
+                    </div>
+                  )}
+                </div>
+                {exec.task_id && (
+                  <button
+                    onClick={() => handleViewConversation(exec.task_id!)}
+                    className="flex-shrink-0 flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    {t('feed.view_conversation')}
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <div className="flex h-full flex-col">
       {/* Invalid Schedule Warning Banner */}
@@ -392,70 +470,101 @@ export function SubscriptionList({
                   | BackgroundExecutionStatus
                   | undefined
                 const lastStatusDisplay = lastStatus ? statusConfig[lastStatus] : undefined
-                const lastMessage = subscription.last_execution_message
-                const lastMessageKey = lastMessage
-                  ? codeWikiExecutionMessageKeys[lastMessage]
-                  : undefined
                 return (
-                  <a
-                    key={subscription.id}
-                    href={`/knowledge?type=document&kb=${subscription.code_wiki_id}`}
-                    className="flex min-h-16 items-center gap-4 border-b border-border px-4 py-3 hover:bg-surface/50"
-                    data-testid="code-wiki-subscription-row"
-                  >
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface text-text-secondary">
-                      <CalendarClock className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="truncate font-medium">{subscription.display_name}</span>
-                        <Badge variant="secondary" className="shrink-0 text-xs">
-                          {t('code_wiki_scheduled_update')}
-                        </Badge>
+                  <div key={subscription.id} className="border-b border-border last:border-b-0">
+                    <div
+                      className="flex min-h-16 items-center gap-4 px-4 py-3 hover:bg-surface/50 sm:pr-2"
+                      data-testid="code-wiki-subscription-row"
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                        <CalendarClock className="h-4 w-4" />
                       </div>
-                      <div className="text-xs text-text-muted">
-                        {getTriggerLabel(subscription)} ·{' '}
-                        {subscription.enabled ? (
-                          <>
-                            {t('next_execution')}:{' '}
-                            {formatNextExecution(subscription.next_execution_time)}
-                          </>
-                        ) : (
-                          t('execution_disabled')
-                        )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="truncate font-medium">{subscription.display_name}</span>
+                          <Badge variant="secondary" className="shrink-0 text-xs">
+                            {t('code_wiki_scheduled_update')}
+                          </Badge>
+                        </div>
+                        <div
+                          className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-text-muted"
+                          data-testid="code-wiki-subscription-meta"
+                        >
+                          <span>{getTriggerLabel(subscription)}</span>
+                          <span>·</span>
+                          {subscription.enabled ? (
+                            <span>
+                              {t('next_execution')}:{' '}
+                              {formatNextExecution(subscription.next_execution_time)}
+                            </span>
+                          ) : (
+                            <span>{t('execution_disabled')}</span>
+                          )}
+                          <span>·</span>
+                          {lastStatusDisplay ? (
+                            <span
+                              className={`inline-flex items-center gap-1 ${lastStatusDisplay.color}`}
+                            >
+                              {lastStatusDisplay.icon}
+                              {t(lastStatusDisplay.text)}
+                              {subscription.last_execution_time && (
+                                <> · {formatRelativeTime(subscription.last_execution_time)}</>
+                              )}
+                            </span>
+                          ) : (
+                            <span>{t('code_wiki_not_checked')}</span>
+                          )}
+                        </div>
                       </div>
                       <div
-                        className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-text-muted"
-                        data-testid="code-wiki-subscription-last-execution"
+                        className="flex shrink-0 items-center gap-3"
+                        data-testid="code-wiki-subscription-controls"
                       >
-                        {lastStatusDisplay ? (
-                          <span
-                            className={`inline-flex items-center gap-1 ${lastStatusDisplay.color}`}
-                          >
-                            {lastStatusDisplay.icon}
-                            {t(lastStatusDisplay.text)}
-                            {subscription.last_execution_time && (
-                              <> · {formatRelativeTime(subscription.last_execution_time)}</>
-                            )}
+                        <button
+                          onClick={() => loadExecutionHistory(subscription.id, true)}
+                          className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
+                          disabled={isLoadingHistory}
+                          aria-expanded={isExpanded}
+                          data-testid="code-wiki-subscription-execution-count"
+                        >
+                          {isLoadingHistory ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <History className="h-3.5 w-3.5" />
+                          )}
+                          <span className="text-sm font-medium">
+                            {subscription.execution_count}
                           </span>
-                        ) : (
-                          <span>{t('code_wiki_not_checked')}</span>
-                        )}
-                        <span>
-                          {subscription.execution_count} {t('executions')}
-                        </span>
-                        {lastMessage && (
-                          <span className="min-w-0 max-w-xs truncate" title={lastMessage}>
-                            {lastMessageKey ? t(lastMessageKey) : lastMessage}
+                          <span className="text-xs">{t('executions')}</span>
+                          {isExpanded ? (
+                            <ChevronUp className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                        <Badge
+                          variant={subscription.enabled ? 'default' : 'secondary'}
+                          className="hidden shrink-0 sm:inline-flex"
+                          data-testid="code-wiki-subscription-enabled-indicator"
+                          aria-label={subscription.enabled ? t('enabled') : t('disabled')}
+                        >
+                          {subscription.enabled ? t('enabled') : t('disabled')}
+                        </Badge>
+                        <a
+                          href={`/knowledge?type=document&kb=${subscription.code_wiki_id}`}
+                          className="inline-flex h-8 w-9 shrink-0 items-center justify-center gap-1 rounded-md text-xs text-text-muted transition-colors hover:bg-surface hover:text-text-primary sm:w-32 sm:px-2"
+                          aria-label={t('code_wiki_scheduled_update_hint')}
+                          data-testid="code-wiki-subscription-management"
+                        >
+                          <span className="hidden sm:inline">
+                            {t('code_wiki_scheduled_update_hint')}
                           </span>
-                        )}
-                        <span>{t('code_wiki_scheduled_update_hint')}</span>
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </a>
                       </div>
                     </div>
-                    <Badge variant={subscription.enabled ? 'default' : 'secondary'}>
-                      {subscription.enabled ? t('enabled') : t('disabled')}
-                    </Badge>
-                  </a>
+                    {isExpanded && renderExecutionHistory(history, true)}
+                  </div>
                 )
               }
 
@@ -767,75 +876,7 @@ export function SubscriptionList({
                   </div>
 
                   {/* Expanded execution history section */}
-                  {isExpanded && (
-                    <div className="bg-surface/30 border-t border-border px-4 py-3">
-                      <div className="flex items-center gap-2 mb-3">
-                        <History className="h-4 w-4 text-text-muted" />
-                        <span className="text-sm font-medium text-text-secondary">
-                          {t('recent_executions')}
-                        </span>
-                      </div>
-
-                      {history.length === 0 ? (
-                        <div className="text-sm text-text-muted py-2">{t('no_executions')}</div>
-                      ) : (
-                        <div className="space-y-2">
-                          {history.map(exec => {
-                            const status = statusConfig[exec.status]
-                            return (
-                              <div
-                                key={exec.id}
-                                className="flex items-center gap-3 p-2 rounded-lg bg-base hover:bg-surface/50 transition-colors"
-                              >
-                                {/* Status icon */}
-                                <div className={`flex-shrink-0 ${status.color}`}>{status.icon}</div>
-
-                                {/* Execution info */}
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 text-sm">
-                                    <span className={status.color}>{t(status.text)}</span>
-                                    <span className="text-text-muted">·</span>
-                                    <span className="text-text-muted text-xs">
-                                      {formatRelativeTime(exec.created_at)}
-                                    </span>
-                                    {exec.trigger_reason && (
-                                      <>
-                                        <span className="text-text-muted">·</span>
-                                        <span className="text-text-muted text-xs truncate">
-                                          {exec.trigger_reason}
-                                        </span>
-                                      </>
-                                    )}
-                                  </div>
-                                  {exec.result_summary && (
-                                    <div className="text-xs text-text-muted mt-1 line-clamp-2">
-                                      {exec.result_summary}
-                                    </div>
-                                  )}
-                                  {exec.error_message && (
-                                    <div className="text-xs text-red-500 mt-1 line-clamp-2">
-                                      {exec.error_message}
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* View conversation button */}
-                                {exec.task_id && (
-                                  <button
-                                    onClick={() => handleViewConversation(exec.task_id!)}
-                                    className="flex-shrink-0 flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
-                                  >
-                                    <MessageSquare className="h-3.5 w-3.5" />
-                                    {t('feed.view_conversation')}
-                                  </button>
-                                )}
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {isExpanded && renderExecutionHistory(history)}
                 </div>
               )
             })}

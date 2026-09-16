@@ -18,7 +18,7 @@
   "create_subscription_desc": "Set up a new automated subscription",
   "no_subscriptions": "No subscriptions configured",
   "code_wiki_scheduled_update": "Code Wiki scheduled update",
-  "code_wiki_scheduled_update_hint": "Managed from the linked Code Wiki settings",
+  "code_wiki_scheduled_update_hint": "Manage in Wiki",
   "code_wiki_not_checked": "Not checked yet",
   "code_wiki_repository_unchanged": "Repository unchanged; no update needed",
   "code_wiki_generation_running": "Another generation is already running; this check was skipped",
