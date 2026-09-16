@@ -321,6 +321,46 @@ impl CodexAppServerClient {
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let (request_id, handle, response_rx) = self.prepare_request().await?;
+        Self::send_request_and_wait(
+            method,
+            params,
+            timeout_seconds,
+            request_id,
+            handle,
+            response_rx,
+        )
+        .await
+    }
+
+    async fn request_for_launch_config(
+        &self,
+        method: &str,
+        params: Value,
+        launch_config: &CodexLaunchConfig,
+    ) -> Result<Value, String> {
+        let timeout_seconds = codex_rpc_timeout_seconds();
+        let (request_id, handle, response_rx) = self
+            .prepare_request_with_process(true, Some(launch_config))
+            .await?;
+        Self::send_request_and_wait(
+            method,
+            params,
+            timeout_seconds,
+            request_id,
+            handle,
+            response_rx,
+        )
+        .await
+    }
+
+    async fn send_request_and_wait(
+        method: &str,
+        params: Value,
+        timeout_seconds: u64,
+        request_id: u64,
+        handle: CodexAppServerHandle,
+        response_rx: oneshot::Receiver<Result<Value, String>>,
+    ) -> Result<Value, String> {
         let message = json!({
             "method": method,
             "id": request_id,
@@ -589,7 +629,7 @@ impl CodexAppServerClient {
         ),
         String,
     > {
-        self.prepare_request_with_process(true).await
+        self.prepare_request_with_process(true, None).await
     }
 
     async fn prepare_existing_request(
@@ -602,12 +642,13 @@ impl CodexAppServerClient {
         ),
         String,
     > {
-        self.prepare_request_with_process(false).await
+        self.prepare_request_with_process(false, None).await
     }
 
     async fn prepare_request_with_process(
         &self,
         start_if_missing: bool,
+        launch_config: Option<&CodexLaunchConfig>,
     ) -> Result<
         (
             u64,
@@ -626,8 +667,12 @@ impl CodexAppServerClient {
             state.process = None;
             state.process_environment.clear();
         }
+        let empty_launch_environment = BTreeMap::new();
+        let launch_environment = launch_config
+            .map(|config| &config.env)
+            .unwrap_or(&empty_launch_environment);
         let process_environment =
-            codex_process_environment(&state.runtime_proxy_env, &BTreeMap::new());
+            codex_process_environment(&state.runtime_proxy_env, launch_environment);
         if state.process.is_some() && state.process_environment != process_environment {
             if !state.active_threads.is_empty() {
                 return Err(
@@ -638,16 +683,17 @@ impl CodexAppServerClient {
             state.process_environment.clear();
         }
         if state.process.is_none() {
-            let launch_config = CodexLaunchConfig {
-                env: process_environment.clone(),
-                ..CodexLaunchConfig::default()
-            };
             if !start_if_missing {
                 return Err("codex app-server is not running".to_owned());
             }
-            let (process, next_id) =
-                start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
-                    .await?;
+            let mut process_launch_config = launch_config.cloned().unwrap_or_default();
+            process_launch_config.env = process_environment.clone();
+            let (process, next_id) = start_persistent_codex_app_server(
+                &self.binary,
+                state.next_id,
+                &process_launch_config,
+            )
+            .await?;
             state.process = Some(process);
             state.process_environment = process_environment;
             state.next_id = next_id;
@@ -663,6 +709,28 @@ impl CodexAppServerClient {
         let (tx, rx) = oneshot::channel();
         handle.pending.lock().await.insert(request_id, tx);
         Ok((request_id, handle, rx))
+    }
+
+    pub async fn fork_thread_at(
+        &self,
+        thread_id: &str,
+        thread_path: Option<&str>,
+        last_turn_id: &str,
+        request: &ExecutionRequest,
+    ) -> Result<Value, String> {
+        let launch_config = build_codex_launch_config_for_fork(request, thread_id)?;
+        let mut params = thread_fork_params(thread_id, thread_path, request, &launch_config);
+        params["lastTurnId"] = Value::String(last_turn_id.to_owned());
+        let response = self
+            .request_for_launch_config("thread/fork", params, &launch_config)
+            .await?;
+        let forked_thread_id = thread_id_from_response(
+            "thread/fork",
+            &response,
+            launch_config.model_provider.as_deref(),
+        )?;
+        bind_local_proxy_thread(&launch_config, &forked_thread_id)?;
+        Ok(response)
     }
 
     async fn send_response(&self, request_id: Value, result: Value) -> Result<(), String> {
@@ -3237,6 +3305,20 @@ struct CodexLocalImage {
 }
 
 fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchConfig, String> {
+    build_codex_launch_config_with_bound_thread(request, None)
+}
+
+fn build_codex_launch_config_for_fork(
+    request: &ExecutionRequest,
+    source_thread_id: &str,
+) -> Result<CodexLaunchConfig, String> {
+    build_codex_launch_config_with_bound_thread(request, Some(source_thread_id))
+}
+
+fn build_codex_launch_config_with_bound_thread(
+    request: &ExecutionRequest,
+    bound_thread_id: Option<&str>,
+) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
     let configured_base_url = non_empty_config(&request.model_config, "base_url")
         .or_else(|| non_empty_config(&request.model_config, "baseUrl"));
@@ -3302,14 +3384,15 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                     ("payload_auth_present", configured_auth_present.to_string()),
                 ],
             );
-            configure_codex_router(
+            configure_or_retain_codex_router(
                 &mut launch_config,
                 &request.task_id,
+                bound_thread_id,
                 upstream,
                 model.clone(),
                 request_model_switched(request),
                 vision_sidecar_upstream(&request.model_config)?,
-            );
+            )?;
         } else {
             log_executor_event(
                 "codex model route selected",
@@ -3349,14 +3432,15 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                 ("payload_auth_present", configured_auth_present.to_string()),
             ],
         );
-        configure_codex_router(
+        configure_or_retain_codex_router(
             &mut launch_config,
             &request.task_id,
+            bound_thread_id,
             upstream,
             model.clone(),
             request_model_switched(request),
             vision_sidecar_upstream(&request.model_config)?,
-        );
+        )?;
     } else {
         let inference_provider = inference_model_provider(&request.model_config);
         log_executor_event(
@@ -3449,6 +3533,36 @@ fn configure_codex_router(
     if model_switched {
         local_model_proxy::mark_model_switch(&local_token);
     }
+    configure_codex_router_registration(launch_config, local_token);
+}
+
+fn configure_or_retain_codex_router(
+    launch_config: &mut CodexLaunchConfig,
+    task_id: &str,
+    bound_thread_id: Option<&str>,
+    upstream: LocalModelProxyUpstream,
+    routing_model_id: Option<String>,
+    model_switched: bool,
+    vision_sidecar: Option<VisionSidecarUpstream>,
+) -> Result<(), String> {
+    if let Some(thread_id) = bound_thread_id {
+        let local_token =
+            local_model_proxy::retain_for_thread(thread_id, routing_model_id.as_deref())?;
+        configure_codex_router_registration(launch_config, local_token);
+    } else {
+        configure_codex_router(
+            launch_config,
+            task_id,
+            upstream,
+            routing_model_id,
+            model_switched,
+            vision_sidecar,
+        );
+    }
+    Ok(())
+}
+
+fn configure_codex_router_registration(launch_config: &mut CodexLaunchConfig, local_token: String) {
     let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
     let provider = codex_model_catalog::PROVIDER_ID;
