@@ -354,6 +354,7 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
         "auto",
         description="RAG configuration mode: auto-fill or disabled",
     )
+    dingtalk_auto_sync_enabled: bool = Field(default=False)
     summary_enabled: bool = Field(
         default=False,
         description="Enable automatic summary generation for documents",

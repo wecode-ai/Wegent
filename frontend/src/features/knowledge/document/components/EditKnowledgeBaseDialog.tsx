@@ -15,11 +15,11 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { Spinner } from '@/components/ui/spinner'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
 import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
@@ -423,19 +423,10 @@ export function EditKnowledgeBaseDialog({
                         />
                       </>
                     ) : (
-                      <SimpleConfigRow
-                        label={tKnowledge('document.dingtalkAutoSync.label')}
-                        description={tKnowledge('document.dingtalkAutoSync.description')}
-                      >
-                        <label className="flex min-h-11 min-w-11 items-center justify-end">
-                          <Switch
-                            aria-label={tKnowledge('document.dingtalkAutoSync.label')}
-                            data-testid="knowledge-dingtalk-auto-sync"
-                            checked={dingtalkAutoSyncEnabled}
-                            onCheckedChange={setDingtalkAutoSyncEnabled}
-                          />
-                        </label>
-                      </SimpleConfigRow>
+                      <DingtalkAutoSyncSetting
+                        checked={dingtalkAutoSyncEnabled}
+                        onCheckedChange={setDingtalkAutoSyncEnabled}
+                      />
                     )
                   }
                   name={name}

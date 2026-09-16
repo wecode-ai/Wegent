@@ -422,6 +422,7 @@ export interface KnowledgeBaseCreate {
   allow_document_download?: boolean
   retrieval_config?: RetrievalConfigDraft
   rag_config_mode?: RagConfigMode
+  dingtalk_auto_sync_enabled?: boolean
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
   /** Default opening view: 'notebook' or 'classic' (documents) */

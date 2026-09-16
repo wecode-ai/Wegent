@@ -315,6 +315,7 @@ class KnowledgeService:
                 data.kb_type or KnowledgeBaseType.NOTEBOOK
             ).value,
             "retrievalConfig": _to_json_dict(data.retrieval_config),
+            "dingtalkAutoSyncEnabled": data.dingtalk_auto_sync_enabled,
             "summaryEnabled": data.summary_enabled,
         }
         if data.allow_document_download is not None:

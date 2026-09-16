@@ -12,7 +12,11 @@ import pytest
 
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus
-from app.schemas.knowledge import KnowledgeBaseResponse, KnowledgeBaseUpdate
+from app.schemas.knowledge import (
+    KnowledgeBaseCreate,
+    KnowledgeBaseResponse,
+    KnowledgeBaseUpdate,
+)
 from app.services.knowledge.external_document_import import (
     external_document_import_service,
 )
@@ -394,3 +398,16 @@ def test_changes_during_probe_prevent_refresh(
     )
     assert refresh_dingtalk_copy(test_db, document_id, generation) is False
     fetch.assert_not_awaited()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_create_preserves_auto_sync_setting(test_db, test_user, enabled):
+    kb_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        test_user.id,
+        KnowledgeBaseCreate(
+            name="create-auto-sync", dingtalk_auto_sync_enabled=enabled
+        ),
+    )
+    kb = test_db.get(Kind, kb_id)
+    assert KnowledgeBaseResponse.from_kind(kb).dingtalk_auto_sync_enabled is enabled
