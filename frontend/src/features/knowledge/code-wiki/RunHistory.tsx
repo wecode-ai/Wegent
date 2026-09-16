@@ -119,7 +119,7 @@ function RunRow({
   run: CodeWikiRunRecord
   knowledgeBaseId: number
   onRepublished: () => void | Promise<void>
-  scheduledUpdateEnabled: boolean
+  scheduledUpdateEnabled: boolean | null
   canManage: boolean
 }) {
   const { t } = useTranslation('knowledge')
@@ -243,9 +243,13 @@ function RunRow({
                     ? 'codeWiki.history.republishSyncingBody'
                     : 'codeWiki.history.republishConfirmBody'
                 )}
-                {scheduledUpdateEnabled && (
+                {scheduledUpdateEnabled !== false && (
                   <span className="mt-2 block text-amber-500">
-                    {t('codeWiki.history.republishScheduledWarning')}
+                    {t(
+                      scheduledUpdateEnabled === null
+                        ? 'codeWiki.history.republishScheduleUnknownWarning'
+                        : 'codeWiki.history.republishScheduledWarning'
+                    )}
                   </span>
                 )}
               </AlertDialogDescription>
@@ -344,11 +348,12 @@ export function RunHistory({
   const { t } = useTranslation('knowledge')
   const [runs, setRuns] = useState<CodeWikiRunRecord[] | null>(null)
   const [loading, setLoading] = useState(false)
-  const [scheduledUpdateEnabled, setScheduledUpdateEnabled] = useState(false)
+  const [scheduledUpdateEnabled, setScheduledUpdateEnabled] = useState<boolean | null>(null)
   const chip = summarise(status, t)
 
   const load = useCallback(async () => {
     setLoading(true)
+    setScheduledUpdateEnabled(null)
     try {
       const [history, scheduledUpdate] = await Promise.all([
         codeWikiApi.history(knowledgeBaseId),
@@ -357,7 +362,7 @@ export function RunHistory({
           : Promise.resolve(null),
       ])
       setRuns(history.runs)
-      setScheduledUpdateEnabled(Boolean(scheduledUpdate?.enabled))
+      setScheduledUpdateEnabled(scheduledUpdate ? Boolean(scheduledUpdate.enabled) : null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
       setRuns([])

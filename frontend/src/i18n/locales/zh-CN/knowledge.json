@@ -1356,6 +1356,7 @@
       "republishSyncingBody": "正在写入页面、清理旧内容并刷新阅读视图。请保持此窗口打开。",
       "republishSyncing": "正在同步…",
       "republishScheduledWarning": "定期更新仍处于启用状态，未来运行可能再次覆盖这个版本；如需冻结，请先关闭定期更新。",
+      "republishScheduleUnknownWarning": "无法确认定期更新状态，未来的定时运行可能再次覆盖这个版本；如需冻结，请检查 Wiki 设置。",
       "viewFailure": "查看完整错误",
       "failureDetailsTitle": "生成错误",
       "failureDetailsDescription": "本次生成的完整错误信息。"

@@ -12,7 +12,7 @@ import type { CodeWikiScheduledUpdate } from '@/types/code-wiki'
 const translations: Record<string, string> = {
   'codeWiki.scheduledUpdate.advanced': 'Advanced settings',
   'codeWiki.scheduledUpdate.history': 'Recent checks',
-  'codeWiki.scheduledUpdate.results.repositoryUnchanged': 'Repository unchanged',
+  'knowledge:codeWiki.scheduledUpdate.results.repositoryUnchanged': 'Repository unchanged',
   'feed:status_failed': 'Failed',
   'feed:status_completed_silent': 'Completed (silent)',
 }

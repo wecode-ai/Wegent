@@ -63,6 +63,28 @@ describe('restoring a past version', () => {
 
     expect(await screen.findByTestId('code-wiki-republish-confirm')).toBeInTheDocument()
     expect(codeWikiApi.republish).not.toHaveBeenCalled()
+    expect(screen.queryByText('codeWiki.history.republishScheduledWarning')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('codeWiki.history.republishScheduleUnknownWarning')
+    ).not.toBeInTheDocument()
+  })
+
+  it.each([true, null])('warns when the schedule is enabled or unknown (%s)', async enabled => {
+    if (enabled === null) {
+      jest.mocked(codeWikiApi.scheduledUpdate).mockRejectedValue(new Error('Network error'))
+    } else {
+      jest.mocked(codeWikiApi.scheduledUpdate).mockResolvedValue({ enabled } as never)
+    }
+    fireEvent.click(await openHistory())
+    expect(
+      await screen.findByText(
+        enabled === null
+          ? 'codeWiki.history.republishScheduleUnknownWarning'
+          : 'codeWiki.history.republishScheduledWarning'
+      )
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('code-wiki-republish-confirm-42'))
+    await waitFor(() => expect(codeWikiApi.republish).toHaveBeenCalledWith(1, 42))
   })
 
   it('restores once confirmed', async () => {

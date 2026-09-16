@@ -44,6 +44,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { parseUTCDate } from '@/lib/utils'
 import type { CodeWikiScheduledUpdate, CodeWikiScheduledUpdateRequest } from '@/types/code-wiki'
 import type { SearchUser } from '@/types/api'
+import { localizeExecutionResult } from './localizeExecutionResult'
 
 const EXECUTION_STATUS_KEYS: Record<string, string> = {
   PENDING: 'feed:status_pending',
@@ -53,16 +54,6 @@ const EXECUTION_STATUS_KEYS: Record<string, string> = {
   FAILED: 'feed:status_failed',
   RETRYING: 'feed:status_retrying',
   CANCELLED: 'feed:status_cancelled',
-}
-
-const EXECUTION_RESULT_KEYS: Record<string, string> = {
-  'repository unchanged since last run': 'codeWiki.scheduledUpdate.results.repositoryUnchanged',
-  'Skipped because scheduled update was deleted': 'codeWiki.scheduledUpdate.results.deleted',
-  'Skipped because scheduled update was disabled': 'codeWiki.scheduledUpdate.results.disabled',
-  'Skipped because another generation is running':
-    'codeWiki.scheduledUpdate.results.generationRunning',
-  'Code Wiki no longer exists or its reference no longer matches':
-    'codeWiki.scheduledUpdate.results.wikiUnavailable',
 }
 
 function formatDateTime(value: string, timezone: string, locale: string): string {
@@ -106,19 +97,6 @@ export function ScheduledUpdateDialog({
   const [executionPrincipalUserId, setExecutionPrincipalUserId] = useState<number | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const loadRequestId = useRef(0)
-
-  const localizeResultSummary = (summary: string) => {
-    const key = EXECUTION_RESULT_KEYS[summary]
-    if (key) return t(key)
-
-    const started = /^(full|incremental) generation started$/.exec(summary)
-    if (started) {
-      return t('codeWiki.scheduledUpdate.results.generationStarted', {
-        mode: t(`codeWiki.history.mode.${started[1]}`),
-      })
-    }
-    return summary
-  }
 
   const loadPlan = useCallback(async () => {
     const requestId = ++loadRequestId.current
@@ -349,7 +327,7 @@ export function ScheduledUpdateDialog({
                       {(execution.error_message || execution.result_summary) && (
                         <p className="mt-1 break-words text-text-secondary">
                           {execution.error_message ||
-                            localizeResultSummary(execution.result_summary)}
+                            localizeExecutionResult(execution.result_summary, t)}
                         </p>
                       )}
                     </li>

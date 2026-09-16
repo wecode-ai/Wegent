@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import { subscriptionApis } from '@/apis/subscription'
 import { SubscriptionList } from '@/features/feed/components/SubscriptionList'
@@ -130,5 +130,75 @@ describe('Code Wiki subscription row', () => {
       await screen.findByText('The wiki is published and the repository is unchanged.')
     ).toBeInTheDocument()
     expect(executionCount).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('refreshes expanded history on terminal changes and re-fetches on reopen', async () => {
+    const props = { onCreateSubscription: jest.fn(), onEditSubscription: jest.fn() }
+    const { rerender } = render(<SubscriptionList {...props} />)
+    const count = screen.getByTestId('code-wiki-subscription-execution-count')
+    fireEvent.click(count)
+    await screen.findByText('The wiki is published and the repository is unchanged.')
+    jest.mocked(subscriptionApis.getExecutions).mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 92,
+          subscription_id: 12,
+          status: 'COMPLETED_SILENT',
+          result_summary: 'repository unchanged since last run',
+          created_at: '2026-09-16T11:00:00',
+        },
+      ],
+    } as never)
+    const context = jest.mocked(useSubscriptionContext).mock.results[0].value
+    jest.mocked(useSubscriptionContext).mockReturnValue({
+      ...context,
+      subscriptions: [
+        {
+          ...CODE_WIKI_SUBSCRIPTION,
+          last_execution_status: 'COMPLETED_SILENT',
+        },
+      ],
+    })
+    rerender(<SubscriptionList {...props} />)
+    await screen.findByText('knowledge:codeWiki.scheduledUpdate.results.repositoryUnchanged')
+    expect(subscriptionApis.getExecutions).toHaveBeenCalledTimes(2)
+    expect(
+      screen.queryByText('The wiki is published and the repository is unchanged.')
+    ).not.toBeInTheDocument()
+    fireEvent.click(count)
+    fireEvent.click(count)
+    await waitFor(() => expect(subscriptionApis.getExecutions).toHaveBeenCalledTimes(3))
+  })
+
+  it('does not let an old request replace newer execution history', async () => {
+    let finishOld!: (value: Awaited<ReturnType<typeof subscriptionApis.getExecutions>>) => void
+    jest.mocked(subscriptionApis.getExecutions).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishOld = resolve
+        })
+    )
+    const props = { onCreateSubscription: jest.fn(), onEditSubscription: jest.fn() }
+    const { rerender } = render(<SubscriptionList {...props} />)
+    fireEvent.click(screen.getByTestId('code-wiki-subscription-execution-count'))
+    const context = jest.mocked(useSubscriptionContext).mock.results[0].value
+    jest.mocked(useSubscriptionContext).mockReturnValue({
+      ...context,
+      subscriptions: [
+        {
+          ...CODE_WIKI_SUBSCRIPTION,
+          execution_count: 6,
+          last_execution_time: '2026-09-16T11:00:00',
+        },
+      ],
+    })
+    rerender(<SubscriptionList {...props} />)
+    await screen.findByText('The wiki is published and the repository is unchanged.')
+    await act(async () => finishOld({ total: 0, items: [] } as never))
+    expect(
+      screen.getByText('The wiki is published and the repository is unchanged.')
+    ).toBeInTheDocument()
+    expect(subscriptionApis.getExecutions).toHaveBeenCalledTimes(2)
   })
 })

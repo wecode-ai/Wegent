@@ -7,7 +7,7 @@
 /**
  * Subscription configuration list component.
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import {
   AlertCircle,
@@ -60,6 +60,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useSubscriptionContext } from '../contexts/subscriptionContext'
 import { subscriptionApis } from '@/apis/subscription'
+import { localizeExecutionResult } from '@/features/knowledge/code-wiki/localizeExecutionResult'
 import type {
   Subscription,
   SubscriptionTriggerType,
@@ -131,12 +132,6 @@ const statusConfig: Record<
   },
 }
 
-const codeWikiExecutionMessageKeys: Record<string, string> = {
-  'repository unchanged since last run': 'code_wiki_repository_unchanged',
-  'Skipped because another generation is running': 'code_wiki_generation_running',
-  'Skipped because scheduled update was disabled': 'code_wiki_schedule_disabled',
-}
-
 export function SubscriptionList({
   onCreateSubscription,
   onEditSubscription,
@@ -164,43 +159,59 @@ export function SubscriptionList({
     {}
   )
   const [executionHistoryLoading, setExecutionHistoryLoading] = useState<number | null>(null)
+  const [historyRefresh, setHistoryRefresh] = useState(0)
+  const historyTranslation = useRef(t)
+  historyTranslation.current = t
 
   // Dialog state for viewing conversation
   const [dialogTaskId, setDialogTaskId] = useState<number | null>(null)
 
-  // Load execution history for a subscription
-  const loadExecutionHistory = useCallback(
-    async (subscriptionId: number, includeSilent = false) => {
-      if (executionHistory[subscriptionId]) {
-        // Already loaded, just toggle
-        setExpandedSubscriptionId(prev => (prev === subscriptionId ? null : subscriptionId))
-        return
-      }
+  const toggleExecutionHistory = useCallback((subscriptionId: number) => {
+    setExpandedSubscriptionId(prev => (prev === subscriptionId ? null : subscriptionId))
+  }, [])
+  const expandedSubscription = subscriptions.find(item => item.id === expandedSubscriptionId)
+  const historyVersion = JSON.stringify([
+    expandedSubscription?.execution_count,
+    expandedSubscription?.last_execution_time,
+    expandedSubscription?.last_execution_status,
+  ])
+  const includeSilent = Boolean(expandedSubscription?.code_wiki_id)
 
-      setExecutionHistoryLoading(subscriptionId)
-      try {
-        const response = await subscriptionApis.getExecutions(
-          { page: 1, limit: 5 },
-          subscriptionId,
-          undefined,
-          undefined,
-          undefined,
-          includeSilent
-        )
+  // Re-fetch on reopen or execution changes; discard superseded responses.
+  useEffect(() => {
+    if (expandedSubscriptionId === null) return
+    const subscriptionId = expandedSubscriptionId
+    let cancelled = false
+    setExecutionHistoryLoading(subscriptionId)
+    subscriptionApis
+      .getExecutions(
+        { page: 1, limit: 5 },
+        subscriptionId,
+        undefined,
+        undefined,
+        undefined,
+        includeSilent
+      )
+      .then(response => {
+        if (cancelled) return
         setExecutionHistory(prev => ({
           ...prev,
           [subscriptionId]: response.items,
         }))
-        setExpandedSubscriptionId(subscriptionId)
-      } catch (error) {
+      })
+      .catch(error => {
+        if (cancelled) return
         console.error('Failed to load execution history:', error)
-        toast.error(t('load_history_failed'))
-      } finally {
+        toast.error(historyTranslation.current('load_history_failed'))
+      })
+      .finally(() => {
+        if (cancelled) return
         setExecutionHistoryLoading(null)
-      }
-    },
-    [executionHistory, t]
-  )
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [expandedSubscriptionId, historyVersion, includeSilent, historyRefresh])
 
   // Format relative time for execution history
   const formatRelativeTime = (dateStr: string) => {
@@ -246,8 +257,7 @@ export function SubscriptionList({
         })
         // If this subscription is expanded, reload its history
         if (expandedSubscriptionId === subscription.id) {
-          setExpandedSubscriptionId(null)
-          setTimeout(() => loadExecutionHistory(subscription.id), 500)
+          setHistoryRefresh(prev => prev + 1)
         }
       } catch (error) {
         console.error('Failed to trigger subscription:', error)
@@ -256,7 +266,7 @@ export function SubscriptionList({
         setActionLoading(null)
       }
     },
-    [t, refreshExecutions, expandedSubscriptionId, loadExecutionHistory]
+    [t, refreshExecutions, expandedSubscriptionId]
   )
 
   const handleToggle = useCallback(
@@ -373,10 +383,6 @@ export function SubscriptionList({
         <div className="space-y-2">
           {history.map(exec => {
             const status = statusConfig[exec.status]
-            const resultMessageKey =
-              localizeCodeWikiMessages && exec.result_summary
-                ? codeWikiExecutionMessageKeys[exec.result_summary]
-                : undefined
             return (
               <div
                 key={exec.id}
@@ -401,7 +407,9 @@ export function SubscriptionList({
                   </div>
                   {exec.result_summary && (
                     <div className="text-xs text-text-muted mt-1 line-clamp-2">
-                      {resultMessageKey ? t(resultMessageKey) : exec.result_summary}
+                      {localizeCodeWikiMessages
+                        ? localizeExecutionResult(exec.result_summary, t)
+                        : exec.result_summary}
                     </div>
                   )}
                   {exec.error_message && (
@@ -521,7 +529,7 @@ export function SubscriptionList({
                         data-testid="code-wiki-subscription-controls"
                       >
                         <button
-                          onClick={() => loadExecutionHistory(subscription.id, true)}
+                          onClick={() => toggleExecutionHistory(subscription.id)}
                           className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-text-muted transition-colors hover:bg-surface hover:text-text-primary md:min-h-0"
                           disabled={isLoadingHistory}
                           aria-expanded={isExpanded}
@@ -650,7 +658,7 @@ export function SubscriptionList({
                     {/* Stats with expand button */}
                     <div className="hidden sm:flex items-center gap-2">
                       <button
-                        onClick={() => loadExecutionHistory(subscription.id)}
+                        onClick={() => toggleExecutionHistory(subscription.id)}
                         className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-surface transition-colors text-text-muted hover:text-text-primary"
                         disabled={isLoadingHistory}
                       >
@@ -692,7 +700,7 @@ export function SubscriptionList({
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
-                            onClick={() => loadExecutionHistory(subscription.id)}
+                            onClick={() => toggleExecutionHistory(subscription.id)}
                             disabled={isLoadingHistory}
                           >
                             <History className="mr-2 h-4 w-4" />
