@@ -482,6 +482,44 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('awaiting')
   })
 
+  test('ignores the previous terminal snapshot while a completed Goal continuation starts', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const completedAt = 1_787_321_634_000
+    const completedTask = task({
+      running: false,
+      status: 'done',
+      completedAt,
+      goalStatus: 'complete',
+    })
+    store.syncRuntimeWork(runtimeWork(completedTask))
+    store.goalStatusReceived(address, 'complete')
+    store.sendRequested(address)
+    store.sendAccepted(address)
+
+    store.syncRuntimeWork(runtimeWork(completedTask))
+
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.turn.phase).toBe('awaiting')
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+          goalStatus: 'complete',
+        })
+      )
+    )
+
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.task).toMatchObject({
+      running: true,
+      status: 'running',
+    })
+  })
+
   test('keeps an explicit continuation running when a completed Goal snapshot arrives late', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(
