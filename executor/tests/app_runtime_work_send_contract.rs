@@ -4025,7 +4025,7 @@ while IFS= read -r line; do
           active_thread_id=thread-1
           ;;
       esac
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"modelProvider":"openai","thread":{{"id":"'"$active_thread_id"'","modelProvider":"openai"}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"'"$active_thread_id"'"}}}}}}'
       ;;
     *'"method":"thread/fork"'*)
       case "$line" in
@@ -4034,7 +4034,7 @@ while IFS= read -r line; do
           ;;
         *'"lastTurnId":"turn-1"'*)
           active_thread_id=thread-fork-1
-          printf '%s\n' '{{"id":'"$request_id"',"result":{{"modelProvider":"openai","thread":{{"id":"thread-fork-1","modelProvider":"openai"}}}}}}'
+          printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-fork-1"}}}}}}'
           ;;
         *)
           printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
@@ -4055,9 +4055,6 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"thread/rollback"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
-      ;;
-    *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
     *'"method":"thread/goal/get"'*)
