@@ -161,7 +161,7 @@ export function ComposerToolbar({
     >
       <div
         data-composer-toolbar-group="features"
-        className="flex min-w-0 flex-auto flex-wrap items-center gap-x-2 gap-y-1"
+        className="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1"
       >
         <AddContextMenu
           disabled={disabled}
@@ -212,7 +212,7 @@ export function ComposerToolbar({
       </div>
       <div
         data-composer-toolbar-group="actions"
-        className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5"
+        className="ml-auto flex min-w-40 flex-1 items-center justify-end gap-1.5"
       >
         {showExecutionTools ? (
           <>
@@ -245,7 +245,7 @@ export function ComposerToolbar({
                   maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
                 />
               ) : (
-                <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
+                <div className="h-8 w-32 min-w-0 shrink" data-testid="model-selector-loading" />
               ))}
           </>
         ) : null}
@@ -270,7 +270,7 @@ export function ComposerToolbar({
             </button>
           </Tooltip>
         ) : isStreaming && canSend ? (
-          <div className="flex items-center rounded-full bg-text-primary text-background">
+          <div className="flex shrink-0 items-center rounded-full bg-text-primary text-background">
             <Tooltip label={primaryBusyLabel} align="end" testId="composer-send-after-turn-tooltip">
               <button
                 type="submit"
