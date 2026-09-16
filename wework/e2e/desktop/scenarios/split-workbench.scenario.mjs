@@ -375,9 +375,14 @@ async function verifyComposerMarkdownEditing(control) {
   await control.command('waitFor', '[data-testid="link-edit-open-link"]', { visible: true })
   assert.equal(await control.command('getValue', COMPOSER), url)
   await control.command('click', '[data-testid="link-edit-edit-text"]')
-  await control.command('fill', '[data-testid="link-edit-text-input"]', { value: 'Example' })
+  await control.command('fill', '[data-testid="link-edit-text-input"]', {
+    value: String.raw`Example [draft]\done]`,
+  })
   await control.command('press', '[data-testid="link-edit-text-input"]', { key: 'Enter' })
-  assert.equal(await control.command('getValue', COMPOSER), `[Example](${url})`)
+  assert.equal(
+    await control.command('getValue', COMPOSER),
+    String.raw`[Example \[draft\]\\done\]](${url})`
+  )
   await control.command('fill', COMPOSER, { value: '' })
   await control.command('pasteText', COMPOSER, { value: url })
   await control.command('setSelectionOffset', COMPOSER, { value: String(url.length) })

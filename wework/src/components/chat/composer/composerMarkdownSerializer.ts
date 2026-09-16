@@ -1,4 +1,5 @@
 import type { Fragment, Mark, Node as PMNode } from 'prosemirror-model'
+import { serializeComposerLink } from './composerLinks'
 
 interface SerializedDocument {
   text: string
@@ -278,7 +279,10 @@ class MarkdownWriter {
       this.emit(String(node.attrs.reference))
     } else if (node.type.name === 'composer_link') {
       this.emit(
-        node.attrs.label ? `[${node.attrs.label}](${node.attrs.url})` : String(node.attrs.url)
+        serializeComposerLink({
+          label: String(node.attrs.label ?? ''),
+          url: String(node.attrs.url),
+        })
       )
     } else if (node.type.name === 'hard_break') this.emit(inCell ? '<br>' : '\n')
     this.at(position + node.nodeSize)

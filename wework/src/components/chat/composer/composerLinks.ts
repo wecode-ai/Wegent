@@ -12,11 +12,15 @@ export interface ParsedComposerLink extends ComposerLinkPayload {
   end: number
 }
 
-const MARKDOWN_LINK_REGEX = new RegExp(
-  '\\[!?([^\\]]*)\\]\\(([a-z][a-z0-9+.-]*:\\/\\/[^\\s)\\]]+)\\)',
-  'gi'
-)
+const MARKDOWN_LINK_REGEX = /\[!?((?:\\.|[^\]\\])*)\]\(([a-z][a-z0-9+.-]*:\/\/[^\s)\]]+)\)/gi
 const BARE_URL_REGEX = new RegExp('https?:\\/\\/[^\\s)\\]}]+', 'gi')
+
+export function serializeComposerLink({
+  url,
+  label,
+}: Pick<ComposerLinkPayload, 'url' | 'label'>): string {
+  return label ? `[${label.replace(/[\\[\]]/g, '\\$&')}](${url})` : url
+}
 
 function recognizedToParsed(
   recognized: RecognizedLink,
@@ -38,7 +42,7 @@ export function parseComposerLinks(value: string): ParsedComposerLink[] {
   const links: ParsedComposerLink[] = []
   for (const match of value.matchAll(MARKDOWN_LINK_REGEX)) {
     const raw = match[0]
-    const label = match[1] ?? ''
+    const label = (match[1] ?? '').replace(/\\([\\[\]])/g, '$1')
     const url = match[2] ?? ''
     const recognized = getRecognizedLink(url)
     if (!recognized) continue

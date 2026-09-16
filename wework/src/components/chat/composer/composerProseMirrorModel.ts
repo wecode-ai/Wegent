@@ -17,6 +17,7 @@ import {
 import {
   createComposerLinkElement,
   parseComposerLinks,
+  serializeComposerLink,
   type ComposerLinkPayload,
   type ParsedComposerLink,
 } from './composerLinks'
@@ -228,7 +229,7 @@ function mergeComposerTokens(
 export function serializeComposerLinkNode(node: ProseMirrorNode): string {
   const label = String(node.attrs.label ?? '')
   const url = String(node.attrs.url ?? '')
-  return label ? `[${label}](${url})` : url
+  return serializeComposerLink({ label, url })
 }
 
 export function serializeComposerDocument(doc: ProseMirrorNode): string {

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createRef, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import { ComposerTextarea } from './ComposerTextarea'
-import { createComposerDocument } from './composerProseMirrorModel'
+import { createComposerDocument, serializeComposerDocument } from './composerProseMirrorModel'
 import { parseComposerLinks } from './composerLinks'
 import { openExternalUrl } from '@/lib/external-links'
 
@@ -28,6 +28,34 @@ function Harness({ initialValue = '' }: { initialValue?: string }) {
 }
 
 describe('ComposerTextarea GitHub inline link chips', () => {
+  test.each([
+    ['https://github.com/wecode-ai/Wegent', 'composer-link-chip'],
+    ['https://example.com/page', 'composer-text-link'],
+  ])('preserves edited delimiter labels for %s after draft restoration', (url, testId) => {
+    const label = String.raw`Docs [draft]\done]`
+    const markdown = String.raw`[Docs \[draft\]\\done\]](${url})`
+    const view = render(<Harness initialValue={url} />)
+    fireEvent.click(screen.getByTestId(testId))
+    fireEvent.click(screen.getByTestId('link-edit-edit-text'))
+    const input = screen.getByTestId('link-edit-text-input')
+    fireEvent.change(input, { target: { value: label } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(markdown)
+    expect(screen.getByTestId(testId)).toHaveTextContent(label)
+    const doc = createComposerDocument(markdown)
+    expect(serializeComposerDocument(doc)).toBe(markdown)
+    if (testId === 'composer-link-chip') {
+      expect(doc.firstChild?.firstChild?.type.name).toBe('composer_link')
+      expect(doc.firstChild?.firstChild?.attrs.label).toBe(label)
+    }
+    view.unmount()
+    render(<Harness initialValue={markdown} />)
+    expect(screen.getByTestId(testId)).toHaveTextContent(label)
+    fireEvent.click(screen.getByTestId(testId))
+    fireEvent.click(screen.getByTestId('link-edit-edit-url'))
+    expect(screen.getByTestId('link-edit-url-input')).toHaveValue(url)
+  })
+
   test.each(['http://example.com/file_name?q=a_b#section', 'https://example.com/page'])(
     'opens %s from the existing composer link popover without rewriting it',
     url => {
