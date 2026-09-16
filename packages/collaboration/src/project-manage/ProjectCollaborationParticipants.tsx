@@ -138,6 +138,7 @@ export function ProjectCollaborationParticipants({
 
   return (
     <ProjectSettingsPage
+      contentWidth="wide"
       title={title}
       description={translate(
         "todo.collaboration_participants_description",

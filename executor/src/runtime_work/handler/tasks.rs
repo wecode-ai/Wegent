@@ -214,15 +214,11 @@ impl RuntimeWorkRpcHandler {
                 ("last_turn_id", last_turn_id.clone()),
             ],
         );
+        let request = runtime_event_request_from_link(&source);
+        self.ensure_notification_router().await;
         let response = match self
-            .call_codex_thread_method(
-                "thread/fork",
-                json!({
-                    "threadId": source_thread_id,
-                    "lastTurnId": last_turn_id,
-                    "cwd": source.workspace_path,
-                }),
-            )
+            .codex_app_server
+            .fork_thread_at(&source_thread_id, None, &last_turn_id, &request)
             .await
         {
             Ok(response) => response,
@@ -1929,6 +1925,13 @@ pub(super) fn forked_task_link(
         .or_else(|| source.runtime_handle.get("execution_request"))
     {
         link.runtime_handle["executionRequest"] = execution_request.clone();
+    }
+    if let Some(model_selection) = source
+        .runtime_handle
+        .get("modelSelection")
+        .or_else(|| source.runtime_handle.get("model_selection"))
+    {
+        link.runtime_handle["modelSelection"] = model_selection.clone();
     }
     link
 }

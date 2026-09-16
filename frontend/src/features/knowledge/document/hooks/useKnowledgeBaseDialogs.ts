@@ -207,16 +207,7 @@ export function useKnowledgeBaseDialogs({
         setIsCreating(false)
       }
     },
-    [
-      createScope,
-      createGroupName,
-      createKbType,
-      sidebar,
-      reloadGroupKbs,
-      resetCreateDialogState,
-      router,
-      t,
-    ]
+    [createScope, createGroupName, createKbType, sidebar, reloadGroupKbs, resetCreateDialogState, t]
   )
 
   const handleUpdate = useCallback(

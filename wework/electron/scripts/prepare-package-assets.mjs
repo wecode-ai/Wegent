@@ -39,8 +39,7 @@ const executorTargetDirectory = resolveExecutorPackageTargetDirectory(process.en
 const packageEnvironment = {
   ...process.env,
   CARGO_BUILD_TARGET: packageTargets.cargoTarget,
-  WEWORK_RUNTIME_TARGET:
-    process.env.WEWORK_RUNTIME_TARGET?.trim() || packageTargets.cargoTarget,
+  WEWORK_RUNTIME_TARGET: process.env.WEWORK_RUNTIME_TARGET?.trim() || packageTargets.cargoTarget,
   WEWORK_CODEX_TARGET: packageTargets.codexTarget,
   WEWORK_DWS_TARGET: packageTargets.dwsTarget,
 }
@@ -56,9 +55,9 @@ const [executorPath] = await Promise.all([
   run(pnpmCommand, ['prepare:codex', '--materialize'], weworkRoot, packageEnvironment),
   run(pnpmCommand, ['prepare:dws'], weworkRoot, packageEnvironment),
   run(pnpmCommand, ['prepare:harness-runtime', '--materialize'], weworkRoot, packageEnvironment),
-  buildCodeStatisticsHook(packageTargets.cargoTarget),
   buildDshApp(),
 ])
+await buildCodeStatisticsHook(packageTargets.cargoTarget)
 
 await rm(resourcesRoot, { recursive: true, force: true })
 await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })

@@ -2,7 +2,39 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM registry.api.weibo.com/wecode/python:3.12-slim
+ARG PYTHON_BASE_IMAGE=registry.api.weibo.com/wecode/python:3.12-slim
+ARG RUST_BASE_IMAGE=registry.api.weibo.com/weibo_rd_if/rust-builder:1.98.1
+
+FROM ${RUST_BASE_IMAGE} AS rust-builder
+
+WORKDIR /build
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential ca-certificates libssl-dev pkg-config && \
+    mkdir -p /root/.cargo && \
+    printf '%s\n' \
+      '[source.crates-io]' \
+      'replace-with = "rsproxy-sparse"' \
+      '' \
+      '[source.rsproxy-sparse]' \
+      'registry = "sparse+https://rsproxy.cn/index/"' \
+      '' \
+      '[net]' \
+      'git-fetch-with-cli = true' \
+      > /root/.cargo/config.toml && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY backend-rs /build/backend-rs
+COPY backend-rs-intra /build/backend-rs-intra
+
+RUN cargo build \
+    --release \
+    --locked \
+    --manifest-path /build/backend-rs-intra/Cargo.toml \
+    --bin wegent-backend-rs
+
+FROM ${PYTHON_BASE_IMAGE}
 
 # Set working directory
 WORKDIR /app
@@ -15,7 +47,7 @@ WORKDIR /app
 # - Playwright chromium dependencies (for Debian Trixie, manually install as playwright install-deps uses obsolete package names)
 RUN sed -i 's|http://deb.debian.org|http://mirrors.cloud.aliyuncs.com|g' /etc/apt/sources.list.d/debian.sources && \
     apt-get update && apt-get install -y \
-    tzdata libmagic1 tesseract-ocr poppler-utils \
+    bash tzdata libmagic1 tesseract-ocr poppler-utils \
     libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxkbcommon0 \
     libatspi2.0-0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
     fonts-unifont fonts-liberation fonts-noto-color-emoji && \
@@ -69,6 +101,8 @@ ENV SHUTDOWN_REJECT_NEW_REQUESTS=true
 # LOG
 ENV LOG_DIR="/data1/weibo/logs"
 ENV LOG_FILE_ENABLED=true
+ENV BREEZE_LOG_DIR="${LOG_DIR}/rust"
+ENV BREEZE_PROFILE_LOG_PATH="${BREEZE_LOG_DIR}/profile.log"
 
 RUN sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml && \
     uv pip install --system --no-cache -r pyproject.toml
@@ -85,12 +119,23 @@ COPY shared /app/shared
 # Create .env file (if it doesn't exist)
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
 
+COPY --from=rust-builder \
+    /build/backend-rs-intra/target/release/wegent-backend-rs \
+    /usr/local/bin/wegent-backend-rs
+COPY backend-rs-intra/config /app/backend-rs-intra/config
+COPY start-hybrid-backend.sh /usr/local/bin/start-hybrid-backend
+
+RUN mkdir -p "$LOG_DIR" "$BREEZE_LOG_DIR" && \
+    chmod 0755 /usr/local/bin/start-hybrid-backend && \
+    ldd /usr/local/bin/wegent-backend-rs && \
+    ! ldd /usr/local/bin/wegent-backend-rs | grep -q 'not found'
+
 ENV PORT=8000
+ENV WEGENT_ENV_FILE=/app/.env
+ENV WEGENT_PYTHON_UPSTREAM_PORT=8004
+ENV WEGENT_RS_ROUTES_FILE=/app/backend-rs-intra/config/routes.toml
 ENV AIGC_VIDEO_AGENT_URL=http://i.aigc-intra.multimedia.api.weibo.com
 # Expose port
 EXPOSE ${PORT}
 
-# Start command with graceful shutdown support
-# --timeout-graceful-shutdown: Time to wait for active connections to close
-# Using exec form to ensure proper signal handling (SIGTERM)
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 1 --timeout-graceful-shutdown ${GRACEFUL_SHUTDOWN_TIMEOUT}"]
+CMD ["/usr/local/bin/start-hybrid-backend"]

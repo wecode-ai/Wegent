@@ -128,6 +128,7 @@
     "collaboration": "Collaboration",
     "more": "More",
     "more_summary": "Devices · Collaboration",
+    "more_summary_non_admin": "Devices",
     "settings": "Settings",
     "docs": "Docs",
     "feature_docs": "Feature Docs",

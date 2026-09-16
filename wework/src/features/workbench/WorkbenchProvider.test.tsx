@@ -910,6 +910,13 @@ function RuntimeTaskForkProbe() {
           )
           .join('|') ?? 'none'}
       </span>
+      <span data-testid="fork-runtime-task-models">
+        {workbench.state.runtimeWork?.projects
+          .flatMap(project => project.deviceWorkspaces)
+          .flatMap(workspace => workspace.tasks)
+          .map(task => `${task.taskId}:${task.modelSelection?.modelName ?? 'none'}`)
+          .join('|') ?? 'none'}
+      </span>
       <button
         type="button"
         data-testid="open-fork-source"
@@ -2645,10 +2652,18 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   test('opens a forked task before refreshing the runtime task list', async () => {
     const refreshRequest = deferred<RuntimeWorkListResponse>()
+    const initialRuntimeWork = createRuntimeWork()
+    initialRuntimeWork.projects[0]!.deviceWorkspaces[0]!.tasks[0]!.modelSelection = {
+      modelName: 'wework-custom-desktop-e2e-responses',
+      modelType: 'runtime',
+      options: {
+        codexProviderId: 'local-model:desktop-e2e-responses',
+      },
+    }
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi
         .fn()
-        .mockResolvedValueOnce(createRuntimeWork())
+        .mockResolvedValueOnce(initialRuntimeWork)
         .mockReturnValueOnce(refreshRequest.promise),
       forkRuntimeTask: vi.fn().mockResolvedValue({
         accepted: true,
@@ -2706,6 +2721,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7')
     expect(screen.getByTestId('fork-runtime-task-titles')).toHaveTextContent(
       'runtime-fork:Runtime A:optimistic'
+    )
+    expect(screen.getByTestId('fork-runtime-task-models')).toHaveTextContent(
+      'runtime-fork:wework-custom-desktop-e2e-responses'
     )
     expect(
       getRuntimeConversationMessages({
@@ -13714,7 +13732,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
-  test('does not poll transcript history while the live stream owns a running task', async () => {
+  test('loads transcript history once while the live stream owns a running task', async () => {
     const runningWork = createRuntimeWork({
       projects: [
         {
@@ -13786,7 +13804,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
     )
-    await new Promise(resolve => window.setTimeout(resolve, 2_100))
     expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
     expect(getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',

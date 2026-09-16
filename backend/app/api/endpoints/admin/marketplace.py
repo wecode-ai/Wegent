@@ -91,7 +91,11 @@ def _resource_metadata(resource: Kind) -> tuple[str, str | None]:
         description = spec.get("description")
     else:
         display_name = capability.get("displayName")
-        description = capability.get("description")
+        description = (
+            spec.get("description")
+            if resource.kind == "Skill"
+            else capability.get("description")
+        )
 
     return str(display_name or resource.name), (
         str(description) if description is not None else None

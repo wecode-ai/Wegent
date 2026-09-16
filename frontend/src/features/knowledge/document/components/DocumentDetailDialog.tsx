@@ -133,7 +133,7 @@ export function DocumentDetailDialog({
   // View mode: 'preview' for markdown rendering/formatted JSON, 'raw' for plain text
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
   const [contentSourceMode, setContentSourceMode] = useState<'parsed' | 'source'>(() =>
-    document && allowDownload && isKnowledgeSourcePreviewSupported(document) ? 'source' : 'parsed'
+    document && isKnowledgeSourcePreviewSupported(document) ? 'source' : 'parsed'
   )
   const [isSummaryOpen, setIsSummaryOpen] = useState(contentSourceMode === 'parsed')
   const summaryManuallyToggledRef = useRef(false)
@@ -183,8 +183,12 @@ export function DocumentDetailDialog({
     [allowDownload, document?.source_type, document?.file_extension, canEdit]
   )
   const canPreviewSource = useMemo(
-    () => Boolean(document && allowDownload && isKnowledgeSourcePreviewSupported(document)),
-    [allowDownload, document]
+    // Source previews stay available for protected knowledge bases: the
+    // original bytes render inline inside the protection boundary (watermark,
+    // no download/copy entries), and the backend serves them under the
+    // preview purpose only for previewable types.
+    () => Boolean(document && isKnowledgeSourcePreviewSupported(document)),
+    [document]
   )
   // Source governance metadata for imported external documents.
   const externalSourceInfo = useMemo(
@@ -607,7 +611,11 @@ export function DocumentDetailDialog({
                 active={open && isSourceView}
                 onDownload={handleSourceDownload}
                 allowDownload={allowDownload}
-                protectedKnowledgeBaseId={isOrganization ? knowledgeBaseId : undefined}
+                protectedPreview={protectedPreview}
+                watermarkText={effectiveWatermarkText}
+                protectedKnowledgeBaseId={
+                  protectedPreview || isOrganization ? knowledgeBaseId : undefined
+                }
                 className={cn(!isSourceView && 'hidden')}
               />
             )}
@@ -845,7 +853,12 @@ export function DocumentDetailDialog({
                       <DocumentProtectionBoundary
                         enabled={protectedPreview}
                         knowledgeBaseId={knowledgeBaseId}
-                        preferExtension={isOrganization}
+                        // Protected knowledge bases delegate the parsed-content
+                        // watermark to the deployment extension as well, so the
+                        // identity (name + employee id / uid) matches the source
+                        // preview; without an extension the open-source
+                        // username fallback still applies.
+                        preferExtension={isOrganization || protectedPreview}
                         watermarkText={effectiveWatermarkText}
                       >
                         <DocumentContentViewer

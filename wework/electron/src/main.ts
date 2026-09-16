@@ -85,6 +85,7 @@ import {
   createNativeContextMenuActions,
   installContextMenu,
 } from './host/image-context-actions.js'
+import { CODEX_SYSTEM_PROXY_PROBE_URL, proxyRulesToUrl } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import { VncSessionManager } from './host/vnc-session-manager.js'
 import {
@@ -1241,6 +1242,9 @@ function installIpc(): void {
   ipcMain.handle('runtime:use-builtin-node', async () => {
     await requiredPreferences().update({ nodeExecutablePath: null })
   })
+  ipcMain.handle('runtime:resolve-codex-proxy', async () =>
+    proxyRulesToUrl(await session.defaultSession.resolveProxy(CODEX_SYSTEM_PROXY_PROBE_URL))
+  )
 }
 
 async function shutdown(): Promise<void> {

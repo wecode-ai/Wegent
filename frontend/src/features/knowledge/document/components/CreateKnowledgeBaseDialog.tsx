@@ -185,6 +185,7 @@ export function CreateKnowledgeBaseDialog({
     showGroupSelector && selectedGroup && selectedGroup.type === 'group'
       ? selectedGroup.name
       : groupName
+  const effectiveAllowDocumentDownload = allowDocumentDownload ?? effectiveScope !== 'organization'
 
   // Reset selectedKbType and selectedGroupId when dialog opens
   useEffect(() => {
@@ -194,7 +195,7 @@ export function CreateKnowledgeBaseDialog({
       setSource(createEmptySource())
       setSelectedGroupId(defaultGroupId || 'personal')
       setDirectAccessRequirement('read')
-      setAllowDocumentDownload(true)
+      setAllowDocumentDownload(undefined)
       setRetrievalConfig(createDefaultRetrievalConfig())
       profileAppliedRef.current = false
       retrievalConfigChangedRef.current = false
@@ -285,7 +286,7 @@ export function CreateKnowledgeBaseDialog({
           name: name.trim(),
           description: description.trim() || undefined,
           direct_access_requirement: directAccessRequirement,
-          allow_document_download: allowDocumentDownload,
+          allow_document_download: effectiveAllowDocumentDownload,
           retrieval_config:
             ragConfigMode === 'disabled' || !retrievalConfigChangedRef.current
               ? undefined
@@ -321,7 +322,7 @@ export function CreateKnowledgeBaseDialog({
         setName('')
         setDescription('')
         setDirectAccessRequirement('read')
-        setAllowDocumentDownload(true)
+        setAllowDocumentDownload(undefined)
         // Reset selectedKbType and keep summaryEnabled as true
         setSelectedKbType(initialKbType)
         setKind('document')
@@ -571,7 +572,7 @@ export function CreateKnowledgeBaseDialog({
             onDescriptionChange={value => setDescription(value)}
             directAccessRequirement={directAccessRequirement}
             onDirectAccessRequirementChange={setDirectAccessRequirement}
-            allowDocumentDownload={allowDocumentDownload}
+            allowDocumentDownload={effectiveAllowDocumentDownload}
             onAllowDocumentDownloadChange={setAllowDocumentDownload}
             summaryEnabled={summaryEnabled}
             onSummaryEnabledChange={checked => {

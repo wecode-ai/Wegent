@@ -19,6 +19,48 @@ fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
 }
 
 #[test]
+fn runtime_proxy_configuration_precedes_persisted_turn_recovery() {
+    assert!(!should_resume_persisted_turns_before_rpc(
+        "runtime.codex.runtime_config.update"
+    ));
+    assert!(should_resume_persisted_turns_before_rpc(
+        "runtime.codex.ensure_started"
+    ));
+    assert!(should_resume_persisted_turns_before_rpc(
+        "runtime.codex.models.list"
+    ));
+}
+
+#[tokio::test]
+async fn runtime_proxy_configuration_releases_deferred_startup_recovery() {
+    let (event_tx, _) = broadcast::channel(1);
+    let handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+        "device-1",
+        "/bin/false",
+        event_tx,
+    );
+    assert!(handler.startup_recovery_deferred.load(Ordering::Acquire));
+
+    handler
+        .dispatch(
+            "runtime.codex.runtime_config.update",
+            json!({"proxyUrl": "http://127.0.0.1:7890"}),
+        )
+        .await
+        .expect("runtime proxy configuration should succeed before recovery");
+
+    let config = handler.codex_runtime_proxy_config.lock().await;
+    assert!(config.initialized);
+    assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+    drop(config);
+    assert!(
+        handler.worktree_reconciliation_state.lock().await.completed,
+        "successful runtime proxy configuration should release deferred recovery"
+    );
+    assert!(!handler.startup_recovery_deferred.load(Ordering::Acquire));
+}
+
+#[test]
 fn defaults_to_ten_parallel_runtime_tasks() {
     assert_eq!(
         RuntimeSettings::default().max_concurrent_tasks,
@@ -2208,6 +2250,18 @@ fn forked_task_inherits_project_routing_metadata() {
     );
     source.runtime_project_key = Some("project-1".to_owned());
     source.runtime_workspace_roots = vec!["/tmp/project".to_owned(), "/tmp/project/api".to_owned()];
+    source.runtime_handle = json!({
+        "executionRequest": {
+            "model_config": {
+                "model": "openai",
+                "model_id": "gpt-5.6-sol",
+            },
+        },
+        "modelSelection": {
+            "modelName": "gpt-5.6-sol",
+            "modelType": "codex-official",
+        },
+    });
 
     let forked = forked_task_link(
         &source,
@@ -2224,6 +2278,14 @@ fn forked_task_inherits_project_routing_metadata() {
     );
     assert_eq!(forked.workspace_path, source.workspace_path);
     assert_eq!(forked.runtime, source.runtime);
+    assert_eq!(
+        forked.runtime_handle["executionRequest"],
+        source.runtime_handle["executionRequest"]
+    );
+    assert_eq!(
+        forked.runtime_handle["modelSelection"],
+        source.runtime_handle["modelSelection"]
+    );
 }
 
 #[test]

@@ -20,10 +20,6 @@ interface WeworkAgentResourceCreatorProps {
 const fieldClassName =
   'w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-50'
 
-function skillSupportsRuntime(skill: UnifiedSkill, runtime: UnifiedAgentRuntime): boolean {
-  return !skill.bindShells?.length || skill.bindShells.includes(runtime)
-}
-
 function parseMcpServers(value: string): Record<string, unknown> {
   const parsed: unknown = JSON.parse(value || '{}')
   if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
@@ -101,10 +97,7 @@ export function WeworkAgentResourceCreator({
     }
   }, [api, t])
 
-  const availableSkills = useMemo(
-    () => skills.filter(skill => skill.visible !== false && skillSupportsRuntime(skill, runtime)),
-    [runtime, skills]
-  )
+  const availableSkills = useMemo(() => skills.filter(skill => skill.visible !== false), [skills])
   const selectedSkillSet = useMemo(() => new Set(selectedSkillIds), [selectedSkillIds])
   const selectedModel =
     selectedModelIndex === '' ? null : (models[Number(selectedModelIndex)] ?? null)

@@ -18,6 +18,11 @@ sidebar_position: 1
 例如，frontend 和 wework 依赖 `@wegent/collaboration`，因此所有相关内部
 Dockerfile 与准备脚本都必须包含 `packages/collaboration`。
 
+远程设备镜像由 `device/build-and-publish.sh` 从仓库根目录构建，使用 BuildKit
+自带的 Dockerfile 解析器，不声明需要从 Docker Hub 下载的 `# syntax` 镜像，
+避免内网 CI 在解析阶段因无法访问 Docker Hub 而失败。
+BuildKit 容器及构建中的 `RUN` 步骤均使用宿主机网络，以访问内网 DNS 和镜像仓库。
+
 ## Internal image builds
 
 Images under `wecode/docker` use isolated build contexts. Run the directory's
@@ -27,3 +32,10 @@ When `frontend/package.json` or `wework/package.json` adds a `workspace:*`
 dependency, the matching image must copy the workspace package manifest before
 dependency installation, copy its source before the application build, and
 remove copied `node_modules` in `prepare_build.sh`.
+
+The remote device image is built from the repository root by
+`device/build-and-publish.sh`. It uses BuildKit's bundled Dockerfile frontend
+without a Docker Hub `# syntax` image, so parsing does not require Docker Hub
+access from internal CI.
+Both the BuildKit container and build-time `RUN` steps use host networking to
+reach internal DNS and registries.

@@ -272,7 +272,7 @@ describe('DocumentList summary header', () => {
     expect(screen.queryByTestId('upload-dialog')).not.toBeInTheDocument()
   })
 
-  it('fails closed while a new knowledge base protection policy is loading', async () => {
+  it('seeds protection from the knowledge base record while the policy is loading', async () => {
     mockDocuments = [createDocument()]
     let resolveProtectedKnowledgeBase: (value: {
       original_download_allowed: boolean
@@ -299,12 +299,14 @@ describe('DocumentList summary header', () => {
       )
     })
 
+    // A KB without an explicit spec value seeds as download-allowed instead of
+    // flashing a protected preview until the protection endpoint answers.
     rerender(<DocumentList knowledgeBase={createKnowledgeBase({ id: 2 })} />)
 
     await waitFor(() => {
       expect(mockGetDocumentProtection).toHaveBeenLastCalledWith(2)
       expect(mockKnowledgeDocumentTreeGrid).toHaveBeenLastCalledWith(
-        expect.objectContaining({ allowDownload: false })
+        expect.objectContaining({ allowDownload: true })
       )
     })
 
@@ -318,6 +320,19 @@ describe('DocumentList summary header', () => {
     await waitFor(() => {
       expect(mockKnowledgeDocumentTreeGrid).toHaveBeenLastCalledWith(
         expect.objectContaining({ allowDownload: true })
+      )
+    })
+  })
+
+  it('seeds a protected knowledge base as download-disabled while the policy is loading', async () => {
+    mockDocuments = [createDocument()]
+    mockGetDocumentProtection.mockReturnValue(new Promise(() => {}))
+
+    render(<DocumentList knowledgeBase={createKnowledgeBase({ allow_document_download: false })} />)
+
+    await waitFor(() => {
+      expect(mockKnowledgeDocumentTreeGrid).toHaveBeenLastCalledWith(
+        expect.objectContaining({ allowDownload: false })
       )
     })
   })

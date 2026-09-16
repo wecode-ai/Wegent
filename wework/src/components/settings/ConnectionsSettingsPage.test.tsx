@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
@@ -296,6 +296,7 @@ describe('ConnectionsSettingsPage', () => {
     })
     cancelLocalCodexLoginMock.mockResolvedValue(undefined)
     localStorage.clear()
+    delete window.weworkElectronNetwork
     delete window.__WEWORK_RUNTIME_CONFIG__
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -1741,6 +1742,34 @@ describe('ConnectionsSettingsPage', () => {
     expect(userApi.updateProxyConfig).not.toHaveBeenCalled()
   })
 
+  test('shows the effective system proxy used by local Codex', async () => {
+    const disconnectedConnection: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'disconnected',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    window.weworkElectronNetwork = {
+      resolveCodexProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
+    }
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={disconnectedConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    await userEvent.click(screen.getByTestId('settings-nav-proxy'))
+
+    expect(await screen.findByTestId('local-proxy-config-status')).toHaveTextContent('系统代理')
+    expect(screen.getByTestId('local-proxy-effective-url')).toHaveTextContent(
+      'http://system-proxy.example.com:7890'
+    )
+  })
+
   test('updates the local Codex remote apps setting from plugin settings', async () => {
     window.history.pushState({}, '', '/settings/plugins')
     api.getAllDevices.mockResolvedValue([localDevice()])
@@ -1947,10 +1976,24 @@ describe('ConnectionsSettingsPage', () => {
         }),
       ])
 
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+    vi.useFakeTimers()
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(2), { timeout: 3_000 })
-    expect(await screen.findByTestId('connection-upgrade-badge-device-1')).toBeVisible()
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(api.getAllDevices).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_500)
+      })
+      expect(api.getAllDevices).toHaveBeenCalledTimes(2)
+      expect(screen.getByTestId('connection-upgrade-badge-device-1')).toBeVisible()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('refreshes device version information when the window regains focus', async () => {

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fs, io::ErrorKind, path::Path};
 
 use serde_json::{Map, Value};
 
@@ -13,6 +13,45 @@ pub struct ClaudeOptions {
     pub system_prompt: Option<String>,
     pub model: Option<String>,
     pub mcp_servers: BTreeMap<String, Value>,
+}
+
+pub(super) fn merge_claude_mcp_servers(
+    config_path: &Path,
+    incoming: BTreeMap<String, Value>,
+) -> Result<BTreeMap<String, Value>, String> {
+    let mut servers = match fs::read(config_path) {
+        Ok(content) => {
+            let config: Value = serde_json::from_slice(&content)
+                .map_err(|_| format!("invalid MCP config JSON: {}", config_path.display()))?;
+            if !config.is_object() {
+                return Err(format!(
+                    "invalid MCP config object: {}",
+                    config_path.display()
+                ));
+            }
+            let servers = config
+                .get("mcpServers")
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new()));
+            let servers: BTreeMap<String, Value> = serde_json::from_value(servers)
+                .map_err(|_| format!("invalid mcpServers map: {}", config_path.display()))?;
+            if servers.values().any(|server| !server.is_object()) {
+                return Err(format!(
+                    "invalid MCP server config: {}",
+                    config_path.display()
+                ));
+            }
+            servers
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => BTreeMap::new(),
+        Err(error) => {
+            return Err(format!("failed to read {}: {error}", config_path.display()));
+        }
+    };
+    // A missing service is not a deletion. Replace matching services in full so
+    // stale headers and transport settings do not survive a newer configuration.
+    servers.extend(incoming);
+    Ok(servers)
 }
 
 pub fn extract_claude_options(
@@ -299,4 +338,64 @@ fn request_mode(request: &ExecutionRequest) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_ascii_lowercase)
+}
+
+#[cfg(test)]
+mod mcp_config_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn followup_preserves_omitted_servers_and_replaces_matching_services_in_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        let docs = json!({"type": "http", "url": "https://example.com/docs"});
+        fs::write(&path, serde_json::to_vec(&json!({"mcpServers": {
+            "docs": docs,
+            "interactive": {"type": "http", "url": "https://example.com/old", "headers": {"X-Test": "old"}, "timeout": 10}
+        }})).unwrap()).unwrap();
+        let updated = json!({"type": "stdio", "command": "new-tool"});
+        let incoming = BTreeMap::from([
+            ("interactive".to_owned(), updated.clone()),
+            (
+                "new-service".to_owned(),
+                json!({"type": "http", "url": "https://example.com/new"}),
+            ),
+        ]);
+
+        let merged = merge_claude_mcp_servers(&path, incoming).unwrap();
+
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged["docs"], docs);
+        assert_eq!(merged["interactive"], updated);
+        assert!(merged.contains_key("new-service"));
+
+        // Persist the next turn as the runtime does, then send no MCP additions.
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({"mcpServers": merged})).unwrap(),
+        )
+        .unwrap();
+        let next_turn = merge_claude_mcp_servers(&path, BTreeMap::new()).unwrap();
+        assert_eq!(next_turn, merged);
+    }
+
+    #[test]
+    fn invalid_existing_config_is_reported_without_discarding_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        for content in [
+            "{broken",
+            "[]",
+            "{\"mcpServers\":[]}",
+            "{\"mcpServers\":{\"docs\":null}}",
+        ] {
+            fs::write(&path, content).unwrap();
+
+            let result = merge_claude_mcp_servers(&path, BTreeMap::new());
+
+            assert!(result.is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        }
+    }
 }

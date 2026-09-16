@@ -4606,7 +4606,7 @@ export function CloudTodoWorkspace({
                 sidebarCollapsed={sidebarCollapsed}
                 title={
                   embedded && embeddedTitle === 'workspace'
-                    ? t('workbench.workspace_tab_board', '协作')
+                    ? t('workbench.workspace_tab_board', '协作 (Beta)')
                     : selectedProject.name
                 }
                 titleIcon={

@@ -1626,9 +1626,19 @@
 .collaboration-group-section-heading,
 .collaboration-group-card-header {
   display: flex;
+  min-width: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.collaboration-group-section-heading > div {
+  min-width: 0;
+}
+
+.collaboration-group-section-heading > button {
+  flex: none;
+  white-space: nowrap;
 }
 
 .collaboration-group-create-heading h3,
@@ -2125,7 +2135,7 @@
 
 .collaboration-group-member-row {
   display: grid;
-  grid-template-columns: minmax(220px, 0.8fr) minmax(220px, 1.2fr);
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
@@ -2135,6 +2145,7 @@
 
 .collaboration-group-member-row > label {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 9px;
 }
@@ -2147,6 +2158,14 @@
 
 .collaboration-group-member-row > label > span:last-child {
   display: grid;
+  min-width: 0;
+}
+
+.collaboration-group-member-row strong,
+.collaboration-group-member-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .collaboration-group-member-row small {
