@@ -966,6 +966,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'automationExecutionCatalog',
         'workspaces',
         'resources',
+        'gitRepositories',
         'projects',
         'myWork',
         'issues',

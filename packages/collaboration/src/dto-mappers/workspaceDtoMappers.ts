@@ -5,6 +5,8 @@
 import type {
   WorkspaceDelivery,
   WorkspaceDeliveryAsset,
+  WorkspaceGitBranch,
+  WorkspaceGitRepository,
   WorkspaceIssueCollaborator,
   WorkspaceTaskBinding,
   WorkspaceWorkflowPlan,
@@ -424,6 +426,30 @@ export function mapCollaborationPlatformResourcesDto(
           mapCollaborationExecutionEnvironmentDto(environment as WorkspaceDto),
         )
       : [],
+  };
+}
+
+export function mapWorkspaceGitRepositoryDto(
+  input: WorkspaceDto,
+): WorkspaceGitRepository {
+  const row = asRecord(input);
+  return {
+    id: Number(camelOrSnake(row, "gitRepoId", "git_repo_id") ?? 0),
+    name: String(row.name ?? ""),
+    fullName: String(camelOrSnake(row, "gitRepo", "git_repo") ?? ""),
+    cloneUrl: String(camelOrSnake(row, "gitUrl", "git_url") ?? ""),
+    gitDomain: String(camelOrSnake(row, "gitDomain", "git_domain") ?? ""),
+    provider: String(row.type ?? ""),
+  };
+}
+
+export function mapWorkspaceGitBranchDto(
+  input: WorkspaceDto,
+): WorkspaceGitBranch {
+  const row = asRecord(input);
+  return {
+    name: String(row.name ?? ""),
+    default: row.default === true,
   };
 }
 
