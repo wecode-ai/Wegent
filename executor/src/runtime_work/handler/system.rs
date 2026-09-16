@@ -9,15 +9,19 @@ use ignore::WalkBuilder;
 const WORKSPACE_SEARCH_RESULT_LIMIT: usize = 50;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn reconcile_and_resume_persisted_turns(&self) {
+        if self.reconcile_worktrees_once().await {
+            self.resume_persisted_turns().await;
+        }
+    }
+
     pub(super) fn spawn_startup_worktree_reconciliation(&self) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
         let handler = self.clone();
         runtime.spawn(async move {
-            if handler.reconcile_worktrees_once().await {
-                handler.resume_persisted_turns().await;
-            }
+            handler.reconcile_and_resume_persisted_turns().await;
         });
     }
 

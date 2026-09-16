@@ -1800,28 +1800,6 @@ fn base_process_environment_keeps_browser_auth_when_bridge_is_unavailable() {
 }
 
 #[test]
-fn auxiliary_requests_defer_environment_restart_until_turns_are_idle() {
-    let current = BTreeMap::from([(
-        "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
-        "Bearer current-token".to_owned(),
-    )]);
-    let requested = BTreeMap::from([(
-        "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
-        "Bearer next-token".to_owned(),
-    )]);
-
-    assert!(!should_restart_auxiliary_process_for_environment(
-        &current, &requested, true
-    ));
-    assert!(should_restart_auxiliary_process_for_environment(
-        &current, &requested, false
-    ));
-    assert!(!should_restart_auxiliary_process_for_environment(
-        &current, &current, false
-    ));
-}
-
-#[test]
 fn replacing_proxy_environment_preserves_local_mcp_auth() {
     let mut current = BTreeMap::from([(
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),

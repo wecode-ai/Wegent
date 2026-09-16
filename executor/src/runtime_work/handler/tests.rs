@@ -19,6 +19,41 @@ fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
 }
 
 #[test]
+fn runtime_proxy_configuration_precedes_persisted_turn_recovery() {
+    assert!(!should_resume_persisted_turns_before_rpc(
+        "runtime.codex.runtime_config.update"
+    ));
+    assert!(should_resume_persisted_turns_before_rpc(
+        "runtime.codex.ensure_started"
+    ));
+    assert!(should_resume_persisted_turns_before_rpc(
+        "runtime.codex.models.list"
+    ));
+}
+
+#[tokio::test]
+async fn runtime_proxy_configuration_releases_deferred_startup_recovery() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+    handler
+        .dispatch(
+            "runtime.codex.runtime_config.update",
+            json!({"proxyUrl": "http://127.0.0.1:7890"}),
+        )
+        .await
+        .expect("runtime proxy configuration should succeed before recovery");
+
+    let config = handler.codex_runtime_proxy_config.lock().await;
+    assert!(config.initialized);
+    assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+    drop(config);
+    assert!(
+        handler.worktree_reconciliation_state.lock().await.completed,
+        "successful runtime proxy configuration should release deferred recovery"
+    );
+}
+
+#[test]
 fn defaults_to_ten_parallel_runtime_tasks() {
     assert_eq!(
         RuntimeSettings::default().max_concurrent_tasks,

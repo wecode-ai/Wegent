@@ -629,13 +629,12 @@ impl CodexAppServerClient {
         }
         let process_environment =
             merged_process_environment(&state.runtime_proxy_env, &base_process_environment);
-        if state.process.is_some()
-            && should_restart_auxiliary_process_for_environment(
-                &state.process_environment,
-                &process_environment,
-                !state.active_threads.is_empty(),
-            )
-        {
+        if state.process.is_some() && state.process_environment != process_environment {
+            if !state.active_threads.is_empty() {
+                return Err(
+                    "cannot change Codex app-server environment while a turn is active".to_owned(),
+                );
+            }
             state.process = None;
             state.process_environment.clear();
         }
@@ -925,13 +924,12 @@ impl CodexAppServerClient {
         let mut initialize_elapsed = None;
         let process_environment =
             merged_process_environment(&state.runtime_proxy_env, &base_process_environment);
-        if state.process.is_some()
-            && should_restart_auxiliary_process_for_environment(
-                &state.process_environment,
-                &process_environment,
-                !state.active_threads.is_empty(),
-            )
-        {
+        if state.process.is_some() && state.process_environment != process_environment {
+            if !state.active_threads.is_empty() {
+                return Err(
+                    "cannot change Codex app-server environment while a turn is active".to_owned(),
+                );
+            }
             state.process = None;
             state.process_environment.clear();
         }
@@ -3891,14 +3889,6 @@ fn merged_process_environment(
     let mut environment = launch_env.clone();
     replace_proxy_environment(&mut environment, runtime_proxy_env.clone());
     environment
-}
-
-fn should_restart_auxiliary_process_for_environment(
-    current: &BTreeMap<String, String>,
-    requested: &BTreeMap<String, String>,
-    has_active_turns: bool,
-) -> bool {
-    current != requested && !has_active_turns
 }
 
 fn replace_proxy_environment(
