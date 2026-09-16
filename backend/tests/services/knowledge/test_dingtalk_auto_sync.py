@@ -175,6 +175,13 @@ def test_scan_pages_enabled_copies_and_isolates_dispatch_failure(
     assert tasks.scan_dingtalk_copies() == 2
     assert calls == ids
 
+    calls.clear()
+    other_kb = create_external_import_kb(test_db, test_user.id, "another-kb")
+    assert tasks.scan_dingtalk_copies(other_kb) == 0
+    assert calls == []
+    assert tasks.scan_dingtalk_copies(imported_copy.kind_id) == 2
+    assert calls == ids
+
     KnowledgeService.update_knowledge_base(
         test_db,
         imported_copy.kind_id,

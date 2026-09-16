@@ -283,6 +283,8 @@ Enable **Automatically update DingTalk documents** under the knowledge base's **
 
 Deployment requires `SCHEDULED_TASKS_ENABLED`, Celery Beat, and a Worker consuming the default queue. Restart these processes after upgrading to load the new tasks. No database migration is needed.
 
+For testing, an authenticated knowledge-base manager can call `POST /api/knowledge-bases/{knowledge_base_id}/dingtalk-sync` with no request body after enabling automatic updates. It queues the same daily scan for that knowledge base only; workers retain each copy's original importer authorization. HTTP 202 with `{"task_id":"...","status":"queued"}` means queued, not successfully updated. Check document processing results in the document list. A disabled setting returns 400, insufficient management permission returns 403, and enqueue failure returns 503. A Worker is required, but there is no need to wait for the next Beat tick.
+
 ## ❓ Troubleshooting
 
 ### Upload Issues

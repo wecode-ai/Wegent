@@ -19,23 +19,23 @@ BATCH_SIZE = 100
 
 @celery_app.task(name="app.tasks.dingtalk_auto_sync_tasks.scan_dingtalk_copies")
 @trace_sync(tracer_name="knowledge.auto_sync")
-def scan_dingtalk_copies() -> int:
+def scan_dingtalk_copies(knowledge_base_id: int | None = None) -> int:
     """Page through eligible copies; one bad dispatch must not block other copies."""
     from app.core.distributed_lock import distributed_lock
 
     with distributed_lock.acquire_context(
-        "scan_dingtalk_copies", expire_seconds=60 * 60
+        f"scan_dingtalk_copies:{knowledge_base_id or 'all'}", expire_seconds=60 * 60
     ) as acquired:
         if not acquired:
             return 0
-        return _dispatch_copies()
+        return _dispatch_copies(knowledge_base_id)
 
 
-def _dispatch_copies() -> int:
+def _dispatch_copies(knowledge_base_id: int | None = None) -> int:
     cursor, dispatched = 0, 0
     with SessionLocal() as db:
         while True:
-            rows = (
+            query = (
                 db.query(KnowledgeDocument.id, KnowledgeDocument.index_generation)
                 .join(KnowledgeDocument.external_source)
                 .join(Kind, Kind.id == KnowledgeDocument.kind_id)
@@ -47,10 +47,10 @@ def _dispatch_copies() -> int:
                     Kind.is_active.is_(True),
                     Kind.json["spec"]["dingtalkAutoSyncEnabled"].as_boolean().is_(True),
                 )
-                .order_by(KnowledgeDocument.id)
-                .limit(BATCH_SIZE)
-                .all()
             )
+            if knowledge_base_id is not None:
+                query = query.filter(KnowledgeDocument.kind_id == knowledge_base_id)
+            rows = query.order_by(KnowledgeDocument.id).limit(BATCH_SIZE).all()
             if not rows:
                 return dispatched
             for document_id, generation in rows:
