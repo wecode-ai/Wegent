@@ -3,6 +3,7 @@ import { formatAppUpdateProgress } from '@/features/app-update/app-update-progre
 import { Download, Loader2, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
+import { Tooltip } from '@/components/ui/tooltip'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
@@ -105,6 +106,40 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
     { version: availableUpdate.version }
   )
   const downloadTitle = formatAppUpdateProgress(downloadProgress, t)
+  const actionLabel = status === 'downloading' ? downloadTitle : title
+  const button = (
+    <button
+      ref={buttonRef}
+      type="button"
+      data-testid="sidebar-app-update-button"
+      disabled={busy}
+      onClick={() => {
+        onBeforeInstall?.()
+        void appUpdate.installUpdate()
+      }}
+      aria-label={errorSummary ?? actionLabel}
+      className={cn(
+        'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+        errorSummary
+          ? 'text-red-500 hover:bg-red-500/10'
+          : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]'
+      )}
+    >
+      {status === 'downloading' && downloadPercent !== null ? (
+        <SidebarUpdateDownloadProgress progress={downloadPercent} />
+      ) : busy ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <Download className="sidebar-update-download-icon h-4 w-4" />
+      )}
+      {!busy && (
+        <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
+      )}
+      {errorSummary && (
+        <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
+      )}
+    </button>
+  )
 
   return (
     <div
@@ -114,38 +149,13 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
       onFocus={showErrorTooltip}
       onBlur={() => setErrorTooltipPosition(null)}
     >
-      <button
-        ref={buttonRef}
-        type="button"
-        data-testid="sidebar-app-update-button"
-        disabled={busy}
-        onClick={() => {
-          onBeforeInstall?.()
-          void appUpdate.installUpdate()
-        }}
-        title={errorSummary ?? (status === 'downloading' ? downloadTitle : title)}
-        aria-label={errorSummary ?? (status === 'downloading' ? downloadTitle : title)}
-        className={cn(
-          'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-          errorSummary
-            ? 'text-red-500 hover:bg-red-500/10'
-            : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]'
-        )}
-      >
-        {status === 'downloading' && downloadPercent !== null ? (
-          <SidebarUpdateDownloadProgress progress={downloadPercent} />
-        ) : busy ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Download className="sidebar-update-download-icon h-4 w-4" />
-        )}
-        {!busy && (
-          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
-        )}
-        {errorSummary && (
-          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
-        )}
-      </button>
+      {errorSummary ? (
+        button
+      ) : (
+        <Tooltip label={actionLabel} testId="sidebar-app-update-tooltip">
+          {button}
+        </Tooltip>
+      )}
       {errorSummary && errorTooltipPosition
         ? createPortal(
             <div

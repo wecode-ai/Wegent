@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
@@ -1947,10 +1947,24 @@ describe('ConnectionsSettingsPage', () => {
         }),
       ])
 
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+    vi.useFakeTimers()
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(2), { timeout: 3_000 })
-    expect(await screen.findByTestId('connection-upgrade-badge-device-1')).toBeVisible()
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(api.getAllDevices).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_500)
+      })
+      expect(api.getAllDevices).toHaveBeenCalledTimes(2)
+      expect(screen.getByTestId('connection-upgrade-badge-device-1')).toBeVisible()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('refreshes device version information when the window regains focus', async () => {
