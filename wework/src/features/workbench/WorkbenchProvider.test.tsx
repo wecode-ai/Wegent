@@ -1803,6 +1803,9 @@ function ProjectWorkPreferenceProbe() {
       <button type="button" onClick={() => workbench.setProjectWorktreeBranch('feature/beta')}>
         select beta
       </button>
+      <button type="button" onClick={() => void workbench.projectChat.listLocalApps()}>
+        list local apps
+      </button>
     </div>
   )
 }
@@ -3230,7 +3233,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(services.skillApi.listSkills).toHaveBeenCalled()
   })
 
-  test('warms Codex composer apps once during workbench startup', async () => {
+  test('does not request remote Codex apps during workbench startup', async () => {
     setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
@@ -3253,25 +3256,16 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderStrictWorkbench(<BootstrapProbe />)
 
     await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
-    await waitFor(() =>
-      expect(
-        localExecutorMocks.requestLocalExecutor.mock.calls.filter(
-          ([method, params]) =>
-            method === 'codex.app_server_request' &&
-            (params as { method?: string }).method === 'app/list'
-        )
-      ).toHaveLength(1)
-    )
     expect(
       localExecutorMocks.requestLocalExecutor.mock.calls.filter(
         ([method, params]) =>
           method === 'codex.app_server_request' &&
           (params as { method?: string }).method === 'app/list'
       )
-    ).toHaveLength(1)
+    ).toHaveLength(0)
   })
 
-  test('allows retained non-composer workbenches to skip Codex app prewarming', async () => {
+  test('does not request remote Codex apps from retained workbenches', async () => {
     setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
@@ -3296,7 +3290,6 @@ describe('WorkbenchProvider runtime tasks', () => {
         <WorkbenchProvider
           user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
           services={createWorkbenchServices()}
-          prewarmComposerApps={false}
         >
           <BootstrapProbe />
         </WorkbenchProvider>
@@ -3323,7 +3316,6 @@ describe('WorkbenchProvider runtime tasks', () => {
           user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
           services={services}
           loadTaskComposerCatalogs={false}
-          prewarmComposerApps={false}
         >
           <BootstrapProbe />
         </WorkbenchProvider>
@@ -3614,6 +3606,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await screen.findByText('select project 7 workspace 22')
     setElectronRuntime()
     await userEvent.click(screen.getByText('select project 7 workspace 22'))
+    await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() =>
       expect(
         localExecutorMocks.requestLocalExecutor.mock.calls.some(

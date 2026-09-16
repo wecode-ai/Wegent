@@ -295,7 +295,6 @@ interface WorkspaceTabSurfaceProps {
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
   nativeWorkbenchKind?: 'task' | 'board'
-  prewarmComposerApps?: boolean
   smartAppsEnabled?: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
@@ -309,7 +308,6 @@ export function WorkspaceTabSurface({
   cloudWebUrl,
   lifecycleStore,
   nativeWorkbenchKind,
-  prewarmComposerApps = false,
   smartAppsEnabled = false,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
@@ -472,7 +470,6 @@ export function WorkspaceTabSurface({
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
               loadTaskComposerCatalogs
-              prewarmComposerApps={prewarmComposerApps}
               publishDebugSnapshots={active && !iframe}
               syncCoreDshModels={
                 tab.fixed &&
@@ -679,9 +676,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const mountedWorkspaceTabs = workspaceTabs.tabs.filter(
     tab => tab.id === workspaceTabs.activeTabId || mountedTabs.ids.has(tab.id)
   )
-  const composerPrewarmTabId = workspaceTabs.tabs.find(
-    tab => nextNativeWorkbenchKinds.get(tab.id) === 'task'
-  )?.id
   const cloudWebUrl = cloudConnection.webUrl
     ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
     : cloudConnection.webUrl
@@ -696,7 +690,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           active={tab.id === workspaceTabs.activeTabId}
           lifecycleStore={lifecycleStore}
           nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
-          prewarmComposerApps={tab.id === composerPrewarmTabId}
           smartAppsEnabled={experimentalFeatures.enabled}
           services={services}
           cloudWebUrl={cloudWebUrl}

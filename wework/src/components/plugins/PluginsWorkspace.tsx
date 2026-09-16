@@ -3812,9 +3812,10 @@ export function PluginsWorkspace({
     marketplaceNeedsDeviceSync(pluginMarketplaceState.items) &&
     !deviceAutoSyncSettled
 
-  // GitHub plugin/list shares the Codex app-server lock with wegent
-  // plugin/install. Order: Wework official + enterprise (cloud catalog and
-  // device ZIP/install) and personal-created (disk listing), then GitHub.
+  // GitHub plugin/list shares the Codex app-server lock with other local Codex
+  // requests. Never start it while opening the page: offline GitHub requests can
+  // hold that lock for about a minute. Cached OpenAI rows paint immediately, and
+  // the user can explicitly refresh when they want to reconcile the remote catalog.
   useEffect(() => {
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (personalDiskSettledKey !== marketplaceCacheKeyValue) return
@@ -3823,14 +3824,7 @@ export function PluginsWorkspace({
     const shouldReconcileGithubCatalog = reconcileGithubCatalogRef.current
     const skipGithubCatalogReconcile = skipGithubCatalogReconcileRef.current
     skipGithubCatalogReconcileRef.current = false
-    // Warm OpenAI rows already come from peek/cache. Auto plugin/list reconciles
-    // github.com/openai/plugins and holds the shared Codex lock, which stalls chat
-    // send. Only refresh after the user explicitly asks.
-    if (
-      skipGithubCatalogReconcile ||
-      (!shouldReconcileGithubCatalog &&
-        hasOpenAiOfficialCatalog(pluginMarketplaceStateRef.current.items))
-    ) {
+    if (skipGithubCatalogReconcile) {
       setIsOpenAiOfficialCatalogLoading(false)
       return
     }
@@ -3844,6 +3838,7 @@ export function PluginsWorkspace({
     void localPluginApi
       .readState({
         mergeAllMarketplaces: true,
+        marketplaceKinds: shouldReconcileGithubCatalog ? undefined : ['local'],
         refresh: true,
       })
       .then(localState => {
