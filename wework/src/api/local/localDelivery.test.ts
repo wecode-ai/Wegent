@@ -828,48 +828,51 @@ describe('local delivery API', () => {
     ).resolves.toMatchObject({ item: { id: 'LOCAL-1' } })
   })
 
-  test('moves successful My Tasks runtime work to review through executor IPC', async () => {
-    const trackedTask = { ...taskRecord, status: 'in_progress' }
-    const reviewedTask = { ...trackedTask, status: 'in_review', version: 2 }
-    const defaultProject = {
-      ...projectRecord,
-      id: DEFAULT_WORK_ITEM_PROJECT_ID,
-      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
-      metadata: { system_kind: 'default_work_items', task_provider: 'local', tags: [] },
-    }
-    const request = vi.fn(async (method: string) => {
-      if (method === 'runtime_tasks.context') {
-        return {
-          id: 'binding-1',
-          cloud_project_id: DEFAULT_WORK_ITEM_PROJECT_ID,
-          loop_item_id: 'LOCAL-1',
-          task_user_id: 0,
-          device_id: 'local-device',
-          task_id: 'runtime-1',
-          task_title: 'Runtime task',
-          backend_task_id: null,
-          linked_at: '2026-07-27T00:00:00Z',
-        }
+  test.each(['queued', 'running', 'succeeded'] as const)(
+    'preserves executor-owned status and read state after a delayed %s observation',
+    async executionStatus => {
+      const reviewedTask = {
+        ...taskRecord,
+        status: 'in_review',
+        version: 2,
+        metadata: { ...taskRecord.metadata, is_unread: false },
       }
-      if (method === 'projects.list') return [defaultProject]
-      if (method === 'todos.get') return trackedTask
-      if (method === 'todos.bindings') return []
-      if (method === 'todos.update') return reviewedTask
-      throw new Error(`Unexpected method: ${method}`)
-    })
-    const api = createLocalDeliveryApi(request)
-    const updateTaskTrackingStatus = api.updateTaskTrackingStatus
+      const defaultProject = {
+        ...projectRecord,
+        id: DEFAULT_WORK_ITEM_PROJECT_ID,
+        project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+        metadata: { system_kind: 'default_work_items', task_provider: 'local', tags: [] },
+      }
+      const request = vi.fn(async (method: string) => {
+        if (method === 'runtime_tasks.context') {
+          return {
+            id: 'binding-1',
+            cloud_project_id: DEFAULT_WORK_ITEM_PROJECT_ID,
+            loop_item_id: 'LOCAL-1',
+            task_user_id: 0,
+            device_id: 'local-device',
+            task_id: 'runtime-1',
+            task_title: 'Runtime task',
+            backend_task_id: null,
+            linked_at: '2026-07-27T00:00:00Z',
+          }
+        }
+        if (method === 'projects.list') return [defaultProject]
+        if (method === 'todos.get') return reviewedTask
+        if (method === 'todos.bindings') return []
+        if (method === 'todos.update') return reviewedTask
+        throw new Error(`Unexpected method: ${method}`)
+      })
+      const api = createLocalDeliveryApi(request)
+      const updateTaskTrackingStatus = api.updateTaskTrackingStatus
 
-    await expect(
-      updateTaskTrackingStatus({ deviceId: 'local-device', taskId: 'runtime-1' }, 'succeeded')
-    ).resolves.toMatchObject({ id: 'LOCAL-1', status: 'in_review' })
+      await expect(
+        updateTaskTrackingStatus({ deviceId: 'local-device', taskId: 'runtime-1' }, executionStatus)
+      ).resolves.toMatchObject({ id: 'LOCAL-1', status: 'in_review', is_unread: false })
 
-    expect(request).toHaveBeenCalledWith('todos.update', {
-      project_id: DEFAULT_WORK_ITEM_PROJECT_ID,
-      task_id: 'LOCAL-1',
-      todo: { version: 1, status: 'in_review' },
-    })
-  })
+      expect(request.mock.calls.some(([method]) => method === 'todos.update')).toBe(false)
+    }
+  )
 
   test('writes a completed user-bound runtime task into its Issue workflow', async () => {
     const workflowTask = {

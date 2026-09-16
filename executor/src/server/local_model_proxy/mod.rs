@@ -14,6 +14,7 @@ mod chat;
 mod fork;
 mod harness_protocol;
 mod history;
+mod image_budget;
 mod vision;
 
 use std::{
@@ -1567,6 +1568,7 @@ fn prepare_request_with_model_hint(
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
     normalize_responses_request_ids(&mut responses_body);
+    image_budget::limit_request_images(&mut responses_body);
 
     if api_format == "openai-responses" {
         apply_configured_max_output_tokens(&mut responses_body, max_output_tokens);
