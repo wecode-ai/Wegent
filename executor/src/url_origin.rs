@@ -46,7 +46,7 @@ pub(crate) fn replace_url_origin(raw: &str, origin: &str) -> Option<String> {
     let mut parsed = url::Url::parse(raw).ok()?;
     let origin = url::Url::parse(origin).ok()?;
     parsed.set_scheme(origin.scheme()).ok()?;
-    parsed.set_host(origin.host_str())?;
+    parsed.set_host(origin.host_str()).ok()?;
     parsed.set_port(origin.port()).ok()?;
     Some(parsed.to_string())
 }

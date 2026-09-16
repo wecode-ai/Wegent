@@ -967,7 +967,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or("")
             .is_empty()
         {
-            request.backend_url = Some(connection.backend_url);
+            request.backend_url = Some(connection.backend_url.clone());
         }
         if request
             .auth_token
