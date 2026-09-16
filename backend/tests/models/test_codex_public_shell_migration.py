@@ -15,6 +15,7 @@ from sqlalchemy.engine import Connection, Engine
 
 
 def _load_migration() -> ModuleType:
+    """Load the migration module directly for isolated data conversion tests."""
     path = (
         Path(__file__).parents[2]
         / "alembic"
@@ -29,6 +30,7 @@ def _load_migration() -> ModuleType:
 
 
 def _legacy_engine() -> Engine:
+    """Create the pre-migration kinds table used by the test scenarios."""
     engine = sa.create_engine("sqlite://")
     metadata = sa.MetaData()
     sa.Table(
@@ -49,6 +51,7 @@ def _legacy_engine() -> Engine:
 def _bind(
     migration: ModuleType, monkeypatch: MonkeyPatch, connection: Connection
 ) -> None:
+    """Bind Alembic operations to the current in-memory database connection."""
     monkeypatch.setattr(
         migration,
         "op",
@@ -57,6 +60,7 @@ def _bind(
 
 
 def _codex_rows(connection: Connection) -> list[sa.RowMapping]:
+    """Return stored public Codex Shell rows."""
     kinds = sa.Table("kinds", sa.MetaData(), autoload_with=connection)
     return list(
         connection.execute(
@@ -73,6 +77,7 @@ def _codex_rows(connection: Connection) -> list[sa.RowMapping]:
 def test_upgrade_adds_missing_codex_shell_idempotently_and_downgrade_removes_it(
     monkeypatch: MonkeyPatch,
 ) -> None:
+    """A missing Codex Shell is created once and removed on downgrade."""
     migration = _load_migration()
     engine = _legacy_engine()
     with engine.begin() as connection:
@@ -96,6 +101,7 @@ def test_upgrade_adds_missing_codex_shell_idempotently_and_downgrade_removes_it(
 def test_upgrade_preserves_existing_public_codex_shell(
     monkeypatch: MonkeyPatch,
 ) -> None:
+    """An active administrator-managed Codex Shell is never overwritten."""
     migration = _load_migration()
     engine = _legacy_engine()
     with engine.begin() as connection:
@@ -122,5 +128,40 @@ def test_upgrade_preserves_existing_public_codex_shell(
 
         rows = _codex_rows(connection)
         assert len(rows) == 1
+        assert rows[0]["json"] == existing_payload
+    engine.dispose()
+
+
+def test_upgrade_reactivates_existing_inactive_public_codex_shell(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """An inactive Codex Shell is reused instead of creating a duplicate identity."""
+    migration = _load_migration()
+    engine = _legacy_engine()
+    with engine.begin() as connection:
+        kinds = sa.Table("kinds", sa.MetaData(), autoload_with=connection)
+        existing_payload = {
+            "kind": "Shell",
+            "metadata": {"name": "Codex", "namespace": "default"},
+            "spec": {"shellType": "Codex", "baseImage": "custom-image"},
+        }
+        connection.execute(
+            kinds.insert().values(
+                user_id=0,
+                kind="Shell",
+                name="Codex",
+                namespace="default",
+                json=existing_payload,
+                is_active=False,
+            )
+        )
+        _bind(migration, monkeypatch, connection)
+
+        migration.upgrade()
+        migration.downgrade()
+
+        rows = _codex_rows(connection)
+        assert len(rows) == 1
+        assert rows[0]["is_active"] is True
         assert rows[0]["json"] == existing_payload
     engine.dispose()

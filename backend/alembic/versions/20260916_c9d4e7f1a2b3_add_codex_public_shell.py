@@ -21,6 +21,7 @@ MIGRATION_MARKER = "codex-public-shell-c9d4e7f1a2b3"
 
 
 def _codex_shell_payload() -> dict[str, object]:
+    """Build the public Codex Shell resource created by this migration."""
     return {
         "apiVersion": "agent.wecode.io/v1",
         "kind": "Shell",
@@ -40,18 +41,24 @@ def _codex_shell_payload() -> dict[str, object]:
 
 
 def upgrade() -> None:
+    """Create or reactivate the public Codex Shell without duplicating its identity."""
     connection = op.get_bind()
     kinds = sa.Table("kinds", sa.MetaData(), autoload_with=connection)
     existing = connection.execute(
-        sa.select(kinds.c.id).where(
+        sa.select(kinds.c.id, kinds.c.is_active)
+        .where(
             kinds.c.user_id == 0,
             kinds.c.kind == "Shell",
             kinds.c.name == "Codex",
             kinds.c.namespace == "default",
-            kinds.c.is_active.is_(True),
         )
+        .order_by(kinds.c.is_active.desc(), kinds.c.id)
     ).first()
     if existing is not None:
+        if not existing.is_active:
+            connection.execute(
+                kinds.update().where(kinds.c.id == existing.id).values(is_active=True)
+            )
         return
 
     connection.execute(
@@ -67,6 +74,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Remove only the public Codex Shell inserted by this migration."""
     connection = op.get_bind()
     kinds = sa.Table("kinds", sa.MetaData(), autoload_with=connection)
     rows = connection.execute(
