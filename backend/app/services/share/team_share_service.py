@@ -26,6 +26,8 @@ from app.schemas.share import (
     ResourceMemberResponse,
 )
 from app.services.share.base_service import UnifiedShareService
+from app.services.team_access_policy import can_use_group_teams
+from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +43,13 @@ class TeamShareService(UnifiedShareService):
         super().__init__(ResourceType.TEAM)
 
     def _get_resource(
-        self, db: Session, resource_id: int, user_id: int
+        self, db: Session, resource_id: int, user_id: int, *, for_use: bool = False
     ) -> Optional[Kind]:
         """
         Fetch Team resource.
 
-        For Teams, we check if the resource exists and belongs to the user
-        OR if the user has been shared access to the team.
+        Configuration reads require ownership or Reporter access. Execution also
+        permits approved group guests without granting configuration access.
         """
         # First try to find team owned by user
         team = (
@@ -69,13 +71,22 @@ class TeamShareService(UnifiedShareService):
 
             if self.check_permission(db, resource_id, user_id, MemberRole.Reporter):
                 return team
+            if for_use and can_use_group_teams(db, user_id, team.namespace):
+                return team
 
         return None  # Return None if not authorized to prevent unauthorized access
+
+    @trace_sync(span_name="team.resolve_usage", tracer_name="team.permissions")
+    def get_resource_for_use(
+        self, db: Session, resource_id: int, user_id: int
+    ) -> Optional[Kind]:
+        """Resolve an agent for execution without granting configuration access."""
+        return self._get_resource(db, resource_id, user_id, for_use=True)
 
     def get_resource(
         self, db: Session, resource_id: int, user_id: int
     ) -> Optional[Kind]:
-        """Public entrypoint to fetch a team if the user has access.
+        """Public entrypoint to fetch a team if the user may read its configuration.
 
         Delegates to _get_resource; exposed for cross-service callers.
         """

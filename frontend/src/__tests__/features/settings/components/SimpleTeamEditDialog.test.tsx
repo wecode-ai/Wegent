@@ -1304,6 +1304,9 @@ describe('Simple TeamEditDialog', () => {
         bots={[makeBot()]}
         setBots={jest.fn()}
         toast={toast}
+        onSaved={() => {
+          toast({ title: 'Saved' })
+        }}
       />
     )
 
@@ -1316,7 +1319,7 @@ describe('Simple TeamEditDialog', () => {
       expect(mockInvalidateTeams).toHaveBeenCalled()
       expect(onClose).toHaveBeenCalled()
     })
-    expect(toast).toHaveBeenCalledWith({
+    expect(toast).toHaveBeenLastCalledWith({
       variant: 'destructive',
       title: 'resource-library:messages.agent_saved_publication_failed',
     })

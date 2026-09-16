@@ -482,7 +482,7 @@ impl RuntimeWorkRpcHandler {
             false
         };
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
-            self.register_codex_thread_workspace_root(&started_thread_id, &route_request);
+            self.register_codex_thread_workspace_root(&started_thread_id, &route_request, false);
         }
         drop(routing);
 

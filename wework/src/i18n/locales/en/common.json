@@ -682,6 +682,8 @@
     "mark_runtime_task": "Pin task",
     "unmark_runtime_task": "Unpin task",
     "rename_project": "Rename project",
+    "move_task_to_project": "Move to project",
+    "move_task_to_project_failed": "Could not move the task. Please try again.",
     "rename_chat": "Rename chat",
     "rename_chat_description": "Keep it short and easy to recognize",
     "chat_name": "Chat name",

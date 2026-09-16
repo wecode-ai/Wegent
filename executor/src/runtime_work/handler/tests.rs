@@ -10,6 +10,12 @@ use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
+#[path = "task_project_move_tests.rs"]
+mod task_project_move_tests;
+
+#[path = "message_presentation_tests.rs"]
+mod message_presentation_tests;
+
 #[test]
 fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
     let config = CodexRuntimeProxyConfig::default();

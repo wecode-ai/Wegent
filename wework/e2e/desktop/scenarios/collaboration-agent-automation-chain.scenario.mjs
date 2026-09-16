@@ -905,9 +905,11 @@ export async function createDesktopScenario({
   }
 
   async function selectGroupTarget(control) {
+    // The form can open before its collaboration-group options finish loading.
     await control.command(
-      'click',
-      scoped('[data-testid="automatic-processing-target-kind-collaboration_group"]')
+      'clickWhenEnabled',
+      scoped('[data-testid="automatic-processing-target-kind-collaboration_group"]'),
+      { timeoutMs: uiTimeoutMs }
     )
     await control.command('click', scoped('[data-testid="automatic-processing-target"]'))
     await control.command(

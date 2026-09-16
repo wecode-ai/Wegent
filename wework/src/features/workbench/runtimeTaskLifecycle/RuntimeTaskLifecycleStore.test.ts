@@ -705,6 +705,55 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('awaiting')
   })
 
+  test('preserves a recovered Goal when an older completed transcript arrives after turn start', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: false, status: 'queued', goalStatus: 'active' }))
+    )
+    store.turnStarted(address, 'recovered-turn')
+    const before = store.getTask(address)
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [
+          {
+            id: 'previous-turn',
+            items: [],
+            status: 'completed',
+            completedAt: 1_786_676_400_000,
+          },
+        ],
+      }),
+      { preserveActiveTurn: true }
+    )
+
+    expect(store.getTask(address)).toEqual(before)
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(listener).not.toHaveBeenCalled()
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [
+          {
+            id: 'recovered-turn',
+            items: [],
+            status: 'completed',
+            completedAt: 1_786_676_401_000,
+          },
+        ],
+      })
+    )
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.task?.completedAt).toBe(1_786_676_401_000)
+  })
+
   test('ignores a stale running transcript after the current turn settles', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
