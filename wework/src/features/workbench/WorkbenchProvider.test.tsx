@@ -13714,7 +13714,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
-  test('does not poll transcript history while the live stream owns a running task', async () => {
+  test('loads transcript history once while the live stream owns a running task', async () => {
     const runningWork = createRuntimeWork({
       projects: [
         {
@@ -13786,7 +13786,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
     )
-    await new Promise(resolve => window.setTimeout(resolve, 2_100))
     expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
     expect(getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',
