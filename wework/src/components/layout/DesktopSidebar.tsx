@@ -45,6 +45,7 @@ import type {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -1520,6 +1521,7 @@ function RuntimeTaskRow({
       ? Number(task.queuePosition)
       : null
   const threadId = getRuntimeTaskThreadId(task)
+  const moveTaskMenu = useMoveRuntimeTaskMenu(workspace, task, threadId, stateDeviceId)
   const notificationsSubscribed = isRuntimeTaskNotificationSubscribed(
     imNotificationSettings,
     taskAddress
@@ -2162,6 +2164,7 @@ function RuntimeTaskRow({
             disabled: !workspace.available || !onRenameRuntimeTask,
             onSelect: () => setRenameOpen(true),
           },
+          moveTaskMenu,
           ...conversationMenuActions.map(action => ({
             label: action.title,
             testId: `runtime-local-task-menu-extension-${action.id}-${task.taskId}`,
