@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ModelApi } from '@/api/models'
 import {
   getDefaultModelOptions,
   inferModelFamily,
@@ -9,21 +10,15 @@ import {
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
 import { findModelForSelection } from './runtimeContextUsage'
 import { modelSelectionIdentityOptions } from './runtimeModelSelection'
-import { WORKBENCH_MODELS_CHANGED_EVENT } from './workbenchCloudDataEvents'
 import type {
   ModelCompatibilityDisabledReason,
   ModelOptions,
   ModelSelectionConfig,
   UnifiedModel,
-  UnifiedModelListResponse,
 } from '@/types/api'
 
-interface WorkbenchModelApi {
-  listModels: () => Promise<UnifiedModelListResponse>
-}
-
 interface UseWorkbenchModelsOptions {
-  api: WorkbenchModelApi
+  api: ModelApi
   locked: boolean
   enabled?: boolean
   filterModel?: (model: UnifiedModel) => boolean
@@ -259,13 +254,13 @@ export function useWorkbenchModels({
       }
     }
 
+    const unsubscribe = api.subscribe?.(loadModels)
     void loadModels()
     window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
-    window.addEventListener(WORKBENCH_MODELS_CHANGED_EVENT, loadModels)
     return () => {
       cancelled = true
+      unsubscribe?.()
       window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
-      window.removeEventListener(WORKBENCH_MODELS_CHANGED_EVENT, loadModels)
     }
   }, [api, enabled, filterModel, reconcileSelectedModels])
 

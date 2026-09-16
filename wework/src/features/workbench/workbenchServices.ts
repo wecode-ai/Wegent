@@ -15,7 +15,7 @@ import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { createCloudProjectSpaceApi } from '@/api/hybrid/cloudProjectSpaceApi'
 import { createHybridWorkbenchServices } from '@/api/hybrid/hybridServices'
 import { createLocalAppServices } from '@/api/local/localServices'
-import { createModelApi } from '@/api/models'
+import type { ModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import type {
   createLocalLoopItemExecutionApi,
@@ -120,7 +120,7 @@ export interface AutomationApi {
 export interface WorkbenchServices {
   agentResourceApi?: ReturnType<typeof createAgentResourceApi>
   teamApi: ReturnType<typeof createTeamApi>
-  modelApi: ReturnType<typeof createModelApi>
+  modelApi: ModelApi
   skillApi: ReturnType<typeof createSkillApi>
   projectApi: Omit<ReturnType<typeof createProjectApi>, 'createGitWorkspaceProject'> & {
     createGitWorkspaceProject?: ReturnType<typeof createProjectApi>['createGitWorkspaceProject']

@@ -2,6 +2,8 @@ import { createHash, generateKeyPairSync, randomUUID, sign as signBytes } from '
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+const CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS = 10_000
+
 interface StoredCloudCredential {
   version: 2
   apiBaseUrl: string
@@ -73,7 +75,10 @@ export class CloudCredentialService {
       const endpoint = `${apiBaseUrl}/auth/wework/sessions/${encodeURIComponent(
         input.sessionId
       )}/poll?poll_token=${encodeURIComponent(input.pollToken)}`
-      const response = await this.request(endpoint, { method: 'GET' })
+      const response = await this.request(endpoint, {
+        method: 'GET',
+        signal: AbortSignal.timeout(CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS),
+      })
       const payload = await responseJson(response)
       if (!response.ok) {
         throw requestError(response.status, payload)
@@ -143,6 +148,7 @@ export class CloudCredentialService {
       )
       const response = await this.request(endpoint, {
         method: 'POST',
+        signal: AbortSignal.timeout(CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS),
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           refresh_token: refreshToken,

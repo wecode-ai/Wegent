@@ -14,12 +14,12 @@ import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
 import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
+import { createCloudModelCatalog } from './cloudModelCatalog'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   notifyWorkbenchCloudArchivesChanged,
   notifyWorkbenchCloudSearchResults,
   notifyWorkbenchAutomationsChanged,
-  notifyWorkbenchModelsChanged,
 } from '@/features/workbench/workbenchCloudDataEvents'
 import { requestCloudModelCatalogSync } from '@/features/model-settings/cloudModelCatalogSyncRequest'
 import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-registration'
@@ -386,9 +386,14 @@ export function createHybridWorkbenchServices(
   let nextCloudDevicesRevision = 1
   let unscopedCloudDevicesRequest: Promise<DeviceInfo[]> | null = null
   const cloudDevicesRequestsBySignal = new WeakMap<AbortSignal, Promise<DeviceInfo[]>>()
-  let rememberedCloudModels: UnifiedModel[] = []
-  let cloudModelsLoaded = false
-  let cloudModelsRequest: Promise<void> | null = null
+  const cloudModels = createCloudModelCatalog(async signal => {
+    const response = await cloudServices.modelApi.listModels({ signal })
+    console.info('[Wework] Cloud model catalog loaded', {
+      count: response.data.length,
+      models: response.data.map(modelIdentityForLog),
+    })
+    return cloudExecutableModels(response.data)
+  })
   const rememberedCloudSearch = new Map<string, RuntimeWorkSearchResponse>()
   const cloudSearchRequests = new Map<string, Promise<void>>()
   const rememberedCloudArchives = new Map<string, ArchivedConversationsListResponse>()
@@ -408,27 +413,6 @@ export function createHybridWorkbenchServices(
     if (revision < rememberedCloudDevicesRevision) return
     rememberedCloudDevices = devices
     rememberedCloudDevicesRevision = revision
-  }
-  const loadCloudModelsInBackground = () => {
-    if (cloudModelsLoaded || cloudModelsRequest) return
-    cloudModelsRequest = Promise.resolve()
-      .then(() => cloudServices.modelApi.listModels())
-      .then(response => {
-        const modelCatalogLog = {
-          count: response.data.length,
-          models: response.data.map(modelIdentityForLog),
-        }
-        console.info('[Wework] Cloud model catalog loaded', modelCatalogLog)
-        rememberedCloudModels = cloudExecutableModels(response.data)
-        cloudModelsLoaded = true
-        notifyWorkbenchModelsChanged()
-      })
-      .catch(error => {
-        console.warn('[Wework] Failed to refresh cloud models in background', error)
-      })
-      .finally(() => {
-        cloudModelsRequest = null
-      })
   }
   const rememberLocalRuntimeWorkDevices = (work: RuntimeWorkListResponse) => {
     work.projects.forEach(project => {
@@ -1405,11 +1389,12 @@ export function createHybridWorkbenchServices(
       listProjects: localServices.projectApi.listProjects,
     },
     modelApi: {
+      subscribe: cloudModels.subscribe,
       async listModels(): Promise<UnifiedModelListResponse> {
+        cloudModels.refreshIfDue()
         const localModels = await localServices.modelApi.listModels()
-        loadCloudModelsInBackground()
         return {
-          data: mergeModelCatalogs(annotateLocalModels(localModels.data), rememberedCloudModels),
+          data: mergeModelCatalogs(annotateLocalModels(localModels.data), cloudModels.getModels()),
         }
       },
     },

@@ -12,7 +12,6 @@ import type { ProjectWithTasks } from '@/types/api'
 import type { UnifiedModel } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
 import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
-import { WORKBENCH_MODELS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { getLocalExecutorStatus } from '@/desktop/localExecutor'
 import { CloudTodoModal } from './CloudTodoModal'
 import { WorkflowExecutionConfigFields } from './WorkflowExecutionConfigFields'
@@ -96,28 +95,29 @@ export function IssueExecutionConfigDialog({
 
   useEffect(() => {
     let active = true
-    const setAvailableModels = (nextModels: UnifiedModel[]) => {
-      if (!active) return
+    let modelRevision = 0
+    const loadModels = async () => {
+      const revision = ++modelRevision
+      const response = await (modelApi?.listModels() ?? Promise.resolve({ data: [] }))
+      if (!active || revision !== modelRevision) return
       setModels(
-        nextModels.filter(model => model.isActive !== false && !model.compatibilityDisabled)
+        response.data.filter(model => model.isActive !== false && !model.compatibilityDisabled)
       )
     }
     const refreshModels = () => {
-      void (modelApi?.listModels() ?? Promise.resolve({ data: [] }))
-        .then(response => setAvailableModels(response.data))
-        .catch(cause => {
-          if (active) setError(cause instanceof Error ? cause.message : String(cause))
-        })
+      void loadModels().catch(cause => {
+        if (active) setError(cause instanceof Error ? cause.message : String(cause))
+      })
     }
-    window.addEventListener(WORKBENCH_MODELS_CHANGED_EVENT, refreshModels)
+    const unsubscribeModels = modelApi?.subscribe?.(refreshModels)
     void Promise.all([
       projectChatAgentApi?.list(String(item.cloud_project_id)) ?? Promise.resolve([]),
       runtimeProfileApi?.list() ?? Promise.resolve([]),
       deviceApi.listDevices(),
-      modelApi?.listModels() ?? Promise.resolve({ data: [] }),
+      loadModels(),
       getLocalExecutorStatus().catch(() => null),
     ])
-      .then(([nextAgents, profiles, devices, modelResponse, localStatus]) => {
+      .then(([nextAgents, profiles, devices, , localStatus]) => {
         if (!active) return
         const onlineDeviceIds = new Set(
           devices
@@ -134,7 +134,6 @@ export function IssueExecutionConfigDialog({
         setAgents(activeAgents)
         setDevices(onlineDevices)
         setLocalDeviceIds(localStatus?.deviceId?.trim() ? [localStatus.deviceId.trim()] : [])
-        setAvailableModels(modelResponse.data)
         setRuntimeProfiles(onlineProfiles)
         setExecutionConfig(current =>
           resolveWorkflowExecutionConfig(current, activeAgents, onlineProfiles)
@@ -172,7 +171,7 @@ export function IssueExecutionConfigDialog({
       })
     return () => {
       active = false
-      window.removeEventListener(WORKBENCH_MODELS_CHANGED_EVENT, refreshModels)
+      unsubscribeModels?.()
     }
   }, [deviceApi, item.cloud_project_id, modelApi, projectChatAgentApi, runtimeProfileApi])
 
