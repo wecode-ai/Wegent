@@ -221,6 +221,7 @@ export async function createDesktopScenario({
   const claudeBinary = await resolveClaudeBinary()
   let backendUrl = ''
   let authToken = ''
+  let cloudEnvironment = null
   let workspace = null
   let project = null
   let skillResource = null
@@ -519,6 +520,8 @@ export async function createDesktopScenario({
   }
 
   async function configureExecutionDevice(control) {
+    assert.ok(cloudEnvironment, 'The real cloud environment was not prepared')
+    const appDevice = await cloudEnvironment.startDuplicateAppDeviceIdentity()
     await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
     await control.command(
       'click',
@@ -530,22 +533,13 @@ export async function createDesktopScenario({
       { timeoutMs: uiTimeoutMs }
     )
     const devices = await request('/api/devices')
-    const device = devices.items.find(candidate => candidate.device_id === CLOUD_DEVICE_ID)
-    assert.ok(device?.id, 'The real cloud Executor device was not registered')
-    await control.command(
-      'clickWhenEnabled',
-      scoped('[data-testid="collaboration-project-execution-environment-add"]'),
-      { timeoutMs: uiTimeoutMs }
-    )
-    await control.command(
-      'clickWhenEnabled',
-      scoped(`[data-testid="collaboration-project-execution-environment-candidate-${device.id}"]`),
-      { timeoutMs: uiTimeoutMs }
-    )
-    await control.command(
-      'waitFor',
-      scoped(`[data-testid="collaboration-project-execution-environment-${device.id}"]`),
-      { timeoutMs: uiTimeoutMs }
+    const cloudDevice = devices.items.find(candidate => candidate.device_id === CLOUD_DEVICE_ID)
+    assert.ok(cloudDevice?.id, 'The real cloud Executor device was not registered')
+    assert.ok(
+      devices.items.some(
+        candidate => candidate.id === appDevice.id && candidate.status === 'online'
+      ),
+      'The connected Wework app device was not available for environment initialization'
     )
     await control.command(
       'fill',
@@ -578,12 +572,80 @@ export async function createDesktopScenario({
     )
     await control.command(
       'clickWhenEnabled',
-      scoped(`[data-testid="collaboration-project-execution-environment-initialize-${device.id}"]`),
+      scoped('[data-testid="collaboration-project-execution-environment-add"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'clickWhenEnabled',
+      scoped(
+        `[data-testid="collaboration-project-execution-environment-candidate-${appDevice.id}"]`
+      ),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'waitFor',
+      scoped(`[data-testid="collaboration-project-execution-environment-${appDevice.id}"]`),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'clickWhenEnabled',
+      scoped(
+        `[data-testid="collaboration-project-execution-environment-initialize-${appDevice.id}"]`
+      ),
       { timeoutMs: Math.max(uiTimeoutMs, 60_000) }
     )
     await control.command(
       'waitFor',
-      scoped(`[data-testid="collaboration-project-execution-environment-${device.id}"]`),
+      scoped(`[data-testid="collaboration-project-execution-environment-${appDevice.id}"]`),
+      {
+        text: '环境已就绪',
+        timeoutMs: Math.max(uiTimeoutMs, 60_000),
+      }
+    )
+    const appInitializedProject = await request(`/api/v1/cloud-projects/${project.id}`)
+    assert.equal(appInitializedProject.execution_environment?.status, 'ready')
+    assert.equal(
+      appInitializedProject.execution_environment?.prepared_device_id,
+      appDevice.device_id,
+      'The Wework app device environment did not preserve its logical device identity'
+    )
+    await control.command(
+      'clickWhenEnabled',
+      scoped(`[data-testid="collaboration-project-execution-environment-remove-${appDevice.id}"]`),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'waitFor',
+      scoped(`[data-testid="collaboration-project-execution-environment-${appDevice.id}"]`),
+      { visible: false, timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'clickWhenEnabled',
+      scoped('[data-testid="collaboration-project-execution-environment-add"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'clickWhenEnabled',
+      scoped(
+        `[data-testid="collaboration-project-execution-environment-candidate-${cloudDevice.id}"]`
+      ),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'waitFor',
+      scoped(`[data-testid="collaboration-project-execution-environment-${cloudDevice.id}"]`),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'clickWhenEnabled',
+      scoped(
+        `[data-testid="collaboration-project-execution-environment-initialize-${cloudDevice.id}"]`
+      ),
+      { timeoutMs: Math.max(uiTimeoutMs, 60_000) }
+    )
+    await control.command(
+      'waitFor',
+      scoped(`[data-testid="collaboration-project-execution-environment-${cloudDevice.id}"]`),
       {
         text: '环境已就绪',
         timeoutMs: Math.max(uiTimeoutMs, 60_000),
@@ -593,7 +655,7 @@ export async function createDesktopScenario({
       `/api/v1/cloud-projects/${project.id}/execution-environments`
     )
     assert.ok(
-      environments.items.some(environment => environment.device_id === device.id),
+      environments.items.some(environment => environment.device_id === cloudDevice.id),
       'The project device pool did not persist the real cloud Executor'
     )
     const configuredProject = await request(`/api/v1/cloud-projects/${project.id}`)
@@ -1127,6 +1189,10 @@ export async function createDesktopScenario({
   return {
     claudeBinary,
     requiresCloudEnvironment: true,
+
+    setCloudEnvironment(cloud) {
+      cloudEnvironment = cloud
+    },
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
