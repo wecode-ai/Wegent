@@ -629,12 +629,13 @@ impl CodexAppServerClient {
         }
         let process_environment =
             merged_process_environment(&state.runtime_proxy_env, &base_process_environment);
-        if state.process.is_some() && state.process_environment != process_environment {
-            if !state.active_threads.is_empty() {
-                return Err(
-                    "cannot change Codex app-server environment while a turn is active".to_owned(),
-                );
-            }
+        if state.process.is_some()
+            && should_restart_auxiliary_process_for_environment(
+                &state.process_environment,
+                &process_environment,
+                !state.active_threads.is_empty(),
+            )
+        {
             state.process = None;
             state.process_environment.clear();
         }
@@ -924,12 +925,13 @@ impl CodexAppServerClient {
         let mut initialize_elapsed = None;
         let process_environment =
             merged_process_environment(&state.runtime_proxy_env, &base_process_environment);
-        if state.process.is_some() && state.process_environment != process_environment {
-            if !state.active_threads.is_empty() {
-                return Err(
-                    "cannot change Codex app-server environment while a turn is active".to_owned(),
-                );
-            }
+        if state.process.is_some()
+            && should_restart_auxiliary_process_for_environment(
+                &state.process_environment,
+                &process_environment,
+                !state.active_threads.is_empty(),
+            )
+        {
             state.process = None;
             state.process_environment.clear();
         }
@@ -3891,6 +3893,14 @@ fn merged_process_environment(
     environment
 }
 
+fn should_restart_auxiliary_process_for_environment(
+    current: &BTreeMap<String, String>,
+    requested: &BTreeMap<String, String>,
+    has_active_turns: bool,
+) -> bool {
+    current != requested && !has_active_turns
+}
+
 fn replace_proxy_environment(
     current: &mut BTreeMap<String, String>,
     requested: BTreeMap<String, String>,
@@ -4298,15 +4308,13 @@ fn cdp_browser_mcp_config_overrides(
 }
 
 fn codex_base_process_environment() -> BTreeMap<String, String> {
-    let mut environment = BTreeMap::new();
-    if crate::browser_mcp::bridge_is_available() {
-        if let Some(endpoint) = crate::browser_mcp::http::browser_mcp_http_endpoint() {
-            environment.insert(
-                "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION".to_owned(),
-                format!("Bearer {}", endpoint.token),
-            );
-        }
-    }
+    let mut environment = BTreeMap::from([(
+        "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION".to_owned(),
+        format!(
+            "Bearer {}",
+            crate::browser_mcp::http::browser_mcp_process_token()
+        ),
+    )]);
     if let Some(endpoint) = crate::task_runtime::mcp_http::space_mcp_http_endpoint() {
         environment.insert(
             "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
