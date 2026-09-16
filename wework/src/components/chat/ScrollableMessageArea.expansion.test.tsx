@@ -1,7 +1,19 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
+import { MessageList } from './MessageList'
 import { getDistanceFromTop } from './bottomOriginScroll'
+import type { WorkbenchMessage } from '@/types/workbench'
+
+const messages: WorkbenchMessage[] = [
+  {
+    id: 'long-user-message',
+    role: 'user',
+    content: Array.from({ length: 30 }, (_, index) => `Line ${index + 1}`).join('\n'),
+    status: 'done',
+    createdAt: '2026-09-16T00:00:00.000Z',
+  },
+]
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -35,15 +47,7 @@ test.each([
       <ScrollableMessageArea
         conversationKey={`expansion-${scrollOrigin}-${initialDistance}`}
         scrollOrigin={scrollOrigin}
-        messages={[
-          {
-            id: 'long-user-message',
-            role: 'user',
-            content: Array.from({ length: 30 }, (_, index) => `Line ${index + 1}`).join('\n'),
-            status: 'done',
-            createdAt: '2026-09-16T00:00:00.000Z',
-          },
-        ]}
+        messages={messages}
       />
     )
     const scroller = screen.getByTestId('chat-message-scroll-area')
@@ -83,3 +87,17 @@ test.each([
     expect(getDistanceFromTop(scroller, scrollOrigin === 'bottom')).toBe(before)
   }
 )
+
+test('uses the latest toggle callback when messages stay unchanged', () => {
+  const previousCallback = vi.fn()
+  const nextCallback = vi.fn()
+  const { rerender } = render(
+    <MessageList messages={messages} onBeforeUserMessageToggle={previousCallback} />
+  )
+  rerender(<MessageList messages={messages} onBeforeUserMessageToggle={nextCallback} />)
+
+  fireEvent.click(screen.getByTestId('toggle-user-message-button'))
+
+  expect(previousCallback).not.toHaveBeenCalled()
+  expect(nextCallback).toHaveBeenCalledOnce()
+})

@@ -736,6 +736,9 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.initialDistanceFromBottomPx !== next.initialDistanceFromBottomPx
       ? 'initialDistanceFromBottomPx'
       : null,
+    previous.onBeforeUserMessageToggle !== next.onBeforeUserMessageToggle
+      ? 'onBeforeUserMessageToggle'
+      : null,
     previous.className !== next.className ? 'className' : null,
     previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
     previous.isWaitingForAssistant !== next.isWaitingForAssistant ? 'isWaitingForAssistant' : null,
