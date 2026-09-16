@@ -808,12 +808,13 @@ button:disabled {
   .composer-mention-node,
   .composer-link-node {
     display: inline-flex;
-    align-items: center;
+    align-items: baseline;
     max-width: 100%;
+    margin-inline-end: 4px;
     font-size: inherit;
     font-weight: inherit;
     line-height: inherit;
-    vertical-align: -0.08em;
+    vertical-align: baseline;
     white-space: nowrap;
     user-select: text;
     -webkit-user-select: text;
@@ -857,6 +858,7 @@ button:disabled {
   .composer-mention-icon-slot {
     position: relative;
     display: inline-block;
+    align-self: center;
     flex: none;
     order: -1;
     width: 1em;

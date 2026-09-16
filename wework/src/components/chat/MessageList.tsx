@@ -1777,7 +1777,7 @@ function renderUserContent(
         href={href}
         data-testid={testId}
         data-cloud-resource-kind={cloudKind}
-        className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-sm font-medium leading-none text-blue-600 no-underline"
+        className="composer-mention-node gap-1 rounded-xl bg-muted text-blue-600 no-underline [&>:first-child]:self-center"
         onClick={event => {
           event.preventDefault()
           if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
