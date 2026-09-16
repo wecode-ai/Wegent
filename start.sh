@@ -1333,7 +1333,7 @@ Configuration File:
       WEGENT_FRONTEND_PORT  - Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
 
     Other Settings:
-      WEGENT_BACKEND_MODE  - Backend mode: python (default) or hybrid
+      WEGENT_BACKEND_MODE  - Backend mode: hybrid (default) or python
       WEGENT_BACKEND_RS_DIR - Rust Backend directory used by hybrid mode (default: backend-rs)
       WEGENT_PYTHON_UPSTREAM_PORT - Hybrid Python port (default: 8004)
       EXECUTOR_IMAGE        - Docker image for executor
@@ -1345,7 +1345,7 @@ Configuration File:
 Examples:
   $0                                    # Start with default configuration
   $0 backend frontend                   # Start only backend and frontend
-  WEGENT_BACKEND_MODE=hybrid $0 backend # Start Backend through the Rust gateway
+  WEGENT_BACKEND_MODE=python $0 backend # Temporarily bypass the Rust gateway
   $0 be fe                              # Start only backend and frontend (short names)
   $0 --clean-frontend-cache             # Start after clearing frontend .next cache
   $0 --init                             # Initialize configuration interactively
@@ -2169,7 +2169,7 @@ start_services() {
         done
     fi
 
-    local backend_mode=${WEGENT_BACKEND_MODE:-python}
+    local backend_mode=${WEGENT_BACKEND_MODE:-hybrid}
     local backend_rs_dir=${WEGENT_BACKEND_RS_DIR:-backend-rs}
     local backend_rs_launcher="$SCRIPT_DIR/$backend_rs_dir/scripts/start-hybrid-backend.sh"
     if [ "$start_backend" = true ]; then
