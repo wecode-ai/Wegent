@@ -111,11 +111,21 @@ export interface CoreDshLaunch {
   sourceFingerprint: string
 }
 
-export interface PrepareCoreDshOptions {
+export interface PreparedCoreDshRuntime {
+  command: string
+  entry: string
+  cwd: string
+  dshHome: string
+  environment: NodeJS.ProcessEnv
+  profile: string
+  version: string
+  sourceFingerprint: string
+}
+
+export interface PrepareCoreDshRuntimeOptions {
   runtimeRoot: string
   dataDirectory: string
   environment: NodeJS.ProcessEnv
-  port: number
 }
 
 export type CommandRunner = (
@@ -124,7 +134,9 @@ export type CommandRunner = (
   options: { cwd: string; env: NodeJS.ProcessEnv }
 ) => Promise<void>
 
-export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Promise<CoreDshLaunch> {
+export async function prepareCoreDshRuntime(
+  options: PrepareCoreDshRuntimeOptions
+): Promise<PreparedCoreDshRuntime> {
   const pluginsRoot = options.environment.WEWORK_CORE_PLUGIN_ROOT?.trim()
   if (!pluginsRoot) {
     throw new Error('WEWORK_CORE_PLUGIN_ROOT is required for the packaged Core DSH runtime')
@@ -145,14 +157,6 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
   return {
     command: nodeCommand,
     entry: runtime.entry,
-    args: runtimeNodeArgs(options.environment, [
-      runtime.entry,
-      '--profile',
-      PROFILE_NAME,
-      '--no-open',
-      '--port',
-      String(options.port),
-    ]),
     cwd: runtime.root,
     dshHome,
     environment: {
@@ -166,6 +170,20 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
     profile: PROFILE_NAME,
     version: runtime.version,
     sourceFingerprint: runtime.sourceFingerprint,
+  }
+}
+
+export function createCoreDshLaunch(runtime: PreparedCoreDshRuntime, port: number): CoreDshLaunch {
+  return {
+    ...runtime,
+    args: runtimeNodeArgs(runtime.environment, [
+      runtime.entry,
+      '--profile',
+      PROFILE_NAME,
+      '--no-open',
+      '--port',
+      String(port),
+    ]),
   }
 }
 
