@@ -793,6 +793,28 @@ describe("CollaborationPlatformApp real component flow", () => {
     });
   });
 
+  it("keeps successful workspaces when projects from the same source fail", async () => {
+    const cloudWorkspace = { ...workspace, id: "cloud-workspace" };
+    const { api } = createApi({
+      initialWorkspaces: [cloudWorkspace],
+      initialProjects: [],
+    });
+    api.projects.list = vi
+      .fn()
+      .mockRejectedValue(new Error("projects offline"));
+
+    await render(<PlatformControllerHarness api={api} />);
+
+    expect(
+      JSON.parse(byTestId("platform-controller-state").textContent ?? "{}"),
+    ).toMatchObject({
+      loading: false,
+      error: null,
+      workspaceIds: [cloudWorkspace.id],
+      projectIds: [],
+    });
+  });
+
   it("keeps primary navigation data when root auxiliary data fails", async () => {
     const { api } = createApi();
     const listMyWork = vi

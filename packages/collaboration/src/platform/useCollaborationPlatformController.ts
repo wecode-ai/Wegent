@@ -126,26 +126,23 @@ function mergeByKey<T>(collections: T[][], keyFor: (item: T) => string): T[] {
 }
 
 function mergeRootNavigationSnapshots(
-  snapshots: Array<RootNavigationSnapshot | null>,
+  snapshots: RootNavigationSnapshot[],
 ): RootNavigationSnapshot {
-  const available = snapshots.filter(
-    (snapshot): snapshot is RootNavigationSnapshot => snapshot !== null,
-  );
   return {
     workspaces: mergeByKey(
-      available.map((snapshot) => snapshot.workspaces),
+      snapshots.map((snapshot) => snapshot.workspaces),
       (workspace) => workspace.id,
     ),
     projects: mergeByKey(
-      available.map((snapshot) => snapshot.projects),
+      snapshots.map((snapshot) => snapshot.projects),
       (project) => project.id,
     ),
     myWork: mergeByKey(
-      available.map((snapshot) => snapshot.myWork),
+      snapshots.map((snapshot) => snapshot.myWork),
       (item) => item.id,
     ),
     executions: mergeByKey(
-      available.map((snapshot) => snapshot.executions),
+      snapshots.map((snapshot) => snapshot.executions),
       ({ project, execution }) => `${project.id}:${execution.id}`,
     ),
   };
@@ -201,8 +198,13 @@ export function useCollaborationPlatformController({
     }));
     if (!location.workspaceId) {
       const sources = navigationApis?.length ? navigationApis : [api];
-      const snapshots = sources.map<RootNavigationSnapshot | null>(() => null);
-      let successfulSources = 0;
+      const snapshots = sources.map<RootNavigationSnapshot>(() => ({
+        workspaces: [],
+        projects: [],
+        myWork: [],
+        executions: [],
+      }));
+      let successfulNavigationLoads = 0;
       const publish = () => {
         if (revision !== loadRevisionRef.current) return;
         const snapshot = mergeRootNavigationSnapshots(snapshots);
@@ -225,44 +227,51 @@ export function useCollaborationPlatformController({
           error: null,
         }));
       };
+      const updateSnapshot = (
+        index: number,
+        update: Partial<RootNavigationSnapshot>,
+      ) => {
+        if (revision !== loadRevisionRef.current) return;
+        snapshots[index] = {
+          ...snapshots[index],
+          ...update,
+        };
+        if (successfulNavigationLoads > 0) publish();
+      };
+      for (const [index, source] of sources.entries()) {
+        void loadRootMyWork(source).then((myWork) => {
+          updateSnapshot(index, { myWork });
+        });
+      }
       const results = await Promise.allSettled(
-        sources.map(async (source, index) => {
-          if (!source.workspaces) {
-            throw new Error("Workspace API is unavailable");
+        sources.flatMap((source, index) => {
+          const loads: Promise<void>[] = [
+            source.projects.list().then((projects) => {
+              if (revision !== loadRevisionRef.current) return;
+              successfulNavigationLoads += 1;
+              updateSnapshot(index, { projects });
+              if (location.rootView === "runs") {
+                void loadRootExecutions(source, projects).then((executions) => {
+                  updateSnapshot(index, { executions });
+                });
+              }
+            }),
+          ];
+          if (source.workspaces) {
+            loads.push(
+              source.workspaces.list().then((workspaces) => {
+                if (revision !== loadRevisionRef.current) return;
+                successfulNavigationLoads += 1;
+                updateSnapshot(index, { workspaces });
+              }),
+            );
           }
-          const [workspaces, projects] = await Promise.all([
-            source.workspaces.list(),
-            source.projects.list(),
-          ]);
-          if (revision !== loadRevisionRef.current) return;
-          successfulSources += 1;
-          snapshots[index] = {
-            workspaces,
-            projects,
-            myWork: [],
-            executions: [],
-          };
-          publish();
-
-          const [myWork, executions] = await Promise.all([
-            loadRootMyWork(source),
-            location.rootView === "runs"
-              ? loadRootExecutions(source, projects)
-              : Promise.resolve([]),
-          ]);
-          if (revision !== loadRevisionRef.current) return;
-          snapshots[index] = {
-            workspaces,
-            projects,
-            myWork,
-            executions,
-          };
-          publish();
+          return loads;
         }),
       );
       if (
         revision === loadRevisionRef.current &&
-        successfulSources === 0 &&
+        successfulNavigationLoads === 0 &&
         results.every((result) => result.status === "rejected")
       ) {
         setState((current) => ({
