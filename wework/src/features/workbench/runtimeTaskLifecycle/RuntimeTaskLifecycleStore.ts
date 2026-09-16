@@ -260,18 +260,17 @@ export class RuntimeTaskLifecycleStore {
     transcript: RuntimePaneTranscript,
     options: SyncTranscriptOptions = {}
   ): void {
-    this.syncRuntimeTranscriptSnapshot(address, transcript)
+    const ignoreStaleIdleTranscript =
+      transcript.running === false &&
+      options.preserveActiveTurn === true &&
+      (this.getTask(address)?.derived.isRunning ?? false)
+    if (!ignoreStaleIdleTranscript) this.syncRuntimeTranscriptSnapshot(address, transcript)
     const streamingTurn = transcript.turns.findLast(
       turn => turn.status === 'pending' || turn.status === 'streaming'
     )
     const hasStreamingTurn = Boolean(streamingTurn)
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
-    const ignoreStaleIdleTranscript =
-      transcript.running === false &&
-      options.preserveActiveTurn === true &&
-      (current?.derived.isRunning ?? false)
-
     if (hasStreamingTurn) {
       if (ignoreStaleRunningTranscript) return
       this.executorStarted(address)
