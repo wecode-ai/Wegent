@@ -2960,15 +2960,37 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       if (!isElectronRuntime()) {
         throw new Error('Deleting a personal plugin requires the Wework desktop app')
       }
-      const marketplacePath =
+      const managedMarketplacePath = await resolveWeworkPersonalMarketplacePath().catch(() => null)
+      const sourcePath =
         sourceMarketplacePath && isLocalMarketplacePath(sourceMarketplacePath)
           ? sourceMarketplacePath.trim()
-          : await resolveWeworkPersonalMarketplacePath()
+          : managedMarketplacePath
+      if (!sourcePath) {
+        throw new Error(`The ${WEWORK_PERSONAL_MARKETPLACE_ID} marketplace is unavailable`)
+      }
       try {
-        await requestLocalExecutor('executor.plugins.personal.delete', {
-          marketplacePath,
-          pluginName,
-        })
+        if (managedMarketplacePath) {
+          const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
+            'runtime.codex.plugin.uninstall_local',
+            {
+              marketplacePath: codexMarketplaceManifestSource(managedMarketplacePath),
+              pluginName,
+            }
+          )
+          if (!commit.localCommitted) {
+            throw new Error('Plugin did not reach its local uninstall commit')
+          }
+        }
+        const marketplacePaths = new Map<string, string>()
+        for (const path of [sourcePath, managedMarketplacePath]) {
+          if (path) marketplacePaths.set(normalizeMarketplaceSource(path), path)
+        }
+        for (const marketplacePath of marketplacePaths.values()) {
+          await requestLocalExecutor('executor.plugins.personal.delete', {
+            marketplacePath,
+            pluginName,
+          })
+        }
       } catch (error) {
         throw new Error(getErrorMessage(error, 'Failed to delete personal plugin'), {
           cause: error,

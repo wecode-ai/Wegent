@@ -2356,6 +2356,11 @@ async def test_sync_installed_plugins_to_device_materializes_account_install(
     # Nested test transactions are connection-bound; reuse the fixture session.
     monkeypatch.setattr(test_db, "close", lambda: None)
     monkeypatch.setattr(
+        device_capability_sync_service,
+        "_session_factory",
+        reuse_test_db,
+    )
+    monkeypatch.setattr(
         "app.api.endpoints.installed_plugins.get_db_session",
         reuse_test_db,
     )
@@ -2694,6 +2699,158 @@ async def test_plugin_mutation_requires_the_current_plugin_result(
     row = test_db.query(PluginDeviceInstallation).one()
     assert row.state == "pending"
     assert row.error_message == ""
+
+
+@pytest.mark.asyncio
+async def test_recipient_installs_shared_personal_plugin_through_endpoint(
+    test_db, test_user, monkeypatch
+):
+    owner = User(
+        user_name="plugin-owner",
+        password_hash=test_user.password_hash,
+        email="plugin-owner@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(owner)
+    test_db.flush()
+    plugin = Plugin(
+        catalog_namespace=f"personal/{owner.id}",
+        slug="wework-video-studio",
+        name="wework-video-studio",
+        display_name="Wework Video Studio",
+        keywords_json=[],
+        interface_json={},
+        status="published",
+        visibility="personal",
+        owner_user_id=owner.id,
+    )
+    test_db.add(plugin)
+    test_db.flush()
+    release = PluginRelease(
+        plugin_id=plugin.id,
+        version="1.0.0",
+        manifest_json={"name": plugin.name, "version": "1.0.0"},
+        interface_json={},
+        storage_key=f"plugins/{plugin.id}/1/shared.zip",
+        sha256="e" * 64,
+        size_bytes=10,
+        status="ready",
+        scan_status="passed",
+        scan_report_json={"components": {"skills": [], "commands": []}},
+    )
+    test_db.add(release)
+    test_db.flush()
+    plugin.latest_release_id = release.id
+    test_db.add(
+        ResourceMember.create(
+            resource_type="Plugin",
+            resource_id=plugin.id,
+            entity_type="user",
+            entity_id=str(test_user.id),
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+
+    async def ensure_pending(*_args, **_kwargs):
+        return None
+
+    async def sync_global(_db, *, user_id):
+        assert user_id == test_user.id
+        assert (
+            plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
+                test_db,
+                user_id=user_id,
+            )
+            == 0
+        )
+        installed = (
+            test_db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "InstalledPlugin",
+                Kind.is_active.is_(True),
+            )
+            .one()
+        )
+        assert installed.json["spec"]["pluginId"] == plugin.id
+        return DeviceCapabilitySyncResponse(
+            synced=1,
+            results=[
+                DeviceCapabilitySyncResult(
+                    device_id="current-device",
+                    success=True,
+                    plugins=[],
+                )
+            ],
+        )
+
+    async def sync_plugin(
+        _db,
+        *,
+        user_id,
+        device_id,
+        installed_plugin_id,
+    ):
+        assert user_id == test_user.id
+        assert device_id == "current-device"
+        item = DeviceCapabilityItemResult(
+            id=installed_plugin_id,
+            status="synced",
+        )
+        result = DeviceCapabilitySyncResult(
+            device_id=device_id,
+            success=True,
+            plugins=[item],
+        )
+        return DeviceCapabilitySyncResponse(
+            success=True,
+            device_id=device_id,
+            mode="merge",
+            plugins=[item],
+            synced=1,
+            results=[result],
+        )
+
+    monkeypatch.setattr(
+        plugin_device_installation_service,
+        "ensure_pending_for_all_devices",
+        ensure_pending,
+    )
+    monkeypatch.setattr(
+        device_capability_sync_service,
+        "sync_user_global_capabilities",
+        sync_global,
+    )
+    monkeypatch.setattr(
+        device_capability_sync_service,
+        "sync_installed_plugin_to_device",
+        sync_plugin,
+    )
+
+    response = await install_marketplace_plugin(
+        marketplace_id=plugin.id,
+        release_id=None,
+        device_id="current-device",
+        db=test_db,
+        current_user=test_user,
+    )
+
+    installed_id = int(response.plugin.metadata["labels"]["id"])
+    installed = test_db.get(Kind, installed_id)
+    assert installed is not None
+    assert installed.user_id == test_user.id
+    assert installed.is_active is True
+    assert installed.json["spec"]["pluginId"] == plugin.id
+    assert installed.json["spec"]["releaseId"] == release.id
+    assert response.plugin.spec.installState == "installed"
+    device_row = test_db.query(PluginDeviceInstallation).one()
+    assert device_row.installed_kind_id == installed_id
+    assert device_row.user_id == test_user.id
+    assert device_row.device_id == "current-device"
+    assert device_row.state == "installed"
+    assert device_row.actual_release_id == release.id
 
 
 @pytest.mark.asyncio
@@ -3858,6 +4015,9 @@ def test_reconcile_stale_installed_catalog_refs_after_reimport(test_db, test_use
     assert sum(1 for row in (stale, duplicate) if row.is_active) == 1
     assert orphan.json["spec"].get("pluginId") in (None, 0)
     assert orphan.json["spec"].get("releaseId") in (None, 0)
+    assert orphan.json["spec"]["enabled"] is False
+    assert orphan.json["spec"]["installState"] == "uninstalled"
+    assert orphan.is_active is False
 
     device_row = (
         test_db.query(PluginDeviceInstallation)
@@ -3934,3 +4094,104 @@ def test_reconcile_updates_visibility_only_marketplace_change(test_db, test_user
     assert changed == 1
     test_db.refresh(installed)
     assert installed.json["spec"]["source"]["marketplace"] == "wegent"
+
+
+def test_reconcile_preserves_accessible_shared_personal_plugin(test_db, test_user):
+    service = PluginMarketplaceService()
+    plugin = Plugin(
+        catalog_namespace="personal/999",
+        slug="shared-design",
+        name="shared-design",
+        display_name="Shared Design",
+        keywords_json=[],
+        interface_json={},
+        status="published",
+        visibility="personal",
+        owner_user_id=999,
+    )
+    test_db.add(plugin)
+    test_db.flush()
+    release = PluginRelease(
+        plugin_id=plugin.id,
+        version="1.0.0",
+        manifest_json={"name": plugin.name},
+        interface_json={},
+        storage_key=f"plugins/{plugin.id}/1/shared.zip",
+        sha256="b" * 64,
+        size_bytes=12,
+        status="ready",
+        scan_status="passed",
+        scan_report_json={},
+    )
+    test_db.add(release)
+    test_db.flush()
+    plugin.latest_release_id = release.id
+    test_db.add(
+        ResourceMember(
+            resource_type="Plugin",
+            resource_id=plugin.id,
+            entity_type="user",
+            entity_id=str(test_user.id),
+            user_id=test_user.id,
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    installed = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name=service._kind_name(plugin.catalog_namespace, plugin.slug),
+        json=service._installed_payload(plugin, release),
+        is_active=True,
+    )
+    test_db.add(installed)
+    test_db.commit()
+
+    changed = service.reconcile_stale_installed_catalog_refs(
+        test_db, user_id=test_user.id
+    )
+
+    assert changed == 0
+    test_db.refresh(installed)
+    assert installed.is_active is True
+    assert installed.json["spec"]["pluginId"] == plugin.id
+    assert installed.json["spec"]["releaseId"] == release.id
+
+
+def test_reconcile_ignores_uploaded_plugin_with_stale_catalog_like_fields(
+    test_db, test_user
+):
+    service = PluginMarketplaceService()
+    installed = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="uploaded-design",
+        json={
+            "kind": "InstalledPlugin",
+            "metadata": {"name": "uploaded-design", "namespace": "default"},
+            "spec": {
+                "source": {
+                    "type": "upload",
+                    "providerKey": "codex-local",
+                    "pluginKey": "uploaded-design",
+                },
+                "pluginId": 999999,
+                "releaseId": 999999,
+                "enabled": True,
+                "installState": "installed",
+            },
+        },
+        is_active=True,
+    )
+    test_db.add(installed)
+    test_db.commit()
+
+    changed = service.reconcile_stale_installed_catalog_refs(
+        test_db, user_id=test_user.id
+    )
+
+    assert changed == 0
+    test_db.refresh(installed)
+    assert installed.is_active is True
+    assert installed.json["spec"]["pluginId"] == 999999

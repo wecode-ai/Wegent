@@ -1751,6 +1751,7 @@
     "plugins_installed": "Installed",
     "plugins_login_required": "Installing plugins requires a Wegent account. Go to login?",
     "plugins_install_device_disconnected": "This device is not connected to the cloud, so the plugin cannot be installed right now. Restore the connection and try again.",
+    "plugins_install_device_identity_unavailable": "This device is not ready yet, so the plugin cannot be installed right now. Try again shortly.",
     "plugins_open_connection_settings": "Connection settings",
     "plugins_uninstall": "Uninstall",
     "plugins_update": "Update",

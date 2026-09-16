@@ -233,16 +233,10 @@ async def sync_installed_plugins_to_device(
         user_id=current_user.id,
         device_id=normalized_device_id,
     )
-    payload = device_capability_sync_service.build_desired_capabilities(
-        db,
-        user_id=current_user.id,
-        device_id=normalized_device_id,
-    )
     db.close()
-    result = await device_capability_sync_service.sync_device_payload(
+    result = await device_capability_sync_service.sync_current_device_capabilities(
         user_id=current_user.id,
         device_id=normalized_device_id,
-        payload=payload,
     )
     with get_db_session() as record_db:
         plugin_device_installation_service.record_device_sync_result(
@@ -250,14 +244,13 @@ async def sync_installed_plugins_to_device(
             user_id=current_user.id,
             result=result,
         )
-    mode = str(payload.get("mode") or "replace")
     errors = list(result.errors or [])
     if result.error:
         errors.append({"device_id": result.device_id, "error": result.error})
     sync = DeviceCapabilitySyncResponse(
         success=bool(result.success),
         device_id=result.device_id,
-        mode=mode if mode in {"merge", "replace"} else "replace",
+        mode="replace",
         skills=result.skills,
         plugins=result.plugins,
         mcps=result.mcps,

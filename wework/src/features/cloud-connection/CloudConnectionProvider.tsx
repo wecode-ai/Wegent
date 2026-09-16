@@ -606,11 +606,8 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       } catch (error) {
         if (refreshGenerationRef.current !== refreshGeneration) return null
         const authExpired =
-          (credentialMode === 'legacy_access_token' &&
-            error instanceof ApiError &&
-            error.status === 401) ||
-          (error instanceof DesktopCloudCredentialError &&
-            ['cloud_auth_expired', 'credentials_unavailable'].includes(error.code))
+          (error instanceof ApiError && error.status === 401) ||
+          (error instanceof DesktopCloudCredentialError && error.code === 'cloud_auth_expired')
         setSnapshot(current =>
           authExpired
             ? {
@@ -623,6 +620,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
               }
             : {
                 ...current,
+                status: current.status === 'connected' && current.token ? 'connected' : 'error',
                 error: getCloudErrorMessage(error),
               }
         )
@@ -723,8 +721,39 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   }, [refreshUser, snapshot.credentialMode, snapshot.status, snapshot.tokenExpiresAt])
 
   useEffect(() => {
+    if (
+      !desktopRestoreSettled ||
+      snapshot.credentialMode !== 'desktop_refresh' ||
+      !snapshot.apiBaseUrl ||
+      (snapshot.status !== 'restoring' &&
+        snapshot.status !== 'error' &&
+        !(snapshot.status === 'connected' && snapshot.error))
+    ) {
+      return
+    }
+    const timer = window.setInterval(() => {
+      void refreshUser()
+    }, ACCESS_TOKEN_REFRESH_RETRY_MS)
+    return () => window.clearInterval(timer)
+  }, [
+    desktopRestoreSettled,
+    refreshUser,
+    snapshot.apiBaseUrl,
+    snapshot.credentialMode,
+    snapshot.error,
+    snapshot.status,
+  ])
+
+  useEffect(() => {
     const refresh = () => {
-      if (snapshot.status === 'connected' && snapshot.apiBaseUrl) void refreshUser()
+      if (
+        snapshot.apiBaseUrl &&
+        (snapshot.status === 'connected' ||
+          (snapshot.credentialMode === 'desktop_refresh' &&
+            (snapshot.status === 'restoring' || snapshot.status === 'error')))
+      ) {
+        void refreshUser()
+      }
     }
     const unsubscribeResume = subscribeSystemResume(refresh)
     window.addEventListener('online', refresh)
@@ -732,7 +761,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       unsubscribeResume()
       window.removeEventListener('online', refresh)
     }
-  }, [refreshUser, snapshot.apiBaseUrl, snapshot.status])
+  }, [refreshUser, snapshot.apiBaseUrl, snapshot.credentialMode, snapshot.status])
 
   const value = useMemo<CloudConnectionContextValue>(() => {
     const effectiveSnapshot =
