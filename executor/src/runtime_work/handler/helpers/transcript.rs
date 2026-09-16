@@ -731,17 +731,30 @@ fn attach_user_message_presentations_for_page(
         let content = string_field(message, "content").unwrap_or_default();
         let presentation_content = string_field(&presentation, "content").unwrap_or_default();
         let attachments = normalized_attachments(presentation.get("attachments"));
+        // Codex replaces file/folder mentions with paths, losing their display labels.
+        let restore_content = !attachments.is_empty()
+            || local_presentation_reference_descriptors(&presentation_content)
+                .iter()
+                .any(|reference| {
+                    reference["href"]
+                        .as_str()
+                        .is_some_and(is_local_path_reference)
+                });
         let references = presentation
             .get("references")
             .and_then(Value::as_array)
+            .filter(|_| !restore_content)
             .map(|references| presentation_reference_ranges(references, &content))
             .unwrap_or_default();
         if let Some(message) = message.as_object_mut() {
-            if !attachments.is_empty() {
+            if restore_content {
                 message.insert(
                     "content".to_owned(),
                     Value::String(presentation_content),
                 );
+                message.remove("presentationReferences");
+            }
+            if !attachments.is_empty() {
                 message.insert("attachments".to_owned(), Value::Array(attachments));
             }
             if !references.is_empty() {
@@ -887,11 +900,15 @@ fn is_local_skill_reference(href: &str) -> bool {
     path.starts_with('/') && path.ends_with("/SKILL.md")
 }
 
+fn is_local_path_reference(href: &str) -> bool {
+    href.starts_with("file://") || href.starts_with("folder://")
+}
+
 fn local_presentation_reference_token(name: &str, href: &str) -> Option<String> {
     if name.is_empty() {
         return None;
     }
-    if is_local_skill_reference(href) {
+    if is_local_skill_reference(href) || is_local_path_reference(href) {
         return Some(format!("${name}"));
     }
     href.starts_with("plugin://").then(|| format!("@{name}"))
