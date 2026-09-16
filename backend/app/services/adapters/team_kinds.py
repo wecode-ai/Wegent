@@ -17,7 +17,16 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, literal, literal_column, or_, tuple_, union_all
+from sqlalchemy import (
+    String,
+    and_,
+    func,
+    literal,
+    literal_column,
+    or_,
+    tuple_,
+    union_all,
+)
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -27,7 +36,7 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
-from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.base_role import has_permission
 from app.schemas.kind import (
     Bot,
     Ghost,
@@ -48,6 +57,7 @@ from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for
 from app.services.base import BaseService
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
+from app.services.team_access_policy import TEAM_USE_ROLE, team_usage_summary
 from app.stores.tasks import task_store
 from shared.models.db.kind import utc_now_naive
 from shared.telemetry.decorators import trace_sync
@@ -100,7 +110,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             for namespace in group_namespaces
             if (
                 (role := effective_roles.get(namespace)) is not None
-                and has_permission(role, BaseRole.Reporter.value)
+                and has_permission(role, TEAM_USE_ROLE)
             )
         ]
         if not accessible_namespaces:
@@ -352,6 +362,17 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
         approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
         authorization_start = time.time()
+        if group_namespaces and effective_roles is None:
+            from app.services.group_permission import get_effective_roles_in_groups
+
+            effective_roles = get_effective_roles_in_groups(
+                db, user_id, group_namespaces
+            )
+        restricted_group_namespaces = {
+            namespace
+            for namespace, role in (effective_roles or {}).items()
+            if role == GroupRole.RestrictedAnalyst
+        }
         authorized_namespace_ids = self._get_accessible_authorization_namespace_ids(
             db,
             user_id,
@@ -374,6 +395,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 Kind.updated_at.label("team_updated_at"),
                 literal_column("0").label("share_status"),  # Default 0 for own teams
                 literal_column(str(user_id)).label("context_user_id"),
+                literal(False).label("restricted_guest_access"),
                 literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
                 literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
             ).filter(
@@ -398,6 +420,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         Kind.user_id.label(
                             "context_user_id"
                         ),  # Use team owner, not inviter
+                        literal(False).label("restricted_guest_access"),
                         literal(self.ACCESS_SOURCE_USER_SHARE).label("access_source"),
                         literal(self.ACCESS_RANK_USER_SHARE).label("access_rank"),
                     )
@@ -432,6 +455,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         "share_status"
                     ),  # 0 for public teams (system-owned)
                     literal_column("0").label("context_user_id"),
+                    literal(False).label("restricted_guest_access"),
                     literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
                     literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
                 ).filter(
@@ -453,6 +477,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 Kind.updated_at.label("team_updated_at"),
                 literal_column("0").label("share_status"),
                 Kind.user_id.label("context_user_id"),
+                Kind.namespace.in_(restricted_group_namespaces).label(
+                    "restricted_guest_access"
+                ),
                 literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
                 literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
             ).filter(
@@ -468,36 +495,42 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             authorized_namespace_entity_ids = [
                 str(ns_id) for ns_id in authorized_namespace_ids
             ]
-            authorized_member_exists = (
-                db.query(ResourceMember.id)
+            authorized_team_query = (
+                db.query(
+                    Kind.id.label("team_id"),
+                    Kind.user_id.label("team_user_id"),
+                    Kind.name.label("team_name"),
+                    Kind.namespace.label("team_namespace"),
+                    Kind.json.label("team_json"),
+                    Kind.created_at.label("team_created_at"),
+                    Kind.updated_at.label("team_updated_at"),
+                    literal_column("2").label("share_status"),
+                    Kind.user_id.label("context_user_id"),
+                    Namespace.name.in_(restricted_group_namespaces).label(
+                        "restricted_guest_access"
+                    ),
+                    literal(self.ACCESS_SOURCE_NAMESPACE_AUTHORIZATION).label(
+                        "access_source"
+                    ),
+                    literal(self.ACCESS_RANK_NAMESPACE_AUTHORIZATION).label(
+                        "access_rank"
+                    ),
+                )
+                .join(
+                    ResourceMember,
+                    (ResourceMember.resource_id == Kind.id)
+                    & ResourceMember.resource_type.in_(team_resource_type_variants),
+                )
+                .join(Namespace, ResourceMember.entity_id == Namespace.id.cast(String))
                 .filter(
-                    ResourceMember.resource_id == Kind.id,
-                    ResourceMember.resource_type.in_(team_resource_type_variants),
                     ResourceMember.entity_type == "namespace",
                     ResourceMember.entity_id.in_(authorized_namespace_entity_ids),
                     ResourceMember.status.in_(approved_status_variants),
+                    Namespace.is_active.is_(True),
+                    Kind.kind == "Team",
+                    Kind.is_active.is_(True),
+                    ~Kind.namespace.in_(group_namespaces),
                 )
-                .exists()
-            )
-            authorized_team_query = db.query(
-                Kind.id.label("team_id"),
-                Kind.user_id.label("team_user_id"),
-                Kind.name.label("team_name"),
-                Kind.namespace.label("team_namespace"),
-                Kind.json.label("team_json"),
-                Kind.created_at.label("team_created_at"),
-                Kind.updated_at.label("team_updated_at"),
-                literal_column("2").label("share_status"),
-                Kind.user_id.label("context_user_id"),
-                literal(self.ACCESS_SOURCE_NAMESPACE_AUTHORIZATION).label(
-                    "access_source"
-                ),
-                literal(self.ACCESS_RANK_NAMESPACE_AUTHORIZATION).label("access_rank"),
-            ).filter(
-                authorized_member_exists,
-                Kind.kind == "Team",
-                Kind.is_active.is_(True),
-                ~Kind.namespace.in_(group_namespaces),
             )
             queries.append(authorized_team_query)
 
@@ -522,12 +555,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 combined_query.c.team_updated_at,
                 combined_query.c.share_status,
                 combined_query.c.context_user_id,
+                combined_query.c.restricted_guest_access,
                 combined_query.c.access_source,
                 func.row_number()
                 .over(
                     partition_by=combined_query.c.team_id,
                     order_by=(
                         combined_query.c.access_rank.asc(),
+                        combined_query.c.restricted_guest_access.desc(),
                         combined_query.c.team_updated_at.desc(),
                         combined_query.c.team_id.desc(),
                     ),
@@ -545,6 +580,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             ranked_query.c.team_updated_at,
             ranked_query.c.share_status,
             ranked_query.c.context_user_id,
+            ranked_query.c.restricted_guest_access,
             ranked_query.c.access_source,
         ).filter(ranked_query.c.access_row_number == 1)
         if shared_only:
@@ -1275,6 +1311,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "user_name": team_user.user_name,
                 }
 
+            if team_data.restricted_guest_access and team_data.team_user_id != user_id:
+                team_dict = team_usage_summary(team_dict)
             result.append(team_dict)
 
         logger.info(
@@ -2388,32 +2426,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         Get input parameters required by the team's external API bots
         Returns parameter schema if team has external API bots, otherwise empty
         """
-        # Get team details
-        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+        from app.services.share.team_share_service import team_share_service
+
+        team = team_share_service.get_resource_for_use(db, team_id, user_id)
 
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
-
-        # Check if user has access to this team
-        is_author = team.user_id == user_id
-
-        if not is_author:
-            # Check if user has shared access via ResourceMember
-            shared_member = (
-                db.query(ResourceMember)
-                .filter(
-                    ResourceMember.resource_type == ResourceType.TEAM,
-                    ResourceMember.resource_id == team_id,
-                    ResourceMember.entity_type == "user",
-                    ResourceMember.entity_id == str(user_id),
-                    ResourceMember.status == MemberStatus.APPROVED,
-                )
-                .first()
-            )
-            if not shared_member:
-                raise HTTPException(
-                    status_code=403, detail="Access denied to this team"
-                )
 
         # Get team owner's context for loading related resources
         team_owner_id = team.user_id
@@ -2575,34 +2593,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         Raises:
             HTTPException: If team not found or access denied
         """
-        # Get team
-        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+        from app.services.share.team_share_service import team_share_service
+
+        team = team_share_service.get_resource_for_use(db, team_id, user_id)
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
-
-        # Check if user has access to this team
-        # Access is granted if:
-        # 1. User is the owner (team.user_id == user_id)
-        # 2. Team is public (team.user_id == 0)
-        # 3. User has shared access via ResourceMember
-        is_public_team = team.user_id == 0
-        is_author = team.user_id == user_id
-        if not is_author and not is_public_team:
-            shared_member = (
-                db.query(ResourceMember)
-                .filter(
-                    ResourceMember.resource_type == ResourceType.TEAM,
-                    ResourceMember.resource_id == team_id,
-                    ResourceMember.entity_type == "user",
-                    ResourceMember.entity_id == str(user_id),
-                    ResourceMember.status == MemberStatus.APPROVED,
-                )
-                .first()
-            )
-            if not shared_member:
-                raise HTTPException(
-                    status_code=403, detail="Access denied to this team"
-                )
 
         team_crd = Team.model_validate(team.json)
         all_skills = set()

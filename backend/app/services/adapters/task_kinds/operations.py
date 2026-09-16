@@ -487,7 +487,7 @@ class TaskOperationsMixin:
         if obj_in.team_id:
             from app.services.share.team_share_service import team_share_service
 
-            return team_share_service.get_resource(db, obj_in.team_id, user.id)
+            return team_share_service.get_resource_for_use(db, obj_in.team_id, user.id)
         elif obj_in.team_name and obj_in.team_namespace:
             return kindReader.get_by_name_and_namespace(
                 db, user.id, KindType.TEAM, obj_in.team_namespace, obj_in.team_name
