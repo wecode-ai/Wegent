@@ -237,13 +237,19 @@ wait_for_python
 echo "Starting Rust gateway on http://$PUBLIC_HOST:$PUBLIC_PORT"
 echo "Fallback upstream: http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 echo "Route config: $ROUTES_FILE"
-WEGENT_RS_LISTEN_HOST="$PUBLIC_HOST" \
-WEGENT_RS_LISTEN_PORT="$PUBLIC_PORT" \
-WEGENT_PYTHON_UPSTREAM_URL="http://127.0.0.1:$PYTHON_UPSTREAM_PORT" \
-WEGENT_RS_ROUTES_FILE="$ROUTES_FILE" \
-BREEZE_LOG_DIR="$BREEZE_LOG_DIR" \
-BREEZE_PROFILE_LOG_PATH="$BREEZE_PROFILE_LOG_PATH" \
-"$RS_BINARY" &
+(
+    # Rust resolves its default config/example.env relative to the current
+    # working directory. Run it from the Rust project root so
+    # backend-rs/config/example.env is loaded consistently.
+    cd "$BACKEND_RS_DIR"
+    export WEGENT_RS_LISTEN_HOST="$PUBLIC_HOST"
+    export WEGENT_RS_LISTEN_PORT="$PUBLIC_PORT"
+    export WEGENT_PYTHON_UPSTREAM_URL="http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
+    export WEGENT_RS_ROUTES_FILE="$ROUTES_FILE"
+    export BREEZE_LOG_DIR="$BREEZE_LOG_DIR"
+    export BREEZE_PROFILE_LOG_PATH="$BREEZE_PROFILE_LOG_PATH"
+    exec "$RS_BINARY"
+) &
 RUST_PID=$!
 write_state
 
