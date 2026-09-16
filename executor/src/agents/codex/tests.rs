@@ -1779,10 +1779,14 @@ fn process_environment_merges_runtime_proxy_and_stable_mcp_auth() {
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
         "Bearer stable-token".to_owned(),
     );
-    let merged = merged_process_environment(&proxy, &launch);
+    let merged = codex_process_environment(&proxy, &launch);
 
     assert_eq!(proxy["ALL_PROXY"], "http://127.0.0.1:7890");
     assert_eq!(merged["ALL_PROXY"], "http://127.0.0.1:7890");
+    assert_eq!(
+        merged["WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION"],
+        "Bearer test-browser-mcp-instance-token"
+    );
     assert_eq!(
         merged["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
         "Bearer stable-token"

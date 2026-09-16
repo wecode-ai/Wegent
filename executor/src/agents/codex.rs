@@ -617,7 +617,6 @@ impl CodexAppServerClient {
         String,
     > {
         ensure_codex_mcp_endpoints().await?;
-        let base_process_environment = codex_base_process_environment();
         let mut state = self.state.lock().await;
         if state
             .process
@@ -628,7 +627,7 @@ impl CodexAppServerClient {
             state.process_environment.clear();
         }
         let process_environment =
-            merged_process_environment(&state.runtime_proxy_env, &base_process_environment);
+            codex_process_environment(&state.runtime_proxy_env, &BTreeMap::new());
         if state.process.is_some() && state.process_environment != process_environment {
             if !state.active_threads.is_empty() {
                 return Err(
@@ -911,7 +910,6 @@ impl CodexAppServerClient {
         &self,
     ) -> Result<(CodexAppServerHandle, Option<Duration>), String> {
         ensure_codex_mcp_endpoints().await?;
-        let base_process_environment = codex_base_process_environment();
         let mut state = self.state.lock().await;
         if state
             .process
@@ -923,7 +921,7 @@ impl CodexAppServerClient {
         }
         let mut initialize_elapsed = None;
         let process_environment =
-            merged_process_environment(&state.runtime_proxy_env, &base_process_environment);
+            codex_process_environment(&state.runtime_proxy_env, &BTreeMap::new());
         if state.process.is_some() && state.process_environment != process_environment {
             if !state.active_threads.is_empty() {
                 return Err(
@@ -971,7 +969,7 @@ impl CodexAppServerClient {
             state.process_environment.clear();
         }
         let process_environment =
-            merged_process_environment(&state.runtime_proxy_env, &launch_config.env);
+            codex_process_environment(&state.runtime_proxy_env, &launch_config.env);
         if state.process.is_some() && state.process_environment != process_environment {
             if !state.active_threads.is_empty() {
                 return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
@@ -3882,11 +3880,12 @@ fn runtime_proxy_endpoint_matches(
     current.get("ALL_PROXY") == requested.get("ALL_PROXY")
 }
 
-fn merged_process_environment(
+fn codex_process_environment(
     runtime_proxy_env: &BTreeMap<String, String>,
     launch_env: &BTreeMap<String, String>,
 ) -> BTreeMap<String, String> {
-    let mut environment = launch_env.clone();
+    let mut environment = codex_base_process_environment();
+    environment.extend(launch_env.clone());
     replace_proxy_environment(&mut environment, runtime_proxy_env.clone());
     environment
 }

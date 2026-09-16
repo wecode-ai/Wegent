@@ -82,6 +82,7 @@ fn running_endpoint() -> &'static StdMutex<Option<RunningBrowserMcpEndpoint>> {
     RUNNING.get_or_init(|| StdMutex::new(None))
 }
 
+#[cfg(not(test))]
 fn local_mcp_token() -> &'static str {
     static TOKEN: OnceLock<String> = OnceLock::new();
     TOKEN.get_or_init(|| Uuid::new_v4().to_string())
@@ -122,7 +123,7 @@ pub(crate) async fn ensure_browser_mcp_http_endpoint() -> Result<BrowserMcpEndpo
         .map_err(|error| format!("failed to read browser MCP endpoint address: {error}"))?;
     let endpoint = BrowserMcpEndpoint {
         url: format!("http://{address}/mcp"),
-        token: local_mcp_token().to_owned(),
+        token: browser_mcp_process_token().to_owned(),
     };
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(BRIDGE_CONNECT_TIMEOUT_SECONDS))
