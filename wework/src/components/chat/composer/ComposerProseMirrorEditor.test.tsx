@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Activity, createRef, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
@@ -9,6 +9,18 @@ import {
   serializeComposerDocument,
   serializeComposerSlice,
 } from './composerProseMirrorModel'
+
+const TABLE_MARKDOWN = '| 项目 | 说明 |\n| --- | --- |\n| 中文 | **重点** |\n| 空单元格 |  |'
+
+function pasteMarkdown(editor: HTMLElement, value: string) {
+  fireEvent.paste(editor, {
+    clipboardData: {
+      files: [],
+      types: ['text/plain'],
+      getData: (type: string) => (type === 'text/plain' ? value : ''),
+    },
+  })
+}
 
 const GMAIL_REFERENCE = '[$gmail](/tmp/gmail/SKILL.md)'
 
@@ -49,6 +61,107 @@ function renderEditor(
 }
 
 describe('ComposerProseMirrorEditor', () => {
+  test('keeps native input after a pasted URL outside the link', async () => {
+    const url = 'https://weibo.com/1192966660/Riodm8zUo'
+    const { editorRef } = renderEditor('')
+    const editor = screen.getByTestId('composer-editor')
+    pasteMarkdown(editor, url)
+    const link = screen.getByTestId('composer-text-link')
+    act(() => {
+      // Simulate the DOM mutation produced by native typing at the link's end.
+      const text = link.firstChild as Text
+      text.appendData('哈哈哈哈')
+      window.getSelection()!.collapse(text, text.length)
+      fireEvent.input(editor, { inputType: 'insertText', data: '哈哈哈哈' })
+    })
+    await waitFor(() => {
+      expect(editorRef.current!.getSnapshot().value).toBe(`[${url}](${url})哈哈哈哈`)
+    })
+    expect(screen.getByTestId('composer-text-link').textContent).toBe(url)
+    expect(editor.textContent).toBe(`${url}哈哈哈哈`)
+  })
+
+  test('keeps separately pasted text outside a link after draft restoration', () => {
+    const url = 'https://example.com/page'
+    const { editorRef } = renderEditor(url)
+    const editor = screen.getByTestId('composer-editor')
+    act(() => editorRef.current!.setValue(url, url.length))
+    pasteMarkdown(editor, '后续文字')
+    expect(editorRef.current!.getSnapshot().value).toBe(`[${url}](${url})后续文字`)
+    expect(screen.getByTestId('composer-text-link').textContent).toBe(url)
+  })
+
+  test('pastes an editable table, edits a cell and navigates between cells with Tab', () => {
+    const { editorRef } = renderEditor('')
+    const editor = screen.getByTestId('composer-editor')
+    pasteMarkdown(editor, TABLE_MARKDOWN)
+    expect(editor.querySelectorAll('table')).toHaveLength(1)
+    expect(editor.querySelector('strong')).toHaveTextContent('重点')
+    const value = editorRef.current!.getSnapshot().value
+    act(() => editorRef.current!.setValue(value, value.indexOf('中文') + 2))
+    pasteMarkdown(editor, '内容')
+    expect(editorRef.current!.getSnapshot().value).toContain('| 中文内容 | **重点** |')
+    fireEvent.keyDown(editor, { key: 'Tab' })
+    expect(editorRef.current!.getSnapshot().selectionStart).toBe(
+      editorRef.current!.getSnapshot().value.indexOf('重点')
+    )
+    fireEvent.keyDown(editor, { key: 'Tab', shiftKey: true })
+    expect(editorRef.current!.getSnapshot().selectionStart).toBe(
+      editorRef.current!.getSnapshot().value.indexOf('中文内容')
+    )
+  })
+
+  test('copies the rendered table as Markdown and undoes/redoes the whole paste', () => {
+    const { editorRef } = renderEditor('')
+    const editor = screen.getByTestId('composer-editor')
+    pasteMarkdown(editor, TABLE_MARKDOWN)
+    fireEvent.keyDown(editor, { key: 'a', metaKey: true })
+    const setData = vi.fn()
+    fireEvent.copy(editor, { clipboardData: { setData } })
+    expect(setData).toHaveBeenCalledWith('text/plain', TABLE_MARKDOWN)
+    fireEvent.keyDown(editor, { key: 'z', ctrlKey: true })
+    expect(editorRef.current!.getSnapshot().value).toBe('')
+    expect(editor.querySelector('table')).toBeNull()
+    fireEvent.keyDown(editor, { key: 'y', ctrlKey: true })
+    expect(editor.querySelector('table')).not.toBeNull()
+    expect(editorRef.current!.getSnapshot().value).toBe(TABLE_MARKDOWN)
+  })
+
+  test('exits the last table cell with Tab and preserves cell line breaks', () => {
+    const { editorRef } = renderEditor(TABLE_MARKDOWN)
+    const editor = screen.getByTestId('composer-editor')
+    act(() => editorRef.current!.setValue(TABLE_MARKDOWN, TABLE_MARKDOWN.lastIndexOf(' |')))
+    fireEvent.keyDown(editor, { key: 'Tab' })
+    pasteMarkdown(editor, '后文')
+    expect(editorRef.current!.getSnapshot().value).toBe(TABLE_MARKDOWN + '\n\n后文')
+    const value = editorRef.current!.getSnapshot().value
+    act(() => editorRef.current!.setValue(value, value.indexOf('中文') + 2))
+    fireEvent.keyDown(editor, { key: 'Enter', shiftKey: true })
+    pasteMarkdown(editor, '第二行')
+    expect(editorRef.current!.getSnapshot().value).toContain('中文<br>第二行')
+  })
+
+  test('keeps pasted Markdown literal inside a code block', () => {
+    const value = '```text\ncode\n```'
+    const { editorRef } = renderEditor(value)
+    act(() => editorRef.current!.setValue(value, value.indexOf('code') + 4))
+    pasteMarkdown(screen.getByTestId('composer-editor'), '\n**literal**')
+    expect(editorRef.current!.getSnapshot().value).toBe('```text\ncode\n**literal**\n```')
+    expect(screen.getByTestId('composer-editor').querySelector('strong')).toBeNull()
+  })
+
+  test('pastes a table into existing cells without nesting tables', () => {
+    const { editorRef } = renderEditor(TABLE_MARKDOWN)
+    const editor = screen.getByTestId('composer-editor')
+    act(() => editorRef.current!.setValue(TABLE_MARKDOWN, TABLE_MARKDOWN.indexOf('中文')))
+    pasteMarkdown(editor, '| 新表头 | B |\n| --- | --- |\n| 新内容 | C |')
+    expect(editor.querySelectorAll('table')).toHaveLength(1)
+    expect(editor.querySelectorAll('tr')).toHaveLength(3)
+    expect(editor.querySelectorAll('td table')).toHaveLength(0)
+    expect(editorRef.current!.getSnapshot().value).toContain('新表头')
+    expect(editorRef.current!.getSnapshot().value).toContain('新内容')
+  })
+
   test('exposes the placeholder layer for scoped composer alignment', () => {
     renderEditor('')
 
@@ -520,6 +633,28 @@ describe('ComposerProseMirrorEditor', () => {
     expect(editorRef.current?.getSnapshot().selectionOffset).toBe(1)
     expect(editorRef.current?.getSnapshot().value).toBe(value)
   })
+
+  test.each([
+    ['ArrowLeft', 'first\nsecond', 6, 37],
+    ['ArrowLeft', 'first\n', 6, 37],
+    ['ArrowLeft', `first\n${GMAIL_REFERENCE}`, 6, 37],
+    ['ArrowRight', 'first\nsecond', 5, 39],
+    ['ArrowRight', '\nsecond', 0, 39],
+    ['ArrowRight', `${GMAIL_REFERENCE}\nsecond`, GMAIL_REFERENCE.length, 39],
+  ] as const)(
+    'allows native %s navigation across paragraphs in %s',
+    (key, value, offset, keyCode) => {
+      const { editorRef, onChange } = renderEditor(value)
+      const editor = screen.getByTestId('composer-editor')
+      act(() => {
+        editorRef.current?.setValue(value, offset)
+        editorRef.current?.focus()
+      })
+
+      expect(fireEvent.keyDown(editor, { key, code: key, keyCode })).toBe(true)
+      expect(onChange).not.toHaveBeenCalled()
+    }
+  )
 
   test.each(['ArrowLeft', 'ArrowRight'])(
     'does not override modified %s visual line navigation',

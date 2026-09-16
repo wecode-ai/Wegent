@@ -1,4 +1,11 @@
 {
+  "table": {
+    "expand": "展开表格",
+    "close": "收起表格",
+    "copy": "复制表格",
+    "copied": "表格已复制",
+    "failed": "复制表格失败，请重试"
+  },
   "continue_in_new_task": "在新任务中继续",
   "message_navigation": {
     "label": "历史发言导航",

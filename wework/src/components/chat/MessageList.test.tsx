@@ -42,6 +42,80 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test('keeps appended text outside the sent link and opens only the original URL', () => {
+    const url = 'https://weibo.com/1192966660/Riodm8zUo'
+    openExternalUrlMock.mockClear()
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-bounded-link',
+            role: 'user',
+            status: 'done',
+            createdAt: '2026-09-16T08:00:00Z',
+            content: `[${url}](${url})哈哈哈哈`,
+          },
+        ]}
+      />
+    )
+    const message = screen.getByTestId('user-message-content')
+    const link = within(message).getByRole('link', { name: url })
+    expect(link).not.toHaveTextContent('哈哈哈哈')
+    expect(message).toHaveTextContent(`${url}哈哈哈哈`)
+    fireEvent.click(link)
+    expect(openExternalUrlMock).toHaveBeenCalledWith(url)
+  })
+
+  test.each(['http://example.com/file_name?q=a_b#section', 'https://example.com/page'])(
+    'opens sent bare URL %s using the configured link handler',
+    url => {
+      openExternalUrlMock.mockClear()
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'user-http-link',
+              role: 'user',
+              content: `访问 ${url}`,
+              status: 'done',
+              createdAt: '2026-09-16T08:00:00Z',
+            },
+          ]}
+        />
+      )
+      fireEvent.click(
+        within(screen.getByTestId('user-message-content')).getByRole('link', { name: url })
+      )
+      expect(openExternalUrlMock).toHaveBeenCalledWith(url)
+    }
+  )
+
+  test('renders sent Markdown tables with formatting and the existing table actions', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-table',
+            role: 'user',
+            status: 'done',
+            createdAt: '2026-09-16T08:00:00Z',
+            content:
+              '| 项目 | 说明 |\n| --- | ---: |\n| 中文 | **重点** |\n| 代码 | `print(1)` |\n| 空单元格 | |',
+          },
+        ]}
+      />
+    )
+    const message = screen.getByTestId('user-message-content')
+    expect(within(message).getAllByRole('row')).toHaveLength(4)
+    expect(within(message).getByText('重点').tagName).toBe('STRONG')
+    expect(within(message).getByText('print(1)').tagName).toBe('CODE')
+    expect(within(message).getByText('说明')).toHaveStyle({ textAlign: 'right' })
+    expect(within(message).getByTestId('markdown-table-copy-button')).toBeInTheDocument()
+    fireEvent.click(within(message).getByTestId('markdown-table-expand-button'))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+  })
+
   test('keeps runtime content truncation invisible while rendering the retained content', () => {
     render(
       <MessageList

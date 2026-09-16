@@ -4,6 +4,12 @@ import { describe, expect, test, vi } from 'vitest'
 import { ComposerTextarea } from './ComposerTextarea'
 import { createComposerDocument } from './composerProseMirrorModel'
 import { parseComposerLinks } from './composerLinks'
+import { openExternalUrl } from '@/lib/external-links'
+
+vi.mock('@/lib/external-links', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/external-links')>()),
+  openExternalUrl: vi.fn().mockResolvedValue(true),
+}))
 
 function Harness({ initialValue = '' }: { initialValue?: string }) {
   const [value, setValue] = useState(initialValue)
@@ -22,6 +28,61 @@ function Harness({ initialValue = '' }: { initialValue?: string }) {
 }
 
 describe('ComposerTextarea GitHub inline link chips', () => {
+  test.each(['http://example.com/file_name?q=a_b#section', 'https://example.com/page'])(
+    'opens %s from the existing composer link popover without rewriting it',
+    url => {
+      vi.mocked(openExternalUrl).mockClear()
+      const value = `访问 ${url} 后继续输入`
+      render(<Harness initialValue={value} />)
+      fireEvent.click(screen.getByTestId('composer-text-link'))
+      expect(screen.getByTestId('link-edit-popover')).toBeInTheDocument()
+      expect(openExternalUrl).not.toHaveBeenCalled()
+      expect(screen.getByTestId('chat-message-input')).toHaveValue(value)
+      fireEvent.click(screen.getByTestId('link-edit-open-link'))
+      expect(openExternalUrl).toHaveBeenCalledWith(url)
+      expect(screen.getByTestId('chat-message-input')).toHaveValue(value)
+    }
+  )
+
+  test('opens link actions with the keyboard', () => {
+    render(<Harness initialValue="http://example.com/page" />)
+    fireEvent.keyDown(screen.getByTestId('composer-text-link'), { key: 'Enter' })
+    expect(screen.getByTestId('link-edit-popover')).toBeInTheDocument()
+    expect(screen.getByTestId('chat-message-input')).toHaveValue('http://example.com/page')
+  })
+
+  test('edits the selected HTTP link without changing its neighboring link or Markdown', async () => {
+    render(<Harness initialValue="**说明** http://example.com/a 和 http://example.com/b" />)
+    fireEvent.click(screen.getAllByTestId('composer-text-link')[1])
+    fireEvent.click(screen.getByTestId('link-edit-edit-text'))
+    const input = screen.getByTestId('link-edit-text-input')
+    fireEvent.change(input, { target: { value: '文档' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() =>
+      expect(screen.queryByTestId('link-edit-text-input')).not.toBeInTheDocument()
+    )
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      '**说明** http://example.com/a 和 [文档](http://example.com/b)'
+    )
+    fireEvent.click(screen.getAllByTestId('composer-text-link')[1])
+    fireEvent.click(screen.getByTestId('link-edit-edit-url'))
+    const urlInput = screen.getByTestId('link-edit-url-input')
+    fireEvent.change(urlInput, { target: { value: 'https://example.com/new' } })
+    fireEvent.keyDown(urlInput, { key: 'Enter' })
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-message-input')).toHaveValue(
+        '**说明** http://example.com/a 和 [文档](https://example.com/new)'
+      )
+    )
+  })
+
+  test('does not make URLs in code clickable', () => {
+    render(
+      <Harness initialValue={'`http://example.com/a`\n\n```text\nhttp://example.com/b\n```'} />
+    )
+    expect(screen.queryByTestId('composer-text-link')).not.toBeInTheDocument()
+  })
+
   const urls = [
     'https://github.com/wecode-ai/Wegent/',
     'https://github.com/wecode-ai/Wegent/actions/runs/30603861794/job/91072055935?pr=2348',
