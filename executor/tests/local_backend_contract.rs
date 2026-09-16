@@ -326,6 +326,10 @@ async fn local_backend_task_execute_streams_claude_stdout_before_completion() {
     assert_eq!(emits[2].event, "response.output_text.delta");
     assert_eq!(emits[2].payload["data"]["delta"], " world");
     assert_eq!(emits[2].payload["data"]["offset"], 5);
+    assert_eq!(
+        emits[1].payload["data"]["item_id"],
+        emits[2].payload["data"]["item_id"]
+    );
     assert_eq!(emits[3].event, "response.completed");
     assert_eq!(
         emits[3].payload["data"]["response"]["output"][0]["content"][0]["text"],
@@ -383,7 +387,7 @@ async fn local_backend_task_execute_streams_claude_thinking_deltas_before_text()
 
 #[cfg(unix)]
 #[tokio::test]
-async fn local_backend_task_execute_streams_claude_assistant_thinking_blocks_as_chunks() {
+async fn local_backend_task_execute_preserves_claude_assistant_block_order() {
     let _lock = ENV_LOCK.lock().await;
     let fake_claude = write_fake_executable(
         "fake-local-backend-assistant-thinking-claude",
@@ -394,8 +398,6 @@ async fn local_backend_task_execute_streams_claude_assistant_thinking_blocks_as_
 	"#,
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
-    let _chunk_chars = EnvGuard::set("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS", "3");
-    let _reasoning_chunk_chars = EnvGuard::set("WEGENT_EXECUTOR_STREAM_REASONING_CHUNK_CHARS", "3");
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
     runner.register_handlers();
@@ -423,12 +425,14 @@ async fn local_backend_task_execute_streams_claude_assistant_thinking_blocks_as_
         Some("response.completed")
     );
 
-    let reasoning = emits
+    let blocks = emits
         .iter()
-        .filter(|emit| emit.event == "response.reasoning_summary_text.delta")
-        .filter_map(|emit| emit.payload["data"]["delta"].as_str())
-        .collect::<String>();
-    assert_eq!(reasoning, "abcdef");
+        .filter(|emit| emit.event == "response.block.created")
+        .map(|emit| &emit.payload["data"]["block"])
+        .collect::<Vec<_>>();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0]["type"], "thinking");
+    assert_eq!(blocks[0]["content"], "abcdef");
 
     let output = emits
         .iter()
@@ -436,6 +440,73 @@ async fn local_backend_task_execute_streams_claude_assistant_thinking_blocks_as_
         .filter_map(|emit| emit.payload["data"]["delta"].as_str())
         .collect::<String>();
     assert_eq!(output, "answer");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn local_backend_preserves_claude_content_order_around_tool_use() {
+    let _lock = ENV_LOCK.lock().await;
+    let fake_claude = write_fake_executable(
+        "fake-local-backend-ordered-content-claude",
+        r##"#!/bin/sh
+	cat >/dev/null
+	printf '%s\n' '{"type":"assistant","message":{"id":"assistant-order","role":"assistant","content":[{"type":"thinking","thinking":"plan first"},{"type":"text","text":"before tool"},{"type":"tool_use","id":"Read_order","name":"Read","input":{"file_path":"README.md"}},{"type":"text","text":"after tool"}]}}'
+	printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"Read_order","content":"ok"}]}}'
+	printf '%s\n' '{"type":"assistant","message":{"id":"assistant-final","role":"assistant","content":[{"type":"text","text":"done"}]}}'
+	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
+	"##,
+    );
+    let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
+    let transport = RecordingTransport::default();
+    let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
+    runner.register_handlers();
+
+    let handler = transport.handler("task:execute").unwrap();
+    let ack = handler(json!({
+        "task_id": 118,
+        "subtask_id": 119,
+        "prompt": "run",
+        "bot": [{"shell_type": "ClaudeCode"}],
+        "model_config": {
+            "env": {
+                "model": "anthropic",
+                "model_id": "claude-3-5-sonnet-20241022"
+            }
+        }
+    }))
+    .await;
+    assert_eq!(ack, None);
+
+    let emits = transport.wait_for_emit_event("response.completed").await;
+    let streamed = emits
+        .iter()
+        .skip(1)
+        .take(emits.len() - 2)
+        .map(|emit| {
+            (
+                emit.event.as_str(),
+                emit.payload["data"]["delta"]
+                    .as_str()
+                    .or_else(|| emit.payload["data"]["block"]["id"].as_str())
+                    .or_else(|| emit.payload["data"]["block_id"].as_str()),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        streamed,
+        vec![
+            ("response.block.created", Some("assistant-order:thinking:0")),
+            ("response.block.created", Some("assistant-order:text:1")),
+            ("response.block.created", Some("Read_order")),
+            ("response.block.created", Some("assistant-order:text:3")),
+            ("response.block.updated", Some("Read_order")),
+            ("response.output_text.delta", Some("done")),
+        ]
+    );
+    assert_eq!(
+        emits[6].payload["data"]["item_id"],
+        "claude-118-119-output-1"
+    );
 }
 
 #[cfg(unix)]

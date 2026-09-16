@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { captureVerificationScreenshot } from '../modules/workspace-flows.mjs'
+import {
+  captureVerificationScreenshot,
+  inCollaborationSidebar,
+} from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
@@ -18,6 +21,10 @@ function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
 }
 
+function sidebarScoped(selector) {
+  return inCollaborationSidebar(selector)
+}
+
 async function snapshot(control) {
   return JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
 }
@@ -25,6 +32,7 @@ async function snapshot(control) {
 export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let cloudOffline = false
   let cloudWorkspaceListFailures = 0
+  const cloudAgentMutationRequests = []
   const cloudProjectDetailRequests = []
   const assertLocalIsolation = () =>
     assert.deepEqual(
@@ -73,6 +81,18 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         json(response, 200, { items: [] })
         return true
       }
+      if (request.method === 'GET' && url.pathname === '/api/models/unified') {
+        json(response, 503, {
+          detail: 'Desktop E2E cloud model service is unavailable',
+        })
+        return true
+      }
+      if (
+        request.method === 'POST' &&
+        (url.pathname === '/api/bots' || url.pathname === '/api/teams')
+      ) {
+        cloudAgentMutationRequests.push(`${request.method} ${url.pathname}`)
+      }
       if (url.pathname.startsWith('/api/v1/cloud-projects/')) {
         cloudProjectDetailRequests.push(`${request.method} ${url.pathname}`)
       }
@@ -93,7 +113,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       await control.command(
         'waitFor',
-        scoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`),
+        sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`),
         {
           text: '本地空间',
           timeoutMs: uiTimeoutMs,
@@ -101,7 +121,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       await control.command(
         'waitFor',
-        scoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
+        sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
         {
           text: '云端空间',
           timeoutMs: uiTimeoutMs,
@@ -128,9 +148,9 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       cloudOffline = true
       await control.command(
         'click',
-        scoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`)
+        sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`)
       )
-      const localWorkspaceTree = scoped(
+      const localWorkspaceTree = sidebarScoped(
         `[data-testid="collaboration-workspace-tree-${LOCAL_WORKSPACE_ID}"]`
       )
       const activeLocalWorkspace = `${localWorkspaceTree} [data-testid="collaboration-workspace-nav-projects"]`
@@ -228,11 +248,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       const settingsSnapshot = await snapshot(control)
       assert.equal(
-        settingsSnapshot.testIds.includes('collaboration-tab-files'),
-        false,
-        'Files must not remain a top-level project view'
-      )
-      assert.equal(
         settingsSnapshot.testIds.includes('collaboration-tab-automation'),
         false,
         'Automation must not remain a top-level project view'
@@ -240,13 +255,57 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
 
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-settings-dispatch"]')
+        scoped('[data-testid="collaboration-project-settings-participants"]')
       )
-      await control.command('waitFor', scoped('[data-testid="project-automation-policy"]'), {
+      await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', scoped('[data-testid="automation-welcome-create-policy"]'), {
-        text: '创建第一条策略',
+      await control.command('click', '[data-testid="project-agent-mode-create"]')
+      await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="wework-agent-model-load-error"]', {
+        text: 'Desktop E2E cloud model service is unavailable',
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.notEqual(
+        await control.command('getAttribute', '[data-testid="wework-agent-resource-create"]', {
+          value: 'disabled',
+        }),
+        null,
+        'Agent creation must remain disabled without an available model'
+      )
+      assert.deepEqual(
+        cloudAgentMutationRequests,
+        [],
+        'Unavailable model metadata must not trigger a cloud Agent mutation'
+      )
+      await control.command('click', '[data-testid="wework-agent-resource-creator-close"]')
+      await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command('getElementCount', scoped('[data-testid^="project-agent-row-"]'))
+        ),
+        0,
+        'A failed offline cloud resource creation must not create a project Agent binding'
+      )
+
+      await control.command(
+        'click',
+        scoped('[data-testid="collaboration-project-settings-automatic-processing"]')
+      )
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="collaboration-project-automatic-processing-page"]'),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('waitFor', scoped('[data-testid="automatic-processing"]'), {
+        text: '暂无自动处理规则',
         timeoutMs: uiTimeoutMs,
       })
       await captureVerificationScreenshot(
@@ -255,8 +314,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         ACTIVE_WORKBENCH_SELECTOR
       )
       assertLocalIsolation()
-      await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
-      await control.command('click', scoped('[data-testid="collaboration-project-settings-files"]'))
+      await control.command('click', scoped('[data-testid="collaboration-tab-files"]'))
       await control.command('waitFor', scoped('[data-testid="cloud-files-view"]'), {
         timeoutMs: uiTimeoutMs,
       })
@@ -282,7 +340,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       await control.command(
         'waitFor',
-        scoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
+        sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
         {
           visible: false,
           timeoutMs: uiTimeoutMs,
@@ -297,7 +355,11 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     },
 
     diagnostics() {
-      return { cloudProjectDetailRequests, cloudWorkspaceListFailures }
+      return {
+        cloudAgentMutationRequests,
+        cloudProjectDetailRequests,
+        cloudWorkspaceListFailures,
+      }
     },
   }
 }

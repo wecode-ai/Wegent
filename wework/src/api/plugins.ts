@@ -127,6 +127,14 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
         `/plugins/installed/sync-device${deviceQuery(deviceId)}${reconcile ? '&reconcile=true' : ''}`
       )
     },
+    syncInstalledPluginToDevice(
+      installedPluginId: string | number,
+      deviceId: string
+    ): Promise<PluginDeviceSyncResponse> {
+      return client.post(
+        `/plugins/installed/${installedPluginId}/sync-device${deviceQuery(deviceId)}`
+      )
+    },
     reportInstalledPluginsOnDevice(
       deviceId: string,
       plugins: PluginDeviceReportItem[]

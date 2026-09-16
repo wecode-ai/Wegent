@@ -8,6 +8,7 @@ pub mod bundled_plugins;
 pub mod capabilities;
 pub mod codex_home;
 pub mod command;
+pub mod environment_prepare;
 mod event_stream;
 pub mod git_commands;
 pub mod git_commit_message;

@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Dispatch } from 'react'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { canRequestDeviceUpgrade, isWeWorkCompatibleDevice } from '@/lib/device-capabilities'
-import type { DeviceUpgradeState, DeviceUpgradeStatusPayload } from '@/types/device-events'
+import type {
+  DeviceSlotUpdatePayload,
+  DeviceUpgradeState,
+  DeviceUpgradeStatusPayload,
+} from '@/types/device-events'
 import type { WorkbenchState } from '@/types/workbench'
 import {
   UPGRADE_REFRESH_INTERVAL_MS,
@@ -160,12 +164,15 @@ export function useWorkbenchDeviceUpgrades({
         void refreshDevices()
       }
     }
+    const handleDeviceSlotUpdate = (payload: DeviceSlotUpdatePayload) => {
+      dispatch({ type: 'device_slot_updated', payload })
+    }
 
     return services.chatStream.subscribe({
       onDeviceOnline: handleDeviceOnline,
       onDeviceOffline: handleDeviceOffline,
       onDeviceStatus: handleDeviceStatus,
-      onDeviceSlotUpdate: refreshDevicesAfterEvent,
+      onDeviceSlotUpdate: handleDeviceSlotUpdate,
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
     })
   }, [dispatch, refreshDevices, services.chatStream, setDeviceUpgradeState])

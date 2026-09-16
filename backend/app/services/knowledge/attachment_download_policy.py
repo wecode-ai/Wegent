@@ -14,7 +14,19 @@ from app.services.knowledge.document_download_policy import (
     require_document_download_allowed,
 )
 
-AttachmentAccessPurpose = Literal["download", "playback", "executor", "share"]
+AttachmentAccessPurpose = Literal[
+    "download", "playback", "executor", "share", "preview"
+]
+
+# Extensions the source-file previewer renders inline. A "preview" purpose is
+# only honoured for these, so it cannot become a generic bypass of the download
+# policy for arbitrary attachments.
+PREVIEWABLE_SOURCE_EXTENSIONS = frozenset({"pdf", "doc", "docx", "xls", "xlsx", "pptx"})
+
+
+def _normalize_extension(file_extension: str | None) -> str | None:
+    normalized = (file_extension or "").strip().lstrip(".").lower()
+    return normalized or None
 
 
 def require_attachment_download_allowed(
@@ -23,6 +35,7 @@ def require_attachment_download_allowed(
     attachment_id: int,
     mime_type: str | None,
     purpose: AttachmentAccessPurpose,
+    file_extension: str | None = None,
 ) -> None:
     """Apply KB original-file policy only to attachments linked to a document.
 
@@ -42,6 +55,16 @@ def require_attachment_download_allowed(
     normalized_mime_type = (mime_type or "").lower()
     if purpose == "playback" and normalized_mime_type.startswith(("image/", "video/")):
         return
+
+    if purpose == "preview":
+        extension = _normalize_extension(file_extension) or _normalize_extension(
+            document.file_extension
+        )
+        if extension in PREVIEWABLE_SOURCE_EXTENSIONS:
+            # Source previews fetch the same bytes as a download would; for the
+            # types the previewer renders, reading them is allowed even when
+            # the knowledge base forbids original-file downloads.
+            return
 
     knowledge_base = (
         db.query(Kind)

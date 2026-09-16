@@ -192,6 +192,10 @@ describe('desktop resource migration', () => {
     expect(source).toContain('executorPackageBinaryPath(targetDirectory, target, profile)')
     expect(source).not.toContain("'metadata',")
     expect(source).toContain('const [executorPath] = await Promise.all([')
+    const parallelPreparationEnd = source.indexOf(
+      '  buildDshApp(),\n])\nawait buildCodeStatisticsHook(packageTargets.cargoTarget)'
+    )
+    expect(parallelPreparationEnd).toBeGreaterThan(-1)
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain("run(pnpmCommand, ['prepare:codex', '--materialize']")
     expect(source).toContain("run(pnpmCommand, ['prepare:dws']")

@@ -1,0 +1,15 @@
+/.traffic-e2e/local/
+/.traffic-e2e/regression.yaml
+/.ci-build/
+/target/
+**/target/
+/data/
+/recordings/
+**/recordings/
+*.pem
+*.key
+*.jks
+*.p12
+*.pfx
+.env
+.env.*

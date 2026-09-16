@@ -4,6 +4,7 @@
 
 import asyncio
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from threading import Lock
@@ -12,7 +13,8 @@ from typing import Any, Dict, List, Optional
 import orjson
 from redis import ConnectionPool as SyncConnectionPool
 from redis import Redis as SyncRedis
-from redis.asyncio import ConnectionPool, Redis
+from redis.asyncio import BlockingConnectionPool, Redis
+from redis.asyncio.client import PubSub
 
 from app.core.config import settings
 
@@ -40,9 +42,10 @@ class RedisCache:
             "socket_connect_timeout": 2.0,
             "retry_on_timeout": True,
         }
-        self._pool: Optional[ConnectionPool] = None
+        self._pool: Optional[BlockingConnectionPool] = None
         self._client: Optional[Redis] = None
         self._owner_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._owner_pid: Optional[int] = None
         self._async_client_lock = Lock()
         self._sync_pool: Optional[SyncConnectionPool] = None
         self._sync_client: Optional[SyncRedis] = None
@@ -52,21 +55,32 @@ class RedisCache:
         """Bind the reusable asynchronous client to the application loop."""
         loop = asyncio.get_running_loop()
         with self._async_client_lock:
-            if self._owner_loop is loop and self._client is not None:
+            if (
+                self._owner_loop is loop
+                and self._owner_pid == os.getpid()
+                and self._client is not None
+            ):
                 return
             if self._owner_loop is not None:
                 raise RuntimeError("Redis cache is already bound to another event loop")
-            self._pool = ConnectionPool.from_url(self._url, **self._connection_params)
+            self._pool = BlockingConnectionPool.from_url(
+                self._url, timeout=5.0, **self._connection_params
+            )
             # Passing an explicit pool keeps lower-level client.aclose() calls
             # from disconnecting the application-owned pool.
             self._client = Redis(connection_pool=self._pool)
             self._owner_loop = loop
+            self._owner_pid = os.getpid()
 
     async def _get_client(self) -> Redis:
         """Return the shared owner client or an isolated caller-owned client."""
         loop = asyncio.get_running_loop()
         with self._async_client_lock:
-            if self._owner_loop is loop and self._client is not None:
+            if (
+                self._owner_loop is loop
+                and self._owner_pid == os.getpid()
+                and self._client is not None
+            ):
                 return self._client
         # Redis asyncio connections are bound to the loop where they perform I/O.
         # Synchronous services use asyncio.run() on short-lived worker loops, so
@@ -79,7 +93,9 @@ class RedisCache:
         loop = asyncio.get_running_loop()
         client = await self._get_client()
         with self._async_client_lock:
-            application_owned = self._owner_loop is loop
+            application_owned = (
+                self._owner_loop is loop and self._owner_pid == os.getpid()
+            )
         try:
             yield client
         finally:
@@ -117,6 +133,7 @@ class RedisCache:
             self._client = None
             self._pool = None
             self._owner_loop = None
+            self._owner_pid = None
         sync_client = self._sync_client
         sync_pool = self._sync_pool
         self._sync_client = None
@@ -134,6 +151,26 @@ class RedisCache:
                     sync_client.close()
                 if sync_pool is not None:
                     sync_pool.disconnect()
+
+    async def subscribe(self, channel: str) -> tuple[Redis, PubSub]:
+        """Open a dedicated subscription without borrowing the command pool.
+
+        The stream owns both objects and must close them when it ends.
+        """
+        client = Redis.from_url(
+            self._url, **{**self._connection_params, "max_connections": 1}
+        )
+        pubsub = client.pubsub()
+        try:
+            await pubsub.subscribe(channel)
+            return client, pubsub
+        except BaseException:
+            # Cancellation during subscription must also release its connection.
+            try:
+                await pubsub.aclose()
+            finally:
+                await client.aclose()
+            raise
 
     def generate_full_cache_key(self, user_id: int, git_domain: str) -> str:
         """Generate cache key for full user repositories list"""

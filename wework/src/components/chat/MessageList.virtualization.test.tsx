@@ -178,21 +178,54 @@ describe('MessageList desktop virtualization', () => {
 
     scrollElement.scrollTop = -160
     expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(false)
-    expect(listElement).toHaveStyle({ height: '3940px' })
-    expect(scrollElement.scrollTop).toBe(-200)
-
-    expect(shouldAdjustScrollPosition?.({ key: 'user-18', start: 8_000 }, 40, instance)).toBe(false)
-    expect(listElement).toHaveStyle({ height: '3940px' })
-    expect(scrollElement.scrollTop).toBe(-200)
-
     expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, -40, instance)).toBe(
+      false
+    )
+    expect(shouldAdjustScrollPosition?.({ key: 'user-18', start: 8_000 }, 40, instance)).toBe(false)
+    expect(listElement).toHaveStyle({ height: '3900px' })
+    expect(scrollElement.scrollTop).toBe(-160)
+
+    useVirtualizerMock.mockClear()
+    render(
+      <MessageList
+        messages={messages}
+        scrollElementRef={{ current: scrollElement }}
+        bottomOrigin
+        virtualAnchorToEnd={false}
+      />
+    )
+    const shouldPreserveScrollPosition = virtualizerInstances.at(-1)
+      ?.shouldAdjustScrollPositionOnItemSizeChange as
+      | ((
+          item: { key: string; start: number },
+          delta: number,
+          instance: typeof instance
+        ) => boolean)
+      | undefined
+
+    scrollElement.scrollTop = -160
+    expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(
+      false
+    )
+    expect(listElement).toHaveStyle({ height: '3940px' })
+    expect(scrollElement.scrollTop).toBe(-200)
+
+    expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, -40, instance)).toBe(
+      false
+    )
+    expect(listElement).toHaveStyle({ height: '3940px' })
+    expect(scrollElement.scrollTop).toBe(-200)
+
+    expect(shouldPreserveScrollPosition?.({ key: 'user-18', start: 8_000 }, 40, instance)).toBe(
       false
     )
     expect(listElement).toHaveStyle({ height: '3940px' })
     expect(scrollElement.scrollTop).toBe(-200)
 
     scrollElement.scrollTop = 0
-    expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(false)
+    expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(
+      false
+    )
     expect(listElement).toHaveStyle({ height: '3940px' })
     expect(scrollElement.scrollTop).toBe(0)
 

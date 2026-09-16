@@ -9,6 +9,8 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
+  FRESH_CHAT_COMPLETION_TEXT,
+  FRESH_CHAT_PROMPT,
 } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -357,6 +359,27 @@ async function waitForRuntimeTaskId(control, timeoutMs) {
   throw new Error('Timed out waiting for the embedded-browser setup to create a local task')
 }
 
+async function waitForRuntimeTask(control, expectedTaskId, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    if (snapshot.workbench?.currentRuntimeTask?.taskId === expectedTaskId) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`Timed out waiting for runtime task ${expectedTaskId}`)
+}
+
+async function waitForDifferentRuntimeTaskId(control, previousTaskId, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
+    if (taskId && taskId !== previousTaskId) return taskId
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`Timed out waiting for a runtime task different from ${previousTaskId}`)
+}
+
 async function withBrowserMcp(identity, label, callback) {
   const executorPath =
     desktopScenarioExecutorBinary ||
@@ -372,6 +395,8 @@ async function withBrowserMcp(identity, label, callback) {
     cwd: repoDir,
     env: {
       ...process.env,
+      WEWORK_EMBEDDED_BROWSER_BRIDGE_URL: identity.baseUrl,
+      WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN: identity.token,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE: identity.runtimePath,
       WEWORK_EMBEDDED_BROWSER_LABEL: label,
     },
@@ -574,6 +599,86 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           (payload.timeoutMs ?? uiTimeoutMs) + 5_000,
           `Timed out waiting for embedded browser bridge action: ${payload.action}`
         )
+      const firstTaskRowSelector = `[data-testid="runtime-local-task-row-${taskId}"]`
+      control.setScenario('fresh_chat')
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="chat-message-input"][contenteditable="true"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command('fill', '[data-testid="chat-message-input"][contenteditable="true"]', {
+        value: FRESH_CHAT_PROMPT,
+      })
+      await control.command('press', '[data-testid="chat-message-input"][contenteditable="true"]', {
+        key: 'Enter',
+      })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: FRESH_CHAT_COMPLETION_TEXT,
+        timeoutMs: uiTimeoutMs,
+      })
+      const backgroundTaskId = await waitForDifferentRuntimeTaskId(control, taskId, uiTimeoutMs)
+      const backgroundBrowserLabel = await readBrowserPanelLabel(
+        control,
+        ACTIVE_WORKBENCH_SELECTOR,
+        uiTimeoutMs
+      )
+      await control.command('click', firstTaskRowSelector)
+      await waitForRuntimeTask(control, taskId, uiTimeoutMs)
+      const backgroundOpenResult = await withTimeout(
+        callBridge(
+          bridgeIdentity,
+          {
+            action: 'open',
+            label: backgroundBrowserLabel,
+            url: fixtureUrl,
+            timeoutMs: 8_000,
+          },
+          backgroundBrowserLabel
+        ),
+        8_000,
+        'The unloaded runtime task did not bootstrap its task-scoped browser'
+      )
+      assert.equal(
+        backgroundOpenResult.ok,
+        true,
+        `The unloaded runtime task browser open failed: ${JSON.stringify(backgroundOpenResult)}`
+      )
+      const backgroundInspect = await callBridge(
+        bridgeIdentity,
+        {
+          action: 'inspect',
+          options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
+          timeoutMs: 5_000,
+        },
+        backgroundBrowserLabel
+      )
+      assert.ok(
+        backgroundInspect.inspectText.includes(READY_TEXT),
+        'The unloaded runtime task browser did not load the requested page'
+      )
+      const activeTaskAfterBackgroundOpen = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      ).workbench?.currentRuntimeTask?.taskId
+      assert.equal(
+        activeTaskAfterBackgroundOpen,
+        taskId,
+        'Opening a browser for an unloaded runtime task changed the active task'
+      )
+      await control.command('click', `[data-testid="runtime-local-task-row-${backgroundTaskId}"]`)
+      await waitForRuntimeTask(control, backgroundTaskId, uiTimeoutMs)
+      await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureUrl,
+        uiTimeoutMs,
+        'The background browser request was not restored with its runtime task'
+      )
+      await control.command('click', '[data-testid="right-workspace-browser-tab-1-close-button"]')
+      await control.command('click', firstTaskRowSelector)
+      await waitForRuntimeTask(control, taskId, uiTimeoutMs)
+      control.setScenario('embedded_browser_bridge_collision')
       const firstTaskTabTestId = await control.command(
         'getAttribute',
         '[data-tab-kind="task"][aria-selected="true"]',
@@ -1030,7 +1135,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       })
       assert.equal(cacheResourceRequests, 2, 'Cache clear did not force a resource request')
 
-      const mcpResult = await withBrowserMcp(bridgeIdentity, browserLabel, async callTool => {
+      const isolatedMcpRuntimePath = join(resultDir, 'embedded-browser-mcp-runtime.json')
+      await writeFile(isolatedMcpRuntimePath, originalBridgeRuntime, 'utf8')
+      const mcpIdentity = { ...bridgeIdentity, runtimePath: isolatedMcpRuntimePath }
+      const mcpResult = await withBrowserMcp(mcpIdentity, browserLabel, async callTool => {
         const openText = await callTool('browser_open_and_inspect', {
           url: redirectUrl,
           inspectOptions: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },

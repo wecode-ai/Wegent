@@ -63,7 +63,10 @@ import wecode.api.gitlab_provider_patch  # noqa: F401  ensures GitLabProvider is
 import wecode.api.models_endpoint_patch  # noqa: F401  patch app.api.endpoints.models to enforce admin-only endpoints
 import wecode.api.oidc_endpoint_patch  # noqa: F401  patch app.api.endpoints.oidc OIDC callback for wecode-specific git_info handling
 import wecode.api.outbound_token_service_patch  # noqa: F401  inject employee_id claim into issued outbound tokens
-import wecode.api.quota_endpoint_patch  # noqa: F401  patch app.api.endpoints.quota to proxy quota requests to external service
+# MIGRATION-CANDIDATE(api="GET /api/quota/claude/quota"): remove after final confirmation.
+# The AIGC quota proxy now runs in Rust (backend-rs-intra), which owns this
+# route through the hybrid gateway route table.
+# import wecode.api.quota_endpoint_patch  # noqa: F401  patch app.api.endpoints.quota to proxy quota requests to external service
 import wecode.api.share_service_patch  # noqa: F401  ERP name priority for share members
 import wecode.api.user_service_patch  # noqa: F401  patch app.services.user without modifying source
 import wecode.api.users_endpoint_patch as users_endpoint_patch  # noqa: F401  patch app.api.endpoints.users without modifying source

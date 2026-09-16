@@ -1068,6 +1068,10 @@ class RuntimeTaskCreatePayload(BaseModel):
         default_factory=list,
         alias="projectPlugins",
     )
+    additional_skills: list[Any] = Field(
+        default_factory=list,
+        alias="additionalSkills",
+    )
     bot: list[dict[str, Any]] = Field(default_factory=list)
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     friendly_title: Optional[dict[str, Any]] = Field(

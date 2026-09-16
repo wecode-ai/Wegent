@@ -128,6 +128,7 @@
     "collaboration": "协作",
     "more": "更多",
     "more_summary": "设备 · 协作",
+    "more_summary_non_admin": "设备",
     "settings": "设置",
     "docs": "文档",
     "feature_docs": "功能文档",
@@ -135,6 +136,16 @@
     "feedback": "问题反馈",
     "admin": "系统管理",
     "evaluation": "AI 考评"
+  },
+  "collaboration_sidebar": {
+    "back_to_workbench": "返回工作台",
+    "title": "协作",
+    "aria_label": "协作导航",
+    "close_navigation": "关闭协作导航",
+    "home": "协作首页",
+    "my_work": "我的工作",
+    "inbox": "收件箱",
+    "run_center": "运行中心"
   },
   "sidebar": {
     "recent_visits": "最近访问",
@@ -328,6 +339,8 @@
     "download": "下载"
   },
   "teams": {
+    "create_target": "创建到",
+    "create_target_description": "智能体将作为当前协作空间的共享资源创建。",
     "title": "智能体列表",
     "description": "智能体 = 机器人 + 机器人之间的协作模式，通过组合不同的机器人和协作方式来完成各种任务",
     "loading": "加载智能体中...",

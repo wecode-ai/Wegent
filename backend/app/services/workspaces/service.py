@@ -4,6 +4,9 @@
 """Workspace application-service facade."""
 
 from app.services.workspaces.agents import WorkspaceAgentService
+from app.services.workspaces.collaboration_groups import (
+    WorkspaceCollaborationGroupService,
+)
 from app.services.workspaces.execution_environments import (
     WorkspaceExecutionEnvironmentService,
 )
@@ -17,6 +20,7 @@ class WorkspaceService(
     WorkspaceMemberService,
     WorkspacePersonalResourceService,
     WorkspaceAgentService,
+    WorkspaceCollaborationGroupService,
     WorkspaceExecutionEnvironmentService,
 ):
     """Expose the complete Workspace aggregate service through one facade."""

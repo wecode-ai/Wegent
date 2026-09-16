@@ -633,12 +633,21 @@ export async function getAttachmentPreview(
  * @param shareToken - Optional share token for public access
  * @returns Download URL
  */
-export function getAttachmentDownloadUrl(attachmentId: number, shareToken?: string): string {
+export function getAttachmentDownloadUrl(
+  attachmentId: number,
+  shareToken?: string,
+  purpose?: 'preview'
+): string {
   const baseUrl = `${API_BASE_URL}/api/attachments/${attachmentId}/download`
+  const params = new URLSearchParams()
   if (shareToken) {
-    return `${baseUrl}?share_token=${encodeURIComponent(shareToken)}`
+    params.set('share_token', shareToken)
   }
-  return baseUrl
+  if (purpose) {
+    params.set('purpose', purpose)
+  }
+  const query = params.toString()
+  return query ? `${baseUrl}?${query}` : baseUrl
 }
 
 export async function createAttachmentDownloadUrl(attachmentId: number): Promise<string> {
@@ -689,6 +698,12 @@ interface FetchAttachmentFileOptions {
   filename?: string
   shareToken?: string
   signal?: AbortSignal
+  /**
+   * Server-side access purpose. "preview" lets protected knowledge-base
+   * originals through for inline rendering (the policy only honours it for
+   * previewable source types); downloads keep the default purpose.
+   */
+  purpose?: 'preview'
 }
 
 function getAttachmentFilename(
@@ -726,13 +741,16 @@ export async function fetchAttachmentFile(
   options: FetchAttachmentFileOptions = {}
 ): Promise<File> {
   const token = getToken()
-  const response = await fetch(getAttachmentDownloadUrl(attachmentId, options.shareToken), {
-    method: 'GET',
-    headers: {
-      ...(!options.shareToken && token && { Authorization: `Bearer ${token}` }),
-    },
-    signal: options.signal,
-  })
+  const response = await fetch(
+    getAttachmentDownloadUrl(attachmentId, options.shareToken, options.purpose),
+    {
+      method: 'GET',
+      headers: {
+        ...(!options.shareToken && token && { Authorization: `Bearer ${token}` }),
+      },
+      signal: options.signal,
+    }
+  )
 
   if (!response.ok) {
     throw new Error(`Failed to fetch attachment (${response.status})`)

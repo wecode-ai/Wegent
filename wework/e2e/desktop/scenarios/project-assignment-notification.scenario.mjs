@@ -320,7 +320,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         assert.ok(inbox.items.some(item => item.title === args.title && item.body === args.body))
         events = [assistantMessage(withClick ? CLICK_COMPLETION : NOTIFICATION_COMPLETION)]
       } else if (requestContainsToolOutput(payload, searchId)) {
-        const tool = selectMcpTool(payload, 'wework_space', 'send_notification', args)
+        const tool = selectMcpTool(payload, 'wework_notifications', 'send_notification', args)
         events = namespacedFunctionCall(callId, tool.namespace, tool.name, tool.arguments)
       } else {
         const directToolName = (payload.tools ?? [])

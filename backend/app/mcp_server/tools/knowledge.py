@@ -36,7 +36,7 @@ from app.services.knowledge.external_document_access import (
     DOWNLOAD_TOKEN_HEADER,
     ExternalDocumentAccessError,
     create_document_download_token,
-    get_document_access_or_raise,
+    get_document_file_or_raise,
     normalize_disposition,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
@@ -752,10 +752,11 @@ def get_document_download(
             return {"error": "User not found"}
 
         normalized_disposition = normalize_disposition(disposition)
-        access = get_document_access_or_raise(
+        access = get_document_file_or_raise(
             db,
             user_id=user.id,
             document_id=document_id,
+            disposition=normalized_disposition,
         )
         if not access.downloadable:
             return {"error": "Document file is unavailable", "code": "file_unavailable"}

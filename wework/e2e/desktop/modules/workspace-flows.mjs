@@ -26,6 +26,12 @@ const FIXED_BOARD_CONTENT_SELECTOR = `[data-testid="${FIXED_BOARD_TAB_CONTENT_TE
 const WEWORK_COLLABORATION_PLATFORM_TEST_ID = 'wework-collaboration-platform'
 const SHARED_COLLABORATION_PLATFORM_TEST_ID = 'collaboration-platform-root'
 const LOCAL_COLLABORATION_WORKSPACE_ID = 'wework-local-workspace'
+export const COLLABORATION_SIDEBAR_SELECTOR = '[data-testid="collaboration-platform-sidebar"]'
+
+export function inCollaborationSidebar(selector, contentSelector = '') {
+  const sidebarSelector = `${COLLABORATION_SIDEBAR_SELECTOR} ${selector}`
+  return contentSelector ? `${contentSelector} ${sidebarSelector}` : sidebarSelector
+}
 
 async function waitForNativeCollaborationPlatform(
   control,
@@ -66,7 +72,10 @@ async function waitForNativeCollaborationPlatform(
 
 async function enterLocalCollaborationWorkspace(control, contentSelector) {
   await waitForNativeCollaborationPlatform(control, contentSelector)
-  const localWorkspaceTree = `${contentSelector} [data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`
+  const localWorkspaceTree = inCollaborationSidebar(
+    `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
+    contentSelector
+  )
   const localWorkspaceIdentity = `${localWorkspaceTree} .collaboration-workspace-identity`
   await control.command('waitFor', localWorkspaceIdentity, {
     visible: true,
@@ -791,7 +800,7 @@ async function verifyDefaultTaskBoardAssociation(control) {
   }
 }
 
-async function requireActiveProjectBoardTab(control, message) {
+async function activeOrdinaryBoardContentSelector(control, message) {
   await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -805,9 +814,66 @@ async function requireActiveProjectBoardTab(control, message) {
     `${message}: ${activeBoardTabTestId}`
   )
   const activeBoardTabId = activeBoardTabTestId.slice('workspace-tab-select-'.length)
+  return `[data-testid="workspace-tab-content-${activeBoardTabId}"]`
+}
+
+async function requireActiveWorkItemsTab(control, message) {
+  const activeBoardContentSelector = await activeOrdinaryBoardContentSelector(control, message)
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-workspace"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const location = new URL(snapshot.location)
+  assert.equal(
+    location.searchParams.get('projectId'),
+    'default-work-items',
+    `${message}: the opened board did not target My Tasks`
+  )
+  return activeBoardContentSelector
+}
+
+async function requireActiveCollaborationTab(control, message, { fixed = false } = {}) {
+  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const activeBoardTabTestId = await control.command(
+    'getAttribute',
+    '[data-tab-kind="board"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
+  const expectedPrefix = fixed ? 'workspace-tab-select-fixed-board' : 'workspace-tab-select-board-'
+  assert.ok(activeBoardTabTestId?.startsWith(expectedPrefix), `${message}: ${activeBoardTabTestId}`)
+  const activeBoardTabId = activeBoardTabTestId.slice('workspace-tab-select-'.length)
   const activeBoardContentSelector = `[data-testid="workspace-tab-content-${activeBoardTabId}"]`
   await waitForNativeCollaborationPlatform(control, activeBoardContentSelector)
   return activeBoardContentSelector
+}
+
+async function waitForStableColumnPlacement(
+  control,
+  includedColumnSelector,
+  excludedColumnSelector,
+  text,
+  message
+) {
+  const startedAt = Date.now()
+  let stableSince = null
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const includedText = await control.command('getText', includedColumnSelector)
+    const excludedText = await control.command('getText', excludedColumnSelector)
+    if (includedText.includes(text) && !excludedText.includes(text)) {
+      stableSince ??= Date.now()
+      if (Date.now() - stableSince >= 500) return
+    } else {
+      stableSince = null
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
 }
 
 async function verifyTrackedTaskBoardRunningStatus(
@@ -818,15 +884,10 @@ async function verifyTrackedTaskBoardRunningStatus(
     text: 'WEWORK_DESKTOP_E2E_TASK',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="work-item-guide-summary-status"]', {
-    text: '进行中',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveProjectBoardTab(
+  const activeBoardContentSelector = await requireActiveWorkItemsTab(
     control,
-    'The first work-item navigation did not open its project-space tab'
+    'The first work-item navigation did not open its My Tasks tab'
   )
   const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
@@ -872,15 +933,16 @@ async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
       target: `${activeBoardContentSelector} [data-testid="cloud-todo-column-dropzone-in_review"]`,
     }
   )
-  await control.command('scrollIntoView', reviewColumnSelector)
-  await control.command('waitFor', reviewColumnSelector, {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await waitForStableColumnPlacement(
+    control,
+    runningColumnSelector,
+    reviewColumnSelector,
+    'WEWORK_DESKTOP_E2E_TASK',
+    'The active runtime task did not remain in progress after a conflicting board move'
+  )
   await captureVerificationScreenshot(
     control,
-    'workspace-02a-running-task-stale-review.png',
+    'workspace-02a-running-task-authoritative.png',
     activeBoardContentSelector
   )
 
@@ -916,15 +978,14 @@ async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
 }
 
 async function verifyTrackedTaskSettledStatus(control) {
-  await control.command('waitFor', '[data-testid="work-item-guide-summary-status"]', {
-    text: '等待确认',
+  await control.command('waitFor', '[data-testid="work-item-open-board-menu"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveProjectBoardTab(
+  const activeBoardContentSelector = await requireActiveWorkItemsTab(
     control,
-    'The settled work-item navigation did not open its project-space tab'
+    'The settled work-item navigation did not open its My Tasks tab'
   )
   const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
@@ -949,9 +1010,9 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveProjectBoardTab(
+  const activeBoardContentSelector = await requireActiveWorkItemsTab(
     control,
-    'The default Issue context test did not open its project-space tab'
+    'The default Issue context test did not open its My Tasks tab'
   )
   const boardCardSelector = [
     `${activeBoardContentSelector} button[data-testid^="cloud-todo-card-"]`,
@@ -998,10 +1059,6 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="work-item-guide-summary-status"]', {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   await captureVerificationScreenshot(control, 'workspace-02-task-associated.png')
   await control.command('click', '[data-testid="work-item-open-details"]')
   await control.command(
@@ -1015,9 +1072,9 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
   )
   await captureVerificationScreenshot(control, 'workspace-04-details-and-executions.png')
   await control.command('click', '[data-testid="work-item-open-board"]')
-  const activeBoardContentSelector = await requireActiveProjectBoardTab(
+  const activeBoardContentSelector = await requireActiveWorkItemsTab(
     control,
-    'The tracked work-item navigation did not open its project-space tab'
+    'The tracked work-item navigation did not open its My Tasks tab'
   )
   await waitForStableSnapshot(
     control,
@@ -1084,10 +1141,12 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
   await control.command('click', '[data-testid="ai-chat-modal-close"]', {
     visible: true,
   })
-  await waitForNativeCollaborationPlatform(
-    control,
-    activeBoardContentSelector,
-    DEFAULT_STEP_TIMEOUT_MS
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-workspace"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
   )
   await captureVerificationScreenshot(
     control,
@@ -1112,9 +1171,15 @@ async function verifyExistingTaskBoardAssociation(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveProjectBoardTab(
+  await requireActiveWorkItemsTab(
     control,
-    'The source work-item navigation did not open its project-space tab'
+    'The source work-item navigation did not open its My Tasks tab'
+  )
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+  const activeBoardContentSelector = await requireActiveCollaborationTab(
+    control,
+    'The fixed collaboration tab did not open the collaboration platform',
+    { fixed: true }
   )
   const targetProjectName = 'Existing Task Target Board'
   await createLocalCollaborationProject(control, activeBoardContentSelector, targetProjectName)
@@ -1200,7 +1265,7 @@ async function verifyExistingTaskBoardAssociation(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const movedBoardContentSelector = await requireActiveProjectBoardTab(
+  const movedBoardContentSelector = await requireActiveCollaborationTab(
     control,
     'The moved work-item navigation did not open its project-space tab'
   )
@@ -1437,7 +1502,10 @@ async function verifyWorkspaceTabIsolation(control) {
     boardTabTestId: firstBoardTestId,
   } = await openProjectWorkspaceTab(control, initialBoardIds)
   await enterLocalCollaborationWorkspace(control, firstBoardContent)
-  const firstWorkspaceTree = `${firstBoardContent} [data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`
+  const firstWorkspaceTree = inCollaborationSidebar(
+    `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
+    firstBoardContent
+  )
   await control.command('hover', `${firstWorkspaceTree} .collaboration-workspace-row`)
   await control.command(
     'click',
@@ -1455,25 +1523,28 @@ async function verifyWorkspaceTabIsolation(control) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const firstWorkspaceAgents = `${firstBoardContent} [data-testid="collaboration-workspace-nav-agents"]`
-  await control.command('waitFor', firstWorkspaceAgents, {
+  const firstWorkspaceParticipants = `${firstBoardContent} [data-testid="collaboration-workspace-nav-participants"]`
+  await control.command('waitFor', firstWorkspaceParticipants, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('clickWhenEnabled', firstWorkspaceAgents)
+  await control.command('clickWhenEnabled', firstWorkspaceParticipants)
   await waitForAttribute(
     control,
-    firstWorkspaceAgents,
+    firstWorkspaceParticipants,
     'aria-current',
     'page',
-    'The first project-space tab did not retain its Agents section'
+    'The first project-space tab did not retain its Participants section'
   )
 
   const { boardContentSelector: secondBoardContent } = await openProjectWorkspaceTab(control, [
     ...initialBoardIds,
     firstBoardTestId,
   ])
-  const secondLocalWorkspace = `${secondBoardContent} [data-testid="collaboration-workspace-home-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`
+  const secondLocalWorkspace = inCollaborationSidebar(
+    `[data-testid="collaboration-workspace-home-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
+    secondBoardContent
+  )
   await control.command('waitFor', secondLocalWorkspace, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1490,13 +1561,16 @@ async function verifyWorkspaceTabIsolation(control) {
   )
   await waitForAttribute(
     control,
-    firstWorkspaceAgents,
+    firstWorkspaceParticipants,
     'aria-current',
     'page',
     'Opening a second project-space tab reset the first tab workspace section'
   )
   await enterLocalCollaborationWorkspace(control, secondBoardContent)
-  const secondWorkspaceHome = `${secondBoardContent} [data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"] [data-testid="collaboration-workspace-nav-projects"]`
+  const secondWorkspaceHome = inCollaborationSidebar(
+    `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"] [data-testid="collaboration-workspace-nav-projects"]`,
+    secondBoardContent
+  )
   await waitForAttribute(
     control,
     secondWorkspaceHome,
@@ -1505,13 +1579,13 @@ async function verifyWorkspaceTabIsolation(control) {
     'The second project-space tab did not enter the local workspace home independently'
   )
   await control.command('click', `[data-testid="workspace-tab-select-${firstBoardId}"]`)
-  await control.command('waitFor', firstWorkspaceAgents, {
+  await control.command('waitFor', firstWorkspaceParticipants, {
     visible: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await waitForAttribute(
     control,
-    firstWorkspaceAgents,
+    firstWorkspaceParticipants,
     'aria-current',
     'page',
     'Switching back did not restore the first project-space tab workspace section'

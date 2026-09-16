@@ -14,11 +14,19 @@ import { describe, expect, test } from 'vitest'
 import {
   CORE_DSH_VERSION,
   copyManagedPlugin,
-  prepareCoreDshLaunch,
+  createCoreDshLaunch,
+  prepareCoreDshRuntime,
   selectBundledDshRuntimeMatching,
   selectCoreDshRuntime,
 } from './core-dsh-runtime.js'
 import { temporaryDirectory } from './test-helpers.js'
+
+async function prepareCoreDshLaunch(
+  options: Parameters<typeof prepareCoreDshRuntime>[0] & { port: number }
+) {
+  const { port, ...runtimeOptions } = options
+  return createCoreDshLaunch(await prepareCoreDshRuntime(runtimeOptions), port)
+}
 
 describe('core DSH runtime', () => {
   test('preserves linked plugin directories as Windows junctions', async () => {

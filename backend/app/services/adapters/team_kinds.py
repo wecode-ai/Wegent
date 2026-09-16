@@ -1341,11 +1341,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         detailed_bots = []
         for bot_info in team_dict["bots"]:
             bot_id = bot_info["bot_id"]
-            # Get bot from kinds table
-            bot = kindReader.get_by_id(db, KindType.BOT, bot_id)
+            from app.services.adapters.bot_kinds import bot_kinds_service
 
-            if bot:
-                bot_dict = self._convert_bot_to_dict(bot, db, bot.user_id)
+            bot_dict = bot_kinds_service.get_by_id_and_user(
+                db,
+                bot_id=bot_id,
+                user_id=team_owner_id,
+            )
+            if bot_dict:
                 detailed_bots.append(
                     {
                         "bot": bot_dict,
@@ -2399,75 +2402,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         logger.debug(f"[_get_bot_summary] Returning: {result}")
         return result
-
-    def _convert_bot_to_dict(
-        self, bot: Kind, db: Session, user_id: int
-    ) -> Dict[str, Any]:
-        """
-        Convert kinds Bot to bot-like dictionary (simplified version)
-        """
-        bot_crd = Bot.model_validate(bot.json)
-
-        # Get ghost
-        ghost = kindReader.get_by_name_and_namespace(
-            db,
-            user_id,
-            KindType.GHOST,
-            bot_crd.spec.ghostRef.namespace,
-            bot_crd.spec.ghostRef.name,
-        )
-
-        # Get shell (with public fallback)
-        shell = kindReader.get_by_name_and_namespace(
-            db,
-            user_id,
-            KindType.SHELL,
-            bot_crd.spec.shellRef.namespace,
-            bot_crd.spec.shellRef.name,
-        )
-
-        # Get model - modelRef is optional (with public fallback)
-        model = None
-        if bot_crd.spec.modelRef:
-            model = kindReader.get_by_name_and_namespace(
-                db,
-                user_id,
-                KindType.MODEL,
-                bot_crd.spec.modelRef.namespace,
-                bot_crd.spec.modelRef.name,
-            )
-
-        # Extract data from components
-        system_prompt = ""
-        mcp_servers = {}
-        shell_type = ""
-        agent_config = {}
-
-        if ghost and ghost.json:
-            ghost_crd = Ghost.model_validate(ghost.json)
-            system_prompt = ghost_crd.spec.systemPrompt
-            mcp_servers = ghost_crd.spec.mcpServers or {}
-
-        if shell and shell.json:
-            shell_crd = Shell.model_validate(shell.json)
-            shell_type = shell_crd.spec.shellType
-
-        if model and model.json:
-            model_crd = Model.model_validate(model.json)
-            agent_config = model_crd.spec.modelConfig
-
-        return {
-            "id": bot.id,
-            "user_id": bot.user_id,
-            "name": bot.name,
-            "shell_type": shell_type,
-            "agent_config": agent_config,
-            "system_prompt": system_prompt,
-            "mcp_servers": mcp_servers,
-            "is_active": bot.is_active,
-            "created_at": bot.created_at,
-            "updated_at": bot.updated_at,
-        }
 
     def get_team_input_parameters(
         self, db: Session, *, team_id: int, user_id: int

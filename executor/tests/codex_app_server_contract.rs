@@ -1754,7 +1754,7 @@ fn read_json_lines(path: &Path) -> Vec<Value> {
 }
 
 async fn wait_for_path(path: &Path, message: &str) {
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while !path.exists() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }

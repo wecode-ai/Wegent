@@ -645,6 +645,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const { t: tChat } = useTranslation('chat')
   const workbench = useContext(WorkbenchContext)
   const sendKey = workbench?.state?.user?.preferences?.send_key ?? 'enter'
+  const followUpBehavior = workbench?.state?.user?.preferences?.follow_up_behavior ?? 'queue'
   const [pendingQueuedSend, setPendingQueuedSend] = useState<PendingQueuedSend | null>(null)
   const [pendingModelSelection, setPendingModelSelection] = useState<PendingModelSelection | null>(
     null
@@ -847,6 +848,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onSelectExternalMention,
     onSelectCloudProject,
     sendKey,
+    followUpBehavior,
+    isStreaming,
   }
   const errorBanner = error ? (
     <div

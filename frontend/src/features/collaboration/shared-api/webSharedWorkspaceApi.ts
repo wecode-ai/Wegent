@@ -23,6 +23,7 @@ import type {
   SharedWorkspaceApi,
   WorkspaceBinaryAccess,
   WorkspaceDeliveryFile,
+  WorkspaceMyWorkItem,
 } from '@wegent/collaboration'
 
 import { ApiError, apiClient } from '@/apis/client'
@@ -568,6 +569,7 @@ export function createWebSharedWorkspaceApi(
     workspaces: sharedHttpApi.workspaces,
     resources: sharedHttpApi.resources,
     projects: {
+      ...sharedHttpApi.projects,
       async list(workspaceId) {
         const endpoint = workspaceId
           ? `/v1/workspaces/${encoded(workspaceId)}/projects`
@@ -610,11 +612,25 @@ export function createWebSharedWorkspaceApi(
           `/v1/cloud-projects/${encoded(projectId)}/execution-environments/${encoded(deviceId)}`
         )
       },
+      initializeExecutionEnvironment(projectId, input) {
+        return client.post(
+          `/v1/cloud-projects/${encoded(projectId)}/execution-environment/initialize`,
+          keysToSnakeCase(input)
+        )
+      },
       importMessages(projectId, input) {
         return client.post(
           `/v1/cloud-projects/${encoded(projectId)}/message-imports`,
           keysToSnakeCase(input)
         )
+      },
+    },
+    myWork: {
+      async list() {
+        const response = await client.get<{ items: WorkspaceMyWorkItem[] }>(
+          '/v1/cloud-work-items/my-work'
+        )
+        return response.items
       },
     },
     issues: {

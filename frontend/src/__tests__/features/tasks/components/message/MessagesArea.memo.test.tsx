@@ -37,9 +37,10 @@ let mockMessages: DisplayMessage[] = [
 ]
 let mockStreamingSubtaskIds: number[] = []
 let mockPresentedIsStreaming = false
-let mockUser: { id: number; user_name: string } | null = {
+let mockUser: { id: number; user_name: string; role: 'admin' | 'user' } | null = {
   id: 1,
   user_name: 'tester',
+  role: 'user',
 }
 let mockTaskSession = {
   selectedTaskDetail: null as { id: number; title: string; status: string } | null,
@@ -167,6 +168,15 @@ jest.mock('@/features/tasks/components/group-chat', () => ({
   TaskMembersPanel: () => null,
 }))
 
+const sendToCollaborationDialogRenderSpy = jest.fn()
+
+jest.mock('@/features/collaboration/SendToCollaborationDialog', () => ({
+  SendToCollaborationDialog: (props: unknown) => {
+    sendToCollaborationDialogRenderSpy(props)
+    return null
+  },
+}))
+
 jest.mock('@/features/tasks/components/CorrectionProgressIndicator', () => ({
   __esModule: true,
   default: () => null,
@@ -241,7 +251,7 @@ describe('MessagesArea memoization', () => {
     ]
     mockStreamingSubtaskIds = []
     mockPresentedIsStreaming = false
-    mockUser = { id: 1, user_name: 'tester' }
+    mockUser = { id: 1, user_name: 'tester', role: 'user' }
     mockTaskSession = {
       selectedTaskDetail: null,
       refreshSelectedTaskDetail: jest.fn(),
@@ -349,7 +359,7 @@ describe('MessagesArea memoization', () => {
 
     expect(getLatestAiBubbleProps().onSaveToKnowledge).toBeUndefined()
 
-    mockUser = { id: 1, user_name: 'tester' }
+    mockUser = { id: 1, user_name: 'tester', role: 'user' }
     rerender(
       <MessagesArea
         {...props}
@@ -358,6 +368,43 @@ describe('MessagesArea memoization', () => {
     )
 
     expect(getLatestAiBubbleProps().onSaveToKnowledge).toEqual(expect.any(Function))
+  })
+
+  it('only supplies collaboration actions to admin users', () => {
+    mockTaskSession.selectedTaskDetail = {
+      id: 7,
+      title: 'Task',
+      status: 'COMPLETED',
+    }
+    const props = {
+      selectedTeam: null,
+      selectedRepo: null,
+      isGroupChat: false,
+    }
+    const { rerender } = render(<MessagesArea {...props} selectedBranch={null} />)
+    const getLatestAiBubbleProps = () =>
+      [...messageBubbleRenderSpy.mock.calls]
+        .reverse()
+        .map(call => call[0])
+        .find(messageProps => messageProps.msg.type === 'ai') as {
+        onForwardClick?: (subtaskId: number) => void
+      }
+
+    expect(getLatestAiBubbleProps().onForwardClick).toBeUndefined()
+    expect(sendToCollaborationDialogRenderSpy).not.toHaveBeenCalled()
+
+    mockUser = { id: 1, user_name: 'admin', role: 'admin' }
+    rerender(
+      <MessagesArea
+        {...props}
+        selectedBranch={{ name: 'admin', protected: false, default: false }}
+      />
+    )
+
+    expect(getLatestAiBubbleProps().onForwardClick).toEqual(expect.any(Function))
+    expect(sendToCollaborationDialogRenderSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: 7 })
+    )
   })
 
   it('binds each success toast to the document created by that save', () => {

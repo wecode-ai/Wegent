@@ -59,7 +59,11 @@ const SUBAGENT_PROMPT = 'WEWORK_DESKTOP_E2E_SUBAGENT_STREAMING_PANEL'
 const SUBAGENT_SEARCH_CALL_ID = 'wework-subagent-tool-search'
 const SUBAGENT_CALL_ID = 'wework-subagent-streaming-panel'
 const SUBAGENT_WAIT_CALL_ID = 'wework-subagent-wait'
+const SUBAGENT_CHILD_TOOL_CALL_ID = 'wework-subagent-child-tool'
 const SUBAGENT_CHILD_PROMPT = 'Inspect the child event stream and report the routing result.'
+const SUBAGENT_CHILD_TOOL_MARKER = 'WEWORK_DESKTOP_E2E_SUBAGENT_TOOL'
+const SUBAGENT_CHILD_TOOL_START = `${SUBAGENT_CHILD_TOOL_MARKER}_START`
+const SUBAGENT_CHILD_TOOL_COMPLETE = `${SUBAGENT_CHILD_TOOL_MARKER}_COMPLETE`
 const SUBAGENT_CHILD_PARTIAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARTIAL'
 const SUBAGENT_CHILD_COMPLETION = `${SUBAGENT_CHILD_PARTIAL}\n\nWEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE`
 const SUBAGENT_PARENT_COMPLETION = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARENT_COMPLETE'
@@ -867,6 +871,7 @@ export function createDesktopScenario({
   let active = false
   let generatedImageStage = 'initial'
   let subagentStage = 'initial'
+  let subagentChildStage = 'initial'
   let toolRegressionStage = 'initial'
   let timerStage = 'initial'
   let releaseAppend
@@ -1121,7 +1126,6 @@ export function createDesktopScenario({
     await control.command('waitFor', '[data-testid="subagent-activity-chip"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await subagentPartialWritten
     assert.equal(
       (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
         SUBAGENT_CHILD_PARTIAL
@@ -1142,6 +1146,29 @@ export function createDesktopScenario({
       'The subagent conversation was not opened inside the active right workspace tab'
     )
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command(
+      'waitFor',
+      '[data-testid="subagent-conversation-scroll"] [data-testid="tool-block-duration"]',
+      {
+        timeoutMs: uiTimeoutMs,
+      }
+    )
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_TOOL_MARKER
+      ),
+      false,
+      'The running child tool leaked into the root conversation'
+    )
+    await subagentPartialWritten
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
       text: SUBAGENT_CHILD_PARTIAL,
       timeoutMs: uiTimeoutMs,
     })
@@ -1151,6 +1178,13 @@ export function createDesktopScenario({
       ),
       false,
       'The rendered child agent stream leaked into the root conversation'
+    )
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_TOOL_MARKER
+      ),
+      false,
+      'The completed child tool leaked into the root conversation'
     )
     await captureSubagent(control, 'streaming-text-subagent-02-streaming-conversation.png')
     releaseSubagentCompletion()
@@ -1221,6 +1255,17 @@ export function createDesktopScenario({
       text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_TOOL_MARKER
+      ),
+      false,
+      'The restored child tool leaked into the root conversation'
+    )
     await captureSubagent(control, 'streaming-text-subagent-06-restored-history.png')
     await control.command('click', '[data-testid="right-workspace-subagents-tab-close-button"]')
   }
@@ -1266,6 +1311,34 @@ export function createDesktopScenario({
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
       if (request.headers['x-openai-subagent']) {
+        if (subagentChildStage === 'initial') {
+          const tool = selectShellTool(
+            body,
+            workspacePath,
+            `printf '${SUBAGENT_CHILD_TOOL_START}\\n'; sleep 2; printf '${SUBAGENT_CHILD_TOOL_COMPLETE}\\n'`,
+            10_000
+          )
+          subagentChildStage = 'awaiting-tool-output'
+          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+          response.end(
+            sse([
+              responseCreated(responseId),
+              ...functionCall(SUBAGENT_CHILD_TOOL_CALL_ID, tool.name, tool.arguments),
+              responseCompleted(responseId),
+            ])
+          )
+          return true
+        }
+        assert.equal(
+          subagentChildStage,
+          'awaiting-tool-output',
+          `Unexpected subagent child stage: ${subagentChildStage}`
+        )
+        assert.ok(
+          requestContainsToolOutputForCall(body, SUBAGENT_CHILD_TOOL_CALL_ID),
+          'The child tool output was not returned to the subagent'
+        )
+        subagentChildStage = 'streaming-text'
         const stream = streamingEvents(responseId, SUBAGENT_CHILD_COMPLETION, 'final_answer')
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
@@ -1287,6 +1360,7 @@ export function createDesktopScenario({
             )
           )
         )
+        subagentChildStage = 'complete'
         response.end(sse(stream.finish))
         return true
       }

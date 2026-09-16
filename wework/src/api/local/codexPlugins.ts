@@ -2810,6 +2810,8 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       if (!isElectronRuntime()) {
         throw new Error('External content import requires the Wework desktop app')
       }
+      await ensureLocalExecutorStarted()
+      await ensureBundledPluginMarketplaceRegistered()
       const imported = await requestLocalExecutor<ExternalContentImportResult>(
         'executor.codex_home.import_external_content',
         { source }

@@ -106,6 +106,27 @@ where
             let command_handler = Arc::clone(&command_handler);
             Box::pin(async move {
                 if let Some(command_key) = payload.get("command_key").and_then(Value::as_str) {
+                    if command_key == "environment_prepare" {
+                        let args = payload
+                            .get("args")
+                            .and_then(Value::as_array)
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .map(str::to_owned)
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        let timeout_seconds = payload
+                            .get("timeout_seconds")
+                            .and_then(Value::as_f64)
+                            .unwrap_or(60.0);
+                        let result = execute_environment_prepare(&args, timeout_seconds).await;
+                        return Some(serde_json::to_value(result).unwrap_or_else(
+                            |error| json!({"success": false, "error": error.to_string()}),
+                        ));
+                    }
                     if is_workspace_file_command(command_key) {
                         let path = payload
                             .get("cwd")
@@ -225,17 +246,20 @@ where
         let client = self.client.clone();
         let runtime_work_handler = self.runtime_work_handler.clone();
         let runtime_pull_lock = Arc::clone(&self.runtime_pull_lock);
+        let runtime_pull_pending = Arc::clone(&self.runtime_pull_pending);
         Arc::new(move |_| {
             let client = client.clone();
             let runtime_work_handler = runtime_work_handler.clone();
             let runtime_pull_lock = Arc::clone(&runtime_pull_lock);
+            let runtime_pull_pending = Arc::clone(&runtime_pull_pending);
             Box::pin(async move {
                 if let Some(handler) = runtime_work_handler {
-                    tokio::spawn(poll_available_runtime_work(
+                    schedule_runtime_work_poll(
                         client,
                         handler,
                         runtime_pull_lock,
-                    ));
+                        runtime_pull_pending,
+                    );
                 }
                 Some(json!({"success": true}))
             })
@@ -266,6 +290,8 @@ where
                         "error": "Capability sync handler is not available",
                     }),
                 };
+                log_capability_sync_items(&response, "skills", "skill");
+                log_capability_sync_items(&response, "plugins", "plugin");
                 write_executor_log_line(&format_executor_log(
                     "device capability sync finished",
                     &[
@@ -519,6 +545,65 @@ where
                 Some(handler.handle_run_extension(payload).await)
             })
         })
+    }
+}
+
+fn log_capability_sync_items(response: &Value, field: &str, capability_type: &str) {
+    let Some(items) = response.get(field).and_then(Value::as_array) else {
+        return;
+    };
+    for item in items {
+        let status = item
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let fields = [
+            ("type", capability_type.to_owned()),
+            (
+                "id",
+                item.get("id").map(Value::to_string).unwrap_or_default(),
+            ),
+            (
+                "name",
+                item.get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            ("status", status.to_owned()),
+            (
+                "stage",
+                item.get("stage")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "error_code",
+                item.get("error_code")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "error",
+                item.get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+        ];
+        if status == "failed" || status == "error" {
+            write_executor_error_line(&format_executor_log(
+                "device capability sync item failed",
+                &fields,
+            ));
+        } else {
+            write_executor_log_line(&format_executor_log(
+                "device capability sync item finished",
+                &fields,
+            ));
+        }
     }
 }
 

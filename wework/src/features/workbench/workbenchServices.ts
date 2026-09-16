@@ -1,4 +1,5 @@
 import { createDeviceApi } from '@/api/devices'
+import type { createAgentResourceApi } from '@/api/agentResources'
 import { createDeliveryApi } from '@/api/deliveries'
 import type { AITableApi } from '@/api/aitable'
 import type { DwsApi } from '@/api/dws'
@@ -117,6 +118,7 @@ export interface AutomationApi {
 }
 
 export interface WorkbenchServices {
+  agentResourceApi?: ReturnType<typeof createAgentResourceApi>
   teamApi: ReturnType<typeof createTeamApi>
   modelApi: ReturnType<typeof createModelApi>
   skillApi: ReturnType<typeof createSkillApi>

@@ -298,6 +298,7 @@ export interface ProjectTaskAttachment extends CloudLoopItemAttachment {
 
 export interface CloudProject {
   id: CloudProjectId
+  workspace_id?: string | null
   public_id: string
   project_key: string
   name: string
@@ -345,6 +346,9 @@ export interface CloudProject {
     prompt: string
   }
   workflow_definition?: ProjectWorkflowDefinition
+  collaboration_groups?: import('@wegent/collaboration').CollaborationGroup[]
+  automatic_processing_rules?: import('@wegent/collaboration').WorkspaceAutomationRule[]
+  execution_environment?: import('@wegent/collaboration').CollaborationExecutionEnvironmentConfig
   workflow_automation_id?: string | null
   created_by_user_id: number
   current_user_id?: number
@@ -842,6 +846,21 @@ export function createDeliveryApi(client: HttpClient) {
         board_config?: CloudProject['board_config']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
+        collaboration_groups?: CloudProject['collaboration_groups']
+        automatic_processing_rules?: CloudProject['automatic_processing_rules']
+        execution_environment?: {
+          repositories: Array<{
+            name: string
+            url: string
+            ref: string
+            path: string
+            primary: boolean
+          }>
+          setup_steps: Array<{
+            command: string
+            working_directory: string
+          }>
+        }
         provider_config?: {
           repository?: string
           domain?: string

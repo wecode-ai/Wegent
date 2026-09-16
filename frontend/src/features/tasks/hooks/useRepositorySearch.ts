@@ -341,8 +341,8 @@ export function useRepositorySearch({
         return
       }
 
-      // Scenario 2: No task selected and no repo selected - load repos and restore from localStorage (if autoRestore enabled)
-      if (autoRestore && !selectedTaskDetail && !selectedRepo && !disabled) {
+      // Load available repositories even when restoring the previous selection is disabled.
+      if (!selectedTaskDetail && !selectedRepo && !disabled) {
         let repoList = repos
         if (repoList.length === 0 && !hasInitiallyLoaded) {
           repoList = await loadRepositories()
@@ -350,6 +350,8 @@ export function useRepositorySearch({
             return
           }
         }
+
+        if (!autoRestore) return
 
         const lastRepo = getLastRepo()
 

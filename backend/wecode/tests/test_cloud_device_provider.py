@@ -75,14 +75,22 @@ async def test_create_device_passes_runtime_envs_to_nevis(test_db, monkeypatch):
         backend_url="https://backend.example.com",
         git_tokens=[
             {
-                "type": "gitlab",
-                "git_domain": "git.intra.weibo.com",
-                "git_token": "git-intra-token",
+                "domain": "git.intra.weibo.com",
+                "host": "git.intra.weibo.com",
+                "provider": "gitlab",
+                "token": "git-intra-token",
+                "username": "alice-intra",
+                "identity_name": "alice-intra",
+                "identity_email": "alice@intra.example.com",
             },
             {
-                "type": "gitlab",
-                "git_domain": "gitlab.weibo.cn",
-                "git_token": "gitlab-weibo-token",
+                "domain": "gitlab.weibo.cn",
+                "host": "gitlab.weibo.cn",
+                "provider": "gitlab",
+                "token": "gitlab-weibo-token",
+                "username": "alice-weibo",
+                "identity_name": "alice-weibo",
+                "identity_email": "alice@weibo.example.com",
             },
         ],
     )

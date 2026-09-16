@@ -791,6 +791,33 @@
   gap: 6px;
 }
 
+.automatic-processing-selected {
+  border-color: rgb(var(--color-focus, var(--color-primary)));
+  background: rgb(var(--color-focus, var(--color-primary)) / 0.05);
+}
+
+.automatic-processing-selected-soft {
+  border-color: rgb(var(--color-focus, var(--color-primary)) / 0.6);
+  background: rgb(var(--color-focus, var(--color-primary)) / 0.1);
+}
+
+.automatic-processing-selected-icon {
+  color: rgb(var(--color-focus, var(--color-primary)));
+}
+
+.automatic-processing-selected-avatar {
+  color: rgb(var(--color-focus, var(--color-primary)));
+  background: rgb(var(--color-focus, var(--color-primary)) / 0.1);
+}
+
+.automatic-processing-picker-open {
+  box-shadow: 0 0 0 2px rgb(var(--color-focus, var(--color-primary)) / 0.2);
+}
+
+.automatic-processing-checkbox {
+  accent-color: rgb(var(--color-focus, var(--color-primary)));
+}
+
 @media (max-width: 767px) {
   .collaboration-project-create-dialog {
     max-height: calc(100vh - 32px);

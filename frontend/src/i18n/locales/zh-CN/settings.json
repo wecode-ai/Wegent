@@ -304,6 +304,12 @@
         "executor_description": "决定智能体处理任务时使用的运行环境。"
       },
       "bind_mode": {
+        "advanced_title": "高级设置",
+        "available_modules": "可用模块",
+        "automatic": "自动（根据运行方式）",
+        "selected": "已选择",
+        "automatic_hint": "不选择任何模块时，将根据运行方式自动设置；选择后完全按所选模块保存。",
+        "summary_separator": "、",
         "more_modes": "更多模式",
         "collapse_more_modes": "收起更多模式",
         "chat": {
