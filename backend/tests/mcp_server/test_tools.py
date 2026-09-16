@@ -164,14 +164,14 @@ class TestKnowledgeTool:
             ) as mock_get_read_user,
             patch.object(
                 module,
-                "get_document_access_or_raise",
+                "get_document_file_or_raise",
                 return_value=access,
             ) as mock_get_access,
             patch.object(
                 module,
                 "create_document_download_token",
                 return_value="download-token",
-            ),
+            ) as mock_create_download_token,
         ):
             result = module.get_document_download(
                 token_info=token_info,
@@ -196,7 +196,56 @@ class TestKnowledgeTool:
             mock_session,
             user_id=3,
             document_id=9,
+            disposition="attachment",
         )
+        mock_create_download_token.assert_called_once_with(
+            user_id=3,
+            document_id=9,
+            disposition="attachment",
+        )
+        mock_session.close.assert_called_once()
+
+    def test_get_document_download_does_not_issue_token_when_download_is_disabled(
+        self,
+    ):
+        """Protected knowledge bases must be rejected before token issuance."""
+        module = get_knowledge_module()
+        token_info = TaskTokenInfo(
+            task_id=1,
+            subtask_id=2,
+            user_id=3,
+            user_name="alice",
+        )
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.scalar.return_value = 77
+
+        with (
+            patch.object(module, "SessionLocal", return_value=mock_session),
+            patch.object(
+                module,
+                "_get_read_user_for_knowledge_base",
+                return_value=SimpleNamespace(id=3),
+            ),
+            patch.object(
+                module,
+                "get_document_file_or_raise",
+                side_effect=module.ExternalDocumentAccessError(
+                    "Document download is disabled",
+                    "DOCUMENT_DOWNLOAD_DISABLED",
+                ),
+            ),
+            patch.object(module, "create_document_download_token") as mock_create_token,
+        ):
+            result = module.get_document_download(
+                token_info=token_info,
+                document_id=9,
+            )
+
+        assert result == {
+            "error": "Document download is disabled",
+            "code": "DOCUMENT_DOWNLOAD_DISABLED",
+        }
+        mock_create_token.assert_not_called()
         mock_session.close.assert_called_once()
 
     def test_download_command_sanitizes_output_file_name(self):

@@ -265,7 +265,10 @@ export function KnowledgeDocumentPageMobile({
         const kbType = data.kb_type || createKbType
 
         if (kbType === 'code_wiki') {
-          await createCodeWiki({ namespace, data })
+          await createCodeWiki({
+            namespace,
+            data,
+          })
 
           setShowCreateDialog(false)
           if (createScope === 'organization') {

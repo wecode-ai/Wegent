@@ -169,7 +169,13 @@ export function FilePreview({
         ) : null
 
       case 'pdf':
-        return blobUrl ? <PDFPreview url={blobUrl} filename={filename} /> : null
+        return blobUrl ? (
+          <PDFPreview
+            url={blobUrl}
+            filename={filename}
+            protectedMode={Boolean(protectedKnowledgeBaseId)}
+          />
+        ) : null
 
       case 'text':
         return <TextPreview content={textContent} filename={filename} />
