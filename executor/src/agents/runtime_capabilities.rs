@@ -2952,25 +2952,11 @@ mod tests {
             let address = listener.local_addr().unwrap();
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
-                let mut request = Vec::new();
-                let mut buffer = [0; 1024];
-                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-                    let read =
-                        tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buffer))
-                            .await
-                            .expect("mock attachment request headers timed out")
-                            .unwrap();
-                    assert!(read > 0, "request closed before headers arrived");
-                    request.extend_from_slice(&buffer[..read]);
-                }
-                let request = String::from_utf8(request).unwrap();
+                let mut buffer = vec![0; 8192];
+                let read = stream.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..read]);
                 assert!(request.starts_with("GET /api/attachments/1/executor-download "));
-                let authorization = request.lines().find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    name.eq_ignore_ascii_case("authorization")
-                        .then(|| value.trim())
-                });
-                assert_eq!(authorization, Some("Bearer test-token"));
+                assert!(request.contains("authorization: Bearer test-token\r\n"));
                 let body = b"image-bytes";
                 let header = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -2983,8 +2969,6 @@ mod tests {
             let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
             let _task_api = EnvGuard::remove("TASK_API_DOMAIN");
             let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
-            let _no_proxy = EnvGuard::set("NO_PROXY", "127.0.0.1");
-            let _no_proxy_lower = EnvGuard::set("no_proxy", "127.0.0.1");
             let request: ExecutionRequest = serde_json::from_value(json!({
                 "task_id": 72,
                 "subtask_id": 204,

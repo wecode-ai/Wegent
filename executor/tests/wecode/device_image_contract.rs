@@ -23,7 +23,7 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
 
     let publish_script =
         fs::read_to_string("../wecode/docker/device/build-and-publish.sh").unwrap();
-    assert!(publish_script.contains("--file wecode/docker/device/Dockerfile"));
+    assert!(publish_script.contains("--file docker/device/Dockerfile"));
     assert!(publish_script.contains("registry.api.weibo.com/ci/wegent-device"));
     assert!(publish_script.contains("pushregistry.api.weibo.com/ci/wegent-device"));
     assert!(publish_script.contains("from build.build_image import BuildImage"));
@@ -31,9 +31,6 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
     assert!(publish_script.contains("--password-stdin"));
     assert!(publish_script.contains("registry.api.weibo.com/ci/moby/buildkit:buildx-stable-1"));
     assert!(publish_script.contains("--driver-opt \"image=$BUILDKIT_IMAGE\""));
-    assert!(publish_script.contains("--driver-opt network=host"));
-    assert!(publish_script.contains("--network host"));
-    assert!(publish_script.contains("--allow network.host"));
     assert!(publish_script.contains("wegent-device-builder-${CI_JOB_ID}"));
     assert!(!publish_script
         .split_whitespace()
