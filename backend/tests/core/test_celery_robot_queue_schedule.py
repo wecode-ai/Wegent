@@ -20,8 +20,17 @@ def test_beat_schedule_is_empty_when_scheduled_tasks_are_disabled(monkeypatch) -
     assert build_beat_schedule() == {}
 
 
+def test_dingtalk_sync_schedule_stays_off_until_an_environment_opts_in(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "SCHEDULED_TASKS_ENABLED", True)
+
+    assert "sync-dingtalk-copies" not in build_beat_schedule()
+
+
 def test_dingtalk_sync_runs_daily_at_0200_beijing_time(monkeypatch) -> None:
     monkeypatch.setattr(settings, "SCHEDULED_TASKS_ENABLED", True)
+    monkeypatch.setattr(settings, "DINGTALK_SYNC_SCHEDULE_ENABLED", True)
     schedule = build_beat_schedule()["sync-dingtalk-copies"]
     module = "app.tasks.dingtalk_auto_sync_tasks"
     assert module in celery_app.conf.include

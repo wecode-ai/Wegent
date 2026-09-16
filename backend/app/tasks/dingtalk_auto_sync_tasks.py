@@ -46,6 +46,8 @@ def scan_dingtalk_copies(self, knowledge_base_id: int | None = None) -> int:
 
     One bad dispatch must not block the other copies. The scan always says what
     it did, because the manual endpoint answers 202 before any of it has run.
+    Beat only registers this task when ``DINGTALK_SYNC_SCHEDULE_ENABLED`` is on;
+    the manual endpoint queues it directly either way.
     """
     from app.core.distributed_lock import distributed_lock
 
