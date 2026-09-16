@@ -25,6 +25,7 @@ import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
 import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
+import { wrapWindowsScriptCommand } from '../../../scripts/child-process-command.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
 import { shouldAcceptInitialTelemetryConsent } from './telemetry-consent.mjs'
@@ -1001,7 +1002,9 @@ async function stopDesktopAppProcess(app) {
 async function runChecked(command, args, options = {}) {
   console.log(`$ ${command} ${args.join(' ')}`)
   await new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, {
+    // Windows requires its command interpreter to run `.cmd`/`.bat` launchers such as `pnpm.cmd`.
+    const resolved = wrapWindowsScriptCommand(command, args)
+    const child = spawn(resolved.command, resolved.args, {
       cwd: options.cwd,
       env: options.env,
       stdio: 'inherit',

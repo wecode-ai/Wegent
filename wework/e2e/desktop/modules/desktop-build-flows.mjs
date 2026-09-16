@@ -436,9 +436,13 @@ async function resolveDesktopCodexBinary() {
   }
 
   const target = hostCodexTarget()
-  await runChecked('pnpm', ['run', 'prepare:codex', '--target', target], {
-    cwd: weworkDir,
-  })
+  await runChecked(
+    process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+    ['run', 'prepare:codex', '--target', target],
+    {
+      cwd: weworkDir,
+    }
+  )
   const lock = JSON.parse(await readFile(join(weworkDir, 'codex-binaries.lock.json'), 'utf8'))
   const entry = lock.targets?.[target]
   const binaryRelativePath = entry?.binaryPath
