@@ -62,6 +62,8 @@ export interface RuntimeConfig {
   appVersion: string
   /** External Wework URL for coding entry points. Empty means use in-app chat code-agent mode. */
   weworkCodeUrl: string
+  /** Display name used by the desktop launch page. */
+  weworkAppName: string
 }
 
 /** Default bind group steps configuration */
@@ -141,6 +143,7 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         bindGroupSteps: process.env.NEXT_PUBLIC_BIND_GROUP_STEPS || DEFAULT_BIND_GROUP_STEPS,
         appVersion: process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
         weworkCodeUrl: '',
+        weworkAppName: 'Wework',
       }
       runtimeConfigCache = fallback
       return fallback
@@ -186,6 +189,7 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     bindGroupSteps: process.env.NEXT_PUBLIC_BIND_GROUP_STEPS || DEFAULT_BIND_GROUP_STEPS,
     appVersion: process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
     weworkCodeUrl: '',
+    weworkAppName: 'Wework',
   }
 }
 

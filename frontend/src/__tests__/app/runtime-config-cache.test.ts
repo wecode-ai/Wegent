@@ -117,6 +117,19 @@ describe('runtime config caching', () => {
     }
   })
 
+  test('desktop app name is configurable at runtime', async () => {
+    const previous = process.env.RUNTIME_WEWORK_APP_NAME
+    try {
+      process.env.RUNTIME_WEWORK_APP_NAME = '  Weibo WeWork  '
+      expect(await (await GET()).json()).toMatchObject({ weworkAppName: 'Weibo WeWork' })
+      delete process.env.RUNTIME_WEWORK_APP_NAME
+      expect(await (await GET()).json()).toMatchObject({ weworkAppName: 'Wework' })
+    } finally {
+      if (previous === undefined) delete process.env.RUNTIME_WEWORK_APP_NAME
+      else process.env.RUNTIME_WEWORK_APP_NAME = previous
+    }
+  })
+
   test('getPublicApiBaseUrl uses the public backend URL from runtime config', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,

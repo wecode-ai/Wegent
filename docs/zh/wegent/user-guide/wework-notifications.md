@@ -14,6 +14,14 @@ sidebar_position: 35
 
 通知点击目标通过可选 `url` 指定，与项目来源独立。例如“给我发个你好的通知，然后点击打开看板页面”使用 `{ "title": "你好", "body": "你好", "url": "wework://boards" }`。收到通知时页面不变，点击后打开看板首页；不需要指定项目。显式地址优先于来源生成的地址。
 
+## 从钉钉等 IM 打开 Wework
+
+IM 通知中的链接指向 Wegent 网站的 `/launch/wework?destination=...` 页面；运行任务更新也携带对应任务的链接。网页校验目标后自动请求启动已安装的客户端，无需先点击页面按钮；在浏览器提示中确认即可。每个目标只自动请求一次，取消后可点击页面按钮再次打开。网页无需登录，目标资源的权限仍由客户端校验。如果钉钉限制唤起应用，请在系统浏览器打开该网页。
+
+跳转页应用名称由前端运行时环境变量 `RUNTIME_WEWORK_APP_NAME` 配置，默认 `Wework`；例如内网可设为 `Weibo WeWork`，重启前端后生效。此变量只影响网页文案；浏览器确认框中的名称取决于本机 `wework://` 协议关联的应用。
+
+部署时将 Backend 的 `FRONTEND_URL` 配置为收件人可访问的 Wegent 网站地址（生产环境使用 HTTPS）。`/launch/wework` 必须路由到 Wegent 前端；不要将它路由到独立 Wework 网站。通知原始目标仍保存为 `wework://...`，网页和客户端复用同一解析器，只接受下表中的目标。
+
 ## Scheme 地址
 
 | 地址                                          | 目标                     |
@@ -39,12 +47,15 @@ sequenceDiagram
   participant Delivery as 异步通知服务
   participant App as Wework
   participant IM as 私人 IM
+  participant Web as Wegent 跳转页
   Caller->>Service: 分配负责人及通知选择
   Service->>DB: 同一事务更新分配并创建通知
   DB-->>Service: 提交成功
   Service->>Delivery: 提交后调度
   Delivery-->>App: 通知列表变更事件
-  Delivery-->>IM: 正文及 scheme
+  Delivery-->>IM: 正文及 Wegent 网页链接
+  IM->>Web: 用户点击链接
+  Web->>App: 自动请求唤起；浏览器确认后打开
   App->>DB: 查询收件箱 / 标记已读
   App->>App: scheme 解析 → 项目标签页 → Issue
 ```

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.wework_notification import WeworkNotification
 from app.schemas.wework_notification import NotificationCreate
+from app.services.wework_links import browser_link
 from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
@@ -120,7 +121,7 @@ async def deliver_notification(notification_id: str) -> None:
                     continue
                 text = notification.body
                 if notification.url:
-                    text += f"\n\n{notification.url}"
+                    text += f"\n\n{browser_link(notification.url)}"
                 result = await im_notification_dispatcher.send_text(db, session, text)
                 if not result.get("success"):
                     logger.warning(
