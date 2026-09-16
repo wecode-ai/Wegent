@@ -118,7 +118,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
     'decideNode',
     'getStageContext',
   ],
-  members: ['list', 'searchUsers', 'add', 'update', 'remove'],
+  members: ['list', 'searchUsers', 'add', 'update', 'remove', 'transferOwnership'],
   files: [
     'list',
     'listDeliveryFiles',
@@ -693,6 +693,9 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
       remove(projectId, userId) {
         return deliveryApi.removeCloudProjectMember(projectId, userId)
+      },
+      async transferOwnership(projectId, userId) {
+        return toProject(await deliveryApi.transferCloudProjectOwnership(projectId, userId))
       },
     },
     files: {

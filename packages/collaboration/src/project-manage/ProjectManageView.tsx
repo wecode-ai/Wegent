@@ -48,6 +48,23 @@ function initialDisplay(
   );
 }
 
+function projectRoleLabel(
+  host: ProjectManageHost,
+  role: ProjectManageRole,
+): string {
+  return host.translate(`todo.project_role_${role.toLowerCase()}`, role);
+}
+
+function projectRoleDescription(
+  host: ProjectManageHost,
+  role: ProjectManageRole,
+): string {
+  return host.translate(
+    `todo.project_role_${role.toLowerCase()}_description`,
+    "",
+  );
+}
+
 export function ProjectManageView<
   Project extends ProjectManageProject,
   Member extends ProjectManageMember,
@@ -505,6 +522,50 @@ export function ProjectManageView<
     }
   }
 
+  async function transferOwnership(member: Member) {
+    if (!api.transferOwnership) return;
+    if (
+      !host.confirm(
+        host.translate(
+          "todo.transfer_project_ownership_confirm",
+          "Transfer Project ownership to {{name}}? You will become a Project admin.",
+          { name: member.user_name },
+        ),
+      )
+    )
+      return;
+    const scope = projectScopeRef.current;
+    setSavingUserId(member.user_id);
+    try {
+      const updatedProject = await api.transferOwnership(
+        scope.projectId,
+        member.user_id,
+      );
+      if (projectScopeRef.current !== scope) return;
+      setMembers((current) =>
+        current.map((currentMember) => {
+          if (currentMember.user_id === member.user_id)
+            return { ...currentMember, role: "Owner" };
+          if (currentMember.role === "Owner")
+            return { ...currentMember, role: "Maintainer" };
+          return currentMember;
+        }),
+      );
+      onProjectUpdated?.(updatedProject);
+    } catch (cause) {
+      if (projectScopeRef.current !== scope) return;
+      reportError(
+        cause,
+        host.translate(
+          "todo.transfer_project_ownership_failed",
+          "Failed to transfer Project ownership",
+        ),
+      );
+    } finally {
+      if (projectScopeRef.current === scope) setSavingUserId(null);
+    }
+  }
+
   async function persistTags(next: string[], scope: typeof projectScope) {
     dirtyRef.current.tags = true;
     try {
@@ -881,7 +942,12 @@ export function ProjectManageView<
                     )}
                   />
                   {member.role === "Owner" ? (
-                    <span className="text-xs text-text-secondary">Owner</span>
+                    <span
+                      className="text-xs text-text-secondary"
+                      title={projectRoleDescription(host, member.role)}
+                    >
+                      {projectRoleLabel(host, member.role)}
+                    </span>
                   ) : (
                     <>
                       <select
@@ -898,10 +964,29 @@ export function ProjectManageView<
                         }
                         className="h-8 rounded-lg border border-border bg-background px-2 text-xs outline-none"
                       >
-                        <option value="Maintainer">Maintainer</option>
-                        <option value="Developer">Developer</option>
-                        <option value="Reporter">Reporter</option>
+                        {(["Maintainer", "Developer", "Reporter"] as const).map(
+                          (role) => (
+                            <option key={role} value={role}>
+                              {projectRoleLabel(host, role)}
+                            </option>
+                          ),
+                        )}
                       </select>
+                      {project.access_role === "Owner" &&
+                      api.transferOwnership ? (
+                        <button
+                          type="button"
+                          className="collaboration-link-button"
+                          data-testid={`cloud-project-member-transfer-owner-${member.user_id}`}
+                          disabled={savingUserId === member.user_id}
+                          onClick={() => void transferOwnership(member)}
+                        >
+                          {host.translate(
+                            "todo.transfer_project_ownership",
+                            "Transfer ownership",
+                          )}
+                        </button>
+                      ) : null}
                       {host.renderTooltip({
                         label: host.translate(
                           "todo.remove_member",
@@ -962,11 +1047,18 @@ export function ProjectManageView<
                   }
                   className="h-9 rounded-lg border border-border bg-background px-2 text-sm outline-none"
                 >
-                  <option value="Maintainer">Maintainer</option>
-                  <option value="Developer">Developer</option>
-                  <option value="Reporter">Reporter</option>
+                  {(["Maintainer", "Developer", "Reporter"] as const).map(
+                    (role) => (
+                      <option key={role} value={role}>
+                        {projectRoleLabel(host, role)}
+                      </option>
+                    ),
+                  )}
                 </select>
               </div>
+              <p className="px-3 text-xs text-text-muted">
+                {projectRoleDescription(host, memberRole)}
+              </p>
               {visibleMemberResults.map((user) => (
                 <button
                   key={user.id}

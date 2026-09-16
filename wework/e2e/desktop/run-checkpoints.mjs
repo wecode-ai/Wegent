@@ -57,6 +57,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'board-focus-view': './scenarios/board-focus-view.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
+  'collaboration-authority': './scenarios/collaboration-authority.scenario.mjs',
   'collaboration-agent-automation-chain':
     './scenarios/collaboration-agent-automation-chain.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
@@ -80,6 +81,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'board-focus-view',
   'cloud-context-resilience',
   'collaboration-shared-core',
+  'collaboration-authority',
   'collaboration-agent-automation-chain',
   'plugin-development',
   'task-attachments',

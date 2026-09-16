@@ -1067,6 +1067,7 @@ def test_issue_actions_are_authorized_independently(
     test_token: str,
 ) -> None:
     reporter, reporter_token = _user(test_db, f"reporter-{uuid.uuid4().hex[:8]}")
+    developer, developer_token = _user(test_db, f"developer-{uuid.uuid4().hex[:8]}")
     maintainer, maintainer_token = _user(test_db, f"maintainer-{uuid.uuid4().hex[:8]}")
     workspace = test_client.post(
         "/api/v1/workspaces",
@@ -1080,7 +1081,11 @@ def test_issue_actions_are_authorized_independently(
     )
     assert project_response.status_code == 201
     project = project_response.json()
-    for user, role in ((reporter, "Reporter"), (maintainer, "Maintainer")):
+    for user, role in (
+        (reporter, "Reporter"),
+        (developer, "Developer"),
+        (maintainer, "Maintainer"),
+    ):
         response = test_client.post(
             f"/api/v1/cloud-projects/{project['id']}/members",
             headers=_auth(test_token),
@@ -1104,8 +1109,13 @@ def test_issue_actions_are_authorized_independently(
     assert reporter_view.json()["permissions"] == {
         "edit_content": False,
         "comment": True,
+        "claim": False,
+        "handoff": False,
         "assign": False,
-        "execute": True,
+        "execute": False,
+        "submit_review": False,
+        "complete": False,
+        "reopen": False,
     }
     assert (
         test_client.post(
@@ -1140,6 +1150,29 @@ def test_issue_actions_are_authorized_independently(
         headers=_auth(reporter_token),
         json={"deviceId": "reporter-device", "taskId": "local-task-1"},
     )
+    assert task_binding.status_code == 403
+
+    developer_view = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=_auth(developer_token),
+    )
+    assert developer_view.status_code == 200
+    assert developer_view.json()["permissions"] == {
+        "edit_content": True,
+        "comment": True,
+        "claim": False,
+        "handoff": False,
+        "assign": False,
+        "execute": True,
+        "submit_review": False,
+        "complete": False,
+        "reopen": False,
+    }
+    task_binding = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/tasks",
+        headers=_auth(developer_token),
+        json={"deviceId": "developer-device", "taskId": "local-task-1"},
+    )
     assert task_binding.status_code == 201
 
     assigned = test_client.post(
@@ -1147,7 +1180,7 @@ def test_issue_actions_are_authorized_independently(
         headers=_auth(maintainer_token),
         json={
             "target_type": "human",
-            "target_id": str(reporter.id),
+            "target_id": str(developer.id),
             "workflow_step": "开发",
             "comment_body": "请处理开发步骤",
             "notify_target": False,
@@ -1165,7 +1198,7 @@ def test_issue_actions_are_authorized_independently(
     assert listed.status_code == 200
     assert {row["target_id"] for row in listed.json()["items"]} >= {
         str(test_user.id),
-        str(reporter.id),
+        str(developer.id),
     }
 
     removed = test_client.delete(
@@ -1177,7 +1210,7 @@ def test_issue_actions_are_authorized_independently(
         f"/api/v1/loop-items/{issue['id']}/assignments",
         headers=_auth(reporter_token),
     ).json()["items"]
-    assert str(reporter.id) not in {row["target_id"] for row in remaining}
+    assert str(developer.id) not in {row["target_id"] for row in remaining}
     assert str(test_user.id) in {row["target_id"] for row in remaining}
 
 

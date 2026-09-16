@@ -626,6 +626,53 @@ class CloudProjectService:
         db.delete(member)
         db.commit()
 
+    def transfer_ownership(
+        self,
+        db: Session,
+        cloud_project_id: int,
+        new_owner_user_id: int,
+        user_id: int,
+    ) -> CloudProject:
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Owner)
+        project = self._lock_project(db, cloud_project_id)
+        if project.created_by_user_id != user_id:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Only the current Project owner can transfer ownership",
+            )
+        if new_owner_user_id == user_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "User already owns this Project"
+            )
+        new_owner, _ = self._get_member(db, cloud_project_id, new_owner_user_id)
+        previous_owner = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
+                ResourceMember.resource_id == cloud_project_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+            )
+            .first()
+        )
+        if previous_owner is None:
+            previous_owner = ResourceMember.create(
+                resource_type=ResourceType.CLOUD_PROJECT.value,
+                resource_id=cloud_project_id,
+                entity_id=str(user_id),
+                role=BaseRole.Maintainer.value,
+                status=MemberStatus.APPROVED.value,
+            )
+            db.add(previous_owner)
+        else:
+            previous_owner.role = BaseRole.Maintainer.value
+            previous_owner.status = MemberStatus.APPROVED.value
+        new_owner.role = BaseRole.Owner.value
+        project.created_by_user_id = new_owner_user_id
+        db.commit()
+        db.refresh(project)
+        return project
+
     @trace_async("project.list_execution_environments", tracer_name="backend")
     async def list_execution_environments(
         self, db: Session, cloud_project_id: int, user_id: int

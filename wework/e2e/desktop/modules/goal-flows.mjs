@@ -969,7 +969,10 @@ async function verifyGoalRestartRecoveryLifecycle({
     'The original executor remained alive after a full Wework restart'
   )
 
-  const recoveringTask = await waitForRecoveringExecutorGoal(control, [blockerTaskId, goalTaskId])
+  const recoveringTask = await waitForQueuedExecutorGoalRecovery(control, [
+    blockerTaskId,
+    goalTaskId,
+  ])
   const recoveringTaskId = recoveringTask.taskId ?? recoveringTask.task_id
   const recoveringTaskRowTestId = `runtime-local-task-row-${recoveringTaskId}`
   const recoveringTaskRunningTestId = `runtime-local-task-running-${recoveringTaskId}`
@@ -1116,7 +1119,7 @@ async function verifyGoalRestartRecoveryLifecycle({
   await captureVerificationScreenshot(control, 'goal-restart-06-completed-read.png')
 }
 
-async function waitForRecoveringExecutorGoal(control, taskIds) {
+async function waitForQueuedExecutorGoalRecovery(control, taskIds) {
   const startedAt = Date.now()
   let observedTasks = []
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
@@ -1139,20 +1142,19 @@ async function waitForRecoveringExecutorGoal(control, taskIds) {
       }))
     const task = observedTasks.find(candidate => {
       const taskId = candidate.taskId ?? candidate.task_id
-      const goalExecutionStatus = candidate.goalExecutionStatus ?? candidate.goal_execution_status
       const goalStatus = candidate.goalStatus ?? candidate.goal_status
       return (
         taskIds.includes(taskId) &&
         candidate.running === false &&
-        (goalExecutionStatus === 'recovering' ||
-          (goalStatus === 'active' && candidate.status === 'queued'))
+        goalStatus === 'active' &&
+        candidate.status === 'queued'
       )
     })
     if (task) return task
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(
-    `The real executor did not expose a queued recovering Goal after restart: ${JSON.stringify(
+    `The real executor did not expose a queued active Goal recovery after restart: ${JSON.stringify(
       observedTasks
     )}`
   )

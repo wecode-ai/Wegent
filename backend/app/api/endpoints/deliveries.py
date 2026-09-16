@@ -1424,6 +1424,8 @@ async def create_issue_assignment(
         access,
         action=IssueAction.ASSIGN,
         issue_creator_user_id=item.created_by_user_id,
+        assignee_user_id=item.assignee_user_id,
+        issue_status=item.status,
         user_id=current_user.id,
     )
     legacy_type, legacy_id = issue_assignment_service.require_canonical_member(

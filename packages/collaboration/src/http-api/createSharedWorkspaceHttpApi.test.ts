@@ -159,6 +159,7 @@ describe("createSharedWorkspaceHttpApi", () => {
     await expect(
       api.workspaces.addMember("workspace/1", { userId: 8 }),
     ).resolves.toMatchObject({ user_id: 8, user_name: "王芳" });
+    await api.workspaces.transferOwnership?.("workspace/1", 8);
     await api.workspaces.removeExecutionEnvironment("workspace/1", 22);
 
     expect(get).toHaveBeenNthCalledWith(
@@ -173,6 +174,10 @@ describe("createSharedWorkspaceHttpApi", () => {
       user_id: 8,
       role: "Developer",
     });
+    expect(post).toHaveBeenCalledWith(
+      "/v1/workspaces/workspace%2F1/transfer-ownership",
+      { user_id: 8 },
+    );
     expect(remove).toHaveBeenCalledWith(
       "/v1/workspaces/workspace%2F1/execution-environments/22",
     );

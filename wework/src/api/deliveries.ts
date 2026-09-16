@@ -117,6 +117,17 @@ export interface CloudLoopItem {
   created_by_user_name?: string | null
   can_view_detail?: boolean
   can_edit?: boolean
+  permissions?: {
+    edit_content: boolean
+    comment: boolean
+    claim: boolean
+    handoff: boolean
+    assign: boolean
+    execute: boolean
+    submit_review: boolean
+    complete: boolean
+    reopen: boolean
+  }
   detail_loaded?: boolean
   content_revision?: number
   has_additional_context?: boolean
@@ -1342,6 +1353,14 @@ export function createDeliveryApi(client: HttpClient) {
     },
     removeCloudProjectMember(projectId: CloudProjectIdInput, userId: number): Promise<void> {
       return client.delete(`/v1/cloud-projects/${projectId}/members/${userId}`)
+    },
+    transferCloudProjectOwnership(
+      projectId: CloudProjectIdInput,
+      userId: number
+    ): Promise<CloudProject> {
+      return client.post(`/v1/cloud-projects/${projectId}/transfer-ownership`, {
+        user_id: userId,
+      })
     },
     searchCloudProjectUsers(
       query: string

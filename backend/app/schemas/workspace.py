@@ -209,6 +209,10 @@ class WorkspaceMemberListResponse(BaseModel):
     items: list[WorkspaceMemberResponse]
 
 
+class WorkspaceOwnershipTransfer(BaseModel):
+    user_id: int = Field(ge=1)
+
+
 class WorkspaceAgentCreate(BaseModel):
     team_id: int = Field(ge=1)
 

@@ -8,6 +8,10 @@ import {
   clearMemberResultsForEmptyQuery,
   runActiveMemberSearch,
 } from "../project-manage/memberSearch";
+import {
+  collaborationRoleDescription,
+  collaborationRoleLabel,
+} from "../rolePresentation";
 import type {
   CollaborationAgent,
   CollaborationGroup,
@@ -24,6 +28,7 @@ export interface WorkspaceResourceCommands {
   addMember(userId: number, role: MemberRole): Promise<CollaborationMember>;
   updateMember(userId: number, role: MemberRole): Promise<CollaborationMember>;
   removeMember(userId: number): Promise<void>;
+  transferOwnership?(userId: number): Promise<CollaborationWorkspace>;
   createCollaborationGroup(input: {
     name: string;
     description?: string;
@@ -98,6 +103,9 @@ const copy = {
     noSearchResults: "没有找到可邀请的用户",
     role: "角色",
     remove: "移除",
+    transferOwnership: "移交所有权",
+    transferOwnershipConfirm:
+      "将空间所有权移交给“{{name}}”？移交后你将成为空间管理员。",
     cancel: "取消",
     owner: "所有者",
     maintainer: "管理员",
@@ -148,6 +156,9 @@ const copy = {
     noSearchResults: "No users available to invite",
     role: "Role",
     remove: "Remove",
+    transferOwnership: "Transfer ownership",
+    transferOwnershipConfirm:
+      "Transfer workspace ownership to {{name}}? You will become a workspace admin.",
     cancel: "Cancel",
     owner: "Owner",
     maintainer: "Maintainer",
@@ -200,13 +211,6 @@ const copy = {
 
 type ResourceCopy = (typeof copy)[keyof typeof copy];
 
-function roleLabel(role: CollaborationRole, messages: ResourceCopy) {
-  if (role === "Owner") return messages.owner;
-  if (role === "Maintainer") return messages.maintainer;
-  if (role === "Developer") return messages.developer;
-  return messages.reporter;
-}
-
 function ErrorMessage({ message }: { message: string | null }) {
   return message ? (
     <div className="collaboration-alert" role="alert">
@@ -218,11 +222,13 @@ function ErrorMessage({ message }: { message: string | null }) {
 function MemberInviteDialog({
   members,
   messages,
+  locale,
   commands,
   onClose,
 }: {
   members: CollaborationMember[];
   messages: ResourceCopy;
+  locale: "zh-CN" | "en";
   commands: WorkspaceResourceCommands;
   onClose(): void;
 }) {
@@ -273,11 +279,16 @@ function MemberInviteDialog({
             value={role}
             onChange={(event) => setRole(event.target.value as MemberRole)}
           >
-            <option value="Maintainer">{messages.maintainer}</option>
-            <option value="Developer">{messages.developer}</option>
-            <option value="Reporter">{messages.reporter}</option>
+            {(["Maintainer", "Developer", "Reporter"] as const).map(
+              (candidateRole) => (
+                <option key={candidateRole} value={candidateRole}>
+                  {collaborationRoleLabel(locale, candidateRole)}
+                </option>
+              ),
+            )}
           </select>
         </label>
+        <p>{collaborationRoleDescription(locale, role)}</p>
         <label>
           {messages.searchUser}
           <input
@@ -380,7 +391,7 @@ export function WorkspaceMembersConfiguration({
                 <span className="collaboration-resource-avatar">
                   {member.user_name.slice(0, 1).toUpperCase()}
                 </span>
-                <span>
+                <span className="collaboration-resource-summary">
                   <strong>{member.user_name}</strong>
                   <small>{member.email ?? ""}</small>
                 </span>
@@ -403,10 +414,38 @@ export function WorkspaceMembersConfiguration({
                           .finally(() => setPendingUserId(null));
                       }}
                     >
-                      <option value="Maintainer">{messages.maintainer}</option>
-                      <option value="Developer">{messages.developer}</option>
-                      <option value="Reporter">{messages.reporter}</option>
+                      {(["Maintainer", "Developer", "Reporter"] as const).map(
+                        (candidateRole) => (
+                          <option key={candidateRole} value={candidateRole}>
+                            {collaborationRoleLabel(locale, candidateRole)}
+                          </option>
+                        ),
+                      )}
                     </select>
+                    {workspace.access_role === "Owner" &&
+                    commands.transferOwnership ? (
+                      <button
+                        type="button"
+                        className="collaboration-link-button"
+                        data-testid={`collaboration-workspace-member-transfer-owner-${member.user_id}`}
+                        disabled={pendingUserId === member.user_id}
+                        onClick={() => {
+                          const message =
+                            messages.transferOwnershipConfirm.replace(
+                              "{{name}}",
+                              member.user_name,
+                            );
+                          if (!window.confirm(message)) return;
+                          setPendingUserId(member.user_id);
+                          setError(null);
+                          void commands.transferOwnership!(member.user_id)
+                            .catch(() => setError(messages.operationFailed))
+                            .finally(() => setPendingUserId(null));
+                        }}
+                      >
+                        {messages.transferOwnership}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="collaboration-link-button collaboration-resource-remove"
@@ -425,7 +464,7 @@ export function WorkspaceMembersConfiguration({
                     </button>
                   </>
                 ) : (
-                  <em>{roleLabel(member.role, messages)}</em>
+                  <em>{collaborationRoleLabel(locale, member.role)}</em>
                 )}
               </div>
             ))}
@@ -440,6 +479,7 @@ export function WorkspaceMembersConfiguration({
         <MemberInviteDialog
           members={members}
           messages={messages}
+          locale={locale}
           commands={commands}
           onClose={() => setDialogOpen(false)}
         />

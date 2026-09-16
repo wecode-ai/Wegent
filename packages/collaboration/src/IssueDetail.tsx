@@ -239,8 +239,12 @@ export function IssueDetail({
           showPanelControls
           showFullscreenControl={false}
           showAssignee={false}
+          canAssign={permissions.canAssign}
           currentAssignment={currentAssignment}
           canStartWork={permissions.canStartWork}
+          canSubmitReview={permissions.canSubmitReview}
+          canComplete={permissions.canComplete}
+          canReopen={permissions.canReopen}
           onCreateTask={onCreateTask}
           translate={editorTranslate}
           extensions={{

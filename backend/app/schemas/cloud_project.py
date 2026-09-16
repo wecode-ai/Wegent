@@ -337,6 +337,10 @@ class CloudProjectMemberResponse(BaseModel):
     capability_description: str = ""
 
 
+class CloudProjectOwnershipTransfer(BaseModel):
+    user_id: int = Field(ge=1)
+
+
 class CollaborationMessageImportTarget(BaseModel):
     kind: Literal["new_issue", "existing_issue"]
     issue_id: str | None = Field(default=None, max_length=64)

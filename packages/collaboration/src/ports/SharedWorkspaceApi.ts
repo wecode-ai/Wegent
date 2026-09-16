@@ -532,6 +532,10 @@ export interface SharedCollaborationWorkspacesApi {
     input: WorkspaceMemberUpdateInput,
   ): Promise<CollaborationMember>;
   removeMember(workspaceId: string, userId: number): Promise<void>;
+  transferOwnership?(
+    workspaceId: string,
+    userId: number,
+  ): Promise<CollaborationWorkspace>;
   listAgents(workspaceId: string): Promise<CollaborationOwnedAgent[]>;
   addAgent(
     workspaceId: string,
@@ -634,6 +638,10 @@ export interface SharedWorkspaceMembersApi {
     },
   ): Promise<CollaborationMember>;
   remove(projectId: string, userId: number): Promise<void>;
+  transferOwnership?(
+    projectId: string,
+    userId: number,
+  ): Promise<CollaborationProject>;
 }
 
 export interface SharedWorkspaceFilesApi {

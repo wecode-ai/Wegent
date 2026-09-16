@@ -34,6 +34,7 @@ from app.schemas.workspace import (
     WorkspaceMemberResponse,
     WorkspaceMemberUpdate,
     WorkspaceNavigationContextResponse,
+    WorkspaceOwnershipTransfer,
     WorkspaceResponse,
     WorkspaceUpdate,
 )
@@ -226,6 +227,22 @@ def remove_workspace_member(
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> None:
     workspace_service.remove_member(db, workspace_id, member_user_id, current_user.id)
+
+
+@router.post(
+    "/{workspace_id}/transfer-ownership",
+    response_model=WorkspaceResponse,
+)
+def transfer_workspace_ownership(
+    workspace_id: int,
+    values: WorkspaceOwnershipTransfer,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> WorkspaceResponse:
+    workspace = workspace_service.transfer_ownership(
+        db, workspace_id, values.user_id, current_user.id
+    )
+    return _response(db, workspace, current_user)
 
 
 @router.get(

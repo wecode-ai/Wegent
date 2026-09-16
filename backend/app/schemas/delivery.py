@@ -104,8 +104,13 @@ class LoopItemReorder(BaseModel):
 class LoopItemPermissions(BaseModel):
     edit_content: bool = False
     comment: bool = False
+    claim: bool = False
+    handoff: bool = False
     assign: bool = False
     execute: bool = False
+    submit_review: bool = False
+    complete: bool = False
+    reopen: bool = False
 
 
 class LoopItemResponse(BaseModel):

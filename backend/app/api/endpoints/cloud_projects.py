@@ -41,6 +41,7 @@ from app.schemas.cloud_project import (
     CloudProjectMemberCreate,
     CloudProjectMemberResponse,
     CloudProjectMemberUpdate,
+    CloudProjectOwnershipTransfer,
     CloudProjectResponse,
     CloudProjectUpdate,
     CollaborationMessageImportCreate,
@@ -605,6 +606,22 @@ def remove_cloud_project_member(
     current_user: User = Depends(get_current_user),
 ) -> None:
     cloud_project_service.remove_member(db, project_id, member_user_id, current_user.id)
+
+
+@router.post(
+    "/{project_id}/transfer-ownership",
+    response_model=CloudProjectResponse,
+)
+def transfer_cloud_project_ownership(
+    project_id: int,
+    values: CloudProjectOwnershipTransfer,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CloudProjectResponse:
+    project = cloud_project_service.transfer_ownership(
+        db, project_id, values.user_id, current_user.id
+    )
+    return _project_response(db, project, current_user)
 
 
 @router.get("/{project_id}/files", response_model=CloudFileListResponse)

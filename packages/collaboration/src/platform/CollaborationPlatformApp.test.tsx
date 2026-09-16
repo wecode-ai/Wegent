@@ -148,6 +148,17 @@ const issue: CollaborationIssue = {
   completed_at: null,
   can_view_detail: true,
   can_edit: false,
+  permissions: {
+    edit_content: true,
+    comment: true,
+    claim: true,
+    handoff: true,
+    assign: true,
+    execute: true,
+    submit_review: true,
+    complete: true,
+    reopen: true,
+  },
 };
 
 const initialLocation: CollaborationPlatformLocation = {
@@ -1565,6 +1576,11 @@ describe("CollaborationPlatformApp real component flow", () => {
       />,
     );
 
+    expect(
+      container.querySelector(
+        '[data-testid^="collaboration-workspace-member-transfer-owner-"]',
+      ),
+    ).toBeNull();
     await click(byTestId("collaboration-workspace-member-invite"));
     await change(
       byTestId("collaboration-workspace-member-search") as HTMLInputElement,
@@ -1832,7 +1848,16 @@ describe("Issue permission separation in the real shared editor", () => {
       <IssueDetail
         api={api}
         project={{ ...project, access_role: "Reporter" }}
-        issue={{ ...issue, can_edit: false, can_view_detail: true }}
+        issue={{
+          ...issue,
+          can_edit: false,
+          can_view_detail: true,
+          permissions: {
+            ...issue.permissions!,
+            edit_content: false,
+            assign: false,
+          },
+        }}
         allIssues={[issue]}
         comments={[]}
         assignments={[]}
