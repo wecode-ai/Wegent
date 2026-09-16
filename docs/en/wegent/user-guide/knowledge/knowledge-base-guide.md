@@ -272,7 +272,7 @@ The previous owner is downgraded to Maintainer, and the new owner gains full con
 
 ---
 
-## Automatic DingTalk document updates
+## 🔄 Automatic DingTalk document updates
 
 Enable **Automatically update DingTalk documents** under **Advanced settings** when creating or editing a knowledge base (off by default). A daily scan checks the source update time of existing and subsequently imported DingTalk copies. Successful, available copies are skipped when the saved timestamp is unchanged, or when the source reports no update time while a baseline exists; all other copies are reimported, including copies without a baseline, and the refresh establishes that baseline only when DingTalk reports an update time. The scan runs daily at 02:00 Asia/Shanghai (18:00 UTC); when the service is unavailable at that time, the run waits for the next schedule instead of catching up.
 
@@ -284,7 +284,7 @@ Enable **Automatically update DingTalk documents** under **Advanced settings** w
 
 This first version accepts delayed DingTalk MCP `updateTime` values: content may change before the timestamp does, causing a scan to skip it; a copy whose source stops reporting a time keeps its saved baseline and stays skipped until a time is reported again. After rollout, observe timestamp delays by format, persistently unchanged nodes, and actual content freshness. This behavior was observed with online documents; recovery on the next cycle is not guaranteed. Use manual reimport when an immediate update is needed; the backend sync trigger still applies timestamp comparison.
 
-Deployment requires `SCHEDULED_TASKS_ENABLED`, Celery Beat, and a Worker consuming the default queue. Restart these processes after upgrading to load the new tasks. No database migration is needed.
+Deployment requires `SCHEDULED_TASKS_ENABLED` plus `DINGTALK_SYNC_SCHEDULE_ENABLED` (off by default), which is what registers the daily schedule; run Celery Beat and a Worker consuming the default queue. Restart these processes after upgrading to load the new tasks. The manual trigger does not depend on `DINGTALK_SYNC_SCHEDULE_ENABLED`. No database migration is needed.
 
 For testing, an authenticated knowledge-base manager can call `POST /api/knowledge-bases/{knowledge_base_id}/dingtalk-sync` with no request body after enabling automatic updates. It queues the same daily scan for that knowledge base only; workers retain each copy's original importer authorization. HTTP 202 with `{"task_id":"...","status":"queued"}` means queued, not successfully updated. Check document processing results in the document list. A disabled setting returns 400, insufficient management permission returns 403, and enqueue failure returns 503. A Worker is required, but there is no need to wait for the next Beat tick.
 

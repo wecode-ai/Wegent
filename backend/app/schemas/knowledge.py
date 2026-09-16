@@ -1280,6 +1280,15 @@ class ExternalDocumentBatchImportResponse(BaseModel):
     )
 
 
+class DingtalkSyncQueuedResponse(BaseModel):
+    """Receipt of a queued DingTalk copy scan, before any copy has been read."""
+
+    task_id: str = Field(description="Task running the scan of this knowledge base")
+    status: Literal["queued"] = Field(
+        default="queued", description="The scan is queued, not finished"
+    )
+
+
 class KnowledgeDocumentListResponse(BaseModel):
     """Schema for knowledge document list response."""
 

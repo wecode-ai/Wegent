@@ -22,7 +22,10 @@ export function DingtalkAutoSyncSetting({
       label={t('document.dingtalkAutoSync.label')}
       description={t('document.dingtalkAutoSync.description')}
     >
-      <div className="flex min-h-11 items-center justify-end">
+      <label
+        htmlFor="knowledge-dingtalk-auto-sync"
+        className="flex min-h-11 min-w-11 items-center justify-end"
+      >
         <Switch
           id="knowledge-dingtalk-auto-sync"
           aria-label={t('document.dingtalkAutoSync.label')}
@@ -30,7 +33,7 @@ export function DingtalkAutoSyncSetting({
           checked={checked}
           onCheckedChange={onCheckedChange}
         />
-      </div>
+      </label>
     </SimpleConfigRow>
   )
 }

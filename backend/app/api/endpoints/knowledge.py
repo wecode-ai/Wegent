@@ -46,6 +46,7 @@ from app.schemas.knowledge import (
     BatchDocumentIds,
     BatchOperationResult,
     ContentOrigin,
+    DingtalkSyncQueuedResponse,
     DocumentContentUpdate,
     DocumentDetailResponse,
     DocumentMoveRequest,
@@ -198,13 +199,17 @@ def _validate_knowledge_base_access_or_raise(
 # ============== Knowledge Base Endpoints ==============
 
 
-@router.post("/{knowledge_base_id}/dingtalk-sync", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/{knowledge_base_id}/dingtalk-sync",
+    response_model=DingtalkSyncQueuedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 @trace_sync("trigger_dingtalk_copy_sync", "knowledge.api")
 def trigger_dingtalk_copy_sync(
     knowledge_base_id: int,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-) -> dict[str, str]:
+) -> DingtalkSyncQueuedResponse:
     """Queue the same daily scan for one managed KB without waiting for Beat."""
     kb = _validate_knowledge_base_access_or_raise(
         db, knowledge_base_id=knowledge_base_id, user=current_user
@@ -228,7 +233,7 @@ def trigger_dingtalk_copy_sync(
         task_id,
         current_user.id,
     )
-    return {"task_id": task_id, "status": "queued"}
+    return DingtalkSyncQueuedResponse(task_id=task_id, status="queued")
 
 
 @router.get("", response_model=KnowledgeBaseListResponse)
