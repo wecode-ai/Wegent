@@ -156,7 +156,10 @@ class ExternalDocumentImportService:
 
         db.refresh(document)
         document.is_active = False
-        document.update_external_source_config(**external_meta)
+        # Invalidate until the fetched body lands with its corresponding timestamp.
+        document.update_external_source_config(
+            **{**external_meta, "source_update_time": None}
+        )
         db.commit()
         db.refresh(document)
         if dispatch:

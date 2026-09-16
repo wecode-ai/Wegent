@@ -191,6 +191,28 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
 
     provider_id = "dingtalk"
 
+    @trace_async(tracer_name="knowledge.external_import")
+    async def get_update_time(self, user: User, node_id: str) -> int | None:
+        """Read the live node timestamp without fetching content or changing a copy."""
+        from app.services.dingtalk_doc_service import DingTalkDocService
+
+        url = DingTalkDocService.get_user_dingtalk_mcp_url(user)
+        if not url:
+            raise ExternalDocumentFetchError("DingTalk Docs is not configured")
+        try:
+            async with asyncio.timeout(EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS):
+                async with open_dingtalk_session(url) as session:
+                    info = self._parse_mcp_response(
+                        await session.call_tool(
+                            "get_document_info", {"nodeId": node_id}
+                        ),
+                        "get_document_info",
+                    )
+        except Exception:
+            raise ExternalDocumentFetchError("DingTalk metadata read failed") from None
+        value = info.get("updateTime")
+        return value if type(value) is int and value > 0 else None
+
     def resolve_importable(
         self,
         db: Session,

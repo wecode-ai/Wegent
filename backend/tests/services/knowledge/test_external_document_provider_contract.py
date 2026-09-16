@@ -158,6 +158,54 @@ class TestDingTalkProviderContract(ProviderContractSuite):
     provider_id = "dingtalk"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (1789562644000, 1789562644000),
+            (None, None),
+            (0, None),
+            (-1, None),
+            (True, None),
+            ("1789562644000", None),
+        ],
+    )
+    async def test_live_timestamp_probe_only_accepts_positive_integer(
+        self, test_user, monkeypatch, value, expected
+    ):
+        from unittest.mock import AsyncMock
+
+        self.configure_user(monkeypatch, test_user)
+        session = SimpleNamespace(
+            call_tool=AsyncMock(
+                return_value=SimpleNamespace(
+                    isError=False,
+                    content=[
+                        SimpleNamespace(
+                            type="text",
+                            text=json.dumps({"success": True, "updateTime": value}),
+                        )
+                    ],
+                )
+            )
+        )
+
+        @asynccontextmanager
+        async def connected(url):
+            yield session
+
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_providers.open_dingtalk_session",
+            connected,
+        )
+        assert (
+            await self.make_provider().get_update_time(test_user, "probe-node")
+            == expected
+        )
+        session.call_tool.assert_awaited_once_with(
+            "get_document_info", {"nodeId": "probe-node"}
+        )
+
+    @pytest.mark.asyncio
     async def test_existing_copy_reads_live_source_without_cached_directory(
         self, test_db, test_user, monkeypatch
     ):
