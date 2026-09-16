@@ -12,6 +12,7 @@ from typing import Any
 
 from app.models.kind import Kind
 from app.services.device.command_service import execute_configured_device_command
+from app.services.device.identity import record_route_id
 
 
 def execution_environment_fingerprint(definition: dict[str, Any]) -> str:
@@ -66,7 +67,7 @@ async def initialize_execution_environment(
         result = await execute_configured_device_command(
             db=db,
             user_id=int(device.user_id),
-            device_id=device_key,
+            device_id=record_route_id(device),
             command_key="environment_prepare",
             args=[
                 json.dumps(

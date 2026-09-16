@@ -77,7 +77,7 @@ async def test_initialization_prepares_device_and_returns_ready_state(
     assert len(result["fingerprint"]) == 64
     command = execute.await_args.kwargs
     assert command["command_key"] == "environment_prepare"
-    assert command["device_id"] == "device-runtime-id"
+    assert command["device_id"] == "device-kind-name"
     assert command["allow_internal"] is True
     payload = json.loads(command["args"][0])
     assert payload == {
@@ -130,6 +130,50 @@ async def test_initialization_failure_returns_error_state(
     assert result["prepared_workspace_path"] == ""
     assert result["prepared_at"] is None
     assert result["error"] == "setup failed"
+
+
+@pytest.mark.asyncio
+async def test_initialization_routes_app_device_by_unique_record_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execute = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": {"workspacePath": "/workspace/environment-project-1"},
+        }
+    )
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        execute,
+    )
+    device = Kind(
+        id=42,
+        kind="Device",
+        name="shared-app-device-name",
+        namespace="default",
+        user_id=7,
+        json={
+            "spec": {
+                "deviceType": "app",
+                "deviceId": "shared-app-device-name",
+            }
+        },
+    )
+
+    result = (
+        await execution_environment_initialization.initialize_execution_environment(
+            db=object(),
+            device=device,
+            environment_id="project-1",
+            definition={"repositories": [], "setup_steps": []},
+        )
+    )
+
+    assert execute.await_args.kwargs["device_id"] == "app-record-42"
+    assert result["status"] == "ready"
+    assert result["prepared_device_id"] == "shared-app-device-name"
 
 
 def test_definition_accepts_multiple_repositories_and_repository_scoped_steps() -> None:
