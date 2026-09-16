@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+'use client'
+
 import { Switch } from '@/components/ui/switch'
+import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export function DingtalkAutoSyncSetting({
@@ -15,19 +18,11 @@ export function DingtalkAutoSyncSetting({
   const { t } = useTranslation('knowledge')
 
   return (
-    <div className="flex items-start gap-4">
-      <div className="min-w-0 flex-1 space-y-1">
-        <label
-          htmlFor="knowledge-dingtalk-auto-sync"
-          className="text-sm font-medium text-text-primary"
-        >
-          {t('document.dingtalkAutoSync.label')}
-        </label>
-        <p className="text-xs leading-5 text-text-muted">
-          {t('document.dingtalkAutoSync.description')}
-        </p>
-      </div>
-      <label className="flex min-h-11 min-w-11 shrink-0 items-center justify-center">
+    <SimpleConfigRow
+      label={t('document.dingtalkAutoSync.label')}
+      description={t('document.dingtalkAutoSync.description')}
+    >
+      <div className="flex min-h-11 items-center justify-end">
         <Switch
           id="knowledge-dingtalk-auto-sync"
           aria-label={t('document.dingtalkAutoSync.label')}
@@ -35,7 +30,7 @@ export function DingtalkAutoSyncSetting({
           checked={checked}
           onCheckedChange={onCheckedChange}
         />
-      </label>
-    </div>
+      </div>
+    </SimpleConfigRow>
   )
 }

@@ -189,15 +189,18 @@ class ExternalDocumentProvider(ABC):
 
 
 def _positive_update_time(value: Any) -> int | None:
-    """Accept only a real positive epoch timestamp, never a bool or a string."""
+    """Accept a positive epoch timestamp, including one sent as a digit string."""
+    if isinstance(value, str) and value.strip().isdigit():
+        # DingTalk sometimes serialises the epoch as a string; it is still usable.
+        value = int(value)
     return value if type(value) is int and value > 0 else None
 
 
 def _read_update_time(info: dict[str, Any], node_id: str) -> int | None:
-    """Read the live source timestamp and make unusable values visible.
+    """Read the live source timestamp, making unusable values visible.
 
-    A timestamp the provider cannot use means the copy can never be skipped as
-    unchanged, so the raw value and its type must be identifiable in logs.
+    Without a usable timestamp the probe has nothing to compare against the
+    saved baseline, so the raw value must be identifiable in logs.
     """
     raw = info.get("updateTime")
     update_time = _positive_update_time(raw)

@@ -26,7 +26,7 @@ from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
 
-SYNC_LOG_PREFIX = "[DingTalk Sync]"
+SCAN_EXPIRES_SECONDS = 24 * 60 * 60
 
 
 def is_copy_sync_enabled(knowledge_base: Kind) -> bool:
@@ -40,25 +40,9 @@ def queue_dingtalk_scan(knowledge_base_id: int | None = None) -> str:
     from app.tasks.dingtalk_auto_sync_tasks import scan_dingtalk_copies
 
     task = scan_dingtalk_copies.apply_async(
-        args=[knowledge_base_id], expires=24 * 60 * 60
+        args=[knowledge_base_id], expires=SCAN_EXPIRES_SECONDS
     )
     return task.id
-
-
-def log_sync_decision(
-    decision: str, *, level: int = logging.INFO, **fields: object
-) -> None:
-    """Write one grep-able decision line for a single copy attempt.
-
-    Every attempt leaves exactly one of these lines, so a sync run can be
-    reconstructed from logs alone: which copy, which baseline, which live
-    timestamp and what was decided about it. Empty fields are omitted to keep
-    the line readable.
-    """
-    details = " ".join(
-        f"{name}={value}" for name, value in fields.items() if value not in (None, "")
-    )
-    logger.log(level, "%s decision=%s %s", SYNC_LOG_PREFIX, decision, details)
 
 
 @dataclass(frozen=True)
@@ -74,23 +58,13 @@ class _CopyContext:
         return self.document is not None and self.user is not None
 
 
-def _status_name(status: object) -> str:
-    """Render an index status for logs without leaking the enum repr."""
-    return str(getattr(status, "value", status) or "")
-
-
-def _live_time_label(update_time: int | None) -> int | str:
-    """Render a probe result, keeping a missing live time visible."""
-    return update_time if update_time is not None else "unavailable"
-
-
 def _resolve_copy_context(
     db: Session, document_id: int, expected_generation: int
 ) -> _CopyContext:
     """Resolve current settings and the original importer permission.
 
     Rejections carry a reason instead of returning ``None`` so a scheduled
-    copy that is skipped can still be explained from logs.
+    copy that is skipped can be explained in one log line.
     """
     document = db.get(KnowledgeDocument, document_id, populate_existing=True)
     if document is None:
@@ -119,22 +93,54 @@ def _resolve_copy_context(
     return _CopyContext(document=document, user=user)
 
 
-def _log_rejected_copy(
+def _log_skipped_copy(
     context: _CopyContext, document_id: int, expected_generation: int, stage: str
 ) -> None:
     """Explain a copy that was filtered out before any provider call."""
-    document = context.document
-    log_sync_decision(
-        "not_eligible",
-        stage=stage,
-        document_id=document_id,
-        kb_id=document.kind_id if document else None,
-        generation=expected_generation,
-        reason=context.reason,
-        index_status=_status_name(document.index_status) if document else None,
-        index_generation=document.index_generation if document else None,
-        provider=document.external_provider if document else None,
+    logger.info(
+        "[DingTalk Sync] skip stage=%s document_id=%s generation=%s reason=%s",
+        stage,
+        document_id,
+        expected_generation,
+        context.reason,
     )
+
+
+def _is_unchanged(
+    document: KnowledgeDocument, baseline: int | None, update_time: int | None
+) -> bool:
+    """Whether the probe gives no evidence that an available copy changed.
+
+    A probe that reports no usable time is not evidence of change: an available
+    copy that already has a baseline keeps it, while a copy without one still
+    refreshes because only a refresh can establish that baseline.
+    """
+    no_evidence_of_change = (
+        baseline is not None if update_time is None else baseline == update_time
+    )
+    return bool(
+        no_evidence_of_change
+        and document.index_status == DocumentIndexStatus.SUCCESS
+        and document.is_active
+        and document.attachment_id
+    )
+
+
+def _queue_refresh(
+    db: Session, document: KnowledgeDocument, expected_generation: int
+) -> bool:
+    """Queue the refresh a manual reimport performs and report the outcome."""
+    result = external_document_import_service.refresh_existing_document(
+        db, document, expected_generation=expected_generation
+    )
+    logger.info(
+        "[DingTalk Sync] refresh document_id=%s generation=%s started=%s outcome=%s",
+        document.id,
+        expected_generation,
+        result.started,
+        result.reason or "queued",
+    )
+    return result.started
 
 
 @trace_sync(tracer_name="knowledge.auto_sync")
@@ -145,81 +151,41 @@ def refresh_dingtalk_copy(
 
     The queued refresh is the same path a manual reimport takes, so the body
     fetch stays the single owner of the imported content and its baseline.
-    Each attempt logs one ``[DingTalk Sync]`` decision line holding the
-    compared baseline, the live timestamp and the resulting action.
     """
     context = _resolve_copy_context(db, document_id, expected_generation)
     if not context.eligible:
-        _log_rejected_copy(context, document_id, expected_generation, "precheck")
+        _log_skipped_copy(context, document_id, expected_generation, "precheck")
         return False
     document, user = context.document, context.user
-    baseline_before_probe = document.external_source_config.get("source_update_time")
     provider = get_external_document_provider("dingtalk")
     try:
         update_time = asyncio.run(
             provider.get_update_time(user, document.external_resource_id)
         )
     except ExternalDocumentFetchError as exc:
-        log_sync_decision(
-            "probe_failed",
-            level=logging.WARNING,
-            document_id=document_id,
-            kb_id=document.kind_id,
-            generation=expected_generation,
-            baseline_update_time=baseline_before_probe,
-            error=str(exc),
+        logger.warning(
+            "[DingTalk Sync] probe failed document_id=%s generation=%s error=%s",
+            document_id,
+            expected_generation,
+            exc,
         )
         return False
     # End the snapshot held across provider I/O before checking a concurrent update.
     db.rollback()
     context = _resolve_copy_context(db, document_id, expected_generation)
     if not context.eligible:
-        _log_rejected_copy(context, document_id, expected_generation, "recheck")
+        _log_skipped_copy(context, document_id, expected_generation, "recheck")
         return False
-    document, user = context.document, context.user
+    document = context.document
     baseline = document.external_source_config.get("source_update_time")
-    status_before = _status_name(document.index_status)
-    # A probe without a live time is no evidence of change: it keeps an
-    # available copy that already has a baseline, while a copy without one
-    # still refreshes because only a refresh can establish that baseline.
-    no_evidence_of_change = (
-        baseline is not None if update_time is None else baseline == update_time
-    )
-    if (
-        no_evidence_of_change
-        and document.index_status == DocumentIndexStatus.SUCCESS
-        and document.is_active
-        and document.attachment_id
-    ):
-        log_sync_decision(
-            "unchanged",
-            document_id=document.id,
-            kb_id=document.kind_id,
-            generation=expected_generation,
-            baseline_update_time=baseline,
-            live_update_time=_live_time_label(update_time),
-            attachment_id=document.attachment_id,
+    if _is_unchanged(document, baseline, update_time):
+        logger.info(
+            "[DingTalk Sync] unchanged document_id=%s generation=%s "
+            "baseline_update_time=%s live_update_time=%s",
+            document.id,
+            expected_generation,
+            baseline,
+            update_time,
         )
         return False
-    metadata = {
-        "provider": "dingtalk",
-        "resource_id": document.external_resource_id,
-        "title": document.external_source_config.get("title") or document.name,
-        "url": document.external_source_config.get("url", ""),
-    }
-    result = external_document_import_service.refresh_existing_document(
-        db, document, metadata, expected_generation=expected_generation
-    )
-    log_sync_decision(
-        "refresh" if result.started else "refresh_not_started",
-        document_id=document.id,
-        kb_id=document.kind_id,
-        generation=expected_generation,
-        baseline_update_time=baseline,
-        live_update_time=_live_time_label(update_time),
-        index_status_before=status_before,
-        previous_attachment_id=document.attachment_id,
-        next_generation=result.document.index_generation if result.started else None,
-        reason=result.reason,
-    )
-    return result.started
+    return _queue_refresh(db, document, expected_generation)

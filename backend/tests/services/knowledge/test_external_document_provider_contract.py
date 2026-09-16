@@ -164,14 +164,15 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         "value,expected",
         [
             (1789562644000, 1789562644000),
+            ("1789562644000", 1789562644000),
             (None, None),
             (0, None),
             (-1, None),
             (True, None),
-            ("1789562644000", None),
+            ("not-a-timestamp", None),
         ],
     )
-    async def test_live_timestamp_probe_only_accepts_positive_integer(
+    async def test_live_timestamp_probe_only_accepts_a_positive_epoch(
         self, test_user, monkeypatch, value, expected
     ):
         self.configure_user(monkeypatch, test_user)
@@ -245,7 +246,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
                         SimpleNamespace(
                             type="text",
                             text=json.dumps(
-                                {"success": True, "updateTime": "1789562644000"}
+                                {"success": True, "updateTime": "not-a-timestamp"}
                             ),
                         )
                     ],
@@ -272,7 +273,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
             )
 
         assert "Unusable updateTime" in caplog.text
-        assert "1789562644000" in caplog.text
+        assert "not-a-timestamp" in caplog.text
 
     @pytest.mark.asyncio
     async def test_fetch_reports_the_live_source_timestamp(

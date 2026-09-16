@@ -100,11 +100,8 @@ def build_beat_schedule() -> dict:
         },
         "sync-dingtalk-copies": {
             "task": "app.tasks.dingtalk_auto_sync_tasks.scan_dingtalk_copies",
-            # Fixed daily time; Celery evaluates the crontab in UTC.
-            "schedule": crontab(
-                minute=settings.DINGTALK_SYNC_MINUTE_UTC,
-                hour=settings.DINGTALK_SYNC_HOUR_UTC,
-            ),
+            # Celery evaluates the crontab in UTC: 18:00 UTC is 02:00 in CN.
+            "schedule": crontab(minute=0, hour=18),
             "options": {"expires": 24 * 60 * 60},
         },
         "sync-plugin-upstreams": {

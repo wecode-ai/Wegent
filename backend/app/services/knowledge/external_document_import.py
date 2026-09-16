@@ -133,7 +133,7 @@ class ExternalDocumentImportService:
         self,
         db: Session,
         document: KnowledgeDocument,
-        external_meta: dict,
+        external_meta: dict | None = None,
         *,
         expected_generation: int | None = None,
     ) -> ExternalDocumentRefreshResult:
@@ -141,7 +141,9 @@ class ExternalDocumentImportService:
 
         Every caller — a manual reimport and an automatic refresh alike —
         goes through the same dispatched task, so there is one way to start
-        an import attempt.
+        an import attempt. ``external_meta`` refreshes the provider-owned
+        metadata a manual import just resolved; a caller that has none (an
+        automatic refresh holds only a resource id) passes nothing.
         """
         decision = prepare_document_index_enqueue(
             db=db,
@@ -165,7 +167,7 @@ class ExternalDocumentImportService:
         document.is_active = False
         # Invalidate until the fetched body lands with its corresponding timestamp.
         document.update_external_source_config(
-            **{**external_meta, "source_update_time": None}
+            **(external_meta or {}), source_update_time=None
         )
         db.commit()
         db.refresh(document)
