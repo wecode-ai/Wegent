@@ -98,6 +98,7 @@ export function DiscoverResources({
   const [isDetailLoading, setIsDetailLoading] = useState(false)
   const [installingIds, setInstallingIds] = useState<Set<number>>(() => new Set())
   const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null)
+  const listingsRequestIdRef = useRef(0)
   const listingGridClassName = 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
   const activeExternalMarketplace = externalMarketplaces.find(
     marketplace => marketplace.key === activeExternalMarketplaceKey
@@ -140,11 +141,13 @@ export function DiscoverResources({
 
   const loadListings = useCallback(
     async (cursor?: string, append = false) => {
+      const requestId = ++listingsRequestIdRef.current
       if (append) {
         setIsLoadingMore(true)
         setLoadMoreFailed(false)
       } else {
         setIsLoading(true)
+        setIsLoadingMore(false)
         setHasError(false)
         setLoadMoreFailed(false)
         setNextCursor(null)
@@ -164,6 +167,7 @@ export function DiscoverResources({
           cursor,
           limit: RESOURCE_LIBRARY_PAGE_SIZE,
         })
+        if (requestId !== listingsRequestIdRef.current) return
         const nextItems = response.items.filter(listing =>
           isVisibleListing(listing, targetNamespace)
         )
@@ -178,6 +182,7 @@ export function DiscoverResources({
         setNextCursor(response.next_cursor)
         setHasMore(response.has_more)
       } catch {
+        if (requestId !== listingsRequestIdRef.current) return
         if (append) {
           setLoadMoreFailed(true)
         } else {
@@ -187,10 +192,12 @@ export function DiscoverResources({
           setHasError(true)
         }
       } finally {
-        if (append) {
-          setIsLoadingMore(false)
-        } else {
-          setIsLoading(false)
+        if (requestId === listingsRequestIdRef.current) {
+          if (append) {
+            setIsLoadingMore(false)
+          } else {
+            setIsLoading(false)
+          }
         }
       }
     },
@@ -203,6 +210,10 @@ export function DiscoverResources({
       return
     }
     void loadListings()
+    return () => {
+      // Invalidate pending responses when filters change or the component unmounts.
+      listingsRequestIdRef.current += 1
+    }
   }, [isExternalMarketplaceActive, loadListings])
 
   const markInstalling = (listingId: number, installing: boolean) => {
@@ -254,9 +265,9 @@ export function DiscoverResources({
   }
 
   const handleLoadMore = useCallback(() => {
-    if (!nextCursor || isLoadingMore) return
+    if (!nextCursor || isLoading || isLoadingMore) return
     void loadListings(nextCursor, true)
-  }, [isLoadingMore, loadListings, nextCursor])
+  }, [isLoading, isLoadingMore, loadListings, nextCursor])
 
   useEffect(() => {
     const trigger = loadMoreTriggerRef.current
