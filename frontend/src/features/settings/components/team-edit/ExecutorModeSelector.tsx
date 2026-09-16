@@ -23,6 +23,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { UnifiedShell } from '@/apis/shells'
+import { useUser } from '@/features/common/UserContext'
 import {
   getCustomShells,
   getSimpleExecutorOptions,
@@ -62,9 +63,12 @@ export default function ExecutorModeSelector({
   hideLabel = false,
 }: ExecutorModeSelectorProps) {
   const { t } = useTranslation()
+  const { user } = useUser()
   const customShells = getCustomShells(shells)
   const hasCustomShells = customShells.length > 0
   const selectedCustomShellName = hasCustomShells ? customShellName : ''
+  const codingRuntimes: CodingExecutorRuntime[] =
+    user?.role === 'admin' ? ['codex', 'claude_code'] : ['claude_code']
 
   return (
     <section className="space-y-2">
@@ -122,8 +126,8 @@ export default function ExecutorModeSelector({
             value={codingRuntime}
             onValueChange={next => onCodingRuntimeChange(next as CodingExecutorRuntime)}
           >
-            <div className="grid gap-2 sm:grid-cols-2">
-              {(['codex', 'claude_code'] as const).map(runtime => (
+            <div className={cn('grid gap-2', codingRuntimes.length > 1 && 'sm:grid-cols-2')}>
+              {codingRuntimes.map(runtime => (
                 <label
                   key={runtime}
                   className={cn(

@@ -11,6 +11,8 @@ import ExecutorModeSelector from '@/features/settings/components/team-edit/Execu
 import enSettings from '@/i18n/locales/en/settings.json'
 import zhSettings from '@/i18n/locales/zh-CN/settings.json'
 
+let mockUserRole: 'admin' | 'user' = 'admin'
+
 const shells: UnifiedShell[] = [
   { name: 'Chat', type: 'public', displayName: 'Chat', shellType: 'Chat' },
   { name: 'Codex', type: 'public', displayName: 'Codex', shellType: 'Codex' },
@@ -43,6 +45,12 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({
+    user: { id: 1, user_name: 'test-user', role: mockUserRole },
+  }),
+}))
+
 jest.mock('@/components/ui/select', () => ({
   Select: ({
     children,
@@ -62,6 +70,10 @@ jest.mock('@/components/ui/select', () => ({
 }))
 
 describe('ExecutorModeSelector', () => {
+  beforeEach(() => {
+    mockUserRole = 'admin'
+  })
+
   it('renders simple, complex, and custom executor cards', () => {
     render(
       <ExecutorModeSelector
@@ -199,5 +211,24 @@ describe('ExecutorModeSelector', () => {
     fireEvent.click(screen.getByTestId('simple-coding-runtime-claude_code-card'))
 
     expect(onCodingRuntimeChange).toHaveBeenCalledWith('claude_code')
+  })
+
+  it('hides Codex from non-admin users', () => {
+    mockUserRole = 'user'
+
+    render(
+      <ExecutorModeSelector
+        value="complex"
+        onChange={jest.fn()}
+        shells={shells}
+        customShellName=""
+        onCustomShellChange={jest.fn()}
+        codingRuntime="claude_code"
+        onCodingRuntimeChange={jest.fn()}
+      />
+    )
+
+    expect(screen.queryByRole('radio', { name: 'Codex' })).not.toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Claude Code' })).toBeChecked()
   })
 })
