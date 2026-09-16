@@ -177,7 +177,7 @@ export default function TaskSidebar({
   const handleOpenSearchDialog = () => {
     setIsSearchDialogOpen(true)
   }
-  // Navigation buttons - show evaluation only for admin users
+  // Navigation buttons - show restricted features only for admin users
   const isAdmin = user?.role === 'admin'
   // Define type explicitly to include all possible buttonPageType values
   type ButtonPageType =
@@ -265,17 +265,16 @@ export default function TaskSidebar({
         buttonPageType: 'inbox',
         unreadCount: inboxUnreadCount,
       },
-      {
+    ]
+    if (isAdmin) {
+      buttons.push({
         label: t('common:navigation.collaboration'),
         icon: Handshake,
         path: collaborationPath,
         isActive: pageType === 'collaboration',
         buttonPageType: 'collaboration',
         testId: 'task-sidebar-nav-collaboration-button',
-      },
-    ]
-    // Only show evaluation nav item for admin users
-    if (isAdmin) {
+      })
       buttons.push({
         label: t('common:navigation.evaluation'),
         icon: ClipboardCheck,
@@ -503,7 +502,11 @@ export default function TaskSidebar({
                   className="min-w-0 truncate text-[11px] font-normal text-text-muted"
                   data-testid="task-sidebar-more-summary"
                 >
-                  {t('common:navigation.more_summary')}
+                  {t(
+                    isAdmin
+                      ? 'common:navigation.more_summary'
+                      : 'common:navigation.more_summary_non_admin'
+                  )}
                 </span>
               </span>
               <span className="ml-auto flex items-center gap-1">

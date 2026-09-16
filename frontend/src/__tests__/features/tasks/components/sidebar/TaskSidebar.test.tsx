@@ -311,7 +311,7 @@ describe('TaskSidebar scroll structure', () => {
     )
     expect(within(fixedSection).getByText('common:navigation.more')).toBeInTheDocument()
     expect(within(fixedSection).getByTestId('task-sidebar-more-summary')).toHaveTextContent(
-      'common:navigation.more_summary'
+      'common:navigation.more_summary_non_admin'
     )
     expect(within(fixedSection).getByTestId('task-sidebar-more-summary')).toHaveClass(
       'text-text-muted',
@@ -434,10 +434,10 @@ describe('TaskSidebar scroll structure', () => {
     const flyout = screen.getByTestId('task-sidebar-more-flyout')
     expect(within(flyout).queryByText('resource-library:title')).not.toBeInTheDocument()
     expect(within(flyout).getByText('devices:my_devices')).toBeInTheDocument()
-    expect(within(flyout).getByText('common:navigation.collaboration')).toBeInTheDocument()
+    expect(within(flyout).queryByText('common:navigation.collaboration')).not.toBeInTheDocument()
   })
 
-  it('uses the translated evaluation label for admin users', () => {
+  it('shows collaboration and evaluation navigation for admin users', () => {
     mockUser = { role: 'admin' }
 
     render(
@@ -449,8 +449,12 @@ describe('TaskSidebar scroll structure', () => {
     fireEvent.mouseEnter(within(fixedSection).getByTestId('task-sidebar-more-button'))
 
     const flyout = screen.getByTestId('task-sidebar-more-flyout')
+    expect(within(flyout).getByText('common:navigation.collaboration')).toBeInTheDocument()
     expect(within(flyout).getByText('AI Evaluation')).toBeInTheDocument()
     expect(within(flyout).queryByText('navigation.evaluation')).not.toBeInTheDocument()
+    expect(within(fixedSection).getByTestId('task-sidebar-more-summary')).toHaveTextContent(
+      'common:navigation.more_summary'
+    )
   })
 
   it('moves secondary navigation back into the scrollable area when the config is disabled', () => {
@@ -473,8 +477,8 @@ describe('TaskSidebar scroll structure', () => {
     expect(within(scrollableSection).queryByText('resource-library:title')).not.toBeInTheDocument()
     expect(within(scrollableSection).getByText('devices:my_devices')).toBeInTheDocument()
     expect(
-      within(scrollableSection).getByText('common:navigation.collaboration')
-    ).toBeInTheDocument()
+      within(scrollableSection).queryByText('common:navigation.collaboration')
+    ).not.toBeInTheDocument()
   })
 
   it('scrolls the sidebar when wheeling over the fixed section', () => {
