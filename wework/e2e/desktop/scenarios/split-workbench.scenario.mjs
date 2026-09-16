@@ -192,7 +192,7 @@ async function verifyMessageTableActions(control) {
     await control.command('getActiveElementTestId', 'body'),
     'markdown-table-expand-button'
   )
-  await control.command('click', COMPOSER)
+  await control.command('click', `${ACTIVE_SURFACE} [data-testid="chat-message-input"]`)
 }
 
 async function verifyMultilineComposerCaret(control, captureScreenshot) {
