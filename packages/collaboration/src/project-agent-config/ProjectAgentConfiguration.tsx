@@ -56,12 +56,11 @@ export function ProjectAgentConfiguration({
 }) {
   const workspaceId = project.workspace_id;
   const supportsAgentCreation = Boolean(host?.renderAgentCreator);
-  const existingAgentSelectionDisabled =
-    host?.existingAgentSelection?.disabled ?? false;
-  const defaultMode: ProjectAgentMode =
-    supportsAgentCreation && existingAgentSelectionDisabled
-      ? "create"
-      : "existing";
+  const supportsExistingAgentSelection =
+    host?.supportsExistingAgentSelection ?? true;
+  const defaultMode: ProjectAgentMode = supportsExistingAgentSelection
+    ? "existing"
+    : "create";
   const [mode, setMode] = useState<ProjectAgentMode>(defaultMode);
   const [agents, setAgents] = useState<ProjectAgentConfigurationRecord[]>([]);
   const [workspaceAgents, setWorkspaceAgents] = useState<
@@ -70,6 +69,7 @@ export function ProjectAgentConfiguration({
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [loading, setLoading] = useState(true);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,13 +83,18 @@ export function ProjectAgentConfiguration({
     setWorkspaceAgents([]);
     setSelectedTeamId("");
     setComposerOpen(false);
+    setEditingAgentId(null);
     setError(null);
     let active = true;
     setLoading(true);
+    const noSelectableResources = { agents: [], execution_environments: [] };
     void Promise.all([
       api.agents.list(project.id),
-      api.resources?.list() ?? { agents: [], execution_environments: [] },
-      workspaceId && api.workspaces
+      // Selectable resources are only needed by the existing-Agent picker.
+      supportsExistingAgentSelection
+        ? (api.resources?.list() ?? noSelectableResources)
+        : noSelectableResources,
+      supportsExistingAgentSelection && workspaceId && api.workspaces
         ? api.workspaces.listAgents(workspaceId)
         : [],
     ])
@@ -138,17 +143,19 @@ export function ProjectAgentConfiguration({
     return () => {
       active = false;
     };
-  }, [api, project.id, project.project_store, workspaceId]);
+  }, [
+    api,
+    project.id,
+    project.project_store,
+    supportsExistingAgentSelection,
+    workspaceId,
+  ]);
 
   useEffect(() => {
-    if (
-      supportsAgentCreation &&
-      existingAgentSelectionDisabled &&
-      mode === "existing"
-    ) {
+    if (!supportsExistingAgentSelection && mode === "existing") {
       setMode("create");
     }
-  }, [existingAgentSelectionDisabled, mode, supportsAgentCreation]);
+  }, [mode, supportsExistingAgentSelection]);
 
   useEffect(() => {
     if (!composerOpen) return;
@@ -165,6 +172,11 @@ export function ProjectAgentConfiguration({
         (candidate) => String(candidate.team_id) === selectedTeamId,
       ) ?? null,
     [selectedTeamId, workspaceAgents],
+  );
+
+  const editingAgent = useMemo(
+    () => agents.find((candidate) => candidate.id === editingAgentId) ?? null,
+    [agents, editingAgentId],
   );
 
   async function addAgent(
@@ -237,6 +249,39 @@ export function ProjectAgentConfiguration({
       onError();
     } finally {
       setArchivingId(null);
+    }
+  }
+
+  async function saveEditedAgent(saved: { name: string; teamId: number }) {
+    const agent = editingAgent;
+    if (!agent) return;
+    setError(null);
+    try {
+      // Project rows keep their own copy of the resource name; workspace rows
+      // derive it from the resource, so a reload is enough there.
+      if (scope === "project" && saved.name && saved.name !== agent.name) {
+        await api.agents.update(project.id, agent.id, {
+          version: agent.version,
+          name: saved.name,
+        });
+      }
+      const nextAgents = await api.agents.list(project.id);
+      setAgents(
+        nextAgents
+          .map(normalizeProjectAgent)
+          .filter((item) => item.status !== "archived"),
+      );
+      setEditingAgentId(null);
+      onAgentsChange?.();
+    } catch (cause) {
+      setError(
+        errorMessage(
+          cause,
+          translate("todo.update_project_agent_failed", "更新项目智能体失败"),
+        ),
+      );
+      onError();
+      throw cause;
     }
   }
 
@@ -381,6 +426,7 @@ export function ProjectAgentConfiguration({
     name: project.name ?? "",
     namespace: project.namespace ?? "default",
   };
+  const canEditAgentResource = Boolean(host?.renderAgentEditor);
 
   return (
     <section className={styles.section} data-testid="project-agent-config">
@@ -474,19 +520,35 @@ export function ProjectAgentConfiguration({
                     </span>
                   </div>
                   {canManage ? (
-                    <button
-                      className={styles.archiveButton}
-                      data-testid={`project-agent-archive-${agent.id}`}
-                      disabled={archivingId === agent.id}
-                      onClick={() => void archiveAgent(agent)}
-                      type="button"
-                    >
-                      {archivingId === agent.id
-                        ? translate("common.saving", "处理中…")
-                        : scope === "workspace"
-                          ? translate("todo.remove_workspace_agent", "移出空间")
-                          : translate("todo.archive_project_agent", "停用")}
-                    </button>
+                    <div className={styles.agentActions}>
+                      {canEditAgentResource && agent.wegentTeamId !== null ? (
+                        <button
+                          className={styles.archiveButton}
+                          data-testid={`project-agent-edit-${agent.id}`}
+                          disabled={archivingId === agent.id}
+                          onClick={() => setEditingAgentId(agent.id)}
+                          type="button"
+                        >
+                          {translate("todo.edit_project_agent", "编辑")}
+                        </button>
+                      ) : null}
+                      <button
+                        className={styles.archiveButton}
+                        data-testid={`project-agent-archive-${agent.id}`}
+                        disabled={archivingId === agent.id}
+                        onClick={() => void archiveAgent(agent)}
+                        type="button"
+                      >
+                        {archivingId === agent.id
+                          ? translate("common.saving", "处理中…")
+                          : scope === "workspace"
+                            ? translate(
+                                "todo.remove_workspace_agent",
+                                "移出空间",
+                              )
+                            : translate("todo.archive_project_agent", "停用")}
+                      </button>
+                    </div>
                   ) : null}
                 </div>
               ))}
@@ -526,13 +588,10 @@ export function ProjectAgentConfiguration({
                           onChange: setMode,
                           options: [
                             {
-                              description:
-                                host.existingAgentSelection?.description ??
-                                translate(
-                                  "todo.choose_existing_agent_description",
-                                  "从我的智能体或空间共享智能体中选择",
-                                ),
-                              disabled: existingAgentSelectionDisabled,
+                              description: translate(
+                                "todo.choose_existing_agent_description",
+                                "从我的智能体或空间共享智能体中选择",
+                              ),
                               label: translate(
                                 "todo.choose_existing_agent",
                                 "已有智能体",
@@ -629,6 +688,18 @@ export function ProjectAgentConfiguration({
                     ) : null}
                   </div>,
                 )
+            : null}
+
+          {editingAgent &&
+          editingAgent.wegentTeamId !== null &&
+          host?.renderAgentEditor
+            ? host.renderAgentEditor({
+                agent: { teamId: editingAgent.wegentTeamId },
+                namespace: creatorContext.namespace,
+                onClose: () => setEditingAgentId(null),
+                onSaved: saveEditedAgent,
+                workspaceName: creatorContext.name,
+              })
             : null}
         </>
       )}

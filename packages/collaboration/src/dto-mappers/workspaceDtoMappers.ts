@@ -5,6 +5,8 @@
 import type {
   WorkspaceDelivery,
   WorkspaceDeliveryAsset,
+  WorkspaceGitBranch,
+  WorkspaceGitRepository,
   WorkspaceIssueCollaborator,
   WorkspaceTaskBinding,
   WorkspaceWorkflowPlan,
@@ -297,26 +299,31 @@ export function mapCollaborationWorkspaceDto(
             };
           })
         : [],
-      status: (executionEnvironment.status ?? "uninitialized") as NonNullable<
-        CollaborationWorkspace["execution_environment"]
-      >["status"],
       fingerprint: String(executionEnvironment.fingerprint ?? ""),
-      prepared_device_id: String(
-        executionEnvironment.prepared_device_id ??
-          executionEnvironment.preparedDeviceId ??
-          "",
+      devices: Object.fromEntries(
+        Object.entries(asRecord(executionEnvironment.devices ?? {})).map(
+          ([deviceKey, value]) => {
+            const entry = asRecord(value);
+            return [
+              deviceKey,
+              {
+                status: entry.status as
+                  | "preparing"
+                  | "ready"
+                  | "error"
+                  | undefined,
+                workspace_path: String(
+                  entry.workspace_path ?? entry.workspacePath ?? "",
+                ),
+                prepared_at: nullableString(
+                  entry.prepared_at ?? entry.preparedAt ?? null,
+                ),
+                error: String(entry.error ?? ""),
+              },
+            ];
+          },
+        ),
       ),
-      prepared_workspace_path: String(
-        executionEnvironment.prepared_workspace_path ??
-          executionEnvironment.preparedWorkspacePath ??
-          "",
-      ),
-      prepared_at: nullableString(
-        executionEnvironment.prepared_at ??
-          executionEnvironment.preparedAt ??
-          null,
-      ),
-      error: String(executionEnvironment.error ?? ""),
     },
     project_count: Number(row.project_count ?? row.projectCount ?? 0),
     created_by_user_id: Number(
@@ -424,6 +431,30 @@ export function mapCollaborationPlatformResourcesDto(
           mapCollaborationExecutionEnvironmentDto(environment as WorkspaceDto),
         )
       : [],
+  };
+}
+
+export function mapWorkspaceGitRepositoryDto(
+  input: WorkspaceDto,
+): WorkspaceGitRepository {
+  const row = asRecord(input);
+  return {
+    id: Number(camelOrSnake(row, "gitRepoId", "git_repo_id") ?? 0),
+    name: String(row.name ?? ""),
+    fullName: String(camelOrSnake(row, "gitRepo", "git_repo") ?? ""),
+    cloneUrl: String(camelOrSnake(row, "gitUrl", "git_url") ?? ""),
+    gitDomain: String(camelOrSnake(row, "gitDomain", "git_domain") ?? ""),
+    provider: String(row.type ?? ""),
+  };
+}
+
+export function mapWorkspaceGitBranchDto(
+  input: WorkspaceDto,
+): WorkspaceGitBranch {
+  const row = asRecord(input);
+  return {
+    name: String(row.name ?? ""),
+    default: row.default === true,
   };
 }
 

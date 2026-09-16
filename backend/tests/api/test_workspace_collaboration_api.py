@@ -110,12 +110,8 @@ def test_workspace_persists_shared_execution_environment_defaults(
             {"command": "corepack enable", "working_directory": "wegent"},
             {"command": "pnpm install", "working_directory": "wegent"},
         ],
-        "status": "preparing",
         "fingerprint": environment["fingerprint"],
-        "prepared_device_id": "",
-        "prepared_workspace_path": "",
-        "prepared_at": None,
-        "error": "",
+        "devices": {},
     }
     assert len(environment["fingerprint"]) == 64
 
@@ -223,12 +219,8 @@ def test_workspace_execution_environment_initialize_preserves_namespace(
     )
     assert binding_response.status_code == 201
     initialized_state = {
-        "repositories": [],
-        "setup_steps": [],
         "status": "ready",
-        "fingerprint": "a" * 64,
-        "prepared_device_id": device.name,
-        "prepared_workspace_path": "/workspace/initialized",
+        "workspace_path": "/workspace/initialized",
         "prepared_at": None,
         "error": "",
     }
@@ -247,7 +239,12 @@ def test_workspace_execution_environment_initialize_preserves_namespace(
     assert initialize_response.status_code == 200
     initialized_workspace = initialize_response.json()
     assert initialized_workspace["namespace"] == group_name
-    assert initialized_workspace["execution_environment"] == initialized_state
+    assert initialized_workspace["execution_environment"] == {
+        "repositories": [],
+        "setup_steps": [],
+        "fingerprint": "",
+        "devices": {device.name: initialized_state},
+    }
     stored_workspace = test_db.get(Kind, int(workspace["id"]))
     assert stored_workspace is not None
     assert stored_workspace.namespace == group_name

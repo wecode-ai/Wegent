@@ -270,6 +270,8 @@ interface CloudTodoBoardCardProps {
   dragDisabled?: boolean
   previewDisabled?: boolean
   archiveDisabled?: boolean
+  /** Menu label for the archive action; defaults to the archive wording. */
+  archiveLabel?: string
   progressDisplay?: BoardCardProgressDisplay
   changeRequestMonitor?: ChangeRequestMonitor | null
   onContinueChangeRequestRepair?: (
@@ -295,12 +297,14 @@ export function CloudTodoBoardCard({
   dragDisabled = false,
   previewDisabled = false,
   archiveDisabled = false,
+  archiveLabel,
   progressDisplay = 'compact',
   changeRequestMonitor = null,
   onContinueChangeRequestRepair,
 }: CloudTodoBoardCardProps) {
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
+  const menuContainerRef = useRef<HTMLDivElement>(null)
   const [hoveredTaskBindingId, setHoveredTaskBindingId] = useState<string | number | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const editable = canEditProjectSpaceIssue(item)
@@ -352,6 +356,18 @@ export function CloudTodoBoardCard({
     return () => window.clearTimeout(timer)
   }, [item.is_unread, onMarkRead, previewOpen])
 
+  // The menu lives outside the card's click target, so close it on any
+  // mousedown that lands outside its container; the trigger still toggles
+  // because its own mousedown stays inside.
+  useEffect(() => {
+    if (!menuOpen) return
+    const closeMenu = (event: MouseEvent) => {
+      if (!menuContainerRef.current?.contains(event.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', closeMenu)
+    return () => document.removeEventListener('mousedown', closeMenu)
+  }, [menuOpen])
+
   const card = (
     <CollaborationIssueCard
       item={item}
@@ -388,7 +404,7 @@ export function CloudTodoBoardCard({
       articleTestId={`cloud-todo-card-drop-${item.id}`}
       menu={
         editable && !archiveDisabled ? (
-          <div className="absolute right-2 top-2 z-20">
+          <div ref={menuContainerRef} className="absolute right-2 top-2 z-20">
             <Tooltip label={t('todo.project_actions', '项目操作')} side="bottom" align="end">
               <button
                 type="button"
@@ -420,7 +436,7 @@ export function CloudTodoBoardCard({
                   className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
                 >
                   <Archive className="h-3.5 w-3.5" />
-                  归档任务
+                  {archiveLabel ?? t('todo.archive_task', '归档任务')}
                 </button>
               </div>
             ) : null}

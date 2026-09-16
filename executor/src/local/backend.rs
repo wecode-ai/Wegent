@@ -968,6 +968,7 @@ fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBa
     if request.device_id.as_deref().unwrap_or("").trim().is_empty() {
         request.device_id = Some(config.device_id.clone());
     }
+    crate::agents::rewrite_loopback_model_gateway(request, &config.backend_url);
 }
 
 fn runtime_error_response(error: AppIpcError) -> Value {

@@ -34,6 +34,7 @@ use crate::{
 
 pub use agno::build_agno_options;
 pub(crate) use backend_url::request_backend_url;
+pub(crate) use backend_url::rewrite_loopback_model_gateway;
 pub use claude_code::build_claude_command;
 pub(crate) use claude_code::{claude_config_dir, claude_task_dir, model_id, prompt_text};
 use claude_code::{

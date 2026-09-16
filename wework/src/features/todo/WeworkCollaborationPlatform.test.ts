@@ -1261,6 +1261,18 @@ describe('Wework collaboration workspace API', () => {
     ])
   })
 
+  it('omits the git repository catalog capability from the local workspace api', () => {
+    const api = createLocalWorkspaceApi(
+      createLocalDeliveryApi(),
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    expect(api?.gitRepositories).toBeUndefined()
+  })
+
   it('persists local automatic processing rules without a cloud automation service', async () => {
     let project = {
       id: 'local-project',

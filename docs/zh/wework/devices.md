@@ -35,6 +35,16 @@ Wework 启动后会管理本机执行环境。本地项目、会话、Codex 和�
 
 启动命令包含设备凭证，应通过安全渠道保存和使用。
 
+### 设备侧 Backend 地址解析
+
+启动命令会把 Backend 地址写入设备的环境变量（`WEGENT_BACKEND_URL`、`WEGENT_SOCKET_URL`）。Executor 运行时只读取设备自己的配置，不再访问 Backend 的配置。`backend_url` 的解析优先级为：
+
+1. 设备环境变量（启动命令中的 `export` 或 `docker run -e`）。
+2. 设备配置文件 `$WEGENT_EXECUTOR_HOME/device-config.json`。
+3. 自愈推导：当 `backend_url` 指向 loopback（`localhost`、`127.0.0.1`、`::1`）而 `socket_url` 不是时，Executor 从 `socket_url` 推导 `backend_url`（`ws`→`http`、`wss`→`https`，保留端口）。设备能建立 Socket 连接即证明该地址可达，因此早期烧入 `http://localhost:8000` 的设备在 Executor 升级后无需重新生成启动命令。
+
+部署自建 Backend 时，应把 `WEGENT_BACKEND_PUBLIC_URL`（以及需要时的 `WEGENT_SOCKET_URL`）配置为设备可达的地址，让新生成的启动命令直接携带正确地址。
+
 ## 在其他设备继续任务
 
 使用任务菜单中的 **复制到其他设备**，选择目标设备和项目目录。正在运行的任务会先停止当前回复，再创建目标设备上的副本。

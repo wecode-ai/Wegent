@@ -168,15 +168,21 @@ export interface CollaborationWorkspace {
   updated_at: string;
 }
 
+export interface CollaborationExecutionEnvironmentDeviceState {
+  status?: "preparing" | "ready" | "error";
+  workspace_path?: string;
+  prepared_at?: string | null;
+  error?: string;
+}
+
 export interface CollaborationExecutionEnvironmentConfig {
   repositories: CollaborationExecutionEnvironmentRepository[];
   setup_steps: CollaborationExecutionEnvironmentSetupStep[];
-  status?: "uninitialized" | "preparing" | "ready" | "error";
   fingerprint?: string;
-  prepared_device_id?: string;
-  prepared_workspace_path?: string;
-  prepared_at?: string | null;
-  error?: string;
+  // Preparation state is per device, keyed by the device's route id
+  // (`device_key` on the environment row), so preparing on one device never
+  // overwrites another device's record.
+  devices?: Record<string, CollaborationExecutionEnvironmentDeviceState>;
 }
 
 export interface CollaborationExecutionEnvironmentRepository {

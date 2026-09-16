@@ -10,6 +10,35 @@ use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
+/// Restores one environment variable when a test finishes.
+struct ScalarEnv {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl ScalarEnv {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+impl Drop for ScalarEnv {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
 #[test]
 fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
     let config = CodexRuntimeProxyConfig::default();
@@ -1348,6 +1377,47 @@ fn skips_backend_connection_without_a_configured_connection() {
     assert!(request.backend_url.is_none());
     assert!(request.auth_token.is_none());
     assert!(request.runtime_auth_token.is_none());
+}
+
+#[test]
+fn rewrites_loopback_gateway_from_the_payload_backend_url() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut request = ExecutionRequest {
+        backend_url: Some("http://backend.example.com:8000".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.model_config = json!({
+        "base_url": "http://localhost:8000/api/runtime-work/llm-responses-proxy",
+    });
+
+    handler.apply_backend_connection(&mut request);
+
+    assert_eq!(
+        request.model_config["base_url"],
+        json!("http://backend.example.com:8000/api/runtime-work/llm-responses-proxy")
+    );
+}
+
+#[test]
+fn rewrites_loopback_gateway_when_no_connection_snapshot_exists() {
+    let _lock = crate::test_env::lock();
+    let _backend = ScalarEnv::remove("WEGENT_BACKEND_URL");
+    let _mode = ScalarEnv::set("EXECUTOR_MODE", "local");
+    let snapshot: Arc<Mutex<Option<ConnectionConfig>>> = Arc::new(Mutex::new(None));
+    let handler =
+        RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(snapshot);
+    let mut request = ExecutionRequest {
+        backend_url: Some("http://backend.example.com:8000".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.model_config = json!({"baseUrl": "http://127.0.0.1:8000/api/work"});
+
+    handler.apply_backend_connection(&mut request);
+
+    assert_eq!(
+        request.model_config["baseUrl"],
+        json!("http://backend.example.com:8000/api/work")
+    );
 }
 
 #[test]

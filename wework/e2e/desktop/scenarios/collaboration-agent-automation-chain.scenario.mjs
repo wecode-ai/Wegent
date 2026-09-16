@@ -674,7 +674,7 @@ export async function createDesktopScenario({
 
   async function createProjectAgentThroughUi(
     control,
-    { name, nativeRuntime, shellRuntime, systemMarker }
+    { name, nativeRuntime, shellRuntime, systemMarker, verifyEditing = false }
   ) {
     const modelCatalog = await request(
       '/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
@@ -697,15 +697,12 @@ export async function createDesktopScenario({
     await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('waitFor', '[data-testid="project-agent-dialog"]', {
-      timeoutMs: uiTimeoutMs,
-    })
-    await control.command('click', '[data-testid="project-agent-mode-create"]')
     await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
       timeoutMs: uiTimeoutMs,
     })
+    const technicalName = `${nativeRuntime}-collaboration-${process.pid}`
     await control.command('fill', '[data-testid="wework-agent-resource-name"]', {
-      value: `${nativeRuntime}-collaboration-${process.pid}`,
+      value: technicalName,
     })
     await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: name })
     await control.command('select', '[data-testid="wework-agent-runtime"]', {
@@ -715,8 +712,9 @@ export async function createDesktopScenario({
       value: String(publicModelIndex),
     })
     await control.command('click', `[data-testid="wework-agent-skill-${skill.id}"]`)
+    const systemPrompt = `${systemMarker}。按 Skill 约束工作，并严格依次调用 get_current_context、get_board_item、add_board_item_comment。`
     await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
-      value: `${systemMarker}。按 Skill 约束工作，并严格依次调用 get_current_context、get_board_item、add_board_item_comment。`,
+      value: systemPrompt,
     })
     await control.command('fill', '[data-testid="wework-agent-mcp"]', {
       value: '{}',
@@ -750,7 +748,73 @@ export async function createDesktopScenario({
       text: name,
       timeoutMs: uiTimeoutMs,
     })
+    if (verifyEditing) {
+      await verifyProjectAgentResourceEditing(control, agent, {
+        botId: team.bots[0].bot.id,
+        name,
+        shellRuntime,
+        systemPrompt,
+        technicalName,
+      })
+    }
     return agent
+  }
+
+  /**
+   * The configured Agent row must reopen its resource-library definition and
+   * save it back without losing the bound runtime, model, or Skills.
+   */
+  async function verifyProjectAgentResourceEditing(
+    control,
+    agent,
+    { botId, name, shellRuntime, systemPrompt, technicalName }
+  ) {
+    await control.command(
+      'clickWhenEnabled',
+      scoped(`[data-testid="project-agent-edit-${agent.id}"]`),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await waitForValue(
+      () => control.command('getValue', '[data-testid="wework-agent-system-prompt"]'),
+      value => value === systemPrompt,
+      `Editing ${name} did not load its persisted system prompt`,
+      uiTimeoutMs
+    )
+    assert.equal(
+      await control.command('getValue', '[data-testid="wework-agent-display-name"]'),
+      name,
+      `Editing ${name} did not load its persisted display name`
+    )
+    assert.equal(
+      await control.command('getValue', '[data-testid="wework-agent-runtime"]'),
+      shellRuntime,
+      `Editing ${name} did not load its persisted runtime`
+    )
+    await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+      visible: false,
+      timeoutMs: uiTimeoutMs,
+    })
+    const editedBot = await request(`/api/bots/${botId}`)
+    assert.equal(editedBot.system_prompt, systemPrompt)
+    assert.equal(editedBot.shell_type, shellRuntime)
+    assert.equal(editedBot.agent_config?.bind_model, MODEL_NAME)
+    assert.ok(
+      editedBot.skills?.includes(SKILL_NAME),
+      `${name} lost ${SKILL_UI_REFERENCE} after saving its resource`
+    )
+    const editedTeam = await request(`/api/teams/${agent.wegentTeamId}`)
+    assert.equal(
+      editedTeam.name,
+      technicalName,
+      `${name} must keep its technical name after editing`
+    )
+    assert.equal(editedTeam.displayName, name)
   }
 
   async function configureAgents(control) {
@@ -767,6 +831,7 @@ export async function createDesktopScenario({
       nativeRuntime: 'codex',
       shellRuntime: 'Codex',
       systemMarker: CODEX_SYSTEM_MARKER,
+      verifyEditing: true,
     })
     await capture(control, 'collaboration-agent-chain-05-codex-configured.png')
     claudeAgent = await createProjectAgentThroughUi(control, {

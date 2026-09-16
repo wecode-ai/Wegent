@@ -1724,25 +1724,10 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
 }
 
 fn proxy_client(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
-    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
-        return reqwest::Client::builder()
-            .timeout(Duration::from_secs(
-                LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS,
-            ))
-            .build()
-            .map_err(|error| HttpError {
-                status: StatusCode::BAD_GATEWAY,
-                detail: format!("Failed to configure local model proxy client: {error}"),
-            });
-    };
-    reqwest::Client::builder()
+    proxy_client_builder(proxy_url)?
         .timeout(Duration::from_secs(
             LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS,
         ))
-        .proxy(reqwest::Proxy::all(proxy_url).map_err(|error| HttpError {
-            status: StatusCode::BAD_GATEWAY,
-            detail: format!("Invalid local model proxy URL: {error}"),
-        })?)
         .build()
         .map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
@@ -1762,7 +1747,10 @@ fn proxy_client_without_redirects(proxy_url: Option<&str>) -> Result<reqwest::Cl
 
 fn proxy_client_builder(proxy_url: Option<&str>) -> Result<reqwest::ClientBuilder, HttpError> {
     let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(reqwest::Client::builder());
+        // The executor hydrates the user's login-shell environment, which may
+        // export proxy variables for unrelated tooling. Reaching the backend
+        // must depend only on the configured upstream, never on that shell.
+        return Ok(reqwest::Client::builder().no_proxy());
     };
     Ok(
         reqwest::Client::builder().proxy(reqwest::Proxy::all(proxy_url).map_err(|error| {
@@ -1793,7 +1781,7 @@ async fn send_upstream_request_with_rate_limit_retry(
         .await
         .map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
-            detail: format!("Local model proxy request failed: {error}"),
+            detail: format!("Local model proxy request failed: {error:#}"),
         })?;
         if response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
             || retry_count == MAX_RATE_LIMIT_RETRIES

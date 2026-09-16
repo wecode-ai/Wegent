@@ -597,6 +597,12 @@ execution environment on a Wework device:
    existing two-agent automation chain, proving that record-scoped routing does not break
    subsequent scheduling.
 
+Environment preparation clones repositories with the Git credentials configured on the device,
+matching how tasks dispatched to a device behave: the Backend sends no task-scoped token because
+one execution environment may hold repositories from several domains. A private repository
+therefore requires the Git accounts to be synchronized to that device first, otherwise the clone
+fails for missing credentials.
+
 ### `cloud-device-lifecycle`
 
 This checkpoint reuses the real cloud Executor started by CI and verifies:
