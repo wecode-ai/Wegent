@@ -300,6 +300,14 @@ impl RuntimeWorkRpcHandler {
                 .and_then(|id| project_index.sidebar_project_key_for_thread(id))
                 .and_then(|key| project_index.project_for_key(key));
             if let Some(project) = assigned_project {
+                let source_project = link
+                    .runtime_project_key
+                    .as_deref()
+                    .and_then(|key| project_index.project_for_key(key))
+                    .or_else(|| project_index.project_for_path(&link.workspace_path));
+                link.preserve_execution_path = source_project
+                    .map(|source| source.key != project.key)
+                    .unwrap_or(true);
                 link.group_workspace_path = Some(project.workspace_path.clone());
                 link.group_project_key = Some(project.key.clone());
                 kept_project += 1;

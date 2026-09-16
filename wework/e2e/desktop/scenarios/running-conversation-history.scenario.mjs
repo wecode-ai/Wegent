@@ -123,12 +123,12 @@ async function waitForLongHistoryHydration(control, timeoutMs) {
 }
 
 async function verifyMoveToProject(control, { taskId, executorHome, timeoutMs }) {
-  const before = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
   const targetPath = join(executorHome, 'task-move-target')
   await mkdir(targetPath, { recursive: true })
   await createSingleRootLocalProject(control, targetPath, 'Task move target')
   const row = '[data-testid="runtime-local-task-row-' + taskId + '"]'
   await control.command('click', row)
+  const address = await waitForTaskAddress(control, taskId, timeoutMs)
   await control.command('contextMenu', row)
   await control.command('click', '[data-testid="runtime-local-task-menu-move-' + taskId + '"]')
   const prefix = 'runtime-local-task-move-' + taskId + '-'
@@ -141,8 +141,19 @@ async function verifyMoveToProject(control, { taskId, executorHome, timeoutMs })
   )
   const projectKey = targetId.slice(prefix.length)
   await control.command('click', '[data-testid="' + targetId + '"]')
-  await assertMovedProject(control, projectKey, before.currentRuntimeTask, timeoutMs)
-  return { projectKey, address: before.currentRuntimeTask }
+  await assertMovedProject(control, projectKey, address, timeoutMs)
+  return { projectKey, address }
+}
+
+async function waitForTaskAddress(control, taskId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+    const address = state?.currentRuntimeTask
+    if (address?.taskId === taskId && address.threadId) return address
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The source task did not resolve its session before moving')
 }
 
 async function assertMovedProject(control, projectKey, address, timeoutMs) {
@@ -357,6 +368,7 @@ export function createDesktopScenario({
       await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
+      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-user"]', {
         text: SECOND_PROMPT,
         timeoutMs: uiTimeoutMs,

@@ -88,6 +88,8 @@ pub(crate) struct RuntimeTaskLink {
     #[serde(skip)]
     pub group_project_key: Option<String>,
     #[serde(skip)]
+    pub preserve_execution_path: bool,
+    #[serde(skip)]
     pub pinned: bool,
     #[serde(skip)]
     pub pinned_order: Option<usize>,
@@ -134,6 +136,7 @@ impl RuntimeTaskLink {
             sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
+            preserve_execution_path: false,
             pinned: false,
             pinned_order: None,
         }
@@ -176,6 +179,7 @@ impl RuntimeTaskLink {
             sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
+            preserve_execution_path: false,
             pinned: false,
             pinned_order: None,
         }
@@ -303,6 +307,7 @@ impl RuntimeTaskLink {
             sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
+            preserve_execution_path: false,
             pinned: false,
             pinned_order: None,
         }
@@ -338,6 +343,7 @@ impl RuntimeTaskLink {
             sidebar_order: self.sidebar_order,
             group_workspace_path: self.group_workspace_path.clone(),
             group_project_key: self.group_project_key.clone(),
+            preserve_execution_path: self.preserve_execution_path,
             pinned: self.pinned,
             pinned_order: self.pinned_order,
         }
@@ -460,6 +466,7 @@ impl Default for RuntimeTaskLink {
             sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
+            preserve_execution_path: false,
             pinned: false,
             pinned_order: None,
         }
@@ -554,7 +561,7 @@ pub(crate) fn workspace_response(
             .find(|root| path_is_within(root, &normalized_link_path))
             .cloned()
             .unwrap_or(normalized_link_path);
-        let execution_group = if link.group_project_key.is_some() {
+        let execution_group = if link.preserve_execution_path {
             workspace_group_path(&link.workspace_path)
         } else {
             group_path.clone()

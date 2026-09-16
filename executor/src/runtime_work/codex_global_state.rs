@@ -544,6 +544,14 @@ pub(crate) fn register_codex_global_thread_workspace_root(
     }
 
     let project_index = CodexGlobalProjectIndex::load();
+    // An explicit removal takes precedence over a stale sidebar assignment.
+    if project_index.is_projectless_thread(thread_id)
+        && project_index
+            .sidebar_project_key_for_thread(thread_id)
+            .is_some()
+    {
+        return Ok(None);
+    }
     let state_path = codex_global_state_path();
     let mut payload = read_state_payload(&state_path).unwrap_or_default();
     // Resuming a session must preserve later sidebar moves, including pending operations.
