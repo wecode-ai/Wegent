@@ -863,7 +863,7 @@ class MilvusBackend(BaseStorageBackend):
         """Report whether the configured Milvus service is reachable."""
         try:
             with self._store.client() as client:
-                client.list_collections()
+                client.list_collections(timeout=self._store.rpc_timeout)
             return True
         except Exception:
             logger.warning("[Milvus] Connection test failed", exc_info=True)

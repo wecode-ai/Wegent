@@ -16,7 +16,11 @@ from app.services.rag.gateway_factory import (
     get_query_gateway,
 )
 from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayError
+from app.services.rag.remote_gateway import (
+    RemoteRagGateway,
+    RemoteRagGatewayError,
+    should_fallback_to_local,
+)
 from app.services.rag.runtime_specs import (
     DeleteRuntimeSpec,
     DropKnowledgeIndexRuntimeSpec,
@@ -354,6 +358,97 @@ async def test_remote_gateway_wraps_transport_errors(mocker) -> None:
     assert exc.value.code == "remote_transport_error"
     assert exc.value.retryable is True
     assert exc.value.status_code is None
+
+
+@pytest.mark.asyncio
+async def test_remote_gateway_keeps_a_storage_code_and_its_safety(
+    mocker,
+) -> None:
+    """A bounded storage failure reaches the caller as a code, not a string."""
+    mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/query",
+            status_code=503,
+            json_body={
+                "code": "storage_unavailable",
+                "message": (
+                    "Storage backend 'milvus' could not complete this operation "
+                    "within its bound. The remote result is unknown; retry the "
+                    "whole operation and do not assume it was cancelled or "
+                    "rolled back."
+                ),
+                "retryable": True,
+                "details": {"sdk_code": "14", "sdk_error": "ConnectError"},
+            },
+        ),
+    )
+    gateway = RemoteRagGateway(base_url="http://knowledge-runtime")
+
+    with pytest.raises(RemoteRagGatewayError) as exc:
+        await gateway.query(
+            QueryRuntimeSpec(knowledge_base_ids=[1], query="release", user_id=8)
+        )
+
+    assert exc.value.code == "storage_unavailable"
+    assert exc.value.retryable is True
+    assert exc.value.status_code == 503
+    assert exc.value.details == {"sdk_code": "14", "sdk_error": "ConnectError"}
+    assert "cancelled" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_remote_gateway_refuses_to_fall_back_on_a_deterministic_code(
+    mocker,
+) -> None:
+    """A contract conflict is the same locally, so it must not retry locally."""
+    mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/query",
+            status_code=409,
+            json_body={
+                "code": "index_contract_incompatible",
+                "message": "Milvus index 'wegent_kb_1' is not compatible.",
+                "retryable": False,
+                "details": {"collection_name": "wegent_kb_1"},
+            },
+        ),
+    )
+    gateway = RemoteRagGateway(base_url="http://knowledge-runtime")
+
+    with pytest.raises(RemoteRagGatewayError) as exc:
+        await gateway.query(
+            QueryRuntimeSpec(knowledge_base_ids=[1], query="release", user_id=8)
+        )
+
+    assert should_fallback_to_local(exc.value) is False
+
+
+@pytest.mark.asyncio
+async def test_remote_gateway_falls_back_on_a_transient_storage_failure(
+    mocker,
+) -> None:
+    mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/query",
+            status_code=503,
+            json_body={
+                "code": "storage_unavailable",
+                "message": "Storage backend 'milvus' could not complete this operation.",
+                "retryable": True,
+            },
+        ),
+    )
+    gateway = RemoteRagGateway(base_url="http://knowledge-runtime")
+
+    with pytest.raises(RemoteRagGatewayError) as exc:
+        await gateway.query(
+            QueryRuntimeSpec(knowledge_base_ids=[1], query="release", user_id=8)
+        )
+
+    assert should_fallback_to_local(exc.value) is True
 
 
 @pytest.mark.asyncio

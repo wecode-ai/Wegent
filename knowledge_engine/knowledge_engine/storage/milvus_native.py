@@ -29,12 +29,14 @@ from pymilvus import (
     FunctionType,
     MilvusClient,
 )
+from pymilvus.exceptions import MilvusException
 
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
     StorageBackendError,
 )
+from knowledge_engine.storage.milvus_errors import rpc_failure
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,12 @@ MAX_ID_LENGTH = 128
 MAX_KEY_LENGTH = 512
 MAX_TEXT_LENGTH = 65535
 MAX_COUNT_ROWS = 16384
+
+# Fallback deadline for one RPC when a store was constructed without one.
+DEFAULT_RPC_TIMEOUT_SECONDS = 10.0
+# Creating a collection and writing its contract are heavy server operations,
+# so they get a wider - but still bounded - budget than a query or mutation.
+HEAVY_RPC_TIMEOUT_SECONDS = 30.0
 
 ID_FIELD = "id"
 KNOWLEDGE_ID_FIELD = "knowledge_id"
@@ -422,9 +430,14 @@ def _binding_payload_fields() -> List[FieldSchema]:
     ]
 
 
-def collection_dimension(client: MilvusClient, collection_name: str) -> int | None:
+def collection_dimension(
+    client: MilvusClient,
+    collection_name: str,
+    *,
+    timeout: float,
+) -> int | None:
     """Read the dense vector dimension from an existing collection."""
-    description = client.describe_collection(collection_name)
+    description = client.describe_collection(collection_name, timeout=timeout)
     for field in description.get("fields", []):
         if field.get("name") == DENSE_VECTOR_FIELD:
             dim = field.get("params", {}).get("dim")
@@ -464,23 +477,38 @@ class MilvusDocumentStore:
     @contextmanager
     def client(self) -> Iterator[MilvusClient]:
         """Create a short-lived client and always release it."""
-        client = self._client_factory(
-            uri=self.uri,
-            token=self.token,
-            db_name=self.db_name,
-            timeout=self.timeout,
-            # Each bounded task owns its connection. Sharing the default
-            # uri-derived alias would let one task's close() tear down
-            # another task's connection.
-            alias=f"wegent-{uuid.uuid4().hex}",
-        )
+        client: MilvusClient | None = None
         try:
+            client = self._client_factory(
+                uri=self.uri,
+                token=self.token,
+                db_name=self.db_name,
+                timeout=self.timeout,
+                # Each bounded task owns its connection. Sharing the default
+                # uri-derived alias would let one task's close() tear down
+                # another task's connection.
+                alias=f"wegent-{uuid.uuid4().hex}",
+            )
             yield client
+        except MilvusException as exc:
+            raise rpc_failure(exc) from exc
         finally:
-            try:
-                client.close()
-            except Exception:
-                logger.debug("[Milvus] Failed to close client", exc_info=True)
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    logger.debug("[Milvus] Failed to close client", exc_info=True)
+
+    @property
+    def rpc_timeout(self) -> float:
+        """Deadline for one Milvus RPC.
+
+        The PyMilvus client constructor only bounds the initial connection: the
+        SDK retries a per-call RPC until that call gets its own ``timeout``
+        kwarg. Passing this value to every RPC is what makes an operation
+        bounded, so it is the single source of truth for the per-call deadline.
+        """
+        return self.timeout or DEFAULT_RPC_TIMEOUT_SECONDS
 
     def connection_identity(self) -> str:
         return strip_connection_credentials(self.uri)
@@ -508,7 +536,9 @@ class MilvusDocumentStore:
         self, client: MilvusClient, collection_name: str
     ) -> MilvusIndexBinding | None:
         """Read the stored contract for a collection, creating nothing."""
-        if not client.has_collection(INDEX_BINDING_COLLECTION):
+        if not client.has_collection(
+            INDEX_BINDING_COLLECTION, timeout=self.rpc_timeout
+        ):
             return None
         rows = client.query(
             collection_name=INDEX_BINDING_COLLECTION,
@@ -516,6 +546,7 @@ class MilvusDocumentStore:
             output_fields=["binding_json"],
             limit=1,
             consistency_level="Strong",
+            timeout=self.rpc_timeout,
         )
         if not rows:
             return None
@@ -538,8 +569,9 @@ class MilvusDocumentStore:
         client.upsert(
             collection_name=INDEX_BINDING_COLLECTION,
             data=[row],
+            timeout=HEAVY_RPC_TIMEOUT_SECONDS,
         )
-        client.flush(INDEX_BINDING_COLLECTION)
+        client.flush(INDEX_BINDING_COLLECTION, timeout=HEAVY_RPC_TIMEOUT_SECONDS)
 
     def _ensure_registry_collection(
         self,
@@ -549,7 +581,7 @@ class MilvusDocumentStore:
         *,
         vector_field: str,
     ) -> None:
-        if client.has_collection(collection_name):
+        if client.has_collection(collection_name, timeout=self.rpc_timeout):
             return
         index_params = client.prepare_index_params()
         index_params.add_index(
@@ -562,9 +594,10 @@ class MilvusDocumentStore:
                 collection_name=collection_name,
                 schema=schema,
                 index_params=index_params,
+                timeout=HEAVY_RPC_TIMEOUT_SECONDS,
             )
         except Exception:
-            if not client.has_collection(collection_name):
+            if not client.has_collection(collection_name, timeout=self.rpc_timeout):
                 raise
 
     def ensure_index(
@@ -593,7 +626,9 @@ class MilvusDocumentStore:
             embedding_space=embedding_space,
         )
         bound = self.read_binding(client, collection_name)
-        collection_exists = client.has_collection(collection_name)
+        collection_exists = client.has_collection(
+            collection_name, timeout=self.rpc_timeout
+        )
 
         if bound is not None:
             bound.assert_compatible(requested)
@@ -683,7 +718,7 @@ class MilvusDocumentStore:
         Reads and deletes use this so an unknown collection is never queried
         or mutated through a contract it does not declare.
         """
-        if not client.has_collection(collection_name):
+        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
             return None
         bound = self.read_binding(client, collection_name)
         if bound is None:
@@ -715,6 +750,7 @@ class MilvusDocumentStore:
                 ),
                 index_params=index_params,
                 consistency_level="Strong",
+                timeout=HEAVY_RPC_TIMEOUT_SECONDS,
             )
             return True
         except Exception:
@@ -731,7 +767,7 @@ class MilvusDocumentStore:
         """Wait briefly for a concurrently created collection to appear."""
         deadline = time.monotonic() + CONCURRENT_BINDING_TIMEOUT_SECONDS
         while True:
-            if client.has_collection(name):
+            if client.has_collection(name, timeout=self.rpc_timeout):
                 return True
             if time.monotonic() >= deadline:
                 return False
@@ -758,7 +794,11 @@ class MilvusDocumentStore:
     def _assert_collection_dimension(
         self, client: MilvusClient, requested: MilvusIndexBinding
     ) -> None:
-        actual_dimension = collection_dimension(client, requested.collection_name)
+        actual_dimension = collection_dimension(
+            client,
+            requested.collection_name,
+            timeout=self.rpc_timeout,
+        )
         if actual_dimension != requested.dimension:
             raise IndexContractIncompatibleError(
                 requested.collection_name,
@@ -780,7 +820,11 @@ class MilvusDocumentStore:
         """
         if not rows:
             return 0
-        client.upsert(collection_name=collection_name, data=list(rows))
+        client.upsert(
+            collection_name=collection_name,
+            data=list(rows),
+            timeout=self.rpc_timeout,
+        )
         return len(rows)
 
     def delete_rows(
@@ -798,16 +842,20 @@ class MilvusDocumentStore:
         through a separate Strong consistency client to prove the rows are
         gone, and it must not seal the segment on every rewrite.
         """
-        if not client.has_collection(collection_name):
+        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
             return
-        client.delete(collection_name=collection_name, filter=filter_expr)
+        client.delete(
+            collection_name=collection_name,
+            filter=filter_expr,
+            timeout=self.rpc_timeout,
+        )
         if flush:
-            client.flush(collection_name)
+            client.flush(collection_name, timeout=self.rpc_timeout)
 
     def count_rows(
         self, client: MilvusClient, collection_name: str, filter_expr: str
     ) -> int:
-        if not client.has_collection(collection_name):
+        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
             return 0
         rows = client.query(
             collection_name=collection_name,
@@ -815,6 +863,7 @@ class MilvusDocumentStore:
             output_fields=[ID_FIELD],
             limit=MAX_COUNT_ROWS,
             consistency_level="Strong",
+            timeout=self.rpc_timeout,
         )
         if len(rows) >= MAX_COUNT_ROWS:
             raise StorageBackendError(
@@ -840,7 +889,7 @@ class MilvusDocumentStore:
         server's own order: it pages a static collection the way ``limit``
         alone cannot, and the caller owns any order it promises on top.
         """
-        if not client.has_collection(collection_name):
+        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
             return []
         return list(
             client.query(
@@ -850,6 +899,7 @@ class MilvusDocumentStore:
                 limit=limit,
                 offset=offset,
                 consistency_level="Strong",
+                timeout=self.rpc_timeout,
             )
         )
 
@@ -864,7 +914,7 @@ class MilvusDocumentStore:
         output_fields: Sequence[str] | None = None,
     ) -> List[Dict[str, Any]]:
         """Dense vector search returning raw database similarity scores."""
-        if not client.has_collection(collection_name):
+        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
             return []
         results = client.search(
             collection_name=collection_name,
@@ -875,6 +925,7 @@ class MilvusDocumentStore:
             output_fields=list(output_fields or ROW_OUTPUT_FIELDS),
             search_params={"metric_type": METRIC_TYPE, "params": {}},
             consistency_level="Strong",
+            timeout=self.rpc_timeout,
         )
         return self._hits_from_results(results)
 
@@ -894,7 +945,7 @@ class MilvusDocumentStore:
         analyzer and scores it against the sparse terms it indexed. No
         embedding provider is involved.
         """
-        if not client.has_collection(collection_name):
+        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
             return []
         results = client.search(
             collection_name=collection_name,
@@ -905,6 +956,7 @@ class MilvusDocumentStore:
             output_fields=list(output_fields or ROW_OUTPUT_FIELDS),
             search_params={"metric_type": SPARSE_METRIC_TYPE, "params": {}},
             consistency_level="Strong",
+            timeout=self.rpc_timeout,
         )
         return self._hits_from_results(results)
 
@@ -919,4 +971,4 @@ class MilvusDocumentStore:
         return hits
 
     def has_collection(self, client: MilvusClient, collection_name: str) -> bool:
-        return bool(client.has_collection(collection_name))
+        return bool(client.has_collection(collection_name, timeout=self.rpc_timeout))

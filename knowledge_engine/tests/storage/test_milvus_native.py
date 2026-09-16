@@ -208,7 +208,7 @@ class _FakeClient:
     def close(self):
         self.closed = True
 
-    def has_collection(self, collection_name):
+    def has_collection(self, collection_name, **kwargs):
         return False
 
 
@@ -258,7 +258,7 @@ class _SparseSearchClient:
         self.exists = exists
         self.searches: list[dict] = []
 
-    def has_collection(self, collection_name: str) -> bool:
+    def has_collection(self, collection_name: str, **kwargs) -> bool:
         return self.exists
 
     def search(self, **kwargs):
@@ -329,10 +329,10 @@ class _ContractCheckClient:
         self.queries: list[dict] = []
         self.descriptions = 0
 
-    def has_collection(self, collection_name: str) -> bool:
+    def has_collection(self, collection_name: str, **kwargs) -> bool:
         return True
 
-    def describe_collection(self, collection_name: str) -> dict:
+    def describe_collection(self, collection_name: str, **kwargs) -> dict:
         self.descriptions += 1
         return {
             "fields": [
@@ -371,7 +371,7 @@ class _CollectionClient:
     def __init__(self, *, collection_exists: bool) -> None:
         self.collection_exists = collection_exists
 
-    def has_collection(self, collection_name: str) -> bool:
+    def has_collection(self, collection_name: str, **kwargs) -> bool:
         return self.collection_exists
 
 

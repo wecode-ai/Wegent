@@ -288,6 +288,7 @@ executor=false
 executor_manager=false
 shared=false
 knowledge_engine=false
+knowledge_runtime=false
 frontend=false
 wework=false
 wegent_cli=false
@@ -305,6 +306,7 @@ executor=false
 executor_manager=false
 shared=false
 knowledge_engine=false
+knowledge_runtime=false
 frontend=true
 wework=true
 wegent_cli=false
@@ -329,6 +331,7 @@ executor=false
 executor_manager=true
 shared=true
 knowledge_engine=true
+knowledge_runtime=true
 frontend=false
 wework=false
 wegent_cli=true
@@ -337,6 +340,46 @@ wework_e2e=false
 EOF
 )
 assert_case "shared dependencies" "$shared_expected" "shared/utils/example.py"
+
+knowledge_runtime_expected=$(
+  cat <<'EOF'
+backend=false
+executor=false
+executor_manager=false
+shared=false
+knowledge_engine=false
+knowledge_runtime=true
+frontend=false
+wework=false
+wegent_cli=false
+platform_e2e=false
+wework_e2e=false
+EOF
+)
+assert_case \
+  "knowledge runtime only" \
+  "$knowledge_runtime_expected" \
+  "knowledge_runtime/knowledge_runtime/main.py"
+
+knowledge_engine_expected=$(
+  cat <<'EOF'
+backend=false
+executor=false
+executor_manager=false
+shared=false
+knowledge_engine=true
+knowledge_runtime=true
+frontend=false
+wework=false
+wegent_cli=false
+platform_e2e=false
+wework_e2e=false
+EOF
+)
+assert_case \
+  "knowledge engine changes also run the runtime tests" \
+  "$knowledge_engine_expected" \
+  "knowledge_engine/knowledge_engine/storage/errors.py"
 
 all_true="${all_false//false/true}"
 assert_case "explicit all modules" "$all_true" --all

@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
+from knowledge_engine.storage.errors import StorageBackendError
 from knowledge_runtime.api.router import router
 from knowledge_runtime.config import get_settings
 from knowledge_runtime.core.logging import setup_logging
@@ -21,6 +21,12 @@ from knowledge_runtime.middleware.auth import require_internal_service_token_con
 from shared.models import RemoteRagError
 
 logger = logging.getLogger(__name__)
+
+# The server could not answer; the caller may retry.
+RETRYABLE_STORAGE_STATUS_CODE = 503
+# The request conflicts with the stored index state, so no retry can settle it
+# and an operator must decide.
+UNRESOLVABLE_STORAGE_STATUS_CODE = 409
 
 
 @asynccontextmanager
@@ -81,6 +87,49 @@ async def embedding_dimension_mismatch_handler(
     )
     return JSONResponse(
         status_code=422,
+        content=error_response.model_dump(mode="json"),
+    )
+
+
+@app.exception_handler(StorageBackendError)
+async def storage_error_handler(
+    request: Request,
+    exc: StorageBackendError,
+) -> JSONResponse:
+    """Return the storage error's own code instead of collapsing it.
+
+    The message is the storage error's own safe text: the SDK failure stays in
+    ``details`` and the server log, so no connection target or raw provider
+    response reaches the caller.
+    """
+    status_code = (
+        RETRYABLE_STORAGE_STATUS_CODE
+        if exc.retryable
+        else (
+            UNRESOLVABLE_STORAGE_STATUS_CODE
+            if exc.code
+            in {
+                "index_contract_incompatible",
+                "index_missing",
+                "storage_capability_unsupported",
+            }
+            else 500
+        )
+    )
+    logger.warning(
+        "Storage error for %s: code=%s retryable=%s",
+        request.url.path,
+        exc.code,
+        exc.retryable,
+    )
+    error_response = RemoteRagError(
+        code=exc.code,
+        message=str(exc),
+        retryable=exc.retryable,
+        details=exc.details,
+    )
+    return JSONResponse(
+        status_code=status_code,
         content=error_response.model_dump(mode="json"),
     )
 

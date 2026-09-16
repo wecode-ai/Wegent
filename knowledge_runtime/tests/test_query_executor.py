@@ -7,9 +7,9 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_executor import QueryExecutor
-
 from shared.models import (
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryRequest,
@@ -248,11 +248,8 @@ class TestQueryExecutor:
             query_request.knowledge_base_ids = [1]
             query_request.scope = RetrievalScope(document_ids=[20])
             query_request.document_ids = [20]
-            executor = QueryExecutor(db=MagicMock())
             config = _make_query_config(1)
-            executor._config_resolver.resolve_query_config = MagicMock(
-                return_value=config
-            )
+            executor = QueryExecutor(config_loader=_make_config_loader(config))
 
             await executor.execute(query_request)
 

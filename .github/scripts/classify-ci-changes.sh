@@ -8,6 +8,7 @@ declare -A changed=(
   [executor_manager]=false
   [shared]=false
   [knowledge_engine]=false
+  [knowledge_runtime]=false
   [frontend]=false
   [wework]=false
   [wegent_cli]=false
@@ -88,11 +89,16 @@ classify_path() {
       changed[executor_manager]=true
       changed[shared]=true
       changed[knowledge_engine]=true
+      changed[knowledge_runtime]=true
       changed[wegent_cli]=true
       changed[platform_e2e]=true
       ;;
     knowledge_engine/*)
       changed[knowledge_engine]=true
+      changed[knowledge_runtime]=true
+      ;;
+    knowledge_runtime/*)
+      changed[knowledge_runtime]=true
       ;;
     frontend/*)
       changed[frontend]=true
@@ -130,6 +136,6 @@ else
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-for key in backend executor executor_manager shared knowledge_engine frontend wework wegent_cli platform_e2e wework_e2e; do
+for key in backend executor executor_manager shared knowledge_engine knowledge_runtime frontend wework wegent_cli platform_e2e wework_e2e; do
   printf '%s=%s\n' "$key" "${changed[$key]}" >> "$output_file"
 done

@@ -135,11 +135,15 @@ class MilvusCleanup:
                 store.require_bound(client, collection_name)
             parent_exists = store.has_collection(client, parent_collection_name)
             if collection_exists:
-                client.drop_collection(collection_name=collection_name)
+                client.drop_collection(
+                    collection_name=collection_name, timeout=store.rpc_timeout
+                )
             if parent_exists:
-                client.drop_collection(collection_name=parent_collection_name)
+                client.drop_collection(
+                    collection_name=parent_collection_name, timeout=store.rpc_timeout
+                )
                 dropped_parent_collection = True
-            self._drop_binding(client, collection_name)
+            self._drop_binding(client, collection_name, timeout=store.rpc_timeout)
 
         return {
             "knowledge_id": knowledge_id,
@@ -177,11 +181,17 @@ class MilvusCleanup:
         return deleted
 
     @staticmethod
-    def _drop_binding(client: MilvusClient, collection_name: str) -> None:
-        if not client.has_collection(INDEX_BINDING_COLLECTION):
+    def _drop_binding(
+        client: MilvusClient,
+        collection_name: str,
+        *,
+        timeout: float,
+    ) -> None:
+        if not client.has_collection(INDEX_BINDING_COLLECTION, timeout=timeout):
             return
         client.delete(
             collection_name=INDEX_BINDING_COLLECTION,
             filter=(f'collection_name == "{sanitize_filter_value(collection_name)}"'),
+            timeout=timeout,
         )
-        client.flush(INDEX_BINDING_COLLECTION)
+        client.flush(INDEX_BINDING_COLLECTION, timeout=timeout)

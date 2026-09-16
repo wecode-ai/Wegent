@@ -55,8 +55,9 @@ class MilvusParentStore:
             return {"stored_count": 0}
 
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
-        with self._store.client() as client:
-            if not client.has_collection(collection_name):
+        store = self._store
+        with store.client() as client:
+            if not client.has_collection(collection_name, timeout=store.rpc_timeout):
                 client.create_collection(
                     collection_name=collection_name,
                     # Milvus requires a dimension of at least 2; this sidecar
@@ -64,9 +65,11 @@ class MilvusParentStore:
                     dimension=PARENT_STORE_VECTOR_DIM,
                     auto_id=True,
                     enable_dynamic_field=True,
+                    timeout=store.rpc_timeout,
                 )
             else:
                 self._delete_with_client(
+                    store,
                     client,
                     collection_name,
                     knowledge_id,
@@ -88,6 +91,7 @@ class MilvusParentStore:
                     }
                     for node in parent_nodes
                 ],
+                timeout=store.rpc_timeout,
             )
         return {"stored_count": len(parent_nodes)}
 
@@ -102,8 +106,9 @@ class MilvusParentStore:
             return {}
 
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
-        with self._store.client() as client:
-            if not client.has_collection(collection_name):
+        store = self._store
+        with store.client() as client:
+            if not client.has_collection(collection_name, timeout=store.rpc_timeout):
                 return {}
 
             parent_records: Dict[str, Dict[str, Any]] = {}
@@ -125,6 +130,7 @@ class MilvusParentStore:
                         "metadata_json",
                     ],
                     limit=1,
+                    timeout=store.rpc_timeout,
                 )
                 if not results:
                     continue
@@ -139,19 +145,21 @@ class MilvusParentStore:
     def delete(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
         """Delete the parent nodes of one document."""
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
-        with self._store.client() as client:
+        store = self._store
+        with store.client() as client:
             return self._delete_with_client(
-                client, collection_name, knowledge_id, doc_ref
+                store, client, collection_name, knowledge_id, doc_ref
             )
 
     @staticmethod
     def _delete_with_client(
+        store: MilvusDocumentStore,
         client,
         collection_name: str,
         knowledge_id: str,
         doc_ref: str,
     ) -> int:
-        if not client.has_collection(collection_name):
+        if not client.has_collection(collection_name, timeout=store.rpc_timeout):
             return 0
         client.delete(
             collection_name=collection_name,
@@ -160,5 +168,6 @@ class MilvusParentStore:
                 doc_refs=[doc_ref],
                 published=False,
             ),
+            timeout=store.rpc_timeout,
         )
         return 0

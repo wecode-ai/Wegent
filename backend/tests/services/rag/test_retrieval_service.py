@@ -446,6 +446,62 @@ class TestRetrieveForChatShell:
         mock_resolve.assert_called_once()
         mock_query.assert_awaited_once()
 
+    def test_internal_retrieve_returns_a_safe_prompt_for_a_missing_index(
+        self,
+        test_client,
+        monkeypatch,
+    ):
+        """The local execution path also fails loudly and without the target.
+
+        The local path has no response protocol of its own, so it adds no new
+        error field: it returns the storage error's own safe text. The
+        identifiable code reaches callers on the Knowledge Runtime HTTP path,
+        which the gateway asserts in ``test_remote_gateway``.
+        """
+        from app.core.config import settings
+        from knowledge_engine.storage.errors import IndexMissingError
+
+        monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
+        payload = {
+            "query": "test",
+            "knowledge_base_ids": [123],
+            "max_results": 5,
+            "route_mode": "auto",
+            "runtime_context": {
+                "context_window": 10000,
+                "used_context_tokens": 100,
+                "reserved_output_tokens": 4096,
+                "context_buffer_ratio": 0.1,
+                "max_direct_chunks": 500,
+            },
+        }
+
+        with (
+            patch(
+                "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+                return_value=object(),
+            ),
+            patch(
+                "app.api.endpoints.internal.rag.LocalRagGateway.query",
+                new_callable=AsyncMock,
+                side_effect=IndexMissingError(
+                    "wegent_123",
+                    "the bound collection confirmed earlier is gone",
+                ),
+            ),
+        ):
+            response = test_client.post(
+                "/api/internal/rag/retrieve",
+                json=payload,
+                headers={"Authorization": "Bearer test-internal-token"},
+            )
+
+        assert response.status_code == 500
+        detail = response.json()["detail"]
+        assert "Milvus index 'wegent_123' is missing" in detail
+        assert "http://" not in detail
+        assert "token" not in detail.lower()
+
     @pytest.mark.asyncio
     async def test_auto_route_returns_direct_injection_records(self):
         """Backend should route to original documents when KB estimate fits context."""
