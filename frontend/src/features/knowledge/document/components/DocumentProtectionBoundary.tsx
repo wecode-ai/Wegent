@@ -23,9 +23,17 @@ interface DocumentProtectionBoundaryProps {
   watermarkText?: string
 }
 
+// Logical tile size shared by the canvas and the CSS background. Fixing the
+// background size keeps the rendered tile density identical across device
+// pixel ratios; without it the pattern would scale up on high-DPI screens,
+// turning the watermark into large sparse text that clashes with dense
+// document content.
+const WATERMARK_TILE_WIDTH = 280
+const WATERMARK_TILE_HEIGHT = 180
+
 function createWatermarkPattern(text: string): string {
-  const width = 280
-  const height = 180
+  const width = WATERMARK_TILE_WIDTH
+  const height = WATERMARK_TILE_HEIGHT
   const ratio = Math.max(1, window.devicePixelRatio || 1)
   const canvas = document.createElement('canvas')
   canvas.width = width * ratio
@@ -79,7 +87,10 @@ function CoreProtectedKnowledgePreview({
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 z-20"
-        style={{ backgroundImage: watermarkPattern ? `url(${watermarkPattern})` : undefined }}
+        style={{
+          backgroundImage: watermarkPattern ? `url(${watermarkPattern})` : undefined,
+          backgroundSize: `${WATERMARK_TILE_WIDTH}px ${WATERMARK_TILE_HEIGHT}px`,
+        }}
         data-testid="knowledge-document-watermark"
         data-watermark-pattern="tiled"
       />

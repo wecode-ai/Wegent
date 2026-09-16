@@ -5,7 +5,7 @@
 'use client'
 
 import { AlertCircle, Download, RefreshCw } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { fetchAttachmentFile, formatFileSize } from '@/apis/attachments'
 import { FilePreview } from '@/components/common/FilePreview'
@@ -14,6 +14,11 @@ import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { KnowledgeDocument } from '@/types/knowledge'
+import { DocumentProtectionBoundary } from './DocumentProtectionBoundary'
+import {
+  getKnowledgeDocumentProtectionExtension,
+  subscribeKnowledgeDocumentProtectionExtension,
+} from '../document-protection-registry'
 import {
   KNOWLEDGE_SOURCE_PREVIEW_MAX_BYTES,
   isKnowledgeSourcePreviewTooLarge,
@@ -25,6 +30,10 @@ interface KnowledgeSourcePreviewProps {
   onDownload: () => void
   allowDownload?: boolean
   protectedKnowledgeBaseId?: number
+  /** Wrap the rendered original in the watermark protection boundary. */
+  protectedPreview?: boolean
+  /** Watermark text for the protection boundary. */
+  watermarkText?: string
   className?: string
 }
 
@@ -34,6 +43,8 @@ export function KnowledgeSourcePreview({
   onDownload,
   allowDownload = true,
   protectedKnowledgeBaseId,
+  protectedPreview = false,
+  watermarkText,
   className,
 }: KnowledgeSourcePreviewProps) {
   const { t } = useTranslation('knowledge')
@@ -42,6 +53,11 @@ export function KnowledgeSourcePreview({
   const [fetchError, setFetchError] = useState<Error | null>(null)
   const [renderError, setRenderError] = useState<Error | null>(null)
   const [retryKey, setRetryKey] = useState(0)
+  const protectionExtension = useSyncExternalStore(
+    subscribeKnowledgeDocumentProtectionExtension,
+    getKnowledgeDocumentProtectionExtension,
+    getKnowledgeDocumentProtectionExtension
+  )
 
   const tooLarge = isKnowledgeSourcePreviewTooLarge(document.file_size)
 
@@ -62,6 +78,10 @@ export function KnowledgeSourcePreview({
 
     fetchAttachmentFile(document.attachment_id, {
       signal: controller.signal,
+      // Source previews read the original bytes for inline rendering; the
+      // backend policy allows this purpose for previewable types even when
+      // the knowledge base forbids downloads.
+      purpose: 'preview',
     })
       .then(setFile)
       .catch(fetchError => {
@@ -183,7 +203,18 @@ export function KnowledgeSourcePreview({
       )}
       data-testid="knowledge-source-preview"
     >
-      <div className="min-h-0 flex-1 overflow-hidden">{content}</div>
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <DocumentProtectionBoundary
+          // When a deployment protection extension is installed, FilePreview
+          // renders through it and that viewer applies its own watermark, so
+          // the open-source fallback must not stack a second layer on top.
+          enabled={protectedPreview && !protectionExtension}
+          knowledgeBaseId={protectedKnowledgeBaseId ?? 0}
+          watermarkText={watermarkText}
+        >
+          {content}
+        </DocumentProtectionBoundary>
+      </div>
     </section>
   )
 }

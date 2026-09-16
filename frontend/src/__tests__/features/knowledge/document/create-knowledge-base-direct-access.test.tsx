@@ -39,6 +39,8 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onDirectAccessRequirementChange,
     onNameChange,
     onSummaryEnabledChange,
+    onAllowDocumentDownloadChange,
+    allowDocumentDownload,
     config,
     onRetrievalConfigChange,
     onRetrievalConfigUserChange,
@@ -47,6 +49,8 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onDirectAccessRequirementChange: (value: DirectAccessRequirement) => void
     onNameChange: (value: string) => void
     onSummaryEnabledChange: (value: boolean) => void
+    onAllowDocumentDownloadChange?: (value: boolean) => void
+    allowDocumentDownload?: boolean
     config: RetrievalConfigDraft
     onRetrievalConfigChange: (value: RetrievalConfigDraft) => void
     onRetrievalConfigUserChange: () => void
@@ -57,6 +61,14 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
       </button>
       <button type="button" onClick={() => onSummaryEnabledChange(false)}>
         disable summary
+      </button>
+      <button
+        type="button"
+        data-testid="knowledge-base-allow-download"
+        data-allow-download={String(allowDocumentDownload)}
+        onClick={() => onAllowDocumentDownloadChange?.(!allowDocumentDownload)}
+      >
+        toggle download
       </button>
       <button
         type="button"
@@ -101,9 +113,138 @@ jest.mock('@/features/knowledge/multimodal/hooks/useMultimodalKBConfig', () => (
 
 const mockedGetKnowledgeBaseRetrievalProfile = getKnowledgeBaseRetrievalProfile as jest.Mock
 
+describe('CreateKnowledgeBaseDialog download default', () => {
+  it('submits the displayed organization default', async () => {
+    const onSubmit = jest.fn(async (_data: Omit<KnowledgeBaseCreate, 'namespace'>) => {})
+    mockedGetKnowledgeBaseRetrievalProfile.mockClear()
+
+    render(
+      <CreateKnowledgeBaseDialog
+        open
+        scope="organization"
+        onOpenChange={jest.fn()}
+        onSubmit={onSubmit}
+      />
+    )
+
+    await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('knowledge-base-allow-download')).toHaveAttribute(
+      'data-allow-download',
+      'false'
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+    fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.create' }))
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ allow_document_download: false })
+      )
+    })
+  })
+
+  it('submits the displayed personal default', async () => {
+    const onSubmit = jest.fn(async (_data: Omit<KnowledgeBaseCreate, 'namespace'>) => {})
+    mockedGetKnowledgeBaseRetrievalProfile.mockClear()
+
+    render(
+      <CreateKnowledgeBaseDialog
+        open
+        scope="personal"
+        onOpenChange={jest.fn()}
+        onSubmit={onSubmit}
+      />
+    )
+    expect(screen.getByTestId('knowledge-base-allow-download')).toHaveAttribute(
+      'data-allow-download',
+      'true'
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+    fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.create' }))
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ allow_document_download: true })
+      )
+    })
+  })
+
+  it('uses the selected group instead of a stale scope for the submitted default', async () => {
+    const onSubmit = jest.fn(async (_data: Omit<KnowledgeBaseCreate, 'namespace'>) => {})
+    mockedGetKnowledgeBaseRetrievalProfile.mockClear()
+
+    render(
+      <CreateKnowledgeBaseDialog
+        open
+        scope="organization"
+        showGroupSelector
+        defaultGroupId="team"
+        availableGroups={[
+          {
+            id: 'team',
+            name: 'team-a',
+            displayName: 'Team A',
+            type: 'group',
+            canCreate: true,
+          },
+        ]}
+        onOpenChange={jest.fn()}
+        onSubmit={onSubmit}
+      />
+    )
+
+    await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('knowledge-base-allow-download')).toHaveAttribute(
+      'data-allow-download',
+      'true'
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+    fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.create' }))
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ allow_document_download: true })
+      )
+    })
+  })
+
+  it('submits the explicit download choice after the user moves the toggle', async () => {
+    const onSubmit = jest.fn(async (_data: Omit<KnowledgeBaseCreate, 'namespace'>) => {})
+    mockedGetKnowledgeBaseRetrievalProfile.mockClear()
+
+    render(
+      <CreateKnowledgeBaseDialog
+        open
+        scope="organization"
+        onOpenChange={jest.fn()}
+        onSubmit={onSubmit}
+      />
+    )
+
+    await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByTestId('knowledge-base-allow-download'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+    fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.create' }))
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ allow_document_download: true })
+      )
+    })
+  })
+})
+
 describe('CreateKnowledgeBaseDialog direct access requirement', () => {
   it('creates the knowledge base with the selected requirement', async () => {
     const onSubmit = jest.fn(async (_data: Omit<KnowledgeBaseCreate, 'namespace'>) => {})
+    mockedGetKnowledgeBaseRetrievalProfile.mockClear()
 
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
