@@ -554,7 +554,12 @@ pub(crate) fn workspace_response(
             .find(|root| path_is_within(root, &normalized_link_path))
             .cloned()
             .unwrap_or(normalized_link_path);
-        link.workspace_path = workspace_task_path(&link.workspace_path, &group_path);
+        let execution_group = if link.group_project_key.is_some() {
+            workspace_group_path(&link.workspace_path)
+        } else {
+            group_path.clone()
+        };
+        link.workspace_path = workspace_task_path(&link.workspace_path, &execution_group);
         groups
             .entry(group_path)
             .or_insert_with(|| (None, Vec::new()))

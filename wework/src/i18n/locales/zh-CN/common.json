@@ -681,6 +681,8 @@
     "mark_runtime_task": "置顶任务",
     "unmark_runtime_task": "取消置顶",
     "rename_project": "重命名项目",
+    "move_task_to_project": "移动到项目",
+    "move_task_to_project_failed": "移动任务失败，请重试。",
     "rename_chat": "重命名会话",
     "rename_chat_description": "保持简短且易于识别",
     "chat_name": "会话名称",

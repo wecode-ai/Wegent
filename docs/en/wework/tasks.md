@@ -114,6 +114,8 @@ A plan generated in Plan mode remains part of the visible response instead of be
 
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
 
+Right-click a started task and select **Move to project** to place it under another available project on the same device. The task retains its session, history, and execution directory, and remains under the destination project after restarting Wework.
+
 ### Export a conversation
 
 Select **Export conversation** at the top of a conversation, or open the conversation item's menu, to export the complete conversation as Markdown or HTML. Before exporting, choose whether to include the message body, tool calls and file changes, thinking, images, and other attachments. Included tool calls, file changes, and thinking are collapsed by default in HTML so the conversation remains easy to read.

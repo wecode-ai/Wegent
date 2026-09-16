@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { appendFile, readFile, readdir, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { createSingleRootLocalProject } from '../modules/shared.mjs'
@@ -122,6 +122,45 @@ async function waitForLongHistoryHydration(control, timeoutMs) {
   throw new Error('Timed out waiting for the long running transcript to hydrate')
 }
 
+async function verifyMoveToProject(control, { taskId, executorHome, timeoutMs }) {
+  const before = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+  const targetPath = join(executorHome, 'task-move-target')
+  await mkdir(targetPath, { recursive: true })
+  await createSingleRootLocalProject(control, targetPath, 'Task move target')
+  const row = '[data-testid="runtime-local-task-row-' + taskId + '"]'
+  await control.command('click', row)
+  await control.command('contextMenu', row)
+  await control.command('click', '[data-testid="runtime-local-task-menu-move-' + taskId + '"]')
+  const prefix = 'runtime-local-task-move-' + taskId + '-'
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const targetId = snapshot.testIds.find(id => id.startsWith(prefix))
+  assert.ok(targetId, 'The task move menu did not offer the destination project')
+  assert.equal(
+    await control.command('getText', '[data-testid="' + targetId + '"]'),
+    'Task move target'
+  )
+  const projectKey = targetId.slice(prefix.length)
+  await control.command('click', '[data-testid="' + targetId + '"]')
+  await assertMovedProject(control, projectKey, before.currentRuntimeTask, timeoutMs)
+  return { projectKey, address: before.currentRuntimeTask }
+}
+
+async function assertMovedProject(control, projectKey, address, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+    if (state?.activeTaskProjectKey === projectKey) {
+      assert.equal(state.currentRuntimeTask.taskId, address.taskId)
+      assert.equal(state.currentRuntimeTask.workspacePath, address.workspacePath)
+      assert.equal(state.currentRuntimeTask.deviceId, address.deviceId)
+      assert.equal(state.currentRuntimeTask.threadId, address.threadId)
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The task did not remain in its destination project')
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   executorHome,
@@ -232,6 +271,12 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
 
+      const moved = await verifyMoveToProject(control, {
+        taskId,
+        executorHome,
+        timeoutMs: uiTimeoutMs,
+      })
+
       assert.ok(restartDesktopApp, 'The running-history scenario cannot restart Wework')
       await restartDesktopApp(async () => {
         const indexPath = join(executorHome, 'runtime-work', 'index.json')
@@ -258,6 +303,7 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
+      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       const hydrationStartedAt = Date.now()
       const performanceSnapshot = JSON.parse(
         await control.command('performanceSnapshot', 'body', {
@@ -338,6 +384,7 @@ export function createDesktopScenario({
         text: SECOND_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
+      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       active = false
     },
 

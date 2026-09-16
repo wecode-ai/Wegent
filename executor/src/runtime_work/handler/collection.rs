@@ -292,6 +292,20 @@ impl RuntimeWorkRpcHandler {
         let mut filtered_no_project = 0_usize;
 
         for mut link in links {
+            // Sidebar assignments override creation bindings without changing execution state.
+            let assigned_project = link
+                .thread_id
+                .as_deref()
+                .filter(|id| !project_index.is_projectless_thread(id))
+                .and_then(|id| project_index.sidebar_project_key_for_thread(id))
+                .and_then(|key| project_index.project_for_key(key));
+            if let Some(project) = assigned_project {
+                link.group_workspace_path = Some(project.workspace_path.clone());
+                link.group_project_key = Some(project.key.clone());
+                kept_project += 1;
+                visible_links.push(link);
+                continue;
+            }
             if !is_codex_runtime(&link.runtime) {
                 kept_non_codex += 1;
                 log_runtime_project_filter_item(
