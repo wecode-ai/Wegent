@@ -101,6 +101,24 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
     modelServerUrl: MODEL_ORIGIN,
 
     async verify(control) {
+      await control.command('navigate', 'body', { value: '/' })
+      await createSingleRootLocalProject(control, workspacePath, 'system-proxy', uiTimeoutMs)
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
+      await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+
+      const proxiedRequest = await waitForProxyRequest(requests, uiTimeoutMs)
+      assert.match(
+        proxiedRequest.url,
+        /^http:\/\/wework-system-proxy\.invalid\/v1\/responses$/,
+        'Codex did not use absolute-form HTTP proxy routing'
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+
       await control.command('navigate', 'body', { value: '/settings/general' })
       await control.command('waitFor', '[data-testid="settings-nav-proxy"]', {
         timeoutMs: uiTimeoutMs,
@@ -128,24 +146,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         'system-proxy-01-settings.png',
         '[data-testid="proxy-config-local-device-section"]'
       )
-
-      await control.command('navigate', 'body', { value: '/' })
-      await createSingleRootLocalProject(control, workspacePath, 'system-proxy', uiTimeoutMs)
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
-      await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
-      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-
-      const proxiedRequest = await waitForProxyRequest(requests, uiTimeoutMs)
-      assert.match(
-        proxiedRequest.url,
-        /^http:\/\/wework-system-proxy\.invalid\/v1\/responses$/,
-        'Codex did not use absolute-form HTTP proxy routing'
-      )
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: COMPLETION,
-        timeoutMs: uiTimeoutMs,
-      })
     },
 
     async cleanup() {
