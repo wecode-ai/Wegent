@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Internal GitLab policy for building and publishing the public device image.
+# Internal GitLab policy for building and publishing the internal device image.
 DEVICE_IMAGE_REPOSITORY="${DEVICE_IMAGE_REPOSITORY:-registry.api.weibo.com/ci/wegent-device}"
 DEVICE_IMAGE_PUSH_REPOSITORY="${DEVICE_IMAGE_PUSH_REPOSITORY:-pushregistry.api.weibo.com/ci/wegent-device}"
 BUILDKIT_IMAGE="${BUILDKIT_IMAGE:-registry.api.weibo.com/ci/moby/buildkit:buildx-stable-1}"
@@ -10,6 +10,11 @@ DEVICE_IMAGE_VERSION="${DEVICE_IMAGE_VERSION:-$EXECUTOR_VERSION}"
 
 if [[ -z "$EXECUTOR_VERSION" ]]; then
   echo "Unable to read the executor version from executor/Cargo.toml" >&2
+  exit 1
+fi
+
+if [[ -z "${WECODER_TOKEN:-}" ]]; then
+  echo "WECODER_TOKEN is required to install the latest wecode-cli" >&2
   exit 1
 fi
 
@@ -51,7 +56,9 @@ executor_version_runtime_image="${DEVICE_IMAGE_REPOSITORY}:${EXECUTOR_VERSION}"
 docker buildx build \
   --builder "$BUILDER_NAME" \
   --platform linux/amd64 \
-  --file docker/device/Dockerfile \
+  --file wecode/docker/device/Dockerfile \
+  --secret id=wecode_cli_token,env=WECODER_TOKEN \
+  --no-cache-filter runtime \
   --build-arg "APP_VERSION=${EXECUTOR_VERSION}" \
   --build-arg "VCS_REF=${CI_COMMIT_SHA}" \
   --build-arg "DEVICE_BASE_IMAGE=${DEVICE_BASE_IMAGE:-registry.api.weibo.com/weibo_rd_if/ubuntu:26.04}" \

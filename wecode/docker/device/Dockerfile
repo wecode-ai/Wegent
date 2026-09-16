@@ -73,7 +73,7 @@ RUN if [ -n "$CARGO_REGISTRIES_CRATES_IO_INDEX" ]; then \
 # ---------------------------------------------------------------------------
 # Runtime stage: install the agent CLIs, code-server, and executor.
 # ---------------------------------------------------------------------------
-FROM --platform=${DEVICE_IMAGE_PLATFORM} ${DEVICE_BASE_IMAGE}
+FROM --platform=${DEVICE_IMAGE_PLATFORM} ${DEVICE_BASE_IMAGE} AS runtime-base
 ARG DEVICE_IMAGE_PLATFORM
 ARG APP_VERSION=1.8.6
 ARG VCS_REF=local
@@ -114,6 +114,7 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
     git \
     python3 \
     python3-pip \
+    util-linux \
     xz-utils \
     && case "$DEVICE_IMAGE_PLATFORM" in \
         linux/amd64) node_arch=x64 ;; \
@@ -127,7 +128,7 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g --registry "$NPM_REGISTRY" \
-      @anthropic-ai/claude-code@2.1.199 @openai/codex@0.142.5 \
+      @anthropic-ai/claude-code@2.1.247 @openai/codex@0.142.5 \
     && npm cache clean --force
 
 # Install the GitHub (gh) and GitLab (glab) CLIs used by git hosting features.
@@ -244,6 +245,8 @@ RUN set -e; \
 ENV PATH="/home/wegent/.wecode/wegent-executor/bin:/home/wegent/.wecode/bin:/home/wegent/.local/bin:${PATH}"
 ENV WEGENT_BACKEND_URL=http://localhost:8000
 ENV WEGENT_EXECUTOR_HOME=/home/wegent/.wecode/wegent-executor
+ENV ADDITIONAL_CODEX_HOME_LIST=${WEGENT_EXECUTOR_HOME}/codex
+ENV WECODE_PROXY_URL=https://copilot.weibo.com
 ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wecode/wegent-executor/workspace
 ENV WEGENT_WORKSPACE_ROOTS=/home/wegent
 ENV DEVICE_PUBLIC_BASE_URL=
@@ -260,6 +263,7 @@ export WEGENT_BACKEND_URL="${WEGENT_BACKEND_URL:-http://localhost:8000}"
 export DEVICE_SESSION_GATEWAY_HOST="${DEVICE_SESSION_GATEWAY_HOST:-0.0.0.0}"
 export DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"
 export DEVICE_CODE_SERVER_PORT="${DEVICE_CODE_SERVER_PORT:-18080}"
+EXPECTED_EXECUTOR_HOME="/home/wegent/.wecode/wegent-executor"
 
 normalize_enabled_flag() {
     local name="$1"
@@ -279,19 +283,113 @@ DEVICE_CODE_SERVER_ENABLED="$(normalize_enabled_flag DEVICE_CODE_SERVER_ENABLED)
 DEVICE_TERMINAL_ENABLED="$(normalize_enabled_flag DEVICE_TERMINAL_ENABLED)"
 export DEVICE_SESSION_GATEWAY_ENABLED DEVICE_CODE_SERVER_ENABLED DEVICE_TERMINAL_ENABLED
 
+if [[ "$WEGENT_EXECUTOR_HOME" != /* ]]; then
+    echo "WEGENT_EXECUTOR_HOME must be an absolute path" >&2
+    exit 1
+fi
+if [[ "$LOCAL_WORKSPACE_ROOT" != /* ]]; then
+    echo "LOCAL_WORKSPACE_ROOT must be an absolute path" >&2
+    exit 1
+fi
+WEGENT_EXECUTOR_HOME="$(realpath -m -- "$WEGENT_EXECUTOR_HOME")"
+LOCAL_WORKSPACE_ROOT="$(realpath -m -- "$LOCAL_WORKSPACE_ROOT")"
+if [ "$WEGENT_EXECUTOR_HOME" != "$EXPECTED_EXECUTOR_HOME" ]; then
+    echo "WEGENT_EXECUTOR_HOME must remain at the stable mount path $EXPECTED_EXECUTOR_HOME" >&2
+    exit 1
+fi
+case "$LOCAL_WORKSPACE_ROOT/" in
+    "$WEGENT_EXECUTOR_HOME/"*) ;;
+    *)
+        echo "LOCAL_WORKSPACE_ROOT must be inside WEGENT_EXECUTOR_HOME" >&2
+        exit 1
+        ;;
+esac
 DEVICE_LOG_DIR="$WEGENT_EXECUTOR_HOME/logs"
+case "${WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED:-false}" in
+    true)
+        if [ -z "${WEGENT_EXECUTOR_HOME_ID:-}" ]; then
+            echo "Verified Worktree persistence requires WEGENT_EXECUTOR_HOME_ID" >&2
+            exit 1
+        fi
+        ;;
+    false | "") ;;
+    *)
+        echo "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED must be true or false" >&2
+        exit 1
+        ;;
+esac
 
-mkdir -p "$WEGENT_EXECUTOR_HOME/bin" "$LOCAL_WORKSPACE_ROOT" "$DEVICE_LOG_DIR"
+# A named volume mounted at WEGENT_EXECUTOR_HOME may contain an older binary.
+# Refresh only the binary from the current image and preserve the remaining data.
+mkdir -p \
+    "$WEGENT_EXECUTOR_HOME/bin" \
+    "$WEGENT_EXECUTOR_HOME/runtime-work" \
+    "$WEGENT_EXECUTOR_HOME/capabilities" \
+    "$WEGENT_EXECUTOR_HOME/sessions" \
+    "$LOCAL_WORKSPACE_ROOT/projects" \
+    "$LOCAL_WORKSPACE_ROOT/chats" \
+    "$LOCAL_WORKSPACE_ROOT/worktrees" \
+    "$DEVICE_LOG_DIR"
+
+# Hold an exclusive writer lock for the lifetime of this container. This
+# prevents two Executors from mutating the same home when the backing
+# filesystem provides normal POSIX advisory locking.
+exec 9>"$WEGENT_EXECUTOR_HOME/.writer.lock"
+if ! flock -n 9; then
+    echo "Another Executor is already using WEGENT_EXECUTOR_HOME" >&2
+    exit 1
+fi
+
+# A deployment may pin the volume identity to its logical device ID. Reusing a
+# volume belonging to another device is rejected before the Executor starts.
+if [ -n "${WEGENT_EXECUTOR_HOME_ID:-}" ]; then
+    _home_id_file="$WEGENT_EXECUTOR_HOME/.executor-home-id"
+    if [ -f "$_home_id_file" ]; then
+        _persisted_home_id="$(cat "$_home_id_file")"
+        if [ "$_persisted_home_id" != "$WEGENT_EXECUTOR_HOME_ID" ]; then
+            echo "Executor Home identity does not match WEGENT_EXECUTOR_HOME_ID" >&2
+            exit 1
+        fi
+    else
+        printf '%s' "$WEGENT_EXECUTOR_HOME_ID" >"$_home_id_file"
+    fi
+fi
+
+_write_probe="$WEGENT_EXECUTOR_HOME/.write-probe.$$"
+printf 'ok' >"$_write_probe"
+rm -f "$_write_probe"
 install -m 0755 /app/executor "$WEGENT_EXECUTOR_HOME/bin/wegent-executor"
 
+# Auto-detect public base URL if not explicitly set.
+# Uses the container's routable IP address.
 if [ -z "${DEVICE_PUBLIC_BASE_URL:-}" ]; then
     _device_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
     _device_ip="${_device_ip:-localhost}"
     export DEVICE_PUBLIC_BASE_URL="http://${_device_ip}:${DEVICE_SESSION_GATEWAY_PORT}"
 fi
 
+node --input-type=module <<'JS'
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+const token = process.env.WEGENT_USER_JWT_TOKEN
+const username = process.env.WECODE_CLI_CUSTOMER_USER || process.env.WEGENT_USER_NAME
+const path = join(process.env.HOME, '.wecode/wecode-cli/config.json')
+const config = JSON.parse(readFileSync(path, 'utf8'))
+config.auth ??= {}
+if (token) config.auth.token = token
+if (username) config.auth.username = username
+config.auth.server = 'https://wegent.intra.weibo.com'
+config.auth.authMethod = 'OIDC'
+chmodSync(path, 0o600)
+writeFileSync(path, JSON.stringify(config, null, 2))
+JS
+wecode restart
+
 pids=()
 
+# Match the local device installer: code-server only listens on loopback and
+# leaves remote authentication to the token-gated device session gateway.
 if [ "$DEVICE_CODE_SERVER_ENABLED" = "true" ] && [ "$DEVICE_SESSION_GATEWAY_ENABLED" = "true" ]; then
     mkdir -p "$HOME/.config/code-server"
     printf "bind-addr: 127.0.0.1:%s\nauth: none\ncert: false\n" "$DEVICE_CODE_SERVER_PORT" >"$HOME/.config/code-server/config.yaml"
@@ -323,6 +421,17 @@ EOF
 RUN chmod 0755 /usr/local/bin/wegent-device-entrypoint
 
 USER wegent
+
+# Refresh the CLI installation on every build without recompiling the executor.
+FROM runtime-base AS runtime
+RUN --mount=type=secret,id=wecode_cli_token,required=true,mode=0444 \
+    curl -fsSL -H "PRIVATE-TOKEN: $(cat /run/secrets/wecode_cli_token)" \
+      "https://git.intra.weibo.com/api/v4/projects/weibo_rd%2Fcommon%2Fwecode%2Fwecode-cli-cc/repository/files/scripts%2Finstall.sh/raw?ref=master" \
+      -o /tmp/install-wecode-cli.sh \
+    && bash /tmp/install-wecode-cli.sh \
+    && wecode stop \
+    && wecode version \
+    && rm -f /tmp/install-wecode-cli.sh
 
 EXPOSE 17888 18080
 
