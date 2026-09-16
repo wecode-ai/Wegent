@@ -31,6 +31,9 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
     assert!(publish_script.contains("--password-stdin"));
     assert!(publish_script.contains("registry.api.weibo.com/ci/moby/buildkit:buildx-stable-1"));
     assert!(publish_script.contains("--driver-opt \"image=$BUILDKIT_IMAGE\""));
+    assert!(publish_script.contains("--driver-opt network=host"));
+    assert!(publish_script.contains("--network host"));
+    assert!(publish_script.contains("--allow network.host"));
     assert!(publish_script.contains("wegent-device-builder-${CI_JOB_ID}"));
     assert!(!publish_script
         .split_whitespace()

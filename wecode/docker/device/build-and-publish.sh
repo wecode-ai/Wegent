@@ -46,6 +46,7 @@ PY
 docker buildx create \
   --name "$BUILDER_NAME" \
   --driver docker-container \
+  --driver-opt network=host \
   --driver-opt "image=$BUILDKIT_IMAGE"
 docker buildx inspect "$BUILDER_NAME" --bootstrap
 
@@ -56,6 +57,8 @@ executor_version_runtime_image="${DEVICE_IMAGE_REPOSITORY}:${EXECUTOR_VERSION}"
 docker buildx build \
   --builder "$BUILDER_NAME" \
   --platform linux/amd64 \
+  --network host \
+  --allow network.host \
   --file wecode/docker/device/Dockerfile \
   --secret id=wecode_cli_token,env=WECODER_TOKEN \
   --no-cache-filter runtime \
