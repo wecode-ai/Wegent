@@ -875,6 +875,57 @@ class RealCloudEnvironment {
     throw new Error('The desktop local executor did not register as an app device')
   }
 
+  async startDuplicateAppDeviceIdentity() {
+    assert.ok(this.executorBinary, 'The real Executor binary is not ready')
+    const appDevice = await this.waitForConnectedAppDevice()
+    const home = join(resultDir, `duplicate-app-executor-home-${process.pid}`)
+    const codexHome = join(home, 'codex')
+    const logPath = join(resultDir, `duplicate-app-executor-${process.pid}.log`)
+    await writeCodexConfig(codexHome, this.modelServerUrl)
+    const env = this.executorEnv({
+      deviceId: appDevice.device_id,
+      deviceName: 'Wework E2E Duplicate App Device',
+      deviceType: 'app',
+      home,
+      codexHome,
+      logFile: `duplicate-app-executor-${process.pid}-runtime.log`,
+    })
+    const executor = spawn(this.executorBinary, [], {
+      cwd: weworkDir,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    })
+    this.generatedRemoteExecutors.push(executor)
+    await Promise.all([
+      appendProcessOutput(executor.stdout, logPath),
+      appendProcessOutput(executor.stderr, logPath),
+    ])
+    const startedAt = Date.now()
+    let matching = []
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      matching = (await this.devices()).filter(
+        device =>
+          device.device_type === 'app' &&
+          device.device_id === appDevice.device_id &&
+          device.status === 'online'
+      )
+      if (matching.length === 2) break
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+    assert.equal(
+      matching.length,
+      2,
+      `The second real app Executor did not register; see ${logPath}`
+    )
+    assert.equal(
+      new Set(matching.map(device => device.execution_target_id)).size,
+      2,
+      'The real app Executors did not receive independent record-scoped routes'
+    )
+    return appDevice
+  }
+
   async waitForDeviceType(deviceId, expectedType) {
     const startedAt = Date.now()
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {

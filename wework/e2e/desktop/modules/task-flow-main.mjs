@@ -272,6 +272,7 @@ import {
 import {
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
+  verifyForkProviderModelPreservation,
   verifyPriorityFilter,
   verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyRunningFollowUpFork,
@@ -2120,6 +2121,22 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       verifyTelemetryRemainsDisabled(control)
       if (shouldStopAfterDesktopCheckpoint('telemetry-consent')) {
         console.log(`Wework desktop telemetry checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('fork-provider-preservation')) {
+      phase = 'fork-provider-model-preservation'
+      await verifyForkProviderModelPreservation({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+        newConversationSelector: '[data-testid="new-chat-button"]',
+      })
+      if (shouldStopAfterDesktopCheckpoint('fork-provider-preservation')) {
+        console.log(
+          `Wework desktop fork-provider-preservation checkpoint passed. Evidence: ${resultDir}`
+        )
         return
       }
     }

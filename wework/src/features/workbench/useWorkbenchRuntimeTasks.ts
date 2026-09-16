@@ -39,6 +39,7 @@ import {
   projectTaskAddresses,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
+import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import type { WorkbenchServices } from './workbenchServices'
 import type {
   ArchiveRuntimeTaskOptions,
@@ -477,6 +478,9 @@ export function useWorkbenchRuntimeTasks({
           const workspacePath =
             response.target.workspacePath ||
             getRuntimeTaskWorkspacePath(sourceWorkspace, sourceTask)
+          const modelSelection =
+            sourceTask.modelSelection ??
+            modelSelectionFromRuntimeHandle(state.currentRuntimeTask.runtimeHandle)
           dispatch({
             type: 'runtime_task_optimistic_upserted',
             project: state.currentProject,
@@ -496,6 +500,7 @@ export function useWorkbenchRuntimeTasks({
               optimistic: true,
               createdAt: now,
               updatedAt: now,
+              modelSelection,
             },
           })
         }
