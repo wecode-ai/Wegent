@@ -938,6 +938,11 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.apply_backend_connection(&mut turn.request);
+        crate::runtime_work::api_context::inject_current_session(
+            &mut turn.request,
+            &self.device_id,
+            &turn.local_task_id,
+        );
         turn.request.extra.insert(
             "runtimeLocalTaskId".to_owned(),
             Value::String(turn.local_task_id.clone()),
