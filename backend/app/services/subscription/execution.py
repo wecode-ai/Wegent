@@ -1091,11 +1091,13 @@ class BackgroundExecutionManager:
         if not subscription:
             return
 
-        spec = (subscription.json or {}).get("spec") or {}
-        if status == BackgroundExecutionStatus.COMPLETED_SILENT and not spec.get(
-            "codeWikiRef"
-        ):
-            return
+        if status == BackgroundExecutionStatus.COMPLETED_SILENT:
+            from app.services.knowledge.code_wiki.scheduled_update import (
+                is_code_wiki_scheduled_update,
+            )
+
+            if not is_code_wiki_scheduled_update(subscription):
+                return
 
         # Preserve _internal field before updating
         internal = subscription.json.get("_internal", {})

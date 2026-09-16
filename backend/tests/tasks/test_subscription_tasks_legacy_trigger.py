@@ -147,9 +147,50 @@ def test_code_wiki_execution_uses_subscription_timeout(
         hours=7
     )
     test_db.commit()
-    assert _cleanup_stale_running_executions(test_db) == 1
+
+    async def cancel_after_commit(*args, **kwargs):
+        commit.assert_called_once()
+        assert execution.status == "FAILED"
+        return True
+
+    cancel_task.side_effect = cancel_after_commit
+    with patch.object(test_db, "commit", wraps=test_db.commit) as commit:
+        assert _cleanup_stale_running_executions(test_db) == 1
     assert execution.status == "FAILED"
     cancel_task.assert_awaited_once_with(test_db, task_id=123, user_id=runner.id)
+
+
+def test_timeout_policy_preserves_ordinary_subscription_deadline() -> None:
+    from app.services.knowledge.code_wiki.subscription_integration import (
+        execution_timeout_policy,
+    )
+
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(kind="Subscription", json={"spec": {}})
+    policy = execution_timeout_policy(
+        db,
+        SimpleNamespace(subscription_id=12, task_id=123),
+        default_hours=3,
+        running_hours=7,
+    )
+    assert policy.threshold_hours == 3
+    assert policy.task_to_cancel is None
+    db.query.assert_not_called()
+
+
+def test_timed_out_task_cancellation_continues_after_a_failure() -> None:
+    from app.services.subscription.execution import background_execution_manager
+    from app.tasks.subscription_tasks import _cancel_timed_out_code_wiki_tasks
+
+    db = MagicMock()
+    with patch.object(
+        background_execution_manager,
+        "cancel_task_by_id",
+        new=AsyncMock(side_effect=[RuntimeError("unavailable"), True]),
+    ) as cancel:
+        _cancel_timed_out_code_wiki_tasks(db, [(123, 1), (124, 2)])
+    assert cancel.await_count == 2
+    db.commit.assert_not_called()
 
 
 def test_recovery_uses_the_code_wiki_dispatcher(

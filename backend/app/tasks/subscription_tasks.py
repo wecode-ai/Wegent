@@ -884,6 +884,22 @@ def _disable_expired_subscription_if_needed(
         return True
 
 
+def _advance_due_subscription(
+    db: Session, subscription: Any, subscription_crd: Any, trigger_type: str
+) -> None:
+    """Advance one schedule, committing through its owning implementation."""
+    from app.services.knowledge.code_wiki.scheduled_update import (
+        advance_scheduled_update,
+        is_code_wiki_scheduled_update,
+    )
+
+    if is_code_wiki_scheduled_update(subscription):
+        advance_scheduled_update(subscription)
+        db.commit()
+    else:
+        _update_next_execution_time(db, subscription, subscription_crd, trigger_type)
+
+
 def _dispatch_due_subscription(
     *,
     db: Session,
@@ -908,18 +924,7 @@ def _dispatch_due_subscription(
         )
 
         try:
-            from app.services.knowledge.code_wiki.scheduled_update import (
-                advance_scheduled_update,
-                is_code_wiki_scheduled_update,
-            )
-
-            if is_code_wiki_scheduled_update(subscription):
-                advance_scheduled_update(subscription)
-                db.commit()
-            else:
-                _update_next_execution_time(
-                    db, subscription, subscription_crd, trigger_type
-                )
+            _advance_due_subscription(db, subscription, subscription_crd, trigger_type)
         except Exception as exc:
             logger.error(
                 f"[subscription_tasks] Failed to update next execution time for subscription {subscription.id}: {exc}",
@@ -1335,6 +1340,29 @@ def _recover_stale_pending_executions(db: Session) -> int:
         return 0
 
 
+def _cancel_timed_out_code_wiki_tasks(
+    db: Session, tasks_to_cancel: List[Tuple[int, int]]
+) -> None:
+    """Cancel downstream tasks only after execution failures have been committed."""
+    if not tasks_to_cancel:
+        return
+    from app.services.subscription.execution import background_execution_manager
+
+    for task_id, user_id in tasks_to_cancel:
+        try:
+            asyncio.run(
+                background_execution_manager.cancel_task_by_id(
+                    db, task_id=task_id, user_id=user_id
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "[subscription_tasks] Failed to cancel timed-out Code Wiki task %s: %s",
+                task_id,
+                exc,
+            )
+
+
 def _cleanup_stale_running_executions(db: Session) -> int:
     """
     Cleanup stale RUNNING executions that have been stuck for too long.
@@ -1354,9 +1382,11 @@ def _cleanup_stale_running_executions(db: Session) -> int:
     Returns:
         Number of cleaned up executions
     """
-    from app.models.kind import Kind
     from app.models.subscription import BackgroundExecution
     from app.schemas.subscription import BackgroundExecutionStatus
+    from app.services.knowledge.code_wiki.subscription_integration import (
+        execution_timeout_policy,
+    )
 
     try:
         stale_threshold = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
@@ -1390,34 +1420,17 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                     - execution.started_at
                 )
                 running_hours = running_duration.total_seconds() / 3600
-                from app.services.knowledge.code_wiki.scheduled_update import (
-                    is_code_wiki_scheduled_update,
+                policy = execution_timeout_policy(
+                    db,
+                    execution,
+                    default_hours=settings.FLOW_STALE_RUNNING_HOURS,
+                    running_hours=running_hours,
                 )
-
-                subscription = db.get(Kind, execution.subscription_id)
-                threshold_hours = settings.FLOW_STALE_RUNNING_HOURS
-                if subscription is not None and is_code_wiki_scheduled_update(
-                    subscription
-                ):
-                    subscription_crd = validate_subscription_for_read(subscription.json)
-                    threshold_hours = subscription_crd.spec.timeoutSeconds / 3600
-                    if running_hours <= threshold_hours:
-                        continue
-                    if execution.task_id > 0:
-                        from app.models.wiki import WikiGeneration
-
-                        generation = (
-                            db.query(WikiGeneration)
-                            .filter(WikiGeneration.task_id == execution.task_id)
-                            .order_by(WikiGeneration.id.desc())
-                            .first()
-                        )
-                        code_wiki_tasks_to_cancel.append(
-                            (
-                                execution.task_id,
-                                generation.user_id if generation else execution.user_id,
-                            )
-                        )
+                threshold_hours = policy.threshold_hours
+                if running_hours <= threshold_hours:
+                    continue
+                if policy.task_to_cancel:
+                    code_wiki_tasks_to_cancel.append(policy.task_to_cancel)
 
                 execution.status = BackgroundExecutionStatus.FAILED.value
                 execution.error_message = (
@@ -1443,25 +1456,7 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                 continue
 
         db.commit()
-        if code_wiki_tasks_to_cancel:
-            from app.services.subscription.execution import (
-                background_execution_manager,
-            )
-
-            for task_id, user_id in code_wiki_tasks_to_cancel:
-                try:
-                    asyncio.run(
-                        background_execution_manager.cancel_task_by_id(
-                            db, task_id=task_id, user_id=user_id
-                        )
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "[subscription_tasks] Failed to cancel timed-out Code Wiki "
-                        "task %s: %s",
-                        task_id,
-                        exc,
-                    )
+        _cancel_timed_out_code_wiki_tasks(db, code_wiki_tasks_to_cancel)
         return cleaned
 
     except Exception as e:
