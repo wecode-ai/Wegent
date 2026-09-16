@@ -1378,6 +1378,20 @@
     }
   },
   "im_channels": {
+    "chat_card": {
+      "title": "Chat AI card settings (optional)",
+      "template_id": "Chat AI card template ID (optional)",
+      "template_placeholder": "Enter a verified DingTalk AI card template ID",
+      "help": "Leave empty to keep existing replies. Applies to chat answers only, independently of subscription notifications.",
+      "advanced": "Advanced: field mapping and follow-ups",
+      "follow_up_enabled": "Enable card follow-ups",
+      "content_key": "Answer content field",
+      "follow_up_action": "Follow-up action ID",
+      "follow_up_text_key": "Follow-up text parameter",
+      "follow_up_images_key": "Follow-up images parameter",
+      "follow_up_status_key": "Send status field (optional; bind it in the template)",
+      "mapping_help": "Bind the content field in both writing and completed states. Images are optional; the submit button must include the upload component's local variable to send images."
+    },
     "title": "IM Channel Management",
     "description": "Manage IM platform integrations (DingTalk, Weibo, Telegram, Discord)",
     "create_description": "Create a new IM channel integration. Configure platform credentials and default agent.",

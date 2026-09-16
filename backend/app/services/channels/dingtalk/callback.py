@@ -17,6 +17,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from app.schemas.dingtalk_card import DingTalkChatCardConfig
 from app.services.channels.callback import (
     BaseCallbackInfo,
     BaseChannelCallbackService,
@@ -34,6 +35,8 @@ logger = logging.getLogger(__name__)
 class DingTalkCallbackInfo(BaseCallbackInfo):
     """Information needed to send callback to DingTalk."""
 
+    chat_card: Optional[Dict[str, Any]] = None
+    card_subtask_id: Optional[int] = None
     webhook_url: Optional[str] = None  # Optional webhook URL for sending messages
     # Serialized incoming_message data for reply
     incoming_message_data: Optional[Dict[str, Any]] = None
@@ -47,6 +50,8 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
         webhook_url: Optional[str] = None,
         incoming_message_data: Optional[Dict[str, Any]] = None,
         card_instance_id: Optional[str] = None,
+        chat_card: Optional[Dict[str, Any]] = None,
+        card_subtask_id: Optional[int] = None,
     ):
         """Initialize DingTalkCallbackInfo.
 
@@ -65,6 +70,8 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
         self.webhook_url = webhook_url
         self.incoming_message_data = incoming_message_data
         self.card_instance_id = card_instance_id
+        self.chat_card = chat_card
+        self.card_subtask_id = card_subtask_id
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for Redis storage."""
@@ -74,6 +81,8 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
                 "webhook_url": self.webhook_url,
                 "incoming_message_data": self.incoming_message_data,
                 "card_instance_id": self.card_instance_id,
+                "chat_card": self.chat_card,
+                "card_subtask_id": self.card_subtask_id,
             }
         )
         return data
@@ -87,6 +96,8 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
             webhook_url=data.get("webhook_url"),
             incoming_message_data=data.get("incoming_message_data"),
             card_instance_id=data.get("card_instance_id"),
+            chat_card=data.get("chat_card"),
+            card_subtask_id=data.get("card_subtask_id"),
         )
 
 
@@ -96,6 +107,65 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
     def __init__(self):
         """Initialize the callback service."""
         super().__init__(ChannelType.DINGTALK)
+
+    @staticmethod
+    def _is_current_card_round(
+        info: Optional[DingTalkCallbackInfo], subtask_id: int
+    ) -> bool:
+        """Match a streamed event against the persisted card's active round."""
+        if not info or not info.chat_card:
+            return True
+        # Runtime addresses currently use subtask 0; numeric tasks have round IDs.
+        return info.card_subtask_id in (None, 0, subtask_id)
+
+    async def _current_card_round(self, task_id, subtask_id) -> bool:
+        info = await self.get_callback_info(task_id)
+        return self._is_current_card_round(info, subtask_id)
+
+    async def accepts_runtime_source(
+        self, task_id: int | str, source: Dict[str, Any]
+    ) -> bool:
+        info = await self.get_callback_info(task_id)
+        if not info or not info.chat_card:
+            return True
+        incoming = info.incoming_message_data or {}
+        return bool(
+            source.get("message_id")
+            and source["message_id"] == incoming.get("msgId")
+            and source.get("channel_id") == info.channel_id
+        )
+
+    async def _get_or_create_emitter(self, task_id, subtask_id):
+        info = await self.get_callback_info(task_id)
+        if not self._is_current_card_round(info, subtask_id):
+            return None
+        active = self._active_emitters.get(task_id)
+        if info and info.chat_card and active:
+            if active.card_instance_id != info.card_instance_id:
+                await self._remove_emitter(task_id)
+        return await super()._get_or_create_emitter(task_id, subtask_id)
+
+    async def register_emitter(self, task_id, emitter) -> None:
+        if getattr(emitter, "chat_card", None):
+            self._last_emitted_offsets.pop(task_id, None)
+        await super().register_emitter(task_id, emitter)
+
+    async def send_task_result(
+        self,
+        task_id: int | str,
+        subtask_id: int,
+        content: str,
+        status: str = "COMPLETED",
+        error_message: Optional[str] = None,
+        result: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Finish the active card round while preserving terminal result metadata."""
+        if not await self._current_card_round(task_id, subtask_id):
+            return False
+        await self._get_or_create_emitter(task_id, subtask_id)
+        return await super().send_task_result(
+            task_id, subtask_id, content, status, error_message, result=result
+        )
 
     def _parse_callback_info(self, data: Dict[str, Any]) -> DingTalkCallbackInfo:
         """Parse callback info from dictionary."""
@@ -225,6 +295,9 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
         Returns:
             StreamingResponseEmitter or None if creation failed
         """
+        if not self._is_current_card_round(callback_info, subtask_id):
+            return None
+
         try:
             # Get DingTalk channel to access the client
             from app.services.channels.manager import get_channel_manager
@@ -271,6 +344,12 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
                 dingtalk_client=channel._client,
                 incoming_message=incoming_message,
                 existing_card_instance_id=existing_card_id,
+                chat_card=(
+                    DingTalkChatCardConfig.model_validate(callback_info.chat_card)
+                    if callback_info.chat_card
+                    else None
+                ),
+                channel_id=callback_info.channel_id,
             )
 
             # Enable Redis-backed content sharing for multi-pod consistency

@@ -67,22 +67,10 @@ class TestTaskMemberServiceGroupChatDetection:
         # The filter should exclude this record because copied_resource_id == 0 is required
         # So first() should return None
 
-        # Test: user 2 should NOT be considered a member
-        with patch.object(
-            task_member_service, "is_task_owner", return_value=False
-        ) as mock_owner:
-            # Reset mock for the ResourceMember query
-            mock_db.reset_mock()
-            mock_query = MagicMock()
-            mock_db.query.return_value = mock_query
-            mock_query.filter.return_value = mock_query
-            mock_query.first.return_value = None  # No group chat member record found
-
-            result = task_member_service.is_member(mock_db, task_id=100, user_id=2)
-
-            # User 2 should not be considered a member
-            assert result is False
-            mock_owner.assert_called_once_with(mock_db, 100, 2)
+        # The access store queries the task first, then its membership.
+        mock_query.first.side_effect = [mock_task, None]
+        result = task_member_service.is_member(mock_db, task_id=100, user_id=2)
+        assert result is False
 
     def test_is_member_includes_real_group_chat_members(
         self, task_member_service, mock_db
@@ -103,19 +91,12 @@ class TestTaskMemberServiceGroupChatDetection:
         mock_member.status = MemberStatus.APPROVED
         mock_member.copied_resource_id = 0  # Real group chat member
 
-        with patch.object(
-            task_member_service, "is_task_owner", return_value=False
-        ) as mock_owner:
-            mock_query = MagicMock()
-            mock_db.query.return_value = mock_query
-            mock_query.filter.return_value = mock_query
-            mock_query.first.return_value = mock_member
-
-            result = task_member_service.is_member(mock_db, task_id=100, user_id=2)
-
-            # User 2 should be considered a member
-            assert result is True
-            mock_owner.assert_called_once_with(mock_db, 100, 2)
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.side_effect = [Mock(spec=TaskResource, user_id=1), mock_member]
+        result = task_member_service.is_member(mock_db, task_id=100, user_id=2)
+        assert result is True
 
     def test_get_member_count_excludes_share_records(
         self, task_member_service, mock_db
@@ -240,12 +221,12 @@ class TestSharedTaskDoesNotBecomeGroupChat:
         mock_task = Mock(spec=TaskResource)
         mock_task.id = 100
         mock_task.user_id = 1  # User A owns this task
-        mock_task.json = {"spec": {"is_group_chat": False}}  # Not a group chat
+        mock_task.json = {"spec": {"is_group_chat": False}}
+        mock_task.is_group_chat = False
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_task
 
-        with patch.object(task_member_service, "get_task", return_value=mock_task):
-            # is_group_chat should return False
-            result = task_member_service.is_group_chat(mock_db, task_id=100)
-            assert result is False
+        result = task_member_service.is_group_chat(mock_db, task_id=100)
+        assert result is False
 
     def test_member_count_is_one_after_share(self, task_member_service, mock_db):
         """
