@@ -4,6 +4,7 @@
 
 """Internal remote device startup command provider."""
 
+import os
 import re
 import shlex
 from urllib.parse import unquote, urlparse, urlunparse
@@ -170,15 +171,24 @@ class WecodeRemoteDeviceCommandProvider:
     def __init__(self, config: RemoteDeviceSettings) -> None:
         self._config = config
 
+    def _get_backend_url(self, context: RemoteDeviceCommandContext) -> str:
+        configured_url = os.getenv("REMOTE_DEVICE_BACKEND_URL", "").strip()
+        if configured_url:
+            return configured_url
+        if settings.WEGENT_BACKEND_PUBLIC_URL.strip():
+            return settings.WEGENT_BACKEND_PUBLIC_URL
+        host = context.request_headers.get("host", context.request_netloc)
+        return f"{context.request_scheme}://{host}"
+
     def build(self, context: RemoteDeviceCommandContext) -> RemoteDeviceCommandResult:
         image = _validate_image(self._config.REMOTE_DEVICE_DOCKER_IMAGE)
         backend_url = _validate_url(
-            _strip_api_suffix(settings.WEGENT_BACKEND_PUBLIC_URL),
+            _strip_api_suffix(self._get_backend_url(context)),
             "backend_url",
             allowed_schemes={"http", "https"},
         )
         socket_url = _validate_url(
-            settings.WEGENT_SOCKET_URL,
+            settings.WEGENT_SOCKET_URL.strip() or backend_url,
             "socket_url",
             allowed_schemes={"http", "https", "ws", "wss"},
         )

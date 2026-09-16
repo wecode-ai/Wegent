@@ -28,14 +28,12 @@ DEFAULT_REMOTE_DEVICE_EXECUTOR_INSTALL_URL = (
     "local_executor_install.sh"
 )
 DEVICE_SESSION_GATEWAY_PORT = 17888
-# Worktree persistence is declared by the container startup command, which pins a
-# named volume at a fixed mount path. A host process has no such guarantee.
-CONTAINER_ONLY_ENV_KEYS = frozenset(
-    {
-        "WEGENT_EXECUTOR_HOME_ID",
-        "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED",
-    }
-)
+# The executor home identity is consumed by the container image entrypoint,
+# which refuses to reuse a volume recorded under a different device. Host
+# processes keep no such marker, so the key stays container-only. Worktree
+# persistence is declared for both variants: the container pins a named volume
+# and the process script pins a stable EXECUTOR_HOME under $HOME.
+CONTAINER_ONLY_ENV_KEYS = frozenset({"WEGENT_EXECUTOR_HOME_ID"})
 
 
 @dataclass(frozen=True)
