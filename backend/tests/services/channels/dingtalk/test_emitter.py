@@ -5,6 +5,9 @@
 """Unit tests for compact DingTalk AI Card progress."""
 
 import asyncio
+import json
+import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -113,6 +116,64 @@ def emitter(card_factory):
     result = StreamingResponseEmitter(object(), object())
     result.MIN_UPDATE_INTERVAL = 0
     return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["done", "error", "cancelled"])
+async def test_terminal_failure_propagates_and_preserves_shared_state(
+    emitter, monkeypatch, terminal
+):
+    cache = FakeCache()
+    monkeypatch.setattr(emitter_module, "cache_manager", cache)
+    emitter.set_shared_content_key("test:answer")
+    await emitter.emit_start(task_id=101, subtask_id=202)
+    await emitter.emit_chunk(task_id=101, subtask_id=202, content="partial", offset=0)
+    operation = "fail" if terminal == "error" else "finish"
+    failure = AsyncMock(side_effect=RuntimeError("card API unavailable"))
+    monkeypatch.setattr(emitter._card, operation, failure)
+    args = {"task_id": 101, "subtask_id": 202}
+    if terminal == "done":
+        args["result"] = {"value": "complete answer"}
+    elif terminal == "error":
+        args["error"] = "model failed"
+    with pytest.raises(RuntimeError, match="card API unavailable"):
+        await getattr(emitter, f"emit_{terminal}")(**args)
+    assert not emitter._finished
+    await emitter.close()
+    assert cache.raw[emitter._answer_key] == (
+        b"complete answer" if terminal == "done" else b"partial"
+    )
+    emitter = StreamingResponseEmitter(object(), object(), emitter.card_instance_id)
+    emitter.set_shared_content_key("test:answer")
+    await getattr(emitter, f"emit_{terminal}")(**args)
+    assert emitter._finished
+    assert emitter._answer_key not in cache.raw
+
+
+@pytest.mark.asyncio
+async def test_finished_reply_log_links_card_to_task_and_masks_content(
+    emitter, card_factory, caplog: pytest.LogCaptureFixture
+):
+    emitter._incoming_message = SimpleNamespace(
+        conversation_id="group-1", message_id="question-1"
+    )
+    answer = "第一轮回答\n token=synthetic-secret"
+
+    with caplog.at_level(logging.INFO, logger=emitter_module.__name__):
+        await emitter.emit_done(task_id=101, subtask_id=202, result={"value": answer})
+
+    records = [r for r in caplog.records if r.msg == "[DingTalkMessage] %s %s"]
+    assert len(records) == 1
+    assert records[0].args[0] == "reply_finished"
+    logged = json.loads(records[0].args[1])
+    assert logged["task_id"] == 101
+    assert logged["subtask_id"] == 202
+    assert logged["card_instance_id"] == "card-1"
+    assert logged["conversation_id"] == "group-1"
+    assert logged["incoming_msg_id"] == "question-1"
+    assert "第一轮回答" in logged["content"]
+    assert "synthetic-secret" not in caplog.text
+    assert card_factory[0].finished == [answer]
 
 
 @pytest.mark.asyncio

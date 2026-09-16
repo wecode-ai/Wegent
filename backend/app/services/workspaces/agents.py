@@ -41,7 +41,15 @@ class WorkspaceAgentService:
             .order_by(ResourceMember.created_at, ResourceMember.id)
             .all()
         )
-        return [agent_values(db, grant=grant, team=team) for grant, team in rows]
+        return [
+            agent_values(
+                db,
+                grant=grant,
+                team=team,
+                execution_user_id=user_id,
+            )
+            for grant, team in rows
+        ]
 
     def require_agent_authorized(
         self, db: Session, *, workspace_id: int, team_id: int
@@ -117,7 +125,12 @@ class WorkspaceAgentService:
         )
         db.commit()
         db.refresh(grant)
-        return agent_values(db, grant=grant, team=team)
+        return agent_values(
+            db,
+            grant=grant,
+            team=team,
+            execution_user_id=user_id,
+        )
 
     def remove_agent(
         self, db: Session, workspace_id: int, team_id: int, user_id: int

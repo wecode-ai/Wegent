@@ -272,6 +272,7 @@ import {
 import {
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
+  verifyForkProviderModelPreservation,
   verifyPriorityFilter,
   verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyRunningFollowUpFork,
@@ -1161,7 +1162,7 @@ async function main() {
     if (!RUNS_PLUGIN_E2E) {
       await writeCodexConfig(
         codexHome,
-        control.url,
+        desktopScenario?.modelServerUrl ?? control.url,
         `${desktopScenario?.codexConfigToml ?? ''}\n${
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
         }\n${
@@ -1284,7 +1285,9 @@ async function main() {
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
-    const electronLaunchArguments = resolveElectronLaunchArguments()
+    const electronLaunchArguments = resolveElectronLaunchArguments({
+      extraArguments: desktopScenario?.electronLaunchArguments ?? [],
+    })
     let activeAppEnvironment = appEnvironment
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
@@ -2118,6 +2121,22 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       verifyTelemetryRemainsDisabled(control)
       if (shouldStopAfterDesktopCheckpoint('telemetry-consent')) {
         console.log(`Wework desktop telemetry checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('fork-provider-preservation')) {
+      phase = 'fork-provider-model-preservation'
+      await verifyForkProviderModelPreservation({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+        newConversationSelector: '[data-testid="new-chat-button"]',
+      })
+      if (shouldStopAfterDesktopCheckpoint('fork-provider-preservation')) {
+        console.log(
+          `Wework desktop fork-provider-preservation checkpoint passed. Evidence: ${resultDir}`
+        )
         return
       }
     }

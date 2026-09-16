@@ -338,6 +338,12 @@ class LocalTaskResponsesHandler:
             return
 
         callback_key = runtime_local_task_callback_key(device_id, local_task_id)
+        service = get_callback_registry().get_service_by_name(
+            source.get("channel_type", "")
+        )
+        if service and not await service.accepts_runtime_source(callback_key, source):
+            logger.info("Skipping stale IM runtime event: task=%s", callback_key)
+            return
         if is_terminal_event(event):
             await get_callback_registry().handle_task_completed(
                 task_id=callback_key,
