@@ -26,6 +26,7 @@ from app.models.wework_notification import WeworkNotification
 from app.services.workspaces.execution_environments import (
     WorkspaceExecutionEnvironmentService,
 )
+from tests.utils.agent_resources import create_runnable_wegent_team
 
 
 @pytest.fixture(autouse=True)
@@ -815,13 +816,10 @@ def test_workspace_resources_and_project_scope_are_separate(
     assert workspace_response.status_code == 201
     workspace = workspace_response.json()
 
-    team = Kind(
-        kind="Team",
-        name=f"workspace-team-{uuid.uuid4().hex[:8]}",
-        namespace="default",
+    team = create_runnable_wegent_team(
+        test_db,
         user_id=test_user.id,
-        is_active=True,
-        json={},
+        name_prefix="workspace",
     )
     device = Kind(
         kind="Device",
@@ -837,19 +835,36 @@ def test_workspace_resources_and_project_scope_are_separate(
             },
         },
     )
-    team.json = {
-        "kind": "Team",
-        "spec": {},
+    unavailable_team = create_runnable_wegent_team(
+        test_db,
+        user_id=test_user.id,
+        name_prefix="workspace-stale-model",
+    )
+    unavailable_team.json = {
+        **unavailable_team.json,
         "status": {"state": "Available"},
     }
-    unavailable_team = Kind(
-        kind="Team",
-        name=f"workspace-unavailable-team-{uuid.uuid4().hex[:8]}",
-        namespace="default",
-        user_id=test_user.id,
-        is_active=True,
-        json={"kind": "Team", "spec": {}, "status": {}},
+    bot_name = unavailable_team.json["spec"]["members"][0]["botRef"]["name"]
+    bot = (
+        test_db.query(Kind)
+        .filter(
+            Kind.kind == "Bot",
+            Kind.user_id == test_user.id,
+            Kind.name == bot_name,
+        )
+        .one()
     )
+    model_name = bot.json["spec"]["modelRef"]["name"]
+    model = (
+        test_db.query(Kind)
+        .filter(
+            Kind.kind == "Model",
+            Kind.user_id == test_user.id,
+            Kind.name == model_name,
+        )
+        .one()
+    )
+    model.is_active = False
     offline_cloud_device = Kind(
         kind="Device",
         name=f"workspace-cloud-device-{uuid.uuid4().hex[:8]}",
@@ -863,7 +878,7 @@ def test_workspace_resources_and_project_scope_are_separate(
             },
         },
     )
-    test_db.add_all([team, unavailable_team, device, offline_cloud_device])
+    test_db.add_all([device, offline_cloud_device])
     test_db.commit()
     test_db.refresh(team)
     test_db.refresh(unavailable_team)
