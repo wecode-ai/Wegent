@@ -1168,11 +1168,14 @@ collaboration_frontend_setup_step="$(
 if ! grep -Fq \
   "if: contains(matrix.segments, 'collaboration-shared-core')" \
   <<<"$collaboration_frontend_setup_step" ||
+  ! grep -Fq \
+    "contains(matrix.segments, 'collaboration-authority')" \
+    <<<"$collaboration_frontend_setup_step" ||
   ! grep -Fq 'uses: ./.github/actions/setup-node-workspace' \
     <<<"$collaboration_frontend_setup_step" ||
   ! grep -Fq 'setup-toolchain: "false"' \
     <<<"$collaboration_frontend_setup_step"; then
-  printf 'Shared Collaboration Core E2E must restore frontend dependencies only on its owning shard\n' >&2
+  printf 'Collaboration E2E must restore frontend dependencies on every owning shard\n' >&2
   exit 1
 fi
 

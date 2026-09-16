@@ -207,10 +207,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('waitFor', scoped('[data-testid="workspace-settings-shell"]'), {
           timeoutMs: uiTimeoutMs,
         })
-        await control.command(
-          'click',
-          scoped('[data-testid="collaboration-workspace-nav-members"]')
+        const workspaceParticipantsSelector = scoped(
+          '[data-testid="collaboration-workspace-nav-participants"]'
         )
+        await control.command('waitFor', workspaceParticipantsSelector, {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('click', workspaceParticipantsSelector)
+        const workspaceMembersTabSelector = scoped(
+          '[data-testid="collaboration-workspace-participants-tab-members"]'
+        )
+        await control.command('waitFor', workspaceMembersTabSelector, {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('click', workspaceMembersTabSelector)
         const workspaceRoleSelector = scoped(
           `[data-testid="collaboration-workspace-member-role-${member.id}"]`
         )
