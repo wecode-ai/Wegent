@@ -263,7 +263,12 @@ export function ProjectIssueTable({
                   </td>
                 ) : null}
                 {executionLabel ? (
-                  <td>{issue.execution_state || "—"}</td>
+                  <td
+                    data-testid={`collaboration-issue-table-execution-${issue.id}`}
+                    title={issue.execution_error || undefined}
+                  >
+                    {issue.execution_state || "—"}
+                  </td>
                 ) : null}
                 <td>{issue.updated_at.slice(0, 10)}</td>
               </tr>

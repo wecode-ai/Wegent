@@ -441,6 +441,14 @@ export function IssueActivityPanel({
                   )}
                 </p>
               ) : null}
+              {entry.run.error_message ? (
+                <p
+                  className="collaboration-run-error"
+                  data-testid={`collaboration-run-error-${entry.run.id}`}
+                >
+                  {entry.run.error_message}
+                </p>
+              ) : null}
               <time>{entry.run.created_at.slice(0, 16).replace("T", " ")}</time>
             </article>
           );
