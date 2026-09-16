@@ -83,6 +83,7 @@ from app.services.knowledge import (
 )
 from app.services.knowledge.dingtalk_auto_sync import (
     is_copy_sync_enabled,
+    log_sync_decision,
     queue_dingtalk_scan,
 )
 from app.services.knowledge.document_download_policy import (
@@ -222,6 +223,12 @@ def trigger_dingtalk_copy_sync(
         raise HTTPException(
             status_code=503, detail="Could not queue DingTalk sync"
         ) from exc
+    log_sync_decision(
+        "scan_queued",
+        kb_id=kb.id,
+        task_id=task_id,
+        user_id=current_user.id,
+    )
     return {"task_id": task_id, "status": "queued"}
 
 

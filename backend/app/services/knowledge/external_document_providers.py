@@ -193,6 +193,23 @@ def _positive_update_time(value: Any) -> int | None:
     return value if type(value) is int and value > 0 else None
 
 
+def _read_update_time(info: dict[str, Any], node_id: str) -> int | None:
+    """Read the live source timestamp and make unusable values visible.
+
+    A timestamp the provider cannot use means the copy can never be skipped as
+    unchanged, so the raw value and its type must be identifiable in logs.
+    """
+    raw = info.get("updateTime")
+    update_time = _positive_update_time(raw)
+    if update_time is None and raw is not None:
+        logger.warning(
+            "[DingTalk Provider] Unusable updateTime node_id=%s value=%r",
+            node_id,
+            raw,
+        )
+    return update_time
+
+
 class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
     """DingTalk adapter backed by the user's DingTalk Docs MCP server."""
 
@@ -215,9 +232,19 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                         ),
                         "get_document_info",
                     )
-        except Exception:
-            raise ExternalDocumentFetchError("DingTalk metadata read failed") from None
-        return _positive_update_time(info.get("updateTime"))
+        except TimeoutError:
+            raise ExternalDocumentFetchError(
+                "DingTalk metadata read timed out"
+            ) from None
+        except ExternalDocumentFetchError:
+            raise
+        except Exception as exc:
+            # The cause class is enough to separate transport failures from MCP
+            # protocol errors without echoing provider payloads into logs.
+            raise ExternalDocumentFetchError(
+                f"DingTalk metadata read failed: {type(exc).__name__}"
+            ) from None
+        return _read_update_time(info, node_id)
 
     def resolve_importable(
         self,
@@ -328,7 +355,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                 await session.call_tool("get_document_info", {"nodeId": node_id}),
                 "get_document_info",
             )
-            update_time = _positive_update_time(info.get("updateTime"))
+            update_time = _read_update_time(info, node_id)
             extension = get_import_extension(info)
             if not extension:
                 raise ExternalDocumentFetchError(

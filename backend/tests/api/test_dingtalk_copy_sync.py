@@ -4,6 +4,7 @@
 
 """The manual trigger has the same scope and execution guards as daily sync."""
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -62,6 +63,40 @@ def test_manual_trigger_checks_access_and_queues_only_requested_kb(
 
 def test_manual_trigger_requires_login(test_client: TestClient) -> None:
     assert test_client.post("/api/knowledge-bases/1/dingtalk-sync").status_code == 401
+
+
+def test_manual_trigger_logs_the_queued_scan_task(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    kb_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        test_user.id,
+        KnowledgeBaseCreate(name="logged-manual-sync", dingtalk_auto_sync_enabled=True),
+    )
+    monkeypatch.setattr(
+        "app.tasks.dingtalk_auto_sync_tasks.scan_dingtalk_copies.apply_async",
+        MagicMock(return_value=SimpleNamespace(id="sync-task")),
+    )
+
+    with caplog.at_level(logging.INFO):
+        response = test_client.post(
+            f"/api/knowledge-bases/{kb_id}/dingtalk-sync",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+
+    assert response.status_code == 202
+    line = next(
+        record.getMessage()
+        for record in caplog.records
+        if "decision=scan_queued" in record.getMessage()
+    )
+    assert f"kb_id={kb_id}" in line
+    assert "task_id=sync-task" in line
 
 
 @pytest.mark.parametrize("initial_enabled", [False, True])

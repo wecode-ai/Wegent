@@ -63,6 +63,7 @@ class ExternalDocumentRefreshResult:
 
     document: KnowledgeDocument
     started: bool
+    reason: str = ""
 
 
 @dataclass
@@ -151,7 +152,9 @@ class ExternalDocumentImportService:
         if not decision.should_enqueue:
             if decision.reason in {"already_in_progress", "stale_generation"}:
                 db.refresh(document)
-                return ExternalDocumentRefreshResult(document, started=False)
+                return ExternalDocumentRefreshResult(
+                    document, started=False, reason=decision.reason
+                )
             status_code = 404 if decision.reason == "document_not_found" else 409
             raise ExternalDocumentImportError(
                 f"External document refresh was not started: {decision.reason}",
@@ -167,6 +170,14 @@ class ExternalDocumentImportService:
         db.commit()
         db.refresh(document)
         self._dispatch_import_task(db, document)
+        logger.info(
+            "[External Import] Refresh queued document_id=%s kb_id=%s generation=%s "
+            "previous_attachment_id=%s",
+            document.id,
+            document.kind_id,
+            document.index_generation,
+            document.attachment_id,
+        )
         return ExternalDocumentRefreshResult(document, started=True)
 
     def import_documents(
@@ -468,7 +479,7 @@ class ExternalDocumentImportService:
 
         generation = document.index_generation
         try:
-            import_external_document_task.delay(
+            queued = import_external_document_task.delay(
                 document_id=document.id, expected_generation=generation
             )
         except Exception as exc:
@@ -490,6 +501,15 @@ class ExternalDocumentImportService:
                 document.id,
                 exc,
             )
+            return
+        logger.info(
+            "[External Import] Body fetch queued document_id=%s kb_id=%s "
+            "generation=%s task_id=%s",
+            document.id,
+            document.kind_id,
+            generation,
+            getattr(queued, "id", None) or "unavailable",
+        )
 
 
 def run_external_document_import(
@@ -536,6 +556,16 @@ def run_external_document_import(
             user=user,
             content=content,
             generation=generation,
+        )
+        logger.info(
+            "[External Import] Body landed document_id=%s kb_id=%s generation=%s "
+            "attachment_id=%s content_bytes=%s provider_update_time=%s",
+            document_id,
+            document.kind_id,
+            generation,
+            document.attachment_id,
+            len(content.content),
+            (content.metadata or {}).get("source_update_time"),
         )
     except (ExternalImportLostWriteError, ObjectDeletedError):
         logger.info(

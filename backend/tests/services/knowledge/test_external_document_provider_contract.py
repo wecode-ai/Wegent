@@ -12,9 +12,11 @@ contract coverage instead of rewriting it. DingTalk is the reference adapter.
 """
 
 import json
+import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -172,8 +174,6 @@ class TestDingTalkProviderContract(ProviderContractSuite):
     async def test_live_timestamp_probe_only_accepts_positive_integer(
         self, test_user, monkeypatch, value, expected
     ):
-        from unittest.mock import AsyncMock
-
         self.configure_user(monkeypatch, test_user)
         session = SimpleNamespace(
             call_tool=AsyncMock(
@@ -204,6 +204,75 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         session.call_tool.assert_awaited_once_with(
             "get_document_info", {"nodeId": "probe-node"}
         )
+
+    @pytest.mark.asyncio
+    async def test_probe_failure_names_the_underlying_cause(
+        self, test_user, monkeypatch
+    ):
+        from app.services.knowledge.external_document_providers import (
+            ExternalDocumentFetchError,
+        )
+
+        self.configure_user(monkeypatch, test_user)
+        session = SimpleNamespace(
+            call_tool=AsyncMock(side_effect=RuntimeError("connection reset"))
+        )
+
+        @asynccontextmanager
+        async def connected(url):
+            yield session
+
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_providers.open_dingtalk_session",
+            connected,
+        )
+
+        with pytest.raises(ExternalDocumentFetchError) as excinfo:
+            await self.make_provider().get_update_time(test_user, "probe-node")
+
+        assert "RuntimeError" in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_unusable_update_time_is_logged_with_its_value(
+        self, test_user, monkeypatch, caplog
+    ):
+        self.configure_user(monkeypatch, test_user)
+        session = SimpleNamespace(
+            call_tool=AsyncMock(
+                return_value=SimpleNamespace(
+                    isError=False,
+                    content=[
+                        SimpleNamespace(
+                            type="text",
+                            text=json.dumps(
+                                {"success": True, "updateTime": "1789562644000"}
+                            ),
+                        )
+                    ],
+                )
+            )
+        )
+
+        @asynccontextmanager
+        async def connected(url):
+            yield session
+
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_providers.open_dingtalk_session",
+            connected,
+        )
+
+        with caplog.at_level(
+            logging.WARNING,
+            logger="app.services.knowledge.external_document_providers",
+        ):
+            assert (
+                await self.make_provider().get_update_time(test_user, "probe-node")
+                is None
+            )
+
+        assert "Unusable updateTime" in caplog.text
+        assert "1789562644000" in caplog.text
 
     @pytest.mark.asyncio
     async def test_fetch_reports_the_live_source_timestamp(
