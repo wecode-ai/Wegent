@@ -946,6 +946,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn apply_backend_connection(&self, request: &mut ExecutionRequest) {
+        self.rewrite_model_gateway_backend(request);
         let connection = match self.backend_connection_snapshot() {
             Ok(Some(connection)) => connection,
             Ok(None) => return,
@@ -988,7 +989,27 @@ impl RuntimeWorkRpcHandler {
         {
             request.runtime_auth_token = Some(connection.runtime_auth_token);
         }
-        crate::agents::rewrite_loopback_model_gateway(request, &connection.backend_url);
+    }
+
+    /// Rewrite a loopback cloud-model gateway to the backend this device reaches.
+    ///
+    /// The connection snapshot is unavailable before the device finishes
+    /// connecting, so fall back to the request's own backend URL (environment,
+    /// payload, or task API domain) and leave the gateway untouched when
+    /// neither source yields a reachable address.
+    fn rewrite_model_gateway_backend(&self, request: &mut ExecutionRequest) {
+        let snapshot_backend_url = self
+            .backend_connection_snapshot()
+            .ok()
+            .flatten()
+            .map(|connection| connection.backend_url)
+            .unwrap_or_default();
+        let backend_url = if snapshot_backend_url.trim().is_empty() {
+            crate::agents::request_backend_url(request).unwrap_or_default()
+        } else {
+            snapshot_backend_url
+        };
+        crate::agents::rewrite_loopback_model_gateway(request, &backend_url);
     }
 
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
