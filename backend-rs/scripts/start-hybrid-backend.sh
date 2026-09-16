@@ -176,7 +176,11 @@ write_state
 
 RS_BINARY="$RS_TARGET_DIR/release/$RS_BINARY_NAME"
 echo "Building Wegent Rust gateway (release)..."
-CARGO_TARGET_DIR="$RS_TARGET_DIR" cargo build \
+# Keep inherited compiler flags and stripping from breaking macOS proc-macro loading.
+env -u RUSTFLAGS -u CARGO_ENCODED_RUSTFLAGS \
+    CARGO_PROFILE_RELEASE_STRIP=false \
+    CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false \
+    CARGO_TARGET_DIR="$RS_TARGET_DIR" cargo build \
     --release \
     --manifest-path "$BACKEND_RS_DIR/Cargo.toml" \
     --bin "$RS_BINARY_NAME" &
