@@ -641,20 +641,21 @@ describe('ComposerProseMirrorEditor', () => {
     ['ArrowRight', 'first\nsecond', 5, 39],
     ['ArrowRight', '\nsecond', 0, 39],
     ['ArrowRight', `${GMAIL_REFERENCE}\nsecond`, GMAIL_REFERENCE.length, 39],
-  ] as const)(
-    'allows native %s navigation across paragraphs in %s',
-    (key, value, offset, keyCode) => {
-      const { editorRef, onChange } = renderEditor(value)
-      const editor = screen.getByTestId('composer-editor')
-      act(() => {
-        editorRef.current?.setValue(value, offset)
-        editorRef.current?.focus()
-      })
+  ] as const)('moves %s across paragraphs in %s', (key, value, offset, keyCode) => {
+    const { editorRef, onChange } = renderEditor(value)
+    const editor = screen.getByTestId('composer-editor')
+    act(() => {
+      editorRef.current?.setValue(value, offset)
+      editorRef.current?.focus()
+    })
 
-      expect(fireEvent.keyDown(editor, { key, code: key, keyCode })).toBe(true)
-      expect(onChange).not.toHaveBeenCalled()
-    }
-  )
+    expect(fireEvent.keyDown(editor, { key, code: key, keyCode })).toBe(false)
+    expect(editorRef.current?.getSnapshot().selectionOffset).toBe(
+      offset + (key === 'ArrowLeft' ? -1 : 1)
+    )
+    expect(editorRef.current?.getSnapshot().value).toBe(value)
+    expect(onChange).not.toHaveBeenCalled()
+  })
 
   test.each(['ArrowLeft', 'ArrowRight'])(
     'does not override modified %s visual line navigation',

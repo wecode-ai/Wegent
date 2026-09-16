@@ -631,16 +631,12 @@ function moveCaretAcrossComposerMention(view: EditorView, event: KeyboardEvent):
 
   const { $head } = view.state.selection
   if (event.key === 'ArrowLeft' && $head.pos === $head.start()) {
-    return (
-      $head.pos === TextSelection.atStart(view.state.doc).from &&
-      setComposerSelection(view, event, $head.pos)
-    )
+    const previous = TextSelection.findFrom(view.state.doc.resolve($head.before()), -1, true)
+    return setComposerSelection(view, event, previous?.head ?? $head.pos)
   }
   if (event.key === 'ArrowRight' && $head.pos === $head.end()) {
-    return (
-      $head.pos === TextSelection.atEnd(view.state.doc).to &&
-      setComposerSelection(view, event, $head.pos)
-    )
+    const next = TextSelection.findFrom(view.state.doc.resolve($head.after()), 1, true)
+    return setComposerSelection(view, event, next?.head ?? $head.pos)
   }
   if (
     event.key === 'ArrowLeft' &&
