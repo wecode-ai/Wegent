@@ -272,6 +272,17 @@ The previous owner is downgraded to Maintainer, and the new owner gains full con
 
 ---
 
+## Automatic DingTalk document updates
+
+Enable **Automatically update DingTalk documents** under the knowledge base's **Edit → Advanced settings** (off by default). A daily scan refreshes existing and subsequently imported DingTalk copies. The first update runs during the next scan; completion is not tied to a fixed clock time.
+
+- Each copy uses its original importer's DingTalk authorization. That account must remain active and retain permission to maintain documents in the target knowledge base.
+- Copies remain shared under the target knowledge base's permissions. New documents in source folders are not imported automatically. Source deletion or revoked access does not delete the Wegent document record.
+- Updates use the same processing flow as manual reimport. Content may be unavailable during an update. Failures appear through the existing error and retry controls and are attempted again in a later cycle.
+- Disabling the setting skips automatic jobs that have not started; processing already underway finishes. Manual reimport remains available.
+
+Deployment requires `SCHEDULED_TASKS_ENABLED`, Celery Beat, and a Worker consuming the default queue. Restart these processes after upgrading to load the new tasks. No database migration is needed.
+
 ## ❓ Troubleshooting
 
 ### Upload Issues

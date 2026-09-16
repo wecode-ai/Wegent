@@ -947,6 +947,9 @@ class KnowledgeService:
                     )
                 spec["retrievalConfig"] = current_retrieval_config
 
+        if data.dingtalk_auto_sync_enabled is not None:
+            spec["dingtalkAutoSyncEnabled"] = data.dingtalk_auto_sync_enabled
+
         # Update summary_enabled if provided
         if data.summary_enabled is not None:
             spec["summaryEnabled"] = data.summary_enabled

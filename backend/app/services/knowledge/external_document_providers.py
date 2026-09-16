@@ -175,6 +175,8 @@ class ExternalDocumentProvider(ABC):
         db: Session,
         user: User,
         external_resource_id: str,
+        *,
+        source_metadata: dict[str, Any] | None = None,
     ) -> ExternalDocumentContent:
         """Fetch the document body as attachment-ready content.
 
@@ -247,11 +249,18 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         db: Session,
         user: User,
         external_resource_id: str,
+        *,
+        source_metadata: dict[str, Any] | None = None,
     ) -> ExternalDocumentContent:
         from app.services.dingtalk_doc_service import DingTalkDocService
 
         try:
-            metadata = self.resolve_importable(db, user, external_resource_id)
+            # Existing copies use live provider authorization, not directory freshness.
+            metadata = (
+                source_metadata
+                if source_metadata is not None
+                else self.resolve_importable(db, user, external_resource_id)
+            )
         except ExternalDocumentImportError as exc:
             if exc.status_code == 404:
                 # The synced node is gone or inactive: the source itself is

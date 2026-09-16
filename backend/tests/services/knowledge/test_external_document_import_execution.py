@@ -201,7 +201,9 @@ class TestRunExternalDocumentImport:
 
         run_external_document_import(test_db, document, test_user, generation=0)
 
-        provider.fetch_content.assert_awaited_once_with(test_db, test_user, "h" * 32)
+        provider.fetch_content.assert_awaited_once_with(
+            test_db, test_user, "h" * 32, source_metadata=None
+        )
         assert attached["document"].id == document.id
         assert attached["content"] is content
         assert attached["generation"] == 0
@@ -469,7 +471,7 @@ class TestRunExternalDocumentImport:
         test_db.add_all([failing, succeeding])
         test_db.commit()
 
-        def fake_fetch(db, user, resource_id):
+        def fake_fetch(db, user, resource_id, *, source_metadata=None):
             if resource_id == "r" * 32:
                 raise ExternalDocumentFetchError("boom")
             return ExternalDocumentContent(

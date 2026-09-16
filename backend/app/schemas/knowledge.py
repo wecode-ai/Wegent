@@ -436,6 +436,9 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
         None,
         description="Retrieval configuration update (excludes retriever and embedding model)",
     )
+    dingtalk_auto_sync_enabled: Optional[bool] = Field(
+        default=None, description="Refresh imported DingTalk copies once a day"
+    )
     summary_enabled: Optional[bool] = Field(
         None,
         description="Enable automatic summary generation for documents",
@@ -931,6 +934,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
         default_factory=dict,
         description="Safe derived retrieval and query-hint capabilities",
     )
+    dingtalk_auto_sync_enabled: bool = Field(default=False)
     summary_enabled: bool = Field(
         default=False,
         description="Enable automatic summary generation for documents",
@@ -1039,6 +1043,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             retrieval_capabilities=derive_retrieval_capabilities(
                 spec.get("retrievalConfig")
             ),
+            dingtalk_auto_sync_enabled=spec.get("dingtalkAutoSyncEnabled", False),
             summary_enabled=spec.get("summaryEnabled", False),
             summary_model_ref=summary_model_ref,
             execution_model_ref=execution_model_ref,

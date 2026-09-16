@@ -128,20 +128,24 @@ class ExternalDocumentImportService:
         )
         return (result.created or result.updated or result.processing)[0]
 
-    def _refresh_existing_document(
+    def refresh_existing_document(
         self,
         db: Session,
         document: KnowledgeDocument,
         external_meta: dict,
+        *,
+        dispatch: bool = True,
+        expected_generation: int | None = None,
     ) -> ExternalDocumentRefreshResult:
         """Queue a single-version refresh while preserving local organization."""
         decision = prepare_document_index_enqueue(
             db=db,
             document_id=document.id,
             allow_if_success=True,
+            expected_generation=expected_generation,
         )
         if not decision.should_enqueue:
-            if decision.reason == "already_in_progress":
+            if decision.reason in {"already_in_progress", "stale_generation"}:
                 db.refresh(document)
                 return ExternalDocumentRefreshResult(document, started=False)
             status_code = 404 if decision.reason == "document_not_found" else 409
@@ -155,7 +159,8 @@ class ExternalDocumentImportService:
         document.update_external_source_config(**external_meta)
         db.commit()
         db.refresh(document)
-        self._dispatch_import_task(db, document)
+        if dispatch:
+            self._dispatch_import_task(db, document)
         return ExternalDocumentRefreshResult(document, started=True)
 
     def import_documents(
@@ -195,7 +200,7 @@ class ExternalDocumentImportService:
         )
         updated: list[KnowledgeDocument] = []
         for document, external_meta in refreshable:
-            refresh = self._refresh_existing_document(db, document, external_meta)
+            refresh = self.refresh_existing_document(db, document, external_meta)
             (updated if refresh.started else processing).append(refresh.document)
 
         created = self._create_batch_documents(
@@ -487,6 +492,7 @@ def run_external_document_import(
     user: User,
     *,
     generation: int,
+    source_metadata: dict | None = None,
 ) -> None:
     """
     Fetch the external body, attach it, and start indexing.
@@ -517,7 +523,12 @@ def run_external_document_import(
                 f"Owner user {owner_user_id} no longer exists"
             )
         content: ExternalDocumentContent = asyncio.run(
-            provider.fetch_content(db, user, resource_id)
+            provider.fetch_content(
+                db,
+                user,
+                resource_id,
+                source_metadata=source_metadata,
+            )
         )
         knowledge_orchestrator.attach_external_document_content(
             db=db,

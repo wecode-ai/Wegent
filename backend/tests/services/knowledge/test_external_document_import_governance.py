@@ -278,7 +278,9 @@ def test_moved_copy_refresh_uses_source_owner_and_target_index_owner(
     assert document.attachment_id == 4321
     assert document.user_id == test_user.id
     assert document.kind_id == target_id
-    fetch.assert_awaited_once_with(test_db, test_user, node.dingtalk_node_id)
+    fetch.assert_awaited_once_with(
+        test_db, test_user, node.dingtalk_node_id, source_metadata=None
+    )
     assert index.call_args.kwargs["knowledge_base_id"] == str(target_id)
     assert index.call_args.kwargs["user_id"] == manager.id
 

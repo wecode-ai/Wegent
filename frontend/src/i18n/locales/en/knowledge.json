@@ -71,6 +71,10 @@
     "document": "Document Knowledge"
   },
   "document": {
+    "dingtalkAutoSync": {
+      "label": "Automatically update DingTalk documents",
+      "description": "Reimport DingTalk documents in this knowledge base daily using each original importer’s authorization. New source documents are not added. Content may be unavailable during updates; failed updates can be retried manually."
+    },
     "title": "Document Knowledge",
     "personal": "Personal Knowledge",
     "team": "Team Knowledge",

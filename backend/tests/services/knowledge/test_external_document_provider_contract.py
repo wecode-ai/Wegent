@@ -157,6 +157,37 @@ class TestDingTalkProviderContract(ProviderContractSuite):
 
     provider_id = "dingtalk"
 
+    @pytest.mark.asyncio
+    async def test_existing_copy_reads_live_source_without_cached_directory(
+        self, test_db, test_user, monkeypatch
+    ):
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.mock_fetch_body(monkeypatch, provider, "updated body")
+        content = await provider.fetch_content(
+            test_db,
+            test_user,
+            "not-in-cache",
+            source_metadata={"title": "Existing copy", "resource_id": "not-in-cache"},
+        )
+        assert content.content == b"updated body"
+
+        monkeypatch.setattr(
+            "app.services.dingtalk_doc_service.DingTalkDocService.get_user_dingtalk_mcp_url",
+            lambda user: None,
+        )
+        from app.services.knowledge.external_document_providers import (
+            ExternalDocumentFetchError,
+        )
+
+        with pytest.raises(ExternalDocumentFetchError):
+            await provider.fetch_content(
+                test_db,
+                test_user,
+                "not-in-cache",
+                source_metadata={"title": "Existing copy"},
+            )
+
     def make_provider(self):
         from app.services.knowledge.external_document_providers import (
             DingTalkExternalDocumentProvider,
