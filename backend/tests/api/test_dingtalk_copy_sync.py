@@ -62,3 +62,45 @@ def test_manual_trigger_checks_access_and_queues_only_requested_kb(
 
 def test_manual_trigger_requires_login(test_client: TestClient) -> None:
     assert test_client.post("/api/knowledge-bases/1/dingtalk-sync").status_code == 401
+
+
+@pytest.mark.parametrize("initial_enabled", [False, True])
+def test_auto_sync_setting_survives_create_update_and_reload(
+    test_client: TestClient, test_token: str, initial_enabled: bool
+) -> None:
+    headers = {"Authorization": f"Bearer {test_token}"}
+    created = test_client.post(
+        "/api/knowledge-bases",
+        headers=headers,
+        json={
+            "name": "persist-auto-sync",
+            "rag_config_mode": "disabled",
+            "dingtalk_auto_sync_enabled": initial_enabled,
+        },
+    )
+    assert created.status_code == 201
+    kb_id = created.json()["id"]
+    assert created.json()["dingtalk_auto_sync_enabled"] is initial_enabled
+    for enabled in (False, True):
+        saved = test_client.put(
+            f"/api/knowledge-bases/{kb_id}",
+            headers=headers,
+            json={"dingtalk_auto_sync_enabled": enabled},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["dingtalk_auto_sync_enabled"] is enabled
+        loaded = test_client.get(f"/api/knowledge-bases/{kb_id}", headers=headers)
+        assert loaded.status_code == 200
+        assert loaded.json()["dingtalk_auto_sync_enabled"] is enabled
+    # Saving an unrelated field must preserve the existing enabled value.
+    test_client.put(
+        f"/api/knowledge-bases/{kb_id}",
+        headers=headers,
+        json={"description": "updated"},
+    )
+    assert (
+        test_client.get(f"/api/knowledge-bases/{kb_id}", headers=headers).json()[
+            "dingtalk_auto_sync_enabled"
+        ]
+        is True
+    )

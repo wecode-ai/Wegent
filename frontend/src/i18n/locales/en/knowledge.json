@@ -73,7 +73,7 @@
   "document": {
     "dingtalkAutoSync": {
       "label": "Automatically update DingTalk documents",
-      "description": "Check DingTalk documents daily and skip available copies with an unchanged update time, using each original importer’s authorization. New source documents are not added. Content may be unavailable during updates; failed updates can be retried manually."
+      "description": "Check imported DingTalk documents daily and sync changes to the knowledge base."
     },
     "title": "Document Knowledge",
     "personal": "Personal Knowledge",
