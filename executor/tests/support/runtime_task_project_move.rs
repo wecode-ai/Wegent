@@ -7,7 +7,7 @@ use super::*;
 #[tokio::test]
 async fn resumed_tasks_preserve_sidebar_moves_and_explicit_removal() {
     let _lock = env_lock().await;
-    for projectless in [false, true] {
+    for (projectless, assigned) in [(false, true), (true, true), (true, false)] {
         let executor_home = temp_path("runtime-move-resume-home", "dir");
         let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
         let codex_home = temp_path("runtime-move-resume-codex", "dir");
@@ -19,11 +19,16 @@ async fn resumed_tasks_preserve_sidebar_moves_and_explicit_removal() {
         } else {
             json!([])
         };
+        let assignments = if assigned {
+            json!({"thread-1": {"projectId": "/tmp/target"}})
+        } else {
+            json!({})
+        };
         fs::write(
             &state_path,
             serde_json::to_vec(&json!({
                 "electron-saved-workspace-roots": ["/tmp/source", "/tmp/target"],
-                "thread-project-assignments": {"thread-1": {"projectId": "/tmp/target"}},
+                "thread-project-assignments": assignments,
                 "thread-workspace-root-hints": {"thread-1": "/tmp/target"},
                 "projectless-thread-ids": projectless_ids
             }))
@@ -65,10 +70,7 @@ async fn resumed_tasks_preserve_sidebar_moves_and_explicit_removal() {
         })
         .await;
         let state: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
-        assert_eq!(
-            state["thread-project-assignments"]["thread-1"]["projectId"],
-            "/tmp/target"
-        );
+        assert_eq!(state["thread-project-assignments"], assignments);
         assert_eq!(
             state["thread-workspace-root-hints"]["thread-1"],
             "/tmp/target"

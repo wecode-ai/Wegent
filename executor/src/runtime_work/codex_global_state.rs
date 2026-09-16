@@ -533,6 +533,7 @@ pub(crate) fn register_codex_global_thread_workspace_root(
     thread_id: &str,
     workspace_path: &str,
     project_key: Option<&str>,
+    is_new_thread: bool,
 ) -> Result<Option<String>, String> {
     let thread_id = thread_id.trim();
     if thread_id.is_empty() {
@@ -544,12 +545,8 @@ pub(crate) fn register_codex_global_thread_workspace_root(
     }
 
     let project_index = CodexGlobalProjectIndex::load();
-    // An explicit removal takes precedence over a stale sidebar assignment.
-    if project_index.is_projectless_thread(thread_id)
-        && project_index
-            .sidebar_project_key_for_thread(thread_id)
-            .is_some()
-    {
+    // Only a newly created thread can replace a stale projectless marker.
+    if !is_new_thread && project_index.is_projectless_thread(thread_id) {
         return Ok(None);
     }
     let state_path = codex_global_state_path();
