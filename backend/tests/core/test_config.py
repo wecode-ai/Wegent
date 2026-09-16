@@ -112,6 +112,13 @@ class TestSettings:
 
         assert build_settings_from_env().SCHEDULED_TASKS_ENABLED is False
 
+    def test_dingtalk_sync_defaults_to_two_am_beijing_time(self):
+        """The daily copy refresh must default to 02:00 Asia/Shanghai."""
+        s = build_settings()
+
+        assert s.DINGTALK_SYNC_HOUR_UTC == 18
+        assert s.DINGTALK_SYNC_MINUTE_UTC == 0
+
     def test_plugin_publication_active_request_limit_must_be_positive(self):
         """Prevent capacity configuration from disabling publication globally."""
         with pytest.raises(

@@ -347,6 +347,11 @@ class Settings(BaseSettings):
     # Celery default queue name (useful for separating preview and prod environments)
     CELERY_TASK_DEFAULT_QUEUE: str = "wegent_online"
 
+    # DingTalk copy refresh runs once per day at a fixed UTC time.
+    # Celery evaluates schedules in UTC, so 18:00 UTC equals 02:00 Asia/Shanghai.
+    DINGTALK_SYNC_HOUR_UTC: int = Field(default=18, ge=0, le=23)
+    DINGTALK_SYNC_MINUTE_UTC: int = Field(default=0, ge=0, le=59)
+
     # Celery Beat scheduler configuration
     # "default" = SQLite file (single instance only)
     # "sqlalchemy" = MySQL database (multi-instance deployment)

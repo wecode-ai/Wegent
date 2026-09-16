@@ -1,3 +1,5 @@
+from celery.schedules import crontab
+
 from app.core.celery_app import build_beat_schedule, celery_app
 from app.core.config import settings
 
@@ -18,10 +20,23 @@ def test_beat_schedule_is_empty_when_scheduled_tasks_are_disabled(monkeypatch) -
     assert build_beat_schedule() == {}
 
 
-def test_dingtalk_sync_has_daily_schedule_and_worker_registration(monkeypatch) -> None:
+def test_dingtalk_sync_runs_daily_at_configured_utc_time(monkeypatch) -> None:
     monkeypatch.setattr(settings, "SCHEDULED_TASKS_ENABLED", True)
     schedule = build_beat_schedule()["sync-dingtalk-copies"]
-    assert schedule["schedule"] == 86400
     module = "app.tasks.dingtalk_auto_sync_tasks"
     assert module in celery_app.conf.include
     assert schedule["task"] == f"{module}.scan_dingtalk_copies"
+    assert schedule["options"] == {"expires": 24 * 60 * 60}
+
+    # Celery evaluates the crontab in UTC; the default 18:00 UTC is 02:00 CST.
+    cron = schedule["schedule"]
+    assert isinstance(cron, crontab)
+    assert cron.hour == {settings.DINGTALK_SYNC_HOUR_UTC}
+    assert cron.minute == {settings.DINGTALK_SYNC_MINUTE_UTC}
+
+    monkeypatch.setattr(settings, "DINGTALK_SYNC_HOUR_UTC", 3)
+    monkeypatch.setattr(settings, "DINGTALK_SYNC_MINUTE_UTC", 30)
+
+    configured = build_beat_schedule()["sync-dingtalk-copies"]["schedule"]
+    assert configured.hour == {3}
+    assert configured.minute == {30}

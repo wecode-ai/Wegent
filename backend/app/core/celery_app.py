@@ -26,6 +26,7 @@ Beat Scheduler Storage:
 import logging
 
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import (
     after_setup_logger,
     after_setup_task_logger,
@@ -99,7 +100,11 @@ def build_beat_schedule() -> dict:
         },
         "sync-dingtalk-copies": {
             "task": "app.tasks.dingtalk_auto_sync_tasks.scan_dingtalk_copies",
-            "schedule": 24 * 60 * 60,
+            # Fixed daily time; Celery evaluates the crontab in UTC.
+            "schedule": crontab(
+                minute=settings.DINGTALK_SYNC_MINUTE_UTC,
+                hour=settings.DINGTALK_SYNC_HOUR_UTC,
+            ),
             "options": {"expires": 24 * 60 * 60},
         },
         "sync-plugin-upstreams": {
