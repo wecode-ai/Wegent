@@ -11,6 +11,12 @@ import { SmartAppManager } from './smart-app-manager.js'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
 import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
 
+// The manager reaches the cloud through Chromium's network stack; unit tests exercise the HTTP
+// protocol against loopback fixtures with Node's implementation instead.
+vi.mock('electron', () => ({
+  net: { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) },
+}))
+
 const roots: string[] = []
 
 afterEach(async () => {

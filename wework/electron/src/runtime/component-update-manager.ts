@@ -15,6 +15,7 @@ import {
 import { basename, dirname, join, resolve } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import type { ComponentDownloadProgress } from '../host/app-update-progress.js'
+import { cloudFetch } from '../host/cloud-http.js'
 import { pipeline } from 'node:stream/promises'
 import * as tar from 'tar'
 
@@ -134,7 +135,7 @@ export class ComponentUpdateManager {
     this.currentAppVersion = options.currentAppVersion
     this.platform = options.platform ?? process.platform
     this.arch = options.arch ?? process.arch
-    this.fetch = options.fetch ?? globalThis.fetch
+    this.fetch = options.fetch ?? cloudFetch
     this.retryDelay =
       options.retryDelay ??
       (attempt =>
