@@ -43,3 +43,7 @@ contextBridge.exposeInMainWorld('weworkElectronExecutionEnvironments', {
   chooseNodeExecutable: () => ipcRenderer.invoke('runtime:choose-node-executable'),
   useBuiltinNode: () => ipcRenderer.invoke('runtime:use-builtin-node'),
 })
+
+contextBridge.exposeInMainWorld('weworkElectronNetwork', {
+  resolveCodexProxy: () => ipcRenderer.invoke('runtime:resolve-codex-proxy'),
+})

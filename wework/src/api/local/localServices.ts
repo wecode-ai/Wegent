@@ -160,7 +160,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { builtinCodexCatalogModel } from '@/features/model-settings/codexCatalog'
 import { localModelSupportsImageInput } from '@/features/model-settings/localModelProviders'
-import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
+import { getEffectiveLocalCodexProxyUrl } from '@/desktop/systemProxy'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import {
@@ -526,7 +526,7 @@ interface RuntimeWorkIpcOptions {
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
   adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
   cloudModelGateway?: CloudModelGateway
-  getRuntimeProxyUrl?: () => string
+  getRuntimeProxyUrl?: () => string | Promise<string>
   user?: User
   transportLabel?: 'Local' | 'Cloud'
   syncConfiguredModelCatalog?: boolean
@@ -1240,7 +1240,7 @@ function harnessProxyUpstream(
     native_namespace_tools: nativeNamespaceTools,
     api_key: apiKey,
     default_headers: headers,
-    proxy_url: getLocalProxyUrl() || null,
+    proxy_url: getEffectiveLocalCodexProxyUrl() || null,
     model_id: recordString(config.model_id),
     routing_model_id: null,
     max_output_tokens: recordNumber(config.max_output_tokens),
@@ -2416,6 +2416,7 @@ export function createRuntimeWorkApiFromIpc(
       throw error
     }
   }
+  const getRuntimeProxyUrl = async () => options.getRuntimeProxyUrl?.()
 
   const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
     const selectedModel = findLocalModelConfigByModelName(data.modelId)
@@ -2716,7 +2717,7 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         options.cloudModelGateway,
-        options.getRuntimeProxyUrl?.(),
+        await getRuntimeProxyUrl(),
         user,
         requireLocalCodexCatalog,
         options.materializeRuntimeTask
@@ -2746,7 +2747,7 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         options.cloudModelGateway,
-        options.getRuntimeProxyUrl?.(),
+        await getRuntimeProxyUrl(),
         user,
         requireLocalCodexCatalog,
         options.materializeRuntimeTask
@@ -2810,7 +2811,7 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         options.cloudModelGateway,
-        options.getRuntimeProxyUrl?.(),
+        await getRuntimeProxyUrl(),
         user,
         requireLocalCodexCatalog,
         options.materializeRuntimeTask
@@ -2868,7 +2869,7 @@ export function createRuntimeWorkApiFromIpc(
           options.cloudModelGateway
         ),
         selection.options,
-        options.getRuntimeProxyUrl?.()
+        await getRuntimeProxyUrl()
       )
       const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
         .address as RuntimeTaskAddress
@@ -3096,7 +3097,7 @@ export function createRuntimeWorkApiFromIpc(
         localDeviceId,
         requestWithLocalDevice,
         options.cloudModelGateway,
-        options.getRuntimeProxyUrl?.(),
+        await getRuntimeProxyUrl(),
         user,
         requireLocalCodexCatalog,
         options.materializeRuntimeTask
@@ -3308,12 +3309,13 @@ export function createAutomationApiFromIpc(
         throw modelCatalogSyncCancelled()
       }
     }
+    const runtimeProxyUrl = await options.getRuntimeProxyUrl?.()
     const taskPayload = await createLocalRuntimeTaskPayload(
       resolvedTaskRequest,
       localDeviceId,
       requestWithLocalDevice,
       options.cloudModelGateway,
-      options.getRuntimeProxyUrl?.(),
+      runtimeProxyUrl,
       user,
       requireLocalCodexCatalog
     )
@@ -3322,7 +3324,7 @@ export function createAutomationApiFromIpc(
           continuationRequest,
           localDeviceId,
           options.cloudModelGateway,
-          options.getRuntimeProxyUrl?.(),
+          runtimeProxyUrl,
           user,
           requireLocalCodexCatalog,
           options.materializeRuntimeTask
@@ -3489,6 +3491,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     }
     return ensurePromise
   }
+  const getRuntimeProxyUrl = async () => {
+    await ensureStatus()
+    return getEffectiveLocalCodexProxyUrl()
+  }
 
   const bootstrapStatus = deps.available || !deps.ensure ? availableStatus : ensureStatus
   const getLocalDeviceId = async () => localDeviceIdFromStatus(await bootstrapStatus())
@@ -3637,7 +3643,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     getLocalDeviceId,
     {
       cloudModelGateway: deps.cloudModelGateway,
-      getRuntimeProxyUrl: getLocalProxyUrl,
+      getRuntimeProxyUrl,
       user: deps.user,
       materializeRuntimeTask: deps.materializeRuntimeTask,
     }
@@ -3647,7 +3653,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     (method, params) => request(method, params as Record<string, unknown>),
     {
       cloudModelGateway: deps.cloudModelGateway,
-      getRuntimeProxyUrl: getLocalProxyUrl,
+      getRuntimeProxyUrl,
       user: deps.user,
       prepareRuntimeModel: data => runtimeWorkApi.prepareRuntimeModel(data),
     }
@@ -3700,6 +3706,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const branchNameApi: NonNullable<WorkbenchServices['branchNameApi']> = {
     async generateBranchName(data) {
       const deviceId = data.deviceId?.trim() || (await getLocalDeviceId())
+      const runtimeProxyUrl = await getRuntimeProxyUrl()
       if (!(await runtimeWorkApi.prepareRuntimeModel({ deviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }
@@ -3723,7 +3730,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         modelType: data.modelType,
         modelOptions: data.modelOptions,
         cloudModelGateway: deps.cloudModelGateway,
-        runtimeProxyUrl: getLocalProxyUrl(),
+        runtimeProxyUrl,
         localDeviceId: deviceId,
         workspaceSource: 'local_path',
         newSession: true,
