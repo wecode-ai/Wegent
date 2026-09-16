@@ -15,7 +15,6 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
-from packaging.version import Version
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
@@ -50,10 +49,10 @@ from app.services.marketplace_tag_service import marketplace_tag_service
 from app.services.smart_app_download_link import build_smart_app_download_url
 from app.services.smart_app_package_parser import (
     MAX_SMART_APP_PACKAGE_SIZE_BYTES,
-    SEMVER_PATTERN,
     ParsedSmartAppPackage,
     smart_app_package_parser,
 )
+from app.utils.semver import parse_semver
 
 _DATA_URL = re.compile(r"^data:(image/(?:png|webp|jpeg));base64,([A-Za-z0-9+/=]+)$")
 _APPROVED = (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)
@@ -151,8 +150,12 @@ class SmartAppMarketplaceService:
     ) -> SmartAppSubmissionInitResponse:
         if not re.fullmatch(r"[0-9a-fA-F]{64}", request.sha256):
             raise HTTPException(status_code=422, detail="sha256 must be hexadecimal")
-        if not SEMVER_PATTERN.fullmatch(request.version):
-            raise HTTPException(status_code=422, detail="version must be SemVer")
+        try:
+            parse_semver(request.version)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail="version must be SemVer"
+            ) from exc
         tags = marketplace_tag_service.validate_resource_tags(
             db, request.tags, require_nonempty=True
         )
@@ -1058,18 +1061,38 @@ class SmartAppMarketplaceService:
     def _ensure_newer_version(
         self, db: Session, *, app: SmartApp, version: str
     ) -> None:
+        try:
+            candidate = parse_semver(version)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail="version must be SemVer"
+            ) from exc
         releases = (
-            db.query(SmartAppRelease.version)
+            db.query(SmartAppRelease.id, SmartAppRelease.version)
             .filter(SmartAppRelease.smart_app_id == app.id)
             .all()
         )
+        precedences = []
+        for release in releases:
+            try:
+                precedences.append(parse_semver(release.version))
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "smart_app_invalid_release_version",
+                        "message": "Stored Smart app release version is not SemVer; "
+                        "repair the release data before publishing",
+                        "smartAppId": app.id,
+                        "releaseId": release.id,
+                        "version": release.version,
+                    },
+                ) from exc
         if any(row.version == version for row in releases):
             raise HTTPException(
                 status_code=409, detail="Smart app version already exists"
             )
-        if releases and Version(version) <= max(
-            Version(row.version) for row in releases
-        ):
+        if precedences and candidate <= max(precedences):
             raise HTTPException(
                 status_code=409, detail="Smart app version must be newer than latest"
             )
