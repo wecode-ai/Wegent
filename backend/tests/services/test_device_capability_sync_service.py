@@ -310,7 +310,7 @@ async def test_sync_user_global_capabilities_uses_cloud_socket_device_id(
         lambda: fake_sio,
     )
 
-    service = DeviceCapabilitySyncService()
+    service = DeviceCapabilitySyncService(session_factory=lambda: nullcontext(test_db))
 
     result = await service.sync_user_global_capabilities(
         test_db,
