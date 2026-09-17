@@ -47,6 +47,7 @@ Direct gateway configuration uses these environment variables:
 | `WEGENT_RS_LISTEN_HOST` | `0.0.0.0` | Public gateway bind host |
 | `WEGENT_RS_LISTEN_PORT` | `8000` | Public gateway bind port |
 | `WEGENT_PYTHON_UPSTREAM_URL` | `http://127.0.0.1:8004` | Python origin |
+| `WEGENT_BACKEND_RS_ENV_FILE` | `config/example.env` | Dotenv file read by the gateway; the launcher defaults it to the Python Backend's `.env` |
 | `WEGENT_RS_ROUTES_FILE` | unset | Optional TOML route file; unset forwards every request to Python |
 
 The launcher sets `WEGENT_RS_ROUTES_FILE` to the selected backend's
