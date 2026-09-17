@@ -337,10 +337,11 @@ export const MessageList = memo(function MessageList({
       : preserveScrollPositionOutsideVirtualizer,
   })
   const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
+  const virtualRows = messageVirtualizer.getVirtualItems()
 
   useLayoutEffect(() => {
     if (virtualMessages) onVirtualLayoutChange?.()
-  }, [onVirtualLayoutChange, virtualMessages, virtualTotalSize])
+  }, [onVirtualLayoutChange, virtualMessages, virtualRows])
 
   useLayoutEffect(() => {
     const previousIds = previousVisibleMessageIdsRef.current
@@ -560,7 +561,7 @@ export const MessageList = memo(function MessageList({
         />
       )}
       {(virtualMessages
-        ? messageVirtualizer.getVirtualItems().map(virtualRow => ({
+        ? virtualRows.map(virtualRow => ({
             index: virtualRow.index,
             key: virtualRow.key,
             measureRef: messageVirtualizer.measureElement,
