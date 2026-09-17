@@ -50,8 +50,12 @@ def sanitize_no_proxy_env() -> list[str]:
     constructed. CIDR ranges such as ``fc00::/7`` are classified as IPv6
     hostnames, so the generated pattern ``all://[fc00::/7]`` fails with
     ``httpx.InvalidURL: Invalid port: ':'`` and aborts client construction
-    before any request is sent. Host patterns cannot express CIDR ranges
-    anyway, so dropping those entries keeps the supported bypass rules intact.
+    before any request is sent. IPv4 ranges were never effective either, since
+    ``all://192.168.0.0/16`` is parsed as the single host ``192.168.0.0``.
+
+    Host patterns cannot express CIDR ranges, so those entries are dropped and
+    logged; destinations inside the removed ranges fall back to the configured
+    proxy instead of failing every client construction in the process.
 
     Returns:
         The removed entries, for logging and assertions.
@@ -71,7 +75,7 @@ def sanitize_no_proxy_env() -> list[str]:
         os.environ[name] = ",".join(
             entry for entry in entries if entry not in unsupported
         )
-        logger.info(
+        logger.warning(
             "Dropped %s entries unsupported by httpx: %s", name, ",".join(unsupported)
         )
 
