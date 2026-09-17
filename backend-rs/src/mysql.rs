@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 //! The application's single lazy MySQL pool.
 //!
 //! Ported from the reference implementation's `src/startup/mysql.rs`. The pool
