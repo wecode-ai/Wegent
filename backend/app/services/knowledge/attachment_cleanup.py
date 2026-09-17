@@ -107,12 +107,23 @@ def cleanup_orphaned_knowledge_attachments(
     for attachment_id, owner_user_id in candidate_owners.items():
         if attachment_id in referenced_ids:
             continue
-        if context_service.delete_context(
-            db,
-            attachment_id,
-            owner_user_id,
-            keep_row_on_storage_failure=True,
-        ):
+        try:
+            was_deleted = context_service.delete_context(
+                db,
+                attachment_id,
+                owner_user_id,
+                keep_row_on_storage_failure=True,
+            )
+        except Exception:  # noqa: BLE001 - one orphan must not block the batch
+            db.rollback()
+            logger.warning(
+                "[Knowledge] Failed to clean up orphan attachment %s",
+                attachment_id,
+                exc_info=True,
+            )
+            retryable_failures += 1
+            continue
+        if was_deleted:
             deleted += 1
         else:
             retryable_failures += 1

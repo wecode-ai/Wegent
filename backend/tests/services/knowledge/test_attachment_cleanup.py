@@ -140,6 +140,36 @@ def test_cleanup_preserves_direct_and_converted_document_references(
     delete_context.assert_not_called()
 
 
+def test_cleanup_continues_after_one_candidate_raises(
+    test_db: Session,
+    test_user,
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 9, 14, 12, 0, 0)
+    first = _attachment(test_db, test_user.id, created_at=now - timedelta(days=2))
+    second = _attachment(test_db, test_user.id, created_at=now - timedelta(days=2))
+    delete_context = MagicMock(side_effect=[RuntimeError("database failure"), True])
+    rollback = MagicMock(wraps=test_db.rollback)
+    monkeypatch.setattr(context_service, "delete_context", delete_context)
+    monkeypatch.setattr(test_db, "rollback", rollback)
+
+    report = cleanup_orphaned_knowledge_attachments(
+        test_db,
+        retention_hours=24,
+        batch_size=100,
+        now=now,
+    )
+
+    assert report.scanned == 2
+    assert report.deleted == 1
+    assert report.retryable_failures == 1
+    assert [call.args[1] for call in delete_context.call_args_list] == [
+        first.id,
+        second.id,
+    ]
+    rollback.assert_called_once_with()
+
+
 def test_storage_delete_failure_keeps_row_for_retry(
     test_db: Session,
     test_user,

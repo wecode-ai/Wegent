@@ -206,7 +206,8 @@ describe('DocumentItem external wiki metadata display', () => {
 
   it('shows the synchronized content time in compact mode', () => {
     render(<DocumentItem document={syncedWikiDocument} compact />)
-    expect(screen.getByText('2026/09/03')).toBeInTheDocument()
+    const expectedDate = formatLocal('2026-09-03T12:34:56Z').split(' ')[0]
+    expect(screen.getByText(expectedDate)).toBeInTheDocument()
   })
 
   it('shows the synchronized content time in table mode', () => {

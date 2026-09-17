@@ -343,8 +343,6 @@ class Settings(BaseSettings):
     WIKI_TREE_MAX_PAGES: int = Field(
         default=5000, ge=1
     )  # Tree browse page-list upper bound
-    # Intranet wiki sites resolve to private addresses; opt in per deployment.
-    WIKI_ALLOW_PRIVATE_NETWORK: bool = False
     EXTERNAL_DOC_SYNC_ENABLED: bool = True
     EXTERNAL_DOC_SYNC_CRON: str = "0 19 * * *"
     EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE: int = 500

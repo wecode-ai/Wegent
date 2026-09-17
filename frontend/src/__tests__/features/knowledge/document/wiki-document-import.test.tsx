@@ -317,6 +317,7 @@ describe('WikiDocumentImport', () => {
     const directoryCheck = (await screen.findByTestId(
       'wiki-import-directory-check-guides'
     )) as HTMLInputElement
+    expect(directoryCheck.closest('label')).toHaveTextContent('（24）')
     fireEvent.click(screen.getByTestId('wiki-import-check-guides/page-01'))
     expect(directoryCheck.indeterminate).toBe(true)
 

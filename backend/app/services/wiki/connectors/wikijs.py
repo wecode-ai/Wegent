@@ -22,10 +22,6 @@ import aiohttp
 
 from app.core.async_utils import AsyncSessionManager
 from app.core.config import settings
-from app.services.plugin_upstream_fetch import (
-    UpstreamFetchError,
-    _assert_public_host,
-)
 from app.services.web_scraper.markdown.html_to_markdown import HtmlToMarkdownConverter
 from app.services.wiki.connector import (
     WikiApiError,
@@ -145,8 +141,7 @@ _HTML_TO_MARKDOWN = HtmlToMarkdownConverter()
 def validate_wiki_site_url(url: str) -> str:
     """Validate a wiki site URL and return its normalized root form.
 
-    Plain HTTP is supported for self-hosted intranet deployments. Private hosts
-    are rejected unless the deployment opts in via WIKI_ALLOW_PRIVATE_NETWORK.
+    Plain HTTP and private hosts are supported for self-hosted deployments.
     """
     cleaned = url.strip()
     parsed = urlparse(cleaned)
@@ -156,17 +151,6 @@ def validate_wiki_site_url(url: str) -> str:
         raise WikiApiError("bad_request", "站点地址缺少主机名", retryable=False)
     if parsed.username or parsed.password:
         raise WikiApiError("bad_request", "站点地址不允许携带凭据", retryable=False)
-    if not settings.WIKI_ALLOW_PRIVATE_NETWORK:
-        # Reuses the platform host policy; performs blocking DNS resolution,
-        # callers run it through asyncio.to_thread.
-        try:
-            _assert_public_host(parsed.hostname)
-        except UpstreamFetchError as exc:
-            raise WikiApiError(
-                "bad_request",
-                "站点地址不允许指向本机/内网地址；内网 Wiki 需部署开启 "
-                "WIKI_ALLOW_PRIVATE_NETWORK",
-            ) from exc
     return (
         parsed._replace(scheme=parsed.scheme.lower(), netloc=parsed.netloc.lower())
         .geturl()
@@ -290,12 +274,12 @@ def _is_source_read_error(error: dict[str, Any]) -> bool:
 
 def _page_content(node: dict[str, Any], site_url: str) -> str:
     content = node.get("content")
-    if isinstance(content, str):
+    if isinstance(content, str) and content.strip():
         return content
     render = node.get("render")
     if isinstance(render, str):
         return _HTML_TO_MARKDOWN.to_markdown(render, base_url=site_url)
-    return ""
+    return content if isinstance(content, str) else ""
 
 
 class WikijsConnector(WikiConnector):

@@ -83,10 +83,6 @@ export function getWikiDirectoryKeys(pages: WikiPageSummary[]): Set<string> {
   return keys
 }
 
-function countPages(node: WikiPageTreeNode): number {
-  return (node.page ? 1 : 0) + node.children.reduce((total, child) => total + countPages(child), 0)
-}
-
 function isPathInsideDirectory(path: string, directoryPath: string): boolean {
   const normalizedPath = path
     .split('/')
@@ -183,7 +179,7 @@ function TreeNode({
               <Folder className="h-3.5 w-3.5 shrink-0 text-text-muted" />
             )}
             <span className="min-w-0 flex-1 truncate">{page?.title || node.name}</span>
-            <span className="shrink-0 text-xs text-text-muted">（{countPages(node)}）</span>
+            <span className="shrink-0 text-xs text-text-muted">（{directoryPageIds.length}）</span>
             {page && (
               <span
                 className="max-w-[45%] shrink truncate text-xs text-text-muted"

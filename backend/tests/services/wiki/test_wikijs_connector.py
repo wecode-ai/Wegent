@@ -39,20 +39,17 @@ def test_scheduled_sync_capability_is_opt_in() -> None:
 
 class TestValidateWikiSiteUrl:
     def test_accepts_https(self):
-        # DNS-dependent host policy is stubbed: scheme handling under test.
-        with patch("app.services.wiki.connectors.wikijs._assert_public_host"):
-            assert (
-                validate_wiki_site_url("https://wiki.example.com/")
-                == "https://wiki.example.com"
-            )
+        assert (
+            validate_wiki_site_url("https://wiki.example.com/")
+            == "https://wiki.example.com"
+        )
 
     def test_accepts_http_scheme(self):
         # Self-hosted Wiki.js deployments may only be reachable over intranet HTTP.
-        with patch("app.services.wiki.connectors.wikijs._assert_public_host"):
-            assert (
-                validate_wiki_site_url("http://wiki.example.com")
-                == "http://wiki.example.com"
-            )
+        assert (
+            validate_wiki_site_url("http://wiki.example.com")
+            == "http://wiki.example.com"
+        )
 
     def test_rejects_other_schemes(self):
         with pytest.raises(WikiApiError):
@@ -66,27 +63,17 @@ class TestValidateWikiSiteUrl:
         with pytest.raises(WikiApiError):
             validate_wiki_site_url("https://user:pass@wiki.example.com")
 
-    def test_rejects_private_host_by_default(self, monkeypatch):
-        # Pin the flag: deployments (and local .env files) may enable it.
-        monkeypatch.setattr(app_settings, "WIKI_ALLOW_PRIVATE_NETWORK", False)
-        # The localhost name is rejected before any DNS resolution.
-        with pytest.raises(WikiApiError):
-            validate_wiki_site_url("https://localhost")
-
-    def test_public_host_policy_is_applied(self, monkeypatch):
-        monkeypatch.setattr(app_settings, "WIKI_ALLOW_PRIVATE_NETWORK", False)
-        # The platform host policy must run for non-localhost hosts.
-        with patch(
-            "app.services.wiki.connectors.wikijs._assert_public_host"
-        ) as mock_assert:
-            validate_wiki_site_url("https://wiki.example.com")
-        mock_assert.assert_called_once_with("wiki.example.com")
-
-    def test_private_host_allowed_with_flag(self, monkeypatch):
-        monkeypatch.setattr(app_settings, "WIKI_ALLOW_PRIVATE_NETWORK", True)
-        assert (
-            validate_wiki_site_url("https://intranet.local") == "https://intranet.local"
-        )
+    @pytest.mark.parametrize(
+        "site_url",
+        [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://[::1]:3000",
+            "https://intranet.local",
+        ],
+    )
+    def test_accepts_local_and_private_hosts(self, site_url):
+        assert validate_wiki_site_url(site_url) == site_url
 
 
 class TestListPages:
@@ -305,6 +292,33 @@ class TestGetPageById:
         assert page is not None
         assert page.path == "docs/renamed"
         assert page.content == "# Renamed"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_render_when_source_content_is_blank(self):
+        connector = WikijsConnector()
+
+        with patch.object(
+            connector,
+            "_post_graphql",
+            return_value={
+                "pages": {
+                    "single": {
+                        "id": 5001,
+                        "path": "docs/renamed",
+                        "title": "Renamed",
+                        "updatedAt": "2026-09-13T02:00:00Z",
+                        "locale": "zh",
+                        "content": "",
+                        "render": "<h1>Renamed</h1><p>Body</p>",
+                        "tags": [],
+                    }
+                }
+            },
+        ):
+            page = await connector.get_page_by_id(_config(), "5001")
+
+        assert page is not None
+        assert page.content == "# Renamed\n\nBody"
 
     @pytest.mark.asyncio
     async def test_falls_back_to_render_when_source_read_is_forbidden(self):
