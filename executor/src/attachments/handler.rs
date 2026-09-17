@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::{AttachmentPromptProcessor, AttachmentRecord};
+use super::{device_runtime_attachment_dir_at, AttachmentPromptProcessor, AttachmentRecord};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachmentTask {
@@ -30,7 +30,11 @@ pub struct AttachmentDownloaderConfig {
 impl AttachmentDownloaderConfig {
     pub fn attachments_dir(&self) -> PathBuf {
         if self.project_layout {
-            return self.workspace.join(&self.task_id).join(&self.subtask_id);
+            return device_runtime_attachment_dir_at(
+                self.workspace.clone(),
+                &self.task_id,
+                &self.subtask_id,
+            );
         }
         self.workspace
             .join(get_attachments_subdir_name(&self.task_id))
@@ -95,17 +99,16 @@ pub fn download_attachments_with(
         };
     };
 
-    let (workspace, project_layout) = resolve_attachment_workspace(task, task_id, workspace_root);
     let attachment_subtask_id = resolve_attachment_subtask_id(
         &task.attachments,
         task.user_subtask_id.as_deref().unwrap_or(subtask_id),
     );
     let config = AttachmentDownloaderConfig {
-        workspace,
+        workspace: workspace_root.to_path_buf(),
         task_id: task_id.to_owned(),
         subtask_id: attachment_subtask_id.clone(),
         auth_token: auth_token.to_owned(),
-        project_layout,
+        project_layout: true,
     };
     let result = downloader.download_all(&config, &task.attachments);
 
@@ -139,36 +142,6 @@ pub fn download_attachments_with(
         success_count: result.success.len(),
         failed_count: result.failed.len(),
     }
-}
-
-fn resolve_attachment_workspace(
-    task: &AttachmentTask,
-    task_id: &str,
-    workspace_root: &Path,
-) -> (PathBuf, bool) {
-    if let Some(project_workspace) = project_workspace(task, workspace_root) {
-        return (project_workspace.join(".wegent/attachments"), true);
-    }
-    (workspace_root.join(task_id), false)
-}
-
-fn project_workspace(task: &AttachmentTask, workspace_root: &Path) -> Option<PathBuf> {
-    if let Some(path) = &task.project_workspace_path {
-        if path.is_absolute() {
-            return Some(path.clone());
-        }
-        return Some(workspace_root.join(path));
-    }
-
-    let project_id = task.project_id?;
-    let git_url = task.git_url.as_deref()?;
-    let repo_name = repo_name_from_url(git_url)?;
-    Some(
-        workspace_root
-            .join("projects")
-            .join(project_id.to_string())
-            .join(repo_name.replace(['/', '\\'], "_")),
-    )
 }
 
 fn resolve_attachment_subtask_id(attachments: &[AttachmentRecord], fallback: &str) -> String {
@@ -208,13 +181,4 @@ fn sanitize_filename(filename: &str) -> String {
     } else {
         basename
     }
-}
-
-fn repo_name_from_url(git_url: &str) -> Option<String> {
-    let trimmed = git_url.trim().trim_end_matches(".git");
-    trimmed
-        .rsplit(['/', ':'])
-        .next()
-        .map(str::to_owned)
-        .filter(|value| !value.is_empty())
 }

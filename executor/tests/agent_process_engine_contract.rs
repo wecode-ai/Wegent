@@ -583,7 +583,7 @@ touch '{}'
 
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_process_engine_downloads_claude_attachments_to_local_task_workspace() {
+async fn agent_process_engine_downloads_claude_attachments_to_device_private_workspace() {
     let _lock = env_lock().lock().await;
     let executor_home = unique_dir("claude-local-attachment-home");
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -640,15 +640,14 @@ printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tex
         other => panic!("unexpected outcome: {other:?}"),
     };
     let local_path = executor_home
-        .join("workspace/2201/2201:executor:attachments/3212/image.png")
+        .join("workspace/attachments/runtime/2201/3212/image.png")
         .display()
         .to_string();
 
     assert!(content.contains(&local_path), "{content}");
     assert!(!content.contains("/home/user/2201:executor:attachments/3212/image.png"));
     assert_eq!(
-        fs::read(executor_home.join("workspace/2201/2201:executor:attachments/3212/image.png"))
-            .unwrap(),
+        fs::read(executor_home.join("workspace/attachments/runtime/2201/3212/image.png")).unwrap(),
         b"fake-image"
     );
     let request = requests.lock().unwrap().first().cloned().unwrap();
