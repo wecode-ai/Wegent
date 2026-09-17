@@ -752,14 +752,14 @@ impl RuntimeWorkRpcHandler {
                 .map_err(|error| AppIpcError::new("codex_runtime_config_update_failed", error))?;
         }
         if if_idle && !force {
-            match self.codex_app_server.restart_if_no_pending_requests().await {
+            match self.codex_app_server.restart_if_idle().await {
                 Ok(()) => {}
-                Err(count) => {
+                Err((active_turn_count, pending_request_count)) => {
                     return Ok(json!({
                         "restarted": false,
                         "requiresConfirmation": true,
-                        "activeTaskCount": active_task_count,
-                        "pendingRequestCount": count,
+                        "activeTaskCount": active_task_count.max(active_turn_count),
+                        "pendingRequestCount": pending_request_count,
                     }));
                 }
             }

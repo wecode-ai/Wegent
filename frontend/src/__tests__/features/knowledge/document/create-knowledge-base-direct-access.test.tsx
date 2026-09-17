@@ -35,6 +35,7 @@ jest.mock('@/apis/knowledge', () => ({
 
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
   KnowledgeBaseForm: ({
+    advancedExtras,
     directAccessRequirement,
     onDirectAccessRequirementChange,
     onNameChange,
@@ -45,6 +46,7 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onRetrievalConfigChange,
     onRetrievalConfigUserChange,
   }: {
+    advancedExtras?: import('react').ReactNode
     directAccessRequirement: DirectAccessRequirement
     onDirectAccessRequirementChange: (value: DirectAccessRequirement) => void
     onNameChange: (value: string) => void
@@ -56,6 +58,7 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onRetrievalConfigUserChange: () => void
   }) => (
     <div>
+      {advancedExtras}
       <button type="button" onClick={() => onNameChange('Private docs')}>
         set name
       </button>
@@ -314,4 +317,21 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
     expect(submitted.retrieval_config).not.toHaveProperty('retriever_name')
     expect(submitted.retrieval_config).not.toHaveProperty('embedding_config')
   })
+})
+
+it('creates with automatic DingTalk updates enabled and resets it after success', async () => {
+  const onSubmit = jest.fn(async (_data: Omit<KnowledgeBaseCreate, 'namespace'>) => {})
+  render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+  const toggle = screen.getByTestId('knowledge-dingtalk-auto-sync')
+  expect(toggle).not.toBeChecked()
+  fireEvent.click(toggle)
+  fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+  fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+  fireEvent.click(screen.getByRole('button', { name: 'common:actions.create' }))
+  await waitFor(() =>
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ dingtalk_auto_sync_enabled: true })
+    )
+  )
+  await waitFor(() => expect(toggle).not.toBeChecked())
 })

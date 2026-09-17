@@ -938,6 +938,11 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.apply_backend_connection(&mut turn.request);
+        crate::runtime_work::api_context::inject_current_session(
+            &mut turn.request,
+            &self.device_id,
+            &turn.local_task_id,
+        );
         turn.request.extra.insert(
             "runtimeLocalTaskId".to_owned(),
             Value::String(turn.local_task_id.clone()),
@@ -1048,10 +1053,15 @@ impl RuntimeWorkRpcHandler {
             let route_handler = handler.clone();
             let route_local_task_id = turn_local_task_id.clone();
             let route_request = request.clone();
+            let is_new_thread = resume_thread_id.is_none() && direct_thread_id.is_none();
             let thread_started: CodexThreadStartedCallback = Box::new(move |thread_id| {
                 route_handler.record_local_task_thread(&route_local_task_id, &thread_id);
                 route_handler.record_active_goal_thread(&route_local_task_id, &thread_id);
-                route_handler.register_codex_thread_workspace_root(&thread_id, &route_request);
+                route_handler.register_codex_thread_workspace_root(
+                    &thread_id,
+                    &route_request,
+                    is_new_thread,
+                );
             });
             let active_turn_handler = handler.clone();
             let active_turn_local_task_id = turn_local_task_id.clone();
@@ -1498,7 +1508,7 @@ impl RuntimeWorkRpcHandler {
                     false,
                 );
                 self.mark_thread_event_route_idle(&thread_id);
-                self.register_codex_thread_workspace_root(&thread_id, &event_request);
+                self.register_codex_thread_workspace_root(&thread_id, &event_request, false);
                 let response_item_id = turn.response_item_id;
                 let response_value_origin = turn.response_value_origin;
                 match turn.outcome {
@@ -1641,6 +1651,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         thread_id: &str,
         request: &ExecutionRequest,
+        is_new_thread: bool,
     ) {
         let Some(workspace_path) = request.cwd() else {
             return;
@@ -1650,6 +1661,7 @@ impl RuntimeWorkRpcHandler {
                 thread_id,
                 workspace_path,
                 request.runtime_project_key.as_deref(),
+                is_new_thread,
             ) {
                 Ok(Some(workspace_root)) => {
                     log_executor_event(

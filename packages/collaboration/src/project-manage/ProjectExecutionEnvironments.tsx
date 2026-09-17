@@ -55,7 +55,7 @@ function executionEnvironmentErrorSummary(message: string): string {
 }
 
 // Short name used for both the display name and the clone directory, for
-// example "wegent" for "weibo_rd/common/wecode/wegent".
+// example "wegent" for "wecode-ai/Wegent".
 function repositoryShortName(repository: WorkspaceGitRepository) {
   const segment =
     repository.fullName.split("/").filter(Boolean).pop() ?? repository.name;

@@ -202,9 +202,10 @@ mod tests {
     }
 
     fn request_with_gateway(base_url: &str) -> ExecutionRequest {
-        let mut request = ExecutionRequest::default();
-        request.model_config = serde_json::json!({ "base_url": base_url });
-        request
+        ExecutionRequest {
+            model_config: serde_json::json!({ "base_url": base_url }),
+            ..ExecutionRequest::default()
+        }
     }
 
     #[test]

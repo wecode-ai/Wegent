@@ -581,7 +581,7 @@ export interface WorkspaceGitRepository {
   id: number;
   /** Short repository name, for example "wegent". */
   name: string;
-  /** Provider path, for example "weibo_rd/common/wecode/wegent". */
+  /** Provider path, for example "wecode-ai/Wegent". */
   fullName: string;
   cloneUrl: string;
   gitDomain: string;

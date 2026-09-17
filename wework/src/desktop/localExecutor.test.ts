@@ -130,7 +130,8 @@ describe('localExecutor', () => {
     await expect(getLocalExecutorStatus()).resolves.toEqual(first)
 
     expect(describeDshExecutorMock).toHaveBeenCalledOnce()
-    expect(requestDshExecutorMock).toHaveBeenCalledTimes(3)
+    // Startup also reconciles the bundled marketplace into Codex (local RPC).
+    expect(requestDshExecutorMock).toHaveBeenCalledTimes(4)
   })
 
   test('invalidates the initialized status after an executor request failure', async () => {
@@ -159,7 +160,7 @@ describe('localExecutor', () => {
     await ensureLocalExecutorStarted()
 
     expect(describeDshExecutorMock).toHaveBeenCalledOnce()
-    expect(requestDshExecutorMock).toHaveBeenCalledTimes(4)
+    expect(requestDshExecutorMock).toHaveBeenCalledTimes(5)
   })
 
   test('installs a declared bundled plugin through Codex app-server', async () => {

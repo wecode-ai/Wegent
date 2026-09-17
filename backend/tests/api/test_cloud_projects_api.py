@@ -1690,6 +1690,19 @@ def test_todo_lifecycle_and_multiple_local_tasks(
     assert my_work.json()["items"][0]["has_active_task"] is True
 
 
+def test_my_work_rejects_limit_above_cap(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    response = test_client.get(
+        "/api/v1/cloud-work-items/my-work",
+        headers=_auth(test_token),
+        params={"limit": 101},
+    )
+
+    assert response.status_code == 422
+
+
 def test_loop_item_tags_roundtrip(
     test_client: TestClient,
     test_db: Session,

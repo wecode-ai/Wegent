@@ -2964,11 +2964,24 @@ mod tests {
             let address = listener.local_addr().unwrap();
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
-                let mut buffer = vec![0; 8192];
-                let read = stream.read(&mut buffer).await.unwrap();
-                let request = String::from_utf8_lossy(&buffer[..read]);
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let read = stream.read(&mut buffer).await.unwrap();
+                    assert!(
+                        read > 0,
+                        "connection closed before complete request headers"
+                    );
+                    request.extend_from_slice(&buffer[..read]);
+                }
+                let request = String::from_utf8_lossy(&request);
                 assert!(request.starts_with("GET /api/attachments/1/executor-download "));
-                assert!(request.contains("authorization: Bearer test-token\r\n"));
+                assert!(request.lines().any(|line| {
+                    line.split_once(':').is_some_and(|(name, value)| {
+                        name.eq_ignore_ascii_case("authorization")
+                            && value.trim() == "Bearer test-token"
+                    })
+                }));
                 let body = b"image-bytes";
                 let header = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",

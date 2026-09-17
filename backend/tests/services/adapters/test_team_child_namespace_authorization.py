@@ -2,6 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from copy import deepcopy
+
+import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
@@ -23,6 +27,8 @@ from app.services.chat.task_default_knowledge_bases import (
 )
 from app.services.external_entity_resolver import register_entity_resolver
 from app.services.share.namespace_entity_resolver import NamespaceEntityResolver
+from app.services.share.team_share_service import team_share_service
+from app.services.team_list_filters import validate_team_list_groups
 
 
 def _create_user(db: Session, name: str) -> User:
@@ -221,13 +227,14 @@ def _arrange_parent_team_authorized_to_child(
     *,
     skills: list[str] | None = None,
     with_knowledge_base: bool = False,
+    member_role: str = "Reporter",
 ) -> tuple[User, User, Namespace, Kind, Kind | None]:
     register_entity_resolver("namespace", NamespaceEntityResolver)
     owner = _create_user(db, "parent-agent-owner")
     child_member = _create_user(db, "child-agent-member")
     parent = _create_namespace(db, owner, "agent-parent")
     child = _create_namespace(db, owner, "agent-parent/child")
-    _add_namespace_member(db, child, child_member)
+    _add_namespace_member(db, child, child_member, member_role)
     kb = (
         _create_parent_knowledge_base(db, owner, parent.name)
         if with_knowledge_base
@@ -244,10 +251,17 @@ def _arrange_parent_team_authorized_to_child(
     return owner, child_member, child, team, kb
 
 
-def test_child_group_team_list_includes_authorized_parent_team(test_db: Session):
+@pytest.mark.parametrize("member_role", ["Reporter", "RestrictedAnalyst"])
+def test_child_group_team_list_includes_authorized_parent_team(
+    test_db: Session, member_role: str
+):
     _owner, child_member, child, team, _kb = _arrange_parent_team_authorized_to_child(
-        test_db
+        test_db, member_role=member_role
     )
+    payload = deepcopy(team.json)
+    payload["spec"]["members"][0]["prompt"] = "private-parent-instructions"
+    team.json = payload
+    test_db.commit()
 
     teams, total = team_kinds_service.get_user_teams_page(
         test_db,
@@ -263,7 +277,21 @@ def test_child_group_team_list_includes_authorized_parent_team(test_db: Session)
     # share_status=2 means the team is shared from others.
     assert listed_team["share_status"] == 2
     assert listed_team["access_source"] == "namespace_authorization"
+    expected_prompt = (
+        "" if member_role == "RestrictedAnalyst" else "private-parent-instructions"
+    )
+    assert listed_team["bots"][0]["bot_prompt"] == expected_prompt
     assert total == len(teams)
+
+    result = task_kinds_service.create_task_or_append(
+        test_db,
+        obj_in=TaskCreate(team_id=team.id, title="Child task", prompt="hello"),
+        user=child_member,
+    )
+    detail = task_kinds_service.get_task_detail(
+        test_db, task_id=result["id"], user_id=child_member.id
+    )
+    assert detail["team"]["bots"][0]["bot_prompt"] == expected_prompt
 
 
 def test_team_list_deduplicates_direct_share_and_namespace_authorization(
@@ -394,3 +422,140 @@ def test_authorized_parent_team_defaults_are_resolved_dynamically(
         )
         == []
     )
+
+
+@pytest.mark.parametrize(
+    ("inherited", "by_name"),
+    [(False, False), (True, True)],
+)
+def test_group_guest_can_use_agent_without_reading_configuration_or_kb_documents(
+    test_db: Session, inherited: bool, by_name: bool
+) -> None:
+    from app.services.knowledge.knowledge_access_policy import (
+        get_knowledge_base_tool_access_mode_by_ids,
+        resolve_knowledge_base_permission,
+    )
+    from shared.models.knowledge import KnowledgeBaseToolAccessMode
+
+    owner = _create_user(test_db, "guest-agent-owner")
+    guest = _create_user(test_db, "guest-agent-user")
+    parent = _create_namespace(test_db, owner, "guest-agents")
+    _add_namespace_member(test_db, parent, owner, "Owner")
+    namespace = (
+        _create_namespace(test_db, owner, "guest-agents/child") if inherited else parent
+    )
+    _add_namespace_member(test_db, parent, guest, "RestrictedAnalyst")
+    kb = _create_parent_knowledge_base(test_db, owner, namespace.name)
+    team = _create_parent_agent_graph(
+        test_db, owner, namespace.name, default_knowledge_base_id=kb.id
+    )
+    payload = deepcopy(team.json)
+    payload["spec"]["members"][0]["prompt"] = "private-agent-instructions"
+    team.json = payload
+    test_db.commit()
+
+    validate_team_list_groups(test_db, guest.id, namespace.name, None)
+    teams, total = team_kinds_service.get_user_teams_page(
+        test_db, user_id=guest.id, scope="group", group_name=namespace.name
+    )
+    assert total == 1
+    assert teams[0]["id"] == team.id
+    assert teams[0]["bots"][0]["bot_prompt"] == ""
+    assert teams[0]["bots"][0]["bot"]["shell_type"] == "ClaudeCode"
+    assert team_share_service.get_resource(test_db, team.id, guest.id) is None
+    assert team_kinds_service.get_team_input_parameters(
+        test_db, team_id=team.id, user_id=guest.id
+    ) == {"has_parameters": False, "parameters": []}
+    assert (
+        team_kinds_service.get_team_skills(test_db, team_id=team.id, user_id=guest.id)[
+            "team_id"
+        ]
+        == team.id
+    )
+
+    selection = (
+        {"team_name": team.name, "team_namespace": team.namespace}
+        if by_name
+        else {"team_id": team.id}
+    )
+    result = task_kinds_service.create_task_or_append(
+        test_db,
+        obj_in=TaskCreate(
+            **selection, title="Guest conversation", prompt="hello", task_type="task"
+        ),
+        user=guest,
+    )
+    task = test_db.get(TaskResource, result["id"])
+    assert task.user_id == guest.id
+    assert task.json["spec"]["teamRef"]["user_id"] == owner.id
+    assert resolve_task_default_knowledge_base_ids(
+        test_db, task_id=task.id, user_id=guest.id
+    ) == [kb.id]
+    assert not resolve_knowledge_base_permission(test_db, kb, guest.id).has_access
+    mode, _ = get_knowledge_base_tool_access_mode_by_ids(test_db, guest.id, [kb.id])
+    assert mode == KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
+
+    detail = task_kinds_service.get_task_detail(
+        test_db, task_id=task.id, user_id=guest.id
+    )
+    assert detail["team"]["bots"][0]["bot_prompt"] == ""
+    assert team.json["spec"]["members"][0]["prompt"] == "private-agent-instructions"
+
+    with pytest.raises(HTTPException) as denied:
+        team_kinds_service.get_team_detail(test_db, team_id=team.id, user_id=guest.id)
+    assert denied.value.status_code == 404
+
+
+def test_non_member_cannot_list_or_use_group_agent(test_db: Session) -> None:
+    owner = _create_user(test_db, "private-agent-owner")
+    outsider = _create_user(test_db, "private-agent-outsider")
+    namespace = _create_namespace(test_db, owner, "private-agents")
+    team = _create_parent_agent_graph(test_db, owner, namespace.name)
+
+    with pytest.raises(HTTPException) as denied:
+        validate_team_list_groups(test_db, outsider.id, namespace.name, None)
+    assert denied.value.status_code == 403
+    assert (
+        team_share_service.get_resource_for_use(test_db, team.id, outsider.id) is None
+    )
+    with pytest.raises(HTTPException) as denied:
+        task_kinds_service.create_task_or_append(
+            test_db,
+            obj_in=TaskCreate(team_id=team.id, title="Denied", prompt="hello"),
+            user=outsider,
+        )
+    assert denied.value.status_code == 404
+
+
+def test_guest_summary_preserves_model_selection_without_credentials() -> None:
+    from app.services.team_access_policy import team_usage_summary
+
+    team = {
+        "bots": [
+            {
+                "bot_prompt": "private instructions",
+                "bot": {
+                    "shell_type": "Chat",
+                    "agent_config": {
+                        "bind_model": "approved-model",
+                        "allowed_models": [
+                            {"name": "approved-model", "type": "public"}
+                        ],
+                        "env": {"api_key": "private-model-key"},
+                        "api_key": "private-model-key",
+                    },
+                },
+            }
+        ]
+    }
+    original = deepcopy(team)
+
+    summary = team_usage_summary(team)
+
+    config = summary["bots"][0]["bot"]["agent_config"]
+    assert config == {
+        "bind_model": "approved-model",
+        "allowed_models": [{"name": "approved-model", "type": "public"}],
+    }
+    assert summary["bots"][0]["bot_prompt"] == ""
+    assert team == original

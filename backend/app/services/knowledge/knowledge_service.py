@@ -315,6 +315,7 @@ class KnowledgeService:
                 data.kb_type or KnowledgeBaseType.NOTEBOOK
             ).value,
             "retrievalConfig": _to_json_dict(data.retrieval_config),
+            "dingtalkAutoSyncEnabled": data.dingtalk_auto_sync_enabled,
             "summaryEnabled": data.summary_enabled,
         }
         if data.allow_document_download is not None:
@@ -950,6 +951,9 @@ class KnowledgeService:
                         data.retrieval_config.hybrid_weights.model_dump()
                     )
                 spec["retrievalConfig"] = current_retrieval_config
+
+        if data.dingtalk_auto_sync_enabled is not None:
+            spec["dingtalkAutoSyncEnabled"] = data.dingtalk_auto_sync_enabled
 
         # Update summary_enabled if provided
         if data.summary_enabled is not None:

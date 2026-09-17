@@ -38,6 +38,11 @@ impl Drop for ScalarEnv {
         }
     }
 }
+#[path = "task_project_move_tests.rs"]
+mod task_project_move_tests;
+
+#[path = "message_presentation_tests.rs"]
+mod message_presentation_tests;
 
 #[test]
 fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {

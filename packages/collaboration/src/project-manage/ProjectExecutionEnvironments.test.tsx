@@ -23,17 +23,17 @@ const repositoryOptions = [
   {
     id: 1,
     name: "wegent",
-    fullName: "weibo_rd/common/wecode/wegent",
+    fullName: "wecode-ai/wegent",
     cloneUrl:
-      "ssh://git@git.example.com:2222/weibo_rd/common/wecode/wegent.git",
+      "ssh://git@git.example.com:2222/wecode-ai/wegent.git",
     gitDomain: "git.example.com",
     provider: "gitlab",
   },
   {
     id: 2,
     name: "internal-sdk",
-    fullName: "weibo_rd/common/internal-sdk",
-    cloneUrl: "https://git.example.com/weibo_rd/common/internal-sdk.git",
+    fullName: "wecode-ai/internal-sdk",
+    cloneUrl: "https://git.example.com/wecode-ai/internal-sdk.git",
     gitDomain: "git.example.com",
     provider: "gitlab",
   },
@@ -822,7 +822,7 @@ describe("ProjectExecutionEnvironments", () => {
         repositories: [
           {
             name: "Custom name",
-            url: "https://git.example.com/weibo_rd/common/internal-sdk.git",
+            url: "https://git.example.com/wecode-ai/internal-sdk.git",
             ref: "develop",
             path: "internal-sdk",
             primary: true,

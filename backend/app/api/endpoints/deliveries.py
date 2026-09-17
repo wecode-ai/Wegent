@@ -97,7 +97,7 @@ from app.services.loop_item_status_history import (
     is_processing_status,
     project_status_transition,
 )
-from app.services.loop_items import loop_item_service
+from app.services.loop_items import MY_WORK_ITEM_LIMIT, loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
@@ -311,10 +311,11 @@ def _workflow_manager_is_active(db: Session, plan: WorkflowPlanView) -> bool:
 
 @router.get("/cloud-work-items/my-work", response_model=MyWorkListResponse)
 def list_my_work(
+    limit: int = Query(default=MY_WORK_ITEM_LIMIT, ge=1, le=MY_WORK_ITEM_LIMIT),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MyWorkListResponse:
-    items = loop_item_service.list_my_work(db, current_user.id)
+    items = loop_item_service.list_my_work(db, current_user.id, limit=limit)
     return MyWorkListResponse(
         items=[MyWorkItemResponse.model_validate(item) for item in items]
     )

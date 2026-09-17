@@ -45,6 +45,7 @@ import type {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -116,6 +117,8 @@ import {
   getRuntimeProjectSidebarStateKey,
 } from '@/lib/runtime-project-state'
 import { cn } from '@/lib/utils'
+import { SidebarTaskTitle } from './SidebarTaskTitle'
+import { SidebarWorklistsScroll } from './SidebarWorklistsScroll'
 import {
   defaultAppearance,
   getWorkbenchBackground,
@@ -574,7 +577,7 @@ function ArchiveConversationsConfirmDialog({
 }
 
 const SIDEBAR_ROW_METADATA_CLASS =
-  'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible'
+  'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible group-focus-visible/task:invisible group-has-[:focus-visible]/task:invisible'
 const SIDEBAR_HEADER_ICON_BUTTON_CLASS =
   'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] active:bg-[rgb(var(--color-sidebar-active))]'
 
@@ -1520,6 +1523,7 @@ function RuntimeTaskRow({
       ? Number(task.queuePosition)
       : null
   const threadId = getRuntimeTaskThreadId(task)
+  const moveTaskMenu = useMoveRuntimeTaskMenu(workspace, task, threadId, stateDeviceId)
   const notificationsSubscribed = isRuntimeTaskNotificationSubscribed(
     imNotificationSettings,
     taskAddress
@@ -1704,6 +1708,7 @@ function RuntimeTaskRow({
       >
         <div
           data-testid={`runtime-local-task-row-${task.taskId}`}
+          data-sidebar-task-row
           data-marked={marked ? 'true' : undefined}
           role="button"
           tabIndex={disabled ? -1 : 0}
@@ -1752,25 +1757,14 @@ function RuntimeTaskRow({
           />
           {priorityLayout ? (
             <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
-              <span
-                data-sidebar-drag-activator
-                data-testid={`runtime-local-task-title-${task.taskId}`}
-                className={cn(
-                  'runtime-task-title relative flex min-w-0 items-center gap-1 truncate',
-                  titleShimmering && 'is-updated'
-                )}
-              >
-                {titleShimmering ? (
-                  <span
-                    aria-hidden="true"
-                    className="runtime-task-title-shimmer"
-                    data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
-                  />
-                ) : null}
-                <span data-testid={`runtime-local-task-drag-activator-${task.taskId}`}>
-                  {task.title}
-                </span>
-              </span>
+              <SidebarTaskTitle
+                text={task.title}
+                testId={`runtime-local-task-title-${task.taskId}`}
+                textTestId={`runtime-local-task-drag-activator-${task.taskId}`}
+                shimmering={titleShimmering}
+                shimmerTestId={`runtime-local-task-title-shimmer-${task.taskId}`}
+                className="flex-none"
+              />
               <span
                 data-testid={`runtime-local-task-source-${task.taskId}`}
                 className="flex min-w-0 items-center gap-1 text-sm leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]"
@@ -1786,25 +1780,13 @@ function RuntimeTaskRow({
               </span>
             </span>
           ) : (
-            <span
-              data-sidebar-drag-activator
-              data-testid={`runtime-local-task-title-${task.taskId}`}
-              className={cn(
-                'runtime-task-title relative min-w-0 flex-1 truncate',
-                titleShimmering && 'is-updated'
-              )}
-            >
-              {titleShimmering ? (
-                <span
-                  aria-hidden="true"
-                  className="runtime-task-title-shimmer"
-                  data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
-                />
-              ) : null}
-              <span data-testid={`runtime-local-task-drag-activator-${task.taskId}`}>
-                {task.title}
-              </span>
-            </span>
+            <SidebarTaskTitle
+              text={task.title}
+              testId={`runtime-local-task-title-${task.taskId}`}
+              textTestId={`runtime-local-task-drag-activator-${task.taskId}`}
+              shimmering={titleShimmering}
+              shimmerTestId={`runtime-local-task-title-shimmer-${task.taskId}`}
+            />
           )}
           {splitGroup && splitGroupLabel ? (
             <span
@@ -1813,7 +1795,7 @@ function RuntimeTaskRow({
               data-split-group-active={splitGroup.active ? 'true' : undefined}
               title={splitGroupLabel}
               aria-label={splitGroupLabel}
-              className="ml-1 inline-flex h-5 shrink-0 items-center gap-0.5 rounded-md bg-[rgb(var(--color-sidebar-hover))] px-1.5 text-xs font-medium leading-none text-[rgb(var(--color-sidebar-text-secondary))]"
+              className="ml-1 inline-flex h-5 shrink-0 items-center gap-0.5 rounded-md bg-[rgb(var(--color-sidebar-hover))] px-1.5 text-xs font-medium leading-none text-[rgb(var(--color-sidebar-text-secondary))] group-hover/task:invisible group-focus-visible/task:invisible group-has-[:focus-visible]/task:invisible"
             >
               <Columns2 className="h-3 w-3" aria-hidden="true" />
               <span>{splitGroup.displayNumber}</span>
@@ -1822,7 +1804,7 @@ function RuntimeTaskRow({
           <span
             data-testid={`runtime-local-task-trailing-${task.taskId}`}
             className={cn(
-              'relative ml-1 flex min-w-[30px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[68px]',
+              'relative ml-1 flex min-w-[30px] shrink-0 items-center justify-end',
               priorityLayout ? 'self-stretch' : 'h-[30px]'
             )}
           >
@@ -1958,8 +1940,9 @@ function RuntimeTaskRow({
             </span>
             <span
               data-testid={`runtime-local-task-hover-actions-${task.taskId}`}
+              data-sidebar-title-actions
               className={cn(
-                'pointer-events-none absolute right-0 top-1/2 z-[70] flex -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100',
+                'pointer-events-none absolute right-0 top-1/2 z-[70] flex -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 group-focus-visible/task:pointer-events-auto group-focus-visible/task:opacity-100 group-has-[:focus-visible]/task:pointer-events-auto group-has-[:focus-visible]/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100',
                 queued ? 'w-[96px]' : 'w-[72px]'
               )}
             >
@@ -2162,6 +2145,7 @@ function RuntimeTaskRow({
             disabled: !workspace.available || !onRenameRuntimeTask,
             onSelect: () => setRenameOpen(true),
           },
+          moveTaskMenu,
           ...conversationMenuActions.map(action => ({
             label: action.title,
             testId: `runtime-local-task-menu-extension-${action.id}-${task.taskId}`,
@@ -2307,7 +2291,7 @@ function LocalHarnessSessionRow({
   const useArchiveTestId = canArchive && session.isPrimary
 
   return (
-    <div className="group/harness-session relative flex items-center">
+    <div data-sidebar-task-row className="group/harness-session relative flex items-center">
       <button
         type="button"
         data-testid={`local-harness-session-row-${session.sessionId}`}
@@ -2322,7 +2306,10 @@ function LocalHarnessSessionRow({
         )}
       >
         <SquareTerminal className="h-4 w-4 shrink-0" aria-hidden="true" />
-        <span className="truncate">{session.title}</span>
+        <SidebarTaskTitle
+          text={session.title}
+          testId={`local-harness-session-title-${session.sessionId}`}
+        />
       </button>
       {onClose && (canArchive || canClose) && (
         <Tooltip
@@ -2336,6 +2323,7 @@ function LocalHarnessSessionRow({
         >
           <button
             type="button"
+            data-sidebar-title-actions
             data-testid={
               useArchiveTestId
                 ? `archive-local-harness-session-${session.sessionId}`
@@ -2350,7 +2338,7 @@ function LocalHarnessSessionRow({
                 ? t('workbench.archive_harness', '归档编码会话')
                 : t('workbench.close_harness', '关闭编码工具')
             }
-            className="flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 focus-visible:opacity-100"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 group-has-[:focus-visible]/harness-session:opacity-100 focus-visible:opacity-100"
           >
             {canArchive ? <Archive className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
           </button>
@@ -4141,21 +4129,14 @@ export function DesktopSidebar({
             />
           </nav>
 
-          <div
-            ref={sidebarWorklistsScrollRef}
-            data-testid="sidebar-worklists-scroll"
-            data-scrolled={sidebarScrolled}
+          <SidebarWorklistsScroll
+            viewportRef={sidebarWorklistsScrollRef}
+            scrolled={sidebarScrolled}
+            locked={paneDragOutsideSidebar}
             onScroll={event => {
               if (preserveLockedScrollPosition(event)) return
               setSidebarScrolled(event.currentTarget.scrollTop > 0)
             }}
-            className={cn(
-              'relative mb-2 mt-0.5 min-h-0 flex-1 border-t border-transparent pb-3 [overflow-anchor:none] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_16px),transparent_100%)]',
-              paneDragOutsideSidebar ? 'overflow-y-hidden' : 'overflow-y-auto',
-              sidebarScrolled &&
-                'scrollbar-soft border-border [mask-image:linear-gradient(to_bottom,transparent_0,black_12px,black_calc(100%_-_16px),transparent_100%)]',
-              !sidebarScrolled && 'scrollbar-none'
-            )}
           >
             <nav className="mb-4 space-y-0.5">
               {onOpenMyWork ? (
@@ -4897,7 +4878,7 @@ export function DesktopSidebar({
                 </section>
               </>
             )}
-          </div>
+          </SidebarWorklistsScroll>
 
           {installedReleaseNotes && (
             <SidebarReleaseNotesCard
