@@ -74,7 +74,7 @@ export const materialTimelineApi = {
     artifactId: string
   ): Promise<{ open_url: string; artifact_id?: string }> {
     return apiClient.get(
-      `/aigc-video/material-video/opencut/open/${encodeURIComponent(sessionId)}?artifact_id=${encodeURIComponent(artifactId)}`
+      `/aigc-video/material-video/opencut/open/${encodeURIComponent(sessionId)}${artifactId ? `?artifact_id=${encodeURIComponent(artifactId)}` : ''}`
     )
   },
 }

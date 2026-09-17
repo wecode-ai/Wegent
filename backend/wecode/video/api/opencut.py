@@ -122,7 +122,11 @@ def _timeline_tracks(timeline: dict[str, Any]) -> dict[str, list[dict[str, Any]]
 
 
 def _callback_base_url() -> str:
-    value = settings.FRONTEND_URL.strip().rstrip("/")
+    value = (
+        (video_media_settings.OPENCUT_CALLBACK_URL or settings.FRONTEND_URL)
+        .strip()
+        .rstrip("/")
+    )
     parsed = urlsplit(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise HTTPException(
@@ -491,6 +495,11 @@ def build_storycut_bundle(
         for index, item in enumerate(items, 1):
             source = _source(item)
             if not source:
+                if source_kind == "video":
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Timeline image or video is missing its source URL",
+                    )
                 continue
             media_index += 1
             visual_kind = str(item.get("kind") or source_kind)
@@ -1014,6 +1023,11 @@ async def save_opencut_timeline(
     )
     converted_tracks = storycut_payload_to_tracks(payload)
     validate_converted_media_tracks(payload, converted_tracks)
+    if _timeline_tracks(original)["video"] and not converted_tracks.get("video"):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot replace a video timeline with an empty visual track",
+        )
     tracks = merge_tracks_with_original(converted_tracks, _timeline_tracks(original))
     saved = await _update_timeline(
         session_id=session_id,

@@ -38,10 +38,14 @@ from wecode.video.api.client import (
 from wecode.video.config.media import video_media_settings
 from wecode.video.services.media_platform import fetch_playback, sign_urls, upload_media
 
+from .multi_style import router as multi_style_router
 from .opencut import router as opencut_router
+from .opencut_voiceover import router as opencut_voiceover_router
 
 router = APIRouter()
 router.include_router(opencut_router)
+router.include_router(opencut_voiceover_router)
+router.include_router(multi_style_router)
 MEDIA_TIMEOUT_SECONDS = 120.0
 MEDIA_CHUNK_SIZE = 1024 * 1024
 UPSTREAM_TIMEOUT_SECONDS = 120.0
