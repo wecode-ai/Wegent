@@ -9,14 +9,15 @@
 //! from the process environment and a dotenv file. The target reads the same
 //! names with dotenv-compatible parsing, preferring the process environment.
 //! The dotenv file defaults to `config/example.env` and is redirected with
-//! `WEGENT_ENV_FILE`.
+//! `WEGENT_BACKEND_RS_ENV_FILE`.
 //!
-//! One deliberate difference: the reference also exposes `init_env`, which
-//! exports every dotenv entry into the process environment with
-//! `env::set_var`. That call is `unsafe` in edition 2024 and this crate
-//! forbids `unsafe`, so it is not ported. Every value this crate owns is read
-//! through [`env_or_dotenv`], which performs the dotenv lookup itself, so the
-//! observable configuration is unchanged.
+//! [`init_env`] ports the reference's `init_env`: it exports the dotenv entries
+//! the process environment does not already define, so modules that read
+//! `env::var` directly observe the same configuration as [`env_or_dotenv`].
+//! `env::set_var` is `unsafe` in edition 2024 because it races with concurrent
+//! environment reads in other threads, so the crate level lint is `deny` and
+//! [`init_env`] carries the single `allow`. The caller must invoke it before
+//! the process spawns any thread.
 
 use std::env;
 use std::sync::OnceLock;
@@ -82,8 +83,12 @@ const DEFAULT_ENV_FILE: &str = "config/example.env";
 /// The dotenv path chosen at startup by [`init_env_file`]; unset until then.
 static ENV_FILE: OnceLock<String> = OnceLock::new();
 
-/// Resolves the dotenv path: `--env-file`, then `WEGENT_ENV_FILE`, then the
-/// default.
+/// Environment variable that redirects the dotenv file. Crate-owned name for
+/// the reference's `WEGENT_ENV_FILE`.
+const ENV_FILE_VAR: &str = "WEGENT_BACKEND_RS_ENV_FILE";
+
+/// Resolves the dotenv path: `--env-file`, then `WEGENT_BACKEND_RS_ENV_FILE`,
+/// then the default.
 ///
 /// A blank value is treated as absent, so an empty argument or an
 /// exported-but-empty variable does not silently disable the next source.
@@ -117,7 +122,7 @@ fn env_file_arg(mut args: impl Iterator<Item = String>) -> Option<String> {
 pub fn init_env_file() {
     let _ = ENV_FILE.set(resolve_env_file(
         env_file_arg(env::args().skip(1)),
-        env::var("WEGENT_ENV_FILE").ok(),
+        env::var(ENV_FILE_VAR).ok(),
     ));
 }
 
@@ -127,27 +132,76 @@ fn dotenv_path() -> String {
     ENV_FILE
         .get()
         .cloned()
-        .unwrap_or_else(|| resolve_env_file(None, env::var("WEGENT_ENV_FILE").ok()))
+        .unwrap_or_else(|| resolve_env_file(None, env::var(ENV_FILE_VAR).ok()))
+}
+
+/// Parses a dotenv file into its `(name, value)` entries, dropping blank
+/// lines, comments, lines without `=`, and entries with a blank value.
+fn dotenv_entries(content: &str) -> Vec<(String, String)> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (key, raw_value) = line.split_once('=')?;
+            let value = dotenv_value(raw_value);
+            if value.is_empty() {
+                return None;
+            }
+            Some((key.trim().to_owned(), value))
+        })
+        .collect()
 }
 
 /// Looks up one key in a dotenv file's contents.
 fn read_dotenv(content: &str, name: &str) -> Option<String> {
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        if key.trim() == name {
-            let value = dotenv_value(raw_value);
-            if !value.is_empty() {
-                return Some(value);
-            }
-        }
+    dotenv_entries(content)
+        .into_iter()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value)
+}
+
+/// Selects the dotenv entries to export into the process environment: every
+/// entry whose name the process environment does not already define.
+fn missing_dotenv_entries(content: &str, is_set: impl Fn(&str) -> bool) -> Vec<(String, String)> {
+    dotenv_entries(content)
+        .into_iter()
+        .filter(|(name, _)| !is_set(name))
+        .collect()
+}
+
+/// Reports whether the process environment defines a non-blank value, matching
+/// the precedence [`env_or_dotenv`] applies.
+fn is_process_env_set(name: &str) -> bool {
+    env::var(name).is_ok_and(|value| !value.trim().is_empty())
+}
+
+/// Exports the dotenv entries the process environment does not already define,
+/// mirroring the reference `init_env`.
+///
+/// Resolves the dotenv path first, so a caller that only needs exported values
+/// does not have to know about [`init_env_file`]. The process environment wins,
+/// so an injected configuration such as a container's `REDIS_URL` is never
+/// overwritten by the dotenv file. A blank environment value counts as absent,
+/// matching [`env_or_dotenv`].
+///
+/// # Safety contract
+///
+/// `env::set_var` is `unsafe` in edition 2024 because it races with concurrent
+/// environment reads; call this before the process spawns any thread — in
+/// particular before a Tokio runtime is built.
+#[allow(unsafe_code)]
+pub fn init_env() {
+    init_env_file();
+    let Ok(content) = std::fs::read_to_string(dotenv_path()) else {
+        return;
+    };
+    for (name, value) in missing_dotenv_entries(&content, is_process_env_set) {
+        // SAFETY: single-threaded by the caller contract documented above.
+        unsafe { env::set_var(name, value) };
     }
-    None
 }
 
 /// Reads one variable from the process environment, falling back to the
@@ -575,6 +629,39 @@ SPACED  =  padded
         // An empty value is not a value, matching `env_or_dotenv`.
         assert_eq!(read_dotenv(content, "EMPTY"), None);
         assert_eq!(read_dotenv(content, "ABSENT"), None);
+    }
+
+    // `init_env` itself mutates the process environment, and the test harness
+    // runs tests on multiple threads, so its selection logic is covered here
+    // instead; the launcher exercises the export end to end.
+    #[test]
+    fn dotenv_export_skips_variables_the_process_already_defines() {
+        let content = "\
+REDIS_URL=redis://127.0.0.1:6379/0
+SECRET_KEY='from-file'
+EMPTY=
+";
+        assert_eq!(
+            missing_dotenv_entries(content, |_| false),
+            vec![
+                (
+                    "REDIS_URL".to_owned(),
+                    "redis://127.0.0.1:6379/0".to_owned()
+                ),
+                ("SECRET_KEY".to_owned(), "from-file".to_owned()),
+            ]
+        );
+        // A defined variable wins over the file, and blank entries never export.
+        let process_env = |name: &str| name == "REDIS_URL";
+        assert_eq!(
+            missing_dotenv_entries(content, process_env),
+            vec![("SECRET_KEY".to_owned(), "from-file".to_owned())]
+        );
+    }
+
+    #[test]
+    fn env_file_variable_name_matches_the_launcher_contract() {
+        assert_eq!(ENV_FILE_VAR, "WEGENT_BACKEND_RS_ENV_FILE");
     }
 
     #[test]
