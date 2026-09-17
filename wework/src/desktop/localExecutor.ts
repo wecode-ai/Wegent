@@ -5,7 +5,7 @@ import {
   requestDshExecutor,
   subscribeDshExecutorEvents,
 } from '@/api/dsh/executorTransport'
-import { resetSystemProxyStateForTests, resolveLocalCodexProxyUrl } from './systemProxy'
+import { resolveLocalCodexProxyUrl } from './systemProxy'
 
 export type UnlistenFn = () => void
 
@@ -312,7 +312,6 @@ export function resetLocalExecutorStateForTests(): void {
   reconciledBundledPluginMarketplaceKey = ''
   reconcilingBundledPluginMarketplaceKey = ''
   reconcileBundledPluginMarketplacePromise = null
-  resetSystemProxyStateForTests()
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {

@@ -22,11 +22,9 @@ type VirtualizerOptions<
   "getScrollElement" | "initialOffset" | "initialRect"
 > & {
   bottomOrigin: boolean;
-  bottomOriginAnchorItemKeys?: ReadonlySet<string | number | bigint>;
   initialContentHeightPx: number;
   initialDistanceFromBottomPx: number;
   positionKey?: string | number | null;
-  preserveBottomOriginItemResizeAnchor?: boolean;
   scrollElementRef?: RefObject<TScrollElement | null>;
   shouldAdjustScrollPositionOnItemSizeChange?: ReactVirtualizer<
     TScrollElement,
@@ -39,11 +37,9 @@ export function useBottomOriginVirtualizer<
   TItemElement extends Element,
 >({
   bottomOrigin,
-  bottomOriginAnchorItemKeys,
   initialContentHeightPx,
   initialDistanceFromBottomPx,
   positionKey,
-  preserveBottomOriginItemResizeAnchor = false,
   scrollElementRef,
   shouldAdjustScrollPositionOnItemSizeChange,
   ...options
@@ -129,32 +125,7 @@ export function useBottomOriginVirtualizer<
   );
   // TanStack exposes this policy as a mutable instance callback rather than an option.
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = bottomOrigin
-    ? (item, delta, instance) => {
-        const element = instance.scrollElement;
-        if (
-          !preserveBottomOriginItemResizeAnchor ||
-          !element ||
-          element.scrollTop >= -0.5 ||
-          delta <= 0 ||
-          !bottomOriginAnchorItemKeys?.has(item.key)
-        ) {
-          return false;
-        }
-
-        const offset = getVirtualizerOffset(instance, element);
-        if (item.start >= offset) return false;
-
-        const itemElement = instance.elementsCache.get(item.key);
-        const listElement = itemElement?.parentElement;
-        if (listElement instanceof HTMLElement) {
-          const currentHeight =
-            Number.parseFloat(listElement.style.height) ||
-            listElement.getBoundingClientRect().height;
-          listElement.style.height = `${Math.max(0, currentHeight + delta)}px`;
-        }
-        element.scrollTop -= delta;
-        return false;
-      }
+    ? () => false // ScrollableMessageArea owns anchoring after the measured layout commits.
     : shouldAdjustScrollPositionOnItemSizeChange;
 
   const normalizedPositionKeyRef = useRef<

@@ -64,9 +64,6 @@ export function createUserViewportAnchor(
       (textPosition?.rect.top ?? visibleAnchor.getBoundingClientRect().top) - scrollerRect.top,
     textOffset: textPosition?.offset ?? null,
     scrollTopPx: scroller.scrollTop,
-    maximumOffsetPx: getMaximumScrollOffset(scroller),
-    clientWidthPx: scroller.clientWidth,
-    clientHeightPx: scroller.clientHeight,
   }
 }
 

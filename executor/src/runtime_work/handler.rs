@@ -30,6 +30,7 @@ use crate::{
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
+    attachments::device_runtime_attachment_task_dir,
     config::device::ConnectionConfig,
     hooks::{
         codex::{post_tool_use_from_notification, CodexHookContext},

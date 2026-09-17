@@ -1336,6 +1336,9 @@ Configuration File:
       WEGENT_BACKEND_MODE  - Backend mode: hybrid (default) or python
       WEGENT_BACKEND_RS_DIR - Rust Backend directory used by hybrid mode (default: backend-rs)
       WEGENT_PYTHON_UPSTREAM_PORT - Hybrid Python port (default: 8004)
+      WEGENT_HYBRID_BACKEND_WAIT_TIMEOUT - Extra seconds the Backend health check keeps
+                            waiting while the hybrid startup (Rust gateway build, Python
+                            upstream) is still running (default: 180)
       EXECUTOR_IMAGE        - Docker image for executor
       WEGENT_SOCKET_URL     - WebSocket URL (auto-computed: http://LOCAL_IP:BACKEND_PORT)
       TASK_API_DOMAIN       - URL for executor_manager to call backend (auto-computed)
@@ -1644,6 +1647,56 @@ force_stop_hybrid_backend() {
     fi
 
     rm -f "$state_file"
+}
+
+# Read one field from the hybrid Backend state file written by
+# backend-rs/scripts/start-hybrid-backend.sh. Prints an empty value when the
+# file or the field is absent.
+read_hybrid_backend_state_field() {
+    local key=$1
+    local state_file="$PID_DIR/backend-hybrid.state"
+
+    if [ ! -f "$state_file" ]; then
+        return 0
+    fi
+
+    awk -F= -v key="$key" '$1 == key { print $2; exit }' "$state_file"
+}
+
+# Print what the hybrid Backend launcher is currently doing, for example
+# "compiling the Rust gateway (cargo build --release)".
+# The launcher is the gate: while it runs, the Backend is still starting up,
+# even in the short gap between its stages. Returns 1 when it is not running,
+# which covers a Backend that is already serving traffic, a launcher that has
+# exited, and python mode, where no state file is written.
+hybrid_backend_startup_stage() {
+    local parent_pid build_pid python_pid rust_pid
+
+    parent_pid=$(read_hybrid_backend_state_field parent)
+    if [ -z "$parent_pid" ] || ! kill -0 "$parent_pid" 2>/dev/null; then
+        return 1
+    fi
+
+    build_pid=$(read_hybrid_backend_state_field build)
+    if [ -n "$build_pid" ] && kill -0 "$build_pid" 2>/dev/null; then
+        echo "compiling the Rust gateway (cargo build --release)"
+        return 0
+    fi
+
+    python_pid=$(read_hybrid_backend_state_field python)
+    if [ -n "$python_pid" ] && kill -0 "$python_pid" 2>/dev/null; then
+        echo "starting the Python Backend upstream"
+        return 0
+    fi
+
+    rust_pid=$(read_hybrid_backend_state_field rust)
+    if [ -n "$rust_pid" ] && kill -0 "$rust_pid" 2>/dev/null; then
+        echo "starting the Rust gateway"
+        return 0
+    fi
+
+    echo "starting the Backend services"
+    return 0
 }
 
 # Check if port is in use
@@ -2063,44 +2116,113 @@ start_service() {
     cd "$SCRIPT_DIR"
 }
 
-# Health check for a service
+# Return 0 when the service answers on its port, printing how it answered.
+# A service that only accepts connections is reported as "responding" once the
+# port has been probed for a while, for services that lag behind their socket.
+probe_service_readiness() {
+    local port=$1
+    local health_path=$2
+    local attempts=$3
+
+    # Try health endpoint first if provided
+    if [ -n "$health_path" ]; then
+        if curl -s --connect-timeout 2 "http://localhost:$port$health_path" >/dev/null 2>&1; then
+            echo "healthy"
+            return 0
+        fi
+    fi
+
+    # Fallback: try root endpoint or just check if port is responding
+    if curl -s --connect-timeout 2 "http://localhost:$port/" >/dev/null 2>&1; then
+        echo "healthy"
+        return 0
+    fi
+
+    if [ "$attempts" -ge 5 ] && nc -z localhost "$port" 2>/dev/null; then
+        echo "responding"
+        return 0
+    fi
+
+    return 1
+}
+
+# Health check for a service.
+# The hybrid Backend compiles its Rust gateway with `cargo build --release`, and
+# then waits for the Python upstream, before it can serve traffic on the public
+# port. The plain retry budget would report a failure while that startup is
+# still running, so the Backend check keeps waiting while the hybrid launcher
+# runs, up to WEGENT_HYBRID_BACKEND_WAIT_TIMEOUT seconds.
 check_service_health() {
     local name=$1
     local port=$2
     local health_path=$3
     local max_retries=15
     local retry_interval=2
+    # Extra seconds granted while the hybrid Backend launcher is still starting up.
+    local startup_wait_timeout=0
+
+    if [ "$name" = "backend" ]; then
+        startup_wait_timeout=${WEGENT_HYBRID_BACKEND_WAIT_TIMEOUT:-180}
+    fi
+
+    local startup_max_retries=$((startup_wait_timeout / retry_interval))
 
     echo -n "  Checking $name..."
 
-    for ((i=1; i<=max_retries; i++)); do
-        # Try health endpoint first if provided
-        if [ -n "$health_path" ]; then
-            if curl -s --connect-timeout 2 "http://localhost:$port$health_path" >/dev/null 2>&1; then
-                echo -e " ${GREEN}✓${NC} healthy (port $port)"
-                return 0
-            fi
-        fi
+    local attempt=0
+    local base_retries=0
+    local startup_retries=0
+    local reported_stage=""
+    local result_prefix=" "
+    local readiness=""
+    local stage=""
 
-        # Fallback: try root endpoint or just check if port is responding
-        if curl -s --connect-timeout 2 "http://localhost:$port/" >/dev/null 2>&1; then
-            echo -e " ${GREEN}✓${NC} healthy (port $port)"
+    while true; do
+        attempt=$((attempt + 1))
+
+        if readiness=$(probe_service_readiness "$port" "$health_path" "$attempt"); then
+            echo -e "${result_prefix}${GREEN}✓${NC} $readiness (port $port)"
             return 0
         fi
 
-        # Also try connecting to port directly (for services that may not respond to HTTP immediately)
-        if nc -z localhost $port 2>/dev/null; then
-            # Port is open, give it a bit more time for HTTP
-            if [ $i -ge 5 ]; then
-                echo -e " ${GREEN}✓${NC} responding (port $port)"
-                return 0
+        # Wait on the hybrid Backend launcher before spending the retry budget,
+        # so a long Rust build is reported instead of retried silently.
+        if [ "$startup_retries" -lt "$startup_max_retries" ] && \
+            stage=$(hybrid_backend_startup_stage); then
+            if [ -z "$reported_stage" ]; then
+                echo ""
+                result_prefix="    "
             fi
+            if [ "$stage" != "$reported_stage" ]; then
+                reported_stage="$stage"
+                echo -e "${result_prefix}${YELLOW}backend-rs is ${stage}, waiting up to ${startup_wait_timeout}s...${NC}"
+            fi
+            startup_retries=$((startup_retries + 1))
+            # Report progress every 10s, plus the final iteration, so a long
+            # Rust build stays visible without flooding the terminal.
+            if [ $((startup_retries % 5)) -eq 0 ] || [ "$startup_retries" -eq "$startup_max_retries" ]; then
+                echo -e "${result_prefix}Waiting... ($((startup_retries * retry_interval))s/${startup_wait_timeout}s)"
+            fi
+            sleep "$retry_interval"
+            continue
         fi
 
-        sleep $retry_interval
+        # The retry budget is counted separately from the startup wait, so the
+        # Backend keeps its normal window once the launcher stops reporting.
+        if [ "$base_retries" -lt "$max_retries" ]; then
+            base_retries=$((base_retries + 1))
+            sleep "$retry_interval"
+            continue
+        fi
+
+        break
     done
 
-    echo -e " ${RED}✗${NC} failed (port $port not responding)"
+    echo -e "${result_prefix}${RED}✗${NC} failed (port $port not responding)"
+    if [ -n "$reported_stage" ]; then
+        echo -e "    ${YELLOW}The hybrid Backend launcher was still ${reported_stage} when the wait expired.${NC}"
+        echo -e "    ${YELLOW}Increase WEGENT_HYBRID_BACKEND_WAIT_TIMEOUT to wait longer.${NC}"
+    fi
     echo -e "    ${YELLOW}Check log: $PID_DIR/${name}.log${NC}"
     return 1
 }

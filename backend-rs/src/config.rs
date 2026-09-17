@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 //! Application configuration loaded from the source-compatible environment.
 //!
 //! Ported from the reference implementation's `src/config.rs`. The source reads
@@ -5,14 +9,15 @@
 //! from the process environment and a dotenv file. The target reads the same
 //! names with dotenv-compatible parsing, preferring the process environment.
 //! The dotenv file defaults to `config/example.env` and is redirected with
-//! `WEGENT_ENV_FILE`.
+//! `WEGENT_BACKEND_RS_ENV_FILE`.
 //!
-//! One deliberate difference: the reference also exposes `init_env`, which
-//! exports every dotenv entry into the process environment with
-//! `env::set_var`. That call is `unsafe` in edition 2024 and this crate
-//! forbids `unsafe`, so it is not ported. Every value this crate owns is read
-//! through [`env_or_dotenv`], which performs the dotenv lookup itself, so the
-//! observable configuration is unchanged.
+//! [`init_env`] ports the reference's `init_env`: it exports the dotenv entries
+//! the process environment does not already define, so modules that read
+//! `env::var` directly observe the same configuration as [`env_or_dotenv`].
+//! `env::set_var` is `unsafe` in edition 2024 because it races with concurrent
+//! environment reads in other threads, so the crate level lint is `deny` and
+//! [`init_env`] carries the single `allow`. The caller must invoke it before
+//! the process spawns any thread.
 
 use std::env;
 use std::sync::OnceLock;
@@ -78,8 +83,12 @@ const DEFAULT_ENV_FILE: &str = "config/example.env";
 /// The dotenv path chosen at startup by [`init_env_file`]; unset until then.
 static ENV_FILE: OnceLock<String> = OnceLock::new();
 
-/// Resolves the dotenv path: `--env-file`, then `WEGENT_ENV_FILE`, then the
-/// default.
+/// Environment variable that redirects the dotenv file. Crate-owned name for
+/// the reference's `WEGENT_ENV_FILE`.
+const ENV_FILE_VAR: &str = "WEGENT_BACKEND_RS_ENV_FILE";
+
+/// Resolves the dotenv path: `--env-file`, then `WEGENT_BACKEND_RS_ENV_FILE`,
+/// then the default.
 ///
 /// A blank value is treated as absent, so an empty argument or an
 /// exported-but-empty variable does not silently disable the next source.
@@ -113,7 +122,7 @@ fn env_file_arg(mut args: impl Iterator<Item = String>) -> Option<String> {
 pub fn init_env_file() {
     let _ = ENV_FILE.set(resolve_env_file(
         env_file_arg(env::args().skip(1)),
-        env::var("WEGENT_ENV_FILE").ok(),
+        env::var(ENV_FILE_VAR).ok(),
     ));
 }
 
@@ -123,27 +132,76 @@ fn dotenv_path() -> String {
     ENV_FILE
         .get()
         .cloned()
-        .unwrap_or_else(|| resolve_env_file(None, env::var("WEGENT_ENV_FILE").ok()))
+        .unwrap_or_else(|| resolve_env_file(None, env::var(ENV_FILE_VAR).ok()))
+}
+
+/// Parses a dotenv file into its `(name, value)` entries, dropping blank
+/// lines, comments, lines without `=`, and entries with a blank value.
+fn dotenv_entries(content: &str) -> Vec<(String, String)> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (key, raw_value) = line.split_once('=')?;
+            let value = dotenv_value(raw_value);
+            if value.is_empty() {
+                return None;
+            }
+            Some((key.trim().to_owned(), value))
+        })
+        .collect()
 }
 
 /// Looks up one key in a dotenv file's contents.
 fn read_dotenv(content: &str, name: &str) -> Option<String> {
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        if key.trim() == name {
-            let value = dotenv_value(raw_value);
-            if !value.is_empty() {
-                return Some(value);
-            }
-        }
+    dotenv_entries(content)
+        .into_iter()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value)
+}
+
+/// Selects the dotenv entries to export into the process environment: every
+/// entry whose name the process environment does not already define.
+fn missing_dotenv_entries(content: &str, is_set: impl Fn(&str) -> bool) -> Vec<(String, String)> {
+    dotenv_entries(content)
+        .into_iter()
+        .filter(|(name, _)| !is_set(name))
+        .collect()
+}
+
+/// Reports whether the process environment defines a non-blank value, matching
+/// the precedence [`env_or_dotenv`] applies.
+fn is_process_env_set(name: &str) -> bool {
+    env::var(name).is_ok_and(|value| !value.trim().is_empty())
+}
+
+/// Exports the dotenv entries the process environment does not already define,
+/// mirroring the reference `init_env`.
+///
+/// Resolves the dotenv path first, so a caller that only needs exported values
+/// does not have to know about [`init_env_file`]. The process environment wins,
+/// so an injected configuration such as a container's `REDIS_URL` is never
+/// overwritten by the dotenv file. A blank environment value counts as absent,
+/// matching [`env_or_dotenv`].
+///
+/// # Safety contract
+///
+/// `env::set_var` is `unsafe` in edition 2024 because it races with concurrent
+/// environment reads; call this before the process spawns any thread — in
+/// particular before a Tokio runtime is built.
+#[allow(unsafe_code)]
+pub fn init_env() {
+    init_env_file();
+    let Ok(content) = std::fs::read_to_string(dotenv_path()) else {
+        return;
+    };
+    for (name, value) in missing_dotenv_entries(&content, is_process_env_set) {
+        // SAFETY: single-threaded by the caller contract documented above.
+        unsafe { env::set_var(name, value) };
     }
-    None
 }
 
 /// Reads one variable from the process environment, falling back to the
@@ -226,6 +284,237 @@ impl DatabaseConfig {
             Some((head, query)) => format!("{head}?{query}&ssl-mode=disabled"),
             None => format!("{base}?ssl-mode=disabled"),
         }
+    }
+}
+
+/// Redis configuration (`settings.REDIS_URL`, `redis://:secret@host:port/db`).
+#[derive(Debug, Clone)]
+pub struct RedisConfig {
+    /// Hostname from the URL authority.
+    pub host: String,
+    /// Port from the URL authority (default 6379).
+    pub port: u16,
+    /// Database index (default 0).
+    pub db: i64,
+    /// Password when the URL carries one.
+    #[allow(dead_code)]
+    pub password: Option<String>,
+}
+
+/// `ACCESS_TOKEN_EXPIRE_MINUTES` default (`app.core.config`: 7 days).
+pub(crate) const ACCESS_TOKEN_EXPIRE_MINUTES_DEFAULT: i64 = 7 * 24 * 60;
+
+/// Read `ACCESS_TOKEN_EXPIRE_MINUTES` (minutes, default 7 days).
+pub(crate) fn env_access_token_expire_minutes() -> i64 {
+    env_or_dotenv("ACCESS_TOKEN_EXPIRE_MINUTES")
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(ACCESS_TOKEN_EXPIRE_MINUTES_DEFAULT)
+}
+
+impl RedisConfig {
+    /// Read and parse the source-compatible `REDIS_URL`
+    /// (`redis://[:password@]host:port[/db]`).
+    pub fn from_env() -> Result<Self, ConfigError> {
+        let url = env_or_dotenv("REDIS_URL").ok_or(ConfigError::Missing("REDIS_URL"))?;
+        Self::parse(&url)
+    }
+
+    pub(crate) fn parse(url: &str) -> Result<Self, ConfigError> {
+        let invalid = || ConfigError::Invalid("REDIS_URL");
+        let rest = url.strip_prefix("redis://").ok_or_else(invalid)?;
+        // Split the optional path (database index) off the authority.
+        let (authority, path) = match rest.split_once('/') {
+            Some((authority, path)) => (authority, path),
+            None => (rest, ""),
+        };
+        let (userinfo, hostport) = match authority.rsplit_once('@') {
+            Some((userinfo, hostport)) => (Some(userinfo), hostport),
+            None => (None, authority),
+        };
+        let password = userinfo
+            .map(|info| match info.split_once(':') {
+                // The username is empty by convention (`redis://:pass@host`).
+                Some((_user, password)) => password.to_string(),
+                None => info.to_string(),
+            })
+            .filter(|password| !password.is_empty());
+        let (host, port) = match hostport.rsplit_once(':') {
+            Some((host, port)) => (host, port.parse::<u16>().map_err(|_| invalid())?),
+            None => (hostport, 6379),
+        };
+        if host.is_empty() {
+            return Err(invalid());
+        }
+        let db = if path.is_empty() {
+            0
+        } else {
+            path.parse::<i64>().map_err(|_| invalid())?
+        };
+        Ok(Self {
+            host: host.to_string(),
+            port,
+            db,
+            password,
+        })
+    }
+}
+
+/// OIDC settings used by `GET /api/auth/oidc/callback`.
+#[derive(Debug, Clone)]
+pub struct OidcConfig {
+    /// Source `OIDC_STATE_SECRET_KEY` (state JWT signing key).
+    pub state_key: String,
+    /// Source `OIDC_STATE_EXPIRE_SECONDS` (default 600).
+    // source-compatible settings field
+    #[allow(dead_code)]
+    pub state_expire_seconds: i64,
+    /// Source `OIDC_DISCOVERY_URL`.
+    pub discovery_url: String,
+    /// Source `OIDC_CLIENT_ID`.
+    // source-compatible settings field
+    #[allow(dead_code)]
+    pub client_id: String,
+    /// Source `OIDC_CLIENT_SECRET`.
+    // source-compatible settings field
+    #[allow(dead_code)]
+    pub client_secret: String,
+    /// Source `OIDC_REDIRECT_URI`.
+    // source-compatible settings field
+    #[allow(dead_code)]
+    pub redirect_uri: String,
+    /// Source `FRONTEND_URL`.
+    pub frontend_url: String,
+}
+
+impl Default for OidcConfig {
+    fn default() -> Self {
+        Self {
+            state_key: "test".to_string(),
+            state_expire_seconds: 600,
+            discovery_url: "http://localhost:5556/.well-known/openid-configuration".to_string(),
+            client_id: "wegent".to_string(),
+            client_secret: "test".to_string(),
+            redirect_uri: "http://localhost:8000/api/auth/oidc/callback".to_string(),
+            frontend_url: "http://localhost:3000".to_string(),
+        }
+    }
+}
+
+impl OidcConfig {
+    /// Reads the source-compatible configuration with pydantic's field
+    /// defaults as fallbacks, mirroring `Settings` in `app/core/config.py`.
+    pub fn from_env() -> Self {
+        Self {
+            state_key: env_or_dotenv("OIDC_STATE_SECRET_KEY").unwrap_or_else(|| "test".to_string()),
+            state_expire_seconds: env_or_dotenv("OIDC_STATE_EXPIRE_SECONDS")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(600),
+            discovery_url: env_or_dotenv("OIDC_DISCOVERY_URL").unwrap_or_else(|| {
+                "http://localhost:5556/.well-known/openid-configuration".to_string()
+            }),
+            client_id: env_or_dotenv("OIDC_CLIENT_ID").unwrap_or_else(|| "wegent".to_string()),
+            client_secret: env_or_dotenv("OIDC_CLIENT_SECRET")
+                .unwrap_or_else(|| "test".to_string()),
+            redirect_uri: env_or_dotenv("OIDC_REDIRECT_URI")
+                .unwrap_or_else(|| "http://localhost:8000/api/auth/oidc/callback".to_string()),
+            frontend_url: env_or_dotenv("FRONTEND_URL")
+                .unwrap_or_else(|| "http://localhost:3000".to_string()),
+        }
+    }
+}
+
+/// Internal chat storage configuration.
+#[derive(Debug, Clone)]
+pub struct InternalChatConfig {
+    /// `INTERNAL_SERVICE_TOKEN`; endpoints fail closed when unset.
+    pub internal_service_token: Option<String>,
+    /// `MAX_EXTRACTED_TEXT_LENGTH` (source default 500000).
+    pub max_extracted_text_length: usize,
+    /// `ATTACHMENT_INJECT_MAX_CHARS` (source default 32000).
+    pub attachment_inject_max_chars: usize,
+}
+
+impl InternalChatConfig {
+    /// Read internal chat storage settings from the environment.
+    pub fn from_env() -> Self {
+        let internal_service_token = env_or_dotenv("INTERNAL_SERVICE_TOKEN")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let max_extracted_text_length = env_or_dotenv("MAX_EXTRACTED_TEXT_LENGTH")
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(500_000);
+        let attachment_inject_max_chars = env_or_dotenv("ATTACHMENT_INJECT_MAX_CHARS")
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(32_000);
+        Self {
+            internal_service_token,
+            max_extracted_text_length,
+            attachment_inject_max_chars,
+        }
+    }
+}
+
+/// Default-team configuration (`DEFAULT_TEAM_{MODE}` values, `name#namespace`).
+#[derive(Debug, Clone, Default)]
+pub struct DefaultTeamsConfig {
+    /// Mode -> `name#namespace` raw value, in source iteration order
+    /// (`wework`, `chat`, `knowledge`, `code`, `task`).
+    pub modes: Vec<(&'static str, String)>,
+}
+
+impl DefaultTeamsConfig {
+    /// Read the `DEFAULT_TEAM_*` values in source iteration order.
+    /// Source defaults for unset variables are preserved (`code` stays empty).
+    pub fn from_env() -> Self {
+        let modes = [
+            (
+                "wework",
+                env_or_dotenv("DEFAULT_TEAM_WEWORK")
+                    .unwrap_or_else(|| "wegent-wework#default".to_string()),
+            ),
+            (
+                "chat",
+                env_or_dotenv("DEFAULT_TEAM_CHAT")
+                    .unwrap_or_else(|| "wegent-chat#default".to_string()),
+            ),
+            (
+                "knowledge",
+                env_or_dotenv("DEFAULT_TEAM_KNOWLEDGE")
+                    .unwrap_or_else(|| "wegent-notebook#default".to_string()),
+            ),
+            (
+                "code",
+                env_or_dotenv("DEFAULT_TEAM_CODE").unwrap_or_default(),
+            ),
+            (
+                "task",
+                env_or_dotenv("DEFAULT_TEAM_TASK")
+                    .unwrap_or_else(|| "wegent-wework#default".to_string()),
+            ),
+        ];
+        Self {
+            modes: modes.to_vec(),
+        }
+    }
+
+    /// Parse the non-empty entries into `(mode, name, namespace)` triples
+    /// (`_get_default_teams_config`).
+    pub fn parsed(&self) -> Vec<(&'static str, String, String)> {
+        let mut parsed = Vec::new();
+        for (mode, value) in &self.modes {
+            let value = value.trim();
+            if value.is_empty() {
+                continue;
+            }
+            let (name, namespace) = match value.split_once('#') {
+                Some((name, namespace)) => (name.trim(), namespace.trim().to_string()),
+                None => (value, "default".to_string()),
+            };
+            if !name.is_empty() {
+                parsed.push((*mode, name.to_string(), namespace));
+            }
+        }
+        parsed
     }
 }
 
@@ -340,6 +629,39 @@ SPACED  =  padded
         // An empty value is not a value, matching `env_or_dotenv`.
         assert_eq!(read_dotenv(content, "EMPTY"), None);
         assert_eq!(read_dotenv(content, "ABSENT"), None);
+    }
+
+    // `init_env` itself mutates the process environment, and the test harness
+    // runs tests on multiple threads, so its selection logic is covered here
+    // instead; the launcher exercises the export end to end.
+    #[test]
+    fn dotenv_export_skips_variables_the_process_already_defines() {
+        let content = "\
+REDIS_URL=redis://127.0.0.1:6379/0
+SECRET_KEY='from-file'
+EMPTY=
+";
+        assert_eq!(
+            missing_dotenv_entries(content, |_| false),
+            vec![
+                (
+                    "REDIS_URL".to_owned(),
+                    "redis://127.0.0.1:6379/0".to_owned()
+                ),
+                ("SECRET_KEY".to_owned(), "from-file".to_owned()),
+            ]
+        );
+        // A defined variable wins over the file, and blank entries never export.
+        let process_env = |name: &str| name == "REDIS_URL";
+        assert_eq!(
+            missing_dotenv_entries(content, process_env),
+            vec![("SECRET_KEY".to_owned(), "from-file".to_owned())]
+        );
+    }
+
+    #[test]
+    fn env_file_variable_name_matches_the_launcher_contract() {
+        assert_eq!(ENV_FILE_VAR, "WEGENT_BACKEND_RS_ENV_FILE");
     }
 
     #[test]

@@ -34,9 +34,6 @@ export interface UserViewportAnchor {
   offsetFromScrollerTop: number
   textOffset: number | null
   scrollTopPx: number
-  maximumOffsetPx: number
-  clientWidthPx: number
-  clientHeightPx: number
 }
 
 export interface PendingLayoutScrollPosition {

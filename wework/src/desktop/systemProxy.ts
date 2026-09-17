@@ -7,17 +7,19 @@ export interface EffectiveLocalCodexProxy {
   source: LocalCodexProxySource
 }
 
-let resolvedSystemProxyUrl: string | null = null
+export const CODEX_API_URL = 'https://chatgpt.com/backend-api/codex'
 
 declare global {
   interface Window {
     weworkElectronNetwork?: {
-      resolveCodexProxy(): Promise<string | null>
+      resolveProxy(targetUrl: string): Promise<string | null>
     }
   }
 }
 
-export async function resolveEffectiveLocalCodexProxy(): Promise<EffectiveLocalCodexProxy> {
+export async function resolveEffectiveLocalCodexProxy(
+  targetUrl: string = CODEX_API_URL
+): Promise<EffectiveLocalCodexProxy> {
   const configuredProxy = getLocalProxyUrl().trim()
   if (configuredProxy) {
     return {
@@ -26,23 +28,16 @@ export async function resolveEffectiveLocalCodexProxy(): Promise<EffectiveLocalC
     }
   }
 
-  const systemProxy = await window.weworkElectronNetwork?.resolveCodexProxy()
+  const systemProxy = await window.weworkElectronNetwork?.resolveProxy(targetUrl)
   const proxyUrl = systemProxy?.trim() || null
-  resolvedSystemProxyUrl = proxyUrl
   return {
     proxyUrl,
     source: proxyUrl ? 'system' : 'direct',
   }
 }
 
-export function getEffectiveLocalCodexProxyUrl(): string {
-  return getLocalProxyUrl().trim() || resolvedSystemProxyUrl || ''
-}
-
-export async function resolveLocalCodexProxyUrl(): Promise<string | null> {
-  return (await resolveEffectiveLocalCodexProxy()).proxyUrl
-}
-
-export function resetSystemProxyStateForTests(): void {
-  resolvedSystemProxyUrl = null
+export async function resolveLocalCodexProxyUrl(
+  targetUrl: string = CODEX_API_URL
+): Promise<string | null> {
+  return (await resolveEffectiveLocalCodexProxy(targetUrl)).proxyUrl
 }

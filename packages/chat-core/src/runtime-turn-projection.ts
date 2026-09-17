@@ -1,4 +1,5 @@
 import { processingBlocks, turnStatus } from "./runtime-turn-helpers";
+import { runtimeConversationTurnTimestamp } from "./runtime-turn-merge";
 
 import { parseCodeCommentContexts } from "./code-comment-context";
 import type {
@@ -13,6 +14,8 @@ export function projectRuntimeConversationTurn(
   turn: RuntimeConversationTurn,
 ): WorkbenchMessage[] {
   const messages: WorkbenchMessage[] = [];
+  const runtimeTurnStartedAt =
+    turn.startedAt ?? runtimeConversationTurnTimestamp(turn);
   let assistantItems: RuntimeConversationItem[] = [];
   let followsGuidance = false;
 
@@ -42,6 +45,7 @@ export function projectRuntimeConversationTurn(
       runtimeStatus: isLast ? turn.status : "done",
       subtaskId: turn.id ?? undefined,
       turnId: turn.id ?? undefined,
+      runtimeTurnStartedAt,
       runtimeMessageIndex: turn.runtimeMessageIndex,
       blocks: blocks.length > 0 ? blocks : undefined,
       runtimeDisplayItems: assistantItems.flatMap<RuntimeAssistantDisplayItem>(

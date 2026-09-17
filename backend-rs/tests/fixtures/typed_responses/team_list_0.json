@@ -1,0 +1,32 @@
+{
+  "id": 1,
+  "user_id": 0,
+  "name": "wegent-wework",
+  "displayName": "W",
+  "namespace": "default",
+  "description": null,
+  "bots": [],
+  "workflow": {
+    "mode": "solo"
+  },
+  "bind_mode": [
+    "task"
+  ],
+  "mode_spec": null,
+  "recommended_mode": "chat",
+  "is_mix_team": false,
+  "is_active": true,
+  "created_at": "1970-01-01T00:00:00",
+  "updated_at": "1970-01-01T00:00:00",
+  "agent_type": null,
+  "icon": null,
+  "display_config": {},
+  "quick_phrases": [],
+  "inputPlaceholder": null,
+  "requires_workspace": null,
+  "publication_status": null,
+  "access_source": "native",
+  "default_for_modes": [
+    "wework"
+  ]
+}

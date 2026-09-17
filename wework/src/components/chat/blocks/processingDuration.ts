@@ -1,1 +1,4 @@
-export * from '@wegent/collaboration/conversation/blocks/processingDuration'
+export {
+  getDurationText,
+  formatDuration,
+} from '@wegent/collaboration/conversation/blocks/processingDuration'

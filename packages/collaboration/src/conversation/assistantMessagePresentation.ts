@@ -58,7 +58,8 @@ export function formatCompactDuration(durationMs: number): string {
 export function getStoppedElapsedDuration(
   message: WorkbenchMessage,
 ): string | null {
-  const startedAt = getTurnStartMs(message.createdAt);
+  const startedAt =
+    message.runtimeTurnStartedAt ?? getTurnStartMs(message.createdAt);
   if (startedAt === undefined) return null;
 
   const completedAt = getMessageTimestampMs(message.completedAt);

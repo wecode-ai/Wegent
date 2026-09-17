@@ -23,6 +23,18 @@ RS_TARGET_DIR=${WEGENT_RS_TARGET_DIR:-$BACKEND_RS_DIR/target}
 ROUTES_FILE=${WEGENT_RS_ROUTES_FILE:-$BACKEND_RS_DIR/config/routes.toml}
 PYTHON_UVICORN=${WEGENT_PYTHON_UVICORN:-$BACKEND_DIR/.venv/bin/uvicorn}
 STATE_FILE=${WEGENT_HYBRID_STATE_FILE:-}
+# Dotenv file the Rust gateway reads. An explicit value is respected as given;
+# otherwise prefer the Backend's real configuration, falling back to the
+# checked-in example. The path must be absolute because the gateway resolves a
+# relative path against its own working directory.
+RS_ENV_FILE=${WEGENT_BACKEND_RS_ENV_FILE:-}
+if [ -z "$RS_ENV_FILE" ]; then
+    if [ -f "$BACKEND_DIR/.env" ]; then
+        RS_ENV_FILE="$BACKEND_DIR/.env"
+    else
+        RS_ENV_FILE="$BACKEND_DIR/.env.example"
+    fi
+fi
 # start.sh already exports LOG_DIR for the Backend. Reuse it for Rust so both
 # processes are discoverable in the same service log directory. These may be
 # overridden directly without adding any new .env contract.
@@ -45,6 +57,8 @@ Environment:
   WEGENT_RS_PROJECT_DIR        Rust Backend project directory
   WEGENT_RS_BINARY_NAME        Rust Backend binary name
   WEGENT_RS_TARGET_DIR         Cargo target directory
+  WEGENT_BACKEND_RS_ENV_FILE   Dotenv file for the Rust gateway
+                               (default: the Backend's .env, else .env.example)
 EOF
 }
 
@@ -237,15 +251,17 @@ wait_for_python
 echo "Starting Rust gateway on http://$PUBLIC_HOST:$PUBLIC_PORT"
 echo "Fallback upstream: http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 echo "Route config: $ROUTES_FILE"
+echo "Dotenv file: $RS_ENV_FILE"
 (
     # Rust resolves its default config/example.env relative to the current
-    # working directory. Run it from the Rust project root so
-    # backend-rs/config/example.env is loaded consistently.
+    # working directory. Run it from the Rust project root so the default and
+    # any relative `--env-file` stay consistent.
     cd "$BACKEND_RS_DIR"
     export WEGENT_RS_LISTEN_HOST="$PUBLIC_HOST"
     export WEGENT_RS_LISTEN_PORT="$PUBLIC_PORT"
     export WEGENT_PYTHON_UPSTREAM_URL="http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
     export WEGENT_RS_ROUTES_FILE="$ROUTES_FILE"
+    export WEGENT_BACKEND_RS_ENV_FILE="$RS_ENV_FILE"
     export BREEZE_LOG_DIR="$BREEZE_LOG_DIR"
     export BREEZE_PROFILE_LOG_PATH="$BREEZE_PROFILE_LOG_PATH"
     exec "$RS_BINARY"
