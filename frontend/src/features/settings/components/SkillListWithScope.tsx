@@ -267,7 +267,7 @@ export function SkillListWithScope({
       const shouldReuseAllSkills = scope === 'all' && !selectedGroup
       const [allSkillsData, bindingsData] = await Promise.all([
         fetchUnifiedSkillsList({ scope: 'all' }),
-        showAutoEnabledSkills ? fetchMyDefaultSkillBindings() : Promise.resolve([]),
+        fetchMyDefaultSkillBindings(),
       ])
       const librarySkillsData = shouldReuseAllSkills
         ? allSkillsData
@@ -680,7 +680,7 @@ export function SkillListWithScope({
    * enablement. Other lists must not offer the action at all.
    */
   const canConfigureAutoEnabledSkill = (skill: UnifiedSkill) =>
-    showAutoEnabledSkills && Boolean(skill.availability?.inMyDefault)
+    Boolean(skill.availability?.inMyDefault)
   /**
    * An installed Skill card configures a Skill that was enabled from outside the user's
    * own resources. It only replaces the regular card in lists that manage automatic
@@ -1034,7 +1034,9 @@ export function SkillListWithScope({
                                       <DropdownMenuContent align="end" className="w-44">
                                         {canEditSkillShareScope(skill) && (
                                           <DropdownMenuItem
-                                            onClick={() => setShareScopeSkill(skill)}
+                                            onSelect={() => {
+                                              window.setTimeout(() => setShareScopeSkill(skill), 0)
+                                            }}
                                             data-testid={`edit-skill-share-scope-button-${skill.id}`}
                                           >
                                             <SlidersHorizontal className="mr-2 h-4 w-4" />
@@ -1048,7 +1050,12 @@ export function SkillListWithScope({
                                         {canConfigureAutoEnabledSkill(skill) && (
                                           <>
                                             <DropdownMenuItem
-                                              onClick={() => setConfiguringSkill(skill)}
+                                              onSelect={() => {
+                                                window.setTimeout(
+                                                  () => setConfiguringSkill(skill),
+                                                  0
+                                                )
+                                              }}
                                               data-testid={`configure-personal-skill-${skill.id}`}
                                             >
                                               <Settings2 className="mr-2 h-4 w-4" />
@@ -1301,20 +1308,18 @@ export function SkillListWithScope({
         onSaved={loadSkills}
       />
 
-      {showAutoEnabledSkills && (
-        <AutoEnabledSkillConfigDialog
-          open={Boolean(configuringSkill)}
-          onOpenChange={open => {
-            if (!open) setConfiguringSkill(null)
-          }}
-          skill={configuringSkill}
-          binding={autoEnabledBindings.find(
-            binding => binding.skill_ref.skill_id === configuringSkill?.id
-          )}
-          currentUserId={user?.id ?? null}
-          onBindingChange={upsertAutoEnabledBinding}
-        />
-      )}
+      <AutoEnabledSkillConfigDialog
+        open={Boolean(configuringSkill)}
+        onOpenChange={open => {
+          if (!open) setConfiguringSkill(null)
+        }}
+        skill={configuringSkill}
+        binding={autoEnabledBindings.find(
+          binding => binding.skill_ref.skill_id === configuringSkill?.id
+        )}
+        currentUserId={user?.id ?? null}
+        onBindingChange={upsertAutoEnabledBinding}
+      />
 
       {/* Reference Conflict Dialog */}
       {skillToDelete && (
