@@ -1,9 +1,267 @@
-# Requests matching a rule are handled by Rust. With no rules, every request
-# falls back to the Python backend.
-routes = []
-
-# Future example:
-# [[routes]]
-# methods = ["GET"]
-# path = "/api/example"
-# match_kind = "exact"
+# Requests matching a rule are handled by Rust. With no active rules, every
+# request falls back to the Python backend. The rules below are kept as a
+# reference for the migrated public APIs; uncomment them to cut over.
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge-bases/:knowledge_base_id"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge-bases/config"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge-bases/:knowledge_base_id/document-protection"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/users/me"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/v1/wework-notifications"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge-bases/:knowledge_base_id/artifacts"
+#match_kind = "template"
+#[[routes]]
+#methods = ["POST"]
+#path = "/api/auth/login"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/v1/cloud-projects/:project_id/members"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/users/me/pet"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/v1/cloud-projects"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/v1/cloud-projects/:project_id/chat-agents"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge/documents"
+#match_kind = "exact"
+[[routes]]
+methods = ["GET"]
+path = "/api/quota/*path"
+match_kind = "template"
+[[routes]]
+methods = ["GET"]
+path = "/api/quota"
+match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/wework-transcripts"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/startup"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/tables"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/users/default-teams"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/internal/chat/attachments/:attachment_id/text"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/subscriptions/executions"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/devices"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/users/welcome-config"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/tasks/:task_id/pipeline-stage-info"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/projects"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/v1/cloud-projects/:project_id/automations"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/groups"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/v1/cloud-projects/:project_id/loop-item-pages"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/auth/oidc/callback"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/v1/kinds/skills/:skill_id/download"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/v1/kinds/skills/unified"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/internal/skills/:skill_id/binary"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/users/search"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/subscriptions"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/tasks/lite/personal"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/shutdown/status"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/internal/chat/history/:session_id"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge-bases/all-grouped"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/attachments/:attachment_id"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/attachments/:attachment_id/executor-download"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/attachments/:attachment_id/download"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/attachments/download/shared"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/tasks/:task_id/runtime-check"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/teams"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/users/quick-access"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/teams/:team_id/skills"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/users/quick-launch"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/users/recent-teams"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/attachments/task/:task_id/all"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/v1/loop-items/:item_id/tasks"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/v1/runtime-tasks/cloud-context"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/plugins/marketplace"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/models/unified"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/tasks/:task_id/remote-workspace/status"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/tasks/:task_id/remote-workspace/tree"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/tasks/:task_id/remote-workspace/file"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/plugins/installed"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/tasks/:task_id/skills"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/tasks/:task_id/export/docx"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/tasks/:task_id"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/connector-runtime/tools"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/v1/cloud-projects/:project_id/board-snapshot"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/work-queues/messages/unread-count"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/apps/installed"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge/documents/:document_id/content"
+#match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/resource-library/listings"
+#match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/v1/responses/:response_id"
+#match_kind = "template"
