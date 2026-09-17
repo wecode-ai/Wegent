@@ -19,7 +19,6 @@ import {
   type WeworkInstalledReleaseNotes,
 } from './app-release-notes'
 import { createAppUpdateError, type AppUpdateError } from './app-update-error'
-import { formatAppUpdateVersion } from './app-update-format'
 import {
   APP_UPDATE_AUTO_CHECK_MIN_AGE_MS,
   APP_UPDATE_AUTO_DOWNLOAD_KEY,
@@ -89,6 +88,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   )
   const [error, setError] = useState<AppUpdateError | null>(null)
   const [restartConfirmationOpen, setRestartConfirmationOpen] = useState(false)
+  const [downgradeConfirmationVersion, setDowngradeConfirmationVersion] = useState<string | null>(
+    null
+  )
   const [downloadedUpdateVersion, setDownloadedUpdateVersion] = useState<string | null>(null)
   const updateChannelRef = useRef(updateChannel)
   const autoUpdateEnabledRef = useRef(autoUpdateEnabled)
@@ -152,6 +154,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const startBackgroundDownload = useCallback(
     (update: WeworkUpdateInfo, channel: WeworkUpdateChannel) => {
+      if (update.kind === 'downgrade-to-stable') return
       setError(null)
       setStatus('downloading')
       setDownloadProgress({ downloadedBytes: 0, totalBytes: null, phase: 'preparing' })
@@ -178,6 +181,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const resetDownloadedUpdate = useCallback(() => {
     setDownloadedUpdateVersion(null)
     setRestartConfirmationOpen(false)
+    setDowngradeConfirmationVersion(null)
   }, [])
 
   const runCheck = useCallback(
@@ -199,21 +203,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           setError(null)
         }
 
-        const result = await activeCheck.promise
-        if (!silent && channel === updateChannelRef.current) {
-          setAvailableUpdate(result.update)
-          if (result.error) {
-            setStatus('error')
-            setError(result.error)
-          } else if (result.update) {
-            setStatus('available')
-            setError(null)
-          } else {
-            setStatus('upToDate')
-            setError(null)
-          }
-        }
-        return result.update
+        return (await activeCheck.promise).update
       }
       if (activeCheck) {
         await activeCheck.promise
@@ -232,7 +222,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           }
 
           setAvailableUpdate(update)
-          setDownloadedUpdateVersion(null)
+          resetDownloadedUpdate()
 
           if (update) {
             setStatus('available')
@@ -240,7 +230,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
             if (autoUpdateEnabledRef.current) {
               startBackgroundDownload(update, channel)
             }
-          } else if (!silent) {
+          } else {
             setStatus('upToDate')
             setError(null)
           }
@@ -248,7 +238,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           return { update, error: null }
         } catch (caughtError) {
           const checkError = createAppUpdateError(caughtError, 'check')
-          if (!silent && channel === updateChannelRef.current) {
+          if (channel === updateChannelRef.current) {
+            setAvailableUpdate(null)
+            resetDownloadedUpdate()
             setStatus('error')
             setError(checkError)
           }
@@ -265,7 +257,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [availableUpdate, isUpdateBusy, startBackgroundDownload, updateChannel]
+    [availableUpdate, isUpdateBusy, resetDownloadedUpdate, startBackgroundDownload, updateChannel]
   )
 
   const checkNow = useCallback(() => runCheck({ silent: false }), [runCheck])
@@ -294,7 +286,12 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, [clearSimulationTimer])
 
   const confirmInstallUpdate = useCallback(async () => {
-    if (!availableUpdate || status === 'installing') return
+    if (
+      !availableUpdate ||
+      downloadedUpdateVersion !== availableUpdate.version ||
+      status === 'installing'
+    )
+      return
     setRestartConfirmationOpen(false)
     track('app_update_install_started', {})
 
@@ -343,10 +340,11 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         setStatus('error')
       }
     }
-  }, [appVersion, availableUpdate, status, updateChannel])
+  }, [appVersion, availableUpdate, downloadedUpdateVersion, status, updateChannel])
 
-  const installUpdate = useCallback(async () => {
+  const downloadAndConfirmUpdate = useCallback(async () => {
     if (!availableUpdate || status === 'installing') return
+    setDowngradeConfirmationVersion(null)
     if (downloadedUpdateVersion === availableUpdate.version) {
       setRestartConfirmationOpen(true)
       return
@@ -357,7 +355,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     }
 
     setStatus('downloading')
-    setDownloadProgress({ downloadedBytes: 0, totalBytes: null })
+    setDownloadProgress({ downloadedBytes: 0, totalBytes: null, phase: 'preparing' })
     setError(null)
 
     try {
@@ -372,6 +370,18 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       setError(createAppUpdateError(caughtError, 'download'))
     }
   }, [availableUpdate, downloadedUpdateVersion, downloadUpdate, startSimulatedDownload, status])
+
+  const installUpdate = useCallback(async () => {
+    if (!availableUpdate || status === 'installing') return
+    if (
+      availableUpdate.kind === 'downgrade-to-stable' &&
+      downloadedUpdateVersion !== availableUpdate.version
+    ) {
+      setDowngradeConfirmationVersion(availableUpdate.version)
+      return
+    }
+    await downloadAndConfirmUpdate()
+  }, [availableUpdate, downloadedUpdateVersion, downloadAndConfirmUpdate, status])
 
   const dismissInstalledReleaseNotes = useCallback(() => {
     if (installedReleaseNotes) {
@@ -416,6 +426,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     setAvailableUpdate({
       currentVersion: appVersion ?? __WEWORK_APP_VERSION__,
       version: SIMULATED_UPDATE_VERSION,
+      kind: 'upgrade-stable',
       body: SIMULATED_RELEASE_NOTES,
     })
     setStatus('available')
@@ -462,9 +473,13 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AppUpdateContextValue>(
     () => ({
+      currentVersion: appVersion,
       updateChannel,
       autoUpdateEnabled,
       availableUpdate,
+      isUpdateReady: Boolean(
+        availableUpdate && downloadedUpdateVersion === availableUpdate.version
+      ),
       installedReleaseNotes,
       status,
       downloadProgress,
@@ -476,6 +491,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       setUpdateChannel,
     }),
     [
+      appVersion,
       availableUpdate,
       autoUpdateEnabled,
       checkNow,
@@ -483,6 +499,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       downloadProgress,
       error,
       installUpdate,
+      downloadedUpdateVersion,
       installedReleaseNotes,
       setUpdateChannel,
       setAutoUpdateEnabled,
@@ -495,17 +512,43 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     <AppUpdateContext.Provider value={value}>
       {children}
       <ConfirmDialog
-        open={restartConfirmationOpen}
-        title={t('workbench.app_update_restart_confirm_title', '重启并更新 Wework？')}
-        description={formatAppUpdateVersion(
-          t('workbench.app_update_restart_confirm_description', {
-            defaultValue: '更新到 v{{version}} 需要关闭并重新打开 Wework。请先保存尚未完成的工作。',
-            version: availableUpdate?.version ?? '',
-          }),
-          availableUpdate?.version ?? ''
+        open={Boolean(
+          downgradeConfirmationVersion && downgradeConfirmationVersion === availableUpdate?.version
         )}
+        title={t('workbench.app_update_downgrade_confirm_title', {
+          version: availableUpdate?.version,
+        })}
+        description={t('workbench.app_update_downgrade_confirm_description', {
+          currentVersion: availableUpdate?.currentVersion,
+          version: availableUpdate?.version,
+        })}
         cancelLabel={t('common.cancel', '取消')}
-        confirmLabel={t('workbench.app_update_restart_confirm_action', '更新并重启')}
+        confirmLabel={t('workbench.app_update_downgrade_confirm_action')}
+        confirmTestId="app-update-downgrade-confirm"
+        onClose={() => setDowngradeConfirmationVersion(null)}
+        onConfirm={() => {
+          void downloadAndConfirmUpdate()
+        }}
+      />
+      <ConfirmDialog
+        open={restartConfirmationOpen}
+        title={t(
+          availableUpdate?.kind === 'downgrade-to-stable'
+            ? 'workbench.app_update_restart_return_title'
+            : 'workbench.app_update_restart_confirm_title',
+          { version: availableUpdate?.version }
+        )}
+        description={t(
+          availableUpdate?.kind === 'downgrade-to-stable'
+            ? 'workbench.app_update_restart_return_description'
+            : 'workbench.app_update_restart_confirm_description'
+        )}
+        cancelLabel={t('workbench.app_update_later')}
+        confirmLabel={t(
+          availableUpdate?.kind === 'downgrade-to-stable'
+            ? 'workbench.app_update_restart_return_action'
+            : 'workbench.app_update_restart_confirm_action'
+        )}
         confirmTestId="app-update-restart-confirm"
         onClose={() => setRestartConfirmationOpen(false)}
         onConfirm={() => {

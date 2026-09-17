@@ -55,6 +55,7 @@ export async function createDesktopScenario({ homePath, resultDir, workbenchRead
       .digest('base64'),
   })
 
+  let manifestVersion = targetVersion
   let origin = ''
   const requests = []
   const componentManifest = await componentManifestForTarget(
@@ -71,7 +72,7 @@ export async function createDesktopScenario({ homePath, resultDir, workbenchRead
       response.setHeader('content-type', 'text/yaml')
       response.end(
         [
-          `version: ${targetVersion}`,
+          `version: ${manifestVersion}`,
           'files:',
           `  - url: ${targetZipName}`,
           `    sha512: ${targetInfo.sha512}`,
@@ -139,7 +140,26 @@ export async function createDesktopScenario({ homePath, resultDir, workbenchRead
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      // An older stable release is only selectable when returning from a prerelease.
+      manifestVersion = '0.0.0'
+      const olderRelease = JSON.parse(await control.command('checkForAppUpdate', 'body'))
+      if (currentVersion.includes('-')) {
+        assert.equal(olderRelease.kind, 'downgrade-to-stable')
+        assert.equal(olderRelease.version, manifestVersion)
+      } else {
+        assert.equal(olderRelease, null)
+        await assert.rejects(control.command('downloadPendingAppUpdate', 'body'))
+      }
+      assert.equal(
+        requests.some(request => request.path === '/' + targetZipName),
+        false
+      )
+      manifestVersion = targetVersion
       const update = JSON.parse(await control.command('checkForAppUpdate', 'body'))
+      assert.equal(
+        update.kind,
+        currentVersion.includes('-') ? 'return-to-stable' : 'upgrade-stable'
+      )
       assert.equal(update.version, targetVersion)
       await control.command('downloadPendingAppUpdate', 'body', { timeoutMs: 120_000 })
 

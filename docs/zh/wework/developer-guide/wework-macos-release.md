@@ -267,6 +267,18 @@ pnpm --filter wework ai:verify start --packaged true
 多个 worktree 并行验证时，为每个实例使用独立 `WEWORK_PORT`。隔离会话会使用独立
 的 Executor Home、应用数据目录和单实例锁。
 
+## 客户端更新选择
+
+- 测试版关闭 Beta 更新后，可回到最新正式版，无论目标版本高低。低版本显示
+  “回到正式版”，下载前必须确认降级，自动更新不得触发此下载。
+- 开启 Beta 时，读取同时包含正式版和测试版的 beta 滚动通道，仅接受比当前版本
+  更高的版本。发布流程按 SemVer 保留两类发布中的最高版本。
+- 正式版关闭 Beta 时，只接受更高的正式版。没有更高版本时显示“暂无可用更新”。
+
+Electron 主进程在设置更新通道后显式设置 `allowDowngrade`：仅允许测试版返回
+正式版。主进程将更新类型通过 IPC 返回，关于页、菜单、侧栏和标题栏使用统一文案。
+切换通道会清除旧目标和确认状态；所有安装均需要用户确认重启。
+
 ## GitHub Actions
 
 `.github/workflows/wework-app.yml` 支持稳定版与测试版渠道、可选版本覆盖、三平台

@@ -4,6 +4,9 @@ import type { AppUpdateError, AppUpdateErrorKind, AppUpdateErrorStage } from './
 type Translate = ReturnType<typeof useTranslation>['t']
 
 export function formatAppUpdateErrorSummary(error: AppUpdateError, t: Translate): string {
+  if (error.kind === 'verification') {
+    return t('workbench.app_update_verification_failed')
+  }
   if (error.kind === 'unsupported') {
     return t('workbench.app_update_endpoint_missing', {
       defaultValue: '当前版本暂不支持自动更新检查',
@@ -42,6 +45,9 @@ export function formatAppUpdateErrorSummary(error: AppUpdateError, t: Translate)
 }
 
 export function formatAppUpdateErrorType(kind: AppUpdateErrorKind, t: Translate): string {
+  if (kind === 'verification') {
+    return t('workbench.app_update_error_type_verification')
+  }
   if (kind === 'network') {
     return t('workbench.app_update_error_type_network', {
       defaultValue: '网络连接失败',

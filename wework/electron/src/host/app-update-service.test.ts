@@ -43,6 +43,7 @@ describe('AppUpdateService', () => {
     })
 
     await expect(service(updater).check('stable')).resolves.toEqual({
+      kind: 'upgrade-stable',
       currentVersion: '0.2.6',
       version: '0.2.7',
       body: 'Changes',

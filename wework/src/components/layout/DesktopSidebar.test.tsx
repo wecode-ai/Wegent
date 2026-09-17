@@ -139,6 +139,8 @@ function renderSidebar(
   }
   if (appUpdate) {
     const value: AppUpdateContextValue = {
+      currentVersion: '0.1.0',
+      isUpdateReady: false,
       updateChannel: 'stable',
       autoUpdateEnabled: true,
       availableUpdate: null,
@@ -764,7 +766,11 @@ describe('DesktopSidebar', () => {
   test('shows an exposed update button in the account row when an app update is available', async () => {
     const installUpdate = vi.fn().mockResolvedValue(undefined)
     renderSidebar({}, undefined, {
-      availableUpdate: { currentVersion: '0.1.0', version: '0.1.1' },
+      availableUpdate: {
+        kind: 'upgrade-stable' as const,
+        currentVersion: '0.1.0',
+        version: '0.1.1',
+      },
       status: 'available',
       installUpdate,
     })
@@ -772,7 +778,7 @@ describe('DesktopSidebar', () => {
     const button = screen.getByTestId('sidebar-app-update-button')
     const action = screen.getByTestId('sidebar-app-update-action')
     expect(button).toHaveClass('h-8', 'w-8')
-    expect(button).toHaveAttribute('aria-label', '更新到 0.1.1')
+    expect(button).toHaveAttribute('aria-label', '升级到正式版 0.1.1')
     expect(button).not.toHaveAttribute('title')
     expect(action).not.toHaveClass('max-w-0', 'opacity-0', 'overflow-hidden')
     expect(screen.getByTestId('settings-button')).toHaveClass('pr-[72px]')
@@ -856,7 +862,11 @@ describe('DesktopSidebar', () => {
 
   test('shows download progress in the account-row update icon', () => {
     renderSidebar({}, undefined, {
-      availableUpdate: { currentVersion: '0.1.0', version: '0.1.1' },
+      availableUpdate: {
+        kind: 'upgrade-stable' as const,
+        currentVersion: '0.1.0',
+        version: '0.1.1',
+      },
       status: 'downloading',
       downloadProgress: { downloadedBytes: 40, totalBytes: 100 },
     })

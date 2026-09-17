@@ -1,12 +1,9 @@
+import { getAppUpdateCopy } from '@/features/app-update/app-update-copy'
 import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import { Bot, Download, ExternalLink, Loader2 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
-import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
-import {
-  calculateAppUpdateDownloadPercent,
-  formatAppUpdateVersion,
-} from '@/features/app-update/app-update-format'
+import { calculateAppUpdateDownloadPercent } from '@/features/app-update/app-update-format'
 import { useAppVersion } from '@/hooks/useAppVersion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
@@ -69,7 +66,6 @@ export function AboutSettingsPage() {
   const updateStatus = appUpdate?.status ?? 'idle'
   const downloadProgress = appUpdate?.downloadProgress ?? null
   const updateError = appUpdate?.error ?? null
-  const formattedUpdateError = updateError ? formatAppUpdateErrorSummary(updateError, t) : null
   const isUpdateBusy =
     updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'
   const downloadPercent = downloadProgress
@@ -78,30 +74,11 @@ export function AboutSettingsPage() {
         downloadProgress.totalBytes
       )
     : null
-  const updateButtonLabel = availableUpdate
-    ? formatAppUpdateVersion(
-        t('workbench.app_update_install', {
-          defaultValue: '更新到 {{version}}',
-          version: availableUpdate.version,
-        }),
-        availableUpdate.version
-      )
-    : t('workbench.app_update_check', { defaultValue: '检查更新' })
-  const updateMessage = availableUpdate
-    ? formatAppUpdateVersion(
-        t('workbench.app_update_available', {
-          defaultValue: '发现新版本 {{version}}',
-          version: availableUpdate.version,
-        }),
-        availableUpdate.version
-      )
-    : updateStatus === 'upToDate'
-      ? t('workbench.app_update_up_to_date', { defaultValue: '已是最新版本' })
-      : null
+  const { action: updateButtonLabel, message: updateMessage } = getAppUpdateCopy(appUpdate, t)
 
   const handleUpdateClick = async () => {
     if (!appUpdate) return
-    if (availableUpdate) {
+    if (updateError?.stage !== 'check' && availableUpdate) {
       await appUpdate.installUpdate()
       return
     }
@@ -131,6 +108,7 @@ export function AboutSettingsPage() {
           label={t('workbench.app_update_auto_update', {
             defaultValue: '自动更新',
           })}
+          description={t('workbench.app_update_auto_update_description')}
           control={
             <SettingsSwitch
               data-testid="about-auto-update-switch"
@@ -151,9 +129,7 @@ export function AboutSettingsPage() {
           label={t('workbench.app_update_beta_channel', {
             defaultValue: '接收 Beta 版本更新',
           })}
-          description={t('workbench.app_update_beta_channel_description', {
-            defaultValue: '同时接收 Beta 和正式版本，并优先更新到版本号更高的版本。',
-          })}
+          description={t('workbench.app_update_beta_channel_description')}
           control={
             <SettingsSwitch
               data-testid="about-beta-update-switch"
@@ -182,12 +158,12 @@ export function AboutSettingsPage() {
           }}
           disabled={!appUpdate || isUpdateBusy}
         />
-        {updateMessage || formattedUpdateError ? (
+        {updateStatus !== 'downloading' && updateMessage ? (
           <span
             data-testid="about-update-status"
             className="max-w-[360px] text-xs leading-5 text-text-secondary"
           >
-            {formattedUpdateError ?? updateMessage}
+            {updateMessage}
           </span>
         ) : null}
         {updateStatus === 'downloading' ? (

@@ -1,3 +1,4 @@
+import '@/i18n'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { useAppUpdate, type AppUpdateContextValue } from './app-update-context'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -56,6 +57,148 @@ describe('AppUpdateProvider', () => {
     vi.clearAllMocks()
   })
 
+  function renderProbe() {
+    let state!: AppUpdateContextValue
+    function Probe() {
+      state = useAppUpdate()
+      return null
+    }
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+    return () => state
+  }
+
+  test('requires explicit downgrade consent even with automatic updates enabled', async () => {
+    appVersionMock.value = '0.5.0-beta.1'
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.5.0-beta.1',
+      version: '0.4.3',
+      kind: 'downgrade-to-stable',
+    })
+    const state = renderProbe()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(APP_UPDATE_INITIAL_CHECK_DELAY_MS)
+    })
+    expect(state().status).toBe('available')
+    act(() => {
+      state().setAutoUpdateEnabled(false)
+      state().setAutoUpdateEnabled(true)
+    })
+    expect(downloadPendingWeworkUpdate).not.toHaveBeenCalled()
+    await act(async () => {
+      await state().installUpdate()
+    })
+    expect(screen.getByRole('dialog')).toHaveTextContent('此操作将降级')
+    expect(screen.getByRole('dialog')).toHaveTextContent('0.5.0-beta.1')
+    expect(screen.getByTestId('app-update-downgrade-confirm')).toHaveTextContent('确认回到正式版')
+    expect(downloadPendingWeworkUpdate).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('app-update-downgrade-confirm-cancel-button'))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await act(async () => {
+      await state().installUpdate()
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('app-update-downgrade-confirm'))
+    })
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(1)
+    expect(installDownloadedWeworkUpdate).not.toHaveBeenCalled()
+    expect(state().isUpdateReady).toBe(true)
+    expect(screen.getByRole('dialog')).toHaveTextContent('重启并回到正式版 0.4.3？')
+    fireEvent.click(screen.getByTestId('app-update-restart-confirm-cancel-button'))
+    await act(async () => {
+      await state().installUpdate()
+    })
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('app-update-restart-confirm'))
+    })
+    expect(installDownloadedWeworkUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  test('closing Beta discovers a rollback without automatically downloading it', async () => {
+    localStorage.setItem(APP_UPDATE_CHANNEL_KEY, 'beta')
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.5.0-beta.1',
+      version: '0.4.3',
+      kind: 'downgrade-to-stable',
+    })
+    const state = renderProbe()
+    await act(async () => {
+      await state().setUpdateChannel('stable')
+    })
+    expect(state().availableUpdate?.kind).toBe('downgrade-to-stable')
+    expect(downloadPendingWeworkUpdate).not.toHaveBeenCalled()
+  })
+
+  test('changing channel dismisses obsolete downgrade consent and clears the target', async () => {
+    vi.mocked(checkForWeworkUpdate)
+      .mockResolvedValueOnce({
+        currentVersion: '0.5.0-beta.1',
+        version: '0.4.3',
+        kind: 'downgrade-to-stable',
+      })
+      .mockResolvedValueOnce(null)
+    const state = renderProbe()
+    await act(async () => {
+      await state().checkNow()
+    })
+    await act(async () => {
+      await state().installUpdate()
+    })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await act(async () => {
+      await state().setUpdateChannel('beta')
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(state().availableUpdate).toBeNull()
+    expect(state().isUpdateReady).toBe(false)
+    expect(downloadPendingWeworkUpdate).not.toHaveBeenCalled()
+  })
+
+  test('reports a failed automatic check as an error rather than no update', async () => {
+    vi.mocked(checkForWeworkUpdate).mockRejectedValue(new Error('Network error'))
+    const state = renderProbe()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(APP_UPDATE_INITIAL_CHECK_DELAY_MS)
+    })
+    expect(state().status).toBe('error')
+    expect(state().error?.stage).toBe('check')
+  })
+
+  test('a joined check cannot overwrite an active automatic download', async () => {
+    let resolveCheck!: (value: Awaited<ReturnType<typeof checkForWeworkUpdate>>) => void
+    let resolveDownload!: () => void
+    vi.mocked(checkForWeworkUpdate).mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveCheck = resolve
+        })
+    )
+    vi.mocked(downloadPendingWeworkUpdate).mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveDownload = resolve
+        })
+    )
+    const state = renderProbe()
+    await act(async () => {
+      const first = state().checkNow()
+      const second = state().checkNow()
+      resolveCheck({ currentVersion: '0.4.3', version: '0.5.0', kind: 'upgrade-stable' })
+      await Promise.all([first, second])
+    })
+    expect(checkForWeworkUpdate).toHaveBeenCalledTimes(1)
+    expect(state().status).toBe('downloading')
+    expect(state().isUpdateReady).toBe(false)
+    await act(async () => {
+      resolveDownload()
+    })
+    expect(state().isUpdateReady).toBe(true)
+  })
+
   test('runs a startup auto check after the initial delay', async () => {
     render(
       <AppUpdateProvider>
@@ -96,6 +239,7 @@ describe('AppUpdateProvider', () => {
   test('downloads a discovered update silently by default', async () => {
     let appUpdate: AppUpdateContextValue | null = null
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      kind: 'upgrade-stable' as const,
       currentVersion: '0.1.0',
       version: '0.2.0',
     })
@@ -138,6 +282,7 @@ describe('AppUpdateProvider', () => {
       | undefined
     let updateRequest: Promise<void> | undefined
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      kind: 'upgrade-stable' as const,
       currentVersion: '0.1.0',
       version: '0.2.0',
     })
@@ -194,6 +339,7 @@ describe('AppUpdateProvider', () => {
     let appUpdate: AppUpdateContextValue | null = null
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      kind: 'upgrade-stable' as const,
       currentVersion: '0.1.0',
       version: '0.2.0',
     })
@@ -221,6 +367,7 @@ describe('AppUpdateProvider', () => {
     let appUpdate: AppUpdateContextValue | null = null
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      kind: 'upgrade-stable' as const,
       currentVersion: '0.1.0',
       version: '0.2.0',
     })
@@ -254,6 +401,7 @@ describe('AppUpdateProvider', () => {
     let finishRetry: (() => void) | undefined
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      kind: 'upgrade-stable' as const,
       currentVersion: '0.1.0',
       version: '0.2.0',
     })
@@ -338,6 +486,7 @@ describe('AppUpdateProvider', () => {
             finishStableCheck = () => resolve(null)
           })
         : Promise.resolve({
+            kind: 'upgrade-beta' as const,
             currentVersion: '0.1.0',
             version: '0.2.0-beta.1',
           })
@@ -467,6 +616,7 @@ describe('AppUpdateProvider', () => {
     let updateRequest: Promise<void> | undefined
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      kind: 'upgrade-stable' as const,
       currentVersion: '0.0.8',
       version: '0.0.9',
     })
@@ -509,8 +659,8 @@ describe('AppUpdateProvider', () => {
       await updateRequest
     })
 
-    expect(screen.getByRole('dialog')).toHaveTextContent('重启并更新 Wework？')
-    expect(screen.getByRole('dialog')).toHaveTextContent('v0.0.9')
+    expect(screen.getByRole('dialog')).toHaveTextContent('重启并升级到')
+    expect(screen.getByRole('dialog')).toHaveTextContent('0.0.9')
     expect(appUpdate?.status).toBe('available')
     expect(appUpdate?.downloadProgress).toBeNull()
     expect(installDownloadedWeworkUpdate).not.toHaveBeenCalled()
@@ -534,6 +684,7 @@ describe('AppUpdateProvider', () => {
     let appUpdate: AppUpdateContextValue | null = null
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      kind: 'upgrade-stable' as const,
       currentVersion: '0.0.8',
       version: '0.0.9',
     })
@@ -574,6 +725,7 @@ describe('AppUpdateProvider', () => {
     let appUpdate: AppUpdateContextValue | null = null
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      kind: 'upgrade-stable' as const,
       currentVersion: '0.1.0',
       version: '0.2.0',
       body: '## Changes\n\n- Added release notes.',
@@ -672,6 +824,7 @@ describe('AppUpdateProvider', () => {
     let appUpdate: AppUpdateContextValue | null = null
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     const update = {
+      kind: 'upgrade-stable' as const,
       currentVersion: '0.0.18',
       version: '0.0.19',
       body: '## Changes\n\n- Fixed update retries.',
@@ -769,7 +922,7 @@ describe('AppUpdateProvider', () => {
       await vi.advanceTimersByTimeAsync(250)
     })
 
-    expect(screen.getByRole('dialog')).toHaveTextContent('重启并更新 Wework？')
+    expect(screen.getByRole('dialog')).toHaveTextContent('重启并升级到')
     expect(appUpdate?.status).toBe('available')
     expect(appUpdate?.downloadProgress).toBeNull()
 
