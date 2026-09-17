@@ -400,7 +400,10 @@ class TestExternalSourceUnavailable:
 
                 event.listen(old_worker, "after_commit", complete_new_attempt)
                 run_external_document_import(
-                    old_worker, document, SimpleNamespace(id=1), generation=1
+                    old_worker,
+                    document,
+                    SimpleNamespace(id=1, is_active=True),
+                    generation=1,
                 )
 
             with Session(engine) as reader:
