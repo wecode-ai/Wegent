@@ -14,6 +14,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches ./patches
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
+COPY packages/collaboration/package.json ./packages/collaboration/package.json
 COPY frontend/package.json ./frontend/package.json
 COPY frontend/scripts ./frontend/scripts
 
@@ -48,7 +49,7 @@ ENV HUSKY=0
 WORKDIR /app/frontend
 RUN corepack enable \
     && corepack prepare pnpm@11.7.0 --activate \
-    && pnpm run build
+    && pnpm --config.verify-deps-before-run=false run build
 
 # ========== Stage 2: Build Wework ==========
 FROM node:22-slim AS wework-builder
@@ -62,6 +63,7 @@ RUN apt-get update \
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches ./patches
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
+COPY packages/collaboration/package.json ./packages/collaboration/package.json
 COPY wework/package.json ./wework/package.json
 
 ENV HUSKY=0
@@ -82,7 +84,7 @@ ENV HUSKY=0
 WORKDIR /app/wework
 RUN corepack enable \
     && corepack prepare pnpm@11.7.0 --activate \
-    && pnpm run build
+    && pnpm --config.verify-deps-before-run=false run build
 
 # ========== Stage 3: Build Python Base with Tools ==========
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS python-base
@@ -152,6 +154,8 @@ ENV PATH=/root/.cargo/bin:${PATH}
 
 COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
 COPY executor/src /app/executor/src
+COPY sdk/plugin-auth /app/sdk/plugin-auth
+COPY sdk/plugin-creator /app/sdk/plugin-creator
 COPY shared/assets /app/shared/assets
 RUN cd /app/executor && APP_VERSION="${APP_VERSION}" cargo build --release --locked
 

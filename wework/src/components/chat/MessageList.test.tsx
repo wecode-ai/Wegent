@@ -5,6 +5,8 @@ import type { Attachment } from '@/types/api'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import { AttachmentDownloadProvider } from './AttachmentDownloadProvider'
+import { clearImagePreviewCache } from './imagePreviewCache'
+import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
 import '@/i18n'
 
 const desktopHostMock = vi.hoisted(() => ({
@@ -40,6 +42,130 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test('keeps appended text outside the sent link and opens only the original URL', () => {
+    const url = 'https://example.com/1192966660/Riodm8zUo'
+    openExternalUrlMock.mockClear()
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-bounded-link',
+            role: 'user',
+            status: 'done',
+            createdAt: '2026-09-16T08:00:00Z',
+            content: `[${url}](${url})哈哈哈哈`,
+          },
+        ]}
+      />
+    )
+    const message = screen.getByTestId('user-message-content')
+    const link = within(message).getByRole('link', { name: url })
+    expect(link).not.toHaveTextContent('哈哈哈哈')
+    expect(message).toHaveTextContent(`${url}哈哈哈哈`)
+    fireEvent.click(link)
+    expect(openExternalUrlMock).toHaveBeenCalledWith(url)
+  })
+
+  test.each(['http://example.com/file_name?q=a_b#section', 'https://example.com/page'])(
+    'opens sent bare URL %s using the configured link handler',
+    url => {
+      openExternalUrlMock.mockClear()
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'user-http-link',
+              role: 'user',
+              content: `访问 ${url}`,
+              status: 'done',
+              createdAt: '2026-09-16T08:00:00Z',
+            },
+          ]}
+        />
+      )
+      fireEvent.click(
+        within(screen.getByTestId('user-message-content')).getByRole('link', { name: url })
+      )
+      expect(openExternalUrlMock).toHaveBeenCalledWith(url)
+    }
+  )
+
+  test('renders sent Markdown tables with formatting and the existing table actions', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-table',
+            role: 'user',
+            status: 'done',
+            createdAt: '2026-09-16T08:00:00Z',
+            content:
+              '| 项目 | 说明 |\n| --- | ---: |\n| 中文 | **重点** |\n| 代码 | `print(1)` |\n| 空单元格 | |',
+          },
+        ]}
+      />
+    )
+    const message = screen.getByTestId('user-message-content')
+    expect(within(message).getAllByRole('row')).toHaveLength(4)
+    expect(within(message).getByText('重点').tagName).toBe('STRONG')
+    expect(within(message).getByText('print(1)').tagName).toBe('CODE')
+    expect(within(message).getByText('说明')).toHaveStyle({ textAlign: 'right' })
+    expect(within(message).getByTestId('markdown-table-copy-button')).toBeInTheDocument()
+    fireEvent.click(within(message).getByTestId('markdown-table-expand-button'))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+  })
+
+  test('keeps runtime content truncation invisible while rendering the retained content', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-truncated-content',
+            role: 'assistant',
+            content: '这是截断后保留的最新回复',
+            contentTruncated: true,
+            contentOriginalChars: 200_001,
+            status: 'streaming',
+            createdAt: '2026-09-14T08:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('这是截断后保留的最新回复')).toBeInTheDocument()
+    expect(screen.queryByText(/早期内容.*卸载/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/加载完整输出/)).not.toBeInTheDocument()
+  })
+
+  test('lets complete user and assistant message regions inherit the UI weight', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-message',
+            role: 'user',
+            content: '请调整会话字体',
+            status: 'done',
+            createdAt: '2026-09-03T08:00:00Z',
+          },
+          {
+            id: 'assistant-message',
+            role: 'assistant',
+            content: '会话字体已调整',
+            status: 'done',
+            createdAt: '2026-09-03T08:00:01Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-user')).not.toHaveClass('font-medium')
+    expect(screen.getByTestId('message-assistant')).not.toHaveClass('font-medium')
+    expect(screen.getByTestId('user-message-content')).not.toHaveClass('font-medium')
+    expect(screen.getByTestId('assistant-message-content')).not.toHaveClass('font-medium')
+  })
+
   test('renders a generated Codex inline visualization from the changed workspace file', async () => {
     runtimeMock.electron = true
     desktopHostMock.invoke.mockResolvedValueOnce('<div>折线图</div>')
@@ -386,6 +512,19 @@ describe('MessageList', () => {
   })
 
   test('renders generated image artifacts and opens an enlarged preview', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('image', {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:generated-image-download')
+    let downloadedFilename = ''
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function () {
+      downloadedFilename = this.download
+    })
+
     render(
       <MessageList
         messages={[
@@ -403,6 +542,7 @@ describe('MessageList', () => {
                 toolName: 'image_generation',
                 renderPayload: {
                   kind: 'image_generation',
+                  mimeType: 'image/webp',
                   imageBase64:
                     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg==',
                   revisedPrompt: 'Minimal dashboard concept',
@@ -419,7 +559,7 @@ describe('MessageList', () => {
     const image = await screen.findByTestId('generated-image')
     expect(image).toHaveAttribute(
       'src',
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
+      'data:image/webp;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
     )
     expect(image).toHaveAttribute('alt', 'Minimal dashboard concept')
 
@@ -428,11 +568,19 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('attachment-image-lightbox')).toBeInTheDocument()
     expect(await screen.findByTestId('attachment-image-lightbox-image')).toHaveAttribute(
       'src',
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
+      'data:image/webp;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
     )
     expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
       'alt',
       'Minimal dashboard concept'
+    )
+
+    await userEvent.click(screen.getByTestId('attachment-image-download'))
+    await waitFor(() => {
+      expect(downloadedFilename).toBe('generated-image-1.webp')
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      'data:image/webp;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
     )
 
     await userEvent.click(screen.getByTestId('attachment-image-zoom-in'))
@@ -441,6 +589,118 @@ describe('MessageList', () => {
     fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
 
     expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
+  })
+
+  test('uses the translated fallback when a generated image has no revised prompt', async () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-image-without-prompt',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            createdAt: '2026-09-04T10:00:01Z',
+            blocks: [
+              {
+                id: 'ig-without-prompt',
+                subtaskId: '1',
+                type: 'tool',
+                toolName: 'image_generation',
+                renderPayload: {
+                  kind: 'image_generation',
+                  imageBase64:
+                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg==',
+                },
+                status: 'done',
+                createdAt: Date.now(),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findByTestId('generated-image')).toHaveAttribute('alt', '生成的图片')
+    expect(screen.getByTestId('generated-image-preview-button')).toHaveAttribute(
+      'aria-label',
+      '生成的图片'
+    )
+  })
+
+  test('renders generated images from task workspace references', async () => {
+    const createObjectUrl = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:generated-workspace-image')
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
+      path: '/workspace/outputs/generated-images/image.png',
+      name: 'image.png',
+      contentBase64: 'aW1hZ2U=',
+      offset: 0,
+      eof: true,
+      size: 5,
+    })
+
+    const { unmount } = render(
+      <WorkspaceFileReaderProvider readWorkspaceFileChunk={readWorkspaceFileChunk}>
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-workspace-image',
+              role: 'assistant',
+              content: 'Generated.',
+              status: 'done',
+              createdAt: '2026-09-02T10:00:01Z',
+              blocks: [
+                {
+                  id: 'ig-workspace-1',
+                  subtaskId: '1',
+                  type: 'tool',
+                  toolName: 'image_generation',
+                  renderPayload: {
+                    kind: 'image_generation',
+                    mimeType: 'image/png',
+                    size: 5,
+                    width: 1536,
+                    height: 1024,
+                    revisedPrompt: 'Workspace image',
+                    source: {
+                      type: 'workspace_file',
+                      deviceId: 'device-1',
+                      workspacePath: '/workspace',
+                      path: 'outputs/generated-images/image.png',
+                    },
+                  },
+                  status: 'done',
+                  createdAt: Date.now(),
+                },
+              ],
+            },
+          ]}
+        />
+      </WorkspaceFileReaderProvider>
+    )
+
+    expect(await screen.findByTestId('generated-image')).toHaveAttribute(
+      'src',
+      'blob:generated-workspace-image'
+    )
+    expect(screen.getByTestId('generated-image-preview-button')).toHaveStyle({
+      aspectRatio: '1.5',
+    })
+    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(
+      'device-1',
+      '/workspace/outputs/generated-images/image.png',
+      0,
+      '/workspace'
+    )
+    expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob))
+
+    unmount()
+    expect(revokeObjectUrl).not.toHaveBeenCalled()
+    clearImagePreviewCache()
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:generated-workspace-image')
   })
 
   test('does not render viewed images as final message artifacts', () => {
@@ -568,6 +828,8 @@ describe('MessageList', () => {
 
     const { container } = render(
       <MessageList
+        onRetryFailedMessage={vi.fn()}
+        onSwitchModelForFailedMessage={vi.fn()}
         messages={[
           {
             id: 'assistant-streaming-windowed',
@@ -1446,16 +1708,9 @@ describe('MessageList', () => {
     const shimmer = screen.getByText('正在搜索代码')
     expect(shimmer).toHaveClass('tool-activity-shimmer')
     const shimmerBands = shimmer.querySelectorAll('.activity-shimmer-band')
-    expect(shimmerBands).toHaveLength(6)
-    expect(Array.from(shimmerBands, band => band.getAttribute('data-grapheme'))).toEqual([
-      '正',
-      '在',
-      '搜',
-      '索',
-      '代',
-      '码',
-    ])
-    expect(shimmer.querySelector('[data-text]')).not.toBeInTheDocument()
+    expect(shimmerBands).toHaveLength(1)
+    expect(shimmerBands[0]).toHaveAttribute('data-text', '正在搜索代码')
+    expect(shimmer.querySelector('[data-grapheme]')).not.toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
@@ -1833,6 +2088,7 @@ describe('MessageList', () => {
   const originalRevokeObjectUrl = URL.revokeObjectURL
 
   afterEach(() => {
+    clearImagePreviewCache()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
     runtimeMock.electron = false
@@ -2191,7 +2447,72 @@ describe('MessageList', () => {
       assistantContent.compareDocumentPosition(processContent) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(processContent).toHaveClass('text-chat')
+    expect(processContent).toHaveClass('text-text-primary')
+    expect(processContent).not.toHaveClass('text-text-secondary')
     expect(processContent).not.toHaveClass('text-sm')
+    expect(processContent.closest('[data-testid="message-assistant"]')).not.toHaveClass(
+      'font-medium'
+    )
+  })
+
+  test('keeps merged subagent activity anchored before later parent output', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-subagent-anchor',
+            role: 'assistant',
+            content: '父代理继续处理。',
+            status: 'streaming',
+            blocks: [
+              {
+                id: 'spawn-1',
+                subtaskId: 'turn-1',
+                type: 'tool',
+                toolName: 'spawnAgent',
+                toolInput: { prompt: '检查实现' },
+                toolOutput: { agentId: 'agent-1' },
+                status: 'done',
+                createdAt: 1770000000000,
+              },
+              {
+                id: 'subagent-agent-1',
+                subtaskId: 'turn-1',
+                type: 'subagent',
+                agentThreadId: 'agent-1',
+                title: 'Explorer',
+                status: 'streaming',
+                createdAt: 1770000002000,
+              },
+            ],
+            runtimeDisplayItems: [
+              {
+                id: 'spawn-1',
+                type: 'block',
+              },
+              {
+                id: 'assistant-text',
+                type: 'assistant_text',
+                content: '父代理继续处理。',
+              },
+              {
+                id: 'subagent-agent-1',
+                type: 'block',
+              },
+            ],
+            createdAt: '2026-02-03T02:40:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const subagentActivity = screen.getByTestId('subagent-activity-inline-group')
+    const assistantContent = screen.getByText('父代理继续处理。')
+
+    expect(
+      subagentActivity.compareDocumentPosition(assistantContent) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(screen.getAllByTestId('subagent-activity-inline-group')).toHaveLength(1)
   })
 
   test('does not restore hidden failed content from runtime display order', () => {
@@ -3355,7 +3676,7 @@ describe('MessageList', () => {
     expect(token).toHaveTextContent('Browser')
     expect(screen.getByTestId('sent-local-skill-icon-browser')).toBeInTheDocument()
     expect(token).toHaveClass(
-      'h-7',
+      'composer-mention-node',
       'gap-1',
       'rounded-xl',
       'bg-muted',
@@ -4857,6 +5178,8 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
+        onRetryFailedMessage={vi.fn()}
+        onSwitchModelForFailedMessage={vi.fn()}
       />
     )
 
@@ -5077,8 +5400,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
-  test('collapses tool rows without trailing generic thinking once final text is visible', () => {
-    const runningBlock: ProcessingBlock = {
+  test('keeps the processing layout stable while final text is streaming', () => {
+    const completedBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
       type: 'tool',
@@ -5088,16 +5411,19 @@ describe('MessageList', () => {
       createdAt: 1770000000000,
     }
 
-    render(
+    const streamingMessage = {
+      id: '2',
+      role: 'assistant' as const,
+      content: 'Let me explore the repo structure for you.',
+      status: 'streaming' as const,
+      createdAt: '2026-05-25T18:46:00.000+08:00',
+    }
+    const { rerender } = render(
       <MessageList
         messages={[
           {
-            id: '2',
-            role: 'assistant',
-            content: 'Let me explore the repo structure for you.',
-            status: 'streaming',
-            createdAt: '2026-05-25T18:46:00.000+08:00',
-            blocks: [runningBlock],
+            ...streamingMessage,
+            blocks: [completedBlock],
           },
         ]}
       />
@@ -5106,6 +5432,56 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('tool-block-thinking')).not.toBeInTheDocument()
     expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('已处理')
+    const content = screen.getByTestId('assistant-message-content')
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...streamingMessage,
+            content: `${streamingMessage.content} More text.`,
+            blocks: [{ ...completedBlock, status: 'streaming' }],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-message-content')).toBe(content)
+
+    rerender(
+      <MessageList
+        isWaitingForAssistant
+        messages={[
+          {
+            ...streamingMessage,
+            content: `${streamingMessage.content} More text. Done.`,
+            status: 'done',
+            blocks: [completedBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-message-content')).toBe(content)
+    expect(screen.getByTestId('message-assistant-waiting')).toBeInTheDocument()
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...streamingMessage,
+            content: `${streamingMessage.content} More text. Done.`,
+            status: 'done',
+            blocks: [completedBlock],
+          },
+        ]}
+      />
+    )
+
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
   })
 
@@ -5398,6 +5774,8 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
+        onRetryFailedMessage={vi.fn()}
+        onSwitchModelForFailedMessage={vi.fn()}
       />
     )
 

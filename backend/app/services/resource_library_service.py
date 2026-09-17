@@ -79,7 +79,7 @@ def _resource_json_text(db: Session, path: str):
 def _system_marketplace_recommendation_score_expression(db: Session):
     score = _resource_json_text(db, "$.spec.capability.marketplace.recommendationScore")
     return case(
-        (score == "", FEATURED_RECOMMENDATION_SCORE),
+        (score == "", 0),
         else_=cast(score, Integer),
     )
 
@@ -101,7 +101,7 @@ def _marketplace_config(source: Kind) -> dict[str, Any]:
 def _marketplace_recommendation_score(source: Kind) -> int:
     configured = _marketplace_config(source).get("recommendationScore")
     if configured is None:
-        return FEATURED_RECOMMENDATION_SCORE if source.user_id == 0 else 0
+        return 0
     try:
         return max(0, min(100, int(configured)))
     except (TypeError, ValueError):
@@ -248,7 +248,13 @@ class ResourceLibraryService:
                 _resource_json_text(db, "$.spec.capability.displayName"),
                 _resource_json_text(db, "$.spec.displayName"),
                 _resource_json_text(db, "$.metadata.displayName"),
-                _resource_json_text(db, "$.spec.capability.description"),
+                case(
+                    (
+                        Kind.kind != "Skill",
+                        _resource_json_text(db, "$.spec.capability.description"),
+                    ),
+                    else_="",
+                ),
                 _resource_json_text(db, "$.spec.description"),
                 _resource_json_text(db, "$.spec.capability.tags"),
                 _resource_json_text(db, "$.spec.tags"),
@@ -1010,7 +1016,11 @@ class ResourceLibraryService:
     ) -> ResourceLibraryListing:
         capability = self._effective_capability(source)
         resource_type = RESOURCE_TYPE_BY_KIND[source.kind]
-        version = str(capability.get("version") or self._source_version(source))
+        version = (
+            self._source_version(source)
+            if source.kind == "Skill"
+            else str(capability.get("version") or self._source_version(source))
+        )
         status = capability.get("publishStatus", "published")
         publisher_user_id = self._capability_publisher_id(capability)
         resolved_publisher_user_id = (
@@ -1023,12 +1033,16 @@ class ResourceLibraryService:
         )
         if source.user_id == 0:
             display_name = self._display_name(source) or capability.get("displayName")
-            description = self._description(source) or capability.get("description")
             icon = self._icon(source) or capability.get("icon")
         else:
             display_name = capability.get("displayName") or self._display_name(source)
-            description = capability.get("description") or self._description(source)
             icon = capability.get("icon") or self._icon(source)
+        if source.kind == "Skill":
+            description = self._description(source)
+        elif source.user_id == 0:
+            description = self._description(source) or capability.get("description")
+        else:
+            description = capability.get("description") or self._description(source)
         return ResourceLibraryListing(
             id=source.id,
             resource_type=resource_type,
@@ -2000,8 +2014,11 @@ class ResourceLibraryService:
         if source.user_id == current_user.id and source.namespace == "default":
             return True
         if source.namespace != "default":
+            required_role = (
+                GroupRole.Developer if source.kind == "Team" else GroupRole.Maintainer
+            )
             return check_group_permission(
-                db, current_user.id, source.namespace, GroupRole.Maintainer
+                db, current_user.id, source.namespace, required_role
             )
         return False
 
@@ -2110,6 +2127,9 @@ class ResourceLibraryService:
         )
 
     def _set_capability(self, source: Kind, capability: dict[str, Any]) -> None:
+        if source.kind == "Skill":
+            capability.pop("description", None)
+            capability.pop("version", None)
         payload = deepcopy(source.json) if isinstance(source.json, dict) else {}
         spec = payload.setdefault("spec", {})
         spec["capability"] = capability

@@ -3,7 +3,14 @@ import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { Attachment, ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
+import type {
+  Attachment,
+  ModelOptions,
+  ModelSelectionConfig,
+  RuntimeTaskAddress,
+  UnifiedModel,
+} from '@/types/api'
+import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRetry'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
 
 const attachment: Attachment = {
@@ -27,7 +34,17 @@ const mocks = vi.hoisted(() => ({
   sendRuntimePaneMessage: vi.fn(async () => true),
   createTask: vi.fn(),
   loadRuntimeTranscriptForPane: vi.fn(),
+  loadTurnFileChangesDiff: vi.fn(),
+  revertTurnFileChanges: vi.fn(),
+  cancelRuntimePaneTask: vi.fn(async () => true),
   syncTranscript: vi.fn(),
+  conversationMessages: [] as Array<{
+    id: string
+    role: 'assistant' | 'user'
+    content: string
+    status: 'done' | 'failed'
+    createdAt: string
+  }>,
   lifecycleSnapshot: null as {
     derived: {
       isRunning: boolean
@@ -35,11 +52,46 @@ const mocks = vi.hoisted(() => ({
     }
   } | null,
   activeModelSelection: null as ModelSelectionConfig | null,
+  isBootstrapping: false,
+  runtimeWork: null as {
+    projects: unknown[]
+    chats: unknown[]
+    totalTasks: number
+  } | null,
 }))
 
 vi.mock('@/components/chat/ScrollableMessageArea', () => ({
-  ScrollableMessageArea: ({ messages }: { messages: Array<{ attachments?: Attachment[] }> }) => (
-    <div data-testid="mock-message-list">
+  ScrollableMessageArea: ({
+    messages,
+    onRetryFailedMessage,
+    onSwitchModelForFailedMessage,
+    onOpenWorkspaceFile,
+    onOpenFileChangesReview,
+    onOpenAssistantPlan,
+    onRequestUserInputSubmit,
+    onRequestUserInputIgnore,
+    scrollOrigin,
+  }: {
+    messages: Array<{
+      id: string
+      attachments?: Attachment[]
+      role?: string
+      content?: string
+      status?: string
+    }>
+    onRetryFailedMessage?: (message: unknown) => void
+    onSwitchModelForFailedMessage?: (message: unknown) => void
+    onOpenWorkspaceFile?: (path: string) => void
+    onOpenFileChangesReview?: () => void
+    onOpenAssistantPlan?: () => void
+    onRequestUserInputSubmit?: (response: {
+      requestId: string
+      answers: Record<string, { answers: string[] }>
+    }) => void
+    onRequestUserInputIgnore?: (payload: { kind: string; request_id: string }) => void
+    scrollOrigin?: 'top' | 'bottom'
+  }) => (
+    <div data-testid="mock-message-list" data-scroll-origin={scrollOrigin}>
       {messages.flatMap(message =>
         (message.attachments ?? []).map(messageAttachment => (
           <span key={messageAttachment.id} data-testid="sent-message-attachment">
@@ -47,6 +99,68 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
           </span>
         ))
       )}
+      {onRetryFailedMessage && messages[0] ? (
+        <button
+          type="button"
+          data-testid="mock-retry"
+          onClick={() => onRetryFailedMessage(messages[0])}
+        >
+          重试
+        </button>
+      ) : null}
+      {onSwitchModelForFailedMessage && messages[0] ? (
+        <button
+          type="button"
+          data-testid="mock-switch-model"
+          onClick={() => onSwitchModelForFailedMessage(messages[0])}
+        >
+          切换模型
+        </button>
+      ) : null}
+      {onOpenWorkspaceFile ? (
+        <button
+          type="button"
+          data-testid="mock-open-file"
+          onClick={() => onOpenWorkspaceFile('/tmp/workspace/file.ts')}
+        >
+          打开文件
+        </button>
+      ) : null}
+      {onOpenFileChangesReview ? (
+        <button type="button" data-testid="mock-open-review" onClick={onOpenFileChangesReview}>
+          打开 Review
+        </button>
+      ) : null}
+      {onOpenAssistantPlan ? (
+        <button type="button" data-testid="mock-open-plan" onClick={onOpenAssistantPlan}>
+          打开 Plan
+        </button>
+      ) : null}
+      {onRequestUserInputSubmit ? (
+        <button
+          type="button"
+          data-testid="mock-submit-input"
+          onClick={() =>
+            onRequestUserInputSubmit({
+              requestId: 'request-1',
+              answers: { choice: { answers: ['继续'] } },
+            })
+          }
+        >
+          回答
+        </button>
+      ) : null}
+      {onRequestUserInputIgnore ? (
+        <button
+          type="button"
+          data-testid="mock-ignore-input"
+          onClick={() =>
+            onRequestUserInputIgnore({ kind: 'request_user_input', request_id: 'request-1' })
+          }
+        >
+          忽略
+        </button>
+      ) : null}
     </div>
   ),
 }))
@@ -60,6 +174,7 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
     goalDraftActive,
     onSetGoal,
     onCancelGoalDraft,
+    projectChat,
   }: {
     onSubmit: (valueOverride?: string) => Promise<boolean>
     disabled?: boolean
@@ -68,8 +183,13 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
     goalDraftActive?: boolean
     onSetGoal?: () => void
     onCancelGoalDraft?: () => void
+    projectChat?: { selectedModel?: UnifiedModel | null }
   }) => (
-    <div data-testid="mock-composer" data-collapse-when-idle={String(collapseWhenIdle)}>
+    <div
+      data-testid="mock-composer"
+      data-collapse-when-idle={String(collapseWhenIdle)}
+      data-selected-model={projectChat?.selectedModel?.name}
+    >
       {onSetGoal ? (
         <button type="button" data-testid="set-goal-button" onClick={onSetGoal}>
           设置目标
@@ -96,18 +216,43 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => ({
     services: {},
-    state: { devices: [], runtimeWork: null },
+    state: {
+      devices: [],
+      isBootstrapping: mocks.isBootstrapping,
+      runtimeWork: mocks.runtimeWork,
+    },
     projectChat: {
       models: [],
       selectedModel: null,
       selectedModelOptions: undefined,
+      resolveRuntimeTaskModelSelection: () => {
+        const selection = mocks.activeModelSelection
+        const model = selection
+          ? {
+              name: selection.modelName,
+              displayName: selection.modelName,
+              type: selection.modelType,
+            }
+          : null
+        return {
+          taskSelection: selection,
+          selectedModel: model,
+          activeModel: model,
+          selectedModelOptions: selection?.options ?? {},
+        }
+      },
+      setRuntimeTaskSelectedModel: vi.fn(),
+      setRuntimeTaskSelectedModelAndOptions: vi.fn(),
+      setRuntimeTaskSelectedModelOption: vi.fn(),
     },
     createTemporaryRuntimeTask: vi.fn(),
     sendRuntimePaneMessage: mocks.sendRuntimePaneMessage,
     sendRuntimePaneGuidance: vi.fn(),
-    cancelRuntimePaneTask: vi.fn(),
+    cancelRuntimePaneTask: mocks.cancelRuntimePaneTask,
     subscribeRuntimeTaskStream: () => () => undefined,
     loadRuntimeTranscriptForPane: mocks.loadRuntimeTranscriptForPane,
+    loadTurnFileChangesDiff: mocks.loadTurnFileChangesDiff,
+    revertTurnFileChanges: mocks.revertTurnFileChanges,
   }),
 }))
 
@@ -125,11 +270,14 @@ vi.mock('@/features/workbench/useWorkbenchAttachments', () => ({
 }))
 
 vi.mock('@/features/workbench/runtimeModelSelection', () => ({
-  selectedModelExecutionFields: () => ({
-    modelId: 'gpt-5.6-sol',
-    modelType: 'runtime',
-    modelOptions: { reasoningEffort: 'high' },
-  }),
+  selectedModelExecutionFields: (model: UnifiedModel | null, options: ModelOptions | undefined) =>
+    model
+      ? {
+          modelId: model.name,
+          modelType: model.type,
+          modelOptions: options ?? {},
+        }
+      : {},
 }))
 
 vi.mock('@/features/workbench/runtimePaneStatus', () => ({
@@ -145,14 +293,10 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
   ) => (action.type === 'user_added' && action.message ? [action.message] : []),
   beginRuntimeConversationHydration: vi.fn(),
   completeRuntimeConversationHydration: vi.fn(),
-  getRuntimeConversationMessages: () => [],
+  getRuntimeConversationMessages: () => mocks.conversationMessages,
   removeRuntimeConversationTurn: () => [],
   subscribeRuntimeConversation: () => () => undefined,
-}))
-
-vi.mock('@/features/workbench/temporaryChatModelContext', () => ({
-  resolveTemporaryChatActiveModel: () => null,
-  resolveTemporaryChatModelSelection: () => mocks.activeModelSelection,
+  updateRuntimeConversationBlocks: () => mocks.conversationMessages,
 }))
 
 vi.mock('@/features/workbench/runtimeTaskLifecycle', () => ({
@@ -184,8 +328,49 @@ describe('TemporaryChatPanel', () => {
       afterCursor: null,
     })
     mocks.syncTranscript.mockReset()
+    mocks.loadTurnFileChangesDiff.mockReset()
+    mocks.revertTurnFileChanges.mockReset()
+    mocks.cancelRuntimePaneTask.mockReset()
+    mocks.cancelRuntimePaneTask.mockResolvedValue(true)
+    mocks.conversationMessages = []
     mocks.lifecycleSnapshot = null
     mocks.activeModelSelection = null
+    mocks.isBootstrapping = false
+    mocks.runtimeWork = null
+  })
+
+  it('uses bottom-origin scrolling by default and allows an explicit override', () => {
+    mocks.conversationMessages = [
+      {
+        id: 'existing-message',
+        role: 'assistant',
+        content: 'existing conversation',
+        status: 'done',
+        createdAt: '2026-09-15T00:00:00.000Z',
+      },
+    ]
+    const { rerender } = render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="bottom-origin-default"
+        initialAddress={address}
+      />
+    )
+
+    expect(screen.getByTestId('mock-message-list')).toHaveAttribute('data-scroll-origin', 'bottom')
+
+    rerender(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="top-origin-override"
+        initialAddress={address}
+        scrollOrigin="top"
+      />
+    )
+
+    expect(screen.getByTestId('mock-message-list')).toHaveAttribute('data-scroll-origin', 'top')
   })
 
   it('passes the collapsed idle state through to the shared composer', () => {
@@ -365,6 +550,10 @@ describe('TemporaryChatPanel', () => {
       />
     )
 
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute(
+      'data-selected-model',
+      'moonshot-kimi-k2.7-code-highspeed'
+    )
     await userEvent.click(screen.getByTestId('mock-send'))
 
     await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(1))
@@ -396,6 +585,25 @@ describe('TemporaryChatPanel', () => {
     expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
   })
 
+  it('lets a legacy task select a model after runtime work finishes without an identity', () => {
+    mocks.runtimeWork = {
+      projects: [],
+      chats: [],
+      totalTasks: 0,
+    }
+
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="legacy-task-without-model"
+        initialAddress={address}
+      />
+    )
+
+    expect(screen.getByTestId('mock-send')).toBeEnabled()
+  })
+
   it('auto-submits the initial input once after the task model identity is available', async () => {
     mocks.activeModelSelection = {
       modelName: 'moonshot-kimi-k2.7-code-highspeed',
@@ -425,5 +633,83 @@ describe('TemporaryChatPanel', () => {
       }),
       expect.any(Object)
     )
+  })
+
+  it('handles retry and runtime input actions inside the temporary conversation', async () => {
+    mocks.activeModelSelection = {
+      modelName: 'gpt-5.6-codex',
+      modelType: 'public',
+      options: {},
+    }
+    mocks.conversationMessages = [
+      {
+        id: 'failed-assistant',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        createdAt: '2026-09-10T00:00:00Z',
+      },
+    ]
+
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="local-actions"
+        initialAddress={address}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-retry'))
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address,
+        message: RUNTIME_RETRY_CONTINUATION_PROMPT,
+        modelId: 'gpt-5.6-codex',
+      })
+    )
+
+    await userEvent.click(screen.getByTestId('mock-submit-input'))
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address,
+        message: '继续',
+        requestUserInputResponse: expect.objectContaining({ requestId: 'request-1' }),
+      })
+    )
+
+    await userEvent.click(screen.getByTestId('mock-ignore-input'))
+    expect(mocks.cancelRuntimePaneTask).toHaveBeenCalledWith(address)
+  })
+
+  it('returns task-page actions to the current runtime task', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'assistant',
+        role: 'assistant',
+        content: 'Open the workspace result',
+        status: 'done',
+        createdAt: '2026-09-10T00:00:00Z',
+      },
+    ]
+    const onOpenRuntimeTask = vi.fn()
+
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="task-page-actions"
+        initialAddress={address}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-open-file'))
+    await userEvent.click(screen.getByTestId('mock-open-review'))
+    await userEvent.click(screen.getByTestId('mock-open-plan'))
+    await userEvent.click(screen.getByTestId('mock-switch-model'))
+
+    expect(onOpenRuntimeTask).toHaveBeenCalledTimes(4)
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith(address)
   })
 })

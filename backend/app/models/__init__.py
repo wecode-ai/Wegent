@@ -77,6 +77,12 @@ from app.models.task import TaskResource
 # All models should import Base directly from app.db.base
 # Import User last as it may have relationships to other models
 from app.models.user import User
+from app.models.wework_notification import WeworkNotification
+from app.models.wework_transcript import (
+    WeworkTranscript,
+    WeworkTranscriptArchive,
+    WeworkTranscriptTurn,
+)
 from app.models.wiki import WikiContent, WikiGeneration, WikiProject
 from app.models.work_queue import (
     QueueMessage,
@@ -89,6 +95,7 @@ from app.models.work_queue import (
 from app.schemas.namespace import GroupRole
 
 __all__ = [
+    "WeworkNotification",
     "DingtalkSyncedNode",
     "CloudProject",
     "CloudProjectFile",
@@ -104,6 +111,9 @@ __all__ = [
     "Delivery",
     "DeliveryAsset",
     "User",
+    "WeworkTranscript",
+    "WeworkTranscriptArchive",
+    "WeworkTranscriptTurn",
     "Kind",
     "IMPrivateSession",
     "IMSessionMode",

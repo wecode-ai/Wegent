@@ -27,6 +27,7 @@ import {
   mkdir,
   pathToFileURL,
   resultDir,
+  withTimeout,
   writeFile,
 } from './shared.mjs'
 
@@ -178,6 +179,36 @@ async function verifySystemDragPanelLayout(control) {
   }
 }
 
+async function verifySentWorkspacePaths(control, folderName, fileName) {
+  for (const [kind, name] of [
+    ['folder', folderName],
+    ['file', fileName],
+  ]) {
+    const token = name.replace(/[^a-zA-Z0-9_-]/g, '-')
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="sent-${kind}-token-${token}"]`,
+      { text: name, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    )
+  }
+}
+
+async function verifyPersistedWorkspacePaths(control, folderName, fileName, completionText) {
+  await verifySentWorkspacePaths(control, folderName, fileName)
+  const readyCount = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCount),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The path reference reload did not reconnect to the desktop controller'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: completionText,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await verifySentWorkspacePaths(control, folderName, fileName)
+}
+
 async function verifyPastedWorkspacePaths({ composerSelector, control, workspacePath }) {
   control.setScenario('pasted_workspace_paths')
   const folderPath = join(workspacePath, PASTED_PATH_FOLDER_NAME)
@@ -226,6 +257,12 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     text: PASTED_PATH_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifyPersistedWorkspacePaths(
+    control,
+    PASTED_PATH_FOLDER_NAME,
+    PASTED_PATH_FILE_NAME,
+    PASTED_PATH_COMPLETION_TEXT
+  )
 }
 
 async function verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath }) {
@@ -281,63 +318,8 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
   await control.command('fill', composerSelector, { value: '' })
 
   await control.command('click', `[data-item-path="${SELECTED_TEXT_FILE_NAME}"]`)
-  await control.command('waitFor', '[data-testid="workspace-file-edit-button"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-line="1"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('selectText', '[data-line="1"]', {
-    value: SELECTED_TEXT_FILE_CONTENT.trim(),
-  })
-  await control.command('waitFor', '[data-testid="workspace-selection-actions"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await captureVerificationScreenshot(control, 'workspace-preview-selection-actions.png')
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 5_000))
-  await captureVerificationScreenshot(control, 'workspace-preview-selection-after-wait.png')
-  assert.notEqual(
-    await control.command('getSelectionOffset', '[data-line="1"]'),
-    '-1',
-    'The workspace preview text selection disappeared after an unrelated workbench refresh'
-  )
-  assert.equal(
-    await control.command('getSystemDragPanelVisibility', 'body'),
-    'false',
-    'Selecting workspace preview text incorrectly opened the system drag panel'
-  )
-  await control.command('click', '[data-testid="add-workspace-selection-to-conversation-button"]')
-  assert.equal(
-    await control.command('getValue', composerSelector),
-    SELECTED_TEXT_FILE_CONTENT.trim(),
-    'The workspace preview selection action did not insert text into the composer'
-  )
-  await control.command('fill', composerSelector, { value: '' })
-  await control.command('selectText', '[data-line="1"]', {
-    value: SELECTED_TEXT_FILE_CONTENT.trim(),
-  })
-  await control.command('dragDataTransferStart', '[data-line="1"]')
-  await waitForSystemDragPanelVisibility(
-    control,
-    true,
-    'Dragging workspace preview text did not show the system drag panel'
-  )
-  await control.command('dragDataTransferEnd', 'body', { target: composerSelector })
-  await waitForSystemDragPanelVisibility(
-    control,
-    false,
-    'The system drag panel did not close after the workspace-preview drag ended'
-  )
-  assert.equal(
-    await control.command('getValue', composerSelector),
-    SELECTED_TEXT_FILE_CONTENT.trim(),
-    'Dragging selected workspace preview text did not insert it into the composer'
-  )
-  await captureVerificationScreenshot(control, 'workspace-preview-selection-drag.png')
-  await control.command('fill', composerSelector, { value: '' })
-
-  await control.command('click', '[data-testid="workspace-file-edit-button"]')
   await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+    text: SELECTED_TEXT_FILE_CONTENT.trim(),
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('press', '[data-testid="workspace-file-editor"] .cm-content', {
@@ -379,7 +361,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
   )
   assert.equal(
     await control.command('getValue', composerSelector),
-    SELECTED_TEXT_FILE_CONTENT.trim(),
+    SELECTED_TEXT_FILE_CONTENT,
     'Dragging selected workspace editor text did not insert it into the composer'
   )
   assert.equal(
@@ -494,6 +476,12 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
     text: DROPPED_PATH_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifyPersistedWorkspacePaths(
+    control,
+    DROPPED_PATH_FOLDER_NAME,
+    DROPPED_PATH_FILE_NAME,
+    DROPPED_PATH_COMPLETION_TEXT
+  )
 }
 
 async function verifySideChatAttachmentIsolation({

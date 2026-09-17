@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { createZipFixture, extractSingleRootZipFixture } from '../modules/zip-fixtures.mjs'
+import {
+  createZipFixture,
+  extractSingleRootZipFixture,
+  extractZipFixture,
+} from '../modules/zip-fixtures.mjs'
+import { telemetryEvents } from '../modules/response-protocol.mjs'
+import { verifySmartAppMarketplaceIdentity } from '../modules/smart-app-marketplace-identity.mjs'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
 const IMPORTED_INSTALLATION_ID = 'dsh-e2e-smoke-imported'
@@ -108,6 +115,48 @@ async function waitForManifestPlugin(manifestPath, pluginSpec, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 250))
   }
   throw new Error(`Smart app manifest did not include ${pluginSpec}`)
+}
+
+async function exportedPackages(downloadsPath) {
+  return new Set(
+    await readdir(downloadsPath)
+      .then(entries => entries.filter(entry => entry.endsWith('.zip')))
+      .catch(() => [])
+  )
+}
+
+async function waitForNewExport(downloadsPath, before, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const entries = await exportedPackages(downloadsPath)
+    const added = [...entries].find(entry => !before.has(entry))
+    if (added) return join(downloadsPath, added)
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('Smart app export success did not create a ZIP in Downloads')
+}
+
+async function waitForMissing(control, selector, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (Number(await control.command('getElementCount', selector)) === 0) return
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(`Timed out waiting for "${selector}" to disappear`)
+}
+
+async function assertExportedPackage({
+  archivePath,
+  expectedName,
+  expectedVersion,
+  extractionPath,
+}) {
+  assert.ok((await stat(archivePath)).size > 0, 'The exported Smart app ZIP was empty')
+  await extractZipFixture(archivePath, extractionPath)
+  const manifest = JSON.parse(await readFile(join(extractionPath, 'plugin-manifest.json'), 'utf8'))
+  assert.equal(manifest.name, expectedName)
+  assert.equal(manifest.version, expectedVersion)
+  await rm(archivePath)
 }
 
 async function createHarnessPackage(
@@ -232,13 +281,17 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
     version: '0.0.9',
   })
   const officialSource = await createOfficialSource(resultDir, packagePath)
+  // Electron falls back to HOME on Linux when XDG user directories are unavailable.
+  const downloadsPath =
+    process.platform === 'linux' ? join(resultDir, 'home') : join(homedir(), 'Downloads')
+  let sharedSmartAppId = null
+  let ownerRequest
   return {
     requiresCloudEnvironment: true,
 
     async prepareCloud({ authToken, backendUrl, publishOfficialSmartApp }) {
       await publishOfficialSmartApp(officialSource)
-      const ownerRequest = (pathname, options) =>
-        requestJson(backendUrl, authToken, pathname, options)
+      ownerRequest = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
       const ownerCatalog = await ownerRequest('/api/smart-apps/marketplace')
       const officialItem = ownerCatalog.items.find(
         item => item.name === INSTALLATION_ID && item.sourceType === 'official'
@@ -302,6 +355,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           releaseExtensions: {
             'io.wegent.build': { pipeline: 'desktop-e2e-user' },
           },
+          scope: 'restricted',
           targets: [
             {
               entityType: 'user',
@@ -311,6 +365,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           ],
         }),
       })
+      sharedSmartAppId = initialized.smartAppId
       const upload = await fetch(initialized.uploadUrl, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/zip' },
@@ -348,6 +403,29 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         ),
         `Unrelated user ${stranger.user_name} discovered the shared Smart app`
       )
+      const publicAccess = await ownerRequest(`/api/smart-apps/${initialized.smartAppId}/access`, {
+        method: 'PUT',
+        body: JSON.stringify({ scope: 'public', targets: [] }),
+      })
+      assert.equal(publicAccess.isListed, true)
+      assert.equal(publicAccess.latestReleaseId, completed.item.latestReleaseId)
+      assert.equal(publicAccess.version, completed.item.version)
+      const publicCatalog = await requestJson(
+        backendUrl,
+        strangerLogin.access_token,
+        '/api/smart-apps/marketplace?source=public'
+      )
+      const publicItem = publicCatalog.items.find(
+        item => item.name === INSTALLATION_ID && item.sourceType === 'user'
+      )
+      assert.equal(publicItem?.accessRole, 'public')
+      assert.equal(publicItem?.visibility, 'public')
+      const ownerPublicCatalog = await ownerRequest('/api/smart-apps/marketplace?source=public')
+      const ownerPublicItem = ownerPublicCatalog.items.find(
+        item => item.id === initialized.smartAppId
+      )
+      assert.equal(ownerPublicItem?.accessRole, 'owner')
+      assert.equal(ownerPublicItem?.latestReleaseId, completed.item.latestReleaseId)
       await ownerRequest(`/api/smart-apps/${initialized.smartAppId}/access`, {
         method: 'PUT',
         body: JSON.stringify({ scope: 'private', targets: [] }),
@@ -409,6 +487,11 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
         timeoutMs: uiTimeoutMs,
       })
+      const marketplaceRequest = await control.awaitTelemetryEvent('smart_app_marketplace_opened')
+      const marketplaceEvent = telemetryEvents(marketplaceRequest.payload).find(
+        event => event.event === 'smart_app_marketplace_opened'
+      )
+      assert.equal(marketplaceEvent?.properties.domain, 'smart_app')
       await control.command('waitFor', '[data-testid="sidebar-worklists-scroll"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -462,6 +545,13 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('clickWhenEnabled', '[data-testid="harness-app-install-confirm"]', {
         timeoutMs: uiTimeoutMs,
       })
+      const installRequest = await control.awaitTelemetryEvent('smart_app_install_succeeded')
+      const installEvent = telemetryEvents(installRequest.payload).find(
+        event => event.event === 'smart_app_install_succeeded'
+      )
+      assert.ok(installEvent, 'Smart App install telemetry event was missing')
+      assert.equal(installEvent?.properties.domain, 'smart_app')
+      assert.equal('smart_app_name' in installEvent.properties, false)
       await control.command('waitFor', '[data-testid="harness-app-start-market-1"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -689,6 +779,30 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           }
         )
       }
+      await control.command(
+        'waitFor',
+        '[data-testid="smart-app-development-preview-verification-unverified"]',
+        {
+          text: '尚未验证',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="smart-app-development-preview-verify"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="smart-app-development-preview-verification-passed"]',
+        {
+          text: '验证通过',
+          timeoutMs: 120_000,
+        }
+      )
+      await captureScreenshot(control, 'harness-apps-03b2-verification-passed.png', 'body')
       await control.command('click', `[data-testid="workspace-tab-close-${secondTaskTabId}"]`)
       await captureScreenshot(control, 'harness-apps-03b2-dsh-reloaded.png', 'body')
       await control.command(
@@ -728,6 +842,14 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         stableMs: 500,
         timeoutMs: 120_000,
       })
+      await control.command(
+        'waitFor',
+        '[data-testid="smart-app-development-preview-verification-stale"]',
+        {
+          text: '验证已过期',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       assert.deepEqual(linkedManifest.plugins, [
         {
           spec: 'file:plugins/wework-e2e-local-dsh-plugin',
@@ -742,6 +864,22 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         )
       )
       await captureScreenshot(control, 'harness-apps-03b4-plugin-reloaded.png', 'body')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="smart-app-development-preview-verify"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="smart-app-development-preview-verification-passed"]',
+        {
+          text: '验证通过',
+          timeoutMs: 120_000,
+        }
+      )
+      await captureScreenshot(control, 'harness-apps-03b4-verification-refreshed.png', 'body')
       const developmentWorkspaceTabId = await control.command(
         'getAttribute',
         '[data-workspace-tab-content][aria-hidden="false"]',
@@ -795,13 +933,20 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           timeoutMs: uiTimeoutMs,
         }
       )
+      const linkedExportsBefore = await exportedPackages(downloadsPath)
       await control.command(
         'click',
         `[data-testid="smart-app-export-package-${CREATED_INSTALLATION_ID}"]`
       )
       await control.command('waitFor', '[data-testid="smart-app-export-success"]', {
-        text: '安装包已导出到下载目录',
-        timeoutMs: uiTimeoutMs,
+        text: '发布包已导出到下载目录。',
+        timeoutMs: 120_000,
+      })
+      await assertExportedPackage({
+        archivePath: await waitForNewExport(downloadsPath, linkedExportsBefore, uiTimeoutMs),
+        expectedName: CREATED_INSTALLATION_ID,
+        expectedVersion: '0.1.0',
+        extractionPath: join(resultDir, 'linked-export-verification'),
       })
       await captureScreenshot(control, 'harness-apps-03f-linked-exported.png', 'body')
       await control.command('click', `[data-testid="smart-app-actions-${CREATED_INSTALLATION_ID}"]`)
@@ -871,6 +1016,11 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           !publishDialogText.includes('no file selected'),
         'Smart app publish dialog leaked native English file picker text'
       )
+      assert.ok(
+        publishDialogText.includes('将使用已导入的发布包') &&
+          publishDialogText.includes('关联文件夹'),
+        'Smart app publish dialog did not explain the imported release package flow'
+      )
       await captureScreenshot(control, 'harness-apps-04a-publish-dialog-zh.png', 'body')
       await control.command('click', '[data-testid="smart-app-publish-close"]')
       await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
@@ -918,20 +1068,98 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       )
       assert.ok(managementTabId, 'Harness management page did not expose its workspace tab ID')
       const activeWorkspaceContentSelector = '[data-workspace-tab-content][aria-hidden="false"]'
+      assert.ok(sharedSmartAppId, 'Shared Smart app fixture did not expose its catalog ID')
+      const sharedVisibilitySelector =
+        `${activeWorkspaceContentSelector} ` +
+        `[data-testid="smart-app-visibility-${sharedSmartAppId}"]`
+      await control.command('click', sharedVisibilitySelector)
+      await control.command('waitFor', '[data-testid="smart-app-share-dialog"]', {
+        text: '管理范围',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="smart-app-share-scope-public"]')
+      await control.command('waitFor', '[data-testid="smart-app-share-dialog"]', {
+        text: '本地后续修改不会自动同步',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="smart-app-share-save"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="smart-app-access-success"]', {
+        text: 'v0.0.9 已上架到智能应用市场。',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-05a-public-snapshot-listed.png', 'body')
+      await control.command('click', '[data-testid="smart-app-access-view-marketplace"]')
+      await control.command(
+        'waitFor',
+        `${activeWorkspaceContentSelector} ` +
+          `[data-testid="smart-app-marketplace-item-${sharedSmartAppId}"]`,
+        {
+          text: '我发布的',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'click',
+        `${activeWorkspaceContentSelector} [data-testid="smart-apps-section-owned"]`
+      )
+      await control.command('waitFor', sharedVisibilitySelector, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', sharedVisibilitySelector)
+      await control.command('waitFor', '[data-testid="smart-app-share-dialog"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="smart-app-share-scope-private"]')
+      await control.command('clickWhenEnabled', '[data-testid="smart-app-share-save"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="smart-app-access-success"]', {
+        text: '分享范围已保存。',
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.ok(ownerRequest, 'Smart app owner API was not prepared')
+      const privateCatalog = await ownerRequest('/api/smart-apps/marketplace?source=public')
+      assert.equal(
+        privateCatalog.items.some(item => item.id === sharedSmartAppId),
+        false,
+        'Making the Smart app private left it listed in the public marketplace'
+      )
+      await waitForMissing(control, '[data-testid="smart-app-share-dialog"]', uiTimeoutMs)
+      await control.command('click', sharedVisibilitySelector)
+      await control.command('waitFor', '[data-testid="smart-app-share-scope-private"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.match(
+        await control.command('getAttribute', '[data-testid="smart-app-share-scope-private"]', {
+          value: 'class',
+        }),
+        /\bbg-background\b.*\bshadow-sm\b/,
+        'Reopening Smart app access settings did not restore the private scope'
+      )
+      await control.command('click', '[data-testid="smart-app-share-cancel"]')
       await captureScreenshot(control, 'harness-apps-05-installed.png', 'body')
       await control.command('click', `[data-testid="smart-app-actions-${INSTALLATION_ID}"]`)
       await control.command(
         'waitFor',
         `[data-testid="smart-app-export-package-${INSTALLATION_ID}"]`,
         {
-          text: '导出安装包',
+          text: '导出发布包',
           timeoutMs: uiTimeoutMs,
         }
       )
+      const installedExportsBefore = await exportedPackages(downloadsPath)
       await control.command('click', `[data-testid="smart-app-export-package-${INSTALLATION_ID}"]`)
       await control.command('waitFor', '[data-testid="smart-app-export-success"]', {
-        text: '安装包已导出到下载目录。',
+        text: '发布包已导出到下载目录。',
         timeoutMs: uiTimeoutMs,
+      })
+      await assertExportedPackage({
+        archivePath: await waitForNewExport(downloadsPath, installedExportsBefore, uiTimeoutMs),
+        expectedName: INSTALLATION_ID,
+        expectedVersion: '0.1.0',
+        extractionPath: join(resultDir, 'installed-export-verification'),
       })
       await captureScreenshot(control, 'harness-apps-05a-exported.png', 'body')
 
@@ -1371,6 +1599,15 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         'Removing an imported workbench left its card visible in My'
       )
       await captureScreenshot(control, 'harness-apps-15a-local-removal-semantics.png', 'body')
+
+      await verifySmartAppMarketplaceIdentity({
+        control,
+        ownerRequest,
+        installationId: INSTALLATION_ID,
+        publicationId: sharedSmartAppId,
+        captureScreenshot,
+        uiTimeoutMs,
+      })
 
       await setExperimentalFeatures(control, false, uiTimeoutMs)
       await control.command('navigate', 'body', { value: '/sites' })

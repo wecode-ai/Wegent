@@ -34,6 +34,7 @@ from app.services.knowledge.code_wiki.runner import (
     is_code_wiki_generation,
     source_of,
     start_run,
+    strategy_team_readiness,
 )
 from app.services.knowledge.code_wiki.version_store import set_page_path
 
@@ -296,7 +297,8 @@ def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
     test_db.flush()
     tasks.team.json = {
         "spec": {
-            "collaborationModel": "coordinate",
+            # The strategy, not collaborationModel, selects the Code Wiki protocol.
+            "collaborationModel": "solo",
             "members": [
                 {
                     "role": "reviewer",
@@ -315,6 +317,11 @@ def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
             ],
         }
     }
+    _set_spec(
+        test_db,
+        knowledge_base,
+        generationStrategy="coordinator_reviewed",
+    )
     started = start_run(
         test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
     )
@@ -328,6 +335,168 @@ def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
     assert "`plan_only` review policy" in tasks.prompt
     assert f"`code-wiki-reviewer-{reviewer.id}`" in tasks.prompt
     assert f"`code-wiki-section-writer-{section_writer.id}`" in tasks.prompt
+
+
+def test_a_generation_snapshots_the_resolved_strategy(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+) -> None:
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.strategy_id == "legacy"
+    assert started.strategy_revision == 1
+    assert started.generation.ext["generationStrategy"] == {
+        "id": "legacy",
+        "revision": 1,
+        "teamRef": {"name": "code-wiki-team", "namespace": "default"},
+    }
+
+
+def test_adaptive_full_run_requires_writer_without_creating_review_state(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+) -> None:
+    from app.core.wiki_config import (
+        CodeWikiGenerationPolicy,
+        CodeWikiStrategyBinding,
+        CodeWikiTeamRef,
+        wiki_settings,
+    )
+
+    writer = Kind(
+        kind="Bot",
+        name="code-wiki-section-writer",
+        namespace="default",
+        user_id=test_user.id,
+        json={"spec": {}},
+        is_active=True,
+    )
+    test_db.add(writer)
+    test_db.flush()
+    tasks.team.json = {
+        "spec": {
+            "collaborationModel": "coordinate",
+            "members": [
+                {
+                    "role": "writer",
+                    "botRef": {
+                        "name": writer.name,
+                        "namespace": writer.namespace,
+                    },
+                }
+            ],
+        }
+    }
+    _set_spec(test_db, knowledge_base, generationStrategy="coordinator_adaptive")
+    monkeypatch.setattr(
+        wiki_settings,
+        "CODE_WIKI_GENERATION_POLICY",
+        CodeWikiGenerationPolicy(
+            defaultStrategy="coordinator_adaptive",
+            legacyFallbackStrategy="legacy",
+            strategies={
+                "coordinator_adaptive": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+                "legacy": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+            },
+        ),
+    )
+
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.strategy_id == "coordinator_adaptive"
+    assert "qualityReview" not in started.generation.ext
+    assert "Strategy: `coordinator_adaptive`" in tasks.prompt
+    assert f"`code-wiki-section-writer-{writer.id}`" in tasks.prompt
+    assert "review-open" not in tasks.prompt
+
+
+def test_solo_full_run_needs_no_team_roles_or_review_state(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+) -> None:
+    from app.core.wiki_config import (
+        CodeWikiGenerationPolicy,
+        CodeWikiStrategyBinding,
+        CodeWikiTeamRef,
+        wiki_settings,
+    )
+
+    _set_spec(test_db, knowledge_base, generationStrategy="coordinator_solo")
+    monkeypatch.setattr(
+        wiki_settings,
+        "CODE_WIKI_GENERATION_POLICY",
+        CodeWikiGenerationPolicy(
+            defaultStrategy="coordinator_solo",
+            legacyFallbackStrategy="legacy",
+            strategies={
+                "coordinator_solo": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+                "legacy": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+            },
+        ),
+    )
+
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.strategy_id == "coordinator_solo"
+    assert "qualityReview" not in started.generation.ext
+    assert "Strategy: `coordinator_solo`" in tasks.prompt
+    assert "Do not call the Claude Code `Task` or `Agent` tool" in tasks.prompt
+    assert "review-open" not in tasks.prompt
+
+
+def test_strategy_team_readiness_resolves_a_solo_team(
+    monkeypatch, test_db: Session, test_user: User, tasks: FakeTasks
+) -> None:
+    from app.core.wiki_config import (
+        CodeWikiGenerationPolicy,
+        CodeWikiStrategyBinding,
+        CodeWikiTeamRef,
+        wiki_settings,
+    )
+    from app.services.knowledge.code_wiki.generation_strategy import strategy_for_run
+
+    monkeypatch.setattr(
+        wiki_settings,
+        "CODE_WIKI_GENERATION_POLICY",
+        CodeWikiGenerationPolicy(
+            defaultStrategy="coordinator_solo",
+            legacyFallbackStrategy="legacy",
+            strategies={
+                "coordinator_solo": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+                "legacy": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+            },
+        ),
+    )
+
+    assert (
+        strategy_team_readiness(
+            test_db, test_user, strategy_for_run("coordinator_solo")
+        )
+        == ""
+    )
 
 
 def test_the_prompt_carries_the_generation_the_agent_must_write_into(
@@ -461,7 +630,13 @@ def _publish_a_first_wiki(test_db, knowledge_base, test_user, tasks) -> WikiGene
     _write_page(test_db, started.generation, "index")
     _write_page(test_db, started.generation, "architecture")
     _write_page(test_db, started.generation, "architecture/backend")
-    finish_run(test_db, generation=started.generation, succeeded=True, head_commit=HEAD)
+    finish_run(
+        test_db,
+        generation=started.generation,
+        succeeded=True,
+        head_commit=HEAD,
+        tracked_file_count=1_000,
+    )
     return started.generation
 
 
@@ -495,6 +670,39 @@ def test_the_commit_the_agent_reports_is_what_the_next_run_compares_against(
     )
 
     assert published_commit(test_db, knowledge_base) == NEXT_HEAD
+
+
+def test_a_published_checkout_count_enables_the_relative_change_limit(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects: FakeEffects,
+):
+    first = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+    _write_page(test_db, first.generation, "index")
+    _write_page(test_db, first.generation, "architecture")
+    _write_page(test_db, first.generation, "architecture/backend")
+    finish_run(
+        test_db,
+        generation=first.generation,
+        succeeded=True,
+        head_commit=HEAD,
+        tracked_file_count=100,
+    )
+
+    started = start_run(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=NEXT_HEAD,
+        changed_paths=[ChangedPath(f"src/module_{i}.py", "M") for i in range(30)],
+    )
+
+    assert started.generation.generation_type.value == "full"
+    assert "30 of 100 tracked files" in started.reason
 
 
 def test_a_failed_run_publishes_nothing(
@@ -548,7 +756,7 @@ def test_a_run_belonging_to_no_knowledge_base_is_not_a_code_wiki_run(
 # --- resolving the repository's state when the caller did not supply it ------
 
 
-def _repository_at(monkeypatch, head: str, changed=None):
+def _repository_at(monkeypatch, head: str, changed=None, tracked_file_count=None):
     """Answer as the provider would, without reaching one."""
     from app.services.knowledge.code_wiki import runner
     from app.services.knowledge.code_wiki.repo_state import RepositoryState
@@ -556,8 +764,11 @@ def _repository_at(monkeypatch, head: str, changed=None):
     monkeypatch.setattr(
         runner,
         "read_repository_state",
-        lambda db, *, user_id, source, since_commit: RepositoryState(
-            head_commit=head, branch="main", changed_paths=changed
+        lambda db, **kwargs: RepositoryState(
+            head_commit=head,
+            branch="main",
+            changed_paths=changed,
+            tracked_file_count=tracked_file_count,
         ),
     )
 
@@ -597,6 +808,52 @@ def test_a_changed_repository_is_updated_incrementally_without_being_told(
 
     assert started.mode == "incremental"
     assert "src/one.py" in tasks.prompt
+
+
+def test_a_historical_wiki_uses_the_tree_count_before_applying_the_ratio(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects: FakeEffects,
+):
+    first = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+    _write_page(test_db, first.generation, "index")
+    finish_run(test_db, generation=first.generation, succeeded=True, head_commit=HEAD)
+    _repository_at(
+        monkeypatch,
+        NEXT_HEAD,
+        changed=(ChangedPath("src/one.py", "M"),),
+        tracked_file_count=1_000,
+    )
+
+    started = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
+
+    assert started.mode == "incremental"
+
+
+def test_a_historical_wiki_rebuilds_when_its_tree_cannot_be_counted(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects: FakeEffects,
+):
+    first = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+    _write_page(test_db, first.generation, "index")
+    finish_run(test_db, generation=first.generation, succeeded=True, head_commit=HEAD)
+    _repository_at(monkeypatch, NEXT_HEAD, changed=(ChangedPath("src/one.py", "M"),))
+
+    started = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
+
+    assert started.mode == "full"
+    assert "file count is unavailable" in started.reason
 
 
 def test_a_repository_that_cannot_be_read_falls_back_to_a_rebuild(
@@ -997,7 +1254,13 @@ def test_a_pinned_commit_lets_the_next_run_be_incremental(
     )
     first = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
     _write_page(test_db, first.generation, "index")
-    finish_run(test_db, generation=first.generation, succeeded=True)
+    finish_run(
+        test_db,
+        generation=first.generation,
+        succeeded=True,
+        head_commit="aaaaaaa",
+        tracked_file_count=1_000,
+    )
 
     # The repository has moved, and one file changed.
     monkeypatch.setattr(

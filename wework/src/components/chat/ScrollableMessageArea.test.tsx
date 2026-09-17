@@ -124,6 +124,28 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getByTestId('chat-message-scroll-area-content')).not.toHaveClass('justify-end')
   })
 
+  test('uses scroll position zero as the bottom for an internal bottom-origin preview', () => {
+    render(
+      <ScrollableMessageArea
+        scrollOrigin="bottom"
+        messages={[
+          {
+            id: 'bottom-origin-preview',
+            role: 'assistant',
+            content: '最新消息直接出现在底部',
+            status: 'done',
+            createdAt: '2026-09-10T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    expect(scroller).toHaveAttribute('data-scroll-origin', 'bottom')
+    expect(scroller).toHaveClass('flex', 'flex-col-reverse', '[overflow-anchor:none]')
+    expect(scroller.scrollTop).toBeCloseTo(0)
+  })
+
   test('updates the message list layout when only the layout class changes', () => {
     const messages = [
       {
@@ -1977,6 +1999,7 @@ describe('ScrollableMessageArea', () => {
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:00.000Z',
         runtimeMessageIndex: 100,
+        turnId: 'virtual-active-turn-1',
       },
       {
         id: 'virtual-active-assistant-1',
@@ -1993,6 +2016,7 @@ describe('ScrollableMessageArea', () => {
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:02.000Z',
         runtimeMessageIndex: 102,
+        turnId: 'virtual-active-turn-2',
       },
       {
         id: 'virtual-active-assistant-2',
@@ -2009,6 +2033,7 @@ describe('ScrollableMessageArea', () => {
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:04.000Z',
         runtimeMessageIndex: 104,
+        turnId: 'virtual-active-turn-3',
       },
       {
         id: 'virtual-active-unindexed-assistant',
@@ -2028,7 +2053,34 @@ describe('ScrollableMessageArea', () => {
             Transient response without a transcript index
           </div>
         </div>
-        <MessageTurnNavigation messages={messages} scrollRef={scrollRef} contentRef={contentRef} />
+        <MessageTurnNavigation
+          messages={messages}
+          turnNavigation={[
+            {
+              id: 'virtual-active-turn-1',
+              turnId: 'virtual-active-turn-1',
+              turnIndex: 0,
+              messageIndex: 0,
+              promptPreview: '',
+            },
+            {
+              id: 'virtual-active-turn-2',
+              turnId: 'virtual-active-turn-2',
+              turnIndex: 1,
+              messageIndex: 1,
+              promptPreview: '',
+            },
+            {
+              id: 'virtual-active-turn-3',
+              turnId: 'virtual-active-turn-3',
+              turnIndex: 2,
+              messageIndex: 2,
+              promptPreview: '',
+            },
+          ]}
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+        />
       </div>
     )
 
@@ -2057,6 +2109,83 @@ describe('ScrollableMessageArea', () => {
     scroller.scrollTop = 2_900
     fireEvent.scroll(scroller)
 
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+  })
+
+  test('keeps the active turn stable until streaming layout measurements catch up', () => {
+    const scrollRef = createRef<HTMLDivElement>()
+    const contentRef = createRef<HTMLDivElement>()
+    const messages = [
+      {
+        id: 'stream-layout-user-1',
+        role: 'user' as const,
+        content: 'First request',
+        status: 'done' as const,
+        createdAt: '2026-09-03T00:00:00.000Z',
+      },
+      {
+        id: 'stream-layout-assistant-1',
+        role: 'assistant' as const,
+        content: 'First response',
+        status: 'done' as const,
+        createdAt: '2026-09-03T00:00:01.000Z',
+      },
+      {
+        id: 'stream-layout-user-2',
+        role: 'user' as const,
+        content: 'Streaming request',
+        status: 'done' as const,
+        createdAt: '2026-09-03T00:00:02.000Z',
+      },
+      {
+        id: 'stream-layout-assistant-2',
+        role: 'assistant' as const,
+        content: 'Streaming response',
+        status: 'streaming' as const,
+        createdAt: '2026-09-03T00:00:03.000Z',
+      },
+    ]
+
+    render(
+      <div ref={scrollRef}>
+        <div ref={contentRef}>
+          {messages.map(message => (
+            <div key={message.id} data-message-id={message.id}>
+              {message.content}
+            </div>
+          ))}
+        </div>
+        <MessageTurnNavigation messages={messages} scrollRef={scrollRef} contentRef={contentRef} />
+      </div>
+    )
+
+    const scroller = scrollRef.current!
+    let scrollHeight = 1_000
+    Object.defineProperties(scroller, {
+      clientHeight: { value: 300, configurable: true },
+      scrollHeight: { get: () => scrollHeight, configurable: true },
+      scrollTop: { value: 700, writable: true, configurable: true },
+    })
+    mockRect(scroller, 0, 300)
+    mockScrollRelativeRect(screen.getByText('First request'), scroller, 0, 60)
+    mockScrollRelativeRect(screen.getByText('First response'), scroller, 60, 440)
+    mockScrollRelativeRect(screen.getByText('Streaming request'), scroller, 750, 50)
+    const streamingResponse = screen.getByText('Streaming response')
+    mockScrollRelativeRect(streamingResponse, scroller, 800, 200)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+
+    scrollHeight = 1_400
+    mockScrollRelativeRect(streamingResponse, scroller, 800, 600)
+    scroller.scrollTop = 1_100
+    fireEvent.scroll(scroller)
+
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+    flushScheduledTimers()
     expect(markers[1]).toHaveAttribute('data-active', 'true')
   })
 
@@ -2360,6 +2489,78 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTop).toBe(624)
   })
 
+  test('falls back to message indexes when navigation turn ids are unavailable locally', () => {
+    const onLoadTurnNavigationItem = vi.fn()
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'fallback-user-1',
+            role: 'user',
+            content: '已加载的第一条需求',
+            status: 'done',
+            createdAt: '2026-09-13T00:00:00.000Z',
+            runtimeMessageIndex: 0,
+          },
+          {
+            id: 'fallback-user-2',
+            role: 'user',
+            content: '已加载的第二条需求',
+            status: 'done',
+            createdAt: '2026-09-13T00:00:01.000Z',
+            runtimeMessageIndex: 2,
+          },
+        ]}
+        turnNavigation={[
+          {
+            id: 'runtime-turn-1',
+            turnId: 'provider-turn-1',
+            turnIndex: 0,
+            messageIndex: 0,
+            cursor: 'cursor:0',
+            promptPreview: '已加载的第一条需求',
+            responsePreview: '',
+          },
+          {
+            id: 'runtime-turn-2',
+            turnId: 'provider-turn-2',
+            turnIndex: 1,
+            messageIndex: 2,
+            cursor: 'cursor:2',
+            promptPreview: '已加载的第二条需求',
+            responsePreview: '',
+          },
+        ]}
+        onLoadTurnNavigationItem={onLoadTurnNavigationItem}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperties(scroller, {
+      clientHeight: { value: 300, configurable: true },
+      scrollHeight: { value: 1_000, configurable: true },
+      scrollTop: { value: 0, writable: true, configurable: true },
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      if (typeof top === 'number') scroller.scrollTop = top
+    })
+    mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('已加载的第一条需求').closest('[data-message-id]')!, 120, 180)
+    mockRect(screen.getByText('已加载的第二条需求').closest('[data-message-id]')!, 620, 680)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+    scroller.scrollTop = 0
+    vi.mocked(scroller.scrollTo).mockClear()
+    fireEvent.click(screen.getAllByTestId('message-turn-navigation-marker')[1])
+
+    expect(onLoadTurnNavigationItem).not.toHaveBeenCalled()
+    expect(scroller.scrollTo).toHaveBeenCalledWith({
+      top: 524,
+      behavior: 'smooth',
+    })
+  })
+
   test('keeps turn navigation in control while a clicked target settles', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver
@@ -2521,6 +2722,7 @@ describe('ScrollableMessageArea', () => {
     )
     const latestMessage = {
       id: 'client-latest-user',
+      turnId: 'turn-latest',
       role: 'user' as const,
       content: '最新需求',
       status: 'done' as const,
@@ -2530,6 +2732,7 @@ describe('ScrollableMessageArea', () => {
     const turnNavigation = [
       {
         id: 'runtime-older-user',
+        turnId: 'turn-older',
         turnIndex: 0,
         messageIndex: 0,
         cursor: 'offset:0',
@@ -2538,6 +2741,7 @@ describe('ScrollableMessageArea', () => {
       },
       {
         id: 'runtime-latest-user',
+        turnId: 'turn-latest',
         turnIndex: 1,
         messageIndex: 2,
         cursor: 'offset:2',
@@ -2792,6 +2996,57 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
       top: 600,
       behavior: 'auto',
+    })
+  })
+
+  test('starts from the latest message when restore is disabled for a preview', () => {
+    cacheConversationScrollSnapshot('latest-preview', {
+      distanceFromBottomPx: 420,
+      pinnedToBottom: false,
+    })
+    render(
+      <ScrollableMessageArea
+        conversationKey="latest-preview"
+        initialScrollPosition="latest"
+        messages={[
+          {
+            id: 'latest-preview-message',
+            role: 'assistant',
+            content: '最新消息',
+            status: 'done',
+            createdAt: '2026-09-09T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 600,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn()
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 600,
+      behavior: 'auto',
+    })
+    expect(getConversationScrollSnapshot('latest-preview')).toEqual({
+      distanceFromBottomPx: 0,
+      pinnedToBottom: true,
     })
   })
 

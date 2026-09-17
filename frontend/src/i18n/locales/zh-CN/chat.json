@@ -7,6 +7,7 @@
   },
   "input": {
     "no_team_placeholder": "请先选择或创建智能体",
+    "loading_teams_placeholder": "正在加载智能体...",
     "expand": "展开输入框",
     "collapse": "收起输入框"
   },
@@ -37,7 +38,7 @@
     "cancel": "取消",
     "re_edit": "重新编辑",
     "re_edit_tooltip": "重新编辑",
-    "forward": "转发"
+    "forward": "发送到协作"
   },
   "edit": {
     "tooltip": "编辑消息",
@@ -675,7 +676,7 @@
       "text_contexts": "消息上下文",
       "structured_contexts": "附加上下文",
       "no_text_contexts": "暂无可用的消息上下文。",
-      "no_structured_contexts": "暂无附件、知识库或表格上下文。",
+      "no_structured_contexts": "暂无附件或知识库上下文。",
       "confirm": "继续",
       "confirming": "继续中...",
       "missing_task": "缺少任务或团队信息",
@@ -757,6 +758,7 @@
     "reference_image": "参考图片（可选）",
     "no_models": "暂无可用的视频模型",
     "settings_title": "视频设置",
+    "generation_mode_section": "视频模式",
     "ratio_section": "比例",
     "duration_section": "时长",
     "duration_auto": "智能时长",
@@ -772,6 +774,7 @@
   },
   "image": {
     "title": "图片生成",
+    "settings_title": "图片设置",
     "model_selector": "选择图片模型",
     "search_model": "搜索图片模型...",
     "size_selector": "选择尺寸",

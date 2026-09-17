@@ -59,10 +59,19 @@ const forbiddenGlobalZIndexClasses = [
 ]
 
 describe('theme token guard', () => {
+  test('uses the ChatGPT Electron default UI weight without changing medium emphasis', () => {
+    const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
+    const source = readFileSync(globalsPath, 'utf8')
+
+    expect(source).toContain('--font-weight-ui: 445;')
+    expect(source).toContain('font-weight: var(--font-weight-ui);')
+    expect(source).toContain('font-weight: 500;')
+  })
+
   test('styles do not reference the removed background token alias', () => {
     const guardedStylePaths = [
       resolve(process.cwd(), 'src/styles/globals.css'),
-      resolve(sourceRoot, 'features/todo/task-detail-layout.css'),
+      resolve(process.cwd(), '../packages/collaboration/src/issue-detail/task-detail-layout.css'),
     ]
 
     for (const stylePath of guardedStylePaths) {
@@ -91,14 +100,27 @@ describe('theme token guard', () => {
     expect(source).toContain("darkMode: 'class'")
   })
 
+  test('native select menus derive their popup colors from theme tokens', () => {
+    const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
+    const source = readFileSync(globalsPath, 'utf8')
+
+    expect(source).toContain('.wework-native-select optgroup {')
+    expect(source).toContain('.wework-native-select option {')
+    expect(source).toContain('.wework-native-select option:disabled {')
+    expect(source).toContain('background-color: rgb(var(--color-popover));')
+    expect(source).toContain('color: rgb(var(--color-text-primary));')
+    expect(source).toContain('color: rgb(var(--color-text-secondary));')
+    expect(source).toContain('color: rgb(var(--color-text-muted));')
+  })
+
   test('titlebar and window frame use the same opaque surface colors', () => {
     const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
     const source = readFileSync(globalsPath, 'utf8')
 
     expect(source.match(/--color-bg-surface: 247 247 248;/g)).toHaveLength(1)
     expect(source.match(/--color-titlebar: 247 247 248;/g)).toHaveLength(1)
-    expect(source.match(/--color-bg-surface: 28 31 36;/g)).toHaveLength(1)
-    expect(source.match(/--color-titlebar: 28 31 36;/g)).toHaveLength(1)
+    expect(source.match(/--color-bg-surface: 33 33 33;/g)).toHaveLength(1)
+    expect(source.match(/--color-titlebar: 33 33 33;/g)).toHaveLength(1)
   })
 
   test('tailwind exposes semantic z-index layers', () => {

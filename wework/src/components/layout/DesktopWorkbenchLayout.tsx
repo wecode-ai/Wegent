@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEventHandler } from 'react'
-import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import type { ProjectCreateMode } from '@/components/chat/ChatInput'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useAuth } from '@/features/auth/useAuth'
@@ -9,7 +8,6 @@ import type {
   GitCloneProjectOperation,
   IMPrivateSession,
   ProjectWithTasks,
-  RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
@@ -40,8 +38,18 @@ import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
+import { WeworkCollaborationPlatform } from '@/features/todo/WeworkCollaborationPlatform'
+import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
-import { projectSpaceApis } from '@/features/todo/projectSpaceSelection'
+import { projectSpaceApis, projectSpaceRef } from '@/features/todo/projectSpaceSelection'
+import {
+  defaultProjectSpaceContentRoute,
+  projectSpaceContentRoute,
+  projectSpaceRefFromRoute,
+  projectSpaceRouteParam,
+  projectSpaceRouteRequestsDefaultProject,
+  projectSpaceRouteTargetsDefaultWorkItems,
+} from '@/features/todo/projectSpaceRoute'
 import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -65,6 +73,8 @@ import {
 } from './workbenchPaneIdentity'
 import { openProjectSpaceRuntimeTaskInTab } from './projectSpaceRuntimeTaskNavigation'
 import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
+import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
+import { loadDshConversationTranscript } from '@/features/dsh-runtime/dshConversationTranscript'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -92,29 +102,32 @@ function isSameRuntimeTask(
   )
 }
 
-function boardRouteParam(contentRoute: string, name: string): string | null {
-  const searchIndex = contentRoute.indexOf('?')
-  if (searchIndex < 0) return null
-  return new URLSearchParams(contentRoute.slice(searchIndex + 1)).get(name)
-}
-
-function boardRouteProjectRef(contentRoute: string): RuntimeProjectSpaceRef | null {
-  const projectId = boardRouteParam(contentRoute, 'projectId')
-  const projectStore = boardRouteParam(contentRoute, 'projectStore')
-  if (!projectId || (projectStore !== 'local' && projectStore !== 'backend')) return null
-  return { projectId, projectStore }
-}
-
-function boardRouteRequestsDefaultProject(contentRoute: string): boolean {
-  return (
-    boardRouteParam(contentRoute, 'projectId') === DEFAULT_WORK_ITEM_PROJECT_ID &&
-    boardRouteParam(contentRoute, 'projectStore') === null
-  )
-}
-
 interface DesktopWorkbenchLayoutProps {
   routeActive?: boolean
   surfaceKind?: 'task' | 'board'
+}
+
+function routePathname(route: string): string {
+  const searchIndex = route.indexOf('?')
+  return searchIndex >= 0 ? route.slice(0, searchIndex) : route
+}
+
+const SETTINGS_RETURN_PATH_KEY = 'wework.settingsReturnPath'
+
+function readSettingsReturnPath(): string | null {
+  try {
+    return window.sessionStorage.getItem(SETTINGS_RETURN_PATH_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeSettingsReturnPath(path: string): void {
+  try {
+    window.sessionStorage.setItem(SETTINGS_RETURN_PATH_KEY, path)
+  } catch {
+    // The in-memory ref remains the fallback when session storage is unavailable.
+  }
 }
 
 export function DesktopWorkbenchLayout({
@@ -135,17 +148,18 @@ export function DesktopWorkbenchLayout({
     startStandaloneChat: onStartStandaloneChat,
     startNewProjectChat: onStartNewProjectChat,
     openRuntimeTask: onOpenRuntimeTask,
+    loadRuntimeTranscriptForPane: onLoadRuntimeTranscriptForPane,
     searchRuntimeWork: onSearchRuntimeWork = async () => ({ items: [] }),
     renameRuntimeTask: onRenameRuntimeTask,
     archiveRuntimeTask: onArchiveRuntimeTask,
     archiveProjectConversations: onArchiveProjectConversations,
     archiveProjectsConversations: onArchiveProjectsConversations,
     archiveChatConversations: onArchiveChatConversations,
+    cancelRuntimeTask: onCancelRuntimeTask,
     refreshDevices: onRefreshDevices,
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
     createProject: onCreateProject,
-    createLocalRuntimeProject: onCreateLocalRuntimeProject,
     createGitWorkspaceProject: onCreateGitWorkspaceProject,
     prepareDeviceWorkspace: onPrepareDeviceWorkspace,
     deleteDeviceWorkspace: onDeleteDeviceWorkspace,
@@ -181,6 +195,11 @@ export function DesktopWorkbenchLayout({
   )
   const availableProjectSpaceApis = useMemo(() => projectSpaceApis(services), [services])
   const workspaceTabs = useOptionalWorkspaceTabs()
+  const ownedWorkspaceTab = workspaceTabs
+    ? workspaceTabId
+      ? (workspaceTabs.tabs.find(tab => tab.id === workspaceTabId) ?? null)
+      : workspaceTabs.activeTab
+    : null
   const activePane = useMemo<WorkbenchPaneIdentity>(
     () => ({
       currentRuntimeTask: state.currentRuntimeTask,
@@ -205,12 +224,31 @@ export function DesktopWorkbenchLayout({
     validRuntimeKeys: runtimePaneKeys,
     runtimeKeysReady: state.runtimeWork !== null,
   })
+  useEffect(() => {
+    if (!routeActive || surfaceKind === 'board') return
+    return bindDshConversationController({
+      getTranscript: reference =>
+        loadDshConversationTranscript(reference, state.runtimeWork, onLoadRuntimeTranscriptForPane),
+    })
+  }, [onLoadRuntimeTranscriptForPane, routeActive, state.runtimeWork, surfaceKind])
   const { activatePane: activateSplitPane } = splitGroups
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
+  const [taskView, setTaskView] = useState<'workbench' | 'default-work-items'>('workbench')
   const routeWorkItemsOpen =
     surfaceKind === 'board' || (surfaceKind === undefined && currentPath === '/todo')
-  const todoOpen = routeWorkItemsOpen
+  const activeProjectSpaceContentRoute =
+    ownedWorkspaceTab?.kind === 'board'
+      ? ownedWorkspaceTab.contentRoute
+      : `${currentPath}${window.location.search}`
+  const defaultWorkItemsOpen =
+    taskView === 'default-work-items' ||
+    (routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute))
+  const workItemSurfaceOpen = routeWorkItemsOpen || defaultWorkItemsOpen
+  const workItemUser = state.user ?? (defaultWorkItemsOpen ? LOCAL_USER : null)
+  const workItemServicesReady = defaultWorkItemsOpen
+    ? availableProjectSpaceApis.length > 0
+    : Boolean(services.deliveryApi)
   const [localHarnessSessions, setLocalHarnessSessions] = useState<LocalHarnessWorkbenchSession[]>(
     []
   )
@@ -340,7 +378,7 @@ export function DesktopWorkbenchLayout({
   }, [])
 
   useEffect(() => {
-    if (todoOpen || !isLocalHarnessAvailable()) return
+    if (workItemSurfaceOpen || !isLocalHarnessAvailable()) return
 
     let cancelled = false
     void loadLocalHarnessSessions()
@@ -372,21 +410,24 @@ export function DesktopWorkbenchLayout({
       cancelled = true
       window.removeEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
     }
-  }, [loadLocalHarnessSessions, todoOpen])
+  }, [loadLocalHarnessSessions, workItemSurfaceOpen])
   const activeItem = 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const startNewChatOutsideHarness = useCallback(() => {
+    setTaskView('workbench')
     setActiveLocalHarnessSessionId(null)
     activateSplitPane(blankPaneKey)
     onNewChat()
   }, [activateSplitPane, blankPaneKey, onNewChat])
   const startStandaloneChatOutsideHarness = useCallback(() => {
+    setTaskView('workbench')
     setActiveLocalHarnessSessionId(null)
     activateSplitPane(blankPaneKey)
     onStartStandaloneChat()
   }, [activateSplitPane, blankPaneKey, onStartStandaloneChat])
   const selectProjectOutsideHarness = useCallback(
     (projectId: number) => {
+      setTaskView('workbench')
       setActiveLocalHarnessSessionId(null)
       activateSplitPane(blankPaneKey)
       onSelectProject(projectId)
@@ -395,6 +436,7 @@ export function DesktopWorkbenchLayout({
   )
   const startNewProjectChatOutsideHarness = useCallback(
     (projectId: number) => {
+      setTaskView('workbench')
       setActiveLocalHarnessSessionId(null)
       activateSplitPane(blankPaneKey)
       onStartNewProjectChat(projectId)
@@ -403,6 +445,7 @@ export function DesktopWorkbenchLayout({
   )
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
+      setTaskView('workbench')
       setActiveLocalHarnessSessionId(null)
       activateSplitPane(
         getWorkbenchPaneKey({
@@ -524,6 +567,12 @@ export function DesktopWorkbenchLayout({
   const [sidebarResizing, setSidebarResizing] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() => isSettingsRoute(initialPath))
   const settingsReturnPathRef = useRef(initialPath === '/todo' ? '/todo' : '/')
+  const routeActiveRef = useRef(routeActive)
+  routeActiveRef.current = routeActive
+  const activeTabRouteRef = useRef(
+    ownedWorkspaceTab?.contentRoute ??
+      `${stripAppBasePath(window.location.pathname)}${window.location.search}`
+  )
   const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
   const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
@@ -556,8 +605,20 @@ export function DesktopWorkbenchLayout({
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed
 
   useEffect(() => {
+    if (!ownedWorkspaceTab) return
+    activeTabRouteRef.current = ownedWorkspaceTab.contentRoute
+  }, [ownedWorkspaceTab])
+
+  useEffect(() => {
+    let previousPath = stripAppBasePath(window.location.pathname)
     const handlePopState = () => {
       const path = stripAppBasePath(window.location.pathname)
+      const enteringSettings = isSettingsRoute(path) && !isSettingsRoute(previousPath)
+      if (enteringSettings && routeActiveRef.current) {
+        settingsReturnPathRef.current = activeTabRouteRef.current
+        writeSettingsReturnPath(activeTabRouteRef.current)
+      }
+      previousPath = path
       setCurrentPath(path)
       setSettingsOpen(isSettingsRoute(path))
     }
@@ -567,7 +628,7 @@ export function DesktopWorkbenchLayout({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (todoOpen) return
+      if (workItemSurfaceOpen) return
       if (event.key.toLowerCase() !== 'k') return
       if (!event.metaKey && !event.ctrlKey) return
       event.preventDefault()
@@ -576,7 +637,7 @@ export function DesktopWorkbenchLayout({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [todoOpen])
+  }, [workItemSurfaceOpen])
 
   useEffect(() => {
     const syncAutoCollapse = () => {
@@ -659,27 +720,24 @@ export function DesktopWorkbenchLayout({
   )
 
   const openCloudDeviceSettings = useCallback(() => {
-    settingsReturnPathRef.current = '/'
     setAutoOpenAddCloudDeviceDialog(true)
     setSettingsOpen(true)
     navigateTo('/settings/connections')
   }, [])
 
-  const openSettings = useCallback(
-    (options: DesktopSidebarAccountSettingsOptions | undefined, returnPath: '/' | '/todo') => {
-      settingsReturnPathRef.current = returnPath
-      setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
-      setSettingsOpen(true)
-      navigateTo(
-        options?.autoOpenAddCloudDeviceDialog
-          ? '/settings/connections'
-          : options?.settingsPage
-            ? `/settings/${options.settingsPage}`
-            : '/settings'
-      )
-    },
-    []
-  )
+  const openSettings = useCallback((options: DesktopSidebarAccountSettingsOptions | undefined) => {
+    settingsReturnPathRef.current = activeTabRouteRef.current
+    writeSettingsReturnPath(activeTabRouteRef.current)
+    setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
+    setSettingsOpen(true)
+    navigateTo(
+      options?.autoOpenAddCloudDeviceDialog
+        ? '/settings/connections'
+        : options?.settingsPage
+          ? `/settings/${options.settingsPage}`
+          : '/settings'
+    )
+  }, [])
 
   const openSidebarPreview = useCallback(() => {
     if (!effectiveSidebarCollapsed) return
@@ -756,9 +814,9 @@ export function DesktopWorkbenchLayout({
   }, [onGetImNotificationSettings])
 
   useEffect(() => {
-    if (todoOpen) return
+    if (workItemSurfaceOpen) return
     void refreshImNotificationSettings().catch(() => undefined)
-  }, [refreshImNotificationSettings, todoOpen])
+  }, [refreshImNotificationSettings, workItemSurfaceOpen])
 
   const openImNotificationTargetDialog = useCallback(
     (mode: ImNotificationDialogMode) => {
@@ -939,6 +997,7 @@ export function DesktopWorkbenchLayout({
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       }
       activeItem={activeItem}
+      taskView={taskView}
       localHarnessSessions={localHarnessSessions}
       activeLocalHarnessSessionId={activeLocalHarnessSessionId}
       collapsed={collapsed}
@@ -957,6 +1016,7 @@ export function DesktopWorkbenchLayout({
       onOpenLocalHarnessSession={openLocalHarnessSession}
       onCloseLocalHarnessSession={closeLocalHarnessSession}
       onOpenSearch={() => setSearchOpen(true)}
+      onOpenMyWork={() => setTaskView('default-work-items')}
       onSelectProject={selectProjectOutsideHarness}
       onStartNewProjectChat={startNewProjectChatOutsideHarness}
       onOpenRuntimeTask={openRuntimeTaskOutsideHarness}
@@ -994,7 +1054,7 @@ export function DesktopWorkbenchLayout({
       onDismissGitCloneOperation={dismissGitCloneOperation}
       projectSpaceApis={availableProjectSpaceApis}
       models={projectChat.models}
-      onOpenSettings={options => openSettings(options, '/')}
+      onOpenSettings={options => openSettings(options)}
       onLogout={onLogout}
     />
   )
@@ -1046,82 +1106,131 @@ export function DesktopWorkbenchLayout({
             onOpenRuntimeTask={onOpenRuntimeTask}
             onRefreshWorkLists={refreshWorkLists}
             onBack={() => {
-              const returnPath = settingsReturnPathRef.current
+              const returnPath = readSettingsReturnPath() ?? settingsReturnPathRef.current
               setSettingsOpen(false)
               setAutoOpenAddCloudDeviceDialog(false)
-              setCurrentPath(returnPath)
+              setCurrentPath(routePathname(returnPath))
               navigateTo(returnPath)
             }}
           />
         )}
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-          {todoOpen &&
-            (state.user && services.deliveryApi ? (
-              <CloudTodoWorkspace
-                user={state.user}
-                localProjects={localTodoProjects}
-                runtimeWork={state.runtimeWork}
-                runtimeTaskLifecycle={runtimeTaskLifecycle}
-                services={services}
-                startupActive={routeActive && todoOpen}
-                onCreateLocalCodeProject={onCreateLocalRuntimeProject}
-                onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-                onListDeviceDirectories={onListDeviceDirectories}
-                onCreateDeviceDirectory={onCreateDeviceDirectory}
-                onCloneGitRepository={onCloneGitRepository}
-                onOpenRuntimeTask={openProjectSpaceRuntimeTask}
-                onArchiveRuntimeTask={onArchiveRuntimeTask}
-                onOpenSettings={options => openSettings(options, '/todo')}
-                onLogout={onLogout}
-                activeProjectRef={
-                  workspaceTabs?.activeTab.kind === 'board'
-                    ? boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
-                    : undefined
-                }
-                defaultProjectRequested={
-                  workspaceTabs?.activeTab.kind === 'board' &&
-                  boardRouteRequestsDefaultProject(workspaceTabs.activeTab.contentRoute)
-                }
-                focusedItemId={
-                  workspaceTabs?.activeTab.kind === 'board'
-                    ? boardRouteParam(workspaceTabs.activeTab.contentRoute, 'itemId')
-                    : undefined
-                }
-                onFocusedItemHandled={() => {
-                  if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
-                  const projectRef = boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
-                  const defaultProjectRequested = boardRouteRequestsDefaultProject(
-                    workspaceTabs.activeTab.contentRoute
-                  )
-                  const params = new URLSearchParams()
-                  if (projectRef) {
-                    params.set('projectStore', projectRef.projectStore)
-                    params.set('projectId', projectRef.projectId)
-                  } else if (defaultProjectRequested) {
-                    params.set('projectId', DEFAULT_WORK_ITEM_PROJECT_ID)
+          {workItemSurfaceOpen &&
+            (workItemUser && workItemServicesReady ? (
+              defaultWorkItemsOpen ? (
+                <CloudTodoWorkspace
+                  user={workItemUser}
+                  localProjects={localTodoProjects}
+                  runtimeWork={state.runtimeWork}
+                  runtimeTaskLifecycle={runtimeTaskLifecycle}
+                  services={services}
+                  embedded
+                  embeddedTitle="project"
+                  startupActive={routeActive && routeWorkItemsOpen}
+                  onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                  onArchiveRuntimeTasks={onArchiveChatConversations}
+                  onOpenSettings={options => openSettings(options)}
+                  onLogout={onLogout}
+                  activeProjectRef={
+                    ownedWorkspaceTab?.kind === 'board'
+                      ? projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
+                      : undefined
                   }
-                  workspaceTabs.updateActiveTab({
-                    contentRoute: `/todo${params.size ? `?${params.toString()}` : ''}`,
-                  })
-                }}
-                onActiveProjectChange={project => {
-                  if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
-                  if (!project) {
+                  defaultProjectRequested
+                  focusedItemId={
+                    ownedWorkspaceTab?.kind === 'board'
+                      ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'itemId')
+                      : undefined
+                  }
+                  onFocusedItemHandled={() => {
+                    if (
+                      !workspaceTabs ||
+                      ownedWorkspaceTab?.kind !== 'board' ||
+                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id
+                    ) {
+                      return
+                    }
                     workspaceTabs.updateActiveTab({
-                      title: t('workbench.workspace_tab_board', '项目空间'),
-                      contentRoute: '/todo',
+                      contentRoute: defaultProjectSpaceContentRoute(),
                     })
-                    return
+                  }}
+                  onActiveProjectChange={project => {
+                    if (
+                      !workspaceTabs ||
+                      ownedWorkspaceTab?.kind !== 'board' ||
+                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id ||
+                      !project
+                    ) {
+                      return
+                    }
+                    workspaceTabs.updateActiveTab({
+                      title: project.name,
+                      contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
+                    })
+                  }}
+                />
+              ) : (
+                <WeworkCollaborationPlatform
+                  user={workItemUser}
+                  localProjects={localTodoProjects}
+                  runtimeWork={state.runtimeWork}
+                  runtimeTaskLifecycle={runtimeTaskLifecycle}
+                  services={services}
+                  startupActive={routeActive && routeWorkItemsOpen}
+                  onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                  onArchiveRuntimeTasks={onArchiveChatConversations}
+                  onCancelRuntimeTask={onCancelRuntimeTask}
+                  onOpenSettings={options => openSettings(options)}
+                  onLogout={onLogout}
+                  activeProjectRef={
+                    ownedWorkspaceTab?.kind === 'board'
+                      ? projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
+                      : undefined
                   }
-                  const params = new URLSearchParams()
-                  params.set('projectStore', project.project_store)
-                  params.set('projectId', project.id)
-                  workspaceTabs.updateActiveTab({
-                    title: project.name,
-                    contentRoute: `/todo?${params.toString()}`,
-                  })
-                }}
-              />
+                  defaultProjectRequested={
+                    ownedWorkspaceTab?.kind === 'board' &&
+                    projectSpaceRouteRequestsDefaultProject(ownedWorkspaceTab.contentRoute)
+                  }
+                  focusedItemId={
+                    ownedWorkspaceTab?.kind === 'board'
+                      ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'itemId')
+                      : undefined
+                  }
+                  onFocusedItemHandled={() => {
+                    if (
+                      !workspaceTabs ||
+                      ownedWorkspaceTab?.kind !== 'board' ||
+                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id
+                    ) {
+                      return
+                    }
+                    const projectRef = projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
+                    workspaceTabs.updateActiveTab({
+                      contentRoute: projectRef ? projectSpaceContentRoute(projectRef) : '/todo',
+                    })
+                  }}
+                  onActiveProjectChange={project => {
+                    if (
+                      !workspaceTabs ||
+                      ownedWorkspaceTab?.kind !== 'board' ||
+                      workspaceTabs.activeTabId !== ownedWorkspaceTab.id
+                    ) {
+                      return
+                    }
+                    if (!project) {
+                      workspaceTabs.updateActiveTab({
+                        title: t('workbench.workspace_tab_board', '协作 (Beta)'),
+                        contentRoute: '/todo',
+                      })
+                      return
+                    }
+                    workspaceTabs.updateActiveTab({
+                      title: project.name,
+                      contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
+                    })
+                  }}
+                />
+              )
             ) : (
               <div
                 data-testid="cloud-board-loading"
@@ -1130,9 +1239,9 @@ export function DesktopWorkbenchLayout({
                 {t('workbench.cloud_board_loading', '正在加载云端看板…')}
               </div>
             ))}
-          {!todoOpen ? (
+          {!workItemSurfaceOpen ? (
             <DesktopWorkbenchMain
-              visible={routeActive && !settingsOpen && !todoOpen}
+              visible={routeActive && !settingsOpen}
               sidebarCollapsed={effectiveSidebarCollapsed}
               sidebarResizing={sidebarResizing}
               onSidebarCollapsedChange={updateSidebarCollapsed}

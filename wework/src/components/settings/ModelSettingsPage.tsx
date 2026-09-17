@@ -22,6 +22,13 @@ import {
   saveLocalCodexModelCatalogOverride,
   type CodexModelCatalogOverride,
 } from '@/api/local/codexOfficialModels'
+import {
+  cancelLocalCodexLogin,
+  listLocalCodexAccounts,
+  startLocalCodexLogin,
+  switchLocalCodexAccount,
+  type LocalCodexAccounts,
+} from '@/api/local/codexAuth'
 import { getLocalCodexAuthStatus, type LocalRuntimeAuthStatus } from '@/api/local/runtimeAuthStatus'
 import { createModelApi } from '@/api/models'
 import { createUserApi } from '@/api/users'
@@ -63,11 +70,13 @@ import {
   type LocalModelConfig,
   type LocalModelCatalogSnapshot,
   type LocalModelApiFormat,
+  type LocalModelCodexToolCompatibility,
   type LocalModelToolProfile,
   type LocalModelWebSearchMode,
 } from '@/features/model-settings/localModelSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
+import { openExternalUrl } from '@/lib/external-links'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 import { track } from '@/telemetry/client'
 import type { UnifiedModel } from '@/types/api'
@@ -142,69 +151,157 @@ function modelMeta(model: UnifiedModel): string {
 
 function LocalCodexModelRow({
   status,
+  accounts,
   loading,
   error,
-  onRefresh,
+  loginState,
+  loginError,
+  switchingAccountId,
+  onLogin,
+  onCancelLogin,
+  onSwitchAccount,
 }: {
   status: LocalRuntimeAuthStatus | null
+  accounts: LocalCodexAccounts | null
   loading: boolean
   error: string | null
-  onRefresh: () => void
+  loginState: 'idle' | 'starting' | 'waiting' | 'cancelling'
+  loginError: string | null
+  switchingAccountId: string | null
+  onLogin: () => void
+  onCancelLogin: () => void
+  onSwitchAccount: (accountId: string) => void
 }) {
   const { t } = useTranslation('common')
   const exists = status?.exists === true
+  const activeAccount = accounts?.accounts.find(account => account.id === accounts.activeAccountId)
+  const loginBusy = loginState !== 'idle'
   return (
     <div
       data-testid="local-codex-model-row"
-      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-3"
+      className="rounded-lg border border-border bg-background px-3 py-2.5"
     >
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-semibold text-text-primary">
-            {t('workbench.local_codex_model_title', '当前设备认证')}
-          </h3>
-          <span
-            data-testid="local-codex-model-status-pill"
-            className={`rounded-full px-2 py-0.5 text-xs ${
-              exists ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
-            }`}
-          >
-            {exists
-              ? t('workbench.runtime_config_configured', '已配置')
-              : t('workbench.runtime_config_not_configured', '未配置')}
-          </span>
-        </div>
-        <div className="mt-1 break-all text-xs leading-5 text-text-secondary">
-          {t('workbench.local_codex_auth_path_value', {
-            defaultValue: '本机 {{path}}',
-            path: status?.targetPath ?? '~/.codex/auth.json',
-          })}
-          {formatRuntimeDate(status?.updatedAt) && (
-            <span className="ml-2">
-              {t('workbench.runtime_config_updated_at', '更新时间')}:{' '}
-              {formatRuntimeDate(status?.updatedAt)}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-text-primary">
+              {t('workbench.local_codex_model_title', 'Codex 账号')}
+            </h3>
+            <span
+              data-testid="local-codex-model-status-pill"
+              className={`rounded-full px-2 py-0.5 text-xs ${
+                exists ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
+              }`}
+            >
+              {loading
+                ? t('workbench.local_codex_account_checking', '检查中')
+                : exists
+                  ? t('workbench.local_codex_account_signed_in', '已登录')
+                  : t('workbench.local_codex_account_signed_out', '未登录')}
             </span>
+          </div>
+          <div className="mt-1 text-xs leading-5 text-text-secondary">
+            {loading
+              ? t('workbench.local_codex_account_checking_description', '正在检查账号状态...')
+              : loginState === 'waiting' || loginState === 'cancelling'
+                ? t(
+                    'workbench.local_codex_login_waiting',
+                    '请在浏览器中完成登录，完成后这里会自动更新。'
+                  )
+                : activeAccount?.email ||
+                  (exists
+                    ? t(
+                        'workbench.local_codex_account_signed_in_description',
+                        '当前设备已可使用 Codex。'
+                      )
+                    : t(
+                        'workbench.local_codex_account_signed_out_description',
+                        '登录 ChatGPT 账号以在 Wework 中使用 Codex。'
+                      ))}
+          </div>
+          {error && <div className="mt-1 text-xs text-red-500">{error}</div>}
+          {loginError && (
+            <div data-testid="local-codex-login-error" className="mt-1 text-xs text-red-500">
+              {loginError}
+            </div>
           )}
         </div>
-        <div className="mt-1 flex items-center gap-1.5 text-xs text-text-muted">
-          <ShieldCheck className="h-3.5 w-3.5" />
-          {status?.sha256
-            ? `SHA-256 ${shortDigest(status.sha256)}`
-            : t('workbench.local_codex_auth_no_digest', '没有可显示的摘要')}
-        </div>
-        {error && <div className="mt-1 text-xs text-red-500">{error}</div>}
+        {!loading && (
+          <div className="flex items-center gap-2">
+            {loginState === 'waiting' || loginState === 'cancelling' ? (
+              <button
+                type="button"
+                data-testid="local-codex-login-cancel-button"
+                onClick={onCancelLogin}
+                disabled={loginState === 'cancelling'}
+                className="inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loginState === 'cancelling' && (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                )}
+                {t('workbench.local_codex_login_cancel', '取消登录')}
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-testid="local-codex-login-button"
+                onClick={onLogin}
+                disabled={loginState === 'starting'}
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loginState === 'starting' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : null}
+                {loginState === 'starting'
+                  ? t('workbench.local_codex_login_opening', '正在打开...')
+                  : exists
+                    ? t('workbench.local_codex_add_account', '添加账号')
+                    : t('workbench.local_codex_login_action', '登录')}
+              </button>
+            )}
+          </div>
+        )}
       </div>
-      <button
-        type="button"
-        data-testid="local-codex-auth-refresh-button"
-        onClick={onRefresh}
-        disabled={loading}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-        aria-label={t('workbench.runtime_config_refresh', '刷新')}
-        title={t('workbench.runtime_config_refresh', '刷新')}
-      >
-        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-      </button>
+      {!loading && accounts && accounts.accounts.length > 0 && (
+        <div data-testid="local-codex-account-list" className="mt-3 grid gap-1">
+          {accounts.accounts.map(account => {
+            const active = account.id === accounts.activeAccountId
+            const switching = account.id === switchingAccountId
+            return (
+              <div
+                key={account.id}
+                data-testid={`local-codex-account-${account.id}`}
+                className="flex min-h-10 items-center justify-between gap-3 rounded-md px-2 py-1.5 hover:bg-muted"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm text-text-primary">
+                    {account.email || t('workbench.local_codex_account_unknown', 'ChatGPT 账号')}
+                  </div>
+                  {account.planType && (
+                    <div className="text-xs text-text-muted">{account.planType}</div>
+                  )}
+                </div>
+                {active ? (
+                  <span className="shrink-0 text-xs text-text-muted">
+                    {t('workbench.local_codex_account_current', '当前账号')}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid={`local-codex-account-switch-${account.id}`}
+                    onClick={() => onSwitchAccount(account.id)}
+                    disabled={loginBusy || switchingAccountId !== null}
+                    className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {switching && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {t('workbench.local_codex_account_switch', '切换')}
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -222,6 +319,7 @@ interface LocalModelFormState {
   }>
   baseUrl: string
   apiFormat: LocalModelApiFormat
+  codexToolCompatibility: LocalModelCodexToolCompatibility
   toolProfile: LocalModelToolProfile
   requestPath: string
   apiKey: string
@@ -259,6 +357,7 @@ const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   additionalModels: [],
   baseUrl: '',
   apiFormat: 'openai-responses',
+  codexToolCompatibility: 'native',
   toolProfile: 'custom',
   requestPath: DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   apiKey: '',
@@ -360,6 +459,7 @@ function isLocalModelFormDirty(
       form.additionalModels.length > 0 ||
       form.baseUrl.trim() !== '' ||
       form.apiFormat !== 'openai-responses' ||
+      form.codexToolCompatibility !== 'native' ||
       form.requestPath !== DEFAULT_LOCAL_MODEL_REQUEST_PATH ||
       form.apiKey.trim() !== '' ||
       form.contextWindow.trim() !== '' ||
@@ -390,6 +490,9 @@ function isLocalModelFormDirty(
     form.additionalModels.length > 0 ||
     form.baseUrl !== editingModel.baseUrl ||
     form.apiFormat !== editingModel.apiFormat ||
+    form.codexToolCompatibility !==
+      (editingModel.codexToolCompatibility ??
+        (editingModel.apiFormat === 'openai-responses' ? 'native' : 'standard')) ||
     form.toolProfile !== editingModel.toolProfile ||
     form.requestPath !== (editingModel.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH) ||
     form.apiKey.trim() !== '' ||
@@ -1116,6 +1219,9 @@ function LocalModelSettingsSection({
       additionalModels: [],
       baseUrl: model.baseUrl,
       apiFormat: model.apiFormat,
+      codexToolCompatibility:
+        model.codexToolCompatibility ??
+        (model.apiFormat === 'openai-responses' ? 'native' : 'standard'),
       toolProfile: model.toolProfile,
       requestPath: model.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH,
       apiKey: '',
@@ -1203,6 +1309,7 @@ function LocalModelSettingsSection({
       additionalModels: [],
       baseUrl: profile.baseUrl,
       apiFormat: profile.apiFormat,
+      codexToolCompatibility: profile.apiFormat === 'openai-responses' ? 'native' : 'standard',
       toolProfile: profile.toolProfile,
       requestPath: profile.requestPath,
       contextWindow:
@@ -1372,6 +1479,7 @@ function LocalModelSettingsSection({
           toolProfile: form.toolProfile,
           baseUrl: form.baseUrl,
           apiFormat: form.apiFormat,
+          codexToolCompatibility: form.codexToolCompatibility,
           requestPath: form.requestPath,
           apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
           contextWindow: providerModelDefaults?.contextWindow ?? form.contextWindow,
@@ -1445,6 +1553,7 @@ function LocalModelSettingsSection({
         modelId: editingModel.modelId,
         baseUrl: editingModel.baseUrl,
         apiFormat: editingModel.apiFormat,
+        codexToolCompatibility: editingModel.codexToolCompatibility,
         toolProfile: editingModel.toolProfile,
         requestPath: editingModel.requestPath,
         apiKey: null,
@@ -1927,6 +2036,8 @@ function LocalModelSettingsSection({
                         const toolProfile = defaultLocalModelToolProfile(apiFormat)
                         updateForm({
                           apiFormat,
+                          codexToolCompatibility:
+                            apiFormat === 'openai-responses' ? 'native' : 'standard',
                           toolProfile,
                           ...(form.catalogEntry
                             ? {
@@ -2169,6 +2280,8 @@ function LocalModelSettingsSection({
                   <CustomModelCapabilitiesForm
                     entry={form.catalogEntry}
                     contextWindow={form.contextWindow}
+                    apiFormat={form.apiFormat}
+                    codexToolCompatibility={form.codexToolCompatibility}
                     onContextWindowChange={value => {
                       const parsed = Number(value)
                       updateForm({
@@ -2180,6 +2293,9 @@ function LocalModelSettingsSection({
                         },
                       })
                     }}
+                    onCodexToolCompatibilityChange={codexToolCompatibility =>
+                      updateForm({ codexToolCompatibility })
+                    }
                     onChange={catalogEntry => updateForm({ catalogEntry })}
                   />
                 )}
@@ -2563,9 +2679,15 @@ function DisconnectedCloudModelsSection({
 function DisconnectedCloudCodexSyncSection({
   onOpenCloudSettings,
   status,
+  accounts,
   loading,
   error,
-  onRefresh,
+  loginState,
+  loginError,
+  switchingAccountId,
+  onLogin,
+  onCancelLogin,
+  onSwitchAccount,
   codexOfficialModels,
   codexOfficialLoading,
   codexOfficialError,
@@ -2573,9 +2695,15 @@ function DisconnectedCloudCodexSyncSection({
 }: {
   onOpenCloudSettings?: () => void
   status: LocalRuntimeAuthStatus | null
+  accounts: LocalCodexAccounts | null
   loading: boolean
   error: string | null
-  onRefresh: () => void
+  loginState: 'idle' | 'starting' | 'waiting' | 'cancelling'
+  loginError: string | null
+  switchingAccountId: string | null
+  onLogin: () => void
+  onCancelLogin: () => void
+  onSwitchAccount: (accountId: string) => void
   codexOfficialModels: CodexOfficialModelList | null
   codexOfficialLoading: boolean
   codexOfficialError: string | null
@@ -2595,7 +2723,18 @@ function DisconnectedCloudCodexSyncSection({
       </CodexSettingsGroup>
 
       <CodexSettingsGroup title={t('workbench.codex_settings_auth_group_title')}>
-        <LocalCodexModelRow status={status} loading={loading} error={error} onRefresh={onRefresh} />
+        <LocalCodexModelRow
+          status={status}
+          accounts={accounts}
+          loading={loading}
+          error={error}
+          loginState={loginState}
+          loginError={loginError}
+          switchingAccountId={switchingAccountId}
+          onLogin={onLogin}
+          onCancelLogin={onCancelLogin}
+          onSwitchAccount={onSwitchAccount}
+        />
 
         <div
           data-testid="runtime-config-shared-auth-unavailable"
@@ -2604,41 +2743,52 @@ function DisconnectedCloudCodexSyncSection({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-text-secondary">
-                {t('workbench.runtime_config_auth_file_title', '共享认证')}
+                {t('workbench.runtime_config_auth_file_title', 'Codex 认证同步')}
               </h3>
               <span
                 data-testid="runtime-config-status"
                 className="rounded-full bg-muted px-2 py-0.5 text-xs text-text-muted"
               >
-                {t('workbench.runtime_config_not_configured', '未配置')}
+                {t('workbench.runtime_config_cloud_disconnected', '未连接云端')}
               </span>
             </div>
             <p className="mt-1 text-xs leading-5 text-text-secondary">
-              {t('workbench.runtime_config_codex_description', '在不同设备之间同步CodeX认证信息。')}
+              {t(
+                'workbench.runtime_config_codex_description',
+                '从本机或在线设备保存一份认证；开启后自动同步到同一账号下缺少认证的设备。'
+              )}
             </p>
           </div>
 
-          <div className="flex min-w-[320px] flex-wrap items-center justify-end gap-2">
-            <select
-              data-testid="runtime-config-sync-source-select"
-              disabled
-              className="h-8 w-[152px] cursor-not-allowed rounded-md border border-border bg-muted px-2 text-sm text-text-muted"
-              aria-label={t('workbench.runtime_config_sync_source', '认证来源')}
+          <div className="grid min-w-[320px] gap-1.5">
+            <label
+              htmlFor="runtime-config-sync-source-disconnected"
+              className="text-xs text-text-secondary"
             >
-              <option value="">
-                {t('workbench.runtime_config_current_device_source', '当前设备')}
-              </option>
-            </select>
-            <button
-              type="button"
-              data-testid="runtime-config-sync-auth-button"
-              onClick={onOpenCloudSettings}
-              disabled={!onOpenCloudSettings}
-              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Network className="h-3.5 w-3.5" />
-              {t('workbench.runtime_config_cloud_disabled_hint', '连接云端后可用')}
-            </button>
+              {t('workbench.runtime_config_sync_source', '认证来源')}
+            </label>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <select
+                id="runtime-config-sync-source-disconnected"
+                data-testid="runtime-config-sync-source-select"
+                disabled
+                className="h-8 w-[152px] cursor-not-allowed rounded-md border border-border bg-muted px-2 text-sm text-text-muted"
+              >
+                <option value="">
+                  {t('workbench.runtime_config_current_device_source', '本机')}
+                </option>
+              </select>
+              <button
+                type="button"
+                data-testid="runtime-config-sync-auth-button"
+                onClick={onOpenCloudSettings}
+                disabled={!onOpenCloudSettings}
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Network className="h-3.5 w-3.5" />
+                {t('workbench.runtime_config_cloud_disabled_hint', '连接云端后可用')}
+              </button>
+            </div>
           </div>
         </div>
       </CodexSettingsGroup>
@@ -2738,8 +2888,16 @@ export function ModelSettingsPage({
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [localAuthStatus, setLocalAuthStatus] = useState<LocalRuntimeAuthStatus | null>(null)
+  const [localCodexAccounts, setLocalCodexAccounts] = useState<LocalCodexAccounts | null>(null)
   const [localAuthLoading, setLocalAuthLoading] = useState(true)
   const [localAuthError, setLocalAuthError] = useState<string | null>(null)
+  const [switchingLocalAccountId, setSwitchingLocalAccountId] = useState<string | null>(null)
+  const [localLoginState, setLocalLoginState] = useState<
+    'idle' | 'starting' | 'waiting' | 'cancelling'
+  >('idle')
+  const [localLoginError, setLocalLoginError] = useState<string | null>(null)
+  const localLoginIdRef = useRef<string | null>(null)
+  const localLoginGenerationRef = useRef(0)
   const [codexOfficialModels, setCodexOfficialModels] = useState<CodexOfficialModelList | null>(
     null
   )
@@ -2762,12 +2920,20 @@ export function ModelSettingsPage({
   const selectedAuthSyncSourceIsLocal = selectedAuthSyncSource === 'local'
   const authSyncBusy = uploading || importing
   const canSyncAuthSource = selectedAuthSyncSourceIsLocal || Boolean(effectiveImportDeviceId)
+  const authSourceActionLabel = selectedAuthSyncSourceIsLocal
+    ? t('workbench.runtime_config_choose_local_auth_action', '选择并保存')
+    : t('workbench.runtime_config_import_action', '读取并保存')
 
   const loadLocalAuthStatus = useCallback(async () => {
     setLocalAuthLoading(true)
     setLocalAuthError(null)
     try {
-      setLocalAuthStatus(await getLocalCodexAuthStatus())
+      const [status, accounts] = await Promise.all([
+        getLocalCodexAuthStatus(),
+        listLocalCodexAccounts(),
+      ])
+      setLocalAuthStatus(status)
+      setLocalCodexAccounts(accounts)
     } catch (statusError) {
       setLocalAuthError(
         getErrorMessage(
@@ -2783,6 +2949,117 @@ export function ModelSettingsPage({
   useEffect(() => {
     void Promise.resolve().then(loadLocalAuthStatus)
   }, [loadLocalAuthStatus])
+
+  useEffect(
+    () => () => {
+      localLoginGenerationRef.current += 1
+      const loginId = localLoginIdRef.current
+      localLoginIdRef.current = null
+      if (loginId) {
+        void cancelLocalCodexLogin(loginId)
+      }
+    },
+    []
+  )
+
+  const handleLocalCodexLogin = async () => {
+    if (localLoginState !== 'idle') return
+    const generation = localLoginGenerationRef.current + 1
+    localLoginGenerationRef.current = generation
+    setLocalLoginState('starting')
+    setLocalLoginError(null)
+    try {
+      const initialAuthSha256 = localAuthStatus?.sha256 ?? null
+      const login = await startLocalCodexLogin()
+      if (localLoginGenerationRef.current !== generation) {
+        void cancelLocalCodexLogin(login.loginId)
+        return
+      }
+      localLoginIdRef.current = login.loginId
+      const opened = await openExternalUrl(login.authUrl, { target: 'system' })
+      if (!opened) {
+        throw new Error(t('workbench.local_codex_login_open_failed', '无法打开 Codex 登录页面'))
+      }
+      setLocalLoginState('waiting')
+      const deadline = Date.now() + 5 * 60 * 1000
+      while (localLoginGenerationRef.current === generation) {
+        const nextStatus = await getLocalCodexAuthStatus()
+        if (localLoginGenerationRef.current !== generation) return
+        if (nextStatus.exists && nextStatus.sha256 !== initialAuthSha256) {
+          localLoginIdRef.current = null
+          setLocalLoginState('idle')
+          await loadLocalAuthStatus()
+          return
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(t('workbench.local_codex_login_timeout', 'Codex 登录已超时，请重试'))
+        }
+        await new Promise(resolve => window.setTimeout(resolve, 1000))
+      }
+    } catch (loginError) {
+      if (localLoginGenerationRef.current !== generation) return
+      const loginId = localLoginIdRef.current
+      localLoginIdRef.current = null
+      if (loginId) {
+        try {
+          await cancelLocalCodexLogin(loginId)
+        } catch {
+          // Preserve the primary login error.
+        }
+      }
+      setLocalLoginState('idle')
+      setLocalLoginError(
+        getErrorMessage(
+          loginError,
+          t('workbench.local_codex_login_failed', 'Codex 登录失败，请重试')
+        )
+      )
+    }
+  }
+
+  const handleSwitchLocalCodexAccount = async (accountId: string) => {
+    if (switchingLocalAccountId || localLoginState !== 'idle') return
+    setSwitchingLocalAccountId(accountId)
+    setLocalLoginError(null)
+    try {
+      setLocalCodexAccounts(await switchLocalCodexAccount(accountId))
+      setLocalAuthStatus(await getLocalCodexAuthStatus())
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    } catch (switchError) {
+      setLocalLoginError(
+        getErrorMessage(
+          switchError,
+          t(
+            'workbench.local_codex_account_switch_failed',
+            '切换失败，请等待正在运行的 Codex 任务结束后重试'
+          )
+        )
+      )
+    } finally {
+      setSwitchingLocalAccountId(null)
+    }
+  }
+
+  const handleCancelLocalCodexLogin = async () => {
+    const loginId = localLoginIdRef.current
+    if (!loginId || localLoginState !== 'waiting') return
+    localLoginGenerationRef.current += 1
+    localLoginIdRef.current = null
+    setLocalLoginState('cancelling')
+    setLocalLoginError(null)
+    try {
+      await cancelLocalCodexLogin(loginId)
+    } catch (cancelError) {
+      setLocalLoginError(
+        getErrorMessage(
+          cancelError,
+          t('workbench.local_codex_login_cancel_failed', '取消 Codex 登录失败')
+        )
+      )
+    } finally {
+      setLocalLoginState('idle')
+    }
+  }
 
   const loadCodexOfficialModels = useCallback(async () => {
     setCodexOfficialLoading(true)
@@ -2909,8 +3186,17 @@ export function ModelSettingsPage({
       setConfig(nextConfig)
       setNotice(t('workbench.runtime_config_import_success', '已从设备导入 auth.json'))
     } catch (importError) {
+      const message = getErrorMessage(
+        importError,
+        t('workbench.runtime_config_import_failed', '从设备导入失败')
+      )
       setError(
-        getErrorMessage(importError, t('workbench.runtime_config_import_failed', '从设备导入失败'))
+        message.includes('runtime auth file does not exist')
+          ? t(
+              'workbench.runtime_config_source_auth_missing',
+              '所选设备没有 Codex 认证，请选择本机或其他已配置设备。'
+            )
+          : message
       )
     } finally {
       setImporting(false)
@@ -2927,8 +3213,8 @@ export function ModelSettingsPage({
   }
 
   const statusLabel = config?.configured
-    ? t('workbench.runtime_config_configured', '已配置')
-    : t('workbench.runtime_config_not_configured', '未配置')
+    ? t('workbench.runtime_config_auth_saved', '认证已保存')
+    : t('workbench.runtime_config_auth_not_saved', '认证未保存')
   const statusClassName = config?.configured
     ? 'bg-primary/10 text-primary'
     : 'bg-muted text-text-muted'
@@ -2952,9 +3238,15 @@ export function ModelSettingsPage({
             <DisconnectedCloudCodexSyncSection
               onOpenCloudSettings={onOpenCloudSettings}
               status={localAuthStatus}
+              accounts={localCodexAccounts}
               loading={localAuthLoading}
               error={localAuthError}
-              onRefresh={() => void loadLocalAuthStatus()}
+              loginState={localLoginState}
+              loginError={localLoginError}
+              switchingAccountId={switchingLocalAccountId}
+              onLogin={() => void handleLocalCodexLogin()}
+              onCancelLogin={() => void handleCancelLocalCodexLogin()}
+              onSwitchAccount={accountId => void handleSwitchLocalCodexAccount(accountId)}
               codexOfficialModels={codexOfficialModels}
               codexOfficialLoading={codexOfficialLoading}
               codexOfficialError={codexOfficialError}
@@ -3016,16 +3308,22 @@ export function ModelSettingsPage({
               <CodexSettingsGroup title={t('workbench.codex_settings_auth_group_title')}>
                 <LocalCodexModelRow
                   status={localAuthStatus}
+                  accounts={localCodexAccounts}
                   loading={localAuthLoading}
                   error={localAuthError}
-                  onRefresh={() => void loadLocalAuthStatus()}
+                  loginState={localLoginState}
+                  loginError={localLoginError}
+                  switchingAccountId={switchingLocalAccountId}
+                  onLogin={() => void handleLocalCodexLogin()}
+                  onCancelLogin={() => void handleCancelLocalCodexLogin()}
+                  onSwitchAccount={accountId => void handleSwitchLocalCodexAccount(accountId)}
                 />
 
                 <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-background px-4 py-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-sm font-semibold text-text-primary">
-                        {t('workbench.runtime_config_auth_file_title', '共享认证')}
+                        {t('workbench.runtime_config_auth_file_title', 'Codex 认证同步')}
                       </h3>
                       <span
                         data-testid="runtime-config-status"
@@ -3049,27 +3347,34 @@ export function ModelSettingsPage({
                       >
                         {updating && <Loader2 className="h-3 w-3 animate-spin" />}
                         {config?.use_user_config
-                          ? t('workbench.runtime_config_use_enabled', '正在使用')
-                          : t('workbench.runtime_config_use_disabled', '未启用')}
+                          ? t('workbench.runtime_config_use_enabled', '自动同步开启')
+                          : t('workbench.runtime_config_use_disabled', '自动同步关闭')}
                       </button>
                     </div>
-                    <div className="mt-1 break-all text-xs leading-5 text-text-secondary">
-                      {config?.target_path ?? '~/.codex/auth.json'}
-                      {updatedAt && (
-                        <span className="ml-2">
-                          {t('workbench.runtime_config_updated_at', '更新时间')}: {updatedAt}
-                        </span>
+                    <p className="mt-1 text-xs leading-5 text-text-secondary">
+                      {t(
+                        'workbench.runtime_config_codex_description',
+                        '从本机或在线设备保存一份认证；开启后自动同步到同一账号下缺少认证的设备。'
                       )}
-                    </div>
-                    <div className="mt-1 flex items-center gap-1.5 text-xs text-text-muted">
-                      <ShieldCheck className="h-3.5 w-3.5" />
-                      {config?.auth_json_sha256
-                        ? `SHA-256 ${shortDigest(config.auth_json_sha256)}`
-                        : t('workbench.runtime_config_secret_stored', '认证信息会加密保存。')}
-                    </div>
+                    </p>
+                    {config?.configured && (
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
+                        {updatedAt && (
+                          <span>
+                            {t('workbench.runtime_config_updated_at', '更新时间')}: {updatedAt}
+                          </span>
+                        )}
+                        {config.auth_json_sha256 && (
+                          <span className="inline-flex items-center gap-1.5">
+                            <ShieldCheck className="h-3.5 w-3.5" />
+                            SHA-256 {shortDigest(config.auth_json_sha256)}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
-                  <div className="flex min-w-[320px] flex-wrap items-center justify-end gap-2">
+                  <div className="grid min-w-[320px] gap-1.5">
                     <input
                       ref={fileInputRef}
                       type="file"
@@ -3078,37 +3383,45 @@ export function ModelSettingsPage({
                       className="hidden"
                       onChange={event => void handleFileChange(event)}
                     />
-                    <select
-                      data-testid="runtime-config-sync-source-select"
-                      value={selectedAuthSyncSource}
-                      onChange={event => setSelectedAuthSyncSource(event.target.value)}
-                      disabled={authSyncBusy}
-                      className="h-8 w-[152px] rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:cursor-not-allowed disabled:bg-muted disabled:text-text-muted"
-                      aria-label={t('workbench.runtime_config_sync_source', '认证来源')}
+                    <label
+                      htmlFor="runtime-config-sync-source"
+                      className="text-xs text-text-secondary"
                     >
-                      <option value="local">
-                        {t('workbench.runtime_config_current_device_source', '当前设备')}
-                      </option>
-                      {onlineDevices.map(device => (
-                        <option key={device.device_id} value={`device:${device.device_id}`}>
-                          {device.name}
+                      {t('workbench.runtime_config_sync_source', '认证来源')}
+                    </label>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <select
+                        id="runtime-config-sync-source"
+                        data-testid="runtime-config-sync-source-select"
+                        value={selectedAuthSyncSource}
+                        onChange={event => setSelectedAuthSyncSource(event.target.value)}
+                        disabled={authSyncBusy}
+                        className="h-8 w-[152px] rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:cursor-not-allowed disabled:bg-muted disabled:text-text-muted"
+                      >
+                        <option value="local">
+                          {t('workbench.runtime_config_current_device_source', '本机')}
                         </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      data-testid="runtime-config-sync-auth-button"
-                      onClick={handleSyncAuthSource}
-                      disabled={!canSyncAuthSource || authSyncBusy}
-                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {authSyncBusy ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Upload className="h-3.5 w-3.5" />
-                      )}
-                      {t('workbench.runtime_config_sync_action', '同步到其他设备')}
-                    </button>
+                        {onlineDevices.map(device => (
+                          <option key={device.device_id} value={`device:${device.device_id}`}>
+                            {device.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        data-testid="runtime-config-sync-auth-button"
+                        onClick={handleSyncAuthSource}
+                        disabled={!canSyncAuthSource || authSyncBusy}
+                        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {authSyncBusy ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="h-3.5 w-3.5" />
+                        )}
+                        {authSourceActionLabel}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </CodexSettingsGroup>

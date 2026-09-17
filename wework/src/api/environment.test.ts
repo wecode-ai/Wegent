@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  applyProjectEnvironmentPatch,
   buildPullRequestUrl,
   checkoutProjectBranch,
   commitAndPushProjectChanges,
@@ -35,11 +36,22 @@ describe('parseGitShortStat', () => {
   })
 
   test('detects a non-git workspace without depending on localized stderr', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: false,
-      stdout: '',
-      error: 'Command failed',
-      stderr: 'fatal: 不是 git 仓库（或者任何父目录）：.git',
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_is_worktree') {
+        return Promise.resolve({
+          success: true,
+          exit_code: 0,
+          stdout: 'false\n',
+          stderr: '',
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        exit_code: 128,
+        stdout: '',
+        error: 'Command failed',
+        stderr: 'fatal: 不是 git 仓库（或者任何父目录）：.git',
+      })
     })
 
     const info = await loadProjectEnvironment(
@@ -1437,6 +1449,97 @@ describe('loadProjectEnvironment', () => {
     expect(executeCommand).toHaveBeenCalledTimes(5)
   })
 
+  test('allows an explicit refresh to supersede an in-flight environment load', async () => {
+    let resolveInitialPullRequests: (value: {
+      success: boolean
+      stdout: unknown[]
+      stderr: string
+    }) => void = () => {}
+    const initialPullRequests = new Promise<{
+      success: boolean
+      stdout: unknown[]
+      stderr: string
+    }>(resolve => {
+      resolveInitialPullRequests = resolve
+    })
+    let pullRequestLookupCount = 0
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'fix/environment-refresh\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_remote_url') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_github_pull_requests') {
+        pullRequestLookupCount += 1
+        if (pullRequestLookupCount === 1) return initialPullRequests
+        return Promise.resolve({
+          success: false,
+          stdout: '',
+          stderr: 'gh: command not found',
+          error: 'Command failed',
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+    })
+    const api = { executeCommand }
+    const target = {
+      deviceId: 'local-device',
+      path: '/workspace/environment-refresh',
+    }
+
+    const initialLoad = loadProjectEnvironment(api, null, target)
+    await vi.waitFor(() => {
+      expect(pullRequestLookupCount).toBe(1)
+    })
+
+    const refreshedInfo = await loadProjectEnvironment(api, null, target, {
+      force: true,
+      shareInflight: false,
+    })
+
+    expect(refreshedInfo.changeRequest).toEqual({
+      provider: 'github',
+      state: 'unavailable',
+    })
+    expect(pullRequestLookupCount).toBe(2)
+
+    resolveInitialPullRequests({
+      success: true,
+      stdout: [
+        {
+          number: 2877,
+          url: 'https://github.com/wecode-ai/Wegent/pull/2877',
+          title: 'Superseded pull request',
+          state: 'OPEN',
+          isDraft: false,
+          statusCheckRollup: [],
+        },
+      ],
+      stderr: '',
+    })
+    await initialLoad
+
+    await expect(loadProjectEnvironment(api, null, target)).resolves.toMatchObject({
+      changeRequest: {
+        provider: 'github',
+        state: 'unavailable',
+      },
+    })
+  })
+
   test('publishes pull request status before a slow branch diff finishes', async () => {
     let resolveShortStat: (value: {
       success: boolean
@@ -1710,7 +1813,7 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
-  test('adds untracked file count to diff additions', async () => {
+  test('keeps shortstat line counts without counting untracked files as lines', async () => {
     const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
       if (data.command_key === 'git_branch') {
         return Promise.resolve({
@@ -1770,8 +1873,8 @@ describe('loadProjectEnvironment', () => {
       }
     )
 
-    // 5 tracked insertions + 2 untracked files = +7
-    expect(info.additions).toBe('+7')
+    // 5 tracked insertions; untracked files are files, not lines.
+    expect(info.additions).toBe('+5')
     expect(info.deletions).toBe('-2')
     expect(info.branchName).toBe('main')
   })
@@ -1848,6 +1951,76 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
+  test('keeps an empty shortstat for a committed repo with only untracked files', async () => {
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({ success: true, stdout: 'main\n', stderr: '' })
+      }
+      if (data.command_key === 'git_branch_diff_shortstat') {
+        return Promise.resolve({ success: true, stdout: '', stderr: '' })
+      }
+      if (data.command_key === 'git_status_porcelain') {
+        return Promise.resolve({ success: true, stdout: '?? output.txt\n', stderr: '' })
+      }
+      return Promise.resolve({ success: false, stdout: '', stderr: 'unknown command' })
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 1,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: { targetType: 'local', deviceId: 'device-123' },
+          workspace: { source: 'local_path', localPath: '/workspace/Wegent' },
+        },
+      }
+    )
+
+    // Untracked files are not lines; an empty shortstat on a committed repo
+    // must stay +0 instead of falling back to the porcelain file count.
+    expect(info.additions).toBe('+0')
+    expect(info.deletions).toBe('-0')
+  })
+
+  test('does not count porcelain files when shortstat fails on a committed repo', async () => {
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({ success: true, stdout: 'main\n', stderr: '' })
+      }
+      if (data.command_key === 'git_branch_diff_shortstat') {
+        return Promise.resolve({
+          success: false,
+          stdout: '',
+          stderr: 'fatal: repository error',
+        })
+      }
+      if (data.command_key === 'git_status_porcelain') {
+        return Promise.resolve({ success: true, stdout: ' M tracked.txt\n', stderr: '' })
+      }
+      return Promise.resolve({ success: false, stdout: '', stderr: 'unknown command' })
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 1,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: { targetType: 'local', deviceId: 'device-123' },
+          workspace: { source: 'local_path', localPath: '/workspace/Wegent' },
+        },
+      }
+    )
+
+    // Porcelain entries with tracked modifications prove a commit baseline
+    // exists, so the shortstat failure must not be replaced by file counts.
+    expect(info.additions).toBe('+0')
+    expect(info.deletions).toBe('-0')
+  })
+
   test('shows zero diff when repo is clean and has no untracked files', async () => {
     const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
       if (data.command_key === 'git_branch') {
@@ -1915,6 +2088,52 @@ describe('loadProjectEnvironment', () => {
 })
 
 describe('commitProjectChanges', () => {
+  test('applies a selected patch through the restricted device command', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: '',
+      stderr: '',
+    })
+    const patch = [
+      'diff --git a/src/env.ts b/src/env.ts',
+      '--- a/src/env.ts',
+      '+++ b/src/env.ts',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+      '',
+    ].join('\n')
+
+    await applyProjectEnvironmentPatch(
+      { executeCommand },
+      {
+        id: 1,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/Wegent',
+          },
+        },
+      },
+      'stage',
+      patch
+    )
+
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_apply_patch',
+      path: '/workspace/Wegent',
+      args: ['stage', btoa(patch)],
+      timeout_seconds: 30,
+      max_output_bytes: 64 * 1024,
+    })
+  })
+
   test('loads the full environment diff through the project device command API', async () => {
     const executeCommand = vi.fn().mockResolvedValue({
       success: true,

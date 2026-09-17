@@ -1,5 +1,6 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { defaultRangeExtractor } from '@tanstack/react-virtual'
+import { nestWorkbenchProcessingBlocks, projectWorkbenchSubagentActivity } from '@wegent/chat-core'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import type {
   CSSProperties,
@@ -37,6 +38,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type {
   ProcessingBlock,
   RuntimeAssistantDisplayItem,
+  SubagentBlock,
   WorkbenchMessage,
 } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
@@ -47,11 +49,9 @@ import {
   isTextAttachment,
 } from '@/lib/attachments'
 import { openLocalFile } from '@/lib/local-terminal'
-import { getRecognizedLink } from '@/lib/link-preview'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
-import { ComposerLinkChip } from './ComposerLinkChip'
 import { ComposerTextarea } from './composer/ComposerTextarea'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
@@ -95,6 +95,7 @@ interface MessageListProps {
   messages: WorkbenchMessage[]
   scrollElementRef?: RefObject<HTMLDivElement | null>
   initialDistanceFromBottomPx?: number
+  onBeforeUserMessageToggle?: () => void
   className?: string
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
@@ -124,14 +125,13 @@ interface MessageListProps {
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
+  onOpenSubagent?: (block: SubagentBlock) => void
   onEditLastUserMessage?: (
     message: WorkbenchMessage,
     content: string
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
   onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
@@ -204,6 +204,7 @@ export const MessageList = memo(function MessageList({
   messages,
   scrollElementRef,
   initialDistanceFromBottomPx = 0,
+  onBeforeUserMessageToggle,
   className,
   conversationKey,
   isWaitingForAssistant = false,
@@ -221,11 +222,10 @@ export const MessageList = memo(function MessageList({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
+  onOpenSubagent,
   onEditLastUserMessage,
   canEditLastUserMessage = false,
   onForkMessage,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
@@ -283,7 +283,7 @@ export const MessageList = memo(function MessageList({
     () => visibleMessages.findLastIndex(message => message.status === 'streaming'),
     [visibleMessages]
   )
-  const bottomOriginAppendOnlyItemKeys = useMemo(
+  const streamingVirtualMessageKeys = useMemo(
     () =>
       new Set(
         visibleMessages.filter(message => message.status === 'streaming').map(message => message.id)
@@ -309,7 +309,8 @@ export const MessageList = memo(function MessageList({
   }, [initialMeasurementsCache, messageIntrinsicHeights, visibleMessages])
   const messageVirtualizer = useBottomOriginVirtualizer({
     bottomOrigin,
-    bottomOriginAppendOnlyItemKeys,
+    bottomOriginAnchorItemKeys: streamingVirtualMessageKeys,
+    preserveBottomOriginItemResizeAnchor: !virtualAnchorToEnd,
     count: visibleMessages.length,
     enabled: virtualMessages,
     getItemKey: index => visibleMessages[index]?.id ?? index,
@@ -600,6 +601,7 @@ export const MessageList = memo(function MessageList({
             {message.role === 'user' ? (
               <UserMessage
                 message={message}
+                onBeforeToggle={onBeforeUserMessageToggle}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenLocalSkillFile={onOpenLocalSkillFile}
                 editable={message.id === editableLastUserMessageId}
@@ -625,6 +627,7 @@ export const MessageList = memo(function MessageList({
               <AssistantMessage
                 message={message}
                 conversationKey={conversationKey}
+                isActiveTurn={isWaitingForAssistant && index === visibleMessages.length - 1}
                 devices={devices}
                 onRetryFailedMessage={onRetryFailedMessage}
                 onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
@@ -636,8 +639,7 @@ export const MessageList = memo(function MessageList({
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
-                onLoadFullTranscript={onLoadFullTranscript}
-                loadingFullTranscript={loadingFullTranscript}
+                onOpenSubagent={onOpenSubagent}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 onFork={onForkMessage && message.turnId ? () => onForkMessage(message) : undefined}
@@ -732,6 +734,9 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.initialDistanceFromBottomPx !== next.initialDistanceFromBottomPx
       ? 'initialDistanceFromBottomPx'
       : null,
+    previous.onBeforeUserMessageToggle !== next.onBeforeUserMessageToggle
+      ? 'onBeforeUserMessageToggle'
+      : null,
     previous.className !== next.className ? 'className' : null,
     previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
     previous.isWaitingForAssistant !== next.isWaitingForAssistant ? 'isWaitingForAssistant' : null,
@@ -762,13 +767,12 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'onRequestUserInputIgnore'
       : null,
     previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
+    previous.onOpenSubagent !== next.onOpenSubagent ? 'onOpenSubagent' : null,
     previous.onEditLastUserMessage !== next.onEditLastUserMessage ? 'onEditLastUserMessage' : null,
     previous.canEditLastUserMessage !== next.canEditLastUserMessage
       ? 'canEditLastUserMessage'
       : null,
     previous.onForkMessage !== next.onForkMessage ? 'onForkMessage' : null,
-    previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
-    previous.loadingFullTranscript !== next.loadingFullTranscript ? 'loadingFullTranscript' : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
       ? 'hideRequestUserInputBlocks'
       : null,
@@ -947,6 +951,7 @@ function formatMessageTime(createdAt: string) {
 
 function UserMessage({
   message,
+  onBeforeToggle,
   onOpenWorkspaceFile,
   onOpenLocalSkillFile,
   editable = false,
@@ -957,6 +962,7 @@ function UserMessage({
   onSubmitEdit,
 }: {
   message: WorkbenchMessage
+  onBeforeToggle?: () => void
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenLocalSkillFile?: (path: string) => void
   editable?: boolean
@@ -1115,7 +1121,7 @@ function UserMessage({
               data-testid="user-message-content"
               data-message-selectable-text
               className={[
-                'relative overflow-hidden break-words whitespace-pre-wrap bg-muted px-4 py-1.5',
+                'relative overflow-hidden break-words bg-muted px-4 py-1.5',
                 shouldCollapse && !isExpanded ? 'max-h-44' : '',
               ].join(' ')}
             >
@@ -1157,7 +1163,10 @@ function UserMessage({
                 type="button"
                 data-testid="toggle-user-message-button"
                 aria-expanded={isExpanded}
-                onClick={() => setIsExpanded(value => !value)}
+                onClick={() => {
+                  onBeforeToggle?.()
+                  setIsExpanded(value => !value)
+                }}
                 className="flex h-9 w-full items-center justify-center gap-1 border-t border-border/60 text-xs font-medium text-text-secondary transition-colors hover:bg-surface"
               >
                 {isExpanded ? (
@@ -1436,7 +1445,7 @@ function MessageTextAttachment({
   const attachmentPath = openableAttachmentPath(attachment)
   const clickable = Boolean(attachmentPath)
   const className =
-    'inline-flex h-9 max-w-[360px] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm'
+    'inline-flex h-9 max-w-[min(360px,100%)] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm'
   const content = (
     <>
       <FileText
@@ -1704,7 +1713,6 @@ function MessageHoverActions({
 
 const CODEX_MENTION_LINK_PATTERN =
   /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
-const COMPOSER_LINK_PATTERN = /\[([^\]]*)\]\(([a-z][a-z0-9+.-]*:\/\/[^\s)\]]+)\)/gi
 
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -1742,133 +1750,108 @@ function renderUserContent(
   onOpenLocalSkillFile?: (path: string) => void,
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 ) {
-  const parts: ReactNode[] = []
-  let offset = 0
-
-  for (const match of content.matchAll(CODEX_MENTION_LINK_PATTERN)) {
-    const start = match.index ?? 0
-    const text = content.slice(offset, start)
-    if (text) {
-      parts.push(...renderUserTextWithLinks(text, offset))
-    }
-
-    const mentionName = match[2]
-    const href = match[3]
-    const skillFilePath = composerSkillFilePath(match[0])
-    const pathReference = composerPathReference(match[0])
-    const mentionKind = codexMentionKind(href)
-    const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
-    const brandIconUrl =
-      mentionKind === 'plugin' || mentionKind === 'app'
-        ? resolveComposerMentionBrandIconUrl(href)
-        : null
-    const tokenTestId = codexMentionTokenTestId(mentionName)
-    const testId =
-      mentionKind === 'skill'
-        ? `sent-local-skill-token-${tokenTestId}`
-        : `sent-${mentionKind}-token-${tokenTestId}`
-    const iconTestId =
-      mentionKind === 'skill'
-        ? `sent-local-skill-icon-${tokenTestId}`
-        : `sent-${mentionKind}-icon-${tokenTestId}`
-    parts.push(
-      <a
-        key={`${mentionKind}-${start}`}
-        href={href}
-        data-testid={testId}
-        data-cloud-resource-kind={cloudKind}
-        className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-sm font-medium leading-none text-blue-600 no-underline"
-        onClick={event => {
-          event.preventDefault()
-          if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
-          if (pathReference) {
-            onOpenWorkspaceFile?.(
-              pathReference.path,
-              pathReference.directory ? { isDirectory: true } : undefined
-            )
-          }
-          const pluginReference = parsePluginUri(href)
-          if (pluginReference) navigateTo(buildPluginDetailRoute(pluginReference))
-        }}
-      >
-        {mentionKind === 'folder' ? (
-          <Folder data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        ) : mentionKind === 'file' ? (
-          <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        ) : mentionKind === 'cloud' ? (
-          cloudKind === 'todo' ? (
-            <ListTodo data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-          ) : cloudKind === 'file' ? (
-            <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-          ) : cloudKind === 'delivery' ? (
-            <PackageOpen data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-          ) : (
-            <LibraryBig data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-          )
-        ) : mentionKind === 'conversation' ? (
-          <MessageCircle data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        ) : brandIconUrl ? (
-          <img
-            data-testid={iconTestId}
-            src={brandIconUrl}
-            alt=""
-            className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
-          />
-        ) : mentionKind === 'plugin' || mentionKind === 'app' ? (
-          <span
-            data-testid={iconTestId}
-            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm bg-blue-600/10 text-xs font-medium leading-none text-blue-600"
+  return (
+    <AssistantMarkdown
+      content={content}
+      variant="user"
+      onOpenFile={onOpenWorkspaceFile}
+      renderLink={(linkHref, text) => {
+        const reference = '[' + text + '](' + linkHref + ')'
+        const match = Array.from(reference.matchAll(CODEX_MENTION_LINK_PATTERN))[0]
+        if (!match) return undefined
+        const mentionName = match[2]
+        const href = match[3]
+        const skillFilePath = composerSkillFilePath(match[0])
+        const pathReference = composerPathReference(match[0])
+        const mentionKind = codexMentionKind(href)
+        const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
+        const brandIconUrl =
+          mentionKind === 'plugin' || mentionKind === 'app'
+            ? resolveComposerMentionBrandIconUrl(href)
+            : null
+        const tokenTestId = codexMentionTokenTestId(mentionName)
+        const testId =
+          mentionKind === 'skill'
+            ? `sent-local-skill-token-${tokenTestId}`
+            : `sent-${mentionKind}-token-${tokenTestId}`
+        const iconTestId =
+          mentionKind === 'skill'
+            ? `sent-local-skill-icon-${tokenTestId}`
+            : `sent-${mentionKind}-icon-${tokenTestId}`
+        return (
+          <a
+            href={href}
+            data-testid={testId}
+            data-cloud-resource-kind={cloudKind}
+            className="composer-mention-node gap-1 rounded-xl bg-muted text-blue-600 no-underline [&>:first-child]:self-center"
+            onClick={event => {
+              event.preventDefault()
+              if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
+              if (pathReference) {
+                onOpenWorkspaceFile?.(
+                  pathReference.path,
+                  pathReference.directory ? { isDirectory: true } : undefined
+                )
+              }
+              const pluginReference = parsePluginUri(href)
+              if (pluginReference) navigateTo(buildPluginDetailRoute(pluginReference))
+            }}
           >
-            <span className="scale-75">{pluginNameInitial(mentionName)}</span>
-          </span>
-        ) : (
-          <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        )}
-        <span className="min-w-0 truncate">
-          {mentionKind === 'file' ||
-          mentionKind === 'folder' ||
-          mentionKind === 'cloud' ||
-          mentionKind === 'conversation'
-            ? mentionName
-            : displayCodexMentionName(mentionName)}
-        </span>
-      </a>
-    )
-    offset = start + match[0].length
-  }
-
-  const remainingText = content.slice(offset)
-  if (remainingText) {
-    parts.push(...renderUserTextWithLinks(remainingText, offset))
-  }
-
-  return parts
-}
-function renderUserTextWithLinks(text: string, baseOffset: number): ReactNode[] {
-  const nodes: ReactNode[] = []
-  let localOffset = 0
-  for (const match of text.matchAll(COMPOSER_LINK_PATTERN)) {
-    const start = match.index ?? 0
-    const url = match[2] ?? ''
-    if (!getRecognizedLink(url)) continue
-    const before = text.slice(localOffset, start)
-    if (before) {
-      nodes.push(<span key={`text-${baseOffset}-${localOffset}`}>{before}</span>)
-    }
-    const label = match[1] ?? ''
-    nodes.push(
-      <ComposerLinkChip
-        key={`link-${baseOffset}-${start}`}
-        payload={{ url, label: label || url }}
-      />
-    )
-    localOffset = start + match[0].length
-  }
-  const tail = text.slice(localOffset)
-  if (tail) {
-    nodes.push(<span key={`text-${baseOffset}-${localOffset}`}>{tail}</span>)
-  }
-  return nodes
+            {mentionKind === 'folder' ? (
+              <Folder data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+            ) : mentionKind === 'file' ? (
+              <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+            ) : mentionKind === 'cloud' ? (
+              cloudKind === 'todo' ? (
+                <ListTodo data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+              ) : cloudKind === 'file' ? (
+                <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+              ) : cloudKind === 'delivery' ? (
+                <PackageOpen
+                  data-testid={iconTestId}
+                  className="h-3.5 w-3.5 shrink-0 text-blue-600"
+                />
+              ) : (
+                <LibraryBig
+                  data-testid={iconTestId}
+                  className="h-3.5 w-3.5 shrink-0 text-blue-600"
+                />
+              )
+            ) : mentionKind === 'conversation' ? (
+              <MessageCircle
+                data-testid={iconTestId}
+                className="h-3.5 w-3.5 shrink-0 text-blue-600"
+              />
+            ) : brandIconUrl ? (
+              <img
+                data-testid={iconTestId}
+                src={brandIconUrl}
+                alt=""
+                className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
+              />
+            ) : mentionKind === 'plugin' || mentionKind === 'app' ? (
+              <span
+                data-testid={iconTestId}
+                className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm bg-blue-600/10 text-xs font-medium leading-none text-blue-600"
+              >
+                <span className="scale-75">{pluginNameInitial(mentionName)}</span>
+              </span>
+            ) : (
+              <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+            )}
+            <span className="min-w-0 truncate">
+              {mentionKind === 'file' ||
+              mentionKind === 'folder' ||
+              mentionKind === 'cloud' ||
+              mentionKind === 'conversation'
+                ? mentionName
+                : displayCodexMentionName(mentionName)}
+            </span>
+          </a>
+        )
+      }}
+    />
+  )
 }
 
 const RAW_FAILED_MESSAGE_PATTERNS = [
@@ -1898,19 +1881,23 @@ function getDisplayProcessingBlocks(
 ): ProcessingBlock[] {
   if (!blocks?.length) return []
 
-  return blocks
-    .map(block =>
-      settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
-        ? { ...block, status: 'done' as const }
-        : block
-    )
-    .filter(block => {
-      if (block.type === 'thinking') return false
-      if (block.type !== 'text') return true
+  return nestWorkbenchProcessingBlocks(
+    projectWorkbenchSubagentActivity(
+      blocks
+        .map(block =>
+          settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
+            ? { ...block, status: 'done' as const }
+            : block
+        )
+        .filter(block => {
+          if (block.type === 'thinking') return false
+          if (block.type !== 'text') return true
 
-      const content = block.content.trim()
-      return Boolean(content) && content !== finalContent.trim()
-    })
+          const content = block.content.trim()
+          return Boolean(content) && content !== finalContent.trim()
+        })
+    )
+  )
 }
 
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
@@ -1923,6 +1910,7 @@ function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
 export function AssistantMessage({
   message,
   conversationKey,
+  isActiveTurn = false,
   devices,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
@@ -1934,14 +1922,14 @@ export function AssistantMessage({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
-  onLoadFullTranscript,
-  loadingFullTranscript,
+  onOpenSubagent,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   onFork,
 }: {
   message: WorkbenchMessage
   conversationKey?: string | number | null
+  isActiveTurn?: boolean
   devices: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
@@ -1965,8 +1953,7 @@ export function AssistantMessage({
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
+  onOpenSubagent?: (block: SubagentBlock) => void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onFork?: () => Promise<void> | void
@@ -2027,6 +2014,8 @@ export function AssistantMessage({
   const usesFinalProcessingShell =
     hasBlocks &&
     !hasPlanResponse &&
+    !isStreaming &&
+    !isActiveTurn &&
     !hasRunningBlocks &&
     !isCancelled &&
     !hasProcessingAfterContent &&
@@ -2044,16 +2033,21 @@ export function AssistantMessage({
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
   const memoryCitations = message.memoryCitations ?? []
-  const generatedImages = useMemo(() => getGeneratedImages(displayBlocks), [displayBlocks])
+  const generatedImages = useMemo(
+    () => getGeneratedImages(displayBlocks, t('tool_activity.image_generation_alt')),
+    [displayBlocks, t]
+  )
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
-  const openFileFromLink = (path: string, options?: WorkspaceFileOpenOptions) => {
-    if (options) {
-      onOpenWorkspaceFile?.(path, options)
-      return
-    }
-    onOpenWorkspaceFile?.(path)
-  }
+  const openFileFromLink = onOpenWorkspaceFile
+    ? (path: string, options?: WorkspaceFileOpenOptions) => {
+        if (options) {
+          onOpenWorkspaceFile(path, options)
+          return
+        }
+        onOpenWorkspaceFile(path)
+      }
+    : undefined
   const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
   const processingTimeline = shouldShowProcessingSummary
     ? processingSegments.map((segment, index) => (
@@ -2084,8 +2078,7 @@ export function AssistantMessage({
           onRequestUserInputSubmit={onRequestUserInputSubmit}
           onRequestUserInputIgnore={onRequestUserInputIgnore}
           onOpenAssistantPlan={onOpenAssistantPlan}
-          onLoadFullTranscript={onLoadFullTranscript}
-          loadingFullTranscript={loadingFullTranscript}
+          onOpenSubagent={onOpenSubagent}
           hideRequestUserInputBlocks={hideRequestUserInputBlocks}
           hiddenRequestUserInputIds={hiddenRequestUserInputIds}
         />
@@ -2141,8 +2134,7 @@ export function AssistantMessage({
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
-                onLoadFullTranscript={onLoadFullTranscript}
-                loadingFullTranscript={loadingFullTranscript}
+                onOpenSubagent={onOpenSubagent}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
               />
@@ -2210,13 +2202,6 @@ export function AssistantMessage({
             <AssistantThinkingIndicator content={activeThinkingContent} />
           )}
           {generatedImages.length > 0 ? <GeneratedImageGallery images={generatedImages} /> : null}
-          {message.contentTruncated ? (
-            <ContentTruncatedNotice
-              originalChars={message.contentOriginalChars}
-              onLoadFullTranscript={onLoadFullTranscript}
-              loadingFullTranscript={loadingFullTranscript}
-            />
-          ) : null}
           {hasVisibleContent && !hasProcessingAfterContent ? (
             <div data-message-selectable-text data-testid="assistant-message-content">
               <AssistantMarkdown
@@ -2233,7 +2218,7 @@ export function AssistantMessage({
           {canShowFinalArtifacts && memoryCitations.length > 0 && (
             <CodexMemoryCitations citations={memoryCitations} onOpenFile={onOpenWorkspaceFile} />
           )}
-          {canShowFinalArtifacts && references.length > 0 && (
+          {canShowFinalArtifacts && references.length > 0 && openFileFromLink && (
             <CodexReferenceList references={references} onOpenFile={openFileFromLink} />
           )}
           {message.status === 'failed' && (
@@ -2284,39 +2269,126 @@ export function AssistantMessage({
 
 interface GeneratedImageArtifact {
   id: string
-  src: string
   alt: string
+  mimeType: string
+  fileExtension: string
+  size: number
+  width?: number
+  height?: number
+  src?: string
+  workspaceFile?: Attachment['workspace_file']
+}
+
+const GENERATED_IMAGE_FILE_EXTENSIONS: Readonly<Record<string, string>> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'image/bmp': '.bmp',
+}
+
+function resolveGeneratedImageType(
+  mimeType: unknown,
+  dataUrl?: string
+): { mimeType: string; fileExtension: string } | null {
+  const dataUrlMimeType = /^data:([^;,]+)/i.exec(dataUrl ?? '')?.[1]
+  const normalizedMimeType =
+    (dataUrlMimeType ?? (typeof mimeType === 'string' ? mimeType : 'image/png'))
+      .split(';', 1)[0]
+      .trim()
+      .toLowerCase() || 'image/png'
+  const fileExtension = GENERATED_IMAGE_FILE_EXTENSIONS[normalizedMimeType]
+  return fileExtension ? { mimeType: normalizedMimeType, fileExtension } : null
+}
+
+function generatedImageDownloadFilename(attachment: Attachment, index: number): string {
+  const extension = attachment.file_extension?.startsWith('.')
+    ? attachment.file_extension
+    : `.${attachment.file_extension || 'png'}`
+  return `generated-image-${index + 1}${extension}`
 }
 
 function generatedImageAttachment(image: GeneratedImageArtifact, index: number): Attachment {
   return {
     id: index + 1,
     filename: image.alt,
-    file_size: 0,
-    mime_type: 'image/png',
+    file_size: image.size,
+    mime_type: image.mimeType,
     status: 'ready',
-    file_extension: '.png',
+    file_extension: image.fileExtension,
     created_at: '',
     local_preview_url: image.src,
+    workspace_file: image.workspaceFile,
+    image_width: image.width,
+    image_height: image.height,
   }
 }
 
-function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[] {
-  return blocks.flatMap(block => {
+function getGeneratedImages(
+  blocks: ProcessingBlock[],
+  fallbackAlt: string
+): GeneratedImageArtifact[] {
+  return blocks.flatMap((block): GeneratedImageArtifact[] => {
     if (block.type !== 'tool' || block.toolName !== 'image_generation') return []
     const payload = block.renderPayload
     if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return []
+    const source = Reflect.get(payload, 'source')
+    const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
+    const alt =
+      typeof revisedPrompt === 'string' && revisedPrompt.trim() ? revisedPrompt : fallbackAlt
+    if (typeof source === 'object' && source !== null && !Array.isArray(source)) {
+      const sourceType = Reflect.get(source, 'type')
+      const deviceId = Reflect.get(source, 'deviceId')
+      const workspacePath = Reflect.get(source, 'workspacePath')
+      const path = Reflect.get(source, 'path')
+      if (
+        sourceType === 'workspace_file' &&
+        typeof deviceId === 'string' &&
+        deviceId.trim() &&
+        typeof workspacePath === 'string' &&
+        workspacePath.trim() &&
+        typeof path === 'string' &&
+        path.trim()
+      ) {
+        const imageType = resolveGeneratedImageType(Reflect.get(payload, 'mimeType'))
+        if (!imageType) return []
+        const size = Reflect.get(payload, 'size')
+        const width = Reflect.get(payload, 'width')
+        const height = Reflect.get(payload, 'height')
+        return [
+          {
+            id: block.id,
+            alt,
+            ...imageType,
+            size: typeof size === 'number' && Number.isFinite(size) && size >= 0 ? size : 0,
+            width:
+              typeof width === 'number' && Number.isFinite(width) && width > 0 ? width : undefined,
+            height:
+              typeof height === 'number' && Number.isFinite(height) && height > 0
+                ? height
+                : undefined,
+            workspaceFile: {
+              device_id: deviceId,
+              workspace_path: workspacePath,
+              path,
+            },
+          },
+        ]
+      }
+    }
     const imageBase64 = Reflect.get(payload, 'imageBase64')
     if (typeof imageBase64 !== 'string' || !imageBase64.trim()) return []
-    const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
+    const imageType = resolveGeneratedImageType(Reflect.get(payload, 'mimeType'), imageBase64)
+    if (!imageType) return []
     return [
       {
         id: block.id,
-        src: imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`,
-        alt:
-          typeof revisedPrompt === 'string' && revisedPrompt.trim()
-            ? revisedPrompt
-            : 'Generated image',
+        src: imageBase64.startsWith('data:')
+          ? imageBase64
+          : `data:${imageType.mimeType};base64,${imageBase64}`,
+        alt,
+        ...imageType,
+        size: 0,
       },
     ]
   })
@@ -2351,6 +2423,7 @@ function GeneratedImagePreview({
       attachment={attachment}
       galleryAttachments={galleryAttachments}
       galleryIndex={index}
+      resolveDownloadFilename={generatedImageDownloadFilename}
       buttonTestId="generated-image-preview-button"
       imageTestId="generated-image"
       loadingTestId="generated-image-loading"
@@ -2359,36 +2432,6 @@ function GeneratedImagePreview({
       placeholderClassName="flex min-h-40 w-full items-center justify-center rounded-lg border border-border bg-surface text-text-muted"
       buttonClassName="block w-full cursor-zoom-in p-0 text-left"
     />
-  )
-}
-
-function ContentTruncatedNotice({
-  originalChars,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
-}: {
-  originalChars?: number
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
-}) {
-  return (
-    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-muted">
-      <span>
-        早期内容已从当前视图卸载
-        {typeof originalChars === 'number' ? `，原始约 ${originalChars.toLocaleString()} 字` : ''}。
-      </span>
-      {onLoadFullTranscript ? (
-        <button
-          type="button"
-          data-testid="load-full-runtime-transcript-button"
-          onClick={() => void onLoadFullTranscript()}
-          disabled={loadingFullTranscript}
-          className="h-8 rounded border border-border bg-base px-2 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
-        >
-          {loadingFullTranscript ? '正在加载完整输出' : '加载完整输出'}
-        </button>
-      ) : null}
-    </div>
   )
 }
 
@@ -2426,6 +2469,14 @@ function getOrderedRuntimeDisplaySegments(
   if (!items?.length) return []
 
   const blocksById = new Map(displayBlocks.map(block => [block.id, block]))
+  const subagentsByAnchorId = new Map(
+    displayBlocks.flatMap(block =>
+      block.type === 'subagent' && block.anchorBlockId
+        ? [[block.anchorBlockId, block] as const]
+        : []
+    )
+  )
+  const renderedAnchoredSubagentIds = new Set<string>()
   const segments: RuntimeDisplaySegment[] = []
 
   items.forEach(item => {
@@ -2440,8 +2491,12 @@ function getOrderedRuntimeDisplaySegments(
       return
     }
 
-    const block = blocksById.get(item.id)
+    const block = subagentsByAnchorId.get(item.id) ?? blocksById.get(item.id)
     if (!block) return
+    if (block.type === 'subagent' && block.anchorBlockId) {
+      if (renderedAnchoredSubagentIds.has(block.id)) return
+      renderedAnchoredSubagentIds.add(block.id)
+    }
     const previous = segments.at(-1)
     if (previous?.kind === 'processing') {
       previous.blocks.push(block)
@@ -2568,22 +2623,26 @@ function AssistantErrorCard({
         <p className="text-sm font-semibold leading-5 text-text-primary">{title}</p>
         <p className="mt-0.5 text-xs leading-[18px] text-text-secondary">{description}</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            data-testid="assistant-error-switch-model-retry"
-            onClick={() => onSwitchModel?.(message)}
-            className="h-8 rounded-lg border border-text-primary bg-text-primary px-3 text-xs font-semibold text-background hover:bg-text-primary/90"
-          >
-            {t('assistant_error.actions.switch_model_retry', '切换模型并重试')}
-          </button>
-          <button
-            type="button"
-            data-testid="assistant-error-retry"
-            onClick={() => onRetry?.(message)}
-            className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
-          >
-            {t('assistant_error.actions.retry', '重试')}
-          </button>
+          {onSwitchModel ? (
+            <button
+              type="button"
+              data-testid="assistant-error-switch-model-retry"
+              onClick={() => onSwitchModel(message)}
+              className="h-8 rounded-lg border border-text-primary bg-text-primary px-3 text-xs font-semibold text-background hover:bg-text-primary/90"
+            >
+              {t('assistant_error.actions.switch_model_retry', '切换模型并重试')}
+            </button>
+          ) : null}
+          {onRetry ? (
+            <button
+              type="button"
+              data-testid="assistant-error-retry"
+              onClick={() => onRetry(message)}
+              className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
+            >
+              {t('assistant_error.actions.retry', '重试')}
+            </button>
+          ) : null}
           {hasErrorDetails && (
             <button
               type="button"

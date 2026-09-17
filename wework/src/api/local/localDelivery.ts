@@ -3,7 +3,6 @@ import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   enqueueIssueWorkflowMutation,
   enqueueTaskTrackingMutation,
-  nextTaskTrackingStatus,
   type TaskExecutionStatus,
   type CloudLoopItemAttachment,
   type CloudLoopItem,
@@ -31,7 +30,12 @@ import {
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
-import type { Attachment, RuntimeProjectPluginRef, RuntimeTaskAddress } from '@/types/api'
+import type {
+  Attachment,
+  ModelSelectionConfig,
+  RuntimeProjectPluginRef,
+  RuntimeTaskAddress,
+} from '@/types/api'
 import {
   localProjectAssociationFromTags,
   localProjectAssociationTag,
@@ -81,6 +85,7 @@ interface LocalTaskBindingRecord {
   task_id: string
   task_title: string | null
   backend_task_id: number | null
+  modelSelection?: ModelSelectionConfig | null
   workflow_node_id?: string | null
   binding_type: 'system' | 'user'
   linked_at: string
@@ -111,9 +116,12 @@ export interface LocalProjectChatAgent {
   id: string
   projectId: string
   name: string
-  runtime: 'codex'
+  runtime: 'codex' | 'claude_code'
   model: string | null
+  capabilityDescription: string
   systemPrompt: string
+  additionalSkills: unknown[]
+  mcpServers: Record<string, unknown>
   status: 'active' | 'archived'
   visibility: 'private' | 'creator_admin' | 'public'
   executionEnvironment: 'local' | 'cloud'
@@ -231,6 +239,14 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
       !Array.isArray(record.metadata.workflow_definition)
         ? (record.metadata.workflow_definition as CloudProject['workflow_definition'])
         : undefined,
+    collaboration_groups: Array.isArray(record.metadata.collaboration_groups)
+      ? (record.metadata.collaboration_groups as NonNullable<CloudProject['collaboration_groups']>)
+      : [],
+    automatic_processing_rules: Array.isArray(record.metadata.automatic_processing_rules)
+      ? (record.metadata.automatic_processing_rules as NonNullable<
+          CloudProject['automatic_processing_rules']
+        >)
+      : [],
     created_by_user_id: 0,
     current_user_id: 0,
     current_user_name: '',
@@ -368,8 +384,12 @@ type LocalAgentRecord = Record<string, unknown> & {
   id: string
   project_id?: string
   name?: string
+  runtime?: string
   model?: string | null
+  capability_description?: string
   system_prompt?: string
+  additional_skills?: unknown[]
+  mcp_servers?: Record<string, unknown>
   status?: string
   visibility?: string
   execution_environment?: string
@@ -397,9 +417,17 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
     id: record.id,
     projectId: record.project_id ?? '',
     name: record.name ?? 'AI',
-    runtime: 'codex',
+    runtime: record.runtime === 'claude_code' ? 'claude_code' : 'codex',
     model: record.model ?? null,
+    capabilityDescription: record.capability_description ?? '',
     systemPrompt: record.system_prompt ?? '',
+    additionalSkills: Array.isArray(record.additional_skills) ? record.additional_skills : [],
+    mcpServers:
+      record.mcp_servers &&
+      typeof record.mcp_servers === 'object' &&
+      !Array.isArray(record.mcp_servers)
+        ? record.mcp_servers
+        : {},
     status: record.status === 'archived' ? 'archived' : 'active',
     visibility: (record.visibility as LocalProjectChatAgent['visibility']) ?? 'creator_admin',
     executionEnvironment:
@@ -429,10 +457,13 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       projectId: string,
       input: {
         name: string
-        runtime: 'codex' | 'wegent'
+        runtime: 'codex' | 'claude_code'
         wegentTeamId?: number | null
         model?: string | null
+        capabilityDescription?: string
         systemPrompt?: string
+        additionalSkills?: unknown[]
+        mcpServers?: Record<string, unknown>
         visibility?: LocalProjectChatAgent['visibility']
         executionEnvironment?: LocalProjectChatAgent['executionEnvironment']
         executionMode?: LocalProjectChatAgent['executionMode']
@@ -443,15 +474,16 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         plugins?: RuntimeProjectPluginRef[]
       }
     ): Promise<LocalProjectChatAgent> {
-      if (input.runtime !== 'codex') {
-        throw new Error('Local project robots only support the Wework runtime')
-      }
       const record = await request<LocalAgentRecord>('chat_agents.create', {
         project_id: projectId,
         agent: {
           name: input.name,
+          runtime: input.runtime,
           model: input.model ?? null,
+          capability_description: input.capabilityDescription ?? '',
           system_prompt: input.systemPrompt ?? '',
+          additional_skills: input.additionalSkills ?? [],
+          mcp_servers: input.mcpServers ?? {},
           visibility: input.visibility ?? 'creator_admin',
           execution_environment: input.executionEnvironment ?? 'local',
           execution_mode: input.executionMode ?? 'auto',
@@ -470,11 +502,14 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       agentId: string,
       input: {
         version: number
-        runtime?: 'codex' | 'wegent'
+        runtime?: 'codex' | 'claude_code'
         wegentTeamId?: number | null
         name?: string
         model?: string | null
+        capabilityDescription?: string
         systemPrompt?: string
+        additionalSkills?: unknown[]
+        mcpServers?: Record<string, unknown>
         status?: 'active' | 'archived'
         visibility?: LocalProjectChatAgent['visibility']
         executionEnvironment?: LocalProjectChatAgent['executionEnvironment']
@@ -486,17 +521,18 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         plugins?: RuntimeProjectPluginRef[]
       }
     ): Promise<LocalProjectChatAgent> {
-      if (input.runtime && input.runtime !== 'codex') {
-        throw new Error('Local project robots only support the Wework runtime')
-      }
       const record = await request<LocalAgentRecord>('chat_agents.update', {
         project_id: projectId,
         agent_id: agentId,
         agent: {
           version: input.version,
           name: input.name,
+          runtime: input.runtime,
           model: input.model,
+          capability_description: input.capabilityDescription,
           system_prompt: input.systemPrompt,
+          additional_skills: input.additionalSkills,
+          mcp_servers: input.mcpServers,
           status: input.status,
           visibility: input.visibility,
           execution_environment: input.executionEnvironment,
@@ -653,7 +689,11 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     can_view_detail: !isPublicVisitor || ownsTask,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
     content_revision: 1,
-    is_unread: false,
+    has_additional_context:
+      typeof record.metadata.has_additional_context === 'boolean'
+        ? record.metadata.has_additional_context
+        : true,
+    is_unread: record.metadata.is_unread === true,
     assignee_user_id: record.assignee_user_id ?? null,
     assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
@@ -812,6 +852,8 @@ export function createLocalDeliveryApi(
         card_display?: CloudProject['card_display']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
+        collaboration_groups?: CloudProject['collaboration_groups']
+        automatic_processing_rules?: CloudProject['automatic_processing_rules']
         version: number
       }
     ) {
@@ -851,6 +893,29 @@ export function createLocalDeliveryApi(
       }
       return { items }
     },
+    async listLoopItemsPage(
+      projectId: CloudProjectId,
+      options: {
+        status: CloudLoopItem['status']
+        parentId: string | null
+        cursor?: string | null
+        limit?: number
+      }
+    ) {
+      const response = await api.listLoopItems(projectId)
+      const offset = Number(options.cursor ?? 0)
+      const limit = options.limit ?? 10
+      const matching = response.items.filter(
+        item => item.status === options.status && item.parent_id === options.parentId
+      )
+      const items = matching.slice(offset, offset + limit)
+      const nextOffset = offset + items.length
+      return {
+        items,
+        task_bindings: [],
+        next_cursor: nextOffset < matching.length ? String(nextOffset) : null,
+      }
+    },
     async getBoardSnapshot(projectId: CloudProjectId): Promise<ProjectBoardSnapshot> {
       const records = await request<LocalLoopItemRecord[]>('todos.list', {
         project_id: projectId,
@@ -872,12 +937,13 @@ export function createLocalDeliveryApi(
     },
     async listLoopItemExecutions(
       projectId: CloudProjectId,
-      options: { agent_id?: string; status?: string } = {}
+      options: { agent_id?: string; status?: string; include_terminal?: boolean } = {}
     ): Promise<{ items: CloudLoopItemExecution[] }> {
       const records = await request<LocalLoopItemExecution[]>('executions.list', {
         project_id: String(projectId),
         agent_id: options.agent_id ?? null,
         status: options.status ?? null,
+        include_terminal: options.include_terminal ?? false,
       })
       return {
         items: records.map(record => ({
@@ -968,7 +1034,12 @@ export function createLocalDeliveryApi(
       return localTask(record)
     },
     async markLoopItemRead(itemId: string) {
-      return api.getLoopItem(itemId)
+      const projectId = await resolveProjectId(itemId)
+      const record = await request<LocalLoopItemRecord>('todos.mark_read', {
+        project_id: projectId,
+        task_id: itemId,
+      })
+      return localTask(record)
     },
     async approveLoopItemRun(projectId: CloudProjectId, itemId: string): Promise<CloudLoopItem> {
       const executions = await request<LocalLoopItemExecution[]>('executions.list', {
@@ -1109,6 +1180,8 @@ export function createLocalDeliveryApi(
       workflowNodeId?: string | null
     ) {
       const projectId = await resolveProjectId(itemId)
+      const modelSelection =
+        task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
       await request('todos.bind', {
         project_id: projectId,
         item_id: itemId,
@@ -1116,6 +1189,7 @@ export function createLocalDeliveryApi(
           ...task,
           ...(taskTitle ? { taskTitle } : {}),
           ...(workflowNodeId ? { workflowNodeId } : {}),
+          ...(modelSelection ? { modelSelection } : {}),
         },
       })
     },
@@ -1224,14 +1298,9 @@ export function createLocalDeliveryApi(
             return updated
           })
         }
-        if (executionStatus === 'succeeded') {
-          const bindings = await api.listTaskBindings(item.id)
-          if (bindings.length > 1) return item
-        }
-        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus)
-        return nextStatus
-          ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
-          : item
+        // The executor projects native task status from its lifecycle. Delayed
+        // renderer observations must not overwrite a completed, already-read task.
+        return item
       })
     },
     async updateTaskTrackingTitle(task: RuntimeTaskAddress, title: string) {

@@ -92,11 +92,15 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 
 ### Executor 启动环境与 Codex Home 初始化
 
-Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过运行当前用户的交互式登录 shell 读取完整环境。shell 优先使用系统用户数据库中的登录 shell，并依次回退到 `$SHELL`、`zsh`、`bash` 和 `sh`。采集过程有固定超时；失败时 executor 保留父进程环境，并继续补充 Homebrew、`/usr/local` 等标准开发目录。最终环境由 executor 统一传递给 Codex、Claude Code、插件、技能、Hooks、PTY 和设备命令，因此 Wework 本地 sidecar、独立本地设备以及 Linux 云端或远程设备使用同一套 PATH 解析逻辑。
+Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过运行当前用户的非交互登录 shell 读取登录环境，避免执行仅供终端交互使用的提示符、补全和插件初始化。需要传递给 Agent 的环境变量应配置在登录 shell 会读取的启动文件中。shell 优先使用系统用户数据库中的登录 shell，并依次回退到 `$SHELL`、`zsh`、`bash` 和 `sh`。采集过程有固定超时；失败时 executor 保留父进程环境，并继续补充 Homebrew、`/usr/local` 等标准开发目录。最终环境由 executor 统一传递给 Codex、Claude Code、插件、技能、Hooks、PTY 和设备命令，因此 Wework 本地 sidecar、独立本地设备以及 Linux 云端或远程设备使用同一套 PATH 解析逻辑。
+
+Windows 没有可采集的登录 shell，executor 改为在启动时合并注册表中的机器与当前用户 PATH。这样即使桌面应用早于 PATH 修改启动，设备命令仍能看到新开 pwsh 可解析的工具。Git diff 与代码托管 CLI 状态等设备命令直接原生调用 git、`gh` 或 `glab`，不再依赖 Windows PATH 上不保证存在的 `bash` 或 `python3`。
 
 Wework 使用独立 Codex Home 隔离本地运行时配置。首次初始化时，用户可以把原生 Codex Home 中的配置、插件、技能和插件市场复制到该目录。初始化完成后，Wework 默认在 `[features]` 中写入 `apps = true`，使迁移后的插件 Apps 能力立即可用；用户之后在设置中明确关闭 Apps 时，后续普通启动不会覆盖该选择。
 
 Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。 Electron 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
+
+Electron 启动主窗口时必须保持主窗口隐藏，并由独立的 startup splash 窗口持续展示启动动画。`wework/electron/src/shell/index.html` 只承载 Core DSH 启动宿主和失败诊断，不得模拟工作台布局、任务列表、输入框或其他骨架屏。Renderer 通过 `renderer.startupReady` 报告首个可操作工作台后，Electron 才显示主窗口并关闭 startup splash；启动失败时继续由 startup splash 提供重试和恢复操作。这样启动期间始终只有一条可见反馈路径，不会由未就绪的主窗口覆盖动画或在动画与真实界面之间闪现占位内容。
 
 ### 运行时任务与目标状态
 
@@ -113,6 +117,10 @@ Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为�
 目标（goal）有独立的生命周期。目标为 `active` 表示其目标仍可在后续回合继续推进，不表示当前存在模型回合。因此，任务空闲时保留 active goal 不会将任务重新标记为运行中；用户发送下一条消息会直接创建新回合，而不是把消息作为对运行中回合的引导。
 
 如果用户在普通回合仍运行时创建目标，Wework 会保留该目标请求，等待当前回合明确结束后以 `initialGoal` 启动新的目标回合。active goal 会让任务继续显示为运行中，但不能阻止这次已排队的目标接力；普通排队消息仍然只能在任务真正空闲时发送。executor 只在目标已经于回合开始前处于 active 状态时等待 Codex 自动续轮；若目标是在普通回合中途创建，当前执行必须先正常收敛，让 Wework 能够启动排队的目标回合。该边界避免前端等待任务空闲、executor 同时等待并不存在的自动续轮所形成的死锁。
+
+为跨 Wework 或 executor 重启恢复真正运行中的目标，runtime work 会把 active Goal 执行记录写入加密的 turn 队列。恢复依据是这条执行记录，而不是仅凭 `goalStatus=active` 推断运行：只有重启前仍在执行的 Goal 才会重新绑定。恢复时 executor 必须先订阅事件，再调用 Codex `thread/resume`，不得额外创建 `turn/start`、伪造用户消息或注入续聊提示；后续轮次仍由 Codex 的原生 Goal 协议驱动。目标暂停、清除或完成后必须删除对应执行记录，防止下次启动错误恢复。
+
+Goal 的单个物理 turn 完成后，executor 会等待 Codex 自动创建下一轮。若等待超时，它会通过 `thread/goal/get` 和 `thread/read` 对账 provider 的权威状态：已有活跃 turn 时重新绑定并继续监听；目标仍为 active 且线程空闲时只尝试一次原生 `thread/resume`；仍无法继续时停止静默等待并向 Wework 暴露 `needsAttention`。Wework 使用 `running`、`recovering` 和 `needsAttention` 三种 Goal 执行状态分别显示正常运行、重启恢复和需要用户恢复，用户点击恢复时复用已保留的 Goal 请求，而不是发送一条普通聊天消息。
 
 Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任务生命周期；Store 为每个任务维护一个状态机并负责事件路由，状态机是执行状态、回合状态、Goal 状态和未读状态的聚合根，reducer 仅作为状态机内部的状态转换实现。React Provider 只把同一个 Store 适配为订阅，不保存或推断运行状态。任务列表、输入框、消息思考态、系统托盘、关闭保护和完成提醒都读取该 Store 的同一份快照。
 
@@ -231,6 +239,19 @@ sequenceDiagram
 `remote` 设备复用本地 executor 的 WebSocket 注册、心跳、任务执行和 command RPC 通道，但由 `RemoteDeviceProvider` 独立列出和返回 `remoteConfig`。Backend 不保存生成命令中的 `WEGENT_AUTH_TOKEN`；Device CRD 只保存 provider、image、deviceId、deviceName、backendUrl、publicBaseUrl 和 createdAt 等非敏感元数据。
 
 远程 Docker 设备启动后会发送 `device:register`，payload 中的 `device_type=remote` 会更新同名 Device CRD。在线状态仍存储在 Redis 的设备在线键中，因此任务调度、slot 统计、terminal/code-server session RPC 与本地设备保持同一套协议。前端不会对 `remote` 设备展示云设备生命周期操作；停止、重启、删除容器由用户在 Docker 主机上完成。
+
+### 项目设备授权池与领取
+
+项目默认允许项目所有者名下的可用设备领取 Run。通过现有 `ResourceMember` 的 `kind + resource` 授权关系为项目添加任意设备后，这些授权构成项目设备白名单；不新增专用映射表。
+
+自动处理规则和人工分配都不要求用户选择设备。目标为人时只改变负责人；目标为智能体或协作小组时创建未绑定设备的排队 Run。设备领取时依次校验：
+
+1. 设备属于 Run 所有者；
+2. 设备满足项目授权池；
+3. 同一 Issue 已经在某台设备执行过时，继续使用该设备；
+4. 设备和智能体仍有可用容量。
+
+领取成功后通过同一个条件更新原子写入规范设备 ID、执行环境、租约和运行请求，避免多个设备同时领取。项目没有显式设备授权时使用默认开放语义；一旦存在授权，则只允许白名单设备。设备是否在线只影响当前能否领取，不影响管理员预先授权离线设备。
 
 ---
 

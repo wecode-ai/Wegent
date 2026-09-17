@@ -1,4 +1,5 @@
 import { sendPrompt } from './conversation-navigation.mjs'
+import { verifyConversationShortcuts } from './conversation-shortcuts.mjs'
 
 import { ensureTaskRowVisible, waitForScenarioRequestCount } from './memory-tool-flows.mjs'
 
@@ -32,7 +33,7 @@ import {
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
-async function verifyShortConversationLayout({ composerSelector, control }) {
+async function verifyShortConversationLayout({ composerSelector, control, restartDesktopApp }) {
   const taskRowsBeforeConversation = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('runtime-local-task-row-')
@@ -52,7 +53,11 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await sendPrompt(control, composerSelector, `${FRESH_CHAT_PROMPT} FOLLOW_UP`)
+  await sendPrompt(
+    control,
+    composerSelector,
+    `${FRESH_CHAT_PROMPT} FOLLOW_UP\n${Array.from({ length: 40 }, (_, index) => `Expansion line ${index + 1}`).join('\n')}`
+  )
   await waitForScenarioRequestCount(control, 'fresh_chat', 2)
   await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -74,6 +79,12 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`)
+  await waitForComposerFocus(
+    control,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Clicking the conversation surface did not restore keyboard focus to the composer'
+  )
 
   const scroller = await getSingleElementMetrics(
     control,
@@ -153,6 +164,31 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     messageTopOffset <= SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET,
     `The short conversation left ${messageTopOffset}px of blank space above its first message`
   )
+
+  const toggleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-user-message-button"]`
+  const expandableContentSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]:has([data-testid="toggle-user-message-button"]) [data-testid="user-message-content"]`
+  const beforeExpansion = await getSingleElementMetrics(
+    control,
+    expandableContentSelector,
+    'The collapsed user message'
+  )
+  await control.command('click', toggleSelector)
+  await control.command('waitFor', `${toggleSelector}[aria-expanded="true"]`, { stableMs: 300 })
+  const afterExpansion = await getSingleElementMetrics(
+    control,
+    expandableContentSelector,
+    'The expanded user message'
+  )
+  assert.ok(
+    afterExpansion.height > beforeExpansion.height,
+    'Expanding the user message did not reveal more content'
+  )
+  assert.ok(
+    Math.abs(afterExpansion.top - beforeExpansion.top) <= 8,
+    `Expanding the user message moved its top from ${beforeExpansion.top}px to ${afterExpansion.top}px`
+  )
+  await control.command('click', toggleSelector)
+  await control.command('waitFor', `${toggleSelector}[aria-expanded="false"]`, { stableMs: 300 })
 
   const taskRowsBeforeRace = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
@@ -239,7 +275,64 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     'The late background transcript leaked into the restored conversation'
   )
   control.setScenario('fresh_chat')
+  await restartDesktopApp()
+  await control.command('focusMainWindow', 'body')
+  await ensureTaskRowVisible(control, shortConversationTaskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForComposerFocus(
+    control,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Opening an existing conversation after app startup did not focus the composer'
+  )
+  await verifyConversationShortcuts(control, composerSelector)
+  await control.command(
+    'hover',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="message-hover-region"]`
+  )
+  await control.command(
+    'click',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="copy-message-button"]`
+  )
+  assert.equal(
+    await control.command('getClipboardText', ''),
+    FRESH_CHAT_COMPLETION_TEXT,
+    'The assistant-message copy action did not populate the desktop clipboard'
+  )
+  await control.command('press', 'body', {
+    key: process.platform === 'darwin' ? 'Meta+v' : 'Control+v',
+  })
+  await waitForComposerFocus(
+    control,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Pasting after copying a message did not transfer keyboard focus to the composer'
+  )
   return shortConversationTaskRowTestId
+}
+
+async function waitForComposerFocus(control, timeoutMs, failureMessage) {
+  const focusStartedAt = Date.now()
+  let activeElementTestId = ''
+  while (Date.now() - focusStartedAt < timeoutMs) {
+    activeElementTestId = await control.command('getActiveElementTestId', 'body')
+    if (activeElementTestId === 'chat-message-input') return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
+    control.command('getComposerFocusSnapshot', 'body'),
+    control.command('getWorkbenchDebugSnapshot', 'body'),
+    control.command('getComposerDiagnosticsSnapshot', 'body'),
+  ])
+  throw new Error(
+    `${failureMessage}; activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
+      `workbench=${workbenchSnapshot}; composerDiagnostics=${composerDiagnostics}`
+  )
 }
 
 async function verifyConversationRenameSpaceDoesNotDrag(control, taskRowTestId) {
@@ -734,6 +827,10 @@ async function captureMemorySample(control, phase) {
     phase,
     timestamp: snapshot.timestamp,
     domNodeCount: snapshot.domNodeCount,
+    assistantDom: snapshot.assistantDom,
+    activeRuntimeAssistant: snapshot.activeRuntimeAssistant,
+    usedJSHeapSize: snapshot.rendererHeap?.usedSize ?? null,
+    totalJSHeapSize: snapshot.rendererHeap?.totalSize ?? null,
     rssKiB: webContent.rss_kib,
     physicalFootprintKiB: webContent.physical_footprint_kib,
     pids: webContent.pids,
@@ -1013,6 +1110,7 @@ export {
   waitForElementWidth,
   waitForElementTop,
   waitForProcessingBlock,
+  waitForComposerFocus,
   verifyViewImageProcessingBlock,
   distanceFromBottom,
   distanceFromTop,

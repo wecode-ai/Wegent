@@ -8,35 +8,26 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
 
 use crate::{
+    agent_session,
     agents::{
-        backend_url::request_backend_url, interactive_mcp::build_interactive_form_answer_query,
-        runtime_capabilities::resolve_skill, skill_download::skill_download_concurrency,
-        task_identity::task_identity_env,
+        interactive_mcp::build_interactive_form_answer_query, task_identity::task_identity_env,
     },
     attachments::{
         append_text_to_vision_prompt, convert_openai_to_anthropic_content, create_multimodal_query,
     },
-    claude_session,
     hooks::pre_execute::{PreExecuteContext, PreExecuteHook},
-    local::{
-        backend::HttpPackageProvider,
-        capabilities::{
-            restore_enabled_claude_plugin_cache, CapabilityPackageProvider, SkillSyncSpec,
-        },
-    },
-    logging::{log_executor_event, push_error_fields, task_fields},
+    local::capabilities::restore_enabled_claude_plugin_cache,
+    logging::{log_executor_event, task_fields},
     process::CommandSpec,
     protocol::ExecutionRequest,
-    services::skill_deployer::{build_skill_deployment_plan, SkillDeploymentOptions, SkillRef},
 };
 
 const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
 const CLAUDE_FILE_EDIT_HOOK_MATCHER: &str = "Write|Edit|MultiEdit|NotebookEdit";
-const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
+const CLAUDE_MAX_CONTEXT_TOKENS_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 const DEFAULT_CLAUDE_MODEL_ENV: &[&str] = &[
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -325,7 +316,7 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
         spec = spec.arg("--model").arg(model);
     }
 
-    if let Some(session_id) = claude_session::load_saved_session_id(request) {
+    if let Some(session_id) = agent_session::load_saved_session_id(request) {
         spec = spec.arg("--resume").arg(session_id);
     }
 
@@ -474,7 +465,7 @@ pub(crate) fn model_id(request: &ExecutionRequest) -> Option<String> {
 fn apply_model_environment(mut spec: CommandSpec, request: &ExecutionRequest) -> CommandSpec {
     let env_values = model_env(request);
     for (key, value) in &env_values {
-        if is_process_env_key(key) {
+        if key != CLAUDE_MAX_CONTEXT_TOKENS_ENV && is_process_env_key(key) {
             spec = spec.env(key, value);
         }
     }
@@ -491,9 +482,59 @@ fn apply_model_environment(mut spec: CommandSpec, request: &ExecutionRequest) ->
         }
     }
 
+    spec = apply_model_context_window_environment(spec, request);
     spec = apply_default_model_environment(spec, request);
 
     spec
+}
+
+fn apply_model_context_window_environment(
+    spec: CommandSpec,
+    request: &ExecutionRequest,
+) -> CommandSpec {
+    let Some((context_window, source)) = resolved_claude_context_window(request) else {
+        return spec;
+    };
+
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    fields.push(("context_window_tokens", context_window.to_string()));
+    fields.push(("context_window_source", source.to_owned()));
+    log_executor_event("claude context window configured", &fields);
+
+    spec.env(CLAUDE_MAX_CONTEXT_TOKENS_ENV, context_window.to_string())
+}
+
+fn resolved_claude_context_window(request: &ExecutionRequest) -> Option<(i64, &'static str)> {
+    if let Some(context_window) = model_string(request, CLAUDE_MAX_CONTEXT_TOKENS_ENV)
+        .and_then(|value| positive_context_window(&Value::String(value)))
+    {
+        return Some((context_window, "explicit_env"));
+    }
+
+    if let Some(context_window) = claude_model_context_window(&request.model_config) {
+        return Some((context_window, "model_config"));
+    }
+
+    process_model_environment(CLAUDE_MAX_CONTEXT_TOKENS_ENV)
+        .and_then(|value| positive_context_window(&Value::String(value)))
+        .map(|context_window| (context_window, "process_env"))
+}
+
+fn claude_model_context_window(model_config: &Value) -> Option<i64> {
+    model_config
+        .get("model_context_window")
+        .or_else(|| model_config.get("context_window"))
+        .or_else(|| model_config.get("contextWindow"))
+        .and_then(positive_context_window)
+}
+
+fn positive_context_window(value: &Value) -> Option<i64> {
+    let context_window = match value {
+        Value::Number(value) => value.as_i64(),
+        Value::String(value) => value.trim().parse().ok(),
+        _ => None,
+    }?;
+    (context_window > 0).then_some(context_window)
 }
 
 fn apply_default_model_environment(
@@ -624,7 +665,7 @@ pub(crate) fn claude_task_dir(request: &ExecutionRequest) -> Option<PathBuf> {
     request
         .cwd()
         .map(PathBuf::from)
-        .or_else(|| claude_session::preferred_task_dir(request))
+        .or_else(|| agent_session::preferred_task_dir(request))
 }
 
 pub(crate) fn claude_config_dir(
@@ -639,7 +680,7 @@ fn claude_skills_dir(
     config_dir: &Path,
     task_dir: Option<&PathBuf>,
 ) -> PathBuf {
-    if is_standalone_project_zero(request) && has_task_skill_names(request) {
+    if has_task_skill_names(request) {
         if let Some(task_dir) = task_dir {
             return task_dir.join(".claude/skills");
         }
@@ -647,246 +688,11 @@ fn claude_skills_dir(
     config_dir.join("skills")
 }
 
-fn is_standalone_project_zero(request: &ExecutionRequest) -> bool {
-    let standalone = request
-        .extra
-        .get("standalone_chat_workspace")
-        .or_else(|| request.extra.get("standaloneChatWorkspace"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    standalone && project_id(request).as_deref() == Some("0")
-}
-
-fn has_task_skill_names(request: &ExecutionRequest) -> bool {
+pub(crate) fn has_task_skill_names(request: &ExecutionRequest) -> bool {
     primary_bot(request).is_some_and(|bot| {
         !crate::services::skill_deployer::collect_skill_names_for_deployment(bot, request)
             .is_empty()
     })
-}
-
-pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: &CommandSpec) {
-    if !has_task_skill_names(request) {
-        return;
-    }
-    let Some(skills_dir) = spec.envs().get("SKILLS_DIR").map(PathBuf::from) else {
-        return;
-    };
-    let Some(bot_config) = primary_bot(request) else {
-        return;
-    };
-    let Some(mut plan) = build_skill_deployment_plan(
-        bot_config,
-        request,
-        SkillDeploymentOptions {
-            skills_dir,
-            clear_cache: false,
-            skip_existing: false,
-        },
-    ) else {
-        return;
-    };
-    let Some(backend_url) = task_backend_url(request) else {
-        return;
-    };
-
-    let resolver_client = reqwest::Client::new();
-    for skill_name in plan.skills.clone() {
-        if plan.resolved_skill_map.contains_key(&skill_name) {
-            continue;
-        }
-        match resolve_skill(&resolver_client, &plan, &skill_name, None, &backend_url).await {
-            Ok(Some((skill_id, namespace))) => {
-                plan.resolved_skill_map.insert(
-                    skill_name.clone(),
-                    SkillRef {
-                        skill_id,
-                        namespace,
-                        is_public: false,
-                        content_hash: None,
-                    },
-                );
-            }
-            Ok(None) => {
-                log_executor_event(
-                    "claude task skill not found",
-                    &[("skill", skill_name.clone())],
-                );
-            }
-            Err(error) => {
-                let mut fields = vec![("skill", skill_name.clone())];
-                push_error_fields(&mut fields, error);
-                log_executor_event("claude task skill resolution failed", &fields);
-            }
-        }
-    }
-
-    let provider = HttpPackageProvider::new(backend_url, plan.auth_token.clone());
-    stream::iter(plan.skills.iter().cloned())
-        .map(|skill_name| {
-            let provider = provider.clone();
-            let plan = &plan;
-            async move {
-                let Some(skill_ref) = plan.resolved_skill_map.get(&skill_name) else {
-                    return;
-                };
-                let target = plan.skills_dir.join(&skill_name);
-                let Some(cache_miss_reason) =
-                    claude_task_skill_cache_miss_reason(&target, skill_ref)
-                else {
-                    return;
-                };
-                let mut fields = task_fields(&request.task_id, &request.subtask_id);
-                fields.push(("skill", skill_name.clone()));
-                fields.push(("target", target.display().to_string()));
-                fields.push(("reason", cache_miss_reason));
-                fields.push(("skill_id", skill_ref.skill_id.to_string()));
-                fields.push(("namespace", skill_ref.namespace.clone()));
-                fields.push((
-                    "content_hash",
-                    skill_ref.content_hash.clone().unwrap_or_default(),
-                ));
-                log_executor_event("claude task skill cache miss", &fields);
-                let spec = SkillSyncSpec {
-                    name: skill_name.clone(),
-                    skill_id: skill_ref.skill_id,
-                    namespace: skill_ref.namespace.clone(),
-                    is_public: skill_ref.is_public,
-                    content_hash: skill_ref.content_hash.clone(),
-                };
-                match provider.stage_skill(&spec, &target).await {
-                    Ok(()) => {
-                        let _ = write_claude_task_skill_marker(&target, skill_ref);
-                        log_executor_event("claude task skill deployed", &fields)
-                    }
-                    Err(error) => {
-                        push_error_fields(&mut fields, error);
-                        log_executor_event("claude task skill deployment failed", &fields);
-                    }
-                }
-            }
-        })
-        .buffer_unordered(skill_download_concurrency())
-        .collect::<Vec<_>>()
-        .await;
-}
-
-fn claude_task_skill_cache_miss_reason(
-    target: &Path,
-    skill_ref: &crate::services::skill_deployer::SkillRef,
-) -> Option<String> {
-    if !target.join("SKILL.md").is_file() {
-        return Some("missing_skill_file".to_owned());
-    }
-    let manifest_status = claude_task_skill_manifest_cache_status(target, skill_ref);
-    if manifest_status.is_ok() {
-        return None;
-    }
-    let marker_status = claude_task_skill_marker_cache_status(target, skill_ref);
-    if marker_status.is_ok() {
-        return None;
-    }
-    Some(format!(
-        "manifest={};marker={}",
-        manifest_status.unwrap_err(),
-        marker_status.unwrap_err()
-    ))
-}
-
-fn claude_task_skill_manifest_cache_status(
-    target: &Path,
-    skill_ref: &crate::services::skill_deployer::SkillRef,
-) -> Result<(), String> {
-    let Some(skill_name) = target.file_name().and_then(|value| value.to_str()) else {
-        return Err("invalid_target".to_owned());
-    };
-    let Some(skills_dir) = target.parent() else {
-        return Err("missing_skills_dir".to_owned());
-    };
-    let path = skills_dir.join(SKILL_MANIFEST_FILE);
-    let value = read_json_value(&path)?;
-    let Some(record) = value.get(skill_name) else {
-        return Err("record_missing".to_owned());
-    };
-    claude_task_skill_record_cache_status(record, skill_ref)
-}
-
-fn claude_task_skill_marker_cache_status(
-    target: &Path,
-    skill_ref: &crate::services::skill_deployer::SkillRef,
-) -> Result<(), String> {
-    let value = read_json_value(&target.join(".wegent-skill.json"))?;
-    claude_task_skill_record_cache_status(&value, skill_ref)
-}
-
-fn read_json_value(path: &Path) -> Result<Value, String> {
-    let content = fs::read_to_string(path).map_err(|error| format!("read_failed({error})"))?;
-    serde_json::from_str::<Value>(&content).map_err(|error| format!("parse_failed({error})"))
-}
-
-fn claude_task_skill_record_cache_status(
-    record: &Value,
-    skill_ref: &crate::services::skill_deployer::SkillRef,
-) -> Result<(), String> {
-    if is_claude_task_skill_record_current(record, skill_ref) {
-        Ok(())
-    } else {
-        Err(format!("record_mismatch({})", skill_record_summary(record)))
-    }
-}
-
-fn is_claude_task_skill_record_current(
-    record: &Value,
-    skill_ref: &crate::services::skill_deployer::SkillRef,
-) -> bool {
-    if record.get("skill_id").and_then(Value::as_i64) != Some(skill_ref.skill_id)
-        || record.get("namespace").and_then(Value::as_str) != Some(skill_ref.namespace.as_str())
-    {
-        return false;
-    }
-    match skill_ref.content_hash.as_deref() {
-        Some(content_hash) => {
-            record.get("content_hash").and_then(Value::as_str) == Some(content_hash)
-        }
-        None => true,
-    }
-}
-
-fn skill_record_summary(record: &Value) -> String {
-    format!(
-        "skill_id={},namespace={},content_hash={}",
-        record
-            .get("skill_id")
-            .and_then(Value::as_i64)
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "<missing>".to_owned()),
-        record
-            .get("namespace")
-            .and_then(Value::as_str)
-            .unwrap_or("<missing>"),
-        record
-            .get("content_hash")
-            .and_then(Value::as_str)
-            .unwrap_or("<missing>")
-    )
-}
-
-fn write_claude_task_skill_marker(
-    target: &Path,
-    skill_ref: &crate::services::skill_deployer::SkillRef,
-) -> std::io::Result<()> {
-    let marker = json!({
-        "skill_id": skill_ref.skill_id,
-        "namespace": &skill_ref.namespace,
-        "content_hash": skill_ref.content_hash,
-    });
-    fs::write(
-        target.join(".wegent-skill.json"),
-        serde_json::to_vec_pretty(&marker)?,
-    )
-}
-
-fn task_backend_url(_request: &ExecutionRequest) -> Option<String> {
-    request_backend_url(_request)
 }
 
 fn user_selected_skills(request: &ExecutionRequest) -> Vec<String> {
@@ -1158,68 +964,6 @@ fn extra_string(request: &ExecutionRequest, key: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    struct EnvGuard {
-        key: &'static str,
-        old_value: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let old_value = env::var(key).ok();
-            env::set_var(key, value);
-            Self { key, old_value }
-        }
-
-        fn remove(key: &'static str) -> Self {
-            let old_value = env::var(key).ok();
-            env::remove_var(key);
-            Self { key, old_value }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = &self.old_value {
-                env::set_var(self.key, value);
-            } else {
-                env::remove_var(self.key);
-            }
-        }
-    }
-
-    #[test]
-    fn task_backend_url_falls_back_to_task_api_domain() {
-        let _lock = crate::test_env::lock();
-        let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
-        let _mode = EnvGuard::remove("EXECUTOR_MODE");
-        let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://backend.local:8000");
-
-        let request = ExecutionRequest::default();
-
-        assert_eq!(
-            task_backend_url(&request),
-            Some("http://backend.local:8000".to_owned())
-        );
-    }
-
-    #[test]
-    fn task_backend_url_prefers_env_over_payload_backend_url() {
-        let _lock = crate::test_env::lock();
-        let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
-        let _mode = EnvGuard::remove("EXECUTOR_MODE");
-        let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://env-backend.local:8000");
-
-        let request = ExecutionRequest {
-            backend_url: Some("http://payload-backend.invalid".to_owned()),
-            ..ExecutionRequest::default()
-        };
-
-        assert_eq!(
-            task_backend_url(&request),
-            Some("http://env-backend.local:8000".to_owned())
-        );
-    }
-
     #[test]
     fn claude_command_uses_configured_desktop_permission_mode() {
         let mut request = ExecutionRequest {
@@ -1281,22 +1025,5 @@ mod tests {
             .expect("permission mode flag");
 
         assert_eq!(command.args()[permission_index + 1], "bypassPermissions");
-    }
-
-    #[test]
-    fn claude_task_skill_record_without_expected_hash_keeps_existing_cache() {
-        let record = json!({
-            "skill_id": 259904,
-            "namespace": "default",
-            "content_hash": "sha256:old",
-        });
-        let skill_ref = crate::services::skill_deployer::SkillRef {
-            skill_id: 259904,
-            namespace: "default".to_owned(),
-            is_public: false,
-            content_hash: None,
-        };
-
-        assert!(is_claude_task_skill_record_current(&record, &skill_ref));
     }
 }

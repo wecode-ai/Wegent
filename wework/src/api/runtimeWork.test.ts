@@ -3,6 +3,51 @@ import { createRuntimeWorkApi } from './runtimeWork'
 import type { HttpClient } from './http'
 
 describe('createRuntimeWorkApi', () => {
+  test('uses the canonical create endpoint for Team execution', async () => {
+    const post = vi.fn().mockResolvedValue({ accepted: true })
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = {
+      schemaVersion: 3 as const,
+      wegentTeamId: 42,
+      deviceId: 'cloud-device-1',
+      workspacePath: '/repo',
+      runtime: 'codex' as const,
+      message: 'run with team',
+    }
+
+    await api.createRuntimeTask(request)
+
+    expect(post).toHaveBeenCalledWith('/runtime-work/create', request)
+  })
+
+  test('materializes a Team request without dispatching it', async () => {
+    const response = {
+      payload: {
+        schemaVersion: 2,
+        runtime: 'codex',
+        message: 'continue',
+        title: 'continue',
+        executionRequest: { team_id: 42 },
+      },
+      runtimeHandle: { wegentTeam: { id: 42 } },
+    }
+    const post = vi.fn().mockResolvedValue(response)
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = {
+      schemaVersion: 3 as const,
+      wegentTeamId: 42,
+      newSession: false,
+      deviceId: 'local-device-1',
+      workspacePath: '/repo',
+      taskId: 'task-1',
+      runtime: 'codex' as const,
+      message: 'continue',
+    }
+
+    await expect(api.materializeRuntimeTask(request)).resolves.toEqual(response)
+    expect(post).toHaveBeenCalledWith('/runtime-work/materialize', request)
+  })
+
   test('lists runtime work without client origin query', async () => {
     const get = vi.fn().mockResolvedValue({
       projects: [],

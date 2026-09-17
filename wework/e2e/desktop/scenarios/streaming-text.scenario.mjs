@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+
+import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -42,6 +44,10 @@ const LONG_CODE_REASONING = Array.from(
 const VISUALIZATION_PROMPT = 'WEWORK_DESKTOP_E2E_ABSOLUTE_VISUALIZATION'
 const VISUALIZATION_TITLE = 'Absolute visualization E2E'
 const VISUALIZATION_MARKER = 'WEWORK_DESKTOP_E2E_VISUALIZATION_VISIBLE'
+const GENERATED_IMAGE_PROMPT = 'WEWORK_DESKTOP_E2E_GENERATED_IMAGE'
+const GENERATED_IMAGE_COMPLETION = 'WEWORK_DESKTOP_E2E_GENERATED_IMAGE_COMPLETE'
+const GENERATED_IMAGE_CALL_ID = 'wework-generated-image'
+const GENERATED_IMAGE_REVISED_PROMPT = 'A small generated image used by the desktop regression test'
 const WINDOWS_LINK_PROMPT = 'WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK'
 const WINDOWS_LINK_LABEL = 'wegent'
 const WINDOWS_LINK_COMPLETION = '[wegent](C:/projects/example-app/wegent)'
@@ -49,6 +55,18 @@ const PHASE_FLIP_PROMPT = 'WEWORK_DESKTOP_E2E_PROCESS_TO_FALLBACK_FINAL'
 const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_FALLBACK_FINAL_FROM_PROCESS'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
 const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
+const SUBAGENT_PROMPT = 'WEWORK_DESKTOP_E2E_SUBAGENT_STREAMING_PANEL'
+const SUBAGENT_SEARCH_CALL_ID = 'wework-subagent-tool-search'
+const SUBAGENT_CALL_ID = 'wework-subagent-streaming-panel'
+const SUBAGENT_WAIT_CALL_ID = 'wework-subagent-wait'
+const SUBAGENT_CHILD_TOOL_CALL_ID = 'wework-subagent-child-tool'
+const SUBAGENT_CHILD_PROMPT = 'Inspect the child event stream and report the routing result.'
+const SUBAGENT_CHILD_TOOL_MARKER = 'WEWORK_DESKTOP_E2E_SUBAGENT_TOOL'
+const SUBAGENT_CHILD_TOOL_START = `${SUBAGENT_CHILD_TOOL_MARKER}_START`
+const SUBAGENT_CHILD_TOOL_COMPLETE = `${SUBAGENT_CHILD_TOOL_MARKER}_COMPLETE`
+const SUBAGENT_CHILD_PARTIAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARTIAL'
+const SUBAGENT_CHILD_COMPLETION = `${SUBAGENT_CHILD_PARTIAL}\n\nWEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE`
+const SUBAGENT_PARENT_COMPLETION = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARENT_COMPLETE'
 const ORDER_STOP_PROMPT = 'WEWORK_DESKTOP_E2E_ORDER_STOPPED_TURN'
 const ORDER_STOP_PARTIAL = 'WEWORK_DESKTOP_E2E_ORDER_STOP_PARTIAL'
 const ORDER_FOLLOW_UP_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_FOLLOW_UP'
@@ -121,6 +139,12 @@ const SCROLL_BUTTON_APPENDED_TEXT = `\n\n${Array.from({ length: 24 }, (_, index)
     ? `${SCROLL_BUTTON_APPEND_MARKER}: content keeps growing after the user clicks the jump-to-bottom button.`
     : `Scroll button growth paragraph ${index + 1}: the click must continue following the virtualized conversation bottom.`
 ).join('\n\n')}`
+
+async function openNewChatWithE2EModel(control, timeoutMs) {
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, ACTIVE_WORKBENCH_SELECTOR)
+}
 const COMPLETION_TEXT = `${PARTIAL_TEXT}${APPENDED_TEXT}${SCROLL_BUTTON_APPENDED_TEXT}\n\nCOMPLETE`
 
 function sse(events) {
@@ -181,6 +205,25 @@ function functionCall(callId, name, argumentsValue) {
       },
     },
   ]
+}
+
+function namespacedFunctionCall(callId, namespace, name, argumentsValue) {
+  return functionCall(callId, name, argumentsValue).map(event => ({
+    ...event,
+    item: { ...event.item, namespace },
+  }))
+}
+
+function toolSearchCall(callId, argumentsValue) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'tool_search_call',
+      call_id: callId,
+      execution: 'client',
+      arguments: argumentsValue,
+    },
+  }
 }
 
 function reasoningEvents(itemId, text, deltaChunkSize = text.length) {
@@ -385,12 +428,20 @@ function requestContainsVisualizationPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(VISUALIZATION_PROMPT)
 }
 
+function requestContainsGeneratedImagePrompt(body) {
+  return JSON.stringify(body.input ?? []).includes(GENERATED_IMAGE_PROMPT)
+}
+
 function requestContainsWindowsLinkPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(WINDOWS_LINK_PROMPT)
 }
 
 function requestContainsTimerPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(TIMER_PROMPT)
+}
+
+function requestContainsSubagentPrompt(body) {
+  return latestModelInputText(body).includes(SUBAGENT_PROMPT)
 }
 
 function latestModelInputText(body) {
@@ -406,6 +457,32 @@ function orderFollowUpNumber(body) {
 
 function requestContainsToolOutput(body) {
   return JSON.stringify(body.input ?? []).includes('function_call_output')
+}
+
+function requestContainsToolOutputForCall(body, callId) {
+  return (Array.isArray(body.input) ? body.input : []).some(
+    item => item?.type === 'function_call_output' && item.call_id === callId
+  )
+}
+
+function requestContainsToolSearchOutputForCall(body, callId) {
+  return (Array.isArray(body.input) ? body.input : []).some(
+    item => item?.type === 'tool_search_output' && item.call_id === callId
+  )
+}
+
+function functionCallOutput(body, callId) {
+  return (Array.isArray(body.input) ? body.input : []).find(
+    item => item?.type === 'function_call_output' && item.call_id === callId
+  )?.output
+}
+
+function spawnedAgentId(body) {
+  const output = functionCallOutput(body, SUBAGENT_CALL_ID)
+  const parsed = typeof output === 'string' ? JSON.parse(output) : output
+  const agentId = parsed?.agent_id ?? parsed?.id
+  assert.ok(agentId, `spawn_agent output did not include an agent id: ${JSON.stringify(output)}`)
+  return agentId
 }
 
 async function waitForRuntimePaneReadyToSend(control, timeoutMs) {
@@ -465,6 +542,37 @@ function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000
       workdir: workspacePath,
       timeout_ms: timeoutMs,
     },
+  }
+}
+
+function selectImageGenerationTool(body) {
+  const tools = Array.isArray(body.tools) ? body.tools : []
+  const namespace = tools.find(tool => tool?.type === 'namespace' && tool.name === 'image_gen')
+  const tool = namespace?.tools?.find(
+    candidate => candidate?.type === 'function' && candidate.name === 'imagegen'
+  )
+  if (tool) {
+    return {
+      namespace: namespace.name,
+      name: tool.name,
+      arguments: { prompt: GENERATED_IMAGE_REVISED_PROMPT },
+    }
+  }
+  const flattenedTool = tools.find(
+    candidate =>
+      candidate?.type === 'function' &&
+      (candidate.name === 'image_gen__imagegen' || candidate.name === 'image_genimagegen')
+  )
+  assert.ok(
+    flattenedTool,
+    `Real Codex did not advertise image_gen.imagegen: ${tools
+      .map(candidate => `${candidate?.type ?? 'unknown'}:${candidate?.name ?? 'unnamed'}`)
+      .join(', ')}`
+  )
+  return {
+    namespace: null,
+    name: flattenedTool.name,
+    arguments: { prompt: GENERATED_IMAGE_REVISED_PROMPT },
   }
 }
 
@@ -537,8 +645,7 @@ async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
   return duration
 }
 
-async function completedToolDuration(control, timeoutMs) {
-  const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
+async function expandCompletedProcessing(control, timeoutMs) {
   const finalToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
   await control.command('waitFor', finalToggle, { timeoutMs })
   if ((await control.command('getAttribute', finalToggle, { value: 'aria-expanded' })) !== 'true') {
@@ -551,6 +658,11 @@ async function completedToolDuration(control, timeoutMs) {
   ) {
     await control.command('click', summaryToggle)
   }
+}
+
+async function completedToolDuration(control, timeoutMs) {
+  const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
+  await expandCompletedProcessing(control, timeoutMs)
   await control.command('waitFor', selector, { timeoutMs })
   const text = await control.command('getText', selector)
   const duration = toolDurationSeconds(text)
@@ -755,7 +867,11 @@ export function createDesktopScenario({
   workspacePath,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
+  const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
   let active = false
+  let generatedImageStage = 'initial'
+  let subagentStage = 'initial'
+  let subagentChildStage = 'initial'
   let toolRegressionStage = 'initial'
   let timerStage = 'initial'
   let releaseAppend
@@ -764,12 +880,14 @@ export function createDesktopScenario({
   let releaseResponse
   let releaseScrollButtonAppend
   let releaseStart
+  let releaseSubagentCompletion
   let releaseToolCompletion
   let releaseToolFinalCompletion
   let resolveAppendWritten
   let resolvePartialWritten
   let resolveRequest
   let resolveScrollButtonAppendWritten
+  let resolveSubagentPartialWritten
   let resolveToolFinalTextStarted
   let resolveToolFollowUp
   let targetRequest
@@ -803,6 +921,12 @@ export function createDesktopScenario({
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
   })
+  const subagentCompletionRelease = new Promise(resolve => {
+    releaseSubagentCompletion = resolve
+  })
+  const subagentPartialWritten = new Promise(resolve => {
+    resolveSubagentPartialWritten = resolve
+  })
   const toolCompletionRelease = new Promise(resolve => {
     releaseToolCompletion = resolve
   })
@@ -815,11 +939,9 @@ export function createDesktopScenario({
   const toolFinalCompletionRelease = new Promise(resolve => {
     releaseToolFinalCompletion = resolve
   })
-
   const verifyLongCodeTerminalBurst = async control => {
     await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    await openNewChatWithE2EModel(control, uiTimeoutMs)
     await control.command('fill', COMPOSER_SELECTOR, { value: LONG_CODE_PROMPT })
     await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
     await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
@@ -844,6 +966,16 @@ export function createDesktopScenario({
       Number(await control.command('getElementCount', THINKING_INDICATOR_SELECTOR)),
       0,
       'The generic thinking indicator remained after long-code output became visible'
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
+        )
+      ),
+      0,
+      'The processing timeline completed while final assistant text was still streaming'
     )
 
     releaseLongCodeStream()
@@ -910,8 +1042,7 @@ export function createDesktopScenario({
   }
 
   const verifyWindowsDriveLinkRendering = async control => {
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    await openNewChatWithE2EModel(control, uiTimeoutMs)
     await control.command('fill', COMPOSER_SELECTOR, { value: WINDOWS_LINK_PROMPT })
     await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
     await control.command('waitFor', ASSISTANT_MARKDOWN_LINK_SELECTOR, {
@@ -927,8 +1058,7 @@ export function createDesktopScenario({
   }
 
   const verifyStoppedTurnOrder = async control => {
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    await openNewChatWithE2EModel(control, uiTimeoutMs)
     const knownOrderTaskRows = new Set(
       JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
         testId.startsWith('runtime-local-task-row-')
@@ -988,9 +1118,190 @@ export function createDesktopScenario({
     await capture(control, 'streaming-text-17-stopped-turn-order-restored.png')
   }
 
+  const verifySubagentStreamingPanel = async control => {
+    await openNewChatWithE2EModel(control, uiTimeoutMs)
+
+    await control.command('fill', COMPOSER_SELECTOR, { value: SUBAGENT_PROMPT })
+    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+    await control.command('waitFor', '[data-testid="subagent-activity-chip"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_PARTIAL
+      ),
+      false,
+      'The child agent stream leaked into the root conversation'
+    )
+    await captureSubagent(control, 'streaming-text-subagent-01-inline-activity.png')
+    await control.command('click', '[data-testid="subagent-activity-chip"]')
+    await control.command('waitFor', '[data-testid="subagent-conversation-panel"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      await control.command('getAttribute', '[data-testid="right-workspace-subagents-tab"]', {
+        value: 'aria-selected',
+      }),
+      'true',
+      'The subagent conversation was not opened inside the active right workspace tab'
+    )
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command(
+      'waitFor',
+      '[data-testid="subagent-conversation-scroll"] [data-testid="tool-block-duration"]',
+      {
+        timeoutMs: uiTimeoutMs,
+      }
+    )
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_TOOL_MARKER
+      ),
+      false,
+      'The running child tool leaked into the root conversation'
+    )
+    await subagentPartialWritten
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_PARTIAL,
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_PARTIAL
+      ),
+      false,
+      'The rendered child agent stream leaked into the root conversation'
+    )
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_TOOL_MARKER
+      ),
+      false,
+      'The completed child tool leaked into the root conversation'
+    )
+    await captureSubagent(control, 'streaming-text-subagent-02-streaming-conversation.png')
+    releaseSubagentCompletion()
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
+      timeoutMs: uiTimeoutMs,
+    })
+    await captureSubagent(control, 'streaming-text-subagent-03-completed-conversation.png')
+
+    await control.command('click', '[data-testid="subagent-conversation-back"]')
+    await control.command('waitFor', '[data-testid="subagent-overview-panel"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      await control.command('getAttribute', '[data-testid="right-workspace-subagents-tab"]', {
+        value: 'aria-selected',
+      }),
+      'true',
+      'The subagent overview lost its right workspace tab'
+    )
+    assert.equal(
+      Number(await control.command('getElementCount', '[data-testid="subagent-overview-item"]')),
+      1,
+      'The subagent overview did not retain the streamed child conversation'
+    )
+    assert.equal(
+      (await control.command('getText', '[data-testid="subagent-overview-panel"]')).includes(
+        '正在工作'
+      ),
+      false,
+      'A completed subagent retained the running preview'
+    )
+    await captureSubagent(control, 'streaming-text-subagent-04-completed-overview.png')
+
+    await control.command('click', '[data-testid="right-workspace-subagents-tab-close-button"]')
+    await control.command('waitFor', '[data-testid="environment-subagents-section"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await captureSubagent(control, 'streaming-text-subagent-05-environment-summary.png')
+
+    const readyCountBeforeReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await Promise.race([
+      control.awaitReadyAfter(readyCountBeforeReload),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error('The reloaded Wework window did not reconnect')),
+          uiTimeoutMs
+        )
+      ),
+    ])
+    await control.command('waitFor', '[data-testid="environment-subagents-section"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="open-subagents-panel-button"]')
+    await control.command('waitFor', '[data-testid="subagent-overview-panel"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      await control.command('getAttribute', '[data-testid="right-workspace-subagents-tab"]', {
+        value: 'aria-selected',
+      }),
+      'true',
+      'The restored subagent overview was not opened inside the right workspace tab'
+    )
+    await control.command('click', '[data-testid="subagent-overview-item"]')
+    await control.command('waitFor', '[data-testid="subagent-conversation-panel"]', {
+      text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_TOOL_MARKER
+      ),
+      false,
+      'The restored child tool leaked into the root conversation'
+    )
+    await captureSubagent(control, 'streaming-text-subagent-06-restored-history.png')
+    await control.command('click', '[data-testid="right-workspace-subagents-tab-close-button"]')
+  }
+
   return {
+    modelProviderAuthToml: '',
+    modelProviderConfigToml:
+      'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
+    appEnvironment: {
+      WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
+    },
+
     async handleHttp(request, response, url) {
       if (!active) return false
+      if (
+        request.method === 'POST' &&
+        ['/v1/images/generations', '/images/generations'].includes(url.pathname)
+      ) {
+        assert.equal(
+          generatedImageStage,
+          'awaiting-image-api',
+          `Unexpected generated-image API stage: ${generatedImageStage}`
+        )
+        const body = await readJson(request)
+        assert.equal(body.prompt, GENERATED_IMAGE_REVISED_PROMPT)
+        assert.equal(body.model, 'gpt-image-2')
+        generatedImageStage = 'awaiting-tool-output'
+        response.writeHead(200, { 'Content-Type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            created: Math.floor(Date.now() / 1000),
+            data: [{ b64_json: ATTACHMENT_BASE64 }],
+          })
+        )
+        return true
+      }
       if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname)) {
         return false
       }
@@ -999,6 +1310,148 @@ export function createDesktopScenario({
       const responseId = `wework-streaming-text-${Date.now()}`
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
+      if (request.headers['x-openai-subagent']) {
+        if (subagentChildStage === 'initial') {
+          const tool = selectShellTool(
+            body,
+            workspacePath,
+            `printf '${SUBAGENT_CHILD_TOOL_START}\\n'; sleep 2; printf '${SUBAGENT_CHILD_TOOL_COMPLETE}\\n'`,
+            10_000
+          )
+          subagentChildStage = 'awaiting-tool-output'
+          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+          response.end(
+            sse([
+              responseCreated(responseId),
+              ...functionCall(SUBAGENT_CHILD_TOOL_CALL_ID, tool.name, tool.arguments),
+              responseCompleted(responseId),
+            ])
+          )
+          return true
+        }
+        assert.equal(
+          subagentChildStage,
+          'awaiting-tool-output',
+          `Unexpected subagent child stage: ${subagentChildStage}`
+        )
+        assert.ok(
+          requestContainsToolOutputForCall(body, SUBAGENT_CHILD_TOOL_CALL_ID),
+          'The child tool output was not returned to the subagent'
+        )
+        subagentChildStage = 'streaming-text'
+        const stream = streamingEvents(responseId, SUBAGENT_CHILD_COMPLETION, 'final_answer')
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        response.write(sse(stream.start))
+        response.write(sse(textDeltaEvents(stream.itemId, SUBAGENT_CHILD_PARTIAL)))
+        response.flush?.()
+        resolveSubagentPartialWritten()
+        await subagentCompletionRelease
+        response.write(
+          sse(
+            textDeltaEvents(
+              stream.itemId,
+              SUBAGENT_CHILD_COMPLETION.slice(SUBAGENT_CHILD_PARTIAL.length),
+              SUBAGENT_CHILD_PARTIAL.length
+            )
+          )
+        )
+        subagentChildStage = 'complete'
+        response.end(sse(stream.finish))
+        return true
+      }
+      if (
+        subagentStage === 'awaiting-wait-output' &&
+        requestContainsToolOutputForCall(body, SUBAGENT_WAIT_CALL_ID)
+      ) {
+        subagentStage = 'complete'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(SUBAGENT_PARENT_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+      if (
+        subagentStage === 'awaiting-spawn-output' &&
+        requestContainsToolOutputForCall(body, SUBAGENT_CALL_ID)
+      ) {
+        const agentId = spawnedAgentId(body)
+        subagentStage = 'awaiting-wait-output'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            ...namespacedFunctionCall(SUBAGENT_WAIT_CALL_ID, 'multi_agent_v1', 'wait_agent', {
+              targets: [agentId],
+              timeout_ms: 60_000,
+            }),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+      if (
+        subagentStage === 'awaiting-search-output' &&
+        requestContainsToolSearchOutputForCall(body, SUBAGENT_SEARCH_CALL_ID)
+      ) {
+        const searchOutput = JSON.stringify(body.input)
+        assert.ok(
+          searchOutput.includes('multi_agent_v1') && searchOutput.includes('spawn_agent'),
+          'tool_search did not return multi_agent_v1.spawn_agent'
+        )
+        subagentStage = 'awaiting-spawn-output'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            ...namespacedFunctionCall(SUBAGENT_CALL_ID, 'multi_agent_v1', 'spawn_agent', {
+              message: SUBAGENT_CHILD_PROMPT,
+              agent_type: 'explorer',
+            }),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+      if (requestContainsSubagentPrompt(body)) {
+        assert.equal(subagentStage, 'initial', `Unexpected subagent stage: ${subagentStage}`)
+        subagentStage = 'awaiting-search-output'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            toolSearchCall(SUBAGENT_SEARCH_CALL_ID, {
+              query: 'spawn agent delegate child work',
+              limit: 8,
+            }),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+      if (
+        generatedImageStage === 'awaiting-tool-output' &&
+        requestContainsToolOutputForCall(body, GENERATED_IMAGE_CALL_ID)
+      ) {
+        generatedImageStage = 'complete'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(GENERATED_IMAGE_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       if (latestInput.includes(LONG_CODE_PROMPT)) {
         const stream = streamingEvents(responseId, LONG_CODE_COMPLETION, 'final_answer')
         response.writeHead(200, {
@@ -1208,6 +1661,29 @@ export function createDesktopScenario({
         return true
       }
 
+      if (requestContainsGeneratedImagePrompt(body)) {
+        assert.equal(
+          generatedImageStage,
+          'initial',
+          `Unexpected generated-image model stage: ${generatedImageStage}`
+        )
+        const tool = selectImageGenerationTool(body)
+        generatedImageStage = 'awaiting-image-api'
+        const toolCallEvents = tool.namespace
+          ? namespacedFunctionCall(
+              GENERATED_IMAGE_CALL_ID,
+              tool.namespace,
+              tool.name,
+              tool.arguments
+            )
+          : functionCall(GENERATED_IMAGE_CALL_ID, tool.name, tool.arguments)
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([responseCreated(responseId), ...toolCallEvents, responseCompleted(responseId)])
+        )
+        return true
+      }
+
       if (requestContainsWindowsLinkPrompt(body)) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
@@ -1255,9 +1731,14 @@ export function createDesktopScenario({
       if (standalone) {
         await createLocalProject(control, workspacePath, uiTimeoutMs)
       } else {
-        await control.command('click', '[data-testid="new-chat-button"]')
-        await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+        await openNewChatWithE2EModel(control, uiTimeoutMs)
       }
+      await selectE2EModel(
+        control,
+        DEFAULT_MODEL_ID,
+        DEFAULT_MODEL_LABEL,
+        ACTIVE_WORKBENCH_SELECTOR
+      )
       if (process.env.WEWORK_E2E_MESSAGE_ORDER_ONLY === 'true') {
         await verifyStoppedTurnOrder(control)
         active = false
@@ -1265,6 +1746,11 @@ export function createDesktopScenario({
       }
       if (process.env.WEWORK_E2E_LONG_CODE_ONLY === 'true') {
         await verifyLongCodeTerminalBurst(control)
+        active = false
+        return
+      }
+      if (process.env.WEWORK_E2E_SUBAGENT_ONLY === 'true') {
+        await verifySubagentStreamingPanel(control)
         active = false
         return
       }
@@ -1312,11 +1798,51 @@ export function createDesktopScenario({
         return
       }
 
+      await openNewChatWithE2EModel(control, uiTimeoutMs)
+      await control.command('fill', COMPOSER_SELECTOR, { value: GENERATED_IMAGE_PROMPT })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="generated-image"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: GENERATED_IMAGE_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.match(
+        await control.command('getAttribute', '[data-testid="generated-image"]', {
+          value: 'src',
+        }),
+        /^blob:/,
+        'The generated image was not loaded from its workspace artifact'
+      )
+      const generatedImageDirectory = join(workspacePath, 'outputs', 'generated-images')
+      assert.ok(
+        (await readdir(generatedImageDirectory)).some(name => name.endsWith('.png')),
+        'The Executor did not materialize the generated image in the task workspace'
+      )
+      await expandCompletedProcessing(control, uiTimeoutMs)
+      const generatedImageSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.ok(
+        generatedImageSnapshot.text.includes('图片已生成'),
+        'The generated image tool did not expose its completed status'
+      )
+      assert.equal(
+        generatedImageSnapshot.text.includes('工具未返回内容'),
+        false,
+        'The generated image tool exposed an empty generic tool result'
+      )
+      await capture(control, 'streaming-text-00-generated-image.png')
+      if (process.env.WEWORK_E2E_GENERATED_IMAGE_ONLY === 'true') {
+        active = false
+        return
+      }
+
       await verifyLongCodeTerminalBurst(control)
       await verifyWindowsDriveLinkRendering(control)
 
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await openNewChatWithE2EModel(control, uiTimeoutMs)
       const knownLegacyTaskRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
           testId.startsWith('runtime-local-task-row-')
@@ -1398,8 +1924,7 @@ export function createDesktopScenario({
         return
       }
 
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await openNewChatWithE2EModel(control, uiTimeoutMs)
       await control.command('fill', COMPOSER_SELECTOR, { value: TOOL_REGRESSION_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       try {
@@ -1521,8 +2046,7 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-05-short-control-composer-docked.png')
 
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await openNewChatWithE2EModel(control, uiTimeoutMs)
       const knownTimerTaskRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
           testId.startsWith('runtime-local-task-row-')
@@ -1585,8 +2109,7 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-09-tool-duration-restored.png')
 
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await openNewChatWithE2EModel(control, uiTimeoutMs)
       const knownTaskRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
           testId.startsWith('runtime-local-task-row-')
@@ -2078,6 +2601,7 @@ export function createDesktopScenario({
       await capture(control, 'streaming-text-17-response-completed.png')
 
       await verifyStoppedTurnOrder(control)
+      await verifySubagentStreamingPanel(control)
       active = false
     },
 

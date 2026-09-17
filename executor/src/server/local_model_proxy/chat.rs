@@ -800,7 +800,30 @@ fn responses_tools(
             tool.clone()
         });
     }
+    if bridge_tool_search {
+        for tool in &mut converted {
+            remove_defer_loading(tool);
+        }
+    }
     converted
+}
+
+fn remove_defer_loading(tool: &mut Value) {
+    let Some(object) = tool.as_object_mut() else {
+        return;
+    };
+    object.remove("defer_loading");
+    if object.get("type").and_then(Value::as_str) != Some("namespace") {
+        return;
+    }
+    for inner_tool in object
+        .get_mut("tools")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        remove_defer_loading(inner_tool);
+    }
 }
 
 fn responses_tool_choice(
@@ -4280,18 +4303,33 @@ mod tests {
     }
 
     #[test]
-    fn responses_bridge_completes_native_tool_search_contract() {
+    fn responses_bridge_removes_defer_loading_without_native_tool_search() {
         let input = json!({
             "model": "third-party-responses-model",
             "tools": [{
                 "type": "tool_search",
                 "execution": "client",
                 "parameters": {"type": "object"}
+            }, {
+                "type": "function",
+                "name": "multi_agent_v1__spawn_agent",
+                "parameters": {"type": "object"},
+                "defer_loading": true
+            }, {
+                "type": "namespace",
+                "name": "github",
+                "defer_loading": true,
+                "tools": [{
+                    "type": "function",
+                    "name": "create_issue",
+                    "parameters": {"type": "object"},
+                    "defer_loading": true
+                }]
             }]
         });
 
         let (converted, _) =
-            responses_to_responses(&input, false, false, false).expect("request should convert");
+            responses_to_responses(&input, false, false, true).expect("request should convert");
 
         assert_eq!(converted["tools"][0]["type"], "function");
         assert_eq!(
@@ -4314,6 +4352,11 @@ mod tests {
             converted["tools"][0]["parameters"]["additionalProperties"],
             false
         );
+        assert!(converted["tools"][1].get("defer_loading").is_none());
+        assert!(converted["tools"][2].get("defer_loading").is_none());
+        assert!(converted["tools"][2]["tools"][0]
+            .get("defer_loading")
+            .is_none());
     }
 
     #[test]
@@ -4358,6 +4401,12 @@ mod tests {
                         "name": "create_issue",
                         "parameters": {"type": "object"}
                     }]
+                },
+                {
+                    "type": "function",
+                    "name": "multi_agent_v1__spawn_agent",
+                    "parameters": {"type": "object"},
+                    "defer_loading": true
                 },
                 {"type": "web_search_preview"}
             ],

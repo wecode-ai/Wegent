@@ -38,6 +38,9 @@ from app.schemas.knowledge_external import (
     ExternalSearchContentRecord,
     ExternalSearchContentResponse,
 )
+from app.services.knowledge.document_download_policy import (
+    is_original_download_allowed,
+)
 from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_ACCESS_DENIED,
     DOCUMENT_READ_ERROR_NOT_FOUND,
@@ -50,6 +53,7 @@ from app.services.knowledge.external_document_access import (
     ExternalDocumentAccessError,
     create_document_download_token,
     get_document_access_or_raise,
+    get_document_file_or_raise,
     normalize_disposition,
 )
 from app.services.knowledge.external_nodes import (
@@ -344,6 +348,7 @@ def _list_nodes_sync(
     include_inactive: bool,
     limit: int,
     offset: int,
+    document_download_exempt: bool = False,
 ) -> str:
     db = SessionLocal()
     try:
@@ -354,6 +359,10 @@ def _list_nodes_sync(
             return _json_error("Knowledge base not found", "not_found")
         if not has_access:
             return _json_error("Access denied to knowledge base", "forbidden")
+
+        original_download_allowed = (
+            document_download_exempt or is_original_download_allowed(db, kb)
+        )
 
         if folder_id != 0:
             folder = (
@@ -374,6 +383,7 @@ def _list_nodes_sync(
                 knowledge_base_id=knowledge_base_id,
                 folder_id=folder_id,
                 include_inactive=include_inactive,
+                original_download_allowed=original_download_allowed,
             )
             total_returned = count_nodes(items)
             total_available = total_returned
@@ -386,6 +396,7 @@ def _list_nodes_sync(
                 include_inactive=include_inactive,
                 limit=limit,
                 offset=offset,
+                original_download_allowed=original_download_allowed,
             )
             items = direct_nodes.items
             total_available = direct_nodes.total_available
@@ -472,25 +483,23 @@ def _get_document_download_sync(
     document_id: int,
     disposition: str,
     resource_url: str,
+    document_download_exempt: bool = False,
 ) -> str:
     db = SessionLocal()
     try:
-        access = get_document_access_or_raise(
+        access = get_document_file_or_raise(
             db,
             user_id=user_id,
             document_id=document_id,
+            disposition=disposition,
+            document_download_exempt=document_download_exempt,
         )
-        if not access.downloadable:
-            return _json_error("Document file is unavailable", "file_unavailable")
-        if disposition == "inline" and not access.previewable:
-            return _json_error(
-                "Document file is not previewable", "unsupported_media_type"
-            )
 
         token = create_document_download_token(
             user_id=user_id,
             document_id=document_id,
             disposition=disposition,
+            document_download_exempt=document_download_exempt,
         )
         return ExternalDocumentDownloadResponse(
             document_id=document_id,
@@ -710,6 +719,7 @@ async def wegent_kb_list_nodes(
             include_inactive=include_inactive,
             limit=limit,
             offset=offset,
+            document_download_exempt=getattr(user, "document_download_exempt", False),
         )
     )
 
@@ -770,6 +780,7 @@ async def wegent_kb_get_document_download(
             document_id=document_id,
             disposition=normalized_disposition,
             resource_url=resource_url,
+            document_download_exempt=getattr(user, "document_download_exempt", False),
         )
     )
 

@@ -13,11 +13,13 @@
   </head>
   <body>
     <main id="runtime-overlay" data-phase="initializing">
-      <section class="runtime-card" aria-live="polite" hidden>
-        <h1>正在启动 Wework</h1>
+      <section class="runtime-card" aria-live="assertive" hidden>
+        <h1>Wework 启动失败</h1>
         <p id="runtime-status">正在初始化 Core DSH…</p>
         <pre id="details" hidden></pre>
-        <button id="reload-dsh" type="button" hidden>重试启动</button>
+        <button id="reload-dsh" data-testid="startup-runtime-retry" type="button" hidden>
+          重试启动
+        </button>
       </section>
     </main>
     <script src="./shell.js"></script>

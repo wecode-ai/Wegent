@@ -121,8 +121,21 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
     listInstalledPlugins(deviceId?: string): Promise<InstalledPluginListResponse> {
       return client.get(`/plugins/installed${deviceQuery(deviceId)}`)
     },
-    syncInstalledPluginsToDevice(deviceId: string): Promise<PluginDeviceSyncResponse> {
-      return client.post(`/plugins/installed/sync-device${deviceQuery(deviceId)}`)
+    syncInstalledPluginsToDevice(
+      deviceId: string,
+      reconcile = false
+    ): Promise<PluginDeviceSyncResponse> {
+      return client.post(
+        `/plugins/installed/sync-device${deviceQuery(deviceId)}${reconcile ? '&reconcile=true' : ''}`
+      )
+    },
+    syncInstalledPluginToDevice(
+      installedPluginId: string | number,
+      deviceId: string
+    ): Promise<PluginDeviceSyncResponse> {
+      return client.post(
+        `/plugins/installed/${installedPluginId}/sync-device${deviceQuery(deviceId)}`
+      )
     },
     reportInstalledPluginsOnDevice(
       deviceId: string,

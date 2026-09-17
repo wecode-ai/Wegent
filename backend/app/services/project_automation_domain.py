@@ -18,11 +18,19 @@ from app.models.kind import Kind
 from app.services.execution.team_readiness import (
     validate_team_execution_readiness,
 )
+from app.services.project_event_sources import supported_event_type
 from app.services.share import team_share_service
 
 ASSIGNMENT_MODES = {"manual", "ai_managed"}
 MANAGER_TYPES = {"custom", "wegent"}
 TERMINAL_RUN_STATUSES = {"succeeded", "failed", "cancelled", "skipped"}
+ACTIVE_RUN_STATUSES = {
+    "pending",
+    "queued",
+    "waiting_runtime",
+    "waiting_device",
+    "running",
+}
 
 
 @dataclass(frozen=True)
@@ -33,6 +41,9 @@ class ProjectAutomationEvent:
     source: str
     actor_user_id: int | None
     payload: dict
+    subject_type: str = "task"
+    event_id: str | None = None
+    subscription_id: str | None = None
 
 
 def utcnow() -> datetime:
@@ -204,6 +215,8 @@ def validate_assignment(
 def validate_trigger(
     trigger_type: str, event_type: str | None, cron_expression: str | None
 ) -> None:
+    if trigger_type == "manual" and event_type is None and cron_expression is None:
+        return
     if trigger_type == "schedule":
         if not cron_expression:
             raise HTTPException(
@@ -212,10 +225,7 @@ def validate_trigger(
             )
         next_run(str(cron_expression), "UTC", utcnow())
         return
-    if trigger_type == "event" and event_type in {
-        "task.created",
-        "task.status_changed",
-    }:
+    if trigger_type == "event" and event_type and supported_event_type(event_type):
         return
     if trigger_type == "workflow" and event_type is None and cron_expression is None:
         return

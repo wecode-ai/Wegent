@@ -30,6 +30,7 @@ from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
 from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
+from app.core.cache import cache_manager
 from app.core.config import settings
 from app.core.exceptions import (
     CustomHTTPException,
@@ -42,6 +43,7 @@ from app.core.logging import setup_logging
 from app.core.shutdown import shutdown_manager
 from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
+from app.db.pool_observability import log_registered_pool_configurations
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
 from app.services.auth.internal_service_token import (
@@ -76,6 +78,7 @@ SENSITIVE_HTTP_BODY_PATHS = {
 
 # Initialize logging at module level for use in lifespan
 setup_logging()
+log_registered_pool_configurations()
 _logger = logging.getLogger(__name__)
 
 
@@ -135,7 +138,12 @@ def _request_context_fields(request_body: str) -> tuple[object, object, object]:
 
 
 def _should_capture_http_body(path: str) -> bool:
-    return path not in SENSITIVE_HTTP_BODY_PATHS
+    if path in SENSITIVE_HTTP_BODY_PATHS:
+        return False
+    return not (
+        path.startswith(f"{settings.API_PREFIX}/sites/")
+        and "/environment-variables" in path
+    )
 
 
 def _load_system_initialization_state(logger: logging.Logger) -> None:
@@ -166,6 +174,17 @@ def _load_system_initialization_state(logger: logging.Logger) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Keep the cache available through startup, channel draining and shutdown.
+    await cache_manager.start()
+    try:
+        async with _application_lifespan(app):
+            yield
+    finally:
+        await cache_manager.aclose()
+
+
+@asynccontextmanager
+async def _application_lifespan(app: FastAPI):
     """
     Lifespan context manager for FastAPI application.
     Handles startup and shutdown events.
@@ -340,26 +359,31 @@ async def lifespan(app: FastAPI):
     task_run_metric_hooks.register()
     logger.info("✓ Task run metric transaction hooks registered")
 
-    # Start background jobs
-    logger.info("Starting background jobs...")
-    start_background_jobs(app)
-    logger.info("✓ Background jobs started")
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info("Starting background jobs...")
+        start_background_jobs(app)
+        logger.info("✓ Background jobs started")
+    else:
+        logger.info("Scheduled tasks are disabled; skipping background jobs")
 
     # Start scheduler backend (for Flow scheduling)
     # The scheduler backend is selected based on SCHEDULER_BACKEND config:
     # - "celery" (default): Uses Celery Beat with embedded/standalone mode
     # - "apscheduler": Uses APScheduler (lightweight, no Redis required)
     # - "xxljob": Uses XXL-JOB distributed scheduler
-    logger.info(f"Starting scheduler backend: {settings.SCHEDULER_BACKEND}...")
-    from app.core.scheduler import start_scheduler
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info(f"Starting scheduler backend: {settings.SCHEDULER_BACKEND}...")
+        from app.core.scheduler import start_scheduler
 
-    scheduler = start_scheduler()
-    if scheduler:
-        logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' started")
+        scheduler = start_scheduler()
+        if scheduler:
+            logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' started")
+        else:
+            logger.warning(
+                "Failed to start scheduler backend. Flow scheduling may not work."
+            )
     else:
-        logger.warning(
-            "Failed to start scheduler backend. Flow scheduling may not work."
-        )
+        logger.info("Scheduled tasks are disabled; skipping scheduler backend")
 
     # Initialize Socket.IO WebSocket emitter
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
@@ -443,12 +467,15 @@ async def lifespan(app: FastAPI):
     await get_pending_request_registry()
     logger.info("✓ PendingRequestRegistry initialized")
 
-    # Start device heartbeat monitor for local device support
-    logger.info("Starting device heartbeat monitor...")
-    from app.services.device_monitor import start_device_monitor
+    # Start device heartbeat monitor for local device support.
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info("Starting device heartbeat monitor...")
+        from app.services.device_monitor import start_device_monitor
 
-    start_device_monitor()
-    logger.info("✓ Device heartbeat monitor started")
+        start_device_monitor()
+        logger.info("✓ Device heartbeat monitor started")
+    else:
+        logger.info("Scheduled tasks are disabled; skipping device heartbeat monitor")
 
     # Initialize IM Channel Manager and start enabled channels
     # This enables DingTalk, Feishu, WeChat bot integrations
@@ -481,6 +508,12 @@ async def lifespan(app: FastAPI):
         )
     except Exception as e:
         logger.warning("Failed to recover video jobs: %s", e, exc_info=True)
+
+    logger.info("Starting terminal session invalidation listener...")
+    from app.services.device.terminal_session_service import terminal_session_service
+
+    await terminal_session_service.start()
+    logger.info("✓ Terminal session invalidation listener started")
 
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
@@ -568,13 +601,22 @@ async def lifespan(app: FastAPI):
         await shutdown_pending_request_registry()
         logger.info("✓ PendingRequestRegistry shutdown completed")
 
+        await terminal_session_service.stop()
+        logger.info("✓ Terminal session invalidation listener stopped")
+
+        from app.services.loop_items.external_provider import (
+            external_loop_item_provider,
+        )
+
+        external_loop_item_provider.close()
+
         # Step 7: Stop device heartbeat monitor
         from app.services.device_monitor import stop_device_monitor_async
 
         await stop_device_monitor_async()
         logger.info("✓ Device heartbeat monitor stopped")
 
-        # Step 7: Shutdown OpenTelemetry
+        # Step 8: Shutdown OpenTelemetry
         from shared.telemetry.config import get_otel_config
         from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
@@ -647,6 +689,16 @@ def create_app():
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
     else:
         logger.debug("OpenTelemetry is disabled")
+
+    @app.middleware("http")
+    async def attach_database_request_path(request: Request, call_next):
+        from app.db.pool_observability import reset_request_path, set_request_path
+
+        token = set_request_path(request.url.path)
+        try:
+            return await call_next(request)
+        finally:
+            reset_request_path(token)
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
@@ -819,6 +871,11 @@ def create_app():
             logger.debug(response_log_message)
         else:
             logger.info(response_log_message)
+
+        if response.status_code == 429:
+            from shared.telemetry.metrics import record_http_429_response
+
+            record_http_429_response()
 
         # Add request ID to response headers for client-side tracking
         response.headers["X-Request-ID"] = request_id

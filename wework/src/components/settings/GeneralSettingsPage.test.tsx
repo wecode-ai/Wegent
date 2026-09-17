@@ -8,6 +8,7 @@ import type { WorkbenchContextValue } from '@/features/workbench/workbenchContex
 import { GeneralSettingsPage } from './GeneralSettingsPage'
 
 const defaultPreferences: AppPreferences = {
+  workbenchMode: 'developer',
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   fixedWorkspaceTabs: [
@@ -62,6 +63,12 @@ const getWegentUsageDisplayMock = vi.hoisted(() => vi.fn())
 const getRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 const updateRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 const refreshWorkListsMock = vi.hoisted(() => vi.fn())
+const changeWorkbenchModeMock = vi.hoisted(() => vi.fn())
+const telemetryConfigMock = vi.hoisted(() => ({ distribution: 'public' as 'public' | 'internal' }))
+
+vi.mock('@/telemetry/config', () => ({
+  getTelemetryConfig: () => telemetryConfigMock,
+}))
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -71,6 +78,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 
 vi.mock('@/desktop/appPreferences', () => ({
   defaultAppPreferences: {
+    workbenchMode: 'developer',
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
     fixedWorkspaceTabs: [
@@ -109,6 +117,10 @@ vi.mock('@/desktop/appPreferences', () => ({
   },
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,
+}))
+
+vi.mock('@/features/workbench-mode/workbenchMode', () => ({
+  changeWorkbenchMode: changeWorkbenchModeMock,
 }))
 
 vi.mock('@/i18n/languagePreference', () => ({
@@ -156,6 +168,7 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
 
 describe('GeneralSettingsPage', () => {
   beforeEach(() => {
+    telemetryConfigMock.distribution = 'public'
     getAppPreferencesMock.mockReset()
     updateAppPreferencesMock.mockReset()
     applyLanguagePreferenceMock.mockReset()
@@ -164,6 +177,7 @@ describe('GeneralSettingsPage', () => {
     getRuntimeSettingsMock.mockReset()
     updateRuntimeSettingsMock.mockReset()
     refreshWorkListsMock.mockReset()
+    changeWorkbenchModeMock.mockReset()
     importExternalContentMock.mockResolvedValue({
       source: 'codex',
       sourcePath: '/Users/test/.codex',
@@ -176,6 +190,9 @@ describe('GeneralSettingsPage', () => {
     refreshWorkListsMock.mockResolvedValue(undefined)
     updateAppPreferencesMock.mockImplementation(patch =>
       Promise.resolve({ ...defaultPreferences, ...patch })
+    )
+    changeWorkbenchModeMock.mockImplementation((_currentMode, workbenchMode) =>
+      Promise.resolve({ ...defaultPreferences, workbenchMode })
     )
     applyLanguagePreferenceMock.mockResolvedValue('zh-CN')
     getWegentUsageDisplayMock.mockResolvedValue({
@@ -199,6 +216,68 @@ describe('GeneralSettingsPage', () => {
     expect(await screen.findByTestId('general-language-system-button')).toBeInTheDocument()
     expect(screen.getByTestId('general-language-zh-CN-button')).toBeInTheDocument()
     expect(screen.getByTestId('general-language-en-button')).toBeInTheDocument()
+  })
+
+  test('switches from developer mode to focus mode', async () => {
+    render(<GeneralSettingsPage />)
+
+    const focusButton = await screen.findByTestId('general-workbench-mode-focus-button')
+    await waitFor(() => expect(focusButton).toBeEnabled())
+    const developerButton = screen.getByTestId('general-workbench-mode-developer-button')
+    expect(developerButton).toHaveAttribute('aria-pressed', 'true')
+
+    await userEvent.click(developerButton)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(focusButton)
+    expect(changeWorkbenchModeMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toHaveTextContent(
+      'workbench.general_settings_mode_focus_confirm_title'
+    )
+    await userEvent.click(screen.getByTestId('general-workbench-mode-confirm-button'))
+
+    await waitFor(() => {
+      expect(changeWorkbenchModeMock).toHaveBeenCalledWith('developer', 'focus')
+    })
+    expect(focusButton).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('keeps developer mode when a mode switch is cancelled', async () => {
+    render(<GeneralSettingsPage />)
+
+    const focusButton = await screen.findByTestId('general-workbench-mode-focus-button')
+    await waitFor(() => expect(focusButton).toBeEnabled())
+    await userEvent.click(focusButton)
+    await userEvent.click(screen.getByTestId('general-workbench-mode-confirm-button-cancel-button'))
+
+    expect(changeWorkbenchModeMock).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('general-workbench-mode-developer-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+  })
+
+  test('refreshes the persisted mode when a failed switch cannot confirm rollback', async () => {
+    getAppPreferencesMock
+      .mockResolvedValueOnce(defaultPreferences)
+      .mockResolvedValueOnce({ ...defaultPreferences, workbenchMode: 'focus' })
+    changeWorkbenchModeMock.mockRejectedValue(
+      new AggregateError([new Error('restart failed'), new Error('rollback failed')])
+    )
+    render(<GeneralSettingsPage />)
+
+    const focusButton = await screen.findByTestId('general-workbench-mode-focus-button')
+    await waitFor(() => expect(focusButton).toBeEnabled())
+    await userEvent.click(focusButton)
+    await userEvent.click(screen.getByTestId('general-workbench-mode-confirm-button'))
+
+    await waitFor(() => expect(getAppPreferencesMock).toHaveBeenCalledTimes(2))
+    expect(focusButton).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('general-workbench-mode-developer-button')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
   })
 
   test('loads and updates the maximum parallel task count', async () => {
@@ -254,6 +333,116 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ language: 'en' })
     })
     expect(applyLanguagePreferenceMock).toHaveBeenCalledWith('en')
+  })
+
+  test('saves the message send shortcut as a user preference', async () => {
+    const updateUserPreferences = vi.fn().mockResolvedValue({ send_key: 'cmd_enter' as const })
+    const renderSettings = (sendKey: 'enter' | 'cmd_enter') => (
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {},
+            state: {
+              user: {
+                id: 1,
+                user_name: 'alice',
+                email: 'alice@example.com',
+                preferences: { send_key: sendKey },
+              },
+            },
+            updateUserPreferences,
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+    const rendered = render(renderSettings('enter'))
+
+    const commandEnterButton = await screen.findByTestId('general-send-key-cmd_enter-button')
+    await waitFor(() => expect(commandEnterButton).toBeEnabled())
+    await userEvent.click(commandEnterButton)
+
+    await waitFor(() => {
+      expect(updateUserPreferences).toHaveBeenCalledWith({ send_key: 'cmd_enter' })
+    })
+    rendered.rerender(renderSettings('cmd_enter'))
+    expect(commandEnterButton).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('restores the previous send shortcut when saving fails', async () => {
+    const updateUserPreferences = vi.fn().mockRejectedValue(new Error('save failed'))
+    render(
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {},
+            state: {
+              user: {
+                id: 1,
+                user_name: 'alice',
+                email: 'alice@example.com',
+                preferences: { send_key: 'enter' },
+              },
+            },
+            updateUserPreferences,
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+
+    const enterButton = await screen.findByTestId('general-send-key-enter-button')
+    const commandEnterButton = screen.getByTestId('general-send-key-cmd_enter-button')
+    await waitFor(() => expect(commandEnterButton).toBeEnabled())
+    await userEvent.click(commandEnterButton)
+
+    await waitFor(() => expect(enterButton).toHaveAttribute('aria-pressed', 'true'))
+    expect(screen.getByText('workbench.general_settings_send_key_save_failed')).toBeInTheDocument()
+  })
+
+  test('saves the follow-up behavior as a user preference', async () => {
+    const updateUserPreferences = vi.fn().mockResolvedValue({
+      send_key: 'cmd_enter' as const,
+      follow_up_behavior: 'guide' as const,
+    })
+    const renderSettings = (followUpBehavior: 'queue' | 'guide') => (
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {},
+            state: {
+              user: {
+                id: 1,
+                user_name: 'alice',
+                email: 'alice@example.com',
+                preferences: {
+                  send_key: 'cmd_enter',
+                  follow_up_behavior: followUpBehavior,
+                },
+              },
+            },
+            updateUserPreferences,
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+    const rendered = render(renderSettings('queue'))
+
+    const guideButton = await screen.findByTestId('general-follow-up-guide-button')
+    await waitFor(() => expect(guideButton).toBeEnabled())
+    await userEvent.click(guideButton)
+
+    await waitFor(() => {
+      expect(updateUserPreferences).toHaveBeenCalledWith({
+        follow_up_behavior: 'guide',
+      })
+    })
+    rendered.rerender(renderSettings('guide'))
+    expect(guideButton).toHaveAttribute('aria-pressed', 'true')
   })
 
   test('persists the selected startup workspace tab', async () => {
@@ -430,6 +619,15 @@ describe('GeneralSettingsPage', () => {
         telemetryEnabled: false,
       })
     })
+  })
+
+  test('hides public telemetry controls in an internal build', () => {
+    telemetryConfigMock.distribution = 'internal'
+
+    render(<GeneralSettingsPage />)
+
+    expect(screen.queryByTestId('general-settings-privacy-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('general-telemetry-toggle')).not.toBeInTheDocument()
   })
 
   test('shows the loaded shared preferences without flashing defaults', async () => {

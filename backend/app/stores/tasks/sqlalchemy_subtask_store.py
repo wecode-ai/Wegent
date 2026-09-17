@@ -817,10 +817,14 @@ class SqlAlchemySubtaskStore:
         if exclude_deleted:
             query = query.filter(Subtask.status != SubtaskStatus.DELETE)
         if order_by == "id":
-            return query.order_by(Subtask.id.asc()).all()
-        if order_by == "created_at":
-            return query.order_by(Subtask.created_at.asc(), Subtask.id.asc()).all()
-        return query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc()).all()
+            query = query.order_by(Subtask.id.asc())
+        elif order_by == "created_at":
+            query = query.order_by(Subtask.created_at.asc(), Subtask.id.asc())
+        else:
+            query = query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
+        subtasks = query.all()
+        self._attach_sender_user_names(db, subtasks)
+        return subtasks
 
     def list_recent_by_task_ids(
         self,
@@ -984,6 +988,20 @@ class SqlAlchemySubtaskStore:
                 Subtask.status == SubtaskStatus.RUNNING,
             )
             .all()
+        )
+
+    def has_active_by_executor_names(
+        self, db: Session, *, user_id: int, executor_names: list[str]
+    ) -> bool:
+        return (
+            db.query(Subtask.id)
+            .filter(
+                Subtask.user_id == user_id,
+                Subtask.executor_name.in_(executor_names),
+                Subtask.status.in_([SubtaskStatus.PENDING, SubtaskStatus.RUNNING]),
+            )
+            .first()
+            is not None
         )
 
     def list_by_executor_ref(

@@ -12,6 +12,7 @@ export function projectRuntimePaneTranscript(
   transcript: RuntimeTranscriptResponse
 ): RuntimePaneTranscript {
   return {
+    runtime: transcript.runtime,
     running: transcript.running,
     messages: runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
     turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
@@ -140,7 +141,7 @@ export function shouldReplaceRuntimeTaskProjection(
 }
 
 export function isRuntimeTaskAuthoritativeCompletion(task: RuntimeTaskSummary): boolean {
-  return task.running === false && task.completedAt != null
+  return task.running === false && task.completedAt != null && !isRuntimeGoalExecutionActive(task)
 }
 
 export type RuntimeTaskTrackingExecutionStatus =
@@ -181,8 +182,9 @@ export function runtimeTaskTrackingExecutionStatus(
 }
 
 export function isRuntimeTaskConfirmedActive(task: RuntimeTaskSummary): boolean {
+  if (task.optimistic === true) return false
+  if (isRuntimeGoalExecutionActive(task)) return true
   return (
-    task.optimistic !== true &&
     task.running === true &&
     task.completedAt == null &&
     (isRuntimeTaskRunningStatus(task.threadStatus) || isRuntimeTaskRunningStatus(task.turnStatus))
@@ -191,11 +193,16 @@ export function isRuntimeTaskConfirmedActive(task: RuntimeTaskSummary): boolean 
 
 export function isRuntimeTaskExecutionRunning(task: RuntimeTaskSummary): boolean {
   const normalizedTask = normalizeRuntimeTaskSummary(task)
-  return (
-    normalizedTask.optimistic !== true &&
-    normalizedTask.running === true &&
-    normalizedTask.completedAt == null
-  )
+  if (normalizedTask.optimistic === true) return false
+  if (isRuntimeGoalExecutionActive(normalizedTask)) return true
+  return normalizedTask.running === true && normalizedTask.completedAt == null
+}
+
+export function isRuntimeGoalExecutionActive(task: RuntimeTaskSummary): boolean {
+  if (task.goalExecutionStatus === 'running' || task.goalExecutionStatus === 'recovering') {
+    return true
+  }
+  return task.goalStatus === 'active' && isRuntimeTaskQueued(task)
 }
 
 function isRuntimeTaskOptimisticallyActive(task: RuntimeTaskSummary): boolean {

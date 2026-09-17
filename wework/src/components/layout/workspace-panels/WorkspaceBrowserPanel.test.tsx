@@ -218,6 +218,8 @@ describe('WorkspaceBrowserPanel', () => {
       title: 'Example Domain',
       url: 'https://example.com/',
       isLoading: false,
+      canGoBack: true,
+      canGoForward: true,
     })
     embeddedBrowserMocks.readEmbeddedBrowserAnnotationState.mockResolvedValue({
       label: 'workspace-browser',
@@ -258,6 +260,26 @@ describe('WorkspaceBrowserPanel', () => {
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveAttribute('autocomplete', 'off')
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveAttribute('autocorrect', 'off')
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveAttribute('spellcheck', 'false')
+  })
+
+  test('renders a transferred page on the first frame without reopening the browser', async () => {
+    render(
+      <WorkspaceBrowserPanel
+        active
+        label="workspace-browser-runtime-1"
+        transferFromLabel="workspace-browser-blank-0"
+        transferredNativeLabel="workspace-browser-native-1"
+        transferredUrl="https://www.baidu.com/"
+      />
+    )
+
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://www.baidu.com/')
+    expect(screen.getByTestId('workspace-browser-native-view')).toBeInTheDocument()
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(embeddedBrowserMocks.openEmbeddedBrowser).not.toHaveBeenCalled()
   })
 
   test('clears cookies from the browser actions submenu and reports completion', async () => {
@@ -744,23 +766,26 @@ describe('WorkspaceBrowserPanel', () => {
     fireEvent.submit(input.closest('form')!)
     await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
 
-    act(() => {
-      handleLocalFilePreview({
-        label: 'workspace-browser',
-        nativeLabel: 'workspace-browser-native-1',
-        url: 'file:///Users/me/archive.zip',
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        handleLocalFilePreview({
+          label: 'workspace-browser',
+          nativeLabel: 'workspace-browser-native-1',
+          url: 'file:///Users/me/archive.zip',
+        })
       })
-    })
 
-    const notice = screen.getByTestId('transient-notice')
-    expect(notice).toHaveTextContent('此文件无法预览')
+      const notice = screen.getByTestId('transient-notice')
+      expect(notice).toHaveTextContent('此文件无法预览')
 
-    await waitFor(
-      () => {
-        expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
-      },
-      { timeout: 3000 }
-    )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_200)
+      })
+      expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('shows an invalid TLS warning returned during the initial browser open', async () => {
@@ -849,6 +874,19 @@ describe('WorkspaceBrowserPanel', () => {
   })
 
   test('controls the embedded native browser from the toolbar and address bar', async () => {
+    let handlePageStateChange!: (pageState: {
+      label: string
+      nativeLabel: string
+      title: string | null
+      url: string | null
+      isLoading: boolean
+      canGoBack?: boolean
+      canGoForward?: boolean
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)
 
@@ -860,6 +898,18 @@ describe('WorkspaceBrowserPanel', () => {
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Example Domain',
+        url: 'https://example.com/',
+        isLoading: false,
+        canGoBack: true,
+        canGoForward: true,
+      })
     })
 
     fireEvent.click(screen.getByTestId('workspace-browser-back-button'))
@@ -878,6 +928,75 @@ describe('WorkspaceBrowserPanel', () => {
         'workspace-browser'
       )
     })
+  })
+
+  test('disables back, forward and reload while loading or without navigation history', async () => {
+    let handlePageStateChange!: (pageState: {
+      label: string
+      nativeLabel: string
+      title: string | null
+      url: string | null
+      isLoading: boolean
+      canGoBack?: boolean
+      canGoForward?: boolean
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
+      title: 'Example Domain',
+      url: 'https://example.com/',
+      isLoading: false,
+      canGoBack: false,
+      canGoForward: false,
+    })
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+    await screen.findByTestId('workspace-browser-native-view')
+
+    // Without navigation history, back and forward stay disabled while reload works.
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-browser-back-button')).toBeDisabled()
+      expect(screen.getByTestId('workspace-browser-forward-button')).toBeDisabled()
+      expect(screen.getByTestId('workspace-browser-reload-button')).not.toBeDisabled()
+    })
+
+    // A navigation enables history-dependent actions.
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Example Domain',
+        url: 'https://example.com/next',
+        isLoading: false,
+        canGoBack: true,
+        canGoForward: false,
+      })
+    })
+    expect(screen.getByTestId('workspace-browser-back-button')).not.toBeDisabled()
+    expect(screen.getByTestId('workspace-browser-forward-button')).toBeDisabled()
+
+    // While a page is loading, all navigation actions are disabled.
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Example Domain',
+        url: 'https://example.com/next',
+        isLoading: true,
+        canGoBack: true,
+        canGoForward: true,
+      })
+    })
+    expect(screen.getByTestId('workspace-browser-back-button')).toBeDisabled()
+    expect(screen.getByTestId('workspace-browser-forward-button')).toBeDisabled()
+    expect(screen.getByTestId('workspace-browser-reload-button')).toBeDisabled()
   })
 
   test('opens the native browser again when the first open fails', async () => {
@@ -2131,7 +2250,7 @@ describe('WorkspaceBrowserPanel', () => {
     expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
   })
 
-  test('ignores a stale close event for a replacement native browser', async () => {
+  test('consumes a close request by logical label when the native label is stale', async () => {
     let handleClose!: (event: { label: string; nativeLabel: string }) => void
     embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
       handleClose = handler
@@ -2147,8 +2266,29 @@ describe('WorkspaceBrowserPanel', () => {
       })
     })
 
-    expect(screen.getByTestId('workspace-browser-native-view')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.com/')
+    expect(screen.queryByTestId('workspace-browser-native-view')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('')
+  })
+
+  test('consumes a close request while its task pane is inactive', async () => {
+    let handleClose!: (event: { label: string; nativeLabel: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      handleClose = handler
+      return Promise.resolve(vi.fn())
+    })
+    const view = render(<WorkspaceBrowserPanel active label="workspace-browser-runtime-1" />)
+    await screen.findByTestId('workspace-browser-native-view')
+    view.rerender(<WorkspaceBrowserPanel active={false} label="workspace-browser-runtime-1" />)
+
+    act(() => {
+      handleClose({
+        label: 'workspace-browser-runtime-1',
+        nativeLabel: 'workspace-browser-native-1',
+      })
+    })
+
+    expect(screen.queryByTestId('workspace-browser-native-view')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('')
   })
 
   test('does not overwrite the address draft while page-state polling continues', async () => {
@@ -3045,6 +3185,19 @@ describe('WorkspaceBrowserPanel', () => {
   })
 
   test('discards a pending page read after the browser panel unmounts', async () => {
+    let handlePageStateChange!: (pageState: {
+      label: string
+      nativeLabel: string
+      title: string | null
+      url: string | null
+      isLoading: boolean
+      canGoBack?: boolean
+      canGoForward?: boolean
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
     mockBrowserHostRect()
     const staleTitleChange = vi.fn()
     const firstView = render(<WorkspaceBrowserPanel active onTitleChange={staleTitleChange} />)
@@ -3053,6 +3206,18 @@ describe('WorkspaceBrowserPanel', () => {
     fireEvent.change(input, { target: { value: 'example.com' } })
     fireEvent.submit(input.closest('form')!)
     await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
+
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Example Domain',
+        url: 'https://example.com/',
+        isLoading: false,
+        canGoBack: true,
+        canGoForward: false,
+      })
+    })
 
     let resolvePageState!: (state: { nativeLabel: string; title: string; url: string }) => void
     const pendingPageState = new Promise<{

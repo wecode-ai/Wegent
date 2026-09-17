@@ -1,4 +1,5 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
+import { ApiError } from '@/api/http'
 import {
   createCloudRuntimeIpcClient,
   RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS,
@@ -10,6 +11,7 @@ import {
   createRuntimeWorkApiFromIpc,
 } from '@/api/local/localServices'
 import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
+import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -351,7 +353,20 @@ export function createHybridWorkbenchServices(
     apiKey: options.token,
     ...(options.backendUrl ? { backendUrl: options.backendUrl } : {}),
   }
-  const localServices = createLocalAppServices({ cloudModelGateway, user: options.user })
+  const localServices = createLocalAppServices({
+    cloudModelGateway,
+    user: options.user,
+    materializeRuntimeTask: async request => {
+      try {
+        return await cloudServices.runtimeWorkApi!.materializeRuntimeTask(request)
+      } catch (error) {
+        if (isUnsupportedRuntimeMaterialization(error)) {
+          throw new Error(REMOTE_TEAM_BACKEND_UNSUPPORTED, { cause: error })
+        }
+        throw error
+      }
+    },
+  })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({
     socketBaseUrl: options.socketBaseUrl,
     socketPath: options.socketPath,
@@ -444,7 +459,7 @@ export function createHybridWorkbenchServices(
       route,
       discoveryRequired,
     })
-    return api
+    return { api, route }
   }
   const invalidateCloudArchiveCache = () => {
     rememberedCloudArchives.clear()
@@ -606,9 +621,13 @@ export function createHybridWorkbenchServices(
     const cloudDevices = await listCloudDevices()
     return cloudDevices.find(device => device.device_id === deviceId) ?? null
   }
-  const listLocalRuntimeWork = async (signal?: AbortSignal) => {
-    const work = signal
-      ? await localServices.runtimeWorkApi!.listRuntimeWork({ signal })
+  const listLocalRuntimeWork = async (
+    requestOptions?: Parameters<
+      NonNullable<WorkbenchServices['runtimeWorkApi']>['listRuntimeWork']
+    >[0]
+  ) => {
+    const work = requestOptions
+      ? await localServices.runtimeWorkApi!.listRuntimeWork(requestOptions)
       : await localServices.runtimeWorkApi!.listRuntimeWork()
     rememberLocalRuntimeWorkDevices(work)
     return work
@@ -818,11 +837,14 @@ export function createHybridWorkbenchServices(
   }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
+    materializeRuntimeTask(data) {
+      return cloudServices.runtimeWorkApi!.materializeRuntimeTask(data)
+    },
     prepareRuntimeModel(data) {
       return runtimeApiForDevice(data.deviceId).then(api => api.prepareRuntimeModel(data))
     },
     async listRuntimeWork(requestOptions) {
-      return listLocalRuntimeWork(requestOptions?.signal)
+      return listLocalRuntimeWork(requestOptions)
     },
     getKeybindings() {
       return localServices.runtimeWorkApi!.getKeybindings()
@@ -1117,13 +1139,28 @@ export function createHybridWorkbenchServices(
         runtime: data.runtime,
       })
       try {
-        const api = await runtimeApiForCreate(data.deviceId, data.taskId)
+        const { api, route } = await runtimeApiForCreate(data.deviceId, data.taskId)
         logRuntimeTaskCreateStage('hybrid-create-forwarded', {
           taskId: data.taskId ?? null,
           deviceId: data.deviceId ?? null,
           elapsedMs: Date.now() - startedAt,
         })
-        const response = await api.createRuntimeTask(data)
+        const request =
+          data.wegentTeamId && route === 'cloud' ? { ...data, schemaVersion: 3 as const } : data
+        let response
+        try {
+          response =
+            data.wegentTeamId && route === 'cloud'
+              ? await cloudServices.runtimeWorkApi!.createRuntimeTask(request)
+              : await api.createRuntimeTask(request)
+        } catch (error) {
+          if (data.wegentTeamId && route === 'cloud' && rejectsRuntimeTaskCreateV3(error)) {
+            throw new Error(REMOTE_TEAM_BACKEND_UNSUPPORTED, {
+              cause: error,
+            })
+          }
+          throw error
+        }
         logRuntimeTaskCreateStage('hybrid-create-resolved', {
           taskId: response.taskId || data.taskId || null,
           deviceId: response.deviceId || data.deviceId || null,
@@ -1357,6 +1394,7 @@ export function createHybridWorkbenchServices(
         : undefined,
     },
     pluginApi: projectPluginApi,
+    agentResourceApi: cloudServices.agentResourceApi,
     teamApi: {
       // Wegent Teams are exposed only for explicitly selected Wegent execution.
       listTeams: cloudServices.teamApi.listTeams,
@@ -1432,6 +1470,7 @@ function filterRuntimeChatStreamHandlers(
     onBlockUpdated: route(handlers.onBlockUpdated),
     onSubagentActivity: route(handlers.onSubagentActivity),
     onRuntimeTaskTitleUpdated: route(handlers.onRuntimeTaskTitleUpdated),
+    onRuntimeWorkChanged: route(handlers.onRuntimeWorkChanged),
     onRuntimeGoalUpdated: route(handlers.onRuntimeGoalUpdated),
     onRuntimeGoalCleared: route(handlers.onRuntimeGoalCleared),
     onRuntimeSupervisorUpdated: route(handlers.onRuntimeSupervisorUpdated),
@@ -1442,6 +1481,25 @@ function filterRuntimeChatStreamHandlers(
     onRuntimeTransportReplaced: includeTransportReplacement
       ? handlers.onRuntimeTransportReplaced
       : undefined,
+    onWeworkNotification: acceptsDevice(undefined) ? handlers.onWeworkNotification : undefined,
     onProjectTaskAssigned: acceptsDevice(undefined) ? handlers.onProjectTaskAssigned : undefined,
   }
+}
+
+function rejectsRuntimeTaskCreateV3(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 422 || !Array.isArray(error.detail)) {
+    return false
+  }
+  return error.detail.some(item => {
+    if (!item || typeof item !== 'object' || !('loc' in item)) return false
+    const location = (item as { loc?: unknown }).loc
+    return Array.isArray(location) && location.includes('schemaVersion')
+  })
+}
+
+function isUnsupportedRuntimeMaterialization(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.status === 404 || error.status === 405 || rejectsRuntimeTaskCreateV3(error))
+  )
 }

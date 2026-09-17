@@ -74,6 +74,11 @@ test('retries only transient notarization transport failures', () => {
   expect(isTransientNotaryFailure(new Error('HTTPClientError.deadlineExceeded'))).toBe(true)
   expect(isTransientNotaryFailure(new Error('abortedUpload after connection reset'))).toBe(true)
   expect(
+    isTransientNotaryFailure(
+      new Error('NSURLErrorDomain Code=-1009 "The Internet connection appears to be offline."')
+    )
+  ).toBe(true)
+  expect(
     isTransientNotaryFailure(new Error('Apple notarization failed with status: Invalid'))
   ).toBe(false)
 })

@@ -5,7 +5,7 @@ import {
   waitForSnapshot,
 } from './conversation-layout.mjs'
 
-import { assertConversationTextOrder, ensurePlanMode } from './conversation-navigation.mjs'
+import { assertConversationTextOrder } from './conversation-navigation.mjs'
 
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
 
@@ -23,6 +23,11 @@ import {
   FORK_ENCRYPTED_CONTENT,
   FORK_FOLLOW_UP_COMPLETION_TEXT,
   FORK_FOLLOW_UP_PROMPT,
+  FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT,
+  FORK_PROVIDER_FOLLOW_UP_PROMPT,
+  FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
+  FORK_PROVIDER_SOURCE_PROMPT,
+  LOCAL_MODEL_CASES,
   REQUEST_USER_INPUT_COMPLETION_TEXT,
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
@@ -49,7 +54,15 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-  await ensurePlanMode(control)
+  const composerSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (composerSnapshot.testIds.includes('plan-mode-pill')) {
+    await control.command('click', '[data-testid="cancel-plan-mode-button"]')
+  }
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('plan-mode-pill'),
+    'The request-user-input regression must run in Default mode'
+  )
   await sendPromptUntilScenarioRequest(
     control,
     composerSelector,
@@ -157,6 +170,7 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     })
     await control.command('press', 'body', { key: PRIORITY_FILTER_SHORTCUT })
     await control.command('waitFor', '[data-testid="runtime-priority-empty"]', {
+      stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     const reopenedPrioritySnapshot = JSON.parse(
@@ -197,7 +211,6 @@ async function verifyPriorityFilter({ composerSelector, control }) {
       }
     }
   }
-  await control.command('click', '[data-testid="cancel-plan-mode-button"]')
 }
 
 async function findRuntimeTaskSortableListSelector(control, taskRowTestIds) {
@@ -616,25 +629,36 @@ async function verifyBackgroundCompletionRestore({
     'A stale running transcript revived the completed task'
   )
 
-  await control.command('navigate', 'body', { value: '/todo' })
-  await control.command('waitFor', '[data-testid="cloud-my-work"]', {
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="cloud-my-work"]')
-  await control.command('waitFor', `[data-testid="my-work-group-done-${taskId}"]`, {
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+  const myWorkButton = '[data-testid="task-my-work-button"]'
+  await control.command('waitFor', myWorkButton, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', myWorkButton)
+  const reviewColumnSelector = '[data-testid="cloud-todo-column-in_review"]'
+  await control.command('waitFor', reviewColumnSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('scrollIntoView', reviewColumnSelector)
+  await control.command('waitFor', reviewColumnSelector, {
     text: 'WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE',
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const myWorkSnapshot = JSON.parse(
-    await control.command('snapshot', '[data-testid="cloud-my-work-view"]')
+  const runningColumnText = await control.command(
+    'getText',
+    '[data-testid="cloud-todo-column-in_progress"]'
   )
   assert.equal(
-    myWorkSnapshot.testIds.includes(`my-work-group-running-${taskId}`),
+    runningColumnText.includes('WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE'),
     false,
     'My Work revived a completed task from the stale running transcript'
   )
-  await control.command('navigate', 'body', { value: '/' })
+  await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -662,26 +686,42 @@ async function verifyRunningFollowUpFork({
   executorHome,
   sourceTaskRowTestId,
 }) {
+  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
+  const previousTask = findRuntimeWorkTask(
+    JSON.parse(await control.command('getLocalRuntimeWork', 'body')),
+    sourceTaskId
+  )
+  assert.equal(previousTask?.running, false, 'The source turn must be complete before follow-up')
+  assert.equal(typeof previousTask?.completedAt, 'number')
   const taskRowsBeforeFork = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('runtime-local-task-row-')
     )
   )
   control.setScenario('running_fork_follow_up')
-  await sendPromptUntilScenarioRequest(
-    control,
-    composerSelector,
-    RUNNING_FORK_FOLLOW_UP_PROMPT,
-    'running_fork_follow_up'
-  )
-  await control.command('waitFor', '[data-testid="pause-response-button"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const firstTurnForkButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="fork-message-button"]`
-  await control.command('scrollIntoView', firstTurnForkButtonSelector)
-  await captureVerificationScreenshot(control, 'running-follow-up-fork-01-streaming.png')
-
   try {
+    await sendPromptUntilScenarioRequest(
+      control,
+      composerSelector,
+      RUNNING_FORK_FOLLOW_UP_PROMPT,
+      'running_fork_follow_up'
+    )
+    const runningTask = findRuntimeWorkTask(
+      JSON.parse(await control.command('getLocalRuntimeWork', 'body')),
+      sourceTaskId
+    )
+    assert.equal(runningTask?.running, true, 'The held follow-up must remain running')
+    assert.ok(
+      runningTask.updatedAt > previousTask.completedAt,
+      'The follow-up projection must be newer than the previous completion'
+    )
+    await control.command('waitFor', '[data-testid="pause-response-button"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const firstTurnForkButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="fork-message-button"]`
+    await control.command('scrollIntoView', firstTurnForkButtonSelector)
+    await captureVerificationScreenshot(control, 'running-follow-up-fork-01-streaming.png')
+
     await control.command(
       'clickDescendantInElementWithText',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
@@ -698,7 +738,6 @@ async function verifyRunningFollowUpFork({
       'Forking the first turn reused the running source task'
     )
 
-    const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
     const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
     const runtimeIndex = JSON.parse(
       await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
@@ -736,7 +775,6 @@ async function verifyRunningFollowUpFork({
   const settledRuntimeIndex = JSON.parse(
     await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
   )
-  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
   assert.equal(
     Object.hasOwn(settledRuntimeIndex.tasks[sourceTaskId] ?? {}, 'turn_status'),
     false,
@@ -840,6 +878,126 @@ async function verifyCompletedTurnFork({
   await captureVerificationScreenshot(control, 'completed-turn-fork-04-source-unchanged.png')
 }
 
+async function verifyForkProviderModelPreservation({
+  composerSelector,
+  control,
+  executorHome,
+  newConversationSelector,
+}) {
+  const sourceModel = LOCAL_MODEL_CASES.find(model => model.protocol === 'responses')
+  assert.ok(sourceModel, 'Missing the responses local model for fork provider verification')
+
+  await control.command('clickWhenEnabled', newConversationSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, sourceModel.optionIds, sourceModel.labels)
+
+  const taskRowsBeforeSource = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  control.setScenario('fork_provider_source')
+  const sourceRequest = await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    FORK_PROVIDER_SOURCE_PROMPT,
+    'fork_provider_source'
+  )
+  assert.equal(
+    sourceRequest.body.model,
+    sourceModel.modelId,
+    'The fork provider source task did not use the selected local model'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const sourceTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeSource, '')
+  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
+  const modelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
+  const sourceProviderId = await control.command('getAttribute', modelSelector, {
+    value: 'data-model-provider-id',
+  })
+  const sourceModelLabel = await control.command('getText', modelSelector)
+
+  const sourceIndex = JSON.parse(
+    await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
+  )
+  assert.equal(
+    sourceIndex.tasks[sourceTaskId]?.runtime_handle?.executionRequest?.model_config?.model_id,
+    sourceModel.modelId,
+    'The source task did not persist its local model execution request'
+  )
+
+  const taskRowsBeforeFork = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await control.command(
+    'clickDescendantInElementWithText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      target: '[data-testid="fork-message-button"]',
+      text: FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
+  const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const forkIndex = JSON.parse(
+    await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
+  )
+  assert.equal(
+    forkIndex.tasks[forkTaskId]?.runtime_handle?.executionRequest?.model_config?.model_id,
+    sourceModel.modelId,
+    'The forked task did not inherit the source execution model'
+  )
+  assert.deepEqual(
+    forkIndex.tasks[forkTaskId]?.runtime_handle?.modelSelection,
+    sourceIndex.tasks[sourceTaskId]?.runtime_handle?.modelSelection,
+    'The forked task did not inherit the source model selection'
+  )
+  assert.equal(
+    await control.command('getText', modelSelector),
+    sourceModelLabel,
+    'The forked task model selector changed the source model'
+  )
+  assert.equal(
+    await control.command('getAttribute', modelSelector, {
+      value: 'data-model-provider-id',
+    }),
+    sourceProviderId,
+    'The forked task model selector changed the source provider'
+  )
+
+  control.setScenario('fork_provider_follow_up')
+  const followUpRequest = await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    FORK_PROVIDER_FOLLOW_UP_PROMPT,
+    'fork_provider_follow_up'
+  )
+  assert.equal(
+    followUpRequest.body.model,
+    sourceModel.modelId,
+    'The fork follow-up did not preserve the source model route'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
 export {
   verifyPriorityFilter,
   verifyRuntimeTaskOrderAndUnreadVisibility,
@@ -847,4 +1005,5 @@ export {
   waitForTaskRowByText,
   verifyRunningFollowUpFork,
   verifyCompletedTurnFork,
+  verifyForkProviderModelPreservation,
 }

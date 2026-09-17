@@ -554,20 +554,13 @@ impl RuntimeWorkRpcHandler {
         }
         let thread_id = runtime_session_id_from_link(link)
             .ok_or_else(|| "runtime task session is not ready".to_owned())?;
-        let mut request = ExecutionRequest {
-            task_id: local_task_id.to_owned(),
-            subtask_id: format!("supervisor-correction-{}", now_ms()),
-            prompt: Value::String(message.to_owned()),
-            system_prompt: link.project_instructions.clone(),
-            project_workspace_path: Some(link.workspace_path.clone()),
-            runtime_workspace_roots: link.runtime_workspace_roots.clone(),
-            runtime_project_key: link.runtime_project_key.clone(),
-            ephemeral: link.ephemeral,
-            ..ExecutionRequest::default()
-        };
-        if let Some(model_id) = task_model_id(&link.runtime_handle) {
-            request.model_config = json!({"model_id": model_id});
-        }
+        let mut request = supervisor_correction_request(
+            runtime_event_request_from_link(link),
+            local_task_id,
+            link,
+            message,
+            format!("supervisor-correction-{}", now_ms()),
+        );
         request.extra.insert(
             "client_user_message_id".to_owned(),
             Value::String(client_user_message_id.clone()),
@@ -649,6 +642,31 @@ impl RuntimeWorkRpcHandler {
             json!({"supervisor": link.supervisor}),
         );
     }
+}
+
+fn supervisor_correction_request(
+    mut request: ExecutionRequest,
+    local_task_id: &str,
+    link: &RuntimeTaskLink,
+    message: &str,
+    subtask_id: String,
+) -> ExecutionRequest {
+    request.task_id = local_task_id.to_owned();
+    request.subtask_id = subtask_id;
+    request.prompt = Value::String(message.to_owned());
+    request.history.clear();
+    request.new_session = false;
+    request.message_id = None;
+    request.backend_url = None;
+    request.auth_token = None;
+    request.runtime_auth_token = None;
+    request.skill_identity_token = None;
+    request.system_prompt = link.project_instructions.clone();
+    request.project_workspace_path = Some(link.workspace_path.clone());
+    request.runtime_workspace_roots = link.runtime_workspace_roots.clone();
+    request.runtime_project_key = link.runtime_project_key.clone();
+    request.ephemeral = link.ephemeral;
+    request
 }
 
 pub(super) fn configured_supervisor(
@@ -778,13 +796,6 @@ fn supervisor_response(link: &RuntimeTaskLink) -> Value {
         "runtime": "codex",
         "supervisor": link.supervisor,
     })
-}
-
-fn task_model_id(runtime_handle: &Value) -> Option<String> {
-    let selection = runtime_handle.get("modelSelection")?;
-    string_field(selection, "modelName")
-        .or_else(|| string_field(selection, "model"))
-        .or_else(|| string_field(selection, "modelId"))
 }
 
 fn supervisor_model_reference(selection: &Value) -> Result<Value, String> {
@@ -942,6 +953,89 @@ fn truncate_visible_tail(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn correction_request_preserves_the_original_execution_route_and_capabilities() {
+        let source = ExecutionRequest {
+            task_id: "task-old".to_owned(),
+            subtask_id: "turn-old".to_owned(),
+            bot: json!([{"id": 7, "shell_type": "CodeX"}]),
+            model_config: json!({
+                "model_id": "gpt-5.6-luna",
+                "codex_model_provider": "wework-e2e",
+                "api_key": "model-secret",
+                "runtime_config": {
+                    "codex": {
+                        "use_user_config": true,
+                        "use_proxy": true,
+                        "proxy_url": "http://127.0.0.1:7890"
+                    }
+                }
+            }),
+            prompt: Value::String("original prompt".to_owned()),
+            history: vec![json!({"role": "user", "content": "old history"})],
+            mcp_servers: vec![json!({"name": "project-mcp"})],
+            message_id: Some(42),
+            auth_token: Some("task-token".to_owned()),
+            runtime_auth_token: Some("runtime-token".to_owned()),
+            skill_identity_token: Some("skill-token".to_owned()),
+            extra: serde_json::Map::from_iter([
+                ("skill_names".to_owned(), json!(["project-skill"])),
+                (
+                    "runtime_permission_profile".to_owned(),
+                    Value::String("danger-full-access".to_owned()),
+                ),
+            ]),
+            ..ExecutionRequest::default()
+        };
+        let mut runtime_handle = json!({});
+        store_runtime_execution_request(&mut runtime_handle, &source);
+        let link = RuntimeTaskLink {
+            local_task_id: "task-current".to_owned(),
+            workspace_path: "/workspace/project".to_owned(),
+            ephemeral: false,
+            runtime_project_key: Some("local:/workspace/project".to_owned()),
+            runtime_workspace_roots: vec![
+                "/workspace/project".to_owned(),
+                "/workspace/shared".to_owned(),
+            ],
+            project_instructions: "Current project instructions".to_owned(),
+            runtime_handle,
+            ..RuntimeTaskLink::default()
+        };
+
+        let request = supervisor_correction_request(
+            runtime_event_request_from_link(&link),
+            &link.local_task_id,
+            &link,
+            "SUPERVISOR_CORRECTION",
+            "supervisor-correction-1".to_owned(),
+        );
+
+        assert_eq!(request.task_id, "task-current");
+        assert_eq!(request.subtask_id, "supervisor-correction-1");
+        assert_eq!(request.prompt, "SUPERVISOR_CORRECTION");
+        assert!(request.history.is_empty());
+        assert_eq!(request.message_id, None);
+        assert!(!request.new_session);
+        assert_eq!(request.model_config["model_id"], "gpt-5.6-luna");
+        assert_eq!(request.model_config["codex_model_provider"], "wework-e2e");
+        assert!(request.model_config.get("api_key").is_none());
+        assert_eq!(request.bot, source.bot);
+        assert_eq!(request.mcp_servers, source.mcp_servers);
+        assert_eq!(request.auth_token, None);
+        assert_eq!(request.runtime_auth_token, None);
+        assert_eq!(request.skill_identity_token, None);
+        assert_eq!(request.extra["skill_names"], json!(["project-skill"]));
+        assert_eq!(
+            request.extra["runtime_permission_profile"],
+            "danger-full-access"
+        );
+        assert_eq!(
+            request.runtime_workspace_roots,
+            vec!["/workspace/project", "/workspace/shared"]
+        );
+    }
 
     #[test]
     fn parses_fenced_supervisor_json() {

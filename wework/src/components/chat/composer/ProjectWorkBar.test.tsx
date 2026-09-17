@@ -1,10 +1,19 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import type { ComponentProps } from 'react'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
-import { ProjectWorkBar } from './ProjectWorkBar'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { installDshUiTestContributions } from '@/test/setup'
+import { ProjectWorkBar as HostProjectWorkBar } from './ProjectWorkBar'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { DeviceInfo, ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
+
+function ProjectWorkBar(
+  props: ComponentProps<typeof HostProjectWorkBar> & Record<string, unknown>
+) {
+  return <HostProjectWorkBar {...props} extensionContext={props} />
+}
 
 const project: ProjectWithTasks = {
   id: 7,
@@ -119,13 +128,37 @@ const availableWorktree = {
 } as const
 
 describe('ProjectWorkBar', () => {
+  beforeEach(async () => {
+    await installDshUiTestContributions(
+      {
+        [WEWORK_DSH_SLOTS.projectCreateSection]: [
+          {
+            id: 'git-project-create',
+            module: 'plugins/wework-ui-git-project-create-section.js',
+          },
+        ],
+        [WEWORK_DSH_SLOTS.projectWorkSection]: [
+          {
+            id: 'git-project-work',
+            module: 'plugins/wework-ui-git-project-work-section.js',
+          },
+        ],
+      },
+      {
+        'plugins/wework-ui-git-project-create-section.js': () =>
+          import('../../../../dsh/ui-git/src/project-create-section'),
+        'plugins/wework-ui-git-project-work-section.js': () =>
+          import('../../../../dsh/ui-git/src/project-work-section'),
+      }
+    )
+  })
+
   test('orders project, workspace, and execution context by user decision flow', () => {
     render(
       <ProjectWorkBar
         devices={[localDevice]}
         currentProject={null}
         executionMode="current_workspace"
-        isGitProject={false}
         onSelectProject={vi.fn()}
         onSelectStandaloneDevice={vi.fn()}
         middleContext={<button data-testid="workspace-context">我的任务</button>}
@@ -405,7 +438,38 @@ describe('ProjectWorkBar', () => {
           deviceId: 'device-1',
           sourcePath: '/repo/Wegent',
         }}
-        isGitProject
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+        onExecutionModeChange={onExecutionModeChange}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('execution-mode-button'))
+    await userEvent.click(screen.getByTestId('execution-mode-git-worktree-button'))
+
+    expect(onExecutionModeChange).toHaveBeenCalledWith('git_worktree')
+  })
+
+  test('trusts runtime preflight when stored project metadata is stale', async () => {
+    const onExecutionModeChange = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[nonGitProject]}
+        devices={[device]}
+        runtimeWork={runtimeWork}
+        currentProject={nonGitProject}
+        currentProjectId={nonGitProject.id}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={201}
+        executionMode="current_workspace"
+        worktreeAvailability={{
+          available: true,
+          reason: 'available',
+          deviceId: 'device-1',
+          sourcePath: '/workspace/notes',
+        }}
         onSelectProject={vi.fn()}
         onSelectStandaloneDevice={vi.fn()}
         onSelectProjectWorkspace={vi.fn()}
@@ -438,7 +502,6 @@ describe('ProjectWorkBar', () => {
           deviceId: 'device-1',
           sourcePath: '/repo/Wegent',
         }}
-        isGitProject
         onSelectProject={vi.fn()}
         onSelectStandaloneDevice={vi.fn()}
         onSelectProjectWorkspace={vi.fn()}
@@ -505,6 +568,7 @@ describe('ProjectWorkBar', () => {
   })
 
   test('keeps project changing and project clearing as separate desktop actions', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
 
     render(
@@ -515,7 +579,7 @@ describe('ProjectWorkBar', () => {
         currentProjectId={project.id}
         currentStandaloneDeviceId={null}
         executionMode="current_workspace"
-        onSelectProject={vi.fn()}
+        onSelectProject={onSelectProject}
         onSelectStandaloneDevice={onSelectStandaloneDevice}
         onExecutionModeChange={vi.fn()}
       />
@@ -529,7 +593,8 @@ describe('ProjectWorkBar', () => {
 
     await userEvent.click(screen.getByTestId('clear-project-button'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('local-device')
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
   test('does not offer clearing when the selected project is required', async () => {
@@ -613,6 +678,34 @@ describe('ProjectWorkBar', () => {
     })
   })
 
+  test('keeps constrained desktop project options inside the popover surface', async () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        runtimeWork={runtimeWork}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    const menu = screen.getByTestId('project-work-menu')
+    expect(menu).toHaveClass('overflow-hidden', 'bg-popover')
+    expect(menu.firstElementChild).toHaveClass('flex', 'min-h-0', 'flex-1', 'flex-col')
+    expect(screen.getByTestId('project-options-list')).toHaveClass(
+      'min-h-0',
+      'flex-1',
+      'overflow-y-auto'
+    )
+  })
+
   test('resolves the selected workspace within the current project before showing remote state', () => {
     const localDevice: DeviceInfo = {
       ...device,
@@ -674,7 +767,8 @@ describe('ProjectWorkBar', () => {
     expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
   })
 
-  test('selects the local device when choosing no project', async () => {
+  test('clears the project when choosing no project', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
     const localDevice: DeviceInfo = {
       ...device,
@@ -704,7 +798,7 @@ describe('ProjectWorkBar', () => {
         currentStandaloneDeviceId="remote-device"
         selectedDeviceWorkspaceId={null}
         executionMode="current_workspace"
-        onSelectProject={vi.fn()}
+        onSelectProject={onSelectProject}
         onSelectStandaloneDevice={onSelectStandaloneDevice}
         onSelectProjectWorkspace={vi.fn()}
         onExecutionModeChange={vi.fn()}
@@ -714,7 +808,8 @@ describe('ProjectWorkBar', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('local-device')
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
   test('selects a single-workspace project directly', async () => {
@@ -1299,7 +1394,6 @@ describe('ProjectWorkBar', () => {
         devices={[localDevice]}
         runtimeWork={runtimeLocalWork}
         currentProjectId={projectId}
-        isGitProject
         currentStandaloneDeviceId={null}
         selectedDeviceWorkspaceId={null}
         executionMode="current_workspace"

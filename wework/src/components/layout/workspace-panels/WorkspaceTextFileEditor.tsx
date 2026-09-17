@@ -24,6 +24,8 @@ interface WorkspaceTextFileEditorProps {
   path: string
   value: string
   themeType: 'light' | 'dark'
+  targetLineStart?: number
+  targetLineEnd?: number
   onChange: (value: string) => void
   onSave: () => void
 }
@@ -95,6 +97,8 @@ export function WorkspaceTextFileEditor({
   path,
   value,
   themeType,
+  targetLineStart,
+  targetLineEnd,
   onChange,
   onSave,
 }: WorkspaceTextFileEditorProps) {
@@ -187,6 +191,24 @@ export function WorkspaceTextFileEditor({
       effects: themeCompartmentRef.current.reconfigure(editorTheme(themeType)),
     })
   }, [themeType])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view || !Number.isInteger(targetLineStart) || Number(targetLineStart) < 1) return
+
+    const startLineNumber = Math.min(Number(targetLineStart), view.state.doc.lines)
+    const endLineNumber = Math.min(
+      Math.max(Number.isInteger(targetLineEnd) ? Number(targetLineEnd) : startLineNumber, 1),
+      view.state.doc.lines
+    )
+    const startLine = view.state.doc.line(Math.min(startLineNumber, endLineNumber))
+    const endLine = view.state.doc.line(Math.max(startLineNumber, endLineNumber))
+    view.dispatch({
+      selection: { anchor: startLine.from, head: endLine.to },
+      effects: EditorView.scrollIntoView(startLine.from, { y: 'center' }),
+    })
+    view.focus()
+  }, [path, targetLineEnd, targetLineStart])
 
   return (
     <div

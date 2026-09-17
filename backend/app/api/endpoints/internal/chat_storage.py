@@ -67,6 +67,10 @@ INJECTION_MODE_KB_HEAD = "kb_head"
 # so this sits just above it. Raise it if that page window grows.
 MAX_ATTACHMENT_TEXT_SLICE = 64_000
 
+CANCELLED_ASSISTANT_CONTEXT_NOTE = (
+    "[Previous assistant response was interrupted by the user.]"
+)
+
 
 def _is_restricted_kb_context(kb_ctx: SubtaskContext) -> bool:
     """Whether a KB history context should be suppressed for restricted mode."""
@@ -278,6 +282,28 @@ def subtask_to_messages(
         ]
 
     # Assistant messages ---------------------------------------------------
+    # A cancelled turn may contain a partial response and an incomplete
+    # messages_chain. Preserve the useful text, but close the turn explicitly
+    # so the next model request does not interpret it as an unfinished assistant
+    # message. Empty cancelled turns add no context and must be omitted.
+    if subtask.status == SubtaskStatus.CANCELLED:
+        if subtask.role != SubtaskRole.ASSISTANT:
+            return []
+        result = subtask.result if isinstance(subtask.result, dict) else {}
+        content = result.get("value", "")
+        if not isinstance(content, str) or not content.strip():
+            return []
+        return [
+            MessageResponse(
+                id=str(subtask.id),
+                role="assistant",
+                content=(f"{content.rstrip()}\n\n{CANCELLED_ASSISTANT_CONTEXT_NOTE}"),
+                created_at=(
+                    subtask.created_at.isoformat() if subtask.created_at else None
+                ),
+            )
+        ]
+
     # For FAILED assistant subtasks, only keep result.value when present.
     # Do not expand messages_chain for failed turns to avoid injecting
     # tool-call artifacts or partial chain state into model history.
@@ -320,10 +346,19 @@ def subtask_to_messages(
                 and msg_kwargs.get("summary_compacted") is True
                 else None
             )
+            content = msg.get("content", "")
+            if (
+                role == "assistant"
+                and not content
+                and not msg.get("tool_calls")
+                and not msg.get("reasoning_content")
+                and resp_metadata is None
+            ):
+                continue
             resp = MessageResponse(
                 id=msg_id,
                 role=role,
-                content=msg.get("content", ""),
+                content=content,
                 name=msg.get("name"),
                 tool_call_id=msg.get("tool_call_id"),
                 tool_calls=msg.get("tool_calls"),
@@ -345,6 +380,8 @@ def subtask_to_messages(
 
     # Fallback for legacy data without messages_chain
     content = result.get("value", "")
+    if not content:
+        return []
     loaded_skills = result.get("loaded_skills")
     return [
         MessageResponse(

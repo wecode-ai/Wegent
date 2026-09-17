@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 
-import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import {
+  createCodexRolloutRecovery,
+  ROLLOUT_CHAT_PROMPT,
+} from '../modules/codex-rollout-recovery.mjs'
+import { createSingleRootLocalProject, join, selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE_WORKSPACE_TAB_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -10,10 +14,12 @@ const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-messa
 const PROMPTS = {
   quiet: 'WEWORK_E2E_CODEX_NOTIFICATION_QUIET',
   noisy: 'WEWORK_E2E_CODEX_NOTIFICATION_NOISY',
+  rollout: ROLLOUT_CHAT_PROMPT,
 }
 const COMPLETIONS = {
   quiet: 'WEWORK_E2E_CODEX_NOTIFICATION_QUIET_COMPLETE',
   noisy: 'WEWORK_E2E_CODEX_NOTIFICATION_NOISY_COMPLETE',
+  rollout: 'WEWORK_E2E_CODEX_ROLLOUT_CHAT_COMPLETE',
 }
 const NOISE_DELTA_COUNT = 2200
 const BURST_RENDER_TIMEOUT_MS = 30_000
@@ -163,7 +169,39 @@ async function selectTask(control, sidebar, task, completion, timeoutMs) {
   )
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+async function waitForUnreadBadge(control, count, timeoutMs) {
+  const { platform } = JSON.parse(await control.command('getNativeWindowState', 'body'))
+  const deadline = Date.now() + timeoutMs
+  let latest
+  while (Date.now() < deadline) {
+    latest = JSON.parse(await control.command('getTraySnapshot', 'body'))
+    const unreadHeading = latest.menu.findIndex(item => item.id === 'heading:unread')
+    const unreadItems = []
+    if (unreadHeading >= 0) {
+      for (const item of latest.menu.slice(unreadHeading + 1)) {
+        if (item.type === 'separator') break
+        if (item.id?.startsWith('task:')) unreadItems.push(item)
+      }
+    }
+    const expectedBadge = platform === 'darwin' ? (count > 0 ? String(count) : '') : null
+    if (unreadItems.length === count && latest.dockBadge === expectedBadge) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`Expected ${count} unread tasks and matching Dock badge: ${JSON.stringify(latest)}`)
+}
+
+export function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  homePath,
+  workspacePath,
+  executorHome,
+}) {
+  const rollout = createCodexRolloutRecovery({
+    chatWorkspacePath: join(homePath, 'Documents', 'Codex'),
+    executorHome,
+    uiTimeoutMs,
+  })
   let active = false
   const requests = []
   const streams = new Map()
@@ -196,7 +234,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   }
 
   return {
+    setRestartDesktopApp(value) {
+      rollout.setRestartDesktopApp(value)
+    },
+
     async handleHttp(request, response, url) {
+      if (await rollout.handleHttp(request, response, url)) return true
       if (!active || request.method !== 'POST') return false
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
@@ -206,6 +249,23 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const requestText = JSON.stringify(body)
       const prompt = Object.values(PROMPTS).find(candidate => requestText.includes(candidate))
       if (!prompt) return false
+      // The rollout recovery chat only needs a completed turn; its transcript
+      // plays no part in the notification isolation assertions.
+      if (prompt === PROMPTS.rollout) {
+        requests.push(prompt)
+        const id = `wework-codex-rollout-${requests.length}`
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        for (const event of [...streamStart(id), ...streamFinish(id, COMPLETIONS.rollout)]) {
+          response.write(sse(event))
+        }
+        response.end()
+        return true
+      }
       if (streams.has(prompt)) {
         const message = `Received duplicate notification isolation request for ${prompt}`
         response.writeHead(409, { 'Content-Type': 'application/json; charset=utf-8' })
@@ -224,7 +284,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       response.flushHeaders()
       for (const event of streamStart(id)) response.write(sse(event))
       streams.set(prompt, { id, itemId, response })
-      emitBurstAndCompletions()
       return true
     },
 
@@ -270,13 +329,41 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="project-row-${createdProjectId}"] ` +
         '[data-testid="project-new-conversation-button"]'
       await control.command('waitFor', newConversationSelector, { timeoutMs: uiTimeoutMs })
+      await waitForUnreadBadge(control, 0, uiTimeoutMs)
       const quiet = await sendTask(control, newConversationSelector, PROMPTS.quiet, uiTimeoutMs)
       await waitForRequestCount(requests, 1, uiTimeoutMs)
       const noisy = await sendTask(control, newConversationSelector, PROMPTS.noisy, uiTimeoutMs)
       await waitForRequestCount(requests, 2, uiTimeoutMs)
       const burstSettleTimeoutMs = Math.max(uiTimeoutMs, BURST_RENDER_TIMEOUT_MS)
 
+      await control.command('clickWhenEnabled', newConversationSelector, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      emitBurstAndCompletions()
+      await waitForUnreadBadge(control, 2, burstSettleTimeoutMs)
+
+      for (const enabled of [false, true]) {
+        await control.command('click', '[data-testid="settings-button"]')
+        await control.command('click', '[data-testid="settings-menu-button"]')
+        await control.command('clickWhenEnabled', '[data-testid="general-tray-unread-toggle"]', {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command(
+          'waitFor',
+          `[data-testid="general-tray-unread-toggle"][aria-pressed="${enabled}"]`,
+          { timeoutMs: uiTimeoutMs }
+        )
+        await control.command('click', '[data-testid="settings-back-button"]')
+        await waitForUnreadBadge(control, enabled ? 2 : 0, uiTimeoutMs)
+      }
+
+      const readyCountBeforeReload = control.readyCount
+      await control.command('reloadApp', 'body')
+      await control.awaitReadyAfter(readyCountBeforeReload)
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await waitForUnreadBadge(control, 2, uiTimeoutMs)
+
       const sidebar = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar"]`
+      let remainingUnread = 2
       for (const [task, completion] of [
         [quiet, COMPLETIONS.quiet],
         [noisy, COMPLETIONS.noisy],
@@ -287,9 +374,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
           { text: completion, timeoutMs: uiTimeoutMs }
         )
+        remainingUnread -= 1
+        await waitForUnreadBadge(control, remainingUnread, uiTimeoutMs)
       }
 
+      await selectTask(control, sidebar, quiet, COMPLETIONS.quiet, uiTimeoutMs)
+      await waitForUnreadBadge(control, 0, uiTimeoutMs)
+
       await captureScreenshot(control, 'codex-notification-isolation-complete.png', 'body')
+      await rollout.verify(control)
       active = false
     },
 
@@ -300,6 +393,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         emitted,
         noiseDeltaCount: NOISE_DELTA_COUNT,
         requests,
+        rollout: rollout.diagnostics(),
         streamCount: streams.size,
       }
     },

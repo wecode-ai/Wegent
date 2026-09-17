@@ -35,6 +35,8 @@ import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import * as changeRequestMonitor from '@/features/workbench/changeRequestMonitor'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
+import { rightWorkspaceDshSidebar } from './workspace-panels/rightWorkspaceDshSidebar'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -208,9 +210,11 @@ await preloadDefaultDshUiTestModules()
 describe('DesktopSidebar', () => {
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
+    await installGitUiTestContributions()
     experimentalFeatures.enabled = true
     window.history.replaceState({}, '', '/')
     localStorage.clear()
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', '')
     enableElectron()
     setActiveKeybindings([])
     Element.prototype.scrollIntoView = vi.fn()
@@ -236,6 +240,23 @@ describe('DesktopSidebar', () => {
     expect(taskActions).not.toHaveClass('pointer-events-none', 'opacity-0')
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-chat-section-new-chat-button')).toBeInTheDocument()
+  })
+
+  test('renders Board as the selected default work-items view', async () => {
+    const onOpenMyWork = vi.fn()
+
+    renderSidebar({
+      taskView: 'default-work-items',
+      onOpenMyWork,
+    })
+
+    const myWorkButton = screen.getByTestId('task-my-work-button')
+    expect(myWorkButton).toHaveTextContent('看板')
+    expect(myWorkButton).toHaveAttribute('aria-current', 'page')
+
+    await userEvent.click(myWorkButton)
+
+    expect(onOpenMyWork).toHaveBeenCalledOnce()
   })
 
   test('shows a discoverable project creation action when the project list is empty', async () => {
@@ -751,7 +772,8 @@ describe('DesktopSidebar', () => {
     const button = screen.getByTestId('sidebar-app-update-button')
     const action = screen.getByTestId('sidebar-app-update-action')
     expect(button).toHaveClass('h-8', 'w-8')
-    expect(button).toHaveAttribute('title', '更新到 0.1.1')
+    expect(button).toHaveAttribute('aria-label', '更新到 0.1.1')
+    expect(button).not.toHaveAttribute('title')
     expect(action).not.toHaveClass('max-w-0', 'opacity-0', 'overflow-hidden')
     expect(screen.getByTestId('settings-button')).toHaveClass('pr-[72px]')
 
@@ -842,7 +864,7 @@ describe('DesktopSidebar', () => {
     const progress = screen.getByTestId('sidebar-app-update-download-progress')
     expect(progress).toHaveAttribute('aria-valuenow', '40')
     expect(screen.getByTestId('sidebar-app-update-button')).toHaveAttribute(
-      'title',
+      'aria-label',
       '正在下载更新 40%'
     )
   })
@@ -1355,6 +1377,10 @@ describe('DesktopSidebar', () => {
 
     fireEvent.keyDown(window, { key: 'p', metaKey: true, shiftKey: true })
     expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+    input.dataset.testid = 'chat-message-input'
+    input.focus()
+    fireEvent.keyDown(input, { key: 'p', metaKey: true, shiftKey: true })
+    expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
     input.remove()
   })
 
@@ -1496,24 +1522,29 @@ describe('DesktopSidebar', () => {
     )
 
     const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
-    expect(scrollContainer).toHaveClass('mt-0.5', 'mb-2')
+    expect(screen.getByTestId('sidebar-worklists-scroll-area')).toHaveClass('mt-0.5', 'mb-2')
     expect(scrollContainer).not.toHaveClass('my-2', 'pt-1')
-    expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
-    expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
+    expect(scrollContainer).toHaveClass('border-transparent')
+    expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-none', 'scrollbar-soft')
+    expect(scrollContainer).toHaveStyle({ overflowY: 'scroll' })
 
     fireEvent.scroll(scrollContainer, { target: { scrollTop: 24 } })
 
     expect(scrollContainer).toHaveAttribute('data-scrolled', 'true')
-    expect(scrollContainer).toHaveClass('border-border', 'scrollbar-soft')
+    expect(scrollContainer).toHaveClass('border-border')
     expect(scrollContainer).not.toHaveClass('border-transparent', 'scrollbar-none')
 
     fireEvent.scroll(scrollContainer, { target: { scrollTop: 0 } })
 
     expect(scrollContainer).toHaveAttribute('data-scrolled', 'false')
-    expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
+    expect(scrollContainer).toHaveClass('border-transparent')
     expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
+    expect(scrollContainer).toHaveStyle({ overflowY: 'scroll' })
 
-    expect(searchButton.parentElement?.parentElement).toHaveClass('h-9', 'justify-between')
+    expect(searchButton.parentElement?.parentElement?.parentElement).toHaveClass(
+      'h-9',
+      'justify-between'
+    )
     expect(pluginsButton.parentElement).toHaveClass('space-y-0.5')
     expect(pluginsButton.parentElement).not.toHaveClass('pt-2')
   })
@@ -1540,7 +1571,7 @@ describe('DesktopSidebar', () => {
       fireEvent.pointerMove(window, { clientX: 600, clientY: 680 })
     })
 
-    expect(scrollContainer).toHaveClass('overflow-y-hidden')
+    expect(scrollContainer).toHaveStyle({ overflowY: 'hidden' })
     scrollContainer.scrollTop = 240
     fireEvent.scroll(scrollContainer)
     expect(scrollContainer.scrollTop).toBe(120)
@@ -1548,7 +1579,7 @@ describe('DesktopSidebar', () => {
     act(() => {
       fireEvent.pointerMove(window, { clientX: 120, clientY: 680 })
     })
-    expect(scrollContainer).toHaveClass('overflow-y-auto')
+    expect(scrollContainer).toHaveStyle({ overflowY: 'scroll' })
 
     act(() => {
       dispatchWorkbenchSidebarPaneDragCancel()
@@ -1664,7 +1695,8 @@ describe('DesktopSidebar', () => {
     const projectsTitle = projectsToggle.querySelector('span')
 
     for (const button of [newTaskButton, pluginsButton, cloudButton]) {
-      expect(button).toHaveClass('font-normal', 'text-[rgb(var(--color-sidebar-text-primary))]')
+      expect(button).not.toHaveClass('font-normal')
+      expect(button).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
     }
     expect(collapseSidebarButton).toHaveClass(
       'text-[rgb(var(--color-sidebar-text-primary))]',
@@ -1984,6 +2016,37 @@ describe('DesktopSidebar', () => {
     expect(window.location.pathname).toBe('/sites')
   })
 
+  test('opens a contributed workspace sidebar tab without changing the current route', async () => {
+    const runtime = window.__WEWORK_DSH_UI__
+    expect(runtime).toBeDefined()
+    const openTab = vi.spyOn(rightWorkspaceDshSidebar, 'openTab').mockImplementation(() => {})
+    const navigation = [
+      ...runtime!.getEntries(WEWORK_DSH_SLOTS.sidebarNavigation),
+      {
+        id: 'reference-website.navigation',
+        label: 'Reference website',
+        icon: 'globe',
+        workspaceSidebarTab: 'reference-website',
+        testId: 'reference-website-button',
+      },
+    ]
+    window.__WEWORK_DSH_UI__ = {
+      ...runtime!,
+      getEntries: slotName =>
+        slotName === WEWORK_DSH_SLOTS.sidebarNavigation
+          ? navigation
+          : runtime!.getEntries(slotName),
+    }
+    window.history.replaceState({}, '', '/')
+
+    renderSidebar()
+    await userEvent.click(screen.getByTestId('reference-website-button'))
+
+    expect(openTab).toHaveBeenCalledWith({ type: 'reference-website' })
+    expect(window.location.pathname).toBe('/')
+    openTab.mockRestore()
+  })
+
   test('keeps a dynamic DSH navigation icon mounted across unrelated sidebar rerenders', async () => {
     const runtime = window.__WEWORK_DSH_UI__
     expect(runtime).toBeDefined()
@@ -2058,17 +2121,11 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
   })
 
-  test('shows Sites only while experimental features are enabled', async () => {
+  test('shows Applications while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
-    const { unmount } = renderSidebar()
-
-    expect(screen.queryByTestId('sites-button')).not.toBeInTheDocument()
-
-    unmount()
-    experimentalFeatures.enabled = true
     renderSidebar()
 
-    expect(screen.getByTestId('sites-button')).toBeInTheDocument()
+    expect(screen.getByTestId('sites-button')).toHaveTextContent('应用')
   })
 
   test('shows Automations when experimental features are disabled', () => {
@@ -2764,7 +2821,7 @@ describe('DesktopSidebar', () => {
     expect(secondSortable).toHaveAttribute('tabindex', '0')
 
     const firstActivator = screen.getByTestId('runtime-local-task-drag-activator-chat-1')
-    const firstTitleSpace = firstActivator.parentElement as HTMLElement
+    const firstTitleSpace = screen.getByTestId('runtime-local-task-title-chat-1')
     const firstTrailing = screen.getByTestId('runtime-local-task-trailing-chat-1')
     const firstActions = screen.getByTestId('runtime-local-task-hover-actions-chat-1')
     mockSidebarSortableRect(firstSortable, 0)
@@ -3311,6 +3368,143 @@ describe('DesktopSidebar', () => {
     expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
   })
 
+  test('shows offline device projects and tasks by default and persists hiding them', async () => {
+    const user = userEvent.setup()
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: 7, key: 'project:7', name: 'Online project' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online' as const,
+              available: true,
+              workspacePath: '/repo/online',
+              tasks: [
+                {
+                  taskId: 'online-project-task',
+                  workspacePath: '/repo/online',
+                  title: 'Online project task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          project: { id: 8, key: 'project:8', name: 'Offline project' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              deviceName: 'Remote Host',
+              deviceStatus: 'offline' as const,
+              available: false,
+              workspacePath: '/repo/offline',
+              tasks: [
+                {
+                  taskId: 'offline-project-task',
+                  workspacePath: '/repo/offline',
+                  title: 'Offline project task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [
+        {
+          deviceId: 'local-device',
+          deviceName: 'Local Mac',
+          deviceStatus: 'online' as const,
+          available: true,
+          workspacePath: '/chats/online',
+          workspaceKind: 'chat',
+          tasks: [
+            {
+              taskId: 'online-chat-task',
+              workspacePath: '/chats/online',
+              workspaceKind: 'chat',
+              title: 'Online chat task',
+              runtime: 'codex',
+            },
+          ],
+        },
+        {
+          deviceId: 'remote-device',
+          deviceName: 'Remote Host',
+          deviceStatus: 'offline' as const,
+          available: false,
+          workspacePath: '/chats/offline',
+          workspaceKind: 'chat',
+          tasks: [
+            {
+              taskId: 'offline-chat-task',
+              workspacePath: '/chats/offline',
+              workspaceKind: 'chat',
+              title: 'Offline chat task',
+              runtime: 'codex',
+            },
+          ],
+        },
+      ],
+      totalTasks: 4,
+    }
+    const props = {
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          status: 'offline' as const,
+          is_default: false,
+          device_type: 'remote',
+        }),
+      ],
+      runtimeWork,
+      onArchiveProjectsConversations: vi.fn().mockResolvedValue(undefined),
+    }
+
+    const view = renderSidebar(props)
+
+    expect(screen.getByTestId('project-row-7')).toBeInTheDocument()
+    expect(screen.getByTestId('project-row-8')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-online-chat-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-offline-chat-task')).toBeInTheDocument()
+
+    const offlineProjectToggle = screen
+      .getByTestId('project-row-8')
+      .querySelector<HTMLButtonElement>('[data-testid="project-item-button"]')
+    expect(offlineProjectToggle).not.toBeNull()
+    await user.click(offlineProjectToggle!)
+    expect(screen.getByTestId('runtime-local-task-row-offline-project-task')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('projects-section-menu'))
+    const visibilityItem = screen.getByTestId('projects-section-show-offline-device-items')
+    expect(visibilityItem).toHaveAttribute('role', 'menuitemcheckbox')
+    expect(visibilityItem).toHaveAttribute('aria-checked', 'true')
+    await user.click(visibilityItem)
+
+    expect(screen.getByTestId('project-row-7')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-row-8')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-online-chat-task')).toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-offline-chat-task')).not.toBeInTheDocument()
+    expect(localStorage.getItem('wework.desktop.sidebar.showOfflineDeviceItems.1')).toBe('false')
+
+    view.unmount()
+    renderSidebar(props)
+
+    expect(screen.queryByTestId('project-row-8')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-offline-chat-task')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('projects-section-menu'))
+    expect(screen.getByTestId('projects-section-show-offline-device-items')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+  })
+
   test('shows an available remote project IP with green status', () => {
     renderSidebar({
       devices: [
@@ -3363,7 +3557,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalTasks: 2,
+            totalTasks: 3,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -3379,7 +3573,16 @@ describe('DesktopSidebar', () => {
                     title: 'Investigate stream',
                     runtime: 'codex',
                     running: true,
+                    goalStatus: 'active',
                     updatedAt: '2026-06-20T03:00:00Z',
+                  },
+                  {
+                    taskId: 'codex-running-without-goal',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Investigate logs',
+                    runtime: 'codex',
+                    running: true,
+                    updatedAt: '2026-06-20T02:30:00Z',
                   },
                   {
                     taskId: 'codex-idle',
@@ -3395,20 +3598,91 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalTasks: 2,
+        totalTasks: 3,
       },
     })
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     const runningStatus = screen.getByTestId('runtime-local-task-running-codex-running')
-    expect(runningStatus).toHaveAttribute('aria-label', '运行中')
-    expect(runningStatus).not.toHaveTextContent('运行中')
+    expect(runningStatus).toHaveAttribute('aria-label', '运行中，有目标')
+    expect(runningStatus).not.toHaveTextContent('运行中，有目标')
     const spinnerLayer = runningStatus.querySelector('.animate-spin')
     expect(spinnerLayer).toBeInstanceOf(HTMLSpanElement)
     expect(spinnerLayer).toHaveClass('will-change-transform')
     expect(spinnerLayer?.querySelector('svg')).not.toHaveClass('animate-spin')
+    expect(screen.getByTestId('runtime-local-task-goal-dot-codex-running')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('runtime-local-task-goal-dot-codex-running-without-goal')
+    ).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
+  })
+
+  test('shows a queued active Goal recovery as running while preserving queue actions', async () => {
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                tasks: [
+                  {
+                    taskId: 'recovering-goal',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Recover active Goal',
+                    runtime: 'codex',
+                    running: false,
+                    status: 'queued',
+                    queuePosition: 2,
+                    goalStatus: 'active',
+                    completedAt: 1_789_484_915_000,
+                    updatedAt: '2026-09-15T15:08:35Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(screen.getByTestId('runtime-local-task-running-recovering-goal')).toHaveAttribute(
+      'aria-label',
+      '运行中，有目标'
+    )
+    expect(
+      screen.queryByTestId('runtime-local-task-queued-recovering-goal')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-queue-down-recovering-goal')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-force-start-recovering-goal')).toBeInTheDocument()
+
+    act(() => {
+      cacheRuntimeConversationQueuePaused(
+        {
+          deviceId: 'local-device',
+          taskId: 'recovering-goal',
+          workspacePath: '/repo/Wegent',
+        },
+        true
+      )
+    })
+
+    expect(screen.getByTestId('runtime-local-task-running-recovering-goal')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('runtime-local-task-queue-paused-recovering-goal')
+    ).not.toBeInTheDocument()
   })
 
   test('shows a paused status when a running task has a paused follow-up queue', async () => {
@@ -3778,6 +4052,10 @@ describe('DesktopSidebar', () => {
       expect(screen.getByTestId('runtime-local-task-hover-actions-codex-1').parentElement).toBe(
         rowChildren[1]
       )
+      const contextMenuTrigger = screen.getByTestId('runtime-local-task-menu-codex-1')
+      expect(contextMenuTrigger).toHaveClass('hidden')
+      expect(contextMenuTrigger.parentElement?.children).toHaveLength(1)
+      expect(contextMenuTrigger.parentElement?.firstElementChild).toBe(contextMenuTrigger)
       expect(screen.getByTestId('runtime-local-task-pin-icon-codex-1')).toBeInTheDocument()
       expect(screen.getByTestId('runtime-local-task-archive-icon-codex-1')).toBeInTheDocument()
       expect(screen.getByTestId('runtime-local-task-hover-actions-codex-1')).toHaveClass(
@@ -4009,6 +4287,80 @@ describe('DesktopSidebar', () => {
     })
   })
 
+  test('shows shared tooltips for every runtime task hover action', async () => {
+    vi.useFakeTimers()
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project-7', name: 'Wegent', stateDeviceId: 'local-device' },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                tasks: [
+                  {
+                    taskId: 'tooltip-task',
+                    threadId: 'thread-tooltip',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Tooltip coverage',
+                    runtime: 'codex',
+                    updatedAt: '2026-09-15T02:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+      imNotificationSettings: {
+        global: { enabled: false, sessionKey: null, session: null },
+        runtimeTaskSubscriptions: [],
+      },
+      onSetRuntimeTaskPinned: vi.fn().mockResolvedValue(undefined),
+      onArchiveRuntimeTask: vi.fn().mockResolvedValue(undefined),
+      onToggleRuntimeTaskNotification: vi.fn().mockResolvedValue(undefined),
+    })
+
+    fireEvent.click(screen.getByTestId('project-item-button'))
+
+    const actions = [
+      {
+        button: 'runtime-local-task-notify-tooltip-task',
+        tooltip: 'runtime-local-task-notify-tooltip-task-tooltip',
+        label: '订阅任务通知',
+      },
+      {
+        button: 'runtime-local-task-mark-tooltip-task',
+        tooltip: 'runtime-local-task-mark-tooltip-task-tooltip',
+        label: '置顶任务',
+      },
+      {
+        button: 'runtime-local-task-archive-tooltip-task',
+        tooltip: 'runtime-local-task-archive-tooltip-task-tooltip',
+        label: '归档任务',
+      },
+    ]
+
+    for (const [index, action] of actions.entries()) {
+      const button = screen.getByTestId(action.button)
+      expect(button).toHaveAttribute('aria-label', action.label)
+      expect(button).not.toHaveAttribute('title')
+
+      fireEvent.pointerEnter(button.parentElement as HTMLElement)
+      await act(async () => vi.advanceTimersByTime(index === 0 ? 700 : 0))
+      expect(screen.getByTestId(action.tooltip)).toHaveTextContent(action.label)
+      fireEvent.pointerLeave(button.parentElement as HTMLElement)
+    }
+  })
+
   test('pins Codex tasks that only expose the thread id as taskId', async () => {
     const onSetRuntimeTaskPinned = vi.fn().mockResolvedValue(undefined)
     renderSidebar({
@@ -4057,7 +4409,7 @@ describe('DesktopSidebar', () => {
     )
   })
 
-  test('reserves runtime task hover actions without padding the truncated title', async () => {
+  test('overlays task actions without resizing the full task title', async () => {
     const user = userEvent.setup()
     const taskTitle = '修复进行中任务未显示 tool 调用'
 
@@ -4096,13 +4448,17 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('project-item-button'))
 
     const titleActivator = screen.getByText(taskTitle)
-    const title = titleActivator.parentElement as HTMLElement
+    const title = screen.getByTestId('runtime-local-task-title-codex-1')
     const trailing = screen.getByTestId('runtime-local-task-trailing-codex-1')
     const hoverActions = screen.getByTestId('runtime-local-task-hover-actions-codex-1')
 
-    expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate')
+    expect(title).toHaveClass('min-w-0', 'flex-1')
+    expect(title).not.toHaveClass('truncate')
+    expect(titleActivator).toHaveTextContent(taskTitle)
     expect(title).not.toHaveClass('group-hover/task:pr-20')
-    expect(trailing).toHaveClass('min-w-[30px]', 'group-hover/task:w-[68px]')
+    expect(trailing).toHaveClass('min-w-[30px]')
+    expect(trailing).not.toHaveClass('group-hover/task:w-[68px]')
+    expect(hoverActions).toHaveAttribute('data-sidebar-title-actions')
     expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[72px]')
   })
 
@@ -4745,7 +5101,8 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toHaveClass(
       'lucide-message-circle-off'
     )
-    expect(toggle).toHaveAttribute('title', expect.stringContaining('Telegram'))
+    expect(toggle).toHaveAttribute('aria-label', expect.stringContaining('Telegram'))
+    expect(toggle).not.toHaveAttribute('title')
 
     await user.click(toggle)
     expect(screen.getByTestId('sidebar-global-im-notification-menu')).toHaveTextContent(
@@ -4876,7 +5233,7 @@ describe('DesktopSidebar', () => {
     )
 
     const bell = screen.getByTestId('sidebar-global-im-notification-button')
-    expect(bell).toHaveAttribute('title', '登录云端后可开启离开电脑提醒')
+    expect(bell).toHaveAttribute('aria-label', '登录云端后可开启离开电脑提醒')
     expect(bell).not.toHaveClass('text-red-500')
     expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
 
@@ -4906,7 +5263,7 @@ describe('DesktopSidebar', () => {
 
     const bell = screen.getByTestId('sidebar-global-im-notification-button')
     expect(bell).toBeInTheDocument()
-    expect(bell).toHaveAttribute('title', '登录云端后可开启离开电脑提醒')
+    expect(bell).toHaveAttribute('aria-label', '登录云端后可开启离开电脑提醒')
     expect(bell).not.toHaveClass('text-red-500')
     expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
 
@@ -4942,7 +5299,7 @@ describe('DesktopSidebar', () => {
     )
 
     const bell = screen.getByTestId('sidebar-global-im-notification-button')
-    expect(bell).toHaveAttribute('title', '登录云端后可开启离开电脑提醒')
+    expect(bell).toHaveAttribute('aria-label', '登录云端后可开启离开电脑提醒')
     expect(bell).not.toHaveClass('text-red-500')
     expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
     expect(screen.queryByTestId('sidebar-global-im-notification-indicator')).not.toBeInTheDocument()

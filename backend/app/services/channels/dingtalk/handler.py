@@ -20,7 +20,7 @@ Architecture:
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional
 
 import dingtalk_stream
 from dingtalk_stream import AckMessage, CallbackMessage, ChatbotMessage
@@ -29,18 +29,27 @@ from sqlalchemy.orm import Session
 from app.core.cache import cache_manager
 from app.db.session import SessionLocal
 from app.models.user import User
+from app.schemas.dingtalk_card import DingTalkChatCardConfig
 from app.services.channels.callback import BaseChannelCallbackService, ChannelType
 from app.services.channels.dingtalk.callback import (
     DingTalkCallbackInfo,
     dingtalk_callback_service,
 )
+from app.services.channels.dingtalk.card_binding import (
+    CardBinding,
+    reply_address,
+    save_binding,
+)
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
+from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 from app.services.channels.dingtalk.user_resolver import DingTalkUserResolver
 from app.services.channels.handler import BaseChannelHandler, MessageContext
 from app.services.execution.emitters import ResultEmitter
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
+from shared.telemetry.context import request_context
+from shared.telemetry.decorators import trace_async
 
 if TYPE_CHECKING:
     from dingtalk_stream.stream import DingTalkStreamClient
@@ -51,6 +60,34 @@ logger = logging.getLogger(__name__)
 # DingTalk may retry sending messages if ACK is not received in time
 DINGTALK_MSG_DEDUP_PREFIX = "dingtalk:msg_dedup:"
 DINGTALK_MSG_DEDUP_TTL = 300  # 5 minutes - enough to cover retry window
+
+
+def _reply_to_message_id(callback_data: dict[str, Any]) -> str:
+    """Return the stable reference for a quoted DingTalk message."""
+
+    text = callback_data.get("text")
+    if not isinstance(text, dict):
+        return ""
+    replied_message = text.get("repliedMsg")
+    if not text.get("isReplyMsg") and not isinstance(replied_message, dict):
+        return ""
+
+    candidates = [callback_data.get("originalProcessQueryKey")]
+    if isinstance(replied_message, dict):
+        candidates.extend(
+            [
+                replied_message.get("processQueryKey"),
+                replied_message.get("msgId"),
+            ]
+        )
+    candidates.append(callback_data.get("originalMsgId"))
+    for candidate in candidates:
+        if isinstance(candidate, bool) or not isinstance(candidate, (int, str)):
+            continue
+        normalized = str(candidate).strip()
+        if normalized:
+            return normalized
+    return ""
 
 
 class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallbackInfo]):
@@ -69,6 +106,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         get_default_team_id: Optional[Callable[[], Optional[int]]] = None,
         get_default_model_name: Optional[Callable[[], Optional[str]]] = None,
         get_user_mapping_config: Optional[Callable[[], Dict[str, Any]]] = None,
+        get_chat_card_config: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
     ):
         """Initialize the DingTalk channel handler.
 
@@ -89,6 +127,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         )
         self._dingtalk_client = dingtalk_client
         self._use_ai_card = use_ai_card
+        self._get_chat_card_config = get_chat_card_config
         # Store incoming_message for reply operations
         self._current_incoming_message: Optional[ChatbotMessage] = None
 
@@ -154,6 +193,9 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
                 message_id = str(callback_data.get("msgId") or "").strip()
                 if message_id:
                     extra_data["message_id"] = message_id
+                reply_to_message_id = _reply_to_message_id(callback_data)
+                if reply_to_message_id:
+                    extra_data["reply_to_message_id"] = reply_to_message_id
 
         # Include pre-downloaded images if they were attached
         images: list[dict[str, str]] = []
@@ -197,11 +239,15 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             user_mapping_mode=mapping_config.mode,
             user_mapping_config=mapping_config.config,
         )
-        return await resolver.resolve_user(
+        user = await resolver.resolve_user(
             sender_id=message_context.sender_id,
             sender_nick=message_context.sender_name,
             sender_staff_id=message_context.extra_data.get("sender_staff_id"),
         )
+
+        if user:
+            message_context.extra_data["wegent_user_id"] = user.id
+        return user
 
     async def send_text_reply(self, message_context: MessageContext, text: str) -> bool:
         """Send a text reply to DingTalk.
@@ -213,6 +259,15 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         Returns:
             True if sent successfully, False otherwise
         """
+        if message_context.extra_data.get("card_follow_up"):
+            from app.services.channels.dingtalk.sender import DingTalkRobotSender
+
+            credential = self._dingtalk_client.credential
+            sender = DingTalkRobotSender(credential.client_id, credential.client_secret)
+            result = await sender.send_text_message(
+                [message_context.extra_data["sender_staff_id"]], text
+            )
+            return bool(result.get("success"))
         incoming_message = message_context.raw_message
         if not isinstance(incoming_message, ChatbotMessage):
             self.logger.error("[DingTalkHandler] Invalid raw_message type for reply")
@@ -222,8 +277,26 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             # Use the SDK's reply_text method via the parent handler
             # This requires access to the ChatbotHandler's reply mechanism
             if hasattr(self, "_chatbot_handler") and self._chatbot_handler:
-                self._chatbot_handler.reply_text(text, incoming_message)
-                return True
+                result = await asyncio.to_thread(
+                    self._chatbot_handler.reply_text, text, incoming_message
+                )
+                success = isinstance(result, dict) and result.get("errcode") == 0
+                log_dingtalk_message(
+                    self.logger,
+                    "text_reply_result",
+                    {
+                        "channel_id": self.channel_id,
+                        "message_id": incoming_message.message_id,
+                        "success": success,
+                        "errcode": (
+                            result.get("errcode") if isinstance(result, dict) else None
+                        ),
+                        "errmsg": (
+                            result.get("errmsg") if isinstance(result, dict) else None
+                        ),
+                    },
+                )
+                return success
             else:
                 self.logger.warning(
                     "[DingTalkHandler] No chatbot_handler set for reply"
@@ -248,6 +321,8 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             channel_id=self._channel_id,
             conversation_id=message_context.conversation_id,
             incoming_message_data=message_context.extra_data.get("callback_data"),
+            chat_card=message_context.extra_data.get("chat_card"),
+            card_subtask_id=message_context.extra_data.get("card_subtask_id"),
         )
 
     def get_callback_service(self) -> Optional[BaseChannelCallbackService]:
@@ -276,10 +351,105 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         if not isinstance(incoming_message, ChatbotMessage):
             return None
 
+        raw_config = message_context.extra_data.get("chat_card")
+        config = (
+            DingTalkChatCardConfig.model_validate(raw_config)
+            if raw_config
+            else self.chat_card_config
+        )
+        if config:
+            message_context.extra_data["chat_card"] = config.model_dump()
         return StreamingResponseEmitter(
             dingtalk_client=self._dingtalk_client,
             incoming_message=incoming_message,
+            chat_card=config,
+            channel_id=self._channel_id,
         )
+
+    @property
+    def chat_card_config(self) -> Optional[DingTalkChatCardConfig]:
+        raw = self._get_chat_card_config() if self._get_chat_card_config else None
+        return DingTalkChatCardConfig.model_validate(raw) if raw is not None else None
+
+    async def _register_streaming_emitter(
+        self,
+        task_id: int | str,
+        streaming_emitter: Optional[ResultEmitter],
+        message_context: MessageContext,
+        *,
+        persist_without_emitter: bool = False,
+    ) -> None:
+        if streaming_emitter and getattr(streaming_emitter, "chat_card", None):
+            try:
+                await self._bind_chat_card(task_id, streaming_emitter, message_context)
+            except Exception:
+                try:
+                    await self._fail_unstarted_card_task(
+                        task_id, streaming_emitter.subtask_id, message_context
+                    )
+                    await self.send_text_reply(
+                        message_context, "聊天卡片创建失败，请检查模板配置后重试。"
+                    )
+                finally:
+                    await streaming_emitter.close()
+                raise
+        await super()._register_streaming_emitter(
+            task_id,
+            streaming_emitter,
+            message_context,
+            persist_without_emitter=persist_without_emitter,
+        )
+
+    async def _bind_chat_card(
+        self,
+        task_id: int | str,
+        emitter: StreamingResponseEmitter,
+        context: MessageContext,
+    ) -> None:
+        context.extra_data["card_subtask_id"] = emitter.subtask_id
+        if not emitter.card_instance_id:
+            raise RuntimeError("DingTalk chat card was not delivered")
+        if emitter.chat_card.follow_up_enabled:
+            await save_binding(
+                emitter.card_instance_id,
+                CardBinding(
+                    channel_id=self._channel_id,
+                    user_id=context.extra_data["wegent_user_id"],
+                    task_id=task_id,
+                    subtask_id=emitter.subtask_id,
+                    incoming_data=reply_address(context.extra_data["callback_data"]),
+                    config=emitter.chat_card,
+                    runtime_task=context.extra_data.get("card_runtime_task"),
+                ),
+            )
+
+    async def _fail_unstarted_card_task(
+        self,
+        task_id: int | str,
+        subtask_id: int,
+        context: MessageContext,
+    ) -> None:
+        if not isinstance(task_id, int) or not subtask_id:
+            return
+        from app.models.task import TaskResource
+        from app.stores.tasks import subtask_store, task_store
+
+        with SessionLocal() as db:
+            task = task_store.get_task_by_states(
+                db,
+                task_id=task_id,
+                states=[TaskResource.STATE_ACTIVE],
+                kind="Task",
+                user_id=context.extra_data["wegent_user_id"],
+            )
+            subtask = subtask_store.get_basic_by_id(db, subtask_id=subtask_id)
+            if task and subtask and subtask.task_id == task_id:
+                self._mark_private_im_task_response_failed(
+                    db,
+                    task=task,
+                    assistant_subtask=subtask,
+                    error_message="DingTalk chat card could not be initialized",
+                )
 
     def set_chatbot_handler(self, handler: "WegentChatbotHandler") -> None:
         """Set reference to the SDK chatbot handler for reply operations."""
@@ -307,6 +477,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         get_default_team_id: Optional[Callable[[], Optional[int]]] = None,
         get_default_model_name: Optional[Callable[[], Optional[str]]] = None,
         get_user_mapping_config: Optional[Callable[[], Dict[str, Any]]] = None,
+        get_chat_card_config: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
         channel_id: Optional[int] = None,
     ):
         """Initialize the handler.
@@ -328,6 +499,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         self._dingtalk_client = dingtalk_client
         self._use_ai_card = use_ai_card
         self._on_message = on_message
+        self._on_card_quote: Optional[Callable[[dict], Awaitable[bool]]] = None
         self._channel_id = channel_id or 0
 
         # Handle deprecated default_team_id parameter
@@ -342,6 +514,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             get_default_team_id=get_default_team_id,
             get_default_model_name=get_default_model_name,
             get_user_mapping_config=get_user_mapping_config,
+            get_chat_card_config=get_chat_card_config,
         )
         # Set back reference for reply operations
         self._channel_handler.set_chatbot_handler(self)
@@ -352,6 +525,11 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         """Set the DingTalk client after initialization."""
         self._dingtalk_client = client
         self._channel_handler.set_dingtalk_client(client)
+
+    def set_card_quote_handler(
+        self, handler: Callable[[dict], Awaitable[bool]]
+    ) -> None:
+        self._on_card_quote = handler
 
     @property
     def default_team_id(self) -> Optional[int]:
@@ -379,7 +557,30 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         Returns:
             Tuple of (status, message) for acknowledgment
         """
+        request_id = next(
+            (
+                value.strip()
+                for key, value in callback.headers.extensions.items()
+                if key.lower() == "x-request-id"
+                and isinstance(value, str)
+                and value.isprintable()
+                and value.strip()
+            ),
+            None,
+        )
+        # Each callback is a request; the long-lived stream may carry a startup ID.
+        with request_context(request_id):
+            return await self._process_message(callback)
+
+    @trace_async(span_name="dingtalk.process_message", tracer_name=__name__)
+    async def _process_message(self, callback: CallbackMessage) -> tuple[str, str]:
+        """Handle the callback within its own request context."""
         try:
+            log_dingtalk_message(
+                self.logger,
+                "received",
+                {"channel_id": self._channel_id, "data": callback.data},
+            )
             # Parse the incoming message
             incoming_message = ChatbotMessage.from_dict(callback.data)
 
@@ -399,19 +600,6 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                     )
                     # Return OK to prevent further retries
                     return AckMessage.STATUS_OK, "OK (duplicate)"
-
-            self.logger.info(
-                "[DingTalkHandler] Received message: sender=%s, msgId=%s, content_preview=%s",
-                getattr(incoming_message, "sender_nick", "unknown"),
-                msg_id,
-                (
-                    incoming_message.text.content[:50]
-                    if hasattr(incoming_message, "text")
-                    and incoming_message.text
-                    and incoming_message.text.content
-                    else "empty"
-                ),
-            )
 
             # Process through custom callback or delegate to channel handler
             if self._on_message:
@@ -519,16 +707,17 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                 continue
         return images
 
-    async def _download_dingtalk_file(
-        self, message: ChatbotMessage
-    ) -> list[dict[str, Any]]:
-        """Download file from DingTalk file-type message.
+    @trace_async(
+        span_name="dingtalk.download_file",
+        tracer_name="backend.channels.dingtalk",
+    )
+    async def _download_dingtalk_file(self, file_content: Any) -> list[dict[str, Any]]:
+        """Download a file from direct or quoted DingTalk file metadata.
 
-        For file messages, the SDK stores file metadata in message.extensions["content"].
         The downloadCode can be used with the same messageFiles/download API as images.
 
         Args:
-            message: ChatbotMessage with message_type=="file"
+            file_content: File metadata dictionary or JSON-encoded dictionary
 
         Returns:
             List of file dicts with filename and binary_data
@@ -537,17 +726,15 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
 
         import requests
 
-        # File metadata is in extensions["content"], may be dict or JSON string
-        file_content = message.extensions.get("content", {})
         if isinstance(file_content, str):
             try:
                 file_content = json.loads(file_content)
             except (json.JSONDecodeError, TypeError):
-                self.logger.error(
-                    "[DingTalkHandler] Failed to parse file content: %s",
-                    str(file_content)[:100],
-                )
+                self.logger.error("[DingTalkHandler] Failed to parse file metadata")
                 return []
+        if not isinstance(file_content, dict):
+            self.logger.warning("[DingTalkHandler] Invalid file metadata")
+            return []
 
         download_code = file_content.get("downloadCode")
         file_name = file_content.get("fileName", "unknown_file")
@@ -583,12 +770,16 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             ]
         except Exception as e:
             self.logger.error(
-                "[DingTalkHandler] Failed to download file %s: %s",
+                "[DingTalkHandler] Failed to download file %s: error_type=%s",
                 file_name,
-                e,
+                type(e).__name__,
             )
             return []
 
+    @trace_async(
+        span_name="dingtalk.process_channel_message",
+        tracer_name="backend.channels.dingtalk",
+    )
     async def _process_with_channel_handler(
         self, incoming_message: ChatbotMessage, callback_data: Dict[str, Any]
     ) -> bool:
@@ -607,6 +798,9 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         Returns:
             True if handled successfully
         """
+        if self._on_card_quote and await self._on_card_quote(callback_data):
+            return True
+
         # Add callback_data to the message for later retrieval
         # We need to store it so create_callback_info can access it
         if not hasattr(incoming_message, "_wegent_callback_data"):
@@ -621,10 +815,22 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             if images:
                 incoming_message._wegent_images = images
 
-        # Download files from DingTalk for file-type messages
+        # Quoted files arrive inside text messages, outside the SDK file content.
         message_type = getattr(incoming_message, "message_type", None)
+        file_content = None
         if message_type == "file":
-            files = await self._download_dingtalk_file(incoming_message)
+            file_content = incoming_message.extensions.get("content", {})
+        elif message_type == "text":
+            text = callback_data.get("text")
+            if isinstance(text, dict) and text.get("isReplyMsg"):
+                replied_message = text.get("repliedMsg")
+                if (
+                    isinstance(replied_message, dict)
+                    and replied_message.get("msgType") == "file"
+                ):
+                    file_content = replied_message.get("content", {})
+        if file_content is not None:
+            files = await self._download_dingtalk_file(file_content)
             if files:
                 incoming_message._wegent_files = files
 
@@ -632,72 +838,57 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         message_context = self._channel_handler.parse_message(incoming_message)
         message_context.extra_data["callback_data"] = callback_data
 
-        # Override send_text_reply to use our reply_text method
-        original_send_reply = self._channel_handler.send_text_reply
-
-        async def patched_send_reply(ctx: MessageContext, text: str) -> bool:
-            self.reply_text(text, ctx.raw_message)
-            return True
-
-        self._channel_handler.send_text_reply = patched_send_reply
-
+        # Get user and update IM binding for subscription notifications
+        db = SessionLocal()
         try:
-            # Get user and update IM binding for subscription notifications
-            db = SessionLocal()
-            try:
-                user = await self._channel_handler.resolve_user(db, message_context)
-                if user and self._channel_id:
-                    try:
-                        self.logger.info(
-                            "[DingTalkHandler] Updating IM binding from message: user_id=%s, channel_id=%s, conversation_type=%s, conversation_id=%s, sender_id=%s",
-                            user.id,
-                            self._channel_id,
-                            message_context.conversation_type,
-                            message_context.conversation_id,
-                            message_context.sender_id,
-                        )
-                        subscription_notification_service.update_user_im_binding(
-                            db=db,
-                            user_id=user.id,
-                            channel_id=self._channel_id,
-                            channel_type="dingtalk",
-                            sender_id=message_context.sender_id,
-                            sender_staff_id=message_context.extra_data.get(
-                                "sender_staff_id"
-                            ),
-                            conversation_id=message_context.conversation_id,
-                        )
-                        # Extract group name from incoming message for group binding
-                        group_name = getattr(
-                            incoming_message, "conversation_title", None
-                        )
+            user = await self._channel_handler.resolve_user(db, message_context)
+            if user and self._channel_id:
+                try:
+                    self.logger.info(
+                        "[DingTalkHandler] Updating IM binding from message: user_id=%s, channel_id=%s, conversation_type=%s, conversation_id=%s, sender_id=%s",
+                        user.id,
+                        self._channel_id,
+                        message_context.conversation_type,
+                        message_context.conversation_id,
+                        message_context.sender_id,
+                    )
+                    subscription_notification_service.update_user_im_binding(
+                        db=db,
+                        user_id=user.id,
+                        channel_id=self._channel_id,
+                        channel_type="dingtalk",
+                        sender_id=message_context.sender_id,
+                        sender_staff_id=message_context.extra_data.get(
+                            "sender_staff_id"
+                        ),
+                        conversation_id=message_context.conversation_id,
+                    )
+                    # Extract group name from incoming message for group binding
+                    group_name = getattr(incoming_message, "conversation_title", None)
 
-                        binding_result = subscription_notification_service.handle_dingtalk_binding_from_message(
-                            db=db,
-                            user_id=user.id,
-                            channel_id=self._channel_id,
-                            conversation_type=message_context.conversation_type,
-                            conversation_id=message_context.conversation_id,
-                            sender_id=message_context.sender_id,
-                            sender_staff_id=message_context.extra_data.get(
-                                "sender_staff_id"
-                            ),
-                            group_name=group_name,
-                        )
-                        self.logger.info(
-                            "[DingTalkHandler] Binding check result: user_id=%s, channel_id=%s, result=%s",
-                            user.id,
-                            self._channel_id,
-                            binding_result,
-                        )
-                    except Exception as e:
-                        self.logger.exception(
-                            "[DingTalkHandler] Failed during IM binding update/check"
-                        )
-            finally:
-                db.close()
-
-            return await self._channel_handler.handle_message(incoming_message)
+                    binding_result = subscription_notification_service.handle_dingtalk_binding_from_message(
+                        db=db,
+                        user_id=user.id,
+                        channel_id=self._channel_id,
+                        conversation_type=message_context.conversation_type,
+                        conversation_id=message_context.conversation_id,
+                        sender_id=message_context.sender_id,
+                        sender_staff_id=message_context.extra_data.get(
+                            "sender_staff_id"
+                        ),
+                        group_name=group_name,
+                    )
+                    self.logger.info(
+                        "[DingTalkHandler] Binding check result: user_id=%s, channel_id=%s, result=%s",
+                        user.id,
+                        self._channel_id,
+                        binding_result,
+                    )
+                except Exception as e:
+                    self.logger.exception(
+                        "[DingTalkHandler] Failed during IM binding update/check"
+                    )
         finally:
-            # Restore original method
-            self._channel_handler.send_text_reply = original_send_reply
+            db.close()
+
+        return await self._channel_handler.handle_message(incoming_message)

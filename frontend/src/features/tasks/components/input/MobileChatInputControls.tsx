@@ -5,9 +5,10 @@
 'use client'
 
 import React, { useMemo, useState, useCallback, type Dispatch, type SetStateAction } from 'react'
-import { ChevronRight, CircleStop, Hand, Plus, Zap } from 'lucide-react'
+import { ChevronRight, CircleStop, Hand, Plus, SlidersHorizontal, Zap } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
 import type { Model } from '../selector/ModelSelector'
+import ImageSizeSelector from '../selector/ImageSizeSelector'
 import VideoGenerationModeSelector from '../selector/VideoGenerationModeSelector'
 import VideoSettingsPopover from '../selector/VideoSettingsPopover'
 import MobileTeamSelector from '../selector/MobileTeamSelector'
@@ -34,7 +35,6 @@ import {
   canSwitchModelAfterMessages,
   canUseChatContexts,
   isChatShell,
-  teamRequiresWorkspace,
 } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import MobileSkillSelector from '../selector/MobileSkillSelector'
@@ -100,6 +100,8 @@ export interface MobileChatInputControlsProps {
   selectedImageModel?: Model | null
   onImageModelChange?: (model: Model) => void
   isImageModelsLoading?: boolean
+  selectedImageSize?: string
+  onImageSizeChange?: (size: string) => void
   showVideoControlsInChat?: boolean
   selectedResolution?: string
   onResolutionChange?: (resolution: string) => void
@@ -141,8 +143,9 @@ export interface MobileChatInputControlsProps {
   availableSkills?: UnifiedSkill[]
   teamSkillNames?: string[]
   preloadedSkillNames?: string[]
+  selectedSkillIds?: number[]
   selectedSkillNames?: string[]
-  onToggleSkill?: (skillName: string) => void
+  onToggleSkill?: (skill: UnifiedSkill) => void
 
   /** When true, hide all selectors - only show send button */
   hideSelectors?: boolean
@@ -175,7 +178,7 @@ export function MobileChatInputControls({
   setSelectedBranch,
   selectedTaskDetail,
   effectiveRequiresWorkspace,
-  onRequiresWorkspaceChange: _onRequiresWorkspaceChange,
+  onRequiresWorkspaceChange,
   enableClarification,
   setEnableClarification,
   enableCorrectionMode = false,
@@ -194,6 +197,8 @@ export function MobileChatInputControls({
   selectedImageModel,
   onImageModelChange,
   isImageModelsLoading = false,
+  selectedImageSize = '1024x1024',
+  onImageSizeChange,
   showVideoControlsInChat = false,
   selectedResolution = '720p',
   onResolutionChange,
@@ -227,12 +232,15 @@ export function MobileChatInputControls({
   availableSkills = [],
   teamSkillNames = [],
   preloadedSkillNames = [],
+  selectedSkillIds,
   selectedSkillNames = [],
   onToggleSkill,
   hideSelectors,
 }: MobileChatInputControlsProps) {
   const { t } = useTranslation('chat')
   const [resourceDrawerOpen, setResourceDrawerOpen] = useState(false)
+  const [videoConfigurationDrawerOpen, setVideoConfigurationDrawerOpen] = useState(false)
+  const [imageConfigurationDrawerOpen, setImageConfigurationDrawerOpen] = useState(false)
   const [nestedSelectorOpen, setNestedSelectorOpen] = useState(false)
   const [skillDrawerOpen, setSkillDrawerOpen] = useState(false)
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
@@ -257,10 +265,6 @@ export function MobileChatInputControls({
   const showClarificationAction = isChatShell(selectedTeam)
   const showCorrectionAction = isChatShell(selectedTeam) && Boolean(onCorrectionModeToggle)
   const showGuidanceAction = isChatShell(selectedTeam) && Boolean(onSendGuidance)
-  const showRepositoryAction =
-    showRepositorySelector &&
-    teamRequiresWorkspace(selectedTeam) &&
-    effectiveRequiresWorkspace !== false
   const showVideoSettings = Boolean(
     isVideoMode &&
     videoParamVisibility.showSettings &&
@@ -268,15 +272,23 @@ export function MobileChatInputControls({
     onRatioChange &&
     onDurationChange
   )
+  const showVideoGenerationModeAction = Boolean(
+    isVideoMode && onVideoGenerationModeChange && videoGenerationModes.length > 1
+  )
+  const showVideoModelAction = Boolean(
+    isVideoMode && videoParamVisibility.showModel && onVideoModelChange
+  )
+  const showVideoConfiguration =
+    showVideoGenerationModeAction || showVideoModelAction || showVideoSettings
+  const showImageConfiguration = Boolean(isImageMode && (onImageModelChange || onImageSizeChange))
   const hasMoreActions =
     showAttachmentAction ||
     showChatContexts ||
     showSkillAction ||
-    showRepositoryAction ||
+    showRepositorySelector ||
     showClarificationAction ||
     showCorrectionAction ||
-    showGuidanceAction ||
-    showVideoSettings
+    showGuidanceAction
   const handleAttachmentFileSelect = useCallback(
     (files: File | File[]) => {
       setResourceDrawerOpen(false)
@@ -455,45 +467,48 @@ export function MobileChatInputControls({
           </div>
         )}
 
-        {isVideoMode && onVideoGenerationModeChange && (
-          <VideoGenerationModeSelector
-            modes={videoGenerationModes}
-            value={selectedVideoGenerationMode}
-            onChange={onVideoGenerationModeChange}
-            disabled={isStreaming}
-          />
-        )}
-        {isVideoMode && videoParamVisibility.showModel && onVideoModelChange && (
-          <div className="min-w-0 flex-1 overflow-hidden">
-            <MobileModelSelector
-              selectedModel={selectedVideoModel ?? null}
-              setSelectedModel={model => model && onVideoModelChange(model)}
-              forceOverride={false}
-              setForceOverride={() => {}}
-              selectedTeam={selectedTeam}
-              disabled={isStreaming}
-              isLoading={isVideoModelsLoading}
-              modelCategoryType="video"
-            />
-          </div>
-        )}
-        {isImageMode && onImageModelChange && (
-          <div
-            className="min-w-0 flex-1 overflow-hidden"
-            data-testid="mobile-image-model-selector-slot"
+        {showImageConfiguration && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-expanded={imageConfigurationDrawerOpen}
+            aria-invalid={isModelSelectionRequired || undefined}
+            aria-label={t('image.settings_title')}
+            data-testid="mobile-image-configuration-button"
+            title={t('image.settings_title')}
+            onClick={() => {
+              setResourceDrawerOpen(false)
+              setImageConfigurationDrawerOpen(true)
+            }}
+            disabled={isStreaming || Boolean(hideSelectors)}
+            className={`h-11 w-11 shrink-0 rounded-xl border hover:bg-hover hover:text-text-primary ${
+              isModelSelectionRequired
+                ? 'border-error bg-error/5 text-error'
+                : 'border-border bg-base text-text-muted'
+            }`}
           >
-            <MobileModelSelector
-              selectedModel={selectedImageModel ?? null}
-              setSelectedModel={model => model && onImageModelChange(model)}
-              forceOverride={false}
-              setForceOverride={() => {}}
-              selectedTeam={selectedTeam}
-              disabled={isStreaming}
-              isLoading={isImageModelsLoading}
-              modelCategoryType="image"
-              triggerVariant="compact"
-            />
-          </div>
+            <SlidersHorizontal className="h-5 w-5" />
+          </Button>
+        )}
+        {showVideoConfiguration && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-expanded={videoConfigurationDrawerOpen}
+            aria-label={t('video.settings_title')}
+            data-testid="mobile-video-configuration-button"
+            title={t('video.settings_title')}
+            onClick={() => {
+              setResourceDrawerOpen(false)
+              setVideoConfigurationDrawerOpen(true)
+            }}
+            disabled={isStreaming || Boolean(hideSelectors)}
+            className="h-11 w-11 shrink-0 rounded-xl border border-border bg-base text-text-muted hover:bg-hover hover:text-text-primary"
+          >
+            <SlidersHorizontal className="h-5 w-5" />
+          </Button>
         )}
         <div className="shrink-0">{renderSendButton()}</div>
       </div>
@@ -565,9 +580,9 @@ export function MobileChatInputControls({
                 </div>
               )}
 
-              {(showRepositoryAction || showClarificationAction || showCorrectionAction) && (
+              {(showRepositorySelector || showClarificationAction || showCorrectionAction) && (
                 <div className="mt-3 overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
-                  {showRepositoryAction && (
+                  {showRepositorySelector && (
                     <MobileRepositorySelector
                       selectedRepo={selectedRepo}
                       handleRepoChange={setSelectedRepo}
@@ -575,6 +590,8 @@ export function MobileChatInputControls({
                       handleBranchChange={setSelectedBranch}
                       disabled={hasMessages}
                       selectedTaskDetail={selectedTaskDetail}
+                      requiresWorkspace={effectiveRequiresWorkspace}
+                      onRequiresWorkspaceChange={onRequiresWorkspaceChange}
                       onSelectorOpenChange={handleNestedSelectorOpenChange}
                     />
                   )}
@@ -597,28 +614,6 @@ export function MobileChatInputControls({
                   )}
                 </div>
               )}
-              {showVideoSettings && onResolutionChange && onRatioChange && onDurationChange && (
-                <div className="mt-3 overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
-                  <VideoSettingsPopover
-                    selectedRatio={selectedRatio}
-                    onRatioChange={onRatioChange}
-                    availableRatios={availableRatios ?? ['16:9', '9:16', '1:1']}
-                    ratioOptions={ratioOptions}
-                    selectedDuration={selectedDuration}
-                    onDurationChange={onDurationChange}
-                    availableDurations={availableDurations ?? [5, 10]}
-                    selectedResolution={selectedResolution}
-                    onResolutionChange={onResolutionChange}
-                    availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
-                    resolutionOptions={resolutionOptions}
-                    disabled={isStreaming}
-                    showDuration={!hideDurationSelector}
-                    hiddenVideoParams={hiddenVideoParams}
-                    triggerVariant="menu-item"
-                  />
-                </div>
-              )}
-
               {showGuidanceAction && onSendGuidance && (
                 <div className="mt-3 overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
                   <Button
@@ -639,11 +634,128 @@ export function MobileChatInputControls({
         )}
       </Drawer>
 
+      <Drawer open={imageConfigurationDrawerOpen} onOpenChange={setImageConfigurationDrawerOpen}>
+        {imageConfigurationDrawerOpen && (
+          <DrawerContent
+            className="max-h-[85vh] bg-[#f2f2f7] dark:bg-[#1c1c1e]"
+            showHandle={false}
+            data-testid="mobile-image-configuration-menu"
+          >
+            <div className="flex justify-center pb-3 pt-2">
+              <div className="h-1 w-9 rounded-full bg-[#3c3c43]/30 dark:bg-[#5c5c5e]" />
+            </div>
+            <div
+              className="max-h-[65vh] min-h-0 flex-1 overflow-y-auto px-4 pb-4"
+              style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+            >
+              <div className="px-1 pb-2 text-xs font-medium text-[#8e8e93]">
+                {t('image.settings_title')}
+              </div>
+              <div
+                className="divide-y divide-border overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]"
+                data-testid="mobile-image-configuration"
+              >
+                {onImageModelChange && (
+                  <MobileModelSelector
+                    selectedModel={selectedImageModel ?? null}
+                    setSelectedModel={model => model && onImageModelChange(model)}
+                    forceOverride={false}
+                    setForceOverride={() => {}}
+                    selectedTeam={selectedTeam}
+                    disabled={isStreaming}
+                    isLoading={isImageModelsLoading}
+                    modelCategoryType="image"
+                    triggerVariant="settings-row"
+                  />
+                )}
+                {onImageSizeChange && (
+                  <ImageSizeSelector
+                    selectedSize={selectedImageSize}
+                    onSizeChange={onImageSizeChange}
+                    disabled={isStreaming}
+                    inline
+                  />
+                )}
+              </div>
+            </div>
+          </DrawerContent>
+        )}
+      </Drawer>
+
+      <Drawer open={videoConfigurationDrawerOpen} onOpenChange={setVideoConfigurationDrawerOpen}>
+        {videoConfigurationDrawerOpen && (
+          <DrawerContent
+            className="max-h-[85vh] bg-[#f2f2f7] dark:bg-[#1c1c1e]"
+            showHandle={false}
+            data-testid="mobile-video-configuration-menu"
+          >
+            <div className="flex justify-center pb-3 pt-2">
+              <div className="h-1 w-9 rounded-full bg-[#3c3c43]/30 dark:bg-[#5c5c5e]" />
+            </div>
+            <div
+              className="max-h-[65vh] min-h-0 flex-1 overflow-y-auto px-4 pb-4"
+              style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+            >
+              <div className="px-1 pb-2 text-xs font-medium text-[#8e8e93]">
+                {t('video.settings_title')}
+              </div>
+              <div
+                className="divide-y divide-border overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]"
+                data-testid="mobile-video-configuration"
+              >
+                {showVideoGenerationModeAction && onVideoGenerationModeChange && (
+                  <VideoGenerationModeSelector
+                    modes={videoGenerationModes}
+                    value={selectedVideoGenerationMode}
+                    onChange={onVideoGenerationModeChange}
+                    disabled={isStreaming}
+                    inline
+                  />
+                )}
+                {showVideoModelAction && onVideoModelChange && (
+                  <MobileModelSelector
+                    selectedModel={selectedVideoModel ?? null}
+                    setSelectedModel={model => model && onVideoModelChange(model)}
+                    forceOverride={false}
+                    setForceOverride={() => {}}
+                    selectedTeam={selectedTeam}
+                    disabled={isStreaming}
+                    isLoading={isVideoModelsLoading}
+                    modelCategoryType="video"
+                    triggerVariant="settings-row"
+                  />
+                )}
+                {showVideoSettings && onResolutionChange && onRatioChange && onDurationChange && (
+                  <VideoSettingsPopover
+                    selectedRatio={selectedRatio}
+                    onRatioChange={onRatioChange}
+                    availableRatios={availableRatios ?? ['16:9', '9:16', '1:1']}
+                    ratioOptions={ratioOptions}
+                    selectedDuration={selectedDuration}
+                    onDurationChange={onDurationChange}
+                    availableDurations={availableDurations ?? [5, 10]}
+                    selectedResolution={selectedResolution}
+                    onResolutionChange={onResolutionChange}
+                    availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
+                    resolutionOptions={resolutionOptions}
+                    disabled={isStreaming}
+                    showDuration={!hideDurationSelector}
+                    hiddenVideoParams={hiddenVideoParams}
+                    inline
+                  />
+                )}
+              </div>
+            </div>
+          </DrawerContent>
+        )}
+      </Drawer>
+
       {showSkillAction && onToggleSkill && (
         <MobileSkillSelector
           skills={availableSkills}
           teamSkillNames={teamSkillNames}
           preloadedSkillNames={preloadedSkillNames}
+          selectedSkillIds={selectedSkillIds}
           selectedSkillNames={selectedSkillNames}
           onToggleSkill={onToggleSkill}
           disabled={isStreaming}

@@ -24,6 +24,8 @@ jest.mock('@/apis/admin', () => ({
     updateQuickLaunchFunctionsConfig: jest.fn(),
     getKnowledgeBaseRetrievalProfile: jest.fn(),
     updateKnowledgeBaseRetrievalProfile: jest.fn(),
+    getCodeWikiGenerationPolicy: jest.fn(),
+    updateCodeWikiGenerationPolicy: jest.fn(),
   },
 }))
 
@@ -75,6 +77,9 @@ const tMock = (key: string) => {
     'system_config.quick_launch_function_preset_no_attachments': 'No attachments',
     'system_config.quick_launch_function_add': 'Add system function',
     'system_config.quick_launch_function_empty': 'No system functions',
+    'system_config.code_wiki_generation_strategy_coordinator_reviewed_title': '审核式生成',
+    'system_config.code_wiki_generation_strategy_coordinator_reviewed_description':
+      '先检查文档计划，再开始写作；通常更稳，但耗时更长。',
     'system_config.version': 'Version',
     'common.save': 'Save',
     'common.done': 'Done',
@@ -163,6 +168,21 @@ describe('SystemConfigPanel', () => {
       retrieval_config: null,
       health: { status: 'missing', fallback_reason: null },
     })
+    mockedAdminApis.getCodeWikiGenerationPolicy.mockResolvedValue({
+      version: 0,
+      configured: false,
+      default_strategy: 'coordinator_reviewed',
+      strategies: [
+        {
+          id: 'coordinator_reviewed',
+          enabled: true,
+          team_name: 'ai-assistant',
+          team_namespace: 'default',
+          display_name: 'Reviewed coordinator',
+          description: 'Reviews the plan before writing.',
+        },
+      ],
+    })
     mockedUploadAttachment.mockResolvedValue({
       id: 777,
       filename: 'template.pdf',
@@ -188,6 +208,21 @@ describe('SystemConfigPanel', () => {
 
     expect(await screen.findByTestId('knowledge-base-retrieval-profile-toggle')).toBeInTheDocument()
     expect(screen.queryByTestId('save-knowledge-base-retrieval-profile')).not.toBeInTheDocument()
+  })
+
+  test('keeps Code Wiki generation strategy policy in its own collapsed section', async () => {
+    render(<SystemConfigPanel />)
+
+    const toggle = await screen.findByTestId('code-wiki-generation-policy-toggle')
+    expect(screen.queryByTestId('save-code-wiki-generation-policy')).not.toBeInTheDocument()
+
+    fireEvent.click(toggle)
+
+    expect(await screen.findByTestId('save-code-wiki-generation-policy')).toBeInTheDocument()
+    expect(screen.getAllByText('审核式生成')).not.toHaveLength(0)
+    expect(
+      screen.getByText('先检查文档计划，再开始写作；通常更稳，但耗时更长。')
+    ).toBeInTheDocument()
   })
 
   test('loads and saves system function launcher form configuration', async () => {

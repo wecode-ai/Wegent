@@ -8,6 +8,7 @@ import {
   ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
+  getKnownLocalExecutorDeviceId,
   requestLocalExecutor,
 } from '@/desktop/localExecutor'
 import type {
@@ -39,6 +40,7 @@ import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPlugin
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
 import { mergeLocalInstalledWithStorePackages } from '@/components/plugins/installedPluginMerge'
+import { installedPluginMarketplaceId } from '@/components/plugins/pluginDistribution'
 
 const MAX_PERSONAL_PLUGIN_PACKAGE_BYTES = 50 * 1024 * 1024
 
@@ -234,6 +236,7 @@ export interface LocalCodexPluginApi {
     q?: string
     marketplaceId?: string
     mergeAllMarketplaces?: boolean
+    marketplaceKinds?: Array<'local' | 'remote'>
     refresh?: boolean
   }): Promise<LocalCodexPluginsState>
   readMarketplacePluginDetail(marketplaceId: string, pluginName: string): Promise<InstalledPlugin>
@@ -241,6 +244,8 @@ export interface LocalCodexPluginApi {
     refresh?: boolean
     /** Start a new membership read when a newer refresh supersedes a pending one. */
     shareInflight?: boolean
+    /** Read current membership and reject partial inventory instead of assuming absence. */
+    requireComplete?: boolean
   }): Promise<InstalledPluginListResponse & { deviceId?: string }>
   listSkills(params?: { cwds?: string[]; forceReload?: boolean }): Promise<LocalDeviceSkill[]>
   listApps(params?: {
@@ -315,6 +320,9 @@ export interface CodexPluginSummary {
 
 interface CodexPluginConnector {
   slug: string
+  accountAuth?: NonNullable<InstalledPluginComponents['connectors']>[number]['accountAuth']
+  displayName?: string | null
+  authorizationGroup?: { id: string; displayName: string } | null
   authPolicy?: 'on_install' | 'on_use' | 'optional' | string | null
   localAuth?: {
     kind?: 'local_qr' | 'browser_oauth'
@@ -442,6 +450,7 @@ let cachedStateGeneration = 0
 let nextReadStateGeneration = 1
 let cachedStateAt = 0
 let cachedStateParamsKey = ''
+let activeReadStateDeviceId: string | null = null
 const inflightReadState = new Map<string, Promise<LocalCodexPluginsState>>()
 let inflightPluginInstalled: Promise<{
   marketplaces: CodexPluginMarketplaceEntry[]
@@ -464,9 +473,10 @@ type PersistedReadStateStore = {
 /** Clears the short-lived readState cache. Intended for tests and explicit invalidation. */
 export function clearLocalCodexPluginsReadStateCache(): void {
   cachedState = null
-  cachedStateGeneration = 0
+  cachedStateGeneration = nextReadStateGeneration++
   cachedStateAt = 0
   cachedStateParamsKey = ''
+  activeReadStateDeviceId = null
   inflightReadState.clear()
   inflightPluginInstalled = null
   inflightWegentStoreList = null
@@ -740,9 +750,18 @@ function toDurableReadState(state: LocalCodexPluginsState): LocalCodexPluginsSta
   }
 }
 
-function isOpenAiOfficialMarketplaceItem(item: PluginMarketplaceItem): boolean {
+function isOpenAiOfficialRemoteMarketplaceItem(item: PluginMarketplaceItem): boolean {
   const marketplaceId = item.manifest?.marketplaceId
-  return typeof marketplaceId === 'string' && isOpenAiOfficialMarketplaceId(marketplaceId)
+  return typeof marketplaceId === 'string' && isOpenAiOfficialRemoteMarketplaceId(marketplaceId)
+}
+
+function installedPluginCacheIdentity(plugin: InstalledPlugin): string {
+  const id = installedPluginId(plugin)
+  if (id != null && String(id).trim()) return String(id)
+  return pluginMarketplaceIdentity(
+    String(plugin.spec.source.pluginKey || plugin.metadata.name || ''),
+    installedPluginMarketplaceId(plugin) ?? ''
+  )
 }
 
 /**
@@ -754,30 +773,52 @@ function isOpenAiOfficialMarketplaceItem(item: PluginMarketplaceItem): boolean {
  */
 function retainOpenAiOfficialCatalog(
   previous: LocalCodexPluginsState | null,
-  next: LocalCodexPluginsState
+  next: LocalCodexPluginsState,
+  options?: { retainRemoteInstalled?: boolean }
 ): LocalCodexPluginsState {
-  const previousOfficialMarketplaces = (previous?.marketplaces ?? []).filter(
+  const previousRemoteMarketplaces = (previous?.marketplaces ?? []).filter(
     marketplace =>
-      isOpenAiOfficialMarketplaceId(marketplace.id) ||
-      isOpenAiOfficialMarketplaceId(marketplace.name)
+      isOpenAiOfficialRemoteMarketplaceId(marketplace.id) ||
+      isOpenAiOfficialRemoteMarketplaceId(marketplace.name)
   )
-  const hasCurrentOfficialItems = next.marketplaceItems.some(isOpenAiOfficialMarketplaceItem)
-  if (previousOfficialMarketplaces.length === 0 || hasCurrentOfficialItems) return next
+  const hasCurrentRemoteItems = next.marketplaceItems.some(isOpenAiOfficialRemoteMarketplaceItem)
+  const shouldRetainRemoteCatalog = previousRemoteMarketplaces.length > 0 && !hasCurrentRemoteItems
+  const hasCurrentRemoteInstalled = next.installedPlugins.some(plugin =>
+    isOpenAiOfficialRemoteMarketplaceId(installedPluginMarketplaceId(plugin))
+  )
+  const shouldRetainRemoteInstalled =
+    options?.retainRemoteInstalled === true && !hasCurrentRemoteInstalled
+  if (!shouldRetainRemoteCatalog && !shouldRetainRemoteInstalled) return next
 
   const existingItemIds = new Set(next.marketplaceItems.map(item => String(item.id)))
-  const retainedItems = (previous?.marketplaceItems ?? []).filter(
-    item => isOpenAiOfficialMarketplaceItem(item) && !existingItemIds.has(String(item.id))
-  )
+  const retainedItems = shouldRetainRemoteCatalog
+    ? (previous?.marketplaceItems ?? []).filter(
+        item => isOpenAiOfficialRemoteMarketplaceItem(item) && !existingItemIds.has(String(item.id))
+      )
+    : []
   const existingMarketplaceIds = new Set(next.marketplaces.map(marketplace => marketplace.id))
-  const retainedMarketplaces = previousOfficialMarketplaces.filter(
-    marketplace => !existingMarketplaceIds.has(marketplace.id)
-  )
+  const retainedMarketplaces = shouldRetainRemoteCatalog
+    ? previousRemoteMarketplaces.filter(marketplace => !existingMarketplaceIds.has(marketplace.id))
+    : []
+  const existingInstalledIds = new Set(next.installedPlugins.map(installedPluginCacheIdentity))
+  const retainedInstalled = shouldRetainRemoteInstalled
+    ? (previous?.installedPlugins ?? []).filter(
+        plugin =>
+          isOpenAiOfficialRemoteMarketplaceId(installedPluginMarketplaceId(plugin)) &&
+          !existingInstalledIds.has(installedPluginCacheIdentity(plugin))
+      )
+    : []
   console.warn(
     '[Wework] Codex plugin/list returned an incomplete OpenAI marketplace after resume; retaining cached catalog'
   )
+  const installedPlugins = [...next.installedPlugins, ...retainedInstalled]
   return {
     ...next,
-    marketplaceItems: [...next.marketplaceItems, ...retainedItems],
+    marketplaceItems: applyInstalledPluginsToMarketplaceItems(
+      [...next.marketplaceItems, ...retainedItems],
+      installedPlugins
+    ),
+    installedPlugins,
     marketplaces: [...next.marketplaces, ...retainedMarketplaces],
   }
 }
@@ -800,7 +841,28 @@ function persistReadStateSnapshot(
   writePersistedReadStateStore(store)
 }
 
-function hydrateReadStateCacheFromSession(): void {
+function readStateMatchesDevice(
+  state: LocalCodexPluginsState | null | undefined,
+  deviceId: string
+): state is LocalCodexPluginsState {
+  return Boolean(state && deviceId && state.deviceId.trim() === deviceId)
+}
+
+function resetInMemoryReadStateForDevice(deviceId: string): void {
+  if (activeReadStateDeviceId === deviceId) return
+  activeReadStateDeviceId = deviceId
+  cachedState = null
+  cachedStateGeneration = nextReadStateGeneration++
+  cachedStateAt = 0
+  cachedStateParamsKey = ''
+  inflightReadState.clear()
+  inflightPluginInstalled = null
+  inflightWegentStoreList = null
+  didHydrateReadStateSession = false
+  warmupReadStatePromise = null
+}
+
+function hydrateReadStateCacheFromSession(deviceId: string): void {
   if (didHydrateReadStateSession) return
   didHydrateReadStateSession = true
   if (cachedState) return
@@ -810,6 +872,7 @@ function hydrateReadStateCacheFromSession(): void {
   )[0]
   if (!entry) return
   if (Date.now() - entry.cachedAt > READ_STATE_DURABLE_TTL_MS) return
+  if (!readStateMatchesDevice(entry.state, deviceId)) return
   cachedState = entry.state
   cachedStateAt = entry.cachedAt
   cachedStateParamsKey = entry.paramsKey
@@ -821,6 +884,8 @@ function rememberReadStateSnapshot(
   state: LocalCodexPluginsState,
   generation: number
 ): void {
+  const deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
+  if (!readStateMatchesDevice(state, deviceId)) return
   if (generation < cachedStateGeneration) return
   cachedState = state
   cachedStateGeneration = generation
@@ -836,12 +901,18 @@ export function peekLocalCodexPluginsReadState(
     mergeAllMarketplaces?: boolean
   } = {}
 ): LocalCodexPluginsState | null {
-  hydrateReadStateCacheFromSession()
+  const deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
+  if (!deviceId) return null
+  resetInMemoryReadStateForDevice(deviceId)
+  hydrateReadStateCacheFromSession(deviceId)
   const paramsKey = readStateParamsKey(params)
-  if (cachedState && cachedStateParamsKey === paramsKey) return cachedState
+  if (readStateMatchesDevice(cachedState, deviceId) && cachedStateParamsKey === paramsKey) {
+    return cachedState
+  }
   const persisted = readPersistedReadStateStore().entries[paramsKey]
   if (!persisted) return null
   if (Date.now() - persisted.cachedAt > READ_STATE_DURABLE_TTL_MS) return null
+  if (!readStateMatchesDevice(persisted.state, deviceId)) return null
   cachedState = persisted.state
   cachedStateAt = persisted.cachedAt
   cachedStateParamsKey = paramsKey
@@ -1322,8 +1393,10 @@ type PersonalMarketplaceListResult = {
 }
 
 type WegentStorePluginSummary = {
+  defaultPrompt?: PluginInterface['defaultPrompt']
   name: string
   packageId: string
+  installedPluginId?: number | null
   marketplace: string
   version?: string | null
   enabled: boolean
@@ -1335,6 +1408,7 @@ type WegentStorePluginSummary = {
 }
 
 type WegentStoreListResult = {
+  supportsPluginReconciliation?: boolean
   storePath: string
   plugins: WegentStorePluginSummary[]
 }
@@ -1581,6 +1655,9 @@ function pluginComponents(detail?: CodexPluginDetail | null): InstalledPluginCom
     const localAuth = connector.localAuth
     return {
       slug: connector.slug,
+      displayName: connector.displayName ?? null,
+      authorizationGroup: connector.authorizationGroup ?? null,
+      ...(connector.accountAuth ? { accountAuth: connector.accountAuth } : {}),
       authPolicy:
         connector.authPolicy === 'on_install' ||
         connector.authPolicy === 'on_use' ||
@@ -1878,7 +1955,7 @@ function toWegentStoreInstalledPlugin(
   const marketplace = isWegentCloudMarketplace(plugin.marketplace)
     ? INTERNAL_DEVICE_MARKETPLACE_ID
     : plugin.marketplace
-  return toInstalledPlugin(
+  const installed = toInstalledPlugin(
     {
       name: marketplace,
       path: storePath || plugin.pluginPath,
@@ -1895,6 +1972,7 @@ function toWegentStoreInstalledPlugin(
         path: plugin.pluginPath,
       },
       interface: {
+        defaultPrompt: plugin.defaultPrompt,
         displayName: plugin.displayName?.trim() || plugin.name,
         shortDescription: plugin.description ?? null,
         logo: plugin.logo ?? null,
@@ -1902,43 +1980,68 @@ function toWegentStoreInstalledPlugin(
       },
     }
   )
+  return {
+    ...installed,
+    spec: {
+      ...installed.spec,
+      sourcePayload: {
+        ...(installed.spec.sourcePayload ?? {}),
+        managedByWegent: true,
+        cloudInstalledPluginId: plugin.installedPluginId ?? null,
+      },
+    },
+  }
+}
+
+/** Read authoritative managed inventory without cached or partial results. */
+export async function readPluginReconciliationInventory(): Promise<InstalledPlugin[]> {
+  const inventory = await requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
+  if (inventory.supportsPluginReconciliation !== true || !Array.isArray(inventory.plugins)) {
+    throw new Error('Update the desktop runtime to check plugin installations')
+  }
+  return inventory.plugins.map(plugin => toWegentStoreInstalledPlugin(plugin, inventory.storePath))
 }
 
 /**
  * Lists packages referenced by the active capability manifest. Avoids Codex
  * plugin/list so installed enterprise ZIPs can paint without scanning caches.
  */
-export async function listWegentStorePluginsFromDisk(): Promise<InstalledPlugin[]> {
+export async function listWegentStorePluginsFromDisk(
+  requireComplete = false
+): Promise<InstalledPlugin[]> {
   if (!isElectronRuntime()) return []
-  if (inflightWegentStoreList) return inflightWegentStoreList
-  const pending = requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
-    .catch(error => {
-      console.warn('[Wework] list wegent store plugins from disk failed', error)
-      return null
-    })
-    .then(listed => {
-      if (!listed?.plugins?.length) {
-        if (listed) {
+  const pending =
+    inflightWegentStoreList ??
+    requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
+      .then(listed => {
+        if (!listed || !Array.isArray(listed.plugins))
+          throw new Error('Invalid local plugin inventory')
+        if (!listed.plugins.length) {
           console.info('[Wework] wegent store disk list empty', {
             storePath: listed.storePath || null,
           })
+          return [] as InstalledPlugin[]
         }
-        return [] as InstalledPlugin[]
-      }
-      console.info('[Wework] wegent store disk list', {
-        storePath: listed.storePath || null,
-        count: listed.plugins.length,
-        names: listed.plugins.map(plugin => plugin.name),
+        console.info('[Wework] wegent store disk list', {
+          storePath: listed.storePath || null,
+          count: listed.plugins.length,
+          names: listed.plugins.map(plugin => plugin.name),
+        })
+        return listed.plugins.map(plugin =>
+          toWegentStoreInstalledPlugin(plugin, listed.storePath || plugin.pluginPath)
+        )
       })
-      return listed.plugins.map(plugin =>
-        toWegentStoreInstalledPlugin(plugin, listed.storePath || plugin.pluginPath)
-      )
-    })
-    .finally(() => {
-      if (inflightWegentStoreList === pending) inflightWegentStoreList = null
-    })
+      .finally(() => {
+        if (inflightWegentStoreList === pending) inflightWegentStoreList = null
+      })
   inflightWegentStoreList = pending
-  return pending
+  try {
+    return await pending
+  } catch (error) {
+    if (requireComplete) throw error
+    console.warn('[Wework] list wegent store plugins from disk failed', error)
+    return []
+  }
 }
 
 function toInstalledPlugin(
@@ -2051,10 +2154,11 @@ async function readPluginDetail(
       }
     )
     const connectors = manifest?.connectors
-    if (!connectors || connectors.length === 0) return response.plugin
+    if (!Array.isArray(connectors)) return response.plugin
     return {
       ...response.plugin,
-      connectors: response.plugin.connectors?.length ? response.plugin.connectors : connectors,
+      // The package owns host-specific fields that plugin/read may not preserve.
+      connectors,
     }
   } catch (error) {
     console.warn('[Wework plugins] failed to read local plugin manifest', {
@@ -2281,6 +2385,8 @@ export function applyInstalledPluginsToMarketplaceItems(
   installedPlugins: InstalledPlugin[]
 ): PluginMarketplaceItem[] {
   const installedByIdentity = new Map<string, InstalledPlugin>()
+  const installedByCloudId = new Map<string, InstalledPlugin>()
+  const installedByAccountId = new Map<string, InstalledPlugin>()
   for (const plugin of installedPlugins) {
     const marketplace =
       plugin.spec.source.marketplace ||
@@ -2294,10 +2400,19 @@ export function applyInstalledPluginsToMarketplaceItems(
       marketplaceName
     )
     if (identity) installedByIdentity.set(identity, plugin)
+    const cloudId = plugin.spec.pluginId ?? plugin.spec.sourcePayload?.cloudPluginId
+    if (cloudId != null) installedByCloudId.set(String(cloudId), plugin)
+    const accountId = plugin.spec.sourcePayload?.cloudInstalledPluginId
+    if (accountId != null) installedByAccountId.set(String(accountId), plugin)
   }
 
   return items.map(item => {
-    const installed = installedByIdentity.get(marketplaceItemInstallIdentity(item))
+    const cloudItem = typeof item.id === 'number' && item.latestReleaseId != null
+    const installed =
+      (cloudItem
+        ? (installedByCloudId.get(String(item.id)) ??
+          installedByAccountId.get(String(item.installedPluginId)))
+        : undefined) ?? installedByIdentity.get(marketplaceItemInstallIdentity(item))
     if (!installed) {
       const marketplaceId =
         typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : ''
@@ -2339,7 +2454,9 @@ export function applyInstalledPluginsToMarketplaceItems(
       ...item,
       installed: true,
       installedPluginId:
-        typeof id === 'string' || typeof id === 'number' ? id : item.installedPluginId,
+        item.installedPluginId ??
+        (installed.spec.sourcePayload?.cloudInstalledPluginId as string | number | undefined) ??
+        (typeof id === 'string' || typeof id === 'number' ? id : null),
       installedLocally: item.installedLocally || installedLocally,
       installedVersion: installedVersion || item.installedVersion || null,
       enabled: installed.spec.enabled,
@@ -2354,12 +2471,16 @@ async function readState(
     query?: string
     marketplaceId?: string
     mergeAllMarketplaces?: boolean
+    marketplaceKinds?: Array<'local' | 'remote'>
     refresh?: boolean
     skipPersonalReconcile?: boolean
   } = {}
 ): Promise<LocalCodexPluginsState> {
   if (!isDesktopRuntime()) return emptyState
-  hydrateReadStateCacheFromSession()
+  const executorStatus = await ensureLocalExecutorStarted()
+  const deviceId = executorStatus.deviceId?.trim() ?? ''
+  resetInMemoryReadStateForDevice(deviceId)
+  hydrateReadStateCacheFromSession(deviceId)
   const paramsKey = readStateParamsKey(params)
   if (
     !params.refresh &&
@@ -2412,6 +2533,7 @@ async function loadReadStateSnapshot(
   params: {
     marketplaceId?: string
     mergeAllMarketplaces?: boolean
+    marketplaceKinds?: Array<'local' | 'remote'>
     refresh?: boolean
     skipPersonalReconcile?: boolean
   },
@@ -2434,6 +2556,7 @@ async function loadReadStateSnapshot(
     featuredPluginIds?: string[]
   }>('plugin/list', {
     cwds: null,
+    ...(params.marketplaceKinds ? { marketplaceKinds: params.marketplaceKinds } : {}),
   })
   const availableMarketplaces = withInitializedBundledMarketplace(availableResponse.marketplaces)
   const featuredIds = featuredPluginIdSet(availableResponse.featuredPluginIds)
@@ -2488,10 +2611,20 @@ async function loadReadStateSnapshot(
     deviceId: executorStatus.deviceId?.trim() ?? '',
   }
   const state = retainOpenAiOfficialCatalog(
-    cachedStateParamsKey === paramsKey ? cachedState : null,
-    loadedState
+    cachedStateParamsKey === paramsKey && readStateMatchesDevice(cachedState, loadedState.deviceId)
+      ? cachedState
+      : null,
+    loadedState,
+    {
+      retainRemoteInstalled:
+        params.marketplaceKinds != null && !params.marketplaceKinds.includes('remote'),
+    }
   )
-  if (generation < cachedStateGeneration && cachedStateParamsKey === paramsKey && cachedState) {
+  if (
+    generation < cachedStateGeneration &&
+    cachedStateParamsKey === paramsKey &&
+    readStateMatchesDevice(cachedState, loadedState.deviceId)
+  ) {
     return cachedState
   }
   if (generation >= cachedStateGeneration) {
@@ -2499,6 +2632,7 @@ async function loadReadStateSnapshot(
     rememberReadStateSnapshot(paramsKey, state, generation)
     rememberSelectedMarketplaceId(selectedId)
   }
+  if (generation < cachedStateGeneration) return state
   if (!params.skipPersonalReconcile) {
     const migrated = await reconcileCodexPersonalPlugins(state)
     if (migrated) {
@@ -2667,7 +2801,9 @@ async function readDetailForInstalledPlugin(plugin: InstalledPlugin): Promise<In
   return detailed
 }
 
-async function loadInstalledPluginsOnly(options: { shareInflight?: boolean } = {}): Promise<{
+async function loadInstalledPluginsOnly(
+  options: { shareInflight?: boolean; requireComplete?: boolean } = {}
+): Promise<{
   installedPlugins: InstalledPlugin[]
   deviceId: string
 }> {
@@ -2675,7 +2811,7 @@ async function loadInstalledPluginsOnly(options: { shareInflight?: boolean } = {
   await ensureBundledPluginMarketplaceRegistered()
   const [installedResponse, storePlugins] = await Promise.all([
     requestPluginInstalled({ shareInflight: options.shareInflight }),
-    listWegentStorePluginsFromDisk(),
+    listWegentStorePluginsFromDisk(options.requireComplete),
   ])
   const bundled = getInitializedBundledPluginMarketplace()
   const personalPath =
@@ -2714,6 +2850,8 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       if (!isElectronRuntime()) {
         throw new Error('External content import requires the Wework desktop app')
       }
+      await ensureLocalExecutorStarted()
+      await ensureBundledPluginMarketplaceRegistered()
       const imported = await requestLocalExecutor<ExternalContentImportResult>(
         'executor.codex_home.import_external_content',
         { source }
@@ -2862,15 +3000,37 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       if (!isElectronRuntime()) {
         throw new Error('Deleting a personal plugin requires the Wework desktop app')
       }
-      const marketplacePath =
+      const managedMarketplacePath = await resolveWeworkPersonalMarketplacePath().catch(() => null)
+      const sourcePath =
         sourceMarketplacePath && isLocalMarketplacePath(sourceMarketplacePath)
           ? sourceMarketplacePath.trim()
-          : await resolveWeworkPersonalMarketplacePath()
+          : managedMarketplacePath
+      if (!sourcePath) {
+        throw new Error(`The ${WEWORK_PERSONAL_MARKETPLACE_ID} marketplace is unavailable`)
+      }
       try {
-        await requestLocalExecutor('executor.plugins.personal.delete', {
-          marketplacePath,
-          pluginName,
-        })
+        if (managedMarketplacePath) {
+          const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
+            'runtime.codex.plugin.uninstall_local',
+            {
+              marketplacePath: codexMarketplaceManifestSource(managedMarketplacePath),
+              pluginName,
+            }
+          )
+          if (!commit.localCommitted) {
+            throw new Error('Plugin did not reach its local uninstall commit')
+          }
+        }
+        const marketplacePaths = new Map<string, string>()
+        for (const path of [sourcePath, managedMarketplacePath]) {
+          if (path) marketplacePaths.set(normalizeMarketplaceSource(path), path)
+        }
+        for (const marketplacePath of marketplacePaths.values()) {
+          await requestLocalExecutor('executor.plugins.personal.delete', {
+            marketplacePath,
+            pluginName,
+          })
+        }
       } catch (error) {
         throw new Error(getErrorMessage(error, 'Failed to delete personal plugin'), {
           cause: error,
@@ -3024,6 +3184,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         query: params.q,
         marketplaceId: params.marketplaceId,
         mergeAllMarketplaces: params.mergeAllMarketplaces,
+        marketplaceKinds: params.marketplaceKinds,
         refresh: params.refresh,
       })
     },
@@ -3059,7 +3220,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       const peeked = peekLocalCodexPluginsReadState(mergeParams) || peekLocalCodexPluginsReadState()
       // Auto-sync / device inventory must bypass peek. Durable snapshots and a
       // fresh readState cache can both lag behind plugin/installed.
-      if (!options?.refresh) {
+      if (!options?.refresh && !options?.requireComplete) {
         // Only trust a non-empty install list while the readState snapshot is still
         // fresh. Durable localStorage can keep installs for days after uninstall.
         const peekedIsFresh =
@@ -3069,12 +3230,31 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           return { items: peeked.installedPlugins, deviceId: peeked.deviceId }
         }
       }
-      const loaded = await loadInstalledPluginsOnly({ shareInflight: options?.shareInflight })
+      const loaded = await loadInstalledPluginsOnly({
+        shareInflight: options?.shareInflight,
+        requireComplete: options?.requireComplete,
+      })
       const installedPlugins = loaded.installedPlugins
       if (cachedState) {
+        // An offline/unreachable OpenAI marketplace vanishes from plugin/installed
+        // entirely. Do not clobber its cached installs with a bundled-only
+        // membership response; an explicit unrestricted refresh reconciles.
+        const hasLiveRemoteInstalled = installedPlugins.some(plugin =>
+          isOpenAiOfficialRemoteMarketplaceId(installedPluginMarketplaceId(plugin))
+        )
+        const retainedRemoteInstalled = hasLiveRemoteInstalled
+          ? []
+          : cachedState.installedPlugins.filter(
+              plugin =>
+                isOpenAiOfficialRemoteMarketplaceId(installedPluginMarketplaceId(plugin)) &&
+                !installedPlugins.some(
+                  candidate =>
+                    installedPluginCacheIdentity(candidate) === installedPluginCacheIdentity(plugin)
+                )
+            )
         cachedState = {
           ...cachedState,
-          installedPlugins,
+          installedPlugins: [...installedPlugins, ...retainedRemoteInstalled],
           deviceId: loaded.deviceId || cachedState.deviceId,
         }
         cachedStateAt = Date.now()

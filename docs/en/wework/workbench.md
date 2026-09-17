@@ -16,9 +16,17 @@ When many tabs are open, the tab list scrolls horizontally while the **+** and t
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
+## Configure board automations
+
+Under **Automation** in a project space, choose a scheduled trigger and select daily, weekdays, weekly, or **Hourly**. Hourly schedules support minute 0–59 and use the configured timezone.
+
+Scheduled automations have a **Run** button on both their list card and detail view, including when their schedule is paused. Save configuration changes before running. The button is disabled while a run is starting to prevent duplicate submissions and becomes available again after a failed start. View results in run history.
+
 ## Manage issues and tasks in workspaces
 
 The top-level **Workspace** tab is where users browse boards, issues, and their linked tasks. It remains independent from Task tabs, preserving its selected board, route, and interface state.
+
+The Task-page sidebar names this destination **Board**. After it opens, the system-managed personal board is still titled **My tasks**, distinguishing the top-level product area from the specific board being viewed. **My tasks** exposes only board-oriented task tracking, including search, creation, filters, and task details. It does not show the table, files, automation, management, or project-action menus; those advanced capabilities remain available only in ordinary project spaces.
 
 Selecting the fixed top-level **Workspace** tab from another page opens **My tasks**; selecting it again while it is active preserves the current board. Even when both local and cloud storage contain a system-generated `default-work-items` space, the sidebar presents a single logical **My tasks** entry instead of two identically named destinations.
 
@@ -26,11 +34,15 @@ Selecting **New Issue** in a workspace opens a lightweight composer instead of a
 
 Without any setup, new tasks select **My tasks** by default. Sending the first message creates a work item, links the runtime task, and keeps its execution status synchronized. Existing runtime tasks are also linked into **My tasks**, so this board is another view of the Task-page inventory rather than an independent task list.
 
+On local boards, when a linked task finishes and moves to **In review**, its card shows an unread dot, a blue border, and a light blue background, with a muted blue surface in dark mode. Opening the item details marks it as read; returning to the board preserves its normal appearance. A subsequent run with a new result makes the card unread again.
+
 Every runtime task has at least one system-managed **My tasks** issue. A user may additionally link the task to one issue in a local or cloud project space. Task context prefers the user-selected issue and falls back to the system issue when no user link exists. The system issue remains linked and receives runtime status, task-title, and archive-state updates even after the extra project-space link is removed, so unlinking another board never removes the task from **My tasks**. Issues may also exist without a runtime task, which is why an ordinary project-space board is not itself a task inventory.
 
-Lanes follow actual execution state: a task that is explicitly queued but has not started appears in **To start**, and an active task appears in **In progress**. Successful, stopped, cancelled, and failed tasks all enter **To confirm**. A successful run means execution has ended; it does not automatically accept the work as completed. After confirming the result, the user can manually move the card to **Completed**. Confirmation cards show the linked task and the first three lines of the final AI response so users can decide whether more work is needed. Archived runtime tasks are excluded from the completed lane. The completed lane also provides batch archive, with an additional confirmation when a workspace still contains uncommitted changes.
+A newly created system **My tasks** issue contains only a projection of the runtime task title and description, so Wework does not inject it as independent project context into the first model request. If a user later changes the title or description, or adds priority, hierarchy, participants, tags, workflow, a due date, attachments, deliveries, or comments, the Executor marks the issue as containing additional context. Wework reads the current issue again before a later turn and injects that new context. Status changes produced only by the runtime lifecycle do not enable injection.
 
-Hover anywhere on a board card to open a task-progress panel. The panel directly reuses the task conversation component, shows the complete currently loaded conversation, and uses the same composer in its collapsed-by-default state. Message loading, live updates, continuation, and attachments therefore behave exactly as they do on the task page. In the normal preview state, the panel remains visible while the pointer stays over either the card or the panel; it closes after you leave both areas, scroll the surrounding board, or press `Esc`. Interacting with the composer pins the panel until you use its top-right close button or press `Esc`.
+Lanes follow actual execution state: a task that is explicitly queued but has not started appears in **To start**, and an active task appears in **In progress**. Successful, stopped, cancelled, and failed tasks all enter **To confirm**. A successful run means execution has ended; it does not automatically accept the work as completed. After confirming the result, the user can manually move the card to **Completed**. Confirmation cards show the linked task and the first three lines of the final AI response so users can decide whether more work is needed. Archived runtime tasks are excluded from the completed lane. The completed lane also provides batch archive, with an additional confirmation when a workspace still contains uncommitted changes. Batch archive processes all linked runtime conversations in one operation, removes successfully archived cards from the board, and keeps failed cards in the confirmation dialog for retry.
+
+Hover anywhere on a board card to open a task-progress panel at a stable position in the viewport's upper-right corner; moving across cards does not make the panel jump with each anchor. Its header shows the current issue title. When the runtime exposes one, the preview shows the current conversation goal. It directly reuses the task conversation component and always starts at the latest message instead of restoring the Task page's saved scroll position. While the current turn is active but has not produced new response text, the preview does not present the previous turn's final response as the latest progress. When a runtime task is associated with a board item, both local and cloud task bindings must persist that conversation's model selection. The preview restores the model from the binding instead of falling back to the global default for new conversations. Message loading, live updates, continuation, and attachments behave exactly as they do on the task page, with the composer collapsed by default. In the normal preview state, the panel remains visible while the pointer stays over either the card or the panel; it closes after you leave both areas, scroll the surrounding board, or press `Esc`. Clicking the card's task-progress area, the pin action in the panel header, or the composer pins the same panel in place instead of opening a separate side conversation. While pinned, hovering other cards does not replace its content; clicking another card's task-progress area switches the pinned panel in the same position. Use the top-right close button or press `Esc` to leave the pinned state and restore normal hover previews.
 
 The work-item control above the composer shows the board name and work-item identifier. Its menu exposes the next step, linked-task count, and participants, and can open details in the unified right workspace. **Open in work-item board** focuses the linked work item while preserving the original Task tab. If a board tab for the same project is already open, Wework reuses it instead of loading a duplicate board; otherwise, it creates a board tab.
 
@@ -38,7 +50,9 @@ Local projects do not each create a separate board. Their tasks share **My tasks
 
 ## Create issues from external systems
 
-Maintainers of a cloud workspace can generate a hook address under **Manage > External task intake**. Configure this address in GitHub, GitLab, Sentry, Grafana, an alerting platform, or any system that supports HTTP callbacks. Each accepted external event is deterministically converted into an unassigned issue in the workspace inbox. Existing `task.created` automation rules continue to run after the issue is created.
+Maintainers of a cloud workspace can create an event subscription for a source (GitHub, GitLab) from inside the automation rule configuration. Configure the generated Webhook URL in GitHub, GitLab, Sentry, Grafana, an alerting platform, or any system that supports HTTP callbacks. Each accepted external event is deterministically converted into an unassigned issue in the workspace inbox. Existing `task.created` automation rules continue to run after the issue is created.
+
+> Note: Event subscriptions are created and managed together with the automation rule that consumes them. Pick a source (GitHub, GitLab), then add the resource URL; the Webhook URL for the created subscription is shown on the same page, ready to copy into the external system.
 
 The hook address contains its own credential. Treat it as a secret and do not store it in a public repository or log. Select **Rotate address** if it is exposed; the old address becomes invalid immediately. Disable the hook when intake must be paused. This capability currently supports cloud workspaces whose tasks are managed by Wework.
 
@@ -97,6 +111,8 @@ The new-task page uses compact suggestion buttons to help choose a task directio
 
 Project selection, message input, quick phrases, and model selection share one composer surface. The composer shows a blue border while focused, and the simplified launcher preserves project, attachment, quick-phrase, and model controls.
 
+After startup, the active task composer receives focus when it becomes available. Returning to the window restores composer focus if no other control holds it. Configured `Command` / `Control` shortcuts remain available while the composer is focused; ordinary text, IME composition, and Option-only text input stay with the editor.
+
 ## Use the Popout Window composer
 
 When no task is running, the Wework Popout Window uses a compact composer with a fixed height. After the message exceeds three lines, the text scrolls inside the editor while attachment, model, and send controls remain visible.
@@ -104,6 +120,8 @@ When no task is running, the Wework Popout Window uses a compact composer with a
 ## Files and terminals
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
+
+Selecting a writable text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files can switch between the editor and rendered preview, while read-only text and binary files remain in preview mode.
 
 Local file and directory links in an AI response open in the Files tab. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
@@ -121,9 +139,17 @@ With the right workspace open, select **Expand panel** in its title bar to let f
 
 You can still collapse the left sidebar while the workspace is expanded, leaving only the right workspace visible. Select **Restore panel** in the upper-right corner, or **Latest turn** at the bottom when a conversation is available, to return to the side-by-side conversation and workspace layout. Closing the right workspace or its last tab also exits the expanded state.
 
+## View execution progress
+
+While a task is running, the conversation shows the tools in use and the current progress. Completed tool calls collapse into summaries that can be expanded to inspect commands or changed files.
+
+After a parent agent starts a subagent, the subagent activity remains anchored at its original invocation position. Later status, progress, and result updates appear at that position even if the parent continues producing other output; the activity does not move to the end of the conversation or render a second time.
+
 ## Navigate long conversations
 
 When a conversation is taller than the current viewport, turn markers appear along the left side of the message area. The navigation stays centered in the conversation viewport instead of scrolling with message content. Select a marker to jump to that turn, or hover over it to preview the user request and assistant response summary.
+
+While an assistant response is still growing, navigation keeps the current turn active until the message area finishes its next layout measurement. This prevents bottom-follow scrolling from briefly clearing the marker or switching it to another turn.
 
 ## Switch conversations and restore position
 
@@ -143,7 +169,13 @@ Process text shown above tool calls while a task is running is also selectable r
 
 ## Review and undo changes
 
-Supported Git tasks show a per-turn change card with file and line counts. Select **Review** to inspect the full diff, filter files, change wrapping, or copy a `git apply` command. The original execution device must be online.
+Supported Git tasks show a per-turn change card with file and line counts. Select **Review** to inspect the complete diff in the right workspace. Normal review mode keeps every file diff rendered. Selecting a file in the tree, or opening a specific changed file from an assistant message, scrolls the content to that file instead of hiding the other files. The original execution device must be online.
+
+The review toolbar supports unified and split layouts. The file tree can be shown or hidden; showing it again preserves its filter, selected file, and scroll position. Selecting a file name in a diff heading opens the right-side **Files** tab at that file's first changed line. Selecting an additions-side line number that maps to the current file opens the corresponding source line. Deletion-side line numbers do not map to the current file and therefore do not navigate.
+
+For unstaged changes, use **Stage** or **Revert** on an individual file or hunk. For staged changes, use **Unstage** on an individual file or hunk. These actions affect only the selected file or hunk and leave the other changes from the turn untouched.
+
+Select a code range in the diff to add a comment. The comment returns to the current conversation composer as code context, supporting a review, feedback, AI revision, and re-review loop.
 
 Select **Undo** to reverse only that turn. Wework checks the reverse patch first and will not overwrite conflicting later changes.
 

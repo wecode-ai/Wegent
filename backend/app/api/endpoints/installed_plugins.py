@@ -27,6 +27,7 @@ from app.api.marketplace_upload import read_marketplace_package
 from app.core import security
 from app.core.config import settings
 from app.db.session import get_db_session
+from app.models.kind import Kind
 from app.models.plugin_marketplace import Plugin, PluginDeviceInstallation
 from app.models.subtask import SubtaskStatus
 from app.models.task import TaskResource
@@ -62,11 +63,13 @@ from app.services.device.capability_sync_service import (
     DeviceCapabilitySyncError,
     device_capability_sync_service,
 )
+from app.services.device.plugin_reconciliation import reconcile_device_plugins
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.marketplace_submission_upload import (
     InvalidMarketplaceSubmissionUploadToken,
     verify_marketplace_submission_upload_token,
 )
+from app.services.plugin_device_identity import plugin_device_id, plugin_device_rows
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
@@ -205,6 +208,7 @@ def auto_update_installed_plugins(
 @router.post("/installed/sync-device", response_model=PluginDeviceSyncResponse)
 async def sync_installed_plugins_to_device(
     device_id: str,
+    reconcile: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginDeviceSyncResponse:
@@ -212,6 +216,11 @@ async def sync_installed_plugins_to_device(
     normalized_device_id = device_id.strip()
     if not normalized_device_id:
         raise HTTPException(status_code=400, detail="device_id is required")
+
+    if reconcile:
+        user_id = current_user.id
+        db.close()
+        return await reconcile_device_plugins(user_id, normalized_device_id)
 
     # Repair stale catalog refs before building desired state / pushing packages.
     # Close the request session before awaiting the device round-trip so the
@@ -224,16 +233,10 @@ async def sync_installed_plugins_to_device(
         user_id=current_user.id,
         device_id=normalized_device_id,
     )
-    payload = device_capability_sync_service.build_desired_capabilities(
-        db,
-        user_id=current_user.id,
-        device_id=normalized_device_id,
-    )
     db.close()
-    result = await device_capability_sync_service.sync_device_payload(
+    result = await device_capability_sync_service.sync_current_device_capabilities(
         user_id=current_user.id,
         device_id=normalized_device_id,
-        payload=payload,
     )
     with get_db_session() as record_db:
         plugin_device_installation_service.record_device_sync_result(
@@ -241,14 +244,13 @@ async def sync_installed_plugins_to_device(
             user_id=current_user.id,
             result=result,
         )
-    mode = str(payload.get("mode") or "replace")
     errors = list(result.errors or [])
     if result.error:
         errors.append({"device_id": result.device_id, "error": result.error})
     sync = DeviceCapabilitySyncResponse(
         success=bool(result.success),
         device_id=result.device_id,
-        mode=mode if mode in {"merge", "replace"} else "replace",
+        mode="replace",
         skills=result.skills,
         plugins=result.plugins,
         mcps=result.mcps,
@@ -264,6 +266,45 @@ async def sync_installed_plugins_to_device(
         normalized_device_id,
         pending_count,
         result.success,
+    )
+    return PluginDeviceSyncResponse(
+        deviceId=normalized_device_id,
+        pendingCount=pending_count,
+        sync=sync,
+    )
+
+
+@router.post(
+    "/installed/{installed_id}/sync-device",
+    response_model=PluginDeviceSyncResponse,
+)
+async def sync_installed_plugin_to_device(
+    installed_id: int,
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginDeviceSyncResponse:
+    """Merge one installed plugin without changing unrelated device state."""
+    normalized_device_id = device_id.strip()
+    if not normalized_device_id:
+        raise HTTPException(status_code=400, detail="device_id is required")
+    pending_count = plugin_device_installation_service.ensure_plugin_pending_for_device(
+        db,
+        user_id=current_user.id,
+        device_id=normalized_device_id,
+        installed_kind_id=installed_id,
+    )
+    sync = await device_capability_sync_service.sync_installed_plugin_to_device_result(
+        db,
+        user_id=current_user.id,
+        device_id=normalized_device_id,
+        installed_plugin_id=installed_id,
+    )
+    plugin_device_installation_service.record_plugin_sync_response(
+        db,
+        user_id=current_user.id,
+        installed_kind_id=installed_id,
+        response=sync,
     )
     return PluginDeviceSyncResponse(
         deviceId=normalized_device_id,
@@ -848,6 +889,9 @@ async def uninstall_installed_plugin(
     )
 
 
+@trace_async(
+    span_name="plugins.ensure_device_installation", tracer_name="backend.plugins"
+)
 async def _ensure_installed_plugin_on_device(
     db: Session,
     *,
@@ -860,15 +904,15 @@ async def _ensure_installed_plugin_on_device(
     """Retry a single-plugin merge when the global replace left the device short."""
     if not device_id:
         return previous
-    device_row = (
-        db.query(PluginDeviceInstallation)
-        .filter(
-            PluginDeviceInstallation.installed_kind_id == installed_id,
-            PluginDeviceInstallation.device_id == device_id,
-        )
-        .first()
-    )
-    if device_row and device_row.state == "installed":
+    device_row = plugin_device_rows(db, user_id, device_id).get(installed_id)
+    installed = db.get(Kind, installed_id)
+    release_id = installed.json.get("spec", {}).get("releaseId") if installed else None
+    if (
+        device_row
+        and device_row.state == "installed"
+        and device_row.actual_release_id == release_id
+        and device_row.desired_release_id == release_id
+    ):
         return previous
     if (
         not manual_retry
@@ -907,6 +951,7 @@ async def _ensure_installed_plugin_on_device(
     return merge_sync
 
 
+@trace_async(span_name="plugins.sync_after_change", tracer_name="backend.plugins")
 async def _sync_global_capabilities(
     db: Session,
     user_id: int,
@@ -931,7 +976,13 @@ async def _sync_global_capabilities(
         db, user_id=user_id, response=result
     )
     required_result = next(
-        (item for item in result.results if item.device_id == required_device_id),
+        (
+            item
+            for item in result.results
+            if required_device_id
+            and plugin_device_id(db, user_id, item.device_id)
+            == plugin_device_id(db, user_id, required_device_id)
+        ),
         None,
     )
     required_device_failed = bool(
@@ -939,16 +990,18 @@ async def _sync_global_capabilities(
     )
     required_materialization_failed = False
     if required_device_id and required_installed_kind_id is not None:
-        device_row = (
-            db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.installed_kind_id
-                == required_installed_kind_id,
-                PluginDeviceInstallation.device_id == required_device_id,
-            )
-            .first()
+        device_row = plugin_device_rows(db, user_id, required_device_id).get(
+            required_installed_kind_id
         )
-        materialized = bool(device_row and device_row.state == "installed")
+        installed = db.get(Kind, required_installed_kind_id)
+        release_id = (
+            installed.json.get("spec", {}).get("releaseId") if installed else None
+        )
+        materialized = bool(
+            device_row
+            and device_row.state == "installed"
+            and device_row.actual_release_id == release_id
+        )
         required_materialization_failed = materialized != expect_installed
     if require_device_success and (
         required_device_failed or required_materialization_failed
@@ -965,7 +1018,7 @@ async def _sync_global_capabilities(
         required_device_failed or required_materialization_failed
     ):
         logger.warning(
-            "Device sync incomplete after plugin uninstall: user_id=%s device_id=%s installed_kind_id=%s",
+            "Device sync incomplete after plugin change: user_id=%s device_id=%s installed_kind_id=%s",
             user_id,
             required_device_id,
             required_installed_kind_id,

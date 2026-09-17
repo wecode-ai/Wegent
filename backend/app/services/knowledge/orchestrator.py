@@ -69,6 +69,7 @@ from app.services.knowledge.retrieval_profile import (
 )
 from app.stores.tasks import task_store
 from shared.models import SearchHints
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -1053,12 +1054,15 @@ class KnowledgeOrchestrator:
         name: Optional[str] = None,
         description: Optional[str] = None,
         direct_access_requirement: Optional[Literal["read", "edit"]] = None,
+        allow_document_download: Optional[bool] = None,
         retrieval_config: Optional[Dict[str, Any]] = None,
         summary_enabled: Optional[bool] = None,
         summary_model_ref: Optional[Dict[str, str]] = None,
         execution_model_ref: Optional[Dict[str, str]] = None,
         execution_model_ref_is_set: bool = False,
         show_generation_task: Optional[bool] = None,
+        generation_strategy: Optional[str] = None,
+        generation_strategy_is_set: bool = False,
         guided_questions: Optional[List[str]] = None,
         max_calls_per_conversation: Optional[int] = None,
         exempt_calls_before_check: Optional[int] = None,
@@ -1079,6 +1083,7 @@ class KnowledgeOrchestrator:
             execution_model_ref: Code Wiki execution model reference. Explicit null
                 clears the override, so its presence is tracked separately.
             show_generation_task: Whether Code Wiki generation tasks are visible.
+            generation_strategy: Default Code Wiki orchestration strategy.
             guided_questions: New guided questions list (optional)
             max_calls_per_conversation: Max calls per conversation (optional)
             exempt_calls_before_check: Exempt calls before check (optional)
@@ -1103,6 +1108,8 @@ class KnowledgeOrchestrator:
             update_fields["description"] = description
         if direct_access_requirement is not None:
             update_fields["direct_access_requirement"] = direct_access_requirement
+        if allow_document_download is not None:
+            update_fields["allow_document_download"] = allow_document_download
         if retrieval_config is not None:
             update_fields["retrieval_config"] = retrieval_config
         if summary_enabled is not None:
@@ -1113,6 +1120,16 @@ class KnowledgeOrchestrator:
             update_fields["execution_model_ref"] = execution_model_ref
         if show_generation_task is not None:
             update_fields["show_generation_task"] = show_generation_task
+        if generation_strategy_is_set:
+            from app.services.knowledge.code_wiki.generation_policy import (
+                ready_strategy_for_new_wiki,
+            )
+
+            if generation_strategy is None:
+                raise ValueError("A code wiki generation strategy cannot be cleared")
+            update_fields["generation_strategy"] = ready_strategy_for_new_wiki(
+                db, user=user, requested_id=generation_strategy
+            )
         if guided_questions is not None:
             update_fields["guided_questions"] = guided_questions
         if max_calls_per_conversation is not None:
@@ -1150,6 +1167,7 @@ class KnowledgeOrchestrator:
         description: Optional[str] = None,
         namespace: str = "default",
         direct_access_requirement: Literal["read", "edit"] = "read",
+        allow_document_download: Optional[bool] = None,
         summary_enabled: bool = False,
         rag_config_mode: Literal["auto", "disabled"] = "auto",
         # REST API scenario: pass complete config
@@ -1177,6 +1195,7 @@ class KnowledgeOrchestrator:
         source: Optional[SourceRepository] = None,
         show_generation_task: bool = False,
         language: str = "",
+        generation_strategy: Optional[str] = None,
     ) -> int:
         """Resolve defaults, persist a knowledge base, and return its id.
 
@@ -1251,10 +1270,12 @@ class KnowledgeOrchestrator:
             description=description,
             namespace=namespace,
             direct_access_requirement=direct_access_requirement,
+            allow_document_download=allow_document_download,
             kb_type=KnowledgeBaseType(kb_type),
             source=source.to_spec() if source else None,
             language=language or None,
             show_generation_task=show_generation_task,
+            generation_strategy=generation_strategy,
             retrieval_config=resolved_retrieval_config,
             summary_enabled=summary_enabled,
             summary_model_ref=resolved_summary_model_ref,
@@ -1299,6 +1320,7 @@ class KnowledgeOrchestrator:
         description: Optional[str] = None,
         namespace: str = "default",
         direct_access_requirement: Literal["read", "edit"] = "read",
+        allow_document_download: Optional[bool] = None,
         kb_type: str = KnowledgeBaseType.NOTEBOOK.value,
         summary_enabled: bool = False,
         rag_config_mode: Literal["auto", "disabled"] = "auto",
@@ -1374,6 +1396,7 @@ class KnowledgeOrchestrator:
             description=description,
             namespace=namespace,
             direct_access_requirement=direct_access_requirement,
+            allow_document_download=allow_document_download,
             summary_enabled=summary_enabled,
             rag_config_mode=rag_config_mode,
             retrieval_config=retrieval_config,
@@ -1401,11 +1424,13 @@ class KnowledgeOrchestrator:
         description: Optional[str] = None,
         namespace: str = "default",
         direct_access_requirement: Literal["read", "edit"] = "read",
+        allow_document_download: Optional[bool] = None,
         # Empty is not "English", it is "fall back to the deployment default", which
         # is also what a wiki created before this field existed does.
         language: str = "",
         # Whether this wiki's generation runs are listed as conversations.
         show_generation_task: bool = False,
+        generation_strategy: Optional[str] = None,
         summary_enabled: bool = False,
         rag_config_mode: Literal["auto", "disabled"] = "auto",
         retrieval_config: Optional[Dict[str, Any]] = None,
@@ -1431,7 +1456,14 @@ class KnowledgeOrchestrator:
         the repository, are decided by the endpoint: they are about who is asking,
         not about what a code wiki is.
         """
+        from app.services.knowledge.code_wiki.generation_policy import (
+            ready_strategy_for_new_wiki,
+        )
         from app.services.knowledge.code_wiki.registry import claim_repository
+
+        generation_strategy = ready_strategy_for_new_wiki(
+            db, user=user, requested_id=generation_strategy
+        )
 
         kb_id = self._create(
             db,
@@ -1441,6 +1473,7 @@ class KnowledgeOrchestrator:
             description=description,
             namespace=namespace,
             direct_access_requirement=direct_access_requirement,
+            allow_document_download=allow_document_download,
             summary_enabled=summary_enabled,
             rag_config_mode=rag_config_mode,
             retrieval_config=retrieval_config,
@@ -1453,6 +1486,7 @@ class KnowledgeOrchestrator:
             source=source,
             show_generation_task=show_generation_task,
             language=language,
+            generation_strategy=generation_strategy,
         )
         claim_repository(db, source, kb_id)
         db.commit()
@@ -1998,11 +2032,6 @@ class KnowledgeOrchestrator:
         )
 
         skip_reason = get_rag_indexing_skip_reason(
-            (
-                data.source_type.value
-                if data.source_type
-                else DocumentSourceType.FILE.value
-            ),
             data.file_extension,
             data.file_size,
         )
@@ -2563,8 +2592,18 @@ class KnowledgeOrchestrator:
 
         assert_user_content_is_mutable(getattr(document, "origin", "user"))
 
+        # Documents whose source type is no longer supported (legacy rows from
+        # removed ingestion paths) cannot be reindexed.
+        from app.schemas.knowledge import DocumentSourceType
+
+        known_source_types = {source_type.value for source_type in DocumentSourceType}
+        if document.source_type not in known_source_types:
+            raise ValueError(
+                f"Unsupported document source type: {document.source_type}"
+            )
+
         skip_reason = get_rag_indexing_skip_reason(
-            document.source_type, document.file_extension, document.file_size
+            document.file_extension, document.file_size
         )
         if skip_reason:
             raise ValueError(skip_reason)
@@ -3015,15 +3054,18 @@ class KnowledgeOrchestrator:
                 "error_message": str(e),
             }
 
+    @trace_async(span_name="knowledge.retrieve", tracer_name="backend.services")
     async def retrieve_knowledge(
         self,
         *,
-        db: Session,
-        user: User,
+        user_id: int,
         knowledge_base_id: int,
         query: str,
+        task_id: int | None = None,
         max_results: int = 10,
         document_ids: Optional[List[int]] = None,
+        folder_ids: Optional[List[int]] = None,
+        include_subfolders: bool = True,
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
         context_window: int = 128000,
         used_context_tokens: int = 0,
@@ -3038,12 +3080,14 @@ class KnowledgeOrchestrator:
         remote RAG gateways with automatic fallback.
 
         Args:
-            db: Database session.
-            user: Current user (for access control).
+            user_id: Current user ID for access control.
             knowledge_base_id: Target knowledge base ID.
             query: Search query text.
+            task_id: Optional task context for resolving delegated read access.
             max_results: Maximum number of results to return (default: 10, max: 50).
             document_ids: Optional list of document IDs to restrict search scope.
+            folder_ids: Optional list of folder IDs to restrict search scope.
+            include_subfolders: Whether folder scope includes descendants.
             route_mode: Routing strategy:
                 - "auto": Let Backend decide based on token budget (default).
                 - "direct_injection": Fetch all chunks for direct context injection.
@@ -3065,125 +3109,30 @@ class KnowledgeOrchestrator:
         Raises:
             ValueError: If knowledge base not found, access denied, or config invalid.
         """
-        # Validate and normalize parameters
+        from app.services.knowledge.search_execution import knowledge_search_runner
+
         if max_results < 1:
             max_results = 10
         if max_results > 50:
             max_results = 50
 
-        # Verify knowledge base access (single point of permission check)
-        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
-            db=db,
+        return await knowledge_search_runner.retrieve(
+            user_id=user_id,
+            task_id=task_id,
             knowledge_base_id=knowledge_base_id,
-            user_id=user.id,
-        )
-        if knowledge_base is None:
-            raise ValueError(f"Knowledge base {knowledge_base_id} not found")
-        if not has_access:
-            raise ValueError(f"Access denied to knowledge base {knowledge_base_id}")
-
-        # Check RAG configuration
-        spec = (
-            (knowledge_base.json or {}).get("spec", {}) if knowledge_base.json else {}
-        )
-        retrieval_config = spec.get("retrievalConfig")
-        if not retrieval_config:
-            raise ValueError(
-                f"Knowledge base {knowledge_base_id} has no RAG configuration"
-            )
-        retriever_name = retrieval_config.get("retriever_name")
-        embedding_config = retrieval_config.get("embedding_config")
-        if not retriever_name or not embedding_config:
-            raise ValueError(
-                f"Knowledge base {knowledge_base_id} has incomplete RAG configuration"
-            )
-
-        # Use runtime resolver and gateway for retrieval (supports remote fallback)
-        from app.services.rag.gateway_factory import get_query_gateway
-        from app.services.rag.local_gateway import LocalRagGateway
-        from app.services.rag.remote_gateway import (
-            RemoteRagGatewayError,
-            should_fallback_to_local,
-        )
-        from app.services.rag.retrieval_service import RetrievalService
-        from app.services.rag.runtime_resolver import RagRuntimeResolver
-        from shared.models import RetrievalScope
-
-        runtime_resolver = RagRuntimeResolver()
-        retrieval_service = RetrievalService()
-        scope = RetrievalScope(document_ids=document_ids) if document_ids else None
-
-        # Build runtime spec for gateway routing
-        runtime_spec = runtime_resolver.build_query_runtime_spec(
-            db=db,
-            knowledge_base_ids=[knowledge_base_id],
             query=query,
             max_results=max_results,
-            scope=scope,
+            document_ids=document_ids,
+            folder_ids=folder_ids,
+            include_subfolders=include_subfolders,
             route_mode=route_mode,
-            user_id=user.id,
-            user_name=user.user_name,
             context_window=context_window,
             used_context_tokens=used_context_tokens,
             reserved_output_tokens=reserved_output_tokens,
             context_buffer_ratio=context_buffer_ratio,
             max_direct_chunks=max_direct_chunks,
             search_hints=search_hints,
-            restricted_mode=False,
         )
-
-        # Finalize route mode based on context budget
-        resolved_route_mode = retrieval_service.decide_route_mode_for_chat_shell(
-            query=query,
-            knowledge_base_ids=[knowledge_base_id],
-            db=db,
-            route_mode=route_mode,
-            scope=scope,
-            metadata_condition=None,
-            context_window=context_window,
-            used_context_tokens=used_context_tokens,
-            reserved_output_tokens=reserved_output_tokens,
-            context_buffer_ratio=context_buffer_ratio,
-            max_direct_chunks=max_direct_chunks,
-        )
-        runtime_spec = runtime_spec.model_copy(
-            update={"route_mode": resolved_route_mode}
-        )
-
-        # Build KB configs for remote gateway if needed
-        if resolved_route_mode == "rag_retrieval":
-            kb_configs = runtime_resolver.build_query_knowledge_base_configs(
-                db=db,
-                knowledge_base_ids=[knowledge_base_id],
-                user_name=user.user_name,
-            )
-            runtime_spec = runtime_spec.model_copy(
-                update={"knowledge_base_configs": kb_configs}
-            )
-
-        # Execute query with remote fallback support
-        rag_gateway = get_query_gateway()
-        try:
-            result = await rag_gateway.query(runtime_spec, db=db)
-        except RemoteRagGatewayError as exc:
-            if should_fallback_to_local(exc):
-                logger.warning(
-                    f"[Orchestrator] Remote query failed for KB {knowledge_base_id}, "
-                    f"falling back to local gateway: {exc}"
-                )
-                result = await LocalRagGateway().query(runtime_spec, db=db)
-            else:
-                raise
-
-        # Normalize result format for API consumers
-        return {
-            "query": query,
-            "knowledge_base_id": knowledge_base_id,
-            "mode": result.get("mode", "rag_retrieval"),
-            "records": result.get("records", []),
-            "total": result.get("total", 0),
-            "total_estimated_tokens": result.get("total_estimated_tokens", 0),
-        }
 
 
 # Singleton instance

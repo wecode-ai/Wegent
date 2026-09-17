@@ -27,6 +27,7 @@ const DELETED_ARCHIVED_TASK_ID_MAX_COUNT: usize = 2_000;
 const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "cloudProjectId",
     "cloud_project_id",
+    "cloudTranscript",
     "executionRequest",
     "execution_request",
     "executorSession",
@@ -38,6 +39,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "runtime",
     "supersededTranscriptTurnIds",
     "threadPath",
+    "wegentTeam",
     "turnIdsBySubtask",
     "userMessagePresentations",
 ];
@@ -86,6 +88,7 @@ struct PersistedRuntimeTask {
     archived: bool,
     continuable: bool,
     goal_status: Option<String>,
+    goal_execution_status: Option<String>,
     supervisor: Option<super::response::RuntimeSupervisorState>,
     created_at: i64,
     updated_at: i64,
@@ -110,6 +113,7 @@ struct PersistedRuntimeTaskInput {
     status: Option<String>,
     continuable: bool,
     goal_status: Option<String>,
+    goal_execution_status: Option<String>,
     supervisor: Option<super::response::RuntimeSupervisorState>,
     created_at: i64,
     updated_at: i64,
@@ -137,6 +141,7 @@ impl From<PersistedRuntimeTaskInput> for PersistedRuntimeTask {
                     .is_some_and(|status| status.eq_ignore_ascii_case("archived")),
             continuable: input.continuable,
             goal_status: input.goal_status,
+            goal_execution_status: input.goal_execution_status,
             supervisor: input.supervisor,
             created_at: input.created_at,
             updated_at: input.updated_at,
@@ -162,6 +167,7 @@ impl PersistedRuntimeTask {
             archived: link.status == "archived",
             continuable: link.continuable,
             goal_status: link.goal_status.clone(),
+            goal_execution_status: link.goal_execution_status.clone(),
             supervisor: link.supervisor.clone(),
             created_at: link.created_at,
             updated_at: link.updated_at,
@@ -192,6 +198,7 @@ impl PersistedRuntimeTask {
             thread_status: "notLoaded".to_owned(),
             turn_status: None,
             goal_status: self.goal_status,
+            goal_execution_status: self.goal_execution_status,
             supervisor: self.supervisor,
             git_info: None,
             created_at: self.created_at,
@@ -208,6 +215,7 @@ impl PersistedRuntimeTask {
             sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
+            preserve_execution_path: false,
             pinned: false,
             pinned_order: None,
         }
@@ -220,6 +228,7 @@ impl PersistedRuntimeTask {
         task.runtime = self.runtime;
         task.continuable = self.continuable;
         task.goal_status = self.goal_status;
+        task.goal_execution_status = self.goal_execution_status;
         task.supervisor = self.supervisor;
         task.created_at = self.created_at;
         task.updated_at = self.updated_at;
@@ -241,15 +250,25 @@ impl PersistedRuntimeTask {
 }
 
 fn persisted_runtime_handle(runtime_handle: &Value) -> Value {
-    Value::Object(
-        runtime_handle
-            .as_object()
-            .into_iter()
-            .flat_map(|runtime_handle| runtime_handle.iter())
-            .filter(|(key, _)| PERSISTED_RUNTIME_HANDLE_KEYS.contains(&key.as_str()))
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-    )
+    let mut persisted = runtime_handle
+        .as_object()
+        .into_iter()
+        .flat_map(|runtime_handle| runtime_handle.iter())
+        .filter(|(key, _)| PERSISTED_RUNTIME_HANDLE_KEYS.contains(&key.as_str()))
+        .filter(|(key, _)| key.as_str() != "wegentTeam")
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<serde_json::Map<String, Value>>();
+    if let Some(team_id) = runtime_handle
+        .get("wegentTeam")
+        .and_then(|team| team.get("id"))
+        .cloned()
+    {
+        persisted.insert(
+            "wegentTeam".to_owned(),
+            serde_json::json!({ "id": team_id }),
+        );
+    }
+    Value::Object(persisted)
 }
 
 fn merge_persisted_runtime_handle(current: &Value, persisted: Value) -> Value {
@@ -392,6 +411,27 @@ impl RuntimeWorkStore {
         updater: impl FnOnce(&mut RuntimeTaskLink),
     ) -> Option<RuntimeTaskLink> {
         self.update_task_with_persistence(local_task_id, updater, true)
+    }
+
+    pub fn rekey_task(
+        &self,
+        local_task_id: &str,
+        new_local_task_id: &str,
+        updater: impl FnOnce(&mut RuntimeTaskLink),
+    ) -> Option<RuntimeTaskLink> {
+        self.refresh_index_from_disk_if_changed();
+        let mut index = self.index.lock().ok()?;
+        if local_task_id != new_local_task_id && index.tasks.contains_key(new_local_task_id) {
+            return None;
+        }
+        let mut task = index.tasks.remove(local_task_id)?;
+        updater(&mut task);
+        task.local_task_id = new_local_task_id.to_owned();
+        let updated = task.clone();
+        index.tasks.insert(new_local_task_id.to_owned(), task);
+        drop(index);
+        self.persist_current_index();
+        Some(updated)
     }
 
     fn update_task_with_persistence(
@@ -1010,7 +1050,12 @@ mod tests {
             "completedTranscriptThreadId": "thread-1",
             "transcriptSnapshotMessages": [{"id": "snapshot-message"}],
             "transcriptSnapshotThreadId": "thread-1",
-            "modelSelection": {"modelName": "gpt-5.6-sol"}
+            "modelSelection": {"modelName": "gpt-5.6-sol"},
+            "wegentTeam": {
+                "id": 7,
+                "agent_config": {"api_key": "must-not-persist"}
+            },
+            "teamExecutionProfile": {"agent_config": {"api_key": "must-not-persist"}}
         });
 
         store.upsert_task(completed);
@@ -1046,6 +1091,11 @@ mod tests {
             task["runtime_handle"]["modelSelection"]["modelName"],
             "gpt-5.6-sol"
         );
+        assert_eq!(task["runtime_handle"]["wegentTeam"]["id"], 7);
+        assert!(task["runtime_handle"]["wegentTeam"]
+            .get("agent_config")
+            .is_none());
+        assert!(task["runtime_handle"].get("teamExecutionProfile").is_none());
 
         let restored = RuntimeWorkStore::new(index_path)
             .get_task("completed-task")

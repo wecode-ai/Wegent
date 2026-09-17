@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
-from pydantic import field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -133,6 +133,15 @@ class Settings(BaseSettings):
     # Database auto-migration configuration (only in development)
     DB_AUTO_MIGRATE: bool = True
 
+    # Database connection pool configuration. Each Backend or Celery process owns
+    # its own pool, so deployment capacity must account for every process.
+    DB_POOL_SIZE: int = Field(default=20, ge=1)
+    DB_MAX_OVERFLOW: int = Field(default=40, ge=0)
+    DB_ASYNC_POOL_SIZE: int = Field(default=10, ge=1)
+    DB_ASYNC_MAX_OVERFLOW: int = Field(default=20, ge=0)
+    DB_POOL_TIMEOUT: int = Field(default=30, ge=1)
+    DB_POOL_RECYCLE: int = Field(default=3600, ge=1)
+
     # Executor configuration
     EXECUTOR_DELETE_TASK_URL: str = (
         "http://localhost:8001/executor-manager/executor/delete"
@@ -160,6 +169,7 @@ class Settings(BaseSettings):
     # JWT configuration
     SECRET_KEY: str = "secret-key"
     ALGORITHM: str = "HS256"
+    WEWORK_TRANSCRIPT_ENCRYPTION_SECRET: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 7 * 24 * 60  # 7 days in minutes
     WEWORK_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     WEWORK_REFRESH_TOKEN_EXPIRE_MINUTES: int = 365 * 24 * 60
@@ -224,6 +234,12 @@ class Settings(BaseSettings):
     APPEND_CHAT_TASK_EXPIRE_HOURS: int = 2
     APPEND_CODE_TASK_EXPIRE_HOURS: int = 24
 
+    # Cancellation recovery configuration
+    # A task stuck in CANCELLING (or a streaming subtask whose runtime is gone) is
+    # finalized locally once no streaming activity has been observed for this long.
+    # Healthy streams touch Redis activity every ~1s, so 30min is conservative.
+    CANCELLING_STUCK_TIMEOUT_SECONDS: int = 1800
+
     # Subtask executor cleanup configuration
     # After a subtask is COMPLETED or FAILED, if executor_name/executor_namespace are set
     # and updated_at exceeds this threshold, the executor task will be deleted automatically.
@@ -242,6 +258,7 @@ class Settings(BaseSettings):
     WORKSPACE_ARCHIVE_BUCKET: str = "wegent-archives"
     WORKSPACE_ARCHIVE_ENABLED: bool = True
     WORKSPACE_ARCHIVE_TIMEZONE: str = "Asia/Shanghai"
+    WEWORK_TRANSCRIPT_S3_BUCKET: str = "wework-transcripts"
 
     # Publish storage configuration
     PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS: int = 3600
@@ -265,6 +282,9 @@ class Settings(BaseSettings):
     GITHUB_OAUTH_SCOPES: str = "repo read:org workflow"
     CONNECTOR_OAUTH_STATE_SECRET: str = ""
     CONNECTOR_OAUTH_SESSION_TTL_SECONDS: int = 600
+    # Dedicated versioned plugin credential keyring; validated only when used.
+    WEWORK_PLUGIN_CREDENTIAL_KEYS: SecretStr = Field(default=SecretStr(""), repr=False)
+    WEWORK_PLUGIN_CREDENTIAL_ACTIVE_KEY_ID: str = ""
     # Upstream Sites Platform base URL. Wework accesses it through Backend.
     SITES_API_BASE_URL: str = ""
     # Optional bearer token for the upstream Sites Platform project API.
@@ -279,6 +299,10 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    TERMINAL_SESSION_CACHE_MAX_ENTRIES: int = 8192
+    TERMINAL_SESSION_CACHE_TTL_SECONDS: float = 5.0
+    # Keep false during mixed-version Backend rollout; enable after all replicas upgrade.
+    TERMINAL_PROTOCOL_V2_ENABLED: bool = True
     TASK_RUN_METRICS_RETENTION_DAYS: int = 32
 
     # Public base URL of this backend, reachable from executor devices. The
@@ -293,6 +317,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_GET_RESPONSE: str = "120/minute"  # GET /api/v1/responses/{id}
     RATE_LIMIT_CANCEL_RESPONSE: str = "30/minute"  # POST /api/v1/responses/{id}/cancel
     RATE_LIMIT_DELETE_RESPONSE: str = "30/minute"  # DELETE /api/v1/responses/{id}
+    RATE_LIMIT_MCP_IDENTITY: str = (
+        "60/minute"  # GET /api/external/mcp-identity/userinfo
+    )
 
     # External knowledge MCP configuration
     # Disabled by default because this endpoint is intended for trusted integrations.
@@ -430,6 +457,12 @@ class Settings(BaseSettings):
                 raise ValueError("RAG_RUNTIME_MODE JSON override must be an object")
             return _normalize_rag_runtime_mode_value(raw, label="global")
         raise ValueError(f"Unsupported RAG_RUNTIME_MODE value: {v!r}")
+
+    # Master switch for scheduled work started by this Backend process.
+    # Disable it for traffic-verification environments that share production
+    # resources but must not run maintenance, scheduling, or queue-consuming
+    # workers. Scheduled work can run on a dedicated deployment instead.
+    SCHEDULED_TASKS_ENABLED: bool = True
 
     # Scheduler backend configuration
     # Supported backends: "celery" (default), "apscheduler", "xxljob"
@@ -804,12 +837,6 @@ class Settings(BaseSettings):
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 600
     # Whether to reject new requests during shutdown (503 Service Unavailable)
     SHUTDOWN_REJECT_NEW_REQUESTS: bool = True
-
-    # Data Table Configuration
-    # JSON string containing table provider credentials (DingTalk, etc.)
-    # Format: {"dingtalk":{"appKey":"...","appSecret":"...","operatorId":"...","userMapping":{...}}}
-    # See backend/app/services/tables/DATA_TABLE_CONFIG_EXAMPLE.md for details
-    DATA_TABLE_CONFIG: str = ""
 
     # Knowledge base and document summary configuration
     # Enable/disable automatic summary generation after document indexing

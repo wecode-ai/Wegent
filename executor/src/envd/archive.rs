@@ -439,15 +439,19 @@ fn is_session_relative_path(kind: TreeKind, relative: &Path, task_id: &str) -> b
 
 fn is_session_marker_name(name: &std::ffi::OsStr) -> bool {
     let name = name.to_string_lossy();
-    name == ".claude_session_id"
-        || name
-            .strip_prefix(".claude_session_id_")
-            .is_some_and(|suffix| {
-                !suffix.is_empty()
-                    && suffix
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-            })
+    [".claude_session_id", ".codex_thread_id"]
+        .iter()
+        .any(|marker| {
+            name == *marker
+                || name
+                    .strip_prefix(&format!("{marker}_"))
+                    .is_some_and(|suffix| {
+                        !suffix.is_empty()
+                            && suffix.bytes().all(|byte| {
+                                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
+                            })
+                    })
+        })
 }
 
 fn is_valid_session_marker_file(path: &Path) -> bool {

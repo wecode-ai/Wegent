@@ -125,7 +125,7 @@ export function handleProviderMcpHttpRequest(
     return true
   }
   if (url.pathname === '/mcp-control/calls' && req.method === 'GET') {
-    writeJson(res, 200, toolCalls)
+    writeControlJson(res, 200, toolCalls)
     return true
   }
   if (url.pathname === '/mcp-control/reset' && req.method === 'POST') {
@@ -136,7 +136,7 @@ export function handleProviderMcpHttpRequest(
     state.documentContents = {}
     state.nodeFailures = {}
     state.hiddenNodeIds.clear()
-    writeJson(res, 200, { status: 'reset' })
+    writeControlJson(res, 200, { status: 'reset' })
     return true
   }
   if (url.pathname === '/mcp-control/config' && req.method === 'POST') {
@@ -169,7 +169,7 @@ export function handleProviderMcpHttpRequest(
     if (config?.pausedContentNodeIds) {
       setPausedContentNodes(config.pausedContentNodeIds)
     }
-    writeJson(res, 200, {
+    writeControlJson(res, 200, {
       deniedNodeIds: [...state.deniedNodeIds],
       documentNames: state.documentNames,
       documentContents: state.documentContents,
@@ -529,5 +529,13 @@ function parseJsonBody<T>(body: string): T | null {
 
 function writeJson(res: http.ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(data, null, 2))
+}
+
+function writeControlJson(res: http.ServerResponse, status: number, data: unknown): void {
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    Connection: 'close',
+  })
   res.end(JSON.stringify(data, null, 2))
 }

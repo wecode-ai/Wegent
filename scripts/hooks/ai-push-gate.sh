@@ -39,16 +39,29 @@ should_run_full_tests() {
     [ "${AI_PUSH_FULL_TESTS:-0}" = "1" ]
 }
 
-collect_wework_test_scope() {
+collect_wework_check_scope() {
     WEWORK_RENDERER_CHANGED=0
     WEWORK_RENDERER_FULL_TESTS=0
     WEWORK_ELECTRON_CHANGED=0
     WEWORK_DSH_CHANGED=0
     WEWORK_SCRIPTS_CHANGED=0
+    WEWORK_LINT_FULL=0
+    WEWORK_LINT_FILES=()
     WEWORK_RELATED_FILES=()
 
     while IFS= read -r changed_file; do
         [ -z "$changed_file" ] && continue
+
+        case "$changed_file" in
+            wework/package.json|wework/eslint.config.*)
+                WEWORK_LINT_FULL=1
+                ;;
+            wework/*.[cm]ts|wework/*.[cm]tsx|wework/*.ts|wework/*.tsx)
+                if [ -f "$changed_file" ]; then
+                    WEWORK_LINT_FILES+=("${changed_file#wework/}")
+                fi
+                ;;
+        esac
 
         case "$changed_file" in
             wework/electron/*)
@@ -80,6 +93,35 @@ collect_wework_test_scope() {
     done < <(printf '%s\n' "$CHANGED_FILES")
 }
 
+run_wework_lint() {
+    : > "$TEMP_DIR/wework_eslint.log"
+
+    if [ "$WEWORK_LINT_FULL" -eq 1 ]; then
+        pnpm --filter wework lint > "$TEMP_DIR/wework_eslint.log" 2>&1
+        return $?
+    fi
+
+    if [ "${#WEWORK_LINT_FILES[@]}" -gt 0 ]; then
+        if ! pnpm --filter wework exec eslint \
+            "${WEWORK_LINT_FILES[@]}" >> "$TEMP_DIR/wework_eslint.log" 2>&1; then
+            return 1
+        fi
+    fi
+
+    if [ "$WEWORK_RENDERER_CHANGED" -eq 1 ]; then
+        if ! pnpm --filter wework run lint:typography \
+            >> "$TEMP_DIR/wework_eslint.log" 2>&1; then
+            return 1
+        fi
+        if ! pnpm --filter wework run lint:task-lifecycle \
+            >> "$TEMP_DIR/wework_eslint.log" 2>&1; then
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
 collect_node_test_files() {
     local directory="$1"
     find "$directory" -type f -name '*.test.mjs' -print 2>/dev/null | sort
@@ -93,6 +135,44 @@ append_unique_file() {
         [ "$existing" = "$candidate" ] && return
     done
     WEWORK_FOCUSED_TEST_FILES+=("$candidate")
+}
+
+format_worker_count() {
+    if [ "$1" = "1" ]; then
+        printf '1 worker'
+    else
+        printf '%s workers' "$1"
+    fi
+}
+
+run_wework_full_renderer_tests() {
+    local test_workers="$1"
+    local shard_count=2
+    local shard
+    local shard_exit=0
+    local test_exit=0
+    local shard_pids=()
+    local shard_logs=()
+
+    for ((shard = 1; shard <= shard_count; shard++)); do
+        shard_logs+=("$TEMP_DIR/wework_test_shard_${shard}.log")
+        pnpm --filter wework exec vitest run --dir src --pool=threads \
+            --maxWorkers "$test_workers" \
+            --shard="$shard/$shard_count" \
+            > "${shard_logs[$((shard - 1))]}" 2>&1 &
+        shard_pids+=("$!")
+    done
+
+    for ((shard = 1; shard <= shard_count; shard++)); do
+        wait "${shard_pids[$((shard - 1))]}"
+        shard_exit=$?
+        cat "${shard_logs[$((shard - 1))]}" >> "$TEMP_DIR/wework_test.log"
+        if [ "$shard_exit" -ne 0 ]; then
+            test_exit=1
+        fi
+    done
+
+    return "$test_exit"
 }
 
 collect_wework_renderer_tests() {
@@ -141,23 +221,24 @@ collect_wework_renderer_tests() {
 
 run_wework_unit_tests() {
     local test_exit=0
+    local test_workers
 
     : > "$TEMP_DIR/wework_test.log"
 
     if [ "$WEWORK_RENDERER_CHANGED" -eq 1 ]; then
         if [ "$WEWORK_RENDERER_FULL_TESTS" -eq 1 ]; then
-            echo -e "   Running full renderer unit tests with $WEWORK_TEST_WORKERS workers..."
-            if ! VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
-                pnpm --filter wework exec vitest run --dir src --pool=threads \
-                >> "$TEMP_DIR/wework_test.log" 2>&1; then
+            test_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
+            echo -e "   Running full renderer unit tests in 2 shards with $(format_worker_count "$test_workers") each..."
+            if ! run_wework_full_renderer_tests "$test_workers"; then
                 test_exit=1
             fi
         else
             collect_wework_renderer_tests
             if [ "${#WEWORK_FOCUSED_TEST_FILES[@]}" -gt 0 ]; then
-                echo -e "   Running focused renderer unit tests with $WEWORK_TEST_WORKERS workers..."
-                if ! VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
-                    pnpm --filter wework exec vitest run --pool=threads \
+                test_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
+                echo -e "   Running focused renderer unit tests with $(format_worker_count "$test_workers")..."
+                if ! pnpm --filter wework exec vitest run --pool=threads \
+                    --maxWorkers "$test_workers" \
                     "${WEWORK_FOCUSED_TEST_FILES[@]}" \
                     >> "$TEMP_DIR/wework_test.log" 2>&1; then
                     test_exit=1
@@ -517,7 +598,11 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         echo -e "   Running unit tests..."
         pnpm --filter @wegent/chat-core test > "$TEMP_DIR/test.log" 2>&1
         CORE_TEST_EXIT=$?
-        pnpm --filter wecode-ai-assistant run test --passWithNoTests >> "$TEMP_DIR/test.log" 2>&1
+        # Bound JSDOM workers, as with Wework, to avoid CPU and memory
+        # contention turning short UI interactions into test timeouts.
+        FRONTEND_TEST_WORKERS="${FRONTEND_PRE_PUSH_TEST_WORKERS:-2}"
+        pnpm --filter wecode-ai-assistant run test --passWithNoTests \
+            --maxWorkers "$FRONTEND_TEST_WORKERS" >> "$TEMP_DIR/test.log" 2>&1
         TEST_EXIT=$?
         if [ $CORE_TEST_EXIT -eq 0 ] && [ $TEST_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Unit Tests: PASSED${NC}"
@@ -547,10 +632,10 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         echo -e "   ${YELLOW}   Run 'pnpm install' from the repository root to install dependencies${NC}"
         WARNINGS+=("Wework: node_modules not found, checks skipped")
     else
-        collect_wework_test_scope
+        collect_wework_check_scope
         echo -e "   Running static checks and unit tests in parallel..."
 
-        pnpm --filter wework lint > "$TEMP_DIR/wework_eslint.log" 2>&1 &
+        run_wework_lint &
         ESLINT_PID=$!
 
         TSC_PID=""
@@ -574,7 +659,6 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             fi
         fi
 
-        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-4}"
         run_wework_unit_tests &
         WEWORK_TEST_PID=$!
 

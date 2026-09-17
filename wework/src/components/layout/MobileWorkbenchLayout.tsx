@@ -408,8 +408,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               turnNavigation={paneSession.turnNavigation}
               loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
               onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
-              onLoadFullTranscript={paneSession.loadFullTranscript}
-              loadingFullTranscript={paneSession.transcriptLoadingFullContent}
               onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
               onLoadTranscriptGap={paneSession.loadTranscriptGap}
               conversationKey={
@@ -534,6 +532,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                       }
                       taskPlan={paneSession.taskPlan}
                       onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                      onForceStartQueuedMessage={paneSession.forceStartQueuedMessage}
                       onReorderQueuedMessages={paneSession.reorderQueuedMessages}
                       queuePaused={paneSession.queuedMessagesPaused}
                       onResumeQueue={paneSession.resumeQueuedMessages}
@@ -604,6 +603,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 <h1 className="heading-lg text-center tracking-normal">{emptyTitle}</h1>
                 <ProjectWorkBar
                   {...effectiveProjectWork}
+                  extensionContext={effectiveProjectWork}
                   className="min-h-0 flex-col justify-center gap-1 px-0"
                   buttonClassName="bg-surface px-4 text-text-primary"
                   menuClassName="left-1/2 w-[min(20rem,calc(100vw-2.5rem))] -translate-x-1/2"
@@ -646,6 +646,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 }
                 taskPlan={paneSession.taskPlan}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                onForceStartQueuedMessage={paneSession.forceStartQueuedMessage}
                 onReorderQueuedMessages={paneSession.reorderQueuedMessages}
                 queuePaused={paneSession.queuedMessagesPaused}
                 onResumeQueue={paneSession.resumeQueuedMessages}

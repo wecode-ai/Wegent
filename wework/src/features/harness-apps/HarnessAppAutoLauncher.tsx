@@ -13,10 +13,11 @@ import {
   takeHarnessAppProxyToken,
   unregisterHarnessAppTab,
 } from '@/features/harness-apps/harnessAppTabs'
+import { notifyHarnessAppInstallationsChanged } from './harnessAppInstallationsChanged'
 import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getErrorMessage } from '@/lib/error-message'
+import { getSmartAppErrorMessage } from '@/lib/smart-app-error-message'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 
 const launches = new Map<string, Promise<void>>()
@@ -66,6 +67,11 @@ export function HarnessAppAutoLauncher({
         }
         if (installation.state === 'running' && installation.webUrl) {
           registerHarnessAppTab(installation)
+          notifyHarnessAppInstallationsChanged({
+            type: 'updated',
+            installationId,
+            installation,
+          })
           if (isElectronRuntime()) clearHarnessAppLaunch(installationId)
           return
         }
@@ -107,6 +113,11 @@ export function HarnessAppAutoLauncher({
           await storeHarnessAppProxyToken(installationId, launch.proxyToken)
           if (contextToken) await storeHarnessAppContextToken(installationId, contextToken)
           registerHarnessAppTab(running)
+          notifyHarnessAppInstallationsChanged({
+            type: 'updated',
+            installationId,
+            installation: running,
+          })
           if (isElectronRuntime()) clearHarnessAppLaunch(installationId)
         } catch (error) {
           console.warn(`[Wework] failed to auto-launch Smart app ${installationId}`, error)
@@ -127,7 +138,11 @@ export function HarnessAppAutoLauncher({
           if (!cancelled) {
             failHarnessAppLaunch(
               installationId,
-              getErrorMessage(error, t('workbench.smart_apps_launch_failed', '智能工作台启动失败'))
+              getSmartAppErrorMessage(
+                error,
+                t('workbench.smart_apps_launch_failed', '智能工作台启动失败'),
+                t
+              )
             )
           }
         }
@@ -141,7 +156,11 @@ export function HarnessAppAutoLauncher({
           )
           failHarnessAppLaunch(
             installationId,
-            getErrorMessage(error, t('workbench.smart_apps_load_failed', '智能工作台加载失败'))
+            getSmartAppErrorMessage(
+              error,
+              t('workbench.smart_apps_load_failed', '智能工作台加载失败'),
+              t
+            )
           )
         }
       })

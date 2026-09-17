@@ -254,6 +254,36 @@ version: "1.1.0"
         assert len(data["items"]) == 1
         assert data["items"][0]["metadata"]["name"] == "skill-identity-exact-match"
 
+    def test_download_skill_with_skill_identity_token(
+        self, test_client: TestClient, test_token: str, test_user: User
+    ):
+        """Executors should download an accessible Skill with their Skill identity."""
+        skill_md = "---\ndescription: Skill identity download skill\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "skill-identity-download-skill", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+        assert create_response.status_code == 201
+        skill_id = create_response.json()["metadata"]["labels"]["id"]
+        skill_identity_token = create_skill_identity_token(
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            runtime_type="executor",
+            runtime_name="claude-code-runtime",
+        )
+
+        response = test_client.get(
+            f"/api/v1/kinds/skills/{skill_id}/download?namespace=default",
+            headers={"Authorization": f"Bearer {skill_identity_token}"},
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert response.content == zip_content
+
     def test_upload_skill_rejects_task_token(
         self, test_client: TestClient, test_user: User
     ):
@@ -1434,6 +1464,18 @@ tags: ["public", "api", "test"]
         assert data["description"] == "Updated public"
         assert data["version"] == "2.0.0"
         assert data["is_public"] is True
+
+        marketplace_response = test_client.get(
+            "/api/admin/marketplace-resources?resource_type=skill&limit=200",
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+        )
+        assert marketplace_response.status_code == 200
+        marketplace_skill = next(
+            item
+            for item in marketplace_response.json()["items"]
+            if item["id"] == skill_id
+        )
+        assert marketplace_skill["recommendation_score"] == 0
 
     def test_update_public_skill_metadata_persists_visibility(
         self, test_client: TestClient, test_admin_token: str

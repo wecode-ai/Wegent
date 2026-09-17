@@ -1,4 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createPortal } from 'react-dom'
 import { HoverCard } from './hover-card'
@@ -284,7 +286,7 @@ describe('HoverCard', () => {
     expect(screen.queryByTestId('pinned-hover-card')).not.toBeInTheDocument()
   })
 
-  test('pins only interactions inside the configured region', () => {
+  test('pins only interactions inside the configured region', async () => {
     render(
       <HoverCard
         testId="scoped-pinned-hover-card"
@@ -312,7 +314,98 @@ describe('HoverCard', () => {
 
     fireEvent.pointerDown(screen.getByLabelText('Reply'))
     fireEvent.focus(screen.getByLabelText('Reply'))
+    fireEvent.click(screen.getByLabelText('Reply'))
+    await act(async () => Promise.resolve())
     expect(screen.getByTestId('scoped-pinned-hover-card-close')).toBeInTheDocument()
+  })
+
+  test('lets a pointer action finish before controlled pinning changes the card', async () => {
+    const events: string[] = []
+    const ControlledCard = () => {
+      const [pinned, setPinned] = useState(false)
+      const [active, setActive] = useState(true)
+      return (
+        <HoverCard
+          testId="controlled-action-hover-card"
+          interactive
+          openOnFocus
+          pinOnInteraction
+          pinOnInteractionSelector="[data-pin-region]"
+          pinned={pinned}
+          onPinnedChange={nextPinned => {
+            events.push(nextPinned ? 'pin' : 'unpin')
+            setPinned(nextPinned)
+          }}
+          content={
+            <div data-pin-region>
+              {!pinned ? <span>Unpinned controls</span> : null}
+              {active ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    events.push('action')
+                    setActive(false)
+                  }}
+                >
+                  Stop response
+                </button>
+              ) : (
+                <span>Response stopped</span>
+              )}
+            </div>
+          }
+        >
+          <button type="button">Current task</button>
+        </HoverCard>
+      )
+    }
+
+    render(<ControlledCard />)
+    fireEvent.focus(screen.getByText('Current task'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Stop response' }))
+
+    expect(events).toEqual(['action', 'pin'])
+    expect(screen.getByTestId('controlled-action-hover-card')).toHaveAttribute(
+      'data-pinned',
+      'true'
+    )
+    expect(screen.getByTestId('controlled-action-hover-card-close')).toHaveClass('z-10')
+  })
+
+  test('keeps a controlled pinned card open until its owner clears the pinned state', () => {
+    const onPinnedChange = vi.fn()
+    const { rerender } = render(
+      <HoverCard
+        testId="controlled-pinned-hover-card"
+        interactive
+        pinned
+        onPinnedChange={onPinnedChange}
+        content={<div>Persistent progress</div>}
+      >
+        <button type="button">Current task</button>
+      </HoverCard>
+    )
+
+    expect(screen.getByTestId('controlled-pinned-hover-card')).toHaveAttribute(
+      'data-pinned',
+      'true'
+    )
+    fireEvent.click(screen.getByTestId('controlled-pinned-hover-card-close'))
+    expect(onPinnedChange).toHaveBeenCalledWith(false)
+
+    rerender(
+      <HoverCard
+        testId="controlled-pinned-hover-card"
+        interactive
+        pinned={false}
+        onPinnedChange={onPinnedChange}
+        content={<div>Persistent progress</div>}
+      >
+        <button type="button">Current task</button>
+      </HoverCard>
+    )
+    expect(screen.queryByTestId('controlled-pinned-hover-card')).not.toBeInTheDocument()
   })
 
   test('positions the card to the left when the right side has less space', async () => {
@@ -352,8 +445,20 @@ describe('HoverCard', () => {
 
   test('measures the rendered card and moves it above the bottom viewport edge', async () => {
     vi.useFakeTimers()
+    let measuredStyle: {
+      left: string
+      top: string
+      visibility: string
+    } | null = null
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
       const isCard = this.dataset.testid === 'bottom-hover-card'
+      if (isCard) {
+        measuredStyle = {
+          left: this.style.left,
+          top: this.style.top,
+          visibility: this.style.visibility,
+        }
+      }
       return {
         x: isCard ? 530 : 900,
         y: isCard ? 700 : 680,
@@ -383,9 +488,174 @@ describe('HoverCard', () => {
     fireEvent.mouseEnter(screen.getByText('Current task'))
     await act(async () => vi.advanceTimersByTime(450))
 
+    expect(measuredStyle).toEqual({
+      left: '0px',
+      top: '0px',
+      visibility: 'hidden',
+    })
     expect(screen.getByTestId('bottom-hover-card')).toHaveStyle({
       left: '530px',
       top: '380px',
+      visibility: 'visible',
+    })
+  })
+
+  test('measures once when the rendered size changes with its position', async () => {
+    vi.useFakeTimers()
+    let cardMeasurements = 0
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      const isCard = this.dataset.testid === 'stable-hover-card'
+      if (!isCard) {
+        return {
+          x: 100,
+          y: 500,
+          width: 100,
+          height: 40,
+          top: 500,
+          right: 200,
+          bottom: 540,
+          left: 100,
+          toJSON: () => undefined,
+        }
+      }
+
+      cardMeasurements += 1
+      const top = Number.parseFloat(this.style.top)
+      const height = top === 500 ? 340 : 220
+      return {
+        x: 210,
+        y: top,
+        width: 360,
+        height,
+        top,
+        right: 570,
+        bottom: top + height,
+        left: 210,
+        toJSON: () => undefined,
+      }
+    })
+    vi.stubGlobal('innerWidth', 1024)
+    vi.stubGlobal('innerHeight', 768)
+
+    render(
+      <HoverCard
+        testId="stable-hover-card"
+        estimatedWidth={360}
+        estimatedHeight={220}
+        content={<div>Position-sensitive details</div>}
+      >
+        <div>Current task</div>
+      </HoverCard>
+    )
+
+    fireEvent.mouseEnter(screen.getByText('Current task'))
+    await act(async () => vi.advanceTimersByTime(450))
+
+    expect(screen.getByTestId('stable-hover-card')).toHaveStyle({ left: '210px', top: '500px' })
+    expect(cardMeasurements).toBe(1)
+  })
+
+  test('keeps viewport-right cards at the same position across different anchors', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('innerWidth', 1024)
+    vi.stubGlobal('innerHeight', 768)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      const isCard = this.dataset.testid?.endsWith('-hover-card') ?? false
+      const isSecondAnchor = this.textContent === 'Second task'
+      return {
+        x: isCard ? 0 : isSecondAnchor ? 420 : 120,
+        y: isCard ? 0 : isSecondAnchor ? 520 : 160,
+        width: isCard ? 360 : 180,
+        height: isCard ? 300 : 80,
+        top: isCard ? 0 : isSecondAnchor ? 520 : 160,
+        right: isCard ? 360 : isSecondAnchor ? 600 : 300,
+        bottom: isCard ? 300 : isSecondAnchor ? 600 : 240,
+        left: isCard ? 0 : isSecondAnchor ? 420 : 120,
+        toJSON: () => undefined,
+      }
+    })
+
+    render(
+      <>
+        <HoverCard
+          testId="first-fixed-hover-card"
+          interactive
+          placement="viewport-right"
+          viewportTop={48}
+          estimatedWidth={360}
+          content={<div>First details</div>}
+        >
+          <div>First task</div>
+        </HoverCard>
+        <HoverCard
+          testId="second-fixed-hover-card"
+          interactive
+          placement="viewport-right"
+          viewportTop={48}
+          estimatedWidth={360}
+          content={<div>Second details</div>}
+        >
+          <div>Second task</div>
+        </HoverCard>
+      </>
+    )
+
+    fireEvent.mouseEnter(screen.getByText('First task'))
+    await act(async () => vi.advanceTimersByTime(450))
+    expect(screen.getByTestId('first-fixed-hover-card')).toHaveStyle({
+      left: '656px',
+      top: '48px',
+    })
+
+    fireEvent.mouseLeave(screen.getByText('First task'))
+    fireEvent.mouseEnter(screen.getByText('Second task'))
+    fireEvent.pointerMove(screen.getByText('Second task'))
+    await act(async () => vi.advanceTimersByTime(450))
+    expect(screen.getByTestId('second-fixed-hover-card')).toHaveStyle({
+      left: '656px',
+      top: '48px',
+    })
+  })
+
+  test('keeps viewport-right cards fully inside the viewport', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('innerWidth', 1024)
+    vi.stubGlobal('innerHeight', 768)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      const isCard = this.dataset.testid === 'bounded-hover-card'
+      return {
+        x: isCard ? 0 : 120,
+        y: isCard ? 0 : 160,
+        width: isCard ? 360 : 180,
+        height: isCard ? 300 : 80,
+        top: isCard ? 0 : 160,
+        right: isCard ? 360 : 300,
+        bottom: isCard ? 300 : 240,
+        left: isCard ? 0 : 120,
+        toJSON: () => undefined,
+      }
+    })
+
+    render(
+      <HoverCard
+        testId="bounded-hover-card"
+        interactive
+        placement="viewport-right"
+        viewportTop={700}
+        estimatedWidth={360}
+        estimatedHeight={300}
+        content={<div>Bounded details</div>}
+      >
+        <div>Bounded task</div>
+      </HoverCard>
+    )
+
+    fireEvent.mouseEnter(screen.getByText('Bounded task'))
+    await act(async () => vi.advanceTimersByTime(450))
+
+    expect(screen.getByTestId('bounded-hover-card')).toHaveStyle({
+      left: '656px',
+      top: '460px',
     })
   })
 })

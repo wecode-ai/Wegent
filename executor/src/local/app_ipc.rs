@@ -8,6 +8,7 @@ use std::{collections::HashMap, future::Future, path::Path, pin::Pin, sync::Arc}
 #[cfg(windows)]
 use std::{env, path::PathBuf};
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
@@ -30,12 +31,18 @@ use crate::{
         CodexLocalConfigUpdateRequest, ExternalContentImportRequest,
     },
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
+    local::environment_prepare::execute_environment_prepare,
+    local::git_commands::{
+        branch_diff, branch_diff_shortstat, hosting_cli_status, push_current_branch,
+        workspace_diff, worktree_add, worktree_remove,
+    },
     local::git_commit_message::generate_commit_message,
     local::harnesses::{
         list_local_harnesses, prepare_local_harness_launch, ListLocalHarnessesRequest,
         PrepareLocalHarnessLaunchRequest,
     },
     local::local_skills::list_local_skills,
+    local::native_git::run_git_capture_with_input,
     local::plugin_catalog::{
         list_wegent_store_plugins, read_plugin_manifest, save_plugin_example,
         ReadPluginManifestRequest, SavePluginExampleRequest,
@@ -51,6 +58,7 @@ use crate::{
         PluginImportMutationRequest, PreviewPluginImportRequest, ReadPluginCloudLinksRequest,
         RollbackPersonalPluginCopyRequest, UnlinkPluginReleaseRequest,
     },
+    local::turn_file_changes_commands::turn_file_changes as turn_file_changes_command,
     local::workspace_files::{
         execute_workspace_file_command_with_input, is_workspace_file_command, WORKSPACE_ROOTS_ENV,
     },
@@ -72,6 +80,16 @@ pub const APP_IPC_PROTOCOL_VERSION: u64 = 1;
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
+const TRANSCRIPT_EXPORT_TIMEOUT_SECONDS: u64 = 10 * 60;
+
+fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
+    match method {
+        Some("executor.plugin_auth.migrate") => 280,
+        Some("executor.plugin_auth.run") => 200,
+        Some("runtime.tasks.transcript.export") => TRANSCRIPT_EXPORT_TIMEOUT_SECONDS,
+        _ => APP_IPC_REQUEST_TIMEOUT_SECONDS,
+    }
+}
 const APP_IPC_AUTH_TIMEOUT_SECONDS: u64 = 5;
 const APP_IPC_MAX_AUTH_FRAME_BYTES: usize = 4096;
 const APP_IPC_BULK_WRITE_BUFFER_CAPACITY: usize = 65_535;
@@ -82,6 +100,7 @@ const APP_IPC_CAPABILITIES: &[&str] = &[
     "executor.harnesses",
     "executor.health",
     "executor.plugins",
+    "executor.plugin_auth",
     "runtime.archives",
     "runtime.automations",
     "runtime.codex",
@@ -105,6 +124,8 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "device.execute_command",
     "dws.*",
     "executions.*",
+    "executor.plugin_auth.migrate",
+    "executor.plugin_auth.run",
     "executor.backend.configure",
     "executor.backend.status",
     "executor.codex_home.config.read",
@@ -149,12 +170,6 @@ enum LocalEndpointRole {
     Client,
     Owner,
 }
-const GIT_PUSH_SCRIPT: &str = r#"branch=$(git branch --show-current)
-if [ -z "$branch" ]; then
-  echo "Cannot push detached HEAD" >&2
-  exit 64
-fi
-exec git push -u origin "$branch""#;
 const RUNTIME_AUTH_STATUS_SCRIPT: &str = r#"
 import hashlib
 import json
@@ -167,7 +182,13 @@ def iso_mtime(path_stat):
     return datetime.fromtimestamp(path_stat.st_mtime, timezone.utc).isoformat()
 
 
-codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
+configured_home = os.environ.get("WEGENT_CODEX_HOME", "").strip()
+if configured_home:
+    codex_home = Path(configured_home)
+else:
+    executor_home = os.environ.get("WEGENT_EXECUTOR_HOME", "").strip()
+    base = Path(executor_home) if executor_home else Path.home() / ".wegent-executor"
+    codex_home = base / "codex"
 target = codex_home / "auth.json"
 result = {
     "runtime": "codex",
@@ -198,176 +219,6 @@ if target.exists() and target.is_file():
 
 print(json.dumps(result, ensure_ascii=False))
 "#;
-const GIT_HOSTING_CLI_STATUS_SCRIPT: &str = r#"
-import json
-import re
-import shutil
-import subprocess
-import sys
-
-tool = sys.argv[1]
-timeout_seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 10
-executable = shutil.which(tool)
-if not executable:
-    print(json.dumps({
-        "tool": tool,
-        "installed": False,
-        "authenticated": False,
-        "executablePath": None,
-        "version": None,
-        "detectionError": None,
-    }))
-    raise SystemExit(0)
-
-def run(*args):
-    return subprocess.run(
-        [executable, *args],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=timeout_seconds,
-        check=False,
-    )
-
-def is_authenticated(auth_result):
-    if auth_result.returncode == 0:
-        return True
-    if tool != "glab":
-        return False
-
-    output = "\n".join((auth_result.stdout, auth_result.stderr))
-    return re.search(r"(?m)^\s*[✓✔]\s+Logged in to\s+", output) is not None
-
-try:
-    version_result = run("--version")
-    version = next(
-        (line.strip() for line in version_result.stdout.splitlines() if line.strip()),
-        None,
-    )
-    auth_result = run("auth", "status")
-except subprocess.TimeoutExpired:
-    print(json.dumps({
-        "tool": tool,
-        "installed": True,
-        "authenticated": False,
-        "executablePath": executable,
-        "version": None,
-        "detectionError": "timeout",
-    }))
-    raise SystemExit(0)
-
-print(json.dumps({
-    "tool": tool,
-    "installed": True,
-    "authenticated": is_authenticated(auth_result),
-    "executablePath": executable,
-    "version": version,
-    "detectionError": None,
-}))
-"#;
-const GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/upstream/HEAD 2>/dev/null)" upstream/main upstream/master "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main origin/master main master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; [ -n "$base" ] || { git diff --shortstat HEAD --; exit 0; }; merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); [ -n "$merge_base" ] || { git diff --shortstat HEAD --; exit 0; }; git diff --shortstat "$merge_base" --"#;
-const GIT_WORKSPACE_DIFF_SCRIPT: &str = r#"if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
-const GIT_BRANCH_DIFF_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/upstream/HEAD 2>/dev/null)" upstream/main upstream/master "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main origin/master main master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; if [ -n "$base" ]; then merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); fi; if [ -n "$merge_base" ]; then git diff --binary "$merge_base" --; elif git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
-const TURN_FILE_CHANGES_SCRIPT: &str = r#"
-import gzip
-import hashlib
-import json
-import os
-import re
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
-
-MAX_PATCH_BYTES = 20 * 1024 * 1024
-ARTIFACT_PATTERN = re.compile(r"turn-file-changes/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)")
-
-
-def finish(payload, code=0):
-    print(json.dumps(payload, ensure_ascii=False))
-    sys.exit(code)
-
-
-def fail(message, code=64, status=None):
-    payload = {"success": False, "error": message}
-    if status:
-        payload["status"] = status
-    finish(payload, code)
-
-
-if len(sys.argv) != 3:
-    fail("mode and artifact id are required")
-
-mode = sys.argv[1]
-artifact_id = sys.argv[2]
-if mode not in {"review", "revert"}:
-    fail("invalid mode")
-
-match = ARTIFACT_PATTERN.fullmatch(artifact_id)
-if not match:
-    fail("invalid artifact id")
-
-task_id = match.group(1)
-subtask_id = match.group(2)
-executor_home = Path(os.environ.get("WEGENT_EXECUTOR_HOME", "~/.wegent-executor")).expanduser()
-artifact_root = (executor_home / "artifacts").resolve()
-artifact_dir = (artifact_root / artifact_id).resolve()
-if artifact_root not in artifact_dir.parents:
-    fail("invalid artifact id")
-
-metadata_path = artifact_dir / "metadata.json"
-patch_path = artifact_dir / "changes.patch.gz"
-if not metadata_path.is_file() or not patch_path.is_file():
-    finish({"success": False, "status": "artifact_missing", "error": "turn file changes artifact is missing"})
-
-try:
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError) as exc:
-    fail(f"invalid artifact metadata: {exc}", code=65)
-
-if not isinstance(metadata, dict):
-    fail("invalid artifact metadata", code=65)
-if str(metadata.get("task_id")) != task_id or str(metadata.get("subtask_id")) != subtask_id:
-    fail("artifact metadata id mismatch", code=65)
-
-workspace = Path.cwd().resolve()
-try:
-    metadata_workspace = Path(str(metadata["workspace_path"])).resolve()
-except (KeyError, OSError):
-    fail("invalid artifact workspace", code=65)
-if metadata_workspace != workspace:
-    fail("artifact workspace mismatch", code=65)
-
-try:
-    with gzip.open(patch_path, "rb") as patch_file:
-        patch = patch_file.read(MAX_PATCH_BYTES + 1)
-except (OSError, gzip.BadGzipFile) as exc:
-    fail(f"failed to read artifact patch: {exc}", code=65)
-if len(patch) > MAX_PATCH_BYTES:
-    fail("artifact patch exceeds size limit", code=65)
-if hashlib.sha256(patch).hexdigest() != metadata.get("checksum"):
-    fail("artifact patch checksum mismatch", code=65)
-
-if mode == "review":
-    finish({"success": True, "diff": patch.decode("utf-8", errors="replace")})
-
-temp_path = None
-try:
-    with tempfile.NamedTemporaryFile(prefix="wegent-validated-turn-", suffix=".patch", delete=False) as temp_file:
-        temp_file.write(patch)
-        temp_path = Path(temp_file.name)
-
-    check = subprocess.run(["git", "apply", "--reverse", "--check", "--binary", str(temp_path)], cwd=workspace, capture_output=True, text=True)
-    if check.returncode != 0:
-        finish({"success": False, "status": "conflicted", "error": "patch does not apply"})
-    apply_result = subprocess.run(["git", "apply", "--reverse", "--binary", str(temp_path)], cwd=workspace, capture_output=True, text=True)
-    if apply_result.returncode != 0:
-        finish({"success": False, "status": "conflicted", "error": "patch does not apply"})
-    finish({"success": True, "status": "reverted"})
-finally:
-    if temp_path is not None:
-        temp_path.unlink(missing_ok=True)
-"#;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -392,6 +243,14 @@ pub trait RuntimeWorkHandler: Send + Sync {
 }
 
 pub trait BackendConnectionHandler: Send + Sync {
+    fn execute_plugin_auth<'a>(
+        &'a self,
+        params: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+    fn migrate_plugin_auth<'a>(
+        &'a self,
+        params: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>>;
     fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
     fn backend_quota<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
     fn backend_status<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
@@ -923,6 +782,20 @@ impl AppIpcServer {
             return Ok(Value::String(saved));
         }
 
+        if method == "executor.plugin_auth.migrate" || method == "executor.plugin_auth.run" {
+            let handler = self.backend_connection_handler.as_ref().ok_or_else(|| {
+                AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection handler is not available",
+                )
+            })?;
+            return if method == "executor.plugin_auth.run" {
+                handler.execute_plugin_auth(params).await
+            } else {
+                handler.migrate_plugin_auth(params).await
+            };
+        }
+
         if method == "executor.backend.configure" {
             let Some(handler) = &self.backend_connection_handler else {
                 return Err(AppIpcError::new(
@@ -1404,8 +1277,9 @@ impl AppIpcServer {
                             None,
                             None,
                         );
+                        let timeout_seconds = app_ipc_request_timeout_seconds(method.as_deref());
                         let response = match tokio::time::timeout(
-                            Duration::from_secs(APP_IPC_REQUEST_TIMEOUT_SECONDS),
+                            Duration::from_secs(timeout_seconds),
                             server.handle_line(&request_line),
                         )
                         .await
@@ -1425,7 +1299,7 @@ impl AppIpcServer {
                                     &AppIpcError::new(
                                         "request_timeout",
                                         format!(
-                                            "app IPC request timed out after {APP_IPC_REQUEST_TIMEOUT_SECONDS}s"
+                                            "app IPC request timed out after {timeout_seconds}s"
                                         ),
                                     ),
                                 ))
@@ -1643,6 +1517,106 @@ impl AppIpcServer {
                 .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
         }
 
+        // Git queries that used to run through `bash` or `python3` run natively
+        // so they work on Windows machines where those interpreters are not on
+        // PATH (Git for Windows only adds `cmd\`, which has git but no bash).
+        let native_path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
+        let native_env = string_env(params.get("env"))?;
+        let native_timeout =
+            positive_number(params.get("timeout_seconds"), DEFAULT_TIMEOUT_SECONDS);
+        let native_max_output = positive_number(
+            params.get("max_output_bytes"),
+            DEFAULT_MAX_OUTPUT_BYTES as f64,
+        )
+        .round() as usize;
+        let native_args = string_list(params.get("args")).unwrap_or_default();
+        let native_result = match command_key {
+            "environment_prepare" => {
+                Some(execute_environment_prepare(&native_args, native_timeout).await)
+            }
+            "git_diff" => Some(
+                workspace_diff(
+                    native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_branch_diff" => Some(
+                branch_diff(
+                    native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_branch_diff_shortstat" => Some(
+                branch_diff_shortstat(
+                    native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_github_cli_status" => {
+                Some(hosting_cli_status("gh", &native_env, native_timeout).await)
+            }
+            "git_gitlab_cli_status" => {
+                Some(hosting_cli_status("glab", &native_env, native_timeout).await)
+            }
+            "git_push" => Some(
+                push_current_branch(
+                    native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_apply_patch" => Some(
+                apply_git_patch(
+                    &native_args,
+                    native_path.as_deref(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_worktree_add" => Some(
+                worktree_add(&native_args, &native_env, native_timeout, native_max_output).await,
+            ),
+            "git_worktree_remove" => Some(
+                worktree_remove(&native_args, &native_env, native_timeout, native_max_output).await,
+            ),
+            "turn_file_changes_review" | "turn_file_changes_revert" => {
+                let artifact_id = native_args.first().map(String::as_str).unwrap_or_default();
+                let mode = if command_key == "turn_file_changes_review" {
+                    "review"
+                } else {
+                    "revert"
+                };
+                Some(
+                    turn_file_changes_command(
+                        mode,
+                        artifact_id,
+                        native_path.as_deref(),
+                        &native_env,
+                        native_max_output,
+                    )
+                    .await,
+                )
+            }
+            _ => None,
+        };
+        if let Some(result) = native_result {
+            return serde_json::to_value(result)
+                .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
         let args = string_list(params.get("args"))?;
         let path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
         let mut env = string_env(params.get("env"))?;
@@ -1693,6 +1667,7 @@ impl AppIpcServer {
         })?;
 
         let request = CommandRequest {
+            command_key: Some(command_key.to_owned()),
             command: command.command.to_owned(),
             argv: command
                 .argv
@@ -2219,6 +2194,16 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             serialize_task_value(
                 runtime
                     .get_task(project_id, task_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.mark_read" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .mark_task_read(project_id, task_id)
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -2809,26 +2794,6 @@ async fn handle_builtin_device_command(
     params: &Value,
 ) -> Option<(CommandResult, Option<PostProcessor>)> {
     match command_key {
-        "home_dir" => Some((
-            CommandResult::ok(
-                dirs::home_dir()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| ".".to_string()),
-            ),
-            None,
-        )),
-        "pwd" => Some((
-            CommandResult::ok(
-                std::env::current_dir()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|_| ".".to_string()),
-            ),
-            None,
-        )),
-        "project_workspace_root" => match project_workspace_root_path() {
-            Ok(path) => Some((CommandResult::ok(path), None)),
-            Err(error) => Some((CommandResult::error(error, 0.0, false), None)),
-        },
         "mkdir_p" => {
             let args = string_list(params.get("args")).ok()?;
             let path = args.first()?;
@@ -2882,15 +2847,7 @@ async fn handle_builtin_device_command(
             ))
         }
         "runtime_auth_status" => {
-            let codex_home = env::var("CODEX_HOME")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    dirs::home_dir()
-                        .unwrap_or_else(|| PathBuf::from("."))
-                        .join(".codex")
-                });
+            let codex_home = crate::agents::wework_codex_home();
             let target = codex_home.join("auth.json");
             let mut result = json!({
                 "runtime": "codex",
@@ -2985,6 +2942,68 @@ fn git_is_worktree(path: &str) -> bool {
     })
 }
 
+async fn apply_git_patch(
+    args: &[String],
+    cwd: Option<&str>,
+    env: &HashMap<String, String>,
+    timeout_seconds: f64,
+    max_output_bytes: usize,
+) -> CommandResult {
+    let action = args.first().map(String::as_str).unwrap_or_default();
+    let encoded_patch = args.get(1).map(String::as_str).unwrap_or_default();
+    let git_args = match action {
+        "stage" => vec![
+            "apply".to_owned(),
+            "--cached".to_owned(),
+            "--whitespace=nowarn".to_owned(),
+            "-".to_owned(),
+        ],
+        "unstage" => vec![
+            "apply".to_owned(),
+            "--cached".to_owned(),
+            "--reverse".to_owned(),
+            "--whitespace=nowarn".to_owned(),
+            "-".to_owned(),
+        ],
+        "revert" => vec![
+            "apply".to_owned(),
+            "--reverse".to_owned(),
+            "--whitespace=nowarn".to_owned(),
+            "-".to_owned(),
+        ],
+        _ => {
+            return CommandResult::error("Unsupported patch action".to_owned(), 0.0, false);
+        }
+    };
+    let patch = match BASE64_STANDARD.decode(encoded_patch) {
+        Ok(patch) => patch,
+        Err(_) => return CommandResult::error("Invalid patch payload".to_owned(), 0.0, false),
+    };
+    let Some(cwd) = cwd.map(Path::new) else {
+        return CommandResult::error("Workspace is not a Git repository".to_owned(), 0.0, false);
+    };
+    if !git_is_worktree(cwd.to_string_lossy().as_ref()) {
+        return CommandResult::error("Workspace is not a Git repository".to_owned(), 0.0, false);
+    }
+
+    match run_git_capture_with_input(
+        &git_args,
+        &patch,
+        Some(cwd),
+        env,
+        Duration::from_secs_f64(timeout_seconds.max(0.001)),
+        max_output_bytes,
+    )
+    .await
+    {
+        Ok(capture) if capture.success => {
+            CommandResult::ok(String::from_utf8_lossy(&capture.stdout).into_owned())
+        }
+        Ok(capture) => CommandResult::error(capture.stderr, 0.0, false),
+        Err(error) => CommandResult::error(error.message, 0.0, error.timed_out),
+    }
+}
+
 fn looks_like_git_dir(path: &Path) -> bool {
     path.join("HEAD").is_file()
         && (path.join("objects").is_dir()
@@ -3017,35 +3036,6 @@ fn is_git_workspace_inspection_command(command_key: &str) -> bool {
             | "git_status_porcelain"
             | "git_remote_url"
     )
-}
-
-#[cfg(windows)]
-fn project_workspace_root_path() -> Result<String, String> {
-    if let Ok(value) = env::var("WEGENT_EXECUTOR_PROJECTS_DIR") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_owned());
-        }
-    }
-    if let Ok(value) = env::var("WECODE_HOME") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed)
-                .join("wegent-executor")
-                .join("workspace")
-                .join("projects")
-                .display()
-                .to_string());
-        }
-    }
-    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
-    Ok(home
-        .join(".wecode")
-        .join("wegent-executor")
-        .join("workspace")
-        .join("projects")
-        .display()
-        .to_string())
 }
 
 pub fn app_ipc_stdio_ready_log_line(device_id: &str) -> String {
@@ -3222,21 +3212,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &["git", "diff", "--shortstat"],
             None,
         )),
-        "git_diff" => Some(command_definition(
-            "bash -c <git_workspace_diff>",
-            &["bash", "-c", GIT_WORKSPACE_DIFF_SCRIPT],
-            None,
-        )),
-        "git_branch_diff" => Some(command_definition(
-            "bash -c <git_branch_diff>",
-            &["bash", "-c", GIT_BRANCH_DIFF_SCRIPT],
-            None,
-        )),
-        "git_branch_diff_shortstat" => Some(command_definition(
-            "bash -c <git_branch_diff_shortstat>",
-            &["bash", "-c", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
-            None,
-        )),
         "git_diff_unstaged" => Some(command_definition(
             "git diff --binary --",
             &["git", "diff", "--binary", "--"],
@@ -3261,16 +3236,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             "git remote get-url origin",
             &["git", "remote", "get-url", "origin"],
             None,
-        )),
-        "git_github_cli_status" => Some(command_definition(
-            "python3 -c <git_hosting_cli_status> gh",
-            &["python3", "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "gh"],
-            Some(PostProcessor::Json),
-        )),
-        "git_gitlab_cli_status" => Some(command_definition(
-            "python3 -c <git_hosting_cli_status> glab",
-            &["python3", "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "glab"],
-            Some(PostProcessor::Json),
         )),
         "git_github_pull_requests" => Some(command_definition(
             "gh pr list --state all --head <branch>",
@@ -3371,48 +3336,13 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             ],
             None,
         )),
-        "git_worktree_add" => Some(command_definition(
-            "sh -c <git_worktree_add>",
-            &[
-                "sh",
-                "-c",
-                concat!(
-                    "source=$1; target=$2; ref=$3; ",
-                    "mkdir -p \"$(dirname \"$target\")\"; ",
-                    "if git -C \"$target\" rev-parse --is-inside-work-tree ",
-                    ">/dev/null 2>&1; then ",
-                    "if [ -n \"$ref\" ]; then ",
-                    "git -C \"$target\" checkout --force --detach \"$ref\"; fi; ",
-                    "exit 0; ",
-                    "else ",
-                    "if [ -e \"$target\" ]; then ",
-                    "echo \"target exists and is not a Git worktree\" >&2; exit 64; fi; ",
-                    "if [ -n \"$ref\" ]; then ",
-                    "git -C \"$source\" worktree add --detach \"$target\" \"$ref\"; ",
-                    "else git -C \"$source\" worktree add --detach \"$target\"; fi; ",
-                    "fi"
-                ),
-                "--",
-            ],
-            None,
-        )),
-        "git_worktree_remove" => Some(command_definition(
-            "sh -c 'git -C \"$1\" worktree remove --force \"$2\"' --",
-            &[
-                "sh",
-                "-c",
-                "git -C \"$1\" worktree remove --force \"$2\"",
-                "--",
-            ],
-            None,
-        )),
         "git_add_all" => Some(command_definition("git add --all", &["git", "add", "--all"], None)),
-        "git_commit" => Some(command_definition("git commit", &["git", "commit"], None)),
-        "git_push" => Some(command_definition(
-            "sh -c <git_push>",
-            &["sh", "-c", GIT_PUSH_SCRIPT],
+        "git_apply_patch" => Some(command_definition(
+            "git apply <validated patch>",
+            &["git", "apply"],
             None,
         )),
+        "git_commit" => Some(command_definition("git commit", &["git", "commit"], None)),
         "browser_relay_restart" => Some(command_definition(
             "sh -lc <browser_relay_restart>",
             &[
@@ -3430,16 +3360,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "payload=${1:?browser tool payload is required}; exec \"$HOME/.wegent-executor/bin/browser-tool\" \"$payload\"",
                 "--",
             ],
-            Some(PostProcessor::Json),
-        )),
-        "turn_file_changes_review" => Some(command_definition(
-            "python3 -c <turn_file_changes> review",
-            &["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "review"],
-            Some(PostProcessor::Json),
-        )),
-        "turn_file_changes_revert" => Some(command_definition(
-            "python3 -c <turn_file_changes> revert",
-            &["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "revert"],
             Some(PostProcessor::Json),
         )),
         _ => None,
@@ -3672,9 +3592,21 @@ mod tests {
     use tokio::time::Duration;
 
     use super::{
-        app_ipc_request_metadata, is_bulk_app_ipc_event, local_app_command, AppIpcServer,
-        BlockingSingleFlight,
+        app_ipc_request_metadata, app_ipc_request_timeout_seconds, is_bulk_app_ipc_event,
+        local_app_command, AppIpcServer, BlockingSingleFlight,
     };
+
+    #[test]
+    fn transcript_export_allows_large_snapshot_packaging() {
+        assert_eq!(
+            app_ipc_request_timeout_seconds(Some("runtime.tasks.transcript.export")),
+            10 * 60
+        );
+        assert_eq!(
+            app_ipc_request_timeout_seconds(Some("runtime.tasks.list")),
+            75
+        );
+    }
 
     #[test]
     fn app_ipc_request_metadata_includes_device_command_key() {
@@ -3990,31 +3922,22 @@ mod tests {
     }
 
     #[test]
-    fn git_diff_commands_do_not_start_a_login_shell() {
-        for command_key in ["git_diff", "git_branch_diff", "git_branch_diff_shortstat"] {
-            let command = local_app_command(command_key).expect("command must be registered");
-
-            assert_eq!(command.argv.first(), Some(&"bash"));
-            assert_eq!(command.argv.get(1), Some(&"-c"));
-            assert!(!command.argv.contains(&"-l"));
-        }
-    }
-
-    #[test]
-    fn git_branch_diff_prefers_fork_parent_remote() {
-        for command_key in ["git_branch_diff", "git_branch_diff_shortstat"] {
-            let script = local_app_command(command_key)
-                .expect("command must be registered")
-                .argv[2];
-            let upstream = script
-                .find("upstream/HEAD")
-                .expect("upstream default branch should be considered");
-            let origin = script
-                .find("origin/HEAD")
-                .expect("origin default branch should be considered");
+    fn git_native_commands_are_not_registered_as_shell_commands() {
+        for command_key in [
+            "git_diff",
+            "git_branch_diff",
+            "git_branch_diff_shortstat",
+            "git_github_cli_status",
+            "git_gitlab_cli_status",
+            "git_push",
+            "git_worktree_add",
+            "git_worktree_remove",
+            "turn_file_changes_review",
+            "turn_file_changes_revert",
+        ] {
             assert!(
-                upstream < origin,
-                "fork parent remote should be checked before origin"
+                local_app_command(command_key).is_none(),
+                "{command_key} must run through the native handler, not the shell registry"
             );
         }
     }

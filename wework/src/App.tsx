@@ -1,3 +1,5 @@
+import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
+import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
 import {
   Activity,
   useCallback,
@@ -84,11 +86,15 @@ import {
   dispatchToggleModelSelectorShortcut,
   dispatchStepFontSizeShortcut,
   dispatchResetFontSizeShortcut,
-  isEditableShortcutTarget,
+  dispatchBuiltinShortcutCommand,
+  shouldIgnoreWorkbenchShortcut,
+  isBuiltinShortcutCommand,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
   setActiveKeybindings,
+  type KeybindingOverride,
 } from '@/lib/keybindings'
+import { getPlatform } from '@/lib/platform'
 import {
   getWeworkDevInstanceInfo,
   getWeworkDevInstanceRows,
@@ -112,13 +118,26 @@ import {
 } from '@/features/workspace-tabs/workspaceTabs'
 import { harnessAppRoute, resolveRunningHarnessApp } from '@/features/harness-apps/harnessAppTabs'
 import type { User } from '@/types/api'
+import { TelemetryAgent } from '@/telemetry/TelemetryAgent'
 import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
-import { track, useTelemetryEnabled } from '@/telemetry/client'
+import { track } from '@/telemetry/client'
+import { resolveTelemetryRoute } from '@/telemetry/routeRegistry'
+import { telemetryFeatureForLocation } from '@/telemetry/routes'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 import { DshAppSurface } from '@/features/dsh-runtime/DshAppSurface'
 import { DshRouteSurface } from '@/features/dsh-runtime/DshRouteSurface'
+import { useDshClientContext } from '@/features/dsh-runtime/DshClientContext'
+import {
+  executeDshCommand,
+  getDshKeybindingDefaults,
+  isDshCommandEnabled,
+  registerDshCommand,
+  registerDshContext,
+  subscribeDshExtensions,
+} from '@/features/dsh-runtime/dshExtensions'
 import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { DshWorkspaceTabSurface } from '@/features/dsh-runtime/DshWorkspaceTabSurface'
 import { getDshApps, resolveDshApp, type WeworkDshApp } from '@/features/dsh-runtime/dshApps'
 import { resolveDshRoute, type WeworkDshRoute } from '@/features/dsh-runtime/dshRoutes'
@@ -169,17 +188,6 @@ function useCurrentLocation() {
   return location
 }
 
-function telemetryFeatureForPath(path: string) {
-  if (path === '/login' || path === '/login/oidc') return 'login' as const
-  const pluginRoute = resolveDshRoute(path)
-  if (pluginRoute) return pluginRoute.telemetryFeature
-  if (path.startsWith('/app/')) return 'apps' as const
-  if (path.startsWith('/settings')) return 'settings' as const
-  if (path.startsWith('/project-space')) return 'project_space' as const
-  if (path === '/') return 'workbench' as const
-  return 'unknown' as const
-}
-
 interface AppRoutesProps {
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   onOpenWeworkForAppshot?: () => void
@@ -193,14 +201,20 @@ function workspaceTabIframe(
   tab: WorkspaceTab,
   wegentUrl: string | null | undefined
 ): { appKey: string; embeddedBrowserLabel?: string; src: string; title: string } | null {
-  const match = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)
-  if (!match) return null
-  const app = resolveDshApp(match[1])
+  const tabUrl = new URL(tab.contentRoute, window.location.origin)
+  const tabPath = stripAppBasePath(tabUrl.pathname)
+  const appId = tabPath.match(/^\/app\/([^/]+)/)?.[1]
+  if (!appId) return null
+  const app = resolveDshApp(appId)
   if (app?.mode === 'iframe') {
-    const src = app.urlSource === 'cloud-web' ? wegentUrl : app.url
+    const appPrefix = `/app/${appId}`
+    const requestedCloudPath = tabPath.slice(appPrefix.length)
+    const cloudPath = requestedCloudPath || app.cloudPath || ''
+    const destination = `${cloudPath}${tabUrl.search}`
+    const src = app.urlSource === 'cloud-web' ? resolveCloudAppUrl(wegentUrl, destination) : app.url
     return src ? { appKey: app.id, src, title: app.label } : null
   }
-  const harnessApp = resolveRunningHarnessApp(match[1])
+  const harnessApp = resolveRunningHarnessApp(appId)
   return harnessApp
     ? {
         appKey: harnessApp.key,
@@ -209,6 +223,24 @@ function workspaceTabIframe(
         title: harnessApp.title,
       }
     : null
+}
+
+function resolveCloudAppUrl(
+  wegentUrl: string | null | undefined,
+  destination: string | undefined
+): string | null {
+  if (!wegentUrl) return null
+  if (!destination) return wegentUrl
+
+  const url = new URL(wegentUrl)
+  if (url.pathname.endsWith('/login/oidc')) {
+    url.searchParams.set('redirect', destination)
+    return url.toString()
+  }
+  const requested = new URL(destination, 'https://wework.invalid')
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}${requested.pathname}`
+  url.search = requested.search
+  return url.toString()
 }
 
 function workspaceTabDshApp(
@@ -263,7 +295,6 @@ interface WorkspaceTabSurfaceProps {
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
   nativeWorkbenchKind?: 'task' | 'board'
-  prewarmComposerApps?: boolean
   smartAppsEnabled?: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
@@ -277,7 +308,6 @@ export function WorkspaceTabSurface({
   cloudWebUrl,
   lifecycleStore,
   nativeWorkbenchKind,
-  prewarmComposerApps = false,
   smartAppsEnabled = false,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
@@ -440,7 +470,6 @@ export function WorkspaceTabSurface({
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
               loadTaskComposerCatalogs
-              prewarmComposerApps={prewarmComposerApps}
               publishDebugSnapshots={active && !iframe}
               syncCoreDshModels={
                 tab.fixed &&
@@ -488,7 +517,7 @@ export function WorkspaceTabSurface({
 }
 
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
-  const path = useCurrentPath()
+  const { pathname: path, search } = useCurrentLocation()
   useDshSlotEntries(WEWORK_DSH_SLOTS.route)
   const isPopoutWindow = isPopoutWindowRuntime()
   const { user, isLoading } = useAuth()
@@ -504,7 +533,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       ) ?? []
     ),
   }))
-  const telemetryEnabled = useTelemetryEnabled()
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
   useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
   const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
@@ -565,11 +593,13 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     }
   }, [])
 
+  const telemetryFeature = isPopoutWindow ? 'popout' : telemetryFeatureForLocation(path, search)
+  const smartAppRoute = resolveTelemetryRoute(path, search)
+
   useEffect(() => {
-    track('feature_opened', {
-      feature: isPopoutWindow ? 'popout' : telemetryFeatureForPath(path),
-    })
-  }, [isPopoutWindow, path, telemetryEnabled])
+    if (smartAppRoute) return
+    track('feature_opened', { feature: telemetryFeature })
+  }, [path, smartAppRoute, telemetryFeature])
   const nextNativeWorkbenchKinds = new Map(
     [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
       workspaceTabs?.tabs.some(tab => tab.id === id)
@@ -628,6 +658,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       <>
         <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
         <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
+        <NotificationEventsBridge chatStream={services.chatStream} />
         <WorkbenchProvider
           lifecycleStore={lifecycleStore}
           services={services}
@@ -645,9 +676,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const mountedWorkspaceTabs = workspaceTabs.tabs.filter(
     tab => tab.id === workspaceTabs.activeTabId || mountedTabs.ids.has(tab.id)
   )
-  const composerPrewarmTabId = workspaceTabs.tabs.find(
-    tab => nextNativeWorkbenchKinds.get(tab.id) === 'task'
-  )?.id
   const cloudWebUrl = cloudConnection.webUrl
     ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
     : cloudConnection.webUrl
@@ -655,13 +683,13 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     <>
       <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
       <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
+      <NotificationEventsBridge chatStream={services.chatStream} />
       {mountedWorkspaceTabs.map(tab => (
         <WorkspaceTabSurface
           key={tab.id}
           active={tab.id === workspaceTabs.activeTabId}
           lifecycleStore={lifecycleStore}
           nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
-          prewarmComposerApps={tab.id === composerPrewarmTabId}
           smartAppsEnabled={experimentalFeatures.enabled}
           services={services}
           cloudWebUrl={cloudWebUrl}
@@ -684,10 +712,12 @@ export default function App() {
       {content}
       <ComputerUseActivityIndicator />
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
-      <DshSlotSurface
-        className="pointer-events-none fixed inset-0 z-system-popover"
-        slot={WEWORK_DSH_SLOTS.shellOverlay}
-      />
+      <div className="pointer-events-none fixed inset-0 z-system-popover">
+        <DshContributionSlotSurface
+          attachedClassName="contents"
+          slot={WEWORK_DSH_SLOTS.shellOverlay}
+        />
+      </div>
     </>
   )
 }
@@ -705,6 +735,7 @@ function MainApp() {
           <CloudConnectionProvider>
             <AuthProvider>
               <TelemetryBridge />
+              <TelemetryAgent />
               <AppShell />
             </AuthProvider>
           </CloudConnectionProvider>
@@ -736,6 +767,7 @@ function browserWorkspaceTabStorageScope(): string {
 
 function AppShell() {
   const { t } = useTranslation('common')
+  const dshContext = useDshClientContext()
   const registeredRoutes = useDshSlotEntries<WeworkDshRoute>(WEWORK_DSH_SLOTS.route)
   const appPreferences = useAppPreferencesState()
   const { pathname: path, search } = useCurrentLocation()
@@ -747,9 +779,6 @@ function AppShell() {
     socketBaseUrl: cloudConnection.socketBaseUrl,
     isConnected: cloudConnection.isConnected,
     token: cloudConnection.token,
-    registrationDeviceType: appPreferences?.preferences.remoteControlEnabled
-      ? ('remote' as const)
-      : ('app' as const),
   }
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isElectron = isElectronRuntime()
@@ -777,7 +806,7 @@ function AppShell() {
   const workspaceTabLabels = useMemo(
     () => ({
       task: t('workbench.workspace_tab_task', '任务'),
-      board: t('workbench.workspace_tab_board', '工作空间'),
+      board: t('workbench.workspace_tab_board', '协作 (Beta)'),
       agent: t('workbench.workspace_tab_agent', '智能体'),
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
       auxiliaryRoutes: Object.fromEntries(
@@ -846,31 +875,145 @@ function AppShell() {
   }, [navigateToApp])
 
   useEffect(() => {
+    if (!dshContext) return
+    const commands = [
+      {
+        id: OPEN_TERMINAL_COMMAND,
+        title: t('workbench.keyboard_shortcuts_open_terminal', '切换底部面板'),
+        description: t(
+          'workbench.keyboard_shortcuts_open_terminal_description',
+          '显示或隐藏底部面板'
+        ),
+        handler: dispatchOpenTerminalShortcut,
+      },
+      {
+        id: OPEN_SETTINGS_COMMAND,
+        title: t('workbench.keyboard_shortcuts_open_settings', '打开设置'),
+        description: t('workbench.keyboard_shortcuts_open_settings_description', '打开设置页面'),
+        handler: dispatchOpenSettingsShortcut,
+      },
+      {
+        id: GO_BACK_COMMAND,
+        title: t('workbench.keyboard_shortcuts_go_back', '返回'),
+        description: t('workbench.keyboard_shortcuts_go_back_description', '返回导航历史'),
+        handler: dispatchGoBackShortcut,
+      },
+      {
+        id: GO_FORWARD_COMMAND,
+        title: t('workbench.keyboard_shortcuts_go_forward', '前进'),
+        description: t('workbench.keyboard_shortcuts_go_forward_description', '前进导航历史'),
+        handler: dispatchGoForwardShortcut,
+      },
+      {
+        id: TOGGLE_SIDEBAR_COMMAND,
+        title: t('workbench.keyboard_shortcuts_toggle_sidebar', '切换边栏'),
+        description: t('workbench.keyboard_shortcuts_toggle_sidebar_description', '显示或隐藏边栏'),
+        handler: dispatchToggleSidebarShortcut,
+      },
+      {
+        id: TOGGLE_SIDE_PANEL_COMMAND,
+        title: t('workbench.keyboard_shortcuts_toggle_side_panel', '切换侧边面板'),
+        description: t(
+          'workbench.keyboard_shortcuts_toggle_side_panel_description',
+          '显示或隐藏侧边面板'
+        ),
+        handler: dispatchToggleSidePanelShortcut,
+      },
+      {
+        id: TOGGLE_MODEL_SELECTOR_COMMAND,
+        title: t('workbench.keyboard_shortcuts_toggle_model_selector', '选择模型'),
+        description: t(
+          'workbench.keyboard_shortcuts_toggle_model_selector_description',
+          '打开或关闭当前输入区的模型选择器'
+        ),
+        handler: dispatchToggleModelSelectorShortcut,
+      },
+      {
+        id: INCREASE_FONT_SIZE_COMMAND,
+        title: t('workbench.keyboard_shortcuts_increase_font_size', '增大字号'),
+        description: t(
+          'workbench.keyboard_shortcuts_increase_font_size_description',
+          '同时增大 UI 和代码字号'
+        ),
+        handler: () => dispatchStepFontSizeShortcut(1),
+      },
+      {
+        id: DECREASE_FONT_SIZE_COMMAND,
+        title: t('workbench.keyboard_shortcuts_decrease_font_size', '减小字号'),
+        description: t(
+          'workbench.keyboard_shortcuts_decrease_font_size_description',
+          '同时减小 UI 和代码字号'
+        ),
+        handler: () => dispatchStepFontSizeShortcut(-1),
+      },
+      {
+        id: RESET_FONT_SIZE_COMMAND,
+        title: t('workbench.keyboard_shortcuts_reset_font_size', '重置字号'),
+        description: t(
+          'workbench.keyboard_shortcuts_reset_font_size_description',
+          '将 UI 和代码字号恢复为默认值'
+        ),
+        handler: dispatchResetFontSizeShortcut,
+      },
+    ] as const
+    const disposers = commands.map(command =>
+      registerDshCommand(
+        dshContext,
+        {
+          id: command.id,
+          title: command.title,
+          description: command.description,
+          category: 'Wework',
+        },
+        command.handler
+      )
+    )
+    disposers.push(
+      registerDshContext(dshContext, 'wework.desktop', isDesktop),
+      registerDshContext(dshContext, 'wework.electron', isElectron),
+      registerDshContext(dshContext, 'wework.window.main', isMainWindow),
+      registerDshContext(dshContext, 'wework.window.popout', isPopoutWindow)
+    )
+    return () => {
+      for (const dispose of disposers.reverse()) dispose()
+    }
+  }, [dshContext, isDesktop, isElectron, isMainWindow, isPopoutWindow, t])
+
+  useEffect(() => {
     if (!isDesktop || isPopoutWindow) return undefined
 
+    let overrides: KeybindingOverride[] = []
     let activeBindings = mergeKeybindings([])
     let disposed = false
+
+    const applyKeybindings = () => {
+      activeBindings = setActiveKeybindings(overrides, getDshKeybindingDefaults(getPlatform()))
+    }
 
     const loadKeybindings = async () => {
       try {
         const services = createLocalAppServices()
         const response = await services.runtimeWorkApi?.getKeybindings()
         if (!disposed) {
-          activeBindings = setActiveKeybindings(response?.keybindings ?? [])
+          overrides = response?.keybindings ?? []
+          applyKeybindings()
         }
       } catch (error) {
         console.error('[Wework] Failed to load keybindings:', error)
       }
     }
 
+    const executeShortcutCommand = (command: string, source: string) => {
+      void executeDshCommand(command, undefined, { source })
+        .then(executed => {
+          if (!executed) dispatchBuiltinShortcutCommand(command)
+        })
+        .catch(error => {
+          console.error(`[Wework] Failed to execute command "${command}":`, error)
+        })
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
-      const terminalKey = activeBindings[OPEN_TERMINAL_COMMAND]
-      const settingsKey = activeBindings[OPEN_SETTINGS_COMMAND]
-      const goBackKey = activeBindings[GO_BACK_COMMAND]
-      const goForwardKey = activeBindings[GO_FORWARD_COMMAND]
-      const sidebarKey = activeBindings[TOGGLE_SIDEBAR_COMMAND]
-      const sidePanelKey = activeBindings[TOGGLE_SIDE_PANEL_COMMAND]
-      const modelSelectorKey = activeBindings[TOGGLE_MODEL_SELECTOR_COMMAND]
       const increaseFontSizeKey = activeBindings[INCREASE_FONT_SIZE_COMMAND]
       const decreaseFontSizeKey = activeBindings[DECREASE_FONT_SIZE_COMMAND]
       const resetFontSizeKey = activeBindings[RESET_FONT_SIZE_COMMAND]
@@ -882,93 +1025,44 @@ function AppShell() {
       // The page zoom guard prevents WebView zoom before this window-level
       // handler runs. Keep application font-size shortcuts actionable.
       if (event.defaultPrevented && !matchesFontSizeShortcut) return
-      const matchesRegisteredShortcut = [
-        terminalKey,
-        settingsKey,
-        goBackKey,
-        goForwardKey,
-        sidebarKey,
-        sidePanelKey,
-        modelSelectorKey,
-        increaseFontSizeKey,
-        decreaseFontSizeKey,
-        resetFontSizeKey,
-      ].some(key => key && key === eventKey)
-      if (!matchesRegisteredShortcut && isEditableShortcutTarget(event.target)) return
-
-      if (settingsKey && eventKey === settingsKey) {
-        event.preventDefault()
-        dispatchOpenSettingsShortcut()
-        return
-      }
-      if (goBackKey && eventKey === goBackKey) {
-        event.preventDefault()
-        dispatchGoBackShortcut()
-        return
-      }
-      if (goForwardKey && eventKey === goForwardKey) {
-        event.preventDefault()
-        dispatchGoForwardShortcut()
-        return
-      }
-      if (sidebarKey && eventKey === sidebarKey) {
-        event.preventDefault()
-        dispatchToggleSidebarShortcut()
-        return
-      }
-      if (sidePanelKey && eventKey === sidePanelKey) {
-        event.preventDefault()
-        dispatchToggleSidePanelShortcut()
-        return
-      }
-      if (modelSelectorKey && eventKey === modelSelectorKey) {
-        event.preventDefault()
-        dispatchToggleModelSelectorShortcut()
-        return
-      }
-      if (increaseFontSizeKey && eventKey === increaseFontSizeKey) {
-        event.preventDefault()
-        dispatchStepFontSizeShortcut(1)
-        return
-      }
-      if (decreaseFontSizeKey && eventKey === decreaseFontSizeKey) {
-        event.preventDefault()
-        dispatchStepFontSizeShortcut(-1)
-        return
-      }
-      if (resetFontSizeKey && eventKey === resetFontSizeKey) {
-        event.preventDefault()
-        dispatchResetFontSizeShortcut()
-        return
-      }
-      if (!terminalKey || eventKey !== terminalKey) return
+      const command = Object.entries(activeBindings).find(
+        ([, key]) => key !== null && key === eventKey
+      )?.[0]
+      if (!command) return
+      const executable = isBuiltinShortcutCommand(command) || isDshCommandEnabled(command)
+      if (!executable) return
+      if (shouldIgnoreWorkbenchShortcut(event)) return
       event.preventDefault()
-      dispatchOpenTerminalShortcut()
+      event.stopPropagation()
+      executeShortcutCommand(command, 'keybinding')
     }
 
     const handleMouseUp = (event: MouseEvent) => {
       if (event.defaultPrevented) return
       if (activeBindings[GO_BACK_COMMAND] && event.button === 3) {
         event.preventDefault()
-        dispatchGoBackShortcut()
+        executeShortcutCommand(GO_BACK_COMMAND, 'mouse')
         return
       }
       if (activeBindings[GO_FORWARD_COMMAND] && event.button === 4) {
         event.preventDefault()
-        dispatchGoForwardShortcut()
+        executeShortcutCommand(GO_FORWARD_COMMAND, 'mouse')
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown)
+    const unsubscribeExtensions = subscribeDshExtensions(applyKeybindings)
+    // Run registered commands before ProseMirror suppresses native formatting keys.
+    window.addEventListener('keydown', handleKeyDown, true)
     window.addEventListener('mouseup', handleMouseUp)
     window.addEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
     void loadKeybindings()
 
     return () => {
       disposed = true
-      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keydown', handleKeyDown, true)
       window.removeEventListener('mouseup', handleMouseUp)
       window.removeEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
+      unsubscribeExtensions()
     }
   }, [isDesktop, isPopoutWindow])
 
@@ -1009,6 +1103,7 @@ function AppShell() {
       restoreSessionTabs={!isMainWindow}
     >
       <ElectronWorkbenchTabBridge />
+      <WeworkSchemeBridge />
       <div
         data-testid="app-shell"
         className={cn(
@@ -1036,7 +1131,6 @@ function AppShell() {
             isConnected={cloudConnection.isConnected}
             token={cloudConnection.token}
             preferencesLoaded={appPreferences?.loaded ?? false}
-            remoteControlEnabled={appPreferences?.preferences.remoteControlEnabled ?? false}
           />
         ) : null}
         {isMainWindow && isElectron ? (

@@ -206,7 +206,7 @@ async def test_mode_chat_argument_switches_to_chat(
     )
 
     assert result.handled is True
-    assert result.action == IMCommandAction.NONE
+    assert result.action == IMCommandAction.START_CHAT
     assert session.mode == IMSessionMode.CHAT
     assert session.active_task_id is None
     assert result.reply == "已切换到 Chat 模式。"
@@ -673,7 +673,7 @@ async def test_chat_command_clears_active_task_and_switches_to_chat(
     )
 
     assert result.handled is True
-    assert result.action == IMCommandAction.NONE
+    assert result.action == IMCommandAction.START_CHAT
     assert session.mode == IMSessionMode.CHAT
     assert session.active_task_id is None
     assert "Chat" in result.reply

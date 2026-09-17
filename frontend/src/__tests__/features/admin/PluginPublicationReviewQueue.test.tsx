@@ -9,7 +9,7 @@ import { adminPluginPublicationApis } from '@/apis/admin-plugin-publications'
 import PluginPublicationReviewQueue from '@/features/admin/components/PluginPublicationReviewQueue'
 
 const mockRouterReplace = jest.fn()
-let mockSearchParams = new URLSearchParams('tab=wework-plugin-publications')
+let mockSearchParams = new URLSearchParams('tab=wework-marketplace&view=plugin-publications')
 const mockToast = jest.fn()
 const mockT = (key: string, values?: Record<string, unknown>) =>
   values ? `${key}:${JSON.stringify(values)}` : key
@@ -46,7 +46,7 @@ const mockedPublicationApis = adminPluginPublicationApis as jest.Mocked<
 describe('PluginPublicationReviewQueue', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockSearchParams = new URLSearchParams('tab=wework-plugin-publications')
+    mockSearchParams = new URLSearchParams('tab=wework-marketplace&view=plugin-publications')
     mockedPublicationApis.listPublicationRequests.mockResolvedValue({
       items: [
         {
@@ -108,15 +108,16 @@ describe('PluginPublicationReviewQueue', () => {
 
     expect(screen.getByTestId('mock-plugin-publication-drawer')).toHaveTextContent('41')
     await waitFor(() =>
-      expect(mockRouterReplace).toHaveBeenCalledWith('?tab=wework-plugin-publications&request=41', {
-        scroll: false,
-      })
+      expect(mockRouterReplace).toHaveBeenCalledWith(
+        '?tab=wework-marketplace&view=plugin-publications&request=41',
+        { scroll: false }
+      )
     )
   })
 
   it('restores all queue filters from the URL and syncs time changes back to it', async () => {
     mockSearchParams = new URLSearchParams(
-      'tab=wework-plugin-publications&status=ci_running&risk=high&submitter=alice&query=mail&submittedAfter=2026-08-01&submittedBefore=2026-08-29&page=2'
+      'tab=wework-marketplace&view=plugin-publications&status=ci_running&risk=high&submitter=alice&query=mail&submittedAfter=2026-08-01&submittedBefore=2026-08-29&page=2'
     )
 
     render(<PluginPublicationReviewQueue />)
@@ -144,7 +145,7 @@ describe('PluginPublicationReviewQueue', () => {
     })
 
     expect(mockRouterReplace).toHaveBeenCalledWith(
-      '?tab=wework-plugin-publications&status=ci_running&risk=high&submitter=alice&query=mail&submittedAfter=2026-08-05&submittedBefore=2026-08-29',
+      '?tab=wework-marketplace&view=plugin-publications&status=ci_running&risk=high&submitter=alice&query=mail&submittedAfter=2026-08-05&submittedBefore=2026-08-29',
       { scroll: false }
     )
     await waitFor(() =>

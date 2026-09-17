@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'vitest'
-import { classifyMarkdownLink, decodeMarkdownFilePath } from './assistantMarkdownLinks'
+import {
+  classifyMarkdownLink,
+  decodeMarkdownFilePath,
+  extractMarkdownLinks,
+} from './assistantMarkdownLinks'
 
 describe('decodeMarkdownFilePath', () => {
   test('fully decodes a file path after repeated Markdown URL encoding', () => {
@@ -57,5 +61,29 @@ describe('classifyMarkdownLink', () => {
 
   test('classifies drive-relative paths without a separator as external', () => {
     expect(classifyMarkdownLink('D:relative/path')).toEqual({ kind: 'external' })
+  })
+
+  test('maps Sites environment configuration URLs into the Applications route', () => {
+    expect(
+      classifyMarkdownLink(
+        '/projects/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/settings/environment-variables'
+      )
+    ).toEqual({
+      kind: 'internal',
+      path: '/sites?app_type=web&view=environment-variables&project_id=prj_01K0A0BCDEFGHJKMNPQRSTVWXY',
+    })
+  })
+})
+
+describe('extractMarkdownLinks', () => {
+  test('supports balanced destinations, angle brackets, and optional titles', () => {
+    expect(
+      extractMarkdownLinks(
+        '[version](https://example.com/page_(v2)) [local](</workspace/a b.md> "Document")'
+      )
+    ).toEqual([
+      { href: 'https://example.com/page_(v2)', title: 'version' },
+      { href: '/workspace/a b.md', title: 'local' },
+    ])
   })
 })

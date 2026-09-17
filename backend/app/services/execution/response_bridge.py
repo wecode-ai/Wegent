@@ -417,6 +417,7 @@ class EmitterBridgeTransport(EventTransport):
                     task_id=self.task_id,
                     subtask_id=self.subtask_id,
                     content=reasoning_content,
+                    data={"thinking_kind": "reasoning_summary"},
                     message_id=message_id,
                 )
             return None

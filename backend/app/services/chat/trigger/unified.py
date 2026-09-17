@@ -33,10 +33,6 @@ from app.services.chat.external_knowledge_refs import (
     validate_external_knowledge_refs,
 )
 from app.services.context import context_service
-from app.services.execution.skill_generation import (
-    enrich_skill_generation_context,
-    has_skill_generation_context_enrichers,
-)
 from app.services.runtime_codex_model import (
     CODEX_RUNTIME_MODEL_ID,
     CODEX_RUNTIME_MODEL_NAME,
@@ -318,6 +314,27 @@ def _task_model_override_available(
     return model_spec is not None
 
 
+def _task_model_override_allowed_for_team(
+    db: "Session",
+    *,
+    team: Kind,
+    model_name: str,
+    user_id: int,
+) -> bool:
+    """Return whether the team's model restriction allows the override.
+
+    Forcing a model the selected agent restricts makes execution request
+    building fail, which leaves IM cards open, so callers that can fall back
+    must check this before consuming any override - including runtime (Codex)
+    overrides that skip model resolution altogether.
+    """
+
+    from app.services.chat.config.model_resolver import allowed_model_names_for_team
+
+    allowed_names = allowed_model_names_for_team(db, team=team, user_id=user_id)
+    return allowed_names is None or model_name in allowed_names
+
+
 def _model_has_explicit_provider_credentials(model_config: Dict[str, Any]) -> bool:
     """Return True when the model config already carries its own endpoint credentials."""
     base_url = str(model_config.get("base_url") or "").strip()
@@ -485,7 +502,6 @@ def _build_cloud_gateway_model_config(
     *,
     model_name: str,
     creator: Any,
-    upstream_api_format: Optional[str] = None,
     model_type: Optional[str] = None,
     namespace: Optional[str] = None,
     resource_user_id: Optional[int] = None,
@@ -505,6 +521,8 @@ def _build_cloud_gateway_model_config(
 
     from app.core.config import settings
     from app.core.security import create_access_token
+    from app.services.chat.config.model_resolver import extract_and_process_model_config
+    from app.services.llm_proxy_service import resolve_llm_proxy_protocol
 
     exact_identity = any(
         value is not None for value in (model_type, namespace, resource_user_id)
@@ -564,13 +582,19 @@ def _build_cloud_gateway_model_config(
         expires_delta=30,
     )
     model_spec = kind.json.get("spec") if isinstance(kind.json, dict) else None
+    provider_config = extract_and_process_model_config(
+        model_spec=model_spec or {},
+        user_id=creator.id,
+        user_name=creator.user_name or "",
+    )
+    upstream_api_format = resolve_llm_proxy_protocol(model_name, provider_config)
     catalog_model_id = _catalog_model_id_from_model_spec(model_spec)
     config = {
         "model": "openai",
         "model_id": model_name,
         "api_format": "responses",
         "protocol": "openai-responses",
-        "upstream_api_format": upstream_api_format or "openai-responses",
+        "upstream_api_format": upstream_api_format,
         "base_url": f"{backend_base}/api/runtime-work/llm-responses-proxy",
         "api_key": token,
         "default_headers": {
@@ -605,7 +629,6 @@ def build_wework_runtime_model_config(
         db,
         model_name=model_name,
         creator=creator,
-        upstream_api_format=resolved.get("upstream_api_format"),
     )
     if gateway_config is None:
         return resolved
@@ -867,6 +890,10 @@ async def build_execution_request(
         ExecutionRequest ready for dispatch
     """
     from app.services.execution import TaskRequestBuilder
+    from app.services.execution.skill_generation import (
+        enrich_skill_generation_context,
+        has_skill_generation_context_enrichers,
+    )
     from shared.models import ExecutionRequest
     from shared.telemetry.context import get_request_id
 
@@ -931,6 +958,29 @@ async def build_execution_request(
                 catalog_model_id,
             )
 
+        # The agent's model restriction wins over a persisted task override for
+        # every override type, including runtime ones: those skip model
+        # resolution below and would otherwise bypass the restriction.
+        if (
+            force_override
+            and override_model_name
+            and _should_ignore_unavailable_task_model_override(payload)
+            and not _task_model_override_allowed_for_team(
+                db,
+                team=team,
+                model_name=override_model_name,
+                user_id=user.id,
+            )
+        ):
+            logger.info(
+                f"[build_execution_request] Ignoring task model override blocked by "
+                f"the agent model restriction: task_id={task.id}, "
+                f"subtask_id={assistant_subtask.id}, user_id={user.id}, "
+                f"modelId={override_model_name}, team_id={getattr(team, 'id', None)}"
+            )
+            override_model_name = None
+            force_override = False
+
         if (
             force_override
             and override_model_name
@@ -961,9 +1011,10 @@ async def build_execution_request(
             )
         ):
             logger.info(
-                "[build_execution_request] Ignoring unavailable task model "
-                "override for payload fallback: modelId=%s",
-                override_model_name,
+                f"[build_execution_request] Ignoring unavailable task model override "
+                f"for payload fallback: task_id={task.id}, "
+                f"subtask_id={assistant_subtask.id}, user_id={user.id}, "
+                f"modelId={override_model_name}"
             )
             override_model_name = None
             force_override = False
@@ -1273,7 +1324,6 @@ async def _process_contexts(
         if prepare_provider_native_knowledge
         else ctx.kb.enhanced_system_prompt
     )
-    request.table_contexts = ctx.table_contexts
     request.kb_meta_prompt = (
         "" if prepare_provider_native_knowledge else ctx.kb.kb_meta_prompt
     )
@@ -1305,11 +1355,10 @@ async def _process_contexts(
             request.document_ids = ctx.kb.document_ids
     logger.info(
         "[ai_trigger_unified] Context processing completed: "
-        "user_subtask_id=%d, knowledge_base_ids=%s, table_contexts_count=%d, "
+        "user_subtask_id=%d, knowledge_base_ids=%s, "
         "attachments=%d, inline_attachment_content=%s",
         user_subtask_id,
         request.knowledge_base_ids,
-        len(ctx.table_contexts),
         len(request.attachments),
         inline_attachment_content,
     )

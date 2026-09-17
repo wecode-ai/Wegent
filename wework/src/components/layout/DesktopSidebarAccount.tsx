@@ -1,6 +1,9 @@
+import { calculateAppUpdateDownloadPercent } from '@/features/app-update/app-update-format'
+import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import { Download, Loader2, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
+import { Tooltip } from '@/components/ui/tooltip'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
@@ -23,6 +26,7 @@ interface DesktopSidebarAccountProps {
   onLogout: () => void
   containerRef?: RefObject<HTMLDivElement | null>
   trailingActions?: ReactNode
+  compact?: boolean
 }
 
 function getSidebarAccountSummary(user: UserProfile | null, fallback: string) {
@@ -41,14 +45,6 @@ function formatSidebarTemplate(template: string, values: Record<string, string>)
     (result, [key, value]) => result.replaceAll(`{{${key}}}`, value),
     template
   )
-}
-
-function calculateSidebarUpdateDownloadPercent(
-  downloadedBytes: number,
-  totalBytes: number | null
-): number | null {
-  if (!totalBytes || totalBytes <= 0) return null
-  return Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
 }
 
 function SidebarUpdateDownloadProgress({ progress }: { progress: number }) {
@@ -85,7 +81,7 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
   const errorSummary = error ? formatAppUpdateErrorSummary(error, t) : null
   const busy = status === 'checking' || status === 'downloading' || status === 'installing'
   const downloadPercent = downloadProgress
-    ? calculateSidebarUpdateDownloadPercent(
+    ? calculateAppUpdateDownloadPercent(
         downloadProgress.downloadedBytes,
         downloadProgress.totalBytes
       )
@@ -109,16 +105,41 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
     }),
     { version: availableUpdate.version }
   )
-  const downloadTitle =
-    downloadPercent === null
-      ? t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })
-      : formatSidebarTemplate(
-          t('workbench.app_update_downloading_progress', {
-            defaultValue: '正在下载更新 {{progress}}%',
-            progress: downloadPercent,
-          }),
-          { progress: String(downloadPercent) }
-        )
+  const downloadTitle = formatAppUpdateProgress(downloadProgress, t)
+  const actionLabel = status === 'downloading' ? downloadTitle : title
+  const button = (
+    <button
+      ref={buttonRef}
+      type="button"
+      data-testid="sidebar-app-update-button"
+      disabled={busy}
+      onClick={() => {
+        onBeforeInstall?.()
+        void appUpdate.installUpdate()
+      }}
+      aria-label={errorSummary ?? actionLabel}
+      className={cn(
+        'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+        errorSummary
+          ? 'text-red-500 hover:bg-red-500/10'
+          : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]'
+      )}
+    >
+      {status === 'downloading' && downloadPercent !== null ? (
+        <SidebarUpdateDownloadProgress progress={downloadPercent} />
+      ) : busy ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <Download className="sidebar-update-download-icon h-4 w-4" />
+      )}
+      {!busy && (
+        <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
+      )}
+      {errorSummary && (
+        <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
+      )}
+    </button>
+  )
 
   return (
     <div
@@ -128,38 +149,13 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
       onFocus={showErrorTooltip}
       onBlur={() => setErrorTooltipPosition(null)}
     >
-      <button
-        ref={buttonRef}
-        type="button"
-        data-testid="sidebar-app-update-button"
-        disabled={busy}
-        onClick={() => {
-          onBeforeInstall?.()
-          void appUpdate.installUpdate()
-        }}
-        title={errorSummary ?? (status === 'downloading' ? downloadTitle : title)}
-        aria-label={errorSummary ?? (status === 'downloading' ? downloadTitle : title)}
-        className={cn(
-          'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-          errorSummary
-            ? 'text-red-500 hover:bg-red-500/10'
-            : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]'
-        )}
-      >
-        {status === 'downloading' && downloadPercent !== null ? (
-          <SidebarUpdateDownloadProgress progress={downloadPercent} />
-        ) : busy ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Download className="sidebar-update-download-icon h-4 w-4" />
-        )}
-        {!busy && (
-          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
-        )}
-        {errorSummary && (
-          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
-        )}
-      </button>
+      {errorSummary ? (
+        button
+      ) : (
+        <Tooltip label={actionLabel} testId="sidebar-app-update-tooltip">
+          {button}
+        </Tooltip>
+      )}
       {errorSummary && errorTooltipPosition
         ? createPortal(
             <div
@@ -182,6 +178,7 @@ export function DesktopSidebarAccount({
   onLogout,
   containerRef: containerRefProp,
   trailingActions,
+  compact = false,
 }: DesktopSidebarAccountProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
@@ -226,14 +223,24 @@ export function DesktopSidebarAccount({
         data-testid="desktop-sidebar-account"
         className="group/account relative shrink-0"
       >
-        <div className="relative flex h-[60px] items-center rounded-[10px] transition-colors group-hover/account:bg-[rgb(var(--color-sidebar-hover))] group-focus-within/account:bg-[rgb(var(--color-sidebar-hover))]">
+        <div
+          className={cn(
+            'relative flex items-center transition-colors group-hover/account:bg-[rgb(var(--color-sidebar-hover))] group-focus-within/account:bg-[rgb(var(--color-sidebar-hover))]',
+            compact ? 'h-7 rounded-lg' : 'h-[60px] rounded-[10px]'
+          )}
+        >
           <button
             type="button"
             data-testid="settings-button"
             onClick={() => setMenuOpen(open => !open)}
             className={cn(
-              'flex h-[60px] min-w-0 flex-1 items-center gap-3 rounded-[10px] py-2 pl-1.5 text-left text-[rgb(var(--color-sidebar-text-primary))]',
-              hasAvailableAppUpdate ? 'pr-[72px]' : 'pr-10'
+              'flex min-w-0 flex-1 items-center text-left text-[rgb(var(--color-sidebar-text-primary))]',
+              compact
+                ? 'h-7 w-7 justify-center rounded-lg'
+                : cn(
+                    'h-[60px] gap-3 rounded-[10px] py-2 pl-1.5',
+                    hasAvailableAppUpdate ? 'pr-[72px]' : 'pr-10'
+                  )
             )}
             title={t('workbench.account_and_settings', '账户与设置')}
             aria-label={t('workbench.account_and_settings', '账户与设置')}
@@ -241,30 +248,39 @@ export function DesktopSidebarAccount({
           >
             <span
               data-testid="sidebar-account-avatar"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary"
+              className={cn(
+                'flex shrink-0 items-center justify-center rounded-full',
+                compact
+                  ? 'h-7 w-7 bg-muted text-text-secondary'
+                  : 'h-10 w-10 bg-primary/20 text-primary'
+              )}
             >
-              <UserRound className="h-5 w-5" aria-hidden="true" />
+              <UserRound className={compact ? 'h-4 w-4' : 'h-5 w-5'} aria-hidden="true" />
             </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-base font-semibold leading-[18px]">
-                {account.label}
+            {!compact ? (
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-base font-semibold leading-[18px]">
+                  {account.label}
+                </span>
+                <span className="block truncate text-xs font-medium leading-4 text-[rgb(var(--color-sidebar-text-secondary))]">
+                  {account.detail}
+                </span>
               </span>
-              <span className="block truncate text-xs font-medium leading-4 text-[rgb(var(--color-sidebar-text-secondary))]">
-                {account.detail}
-              </span>
-            </span>
+            ) : null}
           </button>
-          <div
-            className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5"
-            onClickCapture={() => setMenuOpen(false)}
-          >
-            {hasAvailableAppUpdate && (
-              <div data-testid="sidebar-app-update-action">
-                <SidebarAppUpdateButton onBeforeInstall={() => setMenuOpen(false)} />
-              </div>
-            )}
-            {trailingActions}
-          </div>
+          {!compact ? (
+            <div
+              className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5"
+              onClickCapture={() => setMenuOpen(false)}
+            >
+              {hasAvailableAppUpdate && (
+                <div data-testid="sidebar-app-update-action">
+                  <SidebarAppUpdateButton onBeforeInstall={() => setMenuOpen(false)} />
+                </div>
+              )}
+              {trailingActions}
+            </div>
+          ) : null}
           {menuOpen && (
             <DesktopSettingsMenu
               user={user}
@@ -293,6 +309,7 @@ export function DesktopSidebarAccount({
                 }
                 onLogout()
               }}
+              placement={compact ? 'below-right' : 'above'}
             />
           )}
         </div>

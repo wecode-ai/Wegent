@@ -9,6 +9,7 @@ export interface User {
 
 export interface UserPreferences {
   send_key?: 'enter' | 'cmd_enter'
+  follow_up_behavior?: 'queue' | 'guide'
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
   memory_enabled?: boolean
   mcp_provider_keys?: Record<string, unknown> | null
@@ -173,7 +174,7 @@ export interface CreatedRuntimeProject extends ProjectWithTasks {
   runtimeProjectKey: string
 }
 
-export type ProjectExecutionMode = 'current_workspace' | 'git_worktree'
+export type ProjectExecutionMode = string
 
 export interface ProjectListResponse {
   total?: number
@@ -331,6 +332,7 @@ export interface NormalizedRuntimeMessage {
 
 export interface RuntimeTurnNavigationItem {
   id: string
+  turnId?: string | null
   turnIndex: number
   messageIndex: number
   cursor?: string | null
@@ -384,6 +386,7 @@ export interface RuntimeTaskSummary {
   status?: string | null
   queuePosition?: number | null
   goalStatus?: RuntimeGoalStatus | null
+  goalExecutionStatus?: RuntimeGoalExecutionStatus | null
   optimistic?: boolean
   cachedProjection?: boolean
   error?: string | null
@@ -646,6 +649,7 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeTranscriptTurn {
   id: string
   items: RuntimeTranscriptTurnItem[]
+  itemMerge?: 'prepend'
   messageIndex?: number | null
   status?: string
   runtimeStatus?: string | null
@@ -682,6 +686,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   afterCursor?: string | null
   refresh?: boolean
   includeFullContent?: boolean
+  navigationOnly?: boolean
 }
 
 export interface RuntimeSendRequest {
@@ -731,6 +736,8 @@ export interface RequestUserInputResponse {
 export interface RuntimeSendResponse {
   accepted: boolean
   taskId: string
+  status?: 'queued' | 'running'
+  queuePosition?: number | null
   turnId?: string
   turn_id?: string
   compactionItemId?: string
@@ -769,6 +776,8 @@ export type RuntimeGoalStatus =
   | 'usageLimited'
   | 'budgetLimited'
   | 'complete'
+
+export type RuntimeGoalExecutionStatus = 'running' | 'recovering' | 'needsAttention'
 
 export interface RuntimeGoal {
   threadId: string
@@ -809,6 +818,7 @@ export interface RuntimeGoalSetResponse {
   accepted: boolean
   taskId: string
   goal: RuntimeGoal
+  resumed?: boolean
   error?: string | null
 }
 
@@ -1070,8 +1080,14 @@ export interface RuntimeWorktreeCapability {
   persistentStorageVerified?: boolean
 }
 
+export interface RuntimeInteractiveSessionCapability {
+  codeServer?: boolean
+  terminal?: boolean
+}
+
 export interface RuntimeFeatureSet {
   schemaVersion: number
+  interactiveSessions?: RuntimeInteractiveSessionCapability | null
   worktrees?: RuntimeWorktreeCapability | null
 }
 
@@ -1296,13 +1312,16 @@ export interface RuntimeTaskCancelResponse {
 
 export interface RuntimeTaskExecutionConfig {
   workspace?: {
-    source: 'git_worktree'
+    source: string
     branch?: string
   }
 }
 
 export interface RuntimeTaskCreateRequest {
-  schemaVersion?: 1 | 2
+  schemaVersion?: 1 | 2 | 3
+  forceStart?: boolean
+  wegentTeamId?: number
+  newSession?: boolean
   projectId?: number
   deviceWorkspaceId?: number
   deviceId?: string
@@ -1348,6 +1367,11 @@ export interface RuntimeTaskCreateRequest {
   additionalContext?: RuntimeAdditionalContext
 }
 
+export interface RuntimeTaskMaterializeResponse {
+  payload: Record<string, unknown>
+  runtimeHandle?: Record<string, unknown> | null
+}
+
 export interface RuntimeTaskCreateResponse {
   accepted: boolean
   deviceId: string
@@ -1382,6 +1406,7 @@ export interface RuntimeTaskForkResponse {
   source: RuntimeTaskAddress
   target: RuntimeTaskAddress
   runtime: RuntimeName
+  transcript: RuntimeTranscriptResponse
   error?: string | null
 }
 
@@ -1702,7 +1727,7 @@ export interface ChatSendPayload {
   additional_skills?: SkillRef[]
   execution?: {
     workspace?: {
-      source: 'git_worktree'
+      source: string
       branch?: string
     }
   }
@@ -1766,6 +1791,7 @@ export interface RuntimeTokenUsageBreakdown {
 export interface RuntimeContextUsage {
   total: RuntimeTokenUsageBreakdown
   last: RuntimeTokenUsageBreakdown
+  /** Context window the reported usage is measured against, excluding the model's output budget. */
   modelContextWindow: number
 }
 
@@ -2132,8 +2158,18 @@ export interface InstalledPluginComponents {
   mcps: PluginMCPComponent[]
   connectors?: Array<{
     slug: string
+    displayName?: string | null
+    authorizationGroup?: { id: string; displayName: string } | null
     authPolicy: 'on_install' | 'on_use' | 'optional'
     localAuth?: PluginLocalAuthDefinition | null
+    accountAuth?: {
+      protocolVersion: 1
+      credentialType: 'password' | 'bearer' | 'oauth2'
+      oauth2?: Array<'authorize' | 'refresh' | 'revoke'>
+      exportMode?: 'exclusive'
+      localEnvironment?: Record<string, { type: 'directory' } | { type: 'enum'; values: string[] }>
+      adapter: string
+    } | null
     description?: string | null
   }>
   lsps: PluginPathComponent[]
@@ -2331,6 +2367,9 @@ export interface DeviceCapabilityItemResult {
   id?: string | number | null
   name?: string | null
   status: string
+  stage?: string | null
+  error_code?: string | null
+  retryable?: boolean | null
   error?: string | null
 }
 
@@ -2364,6 +2403,7 @@ export interface PluginMarketplaceInstallResponse {
 }
 
 export interface PluginDeviceSyncResponse {
+  reconciled?: boolean
   deviceId: string
   pendingCount: number
   sync: DeviceCapabilitySyncResponse
@@ -2661,6 +2701,7 @@ export type ChatBlockType =
   | 'plan'
   | 'error'
   | 'guidance'
+  | 'subagent'
   | 'file_changes'
 
 export interface ChatBlock {
@@ -2675,6 +2716,23 @@ export interface ChatBlock {
   tool_output?: unknown
   tool_output_truncated?: boolean
   tool_output_original_bytes?: number
+  parent_tool_use_id?: string
+  parentToolUseId?: string
+  agent_type?: string
+  agentType?: string
+  agent_id?: string
+  agentId?: string
+  agent_thread_id?: string
+  agentThreadId?: string
+  agent_path?: string
+  agentPath?: string
+  agent_status?: 'running' | 'done' | 'interrupted'
+  agentStatus?: 'running' | 'done' | 'interrupted'
+  title?: string
+  description?: string
+  output?: string
+  summary?: string
+  children?: ChatBlock[]
   render_payload?: unknown
   renderPayload?: unknown
   file_changes?: TurnFileChangesSummary
@@ -2710,6 +2768,10 @@ export interface ChatBlockUpdatedPayload {
   toolInput?: Record<string, unknown>
   renderPayload?: unknown
   fileChanges?: TurnFileChangesSummary
+  output?: string
+  summary?: string
+  parentToolUseId?: string
+  agentStatus?: 'running' | 'done' | 'interrupted'
   status?: ChatBlock['status'] | 'running'
   completedAt?: number
   durationMs?: number
@@ -2875,6 +2937,12 @@ export interface SkillRef {
 
 export type AttachmentStatus = 'uploading' | 'parsing' | 'ready' | 'failed'
 
+export interface RuntimeWorkspaceFileReference {
+  device_id: string
+  workspace_path: string
+  path: string
+}
+
 export interface Attachment {
   id: number
   filename: string
@@ -2891,6 +2959,9 @@ export interface Attachment {
   created_at: string
   local_preview_url?: string
   local_path?: string
+  workspace_file?: RuntimeWorkspaceFileReference
+  image_width?: number
+  image_height?: number
   ui_group_id?: string
   ui_group_role?: 'primary' | 'companion'
   ui_kind?: 'appshot'

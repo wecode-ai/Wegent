@@ -11,6 +11,12 @@ pub const DEFAULT_TIMEOUT_SECONDS: u64 = 10;
 pub const MAX_TIMEOUT_SECONDS: u64 = 300;
 pub const OUTPUT_PREVIEW_BYTES: usize = 16 * 1024;
 
+/// A plugin subscribed to this feed receives its `PostToolUse` events from the
+/// durable Codex rollout observer instead of the live turn stream, so files
+/// written by subagent threads, or while the executor was not watching, are
+/// delivered too.
+pub const CODEX_ROLLOUT_SUBSCRIPTION: &str = "codex_rollout";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum HookEventName {
@@ -50,6 +56,14 @@ pub struct HookPluginManifest {
     #[serde(default)]
     pub description: String,
     pub version: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subscriptions: Vec<String>,
+}
+
+impl HookPluginManifest {
+    pub fn subscribes(&self, subscription: &str) -> bool {
+        self.subscriptions.iter().any(|value| value == subscription)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

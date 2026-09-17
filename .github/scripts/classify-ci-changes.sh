@@ -74,7 +74,7 @@ classify_path() {
       changed[wegent_cli]=true
       changed[platform_e2e]=true
       ;;
-    executor/*)
+    executor/* | sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | sdk/plugin-build/* | sdk/plugin-creator/*)
       changed[executor]=true
       changed[platform_e2e]=true
       changed[wework_e2e]=true
@@ -98,7 +98,7 @@ classify_path() {
       changed[frontend]=true
       changed[platform_e2e]=true
       ;;
-    packages/chat-core/*)
+    packages/chat-core/* | packages/collaboration/*)
       changed[frontend]=true
       changed[wework]=true
       changed[platform_e2e]=true

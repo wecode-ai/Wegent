@@ -20,7 +20,10 @@ import {
   UserGroupIcon,
 } from '@heroicons/react/24/outline'
 import { Bot, Team } from '@/types/api'
-import { fetchTeamsList, deleteTeam, shareTeam, copyTeam } from '../services/teams'
+import { deleteTeam, shareTeam, copyTeam } from '../services/teams'
+import { useManagedTeams } from '../hooks/useManagedTeams'
+import { useTeamContext } from '@/contexts/TeamContext'
+import { TeamListLoadMore } from './teams/TeamListLoadMore'
 import { teamApis } from '@/apis/team'
 import { fetchBotsList } from '../services/bots'
 import TeamEditDialog from './TeamEditDialog'
@@ -30,6 +33,7 @@ import { TeamChildNamespaceAuthorizationDialog } from './TeamChildNamespaceAutho
 import { TeamCardActionsMenu } from './TeamCardActionsMenu'
 import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { TeamApiCallButton } from './TeamApiCallButton'
+import { extractDeniedSkillName } from '@/features/settings/utils/teamCopyErrors'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useToast } from '@/hooks/use-toast'
@@ -99,8 +103,8 @@ import {
   type ResourceLibrarySortMode,
   type ResourceLibrarySortSource,
 } from '@/features/resource-library/resourceSorting'
-import { matchesResourceSearch } from '@/features/resource-library/resourceSearch'
 import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
+import { matchesResourceSearch } from '@/features/resource-library/resourceSearch'
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { cn } from '@/lib/utils'
 import { PublishedResourceIndicator } from '@/features/resource-library/components/PublishedResourceIndicator'
@@ -124,6 +128,7 @@ interface TeamListProps {
   hideModeFilter?: boolean
   createRequest?: ResourceCreateRequest
   onCreated?: (team: Team) => void
+  onSaved?: (team: Team, created: boolean) => void
   onCreateRequestClose?: () => void
   creationOnly?: boolean
   compact?: boolean
@@ -159,6 +164,7 @@ export default function TeamList({
   hideModeFilter = false,
   createRequest,
   onCreated,
+  onSaved,
   onCreateRequestClose,
   creationOnly = false,
   compact = false,
@@ -167,11 +173,11 @@ export default function TeamList({
 }: TeamListProps) {
   const { t } = useTranslation(['common', 'wizard'])
   const { user } = useUser()
+  const { invalidateTeams } = useTeamContext({ enabled: false })
+  const userId = user?.id
   const { toast } = useToast()
-  const [teams, setTeams] = useState<Team[]>([])
   const [publishedTeamIds, setPublishedTeamIds] = useState<Set<number>>(new Set())
   const [bots, setBots] = useState<Bot[]>([])
-  const [isLoading, setIsLoading] = useState(true)
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
   const [prefillTeam, setPrefillTeam] = useState<Team | null>(null)
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
@@ -207,6 +213,26 @@ export default function TeamList({
   // Groups where user has at least Developer role (for copy target selection)
   const [writableGroups, setWritableGroups] = useState<Group[]>([])
   const router = useRouter()
+  const {
+    teams,
+    setTeams,
+    isLoading,
+    isLoadingMore,
+    hasMore,
+    error,
+    refresh: refreshList,
+    loadMore,
+    retry,
+  } = useManagedTeams({
+    userId,
+    enabled: !creationOnly,
+    scope,
+    groupName,
+    groupNames: scope === 'group' && !groupName ? groupFilter : undefined,
+    sourceFilter,
+    mode: modeFilter,
+    keyword: searchQuery,
+  })
 
   const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>(
     updater => {
@@ -219,47 +245,26 @@ export default function TeamList({
     [setBots]
   )
 
-  const loadData = useCallback(
-    async (showLoading = true) => {
-      if (showLoading) {
-        setIsLoading(true)
-      }
-      try {
-        const selectedGroupNames =
-          scope === 'group' && !groupName && groupFilter !== undefined ? groupFilter : null
-        const [teamsData, botsData] = selectedGroupNames
-          ? await Promise.all([
-              Promise.all(
-                selectedGroupNames.map(selectedGroupName =>
-                  fetchTeamsList('group', selectedGroupName)
-                )
-              ).then(groupTeams => deduplicateResourcesById(groupTeams.flat())),
-              Promise.all(
-                selectedGroupNames.map(selectedGroupName =>
-                  fetchBotsList('group', selectedGroupName)
-                )
-              ).then(groupBots => deduplicateResourcesById(groupBots.flat())),
-            ])
-          : await Promise.all([fetchTeamsList(scope, groupName), fetchBotsList(scope, groupName)])
-        setTeams(teamsData)
-        setBotsSorted(botsData)
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: t('teams.loading'),
-        })
-      } finally {
-        if (showLoading) {
-          setIsLoading(false)
-        }
-      }
-    },
-    [groupFilter, groupName, scope, setBotsSorted, t, toast]
-  )
+  const loadBots = useCallback(async () => {
+    const selectedGroups = scope === 'group' && !groupName ? groupFilter : undefined
+    const items = selectedGroups
+      ? deduplicateResourcesById(
+          (await Promise.all(selectedGroups.map(name => fetchBotsList('group', name)))).flat()
+        )
+      : await fetchBotsList(scope, groupName)
+    setBotsSorted(items)
+  }, [scope, groupName, groupFilter, setBotsSorted])
 
   useEffect(() => {
-    loadData()
-  }, [loadData])
+    if (!editDialogOpen || userId === undefined) return
+    loadBots().catch(() => toast({ variant: 'destructive', title: t('teams.loading') }))
+  }, [editDialogOpen, userId, loadBots, toast, t])
+
+  const loadData = useCallback(async () => {
+    invalidateTeams()
+    await refreshList()
+    if (editDialogOpen) await loadBots()
+  }, [invalidateTeams, refreshList, editDialogOpen, loadBots])
 
   useEffect(() => {
     if (!compact) return
@@ -285,11 +290,12 @@ export default function TeamList({
 
   const handleTeamSaved = useCallback(
     async (team: Team) => {
-      await loadData(false)
+      await loadData()
+      onSaved?.(team, editingTeamId === 0)
       if (pendingCreateRequestRef.current) onCreated?.(team)
       pendingCreateRequestRef.current = null
     },
-    [loadData, onCreated]
+    [loadData, onCreated, onSaved, editingTeamId]
   )
 
   const handleCreateOptionsChange = useCallback(
@@ -364,24 +370,18 @@ export default function TeamList({
   const executeCopyTeam = async (team: Team, targetNamespace: string, copySkills: boolean) => {
     setCopyingTeamId(team.id)
     try {
-      const copied = await copyTeam(team.id, targetNamespace, copySkills)
-      // Only update local list if copying to the same namespace we're currently viewing
-      const currentNamespace = scope === 'group' ? groupName : 'default'
-      const copiedNamespace = copied.namespace || 'default'
-      if (copiedNamespace === currentNamespace) {
-        setTeams(prev => [copied, ...prev])
-      }
-      // Refresh bots so the cloned bot (solo mode) is available in edit dialog
-      fetchBotsList(scope, groupName)
-        .then(setBotsSorted)
-        .catch(() => {})
+      await copyTeam(team.id, targetNamespace, copySkills)
+      await loadData()
       toast({
         title: t('teams.copy_success'),
       })
     } catch (error) {
+      const deniedSkill = extractDeniedSkillName(error)
       toast({
         variant: 'destructive',
-        title: (error as Error)?.message || t('teams.copy_failed'),
+        title: deniedSkill
+          ? t('teams.copy_skill_permission_denied', { skill: deniedSkill })
+          : (error as Error)?.message || t('teams.copy_failed'),
       })
     } finally {
       setCopyingTeamId(null)
@@ -436,8 +436,7 @@ export default function TeamList({
       description: `${teamName}`,
     })
     // Reload teams list
-    const teamsData = await fetchTeamsList(scope, groupName)
-    setTeams(teamsData)
+    await loadData()
     setWizardOpen(false)
   }
 
@@ -567,6 +566,7 @@ export default function TeamList({
     try {
       const team = teams.find(item => item.id === teamToDelete)
       await deleteTeam(teamToDelete, isUnbindingSharedTeam ? undefined : team?.name)
+      invalidateTeams()
       setTeams(prev => prev.filter(team => team.id !== teamToDelete))
       setDeleteConfirmVisible(false)
       setTeamToDelete(null)
@@ -590,6 +590,7 @@ export default function TeamList({
         pendingMarketUnbind.team.id,
         pendingMarketUnbind.targetNamespace
       )
+      invalidateTeams()
       setTeams(current => current.filter(team => team.id !== pendingMarketUnbind.team.id))
       setPendingMarketUnbind(null)
       toast({ title: t('resource-library:messages.remove_from_team_agent_success') })
@@ -1164,7 +1165,7 @@ export default function TeamList({
                       </div>
                     </Card>
                   ))
-                ) : (
+                ) : error || hasMore ? null : (
                   <div
                     className="flex flex-col items-center gap-3 py-8 text-center text-text-muted"
                     data-testid="team-empty-state"
@@ -1183,6 +1184,13 @@ export default function TeamList({
                     )}
                   </div>
                 )}
+                <TeamListLoadMore
+                  hasMore={hasMore}
+                  loading={isLoadingMore}
+                  failed={Boolean(error)}
+                  onLoadMore={loadMore}
+                  onRetry={retry}
+                />
               </div>
             )}
           </ResourceManagementLayout>

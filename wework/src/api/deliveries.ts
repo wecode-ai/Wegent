@@ -3,6 +3,7 @@ import type { ProjectChatAgent } from './projectChatAgents'
 import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
 import type {
   Attachment,
+  ModelSelectionConfig,
   ModelType,
   RuntimeAdditionalContext,
   RuntimeGoalCreateInput,
@@ -116,7 +117,9 @@ export interface CloudLoopItem {
   created_by_user_name?: string | null
   can_view_detail?: boolean
   can_edit?: boolean
+  detail_loaded?: boolean
   content_revision?: number
+  has_additional_context?: boolean
   is_unread?: boolean
   assignee_user_id: number | null
   assignee_name?: string | null
@@ -295,6 +298,7 @@ export interface ProjectTaskAttachment extends CloudLoopItemAttachment {
 
 export interface CloudProject {
   id: CloudProjectId
+  workspace_id?: string | null
   public_id: string
   project_key: string
   name: string
@@ -342,6 +346,9 @@ export interface CloudProject {
     prompt: string
   }
   workflow_definition?: ProjectWorkflowDefinition
+  collaboration_groups?: import('@wegent/collaboration').CollaborationGroup[]
+  automatic_processing_rules?: import('@wegent/collaboration').WorkspaceAutomationRule[]
+  execution_environment?: import('@wegent/collaboration').CollaborationExecutionEnvironmentConfig
   workflow_automation_id?: string | null
   created_by_user_id: number
   current_user_id?: number
@@ -386,6 +393,8 @@ export type WorkflowContextSource = 'final_result' | 'deliveries' | 'activity'
 export type WorkflowNodeStatus =
   | 'blocked'
   | 'ready'
+  | 'waiting'
+  | 'reacting'
   | 'queued'
   | 'running'
   | 'awaiting_approval'
@@ -422,6 +431,33 @@ export interface WorkflowNodeDefinition {
   name: string
   prompt?: string
   kind?: 'my_task' | 'automation' | 'ai' | null
+  node_type?: 'task' | 'event' | 'loop' | 'loop_start' | 'branch' | 'loop_end'
+  role?: 'start' | null
+  start_config?: {
+    trigger_type?: 'schedule' | 'event' | 'workflow'
+    event_type?: string | null
+    cron_expression?: string | null
+    source_type?: string | null
+  } | null
+  loop_id?: string | null
+  body_node_ids?: string[]
+  loop_config?: {
+    max_attempts?: number
+    timeout_seconds?: number | null
+  } | null
+  branch_conditions?: Array<{
+    source_type: 'github' | 'gitlab'
+    event_type: string
+    handler_node_ids: string[]
+    subscription_id?: string | null
+    collection_mode?: string | null
+  }>
+  event_wait?: {
+    subject_source: 'upstream_pull_request'
+    collection_mode: 'webhook' | 'poll'
+    subscription_id?: string | null
+    poll_interval_seconds?: number | null
+  } | null
   execution_mode?: 'human' | 'robot'
   depends_on: string[]
   dependency_context?: Record<string, WorkflowContextSource[]>
@@ -446,6 +482,19 @@ export interface ProjectWorkflowDefinition {
 
 export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   status: WorkflowNodeStatus
+  loop_state?: 'idle' | 'active' | 'completed'
+  attempts?: number
+  active_condition?: string | null
+  pending_events?: Array<{
+    event_type: string
+    event_id?: string
+    subject_id?: string
+  }>
+  loop_deadline?: string | null
+  exit_reason?: 'loop_end' | 'max_attempts' | 'timeout' | 'forced' | null
+  last_event?: Record<string, unknown> | null
+  activated_at?: string | null
+  catch_up_done?: boolean
   task_binding_id?: string | null
   task_ids?: string[]
   task_statuses?: Record<string, string>
@@ -460,6 +509,16 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   execution_id?: number | null
   automation_run_id?: string | null
   execution_error?: string | null
+  collectors?: Record<
+    string,
+    {
+      collector_id: string
+      mode?: string
+      status?: string
+      error?: string | null
+      created_at?: string
+    }
+  >
 }
 
 export interface IssueWorkflowInstance {
@@ -581,7 +640,7 @@ export interface CloudProjectMember {
 }
 
 export interface LoopItemTaskBinding {
-  id: number
+  id: string | number
   cloud_project_id?: string | number
   loop_item_id: string | null
   task_user_id: number
@@ -589,9 +648,16 @@ export interface LoopItemTaskBinding {
   task_id: string
   task_title: string | null
   backend_task_id: number | null
+  modelSelection?: ModelSelectionConfig | null
   workflow_node_id?: string | null
   binding_type?: 'system' | 'user'
   linked_at: string
+}
+
+export interface LoopItemPage {
+  items: CloudLoopItem[]
+  task_bindings: LoopItemTaskBinding[]
+  next_cursor: string | null
 }
 
 export interface ProjectBoardSnapshot {
@@ -653,7 +719,7 @@ export function nextTaskTrackingStatus(
   if (executionStatus === 'running' && itemStatus !== 'in_progress') {
     return 'in_progress'
   }
-  if (executionStatus === 'succeeded' && itemStatus !== 'completed') {
+  if (executionStatus === 'succeeded' && itemStatus !== 'completed' && itemStatus !== 'in_review') {
     return 'in_review'
   }
   if (
@@ -780,6 +846,21 @@ export function createDeliveryApi(client: HttpClient) {
         board_config?: CloudProject['board_config']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
+        collaboration_groups?: CloudProject['collaboration_groups']
+        automatic_processing_rules?: CloudProject['automatic_processing_rules']
+        execution_environment?: {
+          repositories: Array<{
+            name: string
+            url: string
+            ref: string
+            path: string
+            primary: boolean
+          }>
+          setup_steps: Array<{
+            command: string
+            working_directory: string
+          }>
+        }
         provider_config?: {
           repository?: string
           domain?: string
@@ -823,16 +904,34 @@ export function createDeliveryApi(client: HttpClient) {
       const suffix = query.toString() ? `?${query.toString()}` : ''
       return client.get(`/v1/cloud-projects/${projectId}/loop-items${suffix}`)
     },
+    listLoopItemsPage(
+      projectId: CloudProjectIdInput,
+      options: {
+        status: CloudLoopItem['status']
+        parentId: string | null
+        cursor?: string | null
+        limit?: number
+      }
+    ): Promise<LoopItemPage> {
+      const query = new URLSearchParams({
+        status: options.status,
+        limit: String(options.limit ?? 10),
+      })
+      if (options.parentId) query.set('parent_id', options.parentId)
+      if (options.cursor) query.set('cursor', options.cursor)
+      return client.get(`/v1/cloud-projects/${projectId}/loop-item-pages?${query.toString()}`)
+    },
     getBoardSnapshot(projectId: CloudProjectIdInput): Promise<ProjectBoardSnapshot> {
       return client.get(`/v1/cloud-projects/${projectId}/board-snapshot`)
     },
     listLoopItemExecutions(
       projectId: CloudProjectIdInput,
-      options: { agent_id?: string; status?: string } = {}
+      options: { agent_id?: string; status?: string; include_terminal?: boolean } = {}
     ): Promise<{ items: CloudLoopItemExecution[] }> {
       const query = new URLSearchParams()
       if (options.agent_id) query.set('agent_id', options.agent_id)
       if (options.status) query.set('status', options.status)
+      if (options.include_terminal) query.set('include_terminal', 'true')
       const suffix = query.toString() ? `?${query.toString()}` : ''
       return client
         .get<{
@@ -986,6 +1085,7 @@ export function createDeliveryApi(client: HttpClient) {
         version: number
         assigneeType: 'user' | 'agent' | 'team'
         assigneeId: string
+        notifyAssignee?: boolean
       }
     ): Promise<CloudLoopItem> {
       return client.post(
@@ -1088,10 +1188,13 @@ export function createDeliveryApi(client: HttpClient) {
       taskTitle?: string | null,
       workflowNodeId?: string | null
     ): Promise<void> {
+      const modelSelection =
+        task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, {
         ...task,
         ...(taskTitle ? { taskTitle } : {}),
         ...(workflowNodeId ? { workflowNodeId } : {}),
+        ...(modelSelection ? { modelSelection } : {}),
       })
     },
     decideWorkflowNode(

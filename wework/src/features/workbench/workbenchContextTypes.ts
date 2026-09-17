@@ -35,6 +35,7 @@ import type {
   RuntimeIMNotificationSettingsResponse,
   RuntimeName,
   RuntimeSendRequest,
+  RuntimeSendResponse,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
   RuntimeTaskQueueReorderRequest,
@@ -56,7 +57,9 @@ import type {
   UnifiedModel,
   UnifiedSkill,
   User,
+  UserPreferences,
 } from '@/types/api'
+import type { WorkbenchWorkspaceLaunchOptions } from './workspaceLaunchRequest'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -114,6 +117,7 @@ export interface SendCurrentInputOptions {
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
   origin?: RuntimeTaskCreateRequest['origin']
+  wegentTeamId?: number
 }
 
 export interface CreateTemporaryRuntimeTaskOptions {
@@ -131,6 +135,9 @@ export interface CreateProjectRuntimeTaskOptions {
    * selection, for embedded project-space composers. */
   deviceWorkspaceId?: number | null
   taskRequest?: RuntimeTaskCreateRequest | null
+  /** Override the globally selected project execution strategy. Pass null to
+   * bind the task to the selected project's main workspace. */
+  workspaceExecution?: RuntimeTaskCreateRequest['execution'] | null
   /** Reuse the exact workspace or worktree from a previous runtime task
    * without inheriting its conversation. */
   workspaceSource?: RuntimeTaskAddress | null
@@ -171,6 +178,7 @@ export interface CreateProjectRuntimeTaskOptions {
 
 export interface RuntimePaneActionOptions {
   onError?: (error: string) => void
+  onQueued?: (response: RuntimeSendResponse) => void
   silentBusyRetry?: boolean
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
 }
@@ -180,6 +188,13 @@ export interface RuntimePaneGuidanceResult {
   turnId?: string
   code?: string | null
   error?: string | null
+}
+
+export interface RuntimeTaskModelSelectionControls {
+  taskSelection: ModelSelectionConfig | null
+  selectedModel: UnifiedModel | null
+  activeModel: UnifiedModel | null
+  selectedModelOptions: ModelOptions
 }
 
 export interface WorkbenchContextValue {
@@ -221,6 +236,20 @@ export interface WorkbenchContextValue {
     setSelectedModelOption: (optionId: string, value: string) => void
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
+    resolveRuntimeTaskModelSelection: (
+      address: RuntimeTaskAddress
+    ) => RuntimeTaskModelSelectionControls
+    setRuntimeTaskSelectedModel: (address: RuntimeTaskAddress, model: UnifiedModel | null) => void
+    setRuntimeTaskSelectedModelAndOptions: (
+      address: RuntimeTaskAddress,
+      model: UnifiedModel,
+      options: ModelOptions
+    ) => void
+    setRuntimeTaskSelectedModelOption: (
+      address: RuntimeTaskAddress,
+      optionId: string,
+      value: string
+    ) => void
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
     setInputForScope: (scopeKey: string, value: string) => void
@@ -243,6 +272,7 @@ export interface WorkbenchContextValue {
   upgradingDevices: Record<string, DeviceUpgradeState>
   projectExecutionMode: ProjectExecutionMode
   setProjectExecutionMode: (mode: ProjectExecutionMode) => void
+  updateUserPreferences: (patch: UserPreferences) => Promise<UserPreferences>
   setWorkbenchError: (error: string | null) => void
   projectWorktreeBranch: string | null
   setProjectWorktreeBranch: (branchName: string | null) => void
@@ -253,7 +283,8 @@ export interface WorkbenchContextValue {
     deviceId: string,
     workspacePath: string,
     label?: string,
-    projectRoots?: string[]
+    projectRoots?: string[],
+    launchOptions?: WorkbenchWorkspaceLaunchOptions
   ) => Promise<void>
   startNewChat: () => void
   startNewSkillChat: (
@@ -453,7 +484,10 @@ export type WorkbenchPaneState = Pick<
   | 'error'
 >
 
-export type WorkbenchPaneContextValue = Omit<WorkbenchContextValue, 'state' | 'cloudWorkStatus'> & {
+export type WorkbenchPaneContextValue = Omit<
+  WorkbenchContextValue,
+  'state' | 'cloudWorkStatus' | 'updateUserPreferences'
+> & {
   state: WorkbenchPaneState
 }
 
@@ -467,7 +501,6 @@ export interface WorkbenchProviderProps {
   debugSnapshotEnabled?: boolean
   consumePluginTrials?: boolean
   loadTaskComposerCatalogs?: boolean
-  prewarmComposerApps?: boolean
   publishDebugSnapshots?: boolean
   syncCoreDshModels?: boolean
   syncRemoteProjects?: boolean

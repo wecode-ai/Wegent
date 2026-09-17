@@ -12,6 +12,11 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
+from app.db.pool_observability import (
+    ObservedAsyncQueuePool,
+    ObservedQueuePool,
+    register_pool,
+)
 from app.db.timezone import MYSQL_SESSION_TIMEZONE_OFFSET
 
 # Database connection URL (using sync driver)
@@ -51,22 +56,30 @@ def _create_engine():
             )
         )
     else:
-        # MySQL configuration
-        # Increase pool size to handle concurrent requests in E2E tests and production
-        # Default SQLAlchemy: pool_size=5, max_overflow=10 (total 15 connections)
-        # New settings: pool_size=10, max_overflow=20 (total 30 connections)
-        return create_engine(
+        # Pool limits are per process. Production capacity planning must account
+        # for every Backend and Celery process that imports this engine.
+        mysql_engine = create_engine(
             SQLALCHEMY_DATABASE_URL,
             pool_pre_ping=True,
-            pool_size=10,
-            max_overflow=20,
-            pool_timeout=30,
-            pool_recycle=3600,  # Recycle connections after 1 hour to avoid stale connections
+            poolclass=ObservedQueuePool,
+            pool_size=settings.DB_POOL_SIZE,
+            max_overflow=settings.DB_MAX_OVERFLOW,
+            pool_timeout=settings.DB_POOL_TIMEOUT,
+            pool_recycle=settings.DB_POOL_RECYCLE,
             connect_args={
                 "charset": "utf8mb4",
                 "init_command": f"SET time_zone = '{MYSQL_SESSION_TIMEZONE_OFFSET}'",
             },
         )
+        register_pool(
+            mysql_engine.pool,
+            engine_role="sync",
+            pool_size=settings.DB_POOL_SIZE,
+            max_overflow=settings.DB_MAX_OVERFLOW,
+            pool_timeout=settings.DB_POOL_TIMEOUT,
+            pool_recycle=settings.DB_POOL_RECYCLE,
+        )
+        return mysql_engine
 
 
 engine = _create_engine()
@@ -115,12 +128,21 @@ def _create_async_engine() -> AsyncEngine:
     async_engine = create_async_engine(
         async_url,
         pool_pre_ping=True,
-        pool_size=10,
-        max_overflow=20,
-        pool_timeout=30,
-        pool_recycle=3600,
+        poolclass=ObservedAsyncQueuePool,
+        pool_size=settings.DB_ASYNC_POOL_SIZE,
+        max_overflow=settings.DB_ASYNC_MAX_OVERFLOW,
+        pool_timeout=settings.DB_POOL_TIMEOUT,
+        pool_recycle=settings.DB_POOL_RECYCLE,
     )
     _configure_async_engine_dialect(async_engine)
+    register_pool(
+        async_engine.pool,
+        engine_role="async",
+        pool_size=settings.DB_ASYNC_POOL_SIZE,
+        max_overflow=settings.DB_ASYNC_MAX_OVERFLOW,
+        pool_timeout=settings.DB_POOL_TIMEOUT,
+        pool_recycle=settings.DB_POOL_RECYCLE,
+    )
     return async_engine
 
 

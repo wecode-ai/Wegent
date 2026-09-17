@@ -21,7 +21,17 @@ services:
     networks:
       - wegent-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-123456}"]
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "root",
+          "-p${MYSQL_ROOT_PASSWORD:-123456}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -61,7 +71,8 @@ services:
     networks:
       - wegent-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      test:
+        ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -69,7 +80,7 @@ services:
 
   backend:
     # build:
-      # dockerfile: docker/backend/Dockerfile
+    # dockerfile: docker/backend/Dockerfile
     image: ghcr.io/wecode-ai/wegent-backend:${WEGENT_IMAGE_TAG:-latest}
     pull_policy: ${DOCKER_PULL_POLICY:-always}
     container_name: wegent-backend
@@ -130,6 +141,13 @@ services:
       TEAM_SHARE_QUERY_PARAM: ${TEAM_SHARE_QUERY_PARAM:-teamShare}
       WEGENT_SOCKET_URL: ${WEGENT_SOCKET_URL:-http://localhost:8000}
       ATTACHMENT_PUBLIC_BASE_URL: ${ATTACHMENT_PUBLIC_BASE_URL:-}
+      ATTACHMENT_S3_ENDPOINT: ${ATTACHMENT_S3_ENDPOINT:-}
+      ATTACHMENT_S3_ACCESS_KEY: ${ATTACHMENT_S3_ACCESS_KEY:-}
+      ATTACHMENT_S3_SECRET_KEY: ${ATTACHMENT_S3_SECRET_KEY:-}
+      ATTACHMENT_S3_REGION: ${ATTACHMENT_S3_REGION:-us-east-1}
+      ATTACHMENT_S3_USE_SSL: "${ATTACHMENT_S3_USE_SSL:-true}"
+      WEWORK_TRANSCRIPT_S3_BUCKET: ${WEWORK_TRANSCRIPT_S3_BUCKET:-wework-transcripts}
+      WEWORK_TRANSCRIPT_ENCRYPTION_SECRET: ${WEWORK_TRANSCRIPT_ENCRYPTION_SECRET:-}
       # Chat Shell Configuration (uncomment to use HTTP mode)
       CHAT_SHELL_MODE: ${CHAT_SHELL_MODE:-http}
       CHAT_SHELL_URL: ${CHAT_SHELL_URL:-http://chat_shell:8100}

@@ -33,6 +33,7 @@ SENSITIVE_CONFIG_KEYS = {
     "encoding_aes_key",
     "bot_token",
 }
+DINGTALK_RUNTIME_REPLY_HINT = "引用本通知回复，即可继续该任务。"
 
 
 class IMNotificationDispatcher:
@@ -211,18 +212,28 @@ class IMNotificationDispatcher:
         sent = 0
         results: list[dict[str, Any]] = []
         for session in _dedupe_sessions(sessions):
-            result = await self.send_text(db, session, message)
+            outbound_message = message
+            if runtime_task is not None and session.channel_type == "dingtalk":
+                outbound_message = f"{message}\n\n{DINGTALK_RUNTIME_REPLY_HINT}"
+            result = await self.send_text(db, session, outbound_message)
             result.setdefault("session_key", session.session_key)
             results.append(result)
             if result.get("success"):
                 sent += 1
-                message_id = _result_message_id(result)
-                if runtime_task is not None and message_id is not None:
-                    await im_session_service.save_runtime_task_reply_target(
-                        session=session,
-                        message_id=message_id,
-                        runtime_task=runtime_task,
-                    )
+                if runtime_task is not None:
+                    reply_reference = _result_reply_reference(result)
+                    if reply_reference is None:
+                        logger.warning(
+                            "[IMNotificationDispatcher] Runtime notification "
+                            "response has no reply reference: session_key=%s",
+                            session.session_key,
+                        )
+                    else:
+                        await im_session_service.save_runtime_task_reply_target(
+                            session=session,
+                            message_id=reply_reference,
+                            runtime_task=runtime_task,
+                        )
         return {"sent": sent, "results": results}
 
     def _get_channel(self, db: Session, channel_id: int) -> Kind | None:
@@ -405,17 +416,30 @@ def _dedupe_sessions(
     return deduped
 
 
-def _result_message_id(result: dict[str, Any]) -> int | str | None:
+def _result_reply_reference(result: dict[str, Any]) -> int | str | None:
     payload = result.get("result")
     if not isinstance(payload, dict):
         return None
+    for key in ("processQueryKey", "messageId", "message_id", "id"):
+        reply_reference = _normalize_reply_reference(payload.get(key))
+        if reply_reference is not None:
+            return reply_reference
     result_payload = payload.get("result")
     if not isinstance(result_payload, dict):
         return None
-    message_id = result_payload.get("message_id")
-    if isinstance(message_id, (int, str)) and not isinstance(message_id, bool):
-        return message_id
+    for key in ("message_id", "messageId", "id"):
+        reply_reference = _normalize_reply_reference(result_payload.get(key))
+        if reply_reference is not None:
+            return reply_reference
     return None
+
+
+def _normalize_reply_reference(value: Any) -> int | str | None:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
 
 
 @contextmanager

@@ -1,4 +1,5 @@
 import { createDeviceApi } from '@/api/devices'
+import type { createAgentResourceApi } from '@/api/agentResources'
 import { createDeliveryApi } from '@/api/deliveries'
 import type { AITableApi } from '@/api/aitable'
 import type { DwsApi } from '@/api/dws'
@@ -48,6 +49,7 @@ import type {
 } from '@/types/automation'
 import type { WorkspaceFileApi } from '@/types/workspace-files'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
+import type { SharedWorkspaceApi, WeworkWorkspaceRuntimePort } from '@wegent/collaboration'
 import type { createExternalIssueApi } from '@/api/local/localDelivery'
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
@@ -116,6 +118,7 @@ export interface AutomationApi {
 }
 
 export interface WorkbenchServices {
+  agentResourceApi?: ReturnType<typeof createAgentResourceApi>
   teamApi: ReturnType<typeof createTeamApi>
   modelApi: ReturnType<typeof createModelApi>
   skillApi: ReturnType<typeof createSkillApi>
@@ -149,6 +152,8 @@ export interface WorkbenchServices {
     >['createDockerRemoteDeviceCommand']
   }
   deliveryApi?: DeliveryApi
+  sharedWorkspaceApi?: SharedWorkspaceApi
+  workspaceRuntimePort?: WeworkWorkspaceRuntimePort
   feedbackApi?: ReturnType<typeof createFeedbackApi>
   aitableApi?: AITableApi
   dwsApi?: DwsApi

@@ -670,7 +670,7 @@ function WorkbenchPaneMenu({
       ariaLabel={labels.paneMenu}
       testId={`workbench-pane-menu-${paneId}`}
       placement="bottom-end"
-      triggerClassName="h-7 w-7 rounded-md"
+      triggerClassName="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
       items={[
         {
           label: labels.splitLeft,

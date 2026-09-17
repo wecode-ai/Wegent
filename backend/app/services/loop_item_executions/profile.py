@@ -26,15 +26,117 @@ from app.models.delivery import (
 )
 from app.models.user import User
 from app.schemas.project_chat import ProjectChatWorkspaceBindingView
-from app.schemas.runtime_work import RuntimeTaskCreateRequest
+from app.schemas.runtime_work import RuntimeName, RuntimeTaskCreateRequest
 from app.services.project_chat.workspace_binding import (
     adapt_legacy_workspace_binding,
     read_agent_workspace_binding,
 )
+from app.services.workspaces.storage import get_workspace_kind, workspace_id_for_project
 
 
 class WeworkExecutionProfileError(ValueError):
     """One canonical runtime profile cannot be materialized."""
+
+
+def _execution_environment_config(
+    db: Session,
+    project: CloudProject,
+) -> dict[str, Any]:
+    """Compile Workspace defaults and Project overrides into one Run snapshot."""
+
+    workspace_config: dict[str, Any] = {}
+    workspace_id = workspace_id_for_project(db, project.id)
+    if workspace_id is not None:
+        workspace = get_workspace_kind(db, workspace_id)
+        payload = workspace.json if workspace is not None else {}
+        spec = payload.get("spec") if isinstance(payload, dict) else {}
+        candidate = spec.get("executionEnvironment") if isinstance(spec, dict) else {}
+        if isinstance(candidate, dict):
+            workspace_config = candidate
+
+    metadata = project.metadata_json if isinstance(project.metadata_json, dict) else {}
+    candidate = metadata.get("execution_environment")
+    project_config = candidate if isinstance(candidate, dict) else {}
+    selected_config = project_config if project_config else workspace_config
+    selected_repositories = selected_config.get("repositories")
+    repositories = [
+        {
+            "name": str(repository.get("name") or "").strip(),
+            "url": str(repository.get("url") or "").strip(),
+            "ref": str(repository.get("ref") or "").strip(),
+            "path": str(repository.get("path") or "").strip(),
+            "primary": bool(repository.get("primary")),
+        }
+        for repository in (
+            selected_repositories if isinstance(selected_repositories, list) else []
+        )
+        if isinstance(repository, dict)
+        and str(repository.get("url") or "").strip()
+        and str(repository.get("path") or "").strip()
+    ]
+    selected_steps = selected_config.get("setup_steps")
+    setup_steps = [
+        {
+            "command": str(step.get("command") or "").strip(),
+            "workingDirectory": str(step.get("working_directory") or "").strip(),
+        }
+        for step in (selected_steps if isinstance(selected_steps, list) else [])
+        if isinstance(step, dict) and str(step.get("command") or "").strip()
+    ]
+    devices = selected_config.get("devices")
+    return {
+        "repositories": repositories,
+        "setup_steps": setup_steps,
+        "fingerprint": selected_config.get("fingerprint"),
+        "devices": (
+            {
+                str(key): value
+                for key, value in devices.items()
+                if isinstance(value, dict)
+            }
+            if isinstance(devices, dict)
+            else {}
+        ),
+    }
+
+
+def _merge_environment_execution(
+    execution: dict[str, Any] | None,
+    environment: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Merge immutable environment preparation into the existing execution intent."""
+
+    merged = dict(execution or {})
+    repositories = environment.get("repositories")
+    if isinstance(repositories, list) and repositories:
+        workspace = (
+            dict(merged.get("workspace"))
+            if isinstance(merged.get("workspace"), dict)
+            else {}
+        )
+        workspace["repositories"] = list(repositories)
+        merged["workspace"] = workspace
+    setup_steps = environment.get("setup_steps")
+    if isinstance(setup_steps, list) and setup_steps:
+        setup = (
+            dict(merged.get("setup")) if isinstance(merged.get("setup"), dict) else {}
+        )
+        setup["steps"] = list(setup_steps)
+        setup["fingerprint"] = str(environment.get("fingerprint") or "")
+        merged["setup"] = setup
+    return merged or None
+
+
+def native_runtime_contract(runtime: object) -> tuple[RuntimeName, str]:
+    """Return the exact Runtime and shell pair for a native project agent."""
+
+    if runtime == "codex":
+        return "codex", "Codex"
+    if runtime == "claude_code":
+        return "claude_code", "ClaudeCode"
+    raise WeworkExecutionProfileError(
+        f"Project robot runtime '{runtime}' is not a native device runtime"
+    )
 
 
 def build_project_robot_user_input(
@@ -63,6 +165,37 @@ def build_project_robot_user_input(
     elif normalized_prompt:
         sections.append(normalized_prompt)
     return "\n\n".join(sections)
+
+
+def inherited_workflow_workspace_source(
+    origin_context: dict[str, Any],
+) -> dict[str, str] | None:
+    """Return the latest predecessor Runtime task for an inherited stage."""
+
+    workflow_stage_input = origin_context.get("workflow_stage_input")
+    if not isinstance(workflow_stage_input, dict):
+        return None
+    target_stage = workflow_stage_input.get("target_stage")
+    if (
+        not isinstance(target_stage, dict)
+        or target_stage.get("workspace_policy") != "inherit"
+    ):
+        return None
+    dependencies = workflow_stage_input.get("dependencies")
+    for dependency in reversed(dependencies if isinstance(dependencies, list) else []):
+        if not isinstance(dependency, dict):
+            continue
+        runtime_tasks = dependency.get("runtime_tasks")
+        for source in reversed(
+            runtime_tasks if isinstance(runtime_tasks, list) else []
+        ):
+            if not isinstance(source, dict):
+                continue
+            device_id = str(source.get("device_id") or "")
+            source_task_id = str(source.get("task_id") or "")
+            if device_id and source_task_id:
+                return {"deviceId": device_id, "taskId": source_task_id}
+    return None
 
 
 def validate_wework_execution_target(
@@ -143,6 +276,8 @@ class WeworkExecutionProfile:
     display_name: str
     execution_prompt: str
     instruction: str
+    system_prompt: str = ""
+    runtime: RuntimeName = "codex"
     model: str = ""
     model_type: str | None = None
     model_options: dict[str, str] | None = None
@@ -152,6 +287,8 @@ class WeworkExecutionProfile:
     manager_mode: bool = False
     workspace_policy: str = "project"
     plugins: tuple[dict[str, str], ...] = ()
+    additional_skills: tuple[Any, ...] = ()
+    mcp_servers: dict[str, Any] | None = None
     workspace_binding_override: ProjectChatWorkspaceBindingView | None = None
 
     @classmethod
@@ -170,9 +307,9 @@ class WeworkExecutionProfile:
         from app.services.project_chat.service import (
             bot_config,
             bot_max_concurrent_executions,
+            compiled_bot_config,
         )
 
-        config = bot_config(agent)
         profile_metadata = (
             dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
         )
@@ -180,6 +317,15 @@ class WeworkExecutionProfile:
             runtime_profile.user_id
             if runtime_profile is not None
             else agent.created_by_user_id or 0
+        )
+        config = (
+            compiled_bot_config(
+                db,
+                agent,
+                execution_user_id=owner_user_id,
+            )
+            if db is not None
+            else bot_config(agent)
         )
         local_project_id = int(agent.local_project_id or 0)
         if db is not None and runtime_profile is not None and cloud_project_id:
@@ -200,8 +346,10 @@ class WeworkExecutionProfile:
         return cls(
             owner_user_id=owner_user_id,
             display_name=str(agent.title or agent.name or "AI"),
-            execution_prompt=str(config.get("execution_prompt") or ""),
+            execution_prompt="",
             instruction="",
+            system_prompt=str(config.get("system_prompt") or ""),
+            runtime=native_runtime_contract(config["runtime"])[0],
             model=str(
                 model_override
                 or profile_metadata.get("model")
@@ -232,6 +380,8 @@ class WeworkExecutionProfile:
                 for plugin in config.get("plugins", [])
                 if isinstance(plugin, dict)
             ),
+            additional_skills=tuple(config.get("additional_skills") or []),
+            mcp_servers=dict(config.get("mcp_servers") or {}),
             workspace_binding_override=(
                 ProjectChatWorkspaceBindingView.model_validate(
                     {
@@ -286,8 +436,6 @@ class WeworkExecutionProfile:
     ) -> "WeworkExecutionProfile":
         metadata = dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
         model = str(model_override or metadata.get("model") or "")
-        if not model:
-            raise ValueError("Execution model is required")
         return cls(
             owner_user_id=owner_user_id,
             display_name=display_name or "AI",
@@ -385,10 +533,21 @@ class WeworkExecutionProfile:
             raise WeworkExecutionProfileError(
                 "Robot workspace binding is ambiguous; select an exact workspace"
             )
-        has_bound_workspace = workspace_binding.type != "standalone"
+        has_bound_workspace = workspace_binding.type == "device_project"
+        if workspace_binding.type == "backend_project":
+            has_bound_workspace = workspace_binding.device_workspace_id is not None
+            if not has_bound_workspace:
+                has_bound_workspace = (
+                    wework_execution_environment(
+                        db,
+                        user_id=owner.id,
+                        execution_device_id=execution_device_id,
+                    )
+                    != "cloud"
+                )
         workflow_stage_input = origin_context.get("workflow_stage_input")
         workspace_policy = ""
-        workspace_source_task: dict[str, str] | None = None
+        workspace_source_task = inherited_workflow_workspace_source(origin_context)
         if isinstance(workflow_stage_input, dict):
             target_stage = workflow_stage_input.get("target_stage")
             if isinstance(target_stage, dict):
@@ -396,35 +555,15 @@ class WeworkExecutionProfile:
                     target_stage.get("workspace_policy") or "composer"
                 )
             if workspace_policy == "inherit":
-                dependencies = workflow_stage_input.get("dependencies")
-                for dependency in reversed(
-                    dependencies if isinstance(dependencies, list) else []
-                ):
-                    if not isinstance(dependency, dict):
-                        continue
-                    runtime_tasks = dependency.get("runtime_tasks")
-                    for source in reversed(
-                        runtime_tasks if isinstance(runtime_tasks, list) else []
-                    ):
-                        if not isinstance(source, dict):
-                            continue
-                        device_id = str(source.get("device_id") or "")
-                        source_task_id = str(source.get("task_id") or "")
-                        if device_id and source_task_id:
-                            workspace_source_task = {
-                                "deviceId": device_id,
-                                "taskId": source_task_id,
-                            }
-                            break
-                    if workspace_source_task:
-                        break
                 if workspace_source_task is None:
                     raise WeworkExecutionProfileError(
                         "Inherited workflow workspace has no predecessor Runtime task"
                     )
-        has_stage_workspace = workspace_policy == "inherit" or (
-            workspace_policy == "composer" and has_bound_workspace
-        )
+                workspace_binding = ProjectChatWorkspaceBindingView(
+                    type="standalone",
+                    status="ready",
+                )
+                has_bound_workspace = False
         prompt = self.user_input(
             project_id=str(project.id),
             task_id=task_id,
@@ -457,11 +596,30 @@ class WeworkExecutionProfile:
         origin["workspacePolicy"] = workspace_policy or self.workspace_policy
         if self.manager_mode:
             origin["automationRole"] = "manager"
+        configured_runtime = origin_context.get("runtime")
+        runtime, shell_type = native_runtime_contract(
+            configured_runtime if configured_runtime is not None else self.runtime
+        )
+        configured_mcp_servers = origin_context.get("mcp_servers")
+        mcp_servers = (
+            configured_mcp_servers
+            if configured_mcp_servers is not None
+            else self.mcp_servers or {}
+        )
+        if not isinstance(mcp_servers, dict):
+            raise WeworkExecutionProfileError(
+                "Project robot MCP servers must be an object"
+            )
         bot = [
             {
                 "id": bot_id,
                 "name": self.display_name,
-                "shell_type": "Codex",
+                "shell_type": shell_type,
+                "mcp_servers": [
+                    {"name": name, **server}
+                    for name, server in mcp_servers.items()
+                    if isinstance(server, dict)
+                ],
             }
         ]
         configured_additional_context = origin_context.get("additional_context")
@@ -488,17 +646,52 @@ class WeworkExecutionProfile:
             }
 
         configured_execution = origin_context.get("execution")
+        environment_config = _execution_environment_config(db, project)
+        device_states = environment_config["devices"]
+        # A configured environment only runs on devices that finished preparing
+        # it; every other device stops at preflight so it never clones a fresh
+        # copy outside the prepared workspace.
+        environment_configured = bool(
+            environment_config["repositories"]
+            or environment_config["fingerprint"]
+            or device_states
+        )
+        environment_workspace_path = ""
+        if environment_configured:
+            device_state = device_states.get(execution_device_id)
+            device_state = device_state if isinstance(device_state, dict) else {}
+            if str(device_state.get("status") or "") != "ready":
+                raise WeworkExecutionProfileError(
+                    "Project execution environment is not ready"
+                )
+            environment_workspace_path = str(device_state.get("workspace_path") or "")
+        environment_uses_worktree = bool(
+            environment_workspace_path and environment_config.get("repositories")
+        )
         generated_execution = (
             {"workspace": {"source": "git_worktree"}}
-            if (has_bound_workspace or workspace_source_task)
-            and self.workspace_policy == "git_worktree"
+            if environment_uses_worktree
+            or (
+                (has_bound_workspace or workspace_source_task)
+                and self.workspace_policy == "git_worktree"
+            )
             else None
         )
+        execution = _merge_environment_execution(
+            (
+                configured_execution
+                if isinstance(configured_execution, dict)
+                else generated_execution
+            ),
+            environment_config,
+        )
+        origin["executionEnvironment"] = environment_config
         configured_plugins = origin_context.get("project_plugins")
+        configured_system_prompt = origin_context.get("system_prompt")
         request = RuntimeTaskCreateRequest(
             schemaVersion=2,
             taskId=runtime_task_id,
-            runtime="codex",
+            runtime=runtime,
             message=prompt,
             title=title,
             modelId=self.model or None,
@@ -513,6 +706,11 @@ class WeworkExecutionProfile:
                 if self.model
                 else None
             ),
+            projectInstructions=(
+                str(configured_system_prompt)
+                if configured_system_prompt is not None
+                else self.system_prompt
+            ),
             bot=bot,
             cloudProjectId=str(project.id),
             projectId=(
@@ -521,6 +719,7 @@ class WeworkExecutionProfile:
                 else None
             ),
             deviceWorkspaceId=workspace_binding.device_workspace_id,
+            workspacePath=environment_workspace_path or None,
             deviceId=execution_device_id or None,
             runtimeProjectKey=(
                 workspace_binding.runtime_project_key
@@ -529,7 +728,9 @@ class WeworkExecutionProfile:
             ),
             origin=origin,
             standaloneChatWorkspace=(
-                not has_stage_workspace and workspace_binding.type == "standalone"
+                not has_bound_workspace
+                and workspace_source_task is None
+                and not environment_workspace_path
             ),
             workspaceSourceTask=workspace_source_task,
             additionalContext=additional_context,
@@ -539,14 +740,14 @@ class WeworkExecutionProfile:
                 else list(self.plugins)
             ),
             runtimePermissionMode=origin_context.get("runtime_permission_mode"),
-            execution=(
-                configured_execution
-                if isinstance(configured_execution, dict)
-                else generated_execution
-            ),
+            execution=(execution),
             initialGoal=origin_context.get("initial_goal"),
             initialSupervisor=origin_context.get("initial_supervisor"),
-            additionalSkills=origin_context.get("additional_skills") or [],
+            additionalSkills=(
+                origin_context.get("additional_skills")
+                if origin_context.get("additional_skills") is not None
+                else list(self.additional_skills)
+            ),
             attachmentIds=origin_context.get("attachment_ids") or [],
             attachments=origin_context.get("attachments") or [],
             ephemeral=origin_context.get("ephemeral"),

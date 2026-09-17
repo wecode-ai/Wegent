@@ -4,23 +4,21 @@
 
 """API tests for cloud projects, TODOs, and local task associations."""
 
-import base64
-import hashlib
-import hmac
 import io
-import json
-from contextlib import contextmanager
 from datetime import datetime
 from typing import BinaryIO
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
 from app.models.delivery import (
     CloudProject,
+    CloudProjectFile,
     Delivery,
     DeliveryAsset,
     LoopItem,
@@ -32,9 +30,17 @@ from app.models.delivery import (
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project import Project
+from app.models.resource_member import ResourceMember
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
+from app.services.auth import create_task_token
 from app.services.cloud_files import cloud_file_service
 from app.services.delivery import delivery_service
+from app.services.delivery.storage import DeliveryStorageUnavailableError
+from app.services.loop_item_executions.service import ACTIVE_STATUSES
+from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.project_automation_domain import ACTIVE_RUN_STATUSES
 
 
 class FakeProviderResponse:
@@ -82,6 +88,17 @@ class FakeCloudFileStorage:
         self.objects[target_key] = self.objects[source_key]
 
 
+class UnavailableCloudFileStorage(FakeCloudFileStorage):
+    def put_stream(
+        self,
+        object_key: str,
+        stream: BinaryIO,
+        length: int,
+        content_type: str,
+    ) -> None:
+        raise DeliveryStorageUnavailableError("storage unavailable")
+
+
 @pytest.fixture
 def cloud_file_storage(monkeypatch: pytest.MonkeyPatch) -> FakeCloudFileStorage:
     storage = FakeCloudFileStorage()
@@ -92,6 +109,107 @@ def cloud_file_storage(monkeypatch: pytest.MonkeyPatch) -> FakeCloudFileStorage:
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_execution_list_can_include_terminal_history(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "history", "name": "Execution history"},
+    )
+    assert created.status_code == 201, created.text
+    project = created.json()
+    execution = LoopItemExecution(
+        loop_item_id="history-issue",
+        cloud_project_id=str(project["id"]),
+        executor_owner_user_id=test_user.id,
+        agent_id="history-agent",
+        status="completed",
+        observed_state="succeeded",
+        sync_state="in_sync",
+    )
+    test_db.add(execution)
+    test_db.commit()
+    test_db.refresh(execution)
+
+    active_response = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/executions",
+        headers=_auth(test_token),
+    )
+    history_response = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/executions?include_terminal=true",
+        headers=_auth(test_token),
+    )
+
+    assert active_response.status_code == 200, active_response.text
+    assert active_response.json() == {"items": [], "total": 0}
+    assert history_response.status_code == 200, history_response.text
+    assert history_response.json()["total"] == 1
+    item = history_response.json()["items"][0]
+    assert item["id"] == execution.id
+    assert item["loopItemId"] == "history-issue"
+    assert item["cloudProjectId"] == str(project["id"])
+    assert item["agentId"] == "history-agent"
+    assert item["status"] == "completed"
+    assert item["displayState"] == "succeeded"
+    assert item["observedState"] == "succeeded"
+    assert item["syncState"] == "in_sync"
+
+
+def _create_chat_message(
+    db: Session,
+    *,
+    user_id: int,
+    role: SubtaskRole,
+    prompt: str,
+    result: dict[str, object] | None = None,
+) -> tuple[TaskResource, Subtask]:
+    task = TaskResource(
+        user_id=user_id,
+        kind="Task",
+        name="Release discussion",
+        namespace="default",
+        json={
+            "kind": "Task",
+            "metadata": {
+                "name": "release-discussion",
+                "namespace": "default",
+            },
+            "spec": {},
+        },
+        is_active=TaskResource.STATE_ACTIVE,
+    )
+    db.add(task)
+    db.flush()
+    message = Subtask(
+        user_id=user_id,
+        task_id=task.id,
+        team_id=1,
+        title="Release message",
+        bot_ids=[],
+        role=role,
+        executor_namespace="",
+        executor_name="",
+        prompt=prompt,
+        result=result,
+        status=SubtaskStatus.COMPLETED,
+        progress=100,
+        message_id=1,
+        parent_id=None,
+        error_message="",
+        completed_at=datetime.now(),
+        created_at=datetime.now(),
+    )
+    db.add(message)
+    db.commit()
+    db.refresh(task)
+    db.refresh(message)
+    return task, message
 
 
 def _create_runnable_wegent_team(
@@ -495,17 +613,31 @@ def test_archiving_cloud_project_deletes_all_automation_rules(
         assert rule.version == 2
 
 
+@pytest.mark.parametrize(
+    ("run_status", "project_key"),
+    [
+        (run_status, f"activerun{index}")
+        for index, run_status in enumerate(sorted(ACTIVE_RUN_STATUSES), start=1)
+    ],
+)
 def test_archiving_cloud_project_rejects_active_automation_run(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
     test_token: str,
+    run_status: str,
+    project_key: str,
 ) -> None:
-    project = test_client.post(
+    created = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
-        json={"project_key": "running", "name": "Running automation"},
-    ).json()
+        json={
+            "project_key": project_key,
+            "name": f"Automation {run_status}",
+        },
+    )
+    assert created.status_code == 201, created.text
+    project = created.json()
     rule = ProjectAutomationRule(
         cloud_project_id=project["id"],
         title="Active rule",
@@ -520,8 +652,57 @@ def test_archiving_cloud_project_rejects_active_automation_run(
             cloud_project_id=project["id"],
             parent_id=rule.id,
             title="Active run",
-            status="running",
+            status=run_status,
             created_by_user_id=test_user.id,
+        )
+    )
+    test_db.commit()
+
+    archived = test_client.delete(
+        f"/api/v1/cloud-projects/{project['id']}",
+        params={"version": project["version"]},
+        headers=_auth(test_token),
+    )
+
+    assert archived.status_code == 409
+    assert "Stop active automation runs" in archived.json()["detail"]
+    test_db.expire_all()
+    assert test_db.get(CloudProject, project["id"]).status == "active"
+
+
+@pytest.mark.parametrize(
+    ("execution_status", "project_key"),
+    [
+        (execution_status, f"activeexec{index}")
+        for index, execution_status in enumerate(sorted(ACTIVE_STATUSES), start=1)
+    ],
+)
+def test_archiving_cloud_project_rejects_active_loop_item_execution(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    execution_status: str,
+    project_key: str,
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": project_key,
+            "name": f"Execution {execution_status}",
+        },
+    )
+    assert created.status_code == 201, created.text
+    project = created.json()
+    test_db.add(
+        LoopItemExecution(
+            loop_item_id=f"issue-{execution_status}",
+            cloud_project_id=str(project["id"]),
+            executor_owner_user_id=test_user.id,
+            assigner_user_id=test_user.id,
+            execution_environment="local",
+            status=execution_status,
         )
     )
     test_db.commit()
@@ -661,6 +842,17 @@ def test_public_project_visitors_only_access_their_own_todo_details(
     assert owner_summary["description"] == ""
     assert owner_summary["can_view_detail"] is False
     assert owner_summary["can_edit"] is False
+
+    snapshot = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/board-snapshot",
+        headers=_auth(visitor_token),
+    )
+    assert snapshot.status_code == 200
+    snapshot_body = snapshot.json()
+    assert snapshot_body["items"] == listed_items.json()["items"]
+    assert snapshot_body["task_bindings"] == []
+    assert snapshot_body["members"] == []
+    assert snapshot_body["agents"] == []
 
     hidden_detail = test_client.get(
         f"/api/v1/loop-items/{owner_item['id']}",
@@ -881,16 +1073,22 @@ def test_backend_routes_cloud_github_issues_without_exposing_token(
         "closed_at": None,
     }
     requests: list[tuple[str, str, object]] = []
+    provider_params: list[object] = []
 
     def provider_request(
         method: str, url: str, **kwargs: object
     ) -> FakeProviderResponse:
         requests.append((method, url, kwargs.get("json")))
-        if method == "GET":
+        provider_params.append(kwargs.get("params"))
+        if method == "GET" and url.endswith("/issues"):
             return FakeProviderResponse([created_issue])
+        if method == "PATCH" and isinstance(kwargs.get("json"), dict):
+            created_issue.update(kwargs["json"])
         return FakeProviderResponse(created_issue)
 
-    monkeypatch.setattr(httpx, "request", provider_request)
+    monkeypatch.setattr(
+        external_loop_item_provider._http_client, "request", provider_request
+    )
     project = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
@@ -909,15 +1107,35 @@ def test_backend_routes_cloud_github_issues_without_exposing_token(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
         headers=_auth(test_token),
     )
+    paged = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-item-pages",
+        headers=_auth(test_token),
+        params={"status": "in_progress", "limit": 25},
+    )
     created = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
         headers=_auth(test_token),
         json={"title": "Backend issue", "status": "in_progress", "tags": ["bug"]},
     )
+    archived = test_client.delete(
+        "/api/v1/loop-items/CLOUDGH-7",
+        headers=_auth(test_token),
+    )
 
     assert listed.status_code == 200
     assert listed.json()["items"][0]["id"] == "CLOUDGH-7"
+    assert paged.status_code == 200
+    assert paged.json()["items"][0]["description"] == ""
+    assert paged.json()["items"][0]["detail_loaded"] is False
+    assert any(
+        isinstance(params, dict)
+        and params.get("state") == "open"
+        and params.get("labels") == "wegent:status:in_progress"
+        for params in provider_params
+    )
     assert created.status_code == 201
+    assert archived.status_code == 204
+    assert any(payload == {"state": "closed"} for _, _, payload in requests)
     assert any(method == "POST" for method, _, _ in requests)
     assert all("server-only-secret" not in str(payload) for _, _, payload in requests)
 
@@ -968,7 +1186,9 @@ def test_public_github_project_enforces_issue_ownership(
         number = int(url.rsplit("/", 1)[-1])
         return FakeProviderResponse(issues[number])
 
-    monkeypatch.setattr(httpx, "request", provider_request)
+    monkeypatch.setattr(
+        external_loop_item_provider._http_client, "request", provider_request
+    )
     project = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
@@ -992,7 +1212,8 @@ def test_public_github_project_enforces_issue_ownership(
     by_id = {item["id"]: item for item in listed.json()["items"]}
     assert by_id["PUBLICGH-1"]["description"] == ""
     assert by_id["PUBLICGH-1"]["can_view_detail"] is False
-    assert by_id["PUBLICGH-2"]["description"] == "visitor details"
+    assert by_id["PUBLICGH-2"]["description"] == ""
+    assert by_id["PUBLICGH-2"]["detail_loaded"] is False
     assert by_id["PUBLICGH-2"]["created_by_user_name"] == visitor.user_name
     assert by_id["PUBLICGH-2"]["can_edit"] is True
 
@@ -1004,6 +1225,8 @@ def test_public_github_project_enforces_issue_ownership(
     )
     assert hidden.status_code == 404
     assert visible.status_code == 200
+    assert visible.json()["description"] == "visitor details"
+    assert visible.json()["detail_loaded"] is True
 
 
 def test_backend_routes_gitlab_updates_and_comments(
@@ -1020,6 +1243,7 @@ def test_backend_routes_gitlab_updates_and_comments(
         "created_at": "2026-07-28T00:00:00Z",
         "updated_at": "2026-07-28T00:00:00Z",
     }
+    notes: list[dict[str, object]] = []
     requests: list[tuple[str, str, object]] = []
 
     def provider_request(
@@ -1028,15 +1252,17 @@ def test_backend_routes_gitlab_updates_and_comments(
         payload = kwargs.get("json")
         requests.append((method, url, payload))
         if url.endswith("/notes"):
-            return FakeProviderResponse(
-                {
+            if method == "POST":
+                note = {
                     "id": 10,
                     "body": "ship it",
                     "author": {"username": "admin"},
                     "web_url": "https://gitlab.example.com/note/10",
                     "created_at": "2026-07-28T00:00:00Z",
                 }
-            )
+                notes.append(note)
+                return FakeProviderResponse(note)
+            return FakeProviderResponse(notes)
         if method == "PUT" and isinstance(payload, dict):
             issue.update(payload)
             if isinstance(issue.get("labels"), str):
@@ -1046,7 +1272,9 @@ def test_backend_routes_gitlab_updates_and_comments(
             )
         return FakeProviderResponse(issue)
 
-    monkeypatch.setattr(httpx, "request", provider_request)
+    monkeypatch.setattr(
+        external_loop_item_provider._http_client, "request", provider_request
+    )
     project = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
@@ -1073,14 +1301,302 @@ def test_backend_routes_gitlab_updates_and_comments(
         headers=_auth(test_token),
         json={"body": "ship it"},
     )
+    listed_comments = test_client.get(
+        "/api/v1/loop-items/CLOUDGL-9/comments",
+        headers=_auth(test_token),
+    )
 
     assert updated.status_code == 200
     assert updated.json()["status"] == "completed"
     assert commented.status_code == 201
     assert commented.json()["web_url"] == "https://gitlab.example.com/note/10"
+    assert listed_comments.status_code == 200
+    assert listed_comments.json() == [commented.json()]
     assert any(method == "PUT" for method, _, _ in requests)
-    assert any(url.endswith("/notes") for _, url, _ in requests)
+    assert any(
+        method == "GET" and url.endswith("/notes") for method, url, _ in requests
+    )
     assert all("server-only-secret" not in str(payload) for _, _, payload in requests)
+
+
+def test_backend_lists_github_comments_after_creation(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue = {
+        "number": 12,
+        "title": "GitHub issue",
+        "body": "details",
+        "state": "open",
+        "labels": [{"name": "wegent:creator:1:admin"}],
+        "created_at": "2026-07-28T00:00:00Z",
+        "updated_at": "2026-07-28T00:00:00Z",
+    }
+    comments: list[dict[str, object]] = []
+    requests: list[tuple[str, str, object]] = []
+
+    def provider_request(
+        method: str, url: str, **kwargs: object
+    ) -> FakeProviderResponse:
+        requests.append((method, url, kwargs.get("params")))
+        if url.endswith("/comments"):
+            if method == "POST":
+                comment = {
+                    "id": 21,
+                    "body": "ready to merge",
+                    "user": {"login": "admin"},
+                    "html_url": "https://github.com/acme/repo/issues/12#issuecomment-21",
+                    "created_at": "2026-07-28T01:00:00Z",
+                    "updated_at": "2026-07-28T01:01:00Z",
+                }
+                comments.append(comment)
+                return FakeProviderResponse(comment)
+            return FakeProviderResponse(comments)
+        return FakeProviderResponse(issue)
+
+    monkeypatch.setattr(
+        external_loop_item_provider._http_client, "request", provider_request
+    )
+    project_response = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "commentgh",
+            "name": "GitHub comments",
+            "task_provider": "github",
+            "provider_config": {
+                "repository": "acme/repo",
+                "token": "server-only-secret",
+            },
+        },
+    )
+    assert project_response.status_code == 201
+
+    created = test_client.post(
+        "/api/v1/loop-items/COMMENTGH-12/comments",
+        headers=_auth(test_token),
+        json={"body": "ready to merge"},
+    )
+    listed = test_client.get(
+        "/api/v1/loop-items/COMMENTGH-12/comments",
+        headers=_auth(test_token),
+    )
+
+    assert created.status_code == 201
+    assert listed.status_code == 200
+    assert listed.json() == [created.json()]
+    assert any(
+        method == "GET"
+        and url.endswith("/comments")
+        and params
+        == {
+            "per_page": 100,
+            "page": 1,
+            "sort": "created",
+            "direction": "asc",
+        }
+        for method, url, params in requests
+    )
+
+
+def test_external_issue_comments_require_project_access(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    visitor = User(
+        user_name="external-comment-visitor",
+        password_hash="unused",
+        email="external-comment-visitor@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(visitor)
+    test_db.commit()
+    visitor_token = create_access_token(data={"sub": visitor.user_name})
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "privategl",
+            "name": "Private GitLab",
+            "task_provider": "gitlab",
+            "provider_config": {
+                "repository": "group/private",
+                "domain": "gitlab.example.com",
+                "api_base": "https://gitlab.example.com/api/v4",
+                "token": "server-only-secret",
+            },
+        },
+    )
+    assert created.status_code == 201
+
+    listed = test_client.get(
+        "/api/v1/loop-items/PRIVATEGL-9/comments",
+        headers=_auth(visitor_token),
+    )
+
+    assert listed.status_code == 404
+
+
+def test_internal_issue_comments_are_persisted_and_listed(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "comment", "name": "Comment project"},
+    ).json()
+    issue = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Review comments"},
+    ).json()
+
+    created = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/comments",
+        headers=_auth(test_token),
+        json={"body": "Ship after the final review."},
+    )
+    listed = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}/comments",
+        headers=_auth(test_token),
+    )
+
+    assert created.status_code == 201
+    assert created.json()["body"] == "Ship after the final review."
+    assert created.json()["author"]
+    assert listed.status_code == 200
+    assert listed.json() == [created.json()]
+
+
+def test_chat_message_import_creates_issue_from_immutable_snapshot(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    task, message = _create_chat_message(
+        test_db,
+        user_id=test_user.id,
+        role=SubtaskRole.USER,
+        prompt="Keep this exact decision in the collaboration Issue.",
+    )
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "import", "name": "Imported discussions"},
+    ).json()
+
+    imported = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/message-imports",
+        headers=_auth(test_token),
+        json={
+            "source_task_id": task.id,
+            "subtask_ids": [message.id],
+            "target": {"kind": "new_issue", "title": "Release decision"},
+            "note": "Captured on September 10, 2026.",
+        },
+    )
+
+    assert imported.status_code == 201
+    payload = imported.json()
+    issue = payload["issue"]
+    assert issue["title"] == "Release decision"
+    assert issue["cloud_project_id"] == project["id"]
+    assert payload["comment"] is None
+    assert "Keep this exact decision" in issue["description"]
+    assert "Captured on September 10, 2026." in issue["description"]
+
+    message.prompt = "This later edit must not change the imported Issue."
+    test_db.commit()
+    persisted = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=_auth(test_token),
+    )
+    assert persisted.status_code == 200
+    assert "Keep this exact decision" in persisted.json()["description"]
+    assert "later edit" not in persisted.json()["description"]
+
+
+def test_chat_message_import_appends_to_existing_issue_and_rejects_missing_message(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    task, message = _create_chat_message(
+        test_db,
+        user_id=test_user.id,
+        role=SubtaskRole.ASSISTANT,
+        prompt="fallback",
+        result={"value": "The deployment is ready."},
+    )
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "append", "name": "Existing Issue imports"},
+    ).json()
+    issue = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Deployment"},
+    ).json()
+    other_project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "other", "name": "Other imports"},
+    ).json()
+    other_issue = test_client.post(
+        f"/api/v1/cloud-projects/{other_project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Unrelated deployment"},
+    ).json()
+
+    imported = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/message-imports",
+        headers=_auth(test_token),
+        json={
+            "source_task_id": task.id,
+            "subtask_ids": [message.id],
+            "target": {"kind": "existing_issue", "issue_id": issue["id"]},
+        },
+    )
+    missing = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/message-imports",
+        headers=_auth(test_token),
+        json={
+            "source_task_id": task.id,
+            "subtask_ids": [message.id + 10_000],
+            "target": {"kind": "existing_issue", "issue_id": issue["id"]},
+        },
+    )
+    wrong_project = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/message-imports",
+        headers=_auth(test_token),
+        json={
+            "source_task_id": task.id,
+            "subtask_ids": [message.id],
+            "target": {"kind": "existing_issue", "issue_id": other_issue["id"]},
+        },
+    )
+    comments = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}/comments",
+        headers=_auth(test_token),
+    )
+
+    assert imported.status_code == 201
+    payload = imported.json()
+    assert payload["issue"]["id"] == issue["id"]
+    assert payload["comment"]["id"]
+    assert payload["comment"]["author"]
+    assert "The deployment is ready." in payload["comment"]["body"]
+    assert missing.status_code == 404
+    assert wrong_project.status_code == 404
+    assert comments.status_code == 200
+    assert len(comments.json()) == 1
 
 
 def test_todo_lifecycle_and_multiple_local_tasks(
@@ -1172,6 +1688,19 @@ def test_todo_lifecycle_and_multiple_local_tasks(
     )
     assert my_work.status_code == 200
     assert my_work.json()["items"][0]["has_active_task"] is True
+
+
+def test_my_work_rejects_limit_above_cap(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    response = test_client.get(
+        "/api/v1/cloud-work-items/my-work",
+        headers=_auth(test_token),
+        params={"limit": 101},
+    )
+
+    assert response.status_code == 422
 
 
 def test_loop_item_tags_roundtrip(
@@ -1385,242 +1914,232 @@ def test_cloud_project_robot_binds_default_runtime_profile(
     assert cleared.json()["defaultRuntimeProfileId"] is None
 
 
-def test_project_automation_webhook_verifies_github_signature(
+def test_cloud_project_codex_agent_requires_explicit_project_environment(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    test_db.add(
-        Kind(
-            kind="Device",
-            name="hook-cloud-device",
-            namespace="default",
-            user_id=test_user.id,
-            is_active=True,
-            json={
-                "spec": {"deviceType": "cloud"},
-                "metadata": {"name": "hook-cloud-device"},
-            },
-        )
+    monkeypatch.setattr(
+        "app.services.workspaces.environment_status.cache_manager.mget_or_raise",
+        AsyncMock(return_value={}),
     )
+    device = Kind(
+        kind="Device",
+        name="personal-codex-device",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {"deviceType": "local"},
+            "metadata": {"name": "personal-codex-device"},
+        },
+    )
+    other_device = Kind(
+        kind="Device",
+        name="other-personal-codex-device",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {"deviceType": "local"},
+            "metadata": {"name": "other-personal-codex-device"},
+        },
+    )
+    test_db.add_all([device, other_device])
     test_db.commit()
-    project = test_client.post(
+    test_db.refresh(device)
+    test_db.refresh(other_device)
+
+    project_response = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
-        json={
-            "project_key": "hook",
-            "name": "Webhook project",
-            "task_provider": "github",
-            "provider_config": {
-                "repository": "acme/hook",
-                "token": "provider-token",
-            },
-        },
-    ).json()
-    agent = test_client.post(
+        json={"project_key": "personalenv", "name": "Personal environment"},
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+
+    agent_payload = {
+        "name": "Personal Codex",
+        "runtime": "codex",
+        "executionEnvironment": "local",
+        "executionDeviceId": device.name,
+    }
+    created = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/chat-agents",
         headers=_auth(test_token),
-        json={
-            "name": "Dispatcher",
-            "runtime": "codex",
-        },
-    ).json()
-    rule = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations",
+        json=agent_payload,
+    )
+    assert created.status_code == 422
+    assert created.json()["detail"] == (
+        "Execution environment is not configured in this Project"
+    )
+
+    selected = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environments",
         headers=_auth(test_token),
-        json={
-            "name": "External issue",
-            "prompt": "Dispatch the issue.",
-            "triggerType": "event",
-            "eventType": "task.created",
-            "agentId": agent["id"],
-        },
-    ).json()
-    assert rule["webhookSecret"]
+        json={"device_id": device.id},
+    )
+    assert selected.status_code == 201, selected.text
+    assert selected.json()["device_id"] == device.id
+
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json=agent_payload,
+    )
+    assert created.status_code == 201, created.text
+    agent = created.json()
+    assert agent["executionDeviceId"] == device.name
+
+    project_bindings = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Device",
+            ResourceMember.resource_id == device.id,
+            ResourceMember.entity_type == "project",
+            ResourceMember.entity_id == str(project["id"]),
+        )
+        .all()
+    )
+    assert len(project_bindings) == 1
+    assert project_bindings[0].role == "Developer"
+    assert project_bindings[0].invited_by_user_id == test_user.id
+    assert (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Device",
+            ResourceMember.resource_id == device.id,
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.entity_id == str(project["workspace_id"]),
+        )
+        .count()
+        == 0
+    )
+
     listed = test_client.get(
-        f"/api/v1/cloud-projects/{project['id']}/automations",
-        headers=_auth(test_token),
-    ).json()
-    assert listed[0]["webhookSecret"] is None
-
-    rotated_response = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}"
-        "/rotate-webhook-secret",
+        f"/api/v1/cloud-projects/{project['id']}/execution-environments",
         headers=_auth(test_token),
     )
-    assert rotated_response.status_code == 200, rotated_response.text
-    rotated = rotated_response.json()
-    assert rotated["webhookSecret"]
-    assert rotated["webhookSecret"] != rule["webhookSecret"]
-    assert rotated["version"] == rule["version"] + 1
-    stored_rule = test_db.get(ProjectAutomationRule, rule["id"])
-    assert stored_rule is not None
-    stored_metadata = dict(stored_rule.metadata_json)
-    stored_credential = stored_metadata["webhook_secret_encrypted"]
-    assert stored_credential["algorithm"] == "aes-256-gcm"
-    assert "nonce" in stored_credential
-
-    captured: dict[str, object] = {}
-
-    async def fake_process(
-        db: Session, event: object, *, automation_id: str | None = None
-    ) -> int:
-        captured["event"] = event
-        captured["automation_id"] = automation_id
-        return 1
-
-    monkeypatch.setattr(
-        "app.api.endpoints.project_automations.project_automation_processor.process",
-        fake_process,
+    assert listed.status_code == 200
+    environment = next(
+        item for item in listed.json()["items"] if item["device_id"] == device.id
     )
-    payload = {"action": "opened", "issue": {"number": 42, "title": "Bug"}}
-    body = json.dumps(payload, separators=(",", ":")).encode()
-    signature = (
-        "sha256="
-        + hmac.new(rotated["webhookSecret"].encode(), body, hashlib.sha256).hexdigest()
+    assert environment["owner_type"] == "user"
+    assert environment["owner_id"] == str(test_user.id)
+
+    created_again = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={**agent_payload, "name": "Second Personal Codex"},
     )
-    rejected = test_client.post(
-        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Signature-256": "sha256=bad",
+    assert created_again.status_code == 201, created_again.text
+
+    rejected_update = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents/{agent['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": agent["version"],
+            "executionDeviceId": other_device.name,
         },
     )
-    response = test_client.post(
-        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
-        content=body,
-        headers={"Content-Type": "application/json", "X-Hub-Signature-256": signature},
+    assert rejected_update.status_code == 422
+    assert rejected_update.json()["detail"] == (
+        "Execution environment is not configured in this Project"
     )
 
-    assert rejected.status_code == 401
-    assert response.status_code == 202, response.text
-    assert response.json() == {"status": "accepted", "dispatched": 1}
-    assert captured["automation_id"] == rule["id"]
-    event = captured["event"]
-    assert getattr(event, "event_type") == "task.created"
-    assert getattr(event, "subject_id") == f"{project['project_key']}-42"
-    assert getattr(event, "actor_user_id") == test_user.id
-
-    old_signature = (
-        "sha256="
-        + hmac.new(rule["webhookSecret"].encode(), body, hashlib.sha256).hexdigest()
+    selected_other = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": other_device.id},
     )
-    old_secret_response = test_client.post(
-        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Signature-256": old_signature,
+    assert selected_other.status_code == 201, selected_other.text
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents/{agent['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": agent["version"],
+            "executionDeviceId": other_device.name,
         },
     )
-    assert old_secret_response.status_code == 401
-
-    tampered_credential = dict(stored_credential)
-    ciphertext = bytearray(base64.b64decode(tampered_credential["ciphertext"]))
-    ciphertext[0] ^= 0x01
-    tampered_credential["ciphertext"] = base64.b64encode(ciphertext).decode()
-    stored_metadata["webhook_secret_encrypted"] = tampered_credential
-    stored_rule.metadata_json = stored_metadata
-    test_db.commit()
-    tampered_response = test_client.post(
-        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
-        content=body,
-        headers={"Content-Type": "application/json", "X-Hub-Signature-256": signature},
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["executionDeviceId"] == other_device.name
+    assert (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Device",
+            ResourceMember.resource_id == device.id,
+            ResourceMember.entity_type == "project",
+            ResourceMember.entity_id == str(project["id"]),
+        )
+        .count()
+        == 1
     )
-    assert tampered_response.status_code == 401
-
-    manual_response = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/run",
-        headers=_auth(test_token),
-    )
-    assert manual_response.status_code == 200, manual_response.text
-    assert manual_response.json()["trigger"] == "manual"
-    assert manual_response.json()["automationId"] == rule["id"]
 
 
-def test_project_automation_webhook_verifies_gitlab_token(
+def test_cloud_project_wegent_agent_does_not_grant_team_to_workspace(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
     test_token: str,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    project = test_client.post(
+    team = _create_runnable_wegent_team(
+        test_db,
+        user_id=test_user.id,
+        prefix="personal-agent",
+    )
+    project_response = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
-        json={
-            "project_key": "labhook",
-            "name": "GitLab webhook project",
-            "task_provider": "gitlab",
-            "provider_config": {
-                "repository": "acme/hook",
-                "token": "provider-token",
-            },
-        },
-    ).json()
-    agent = ProjectChatAgent(
-        cloud_project_id=project["id"],
-        name="Dispatcher",
-        title="Dispatcher",
-        status="active",
-        created_by_user_id=test_user.id,
-        metadata_json={"runtime": "codex"},
+        json={"project_key": "personalagent", "name": "Personal Agent"},
     )
-    test_db.add(agent)
-    test_db.commit()
-    rule = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations",
+    assert project_response.status_code == 201
+    project = project_response.json()
+
+    agent_payload = {
+        "name": "Wegent Agent",
+        "runtime": "wegent",
+        "wegentTeamId": team.id,
+    }
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json=agent_payload,
+    )
+    assert created.status_code == 201, created.text
+    agent = created.json()
+    assert agent["wegentTeamId"] == team.id
+
+    created_again = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={**agent_payload, "name": "Second Wegent Agent"},
+    )
+    assert created_again.status_code == 201, created_again.text
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents/{agent['id']}",
         headers=_auth(test_token),
         json={
-            "name": "External issue",
-            "prompt": "Dispatch the issue.",
-            "triggerType": "event",
-            "eventType": "task.created",
-            "agentId": agent.id,
-        },
-    ).json()
-
-    captured: dict[str, object] = {}
-
-    async def fake_process(
-        db: Session, event: object, *, automation_id: str | None = None
-    ) -> int:
-        captured["event"] = event
-        return 1
-
-    monkeypatch.setattr(
-        "app.api.endpoints.project_automations.project_automation_processor.process",
-        fake_process,
-    )
-    response = test_client.post(
-        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
-        headers={"X-Gitlab-Token": rule["webhookSecret"]},
-        json={
-            "object_kind": "issue",
-            "event_type": "issue",
-            "object_attributes": {
-                "action": "open",
-                "iid": 7,
-                "title": "Bug",
-                "state": "opened",
-                "labels": [
-                    {"title": "backend"},
-                    {"title": "wegent:status:in_progress"},
-                    {"title": "wegent:priority:high"},
-                ],
-            },
+            "version": agent["version"],
+            "wegentTeamId": team.id,
         },
     )
-
-    assert response.status_code == 202, response.text
-    assert response.json() == {"status": "accepted", "dispatched": 1}
-    event = captured["event"]
-    assert getattr(event, "payload")["status"] == "in_progress"
-    assert getattr(event, "payload")["priority"] == "high"
-    assert getattr(event, "payload")["tags"] == ["backend"]
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["wegentTeamId"] == team.id
+    assert (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Team",
+            ResourceMember.resource_id == team.id,
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.entity_id == str(project["workspace_id"]),
+        )
+        .count()
+        == 0
+    )
 
 
 def test_cloud_project_automation_creates_generic_task_for_cloud_robot(
@@ -1893,43 +2412,6 @@ def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_cla
             },
         )
     )
-    test_db.add(
-        Kind(
-            kind="Device",
-            name="automation-runtime-device",
-            namespace="default",
-            user_id=test_user.id,
-            is_active=True,
-            json={
-                "spec": {
-                    "deviceType": "local",
-                    "runtimeInstanceId": "runtime-automation-local",
-                },
-                "metadata": {"name": "automation-runtime-device"},
-            },
-        )
-    )
-    test_db.add(
-        Kind(
-            kind="Model",
-            name="test-model",
-            namespace="default",
-            user_id=0,
-            is_active=True,
-            json={
-                "spec": {
-                    "modelConfig": {
-                        "env": {
-                            "model": "claude",
-                            "model_id": "test-model",
-                            "api_key": "test-key",
-                            "base_url": "https://runtime.example.com",
-                        }
-                    }
-                }
-            },
-        )
-    )
     test_db.commit()
     project = test_client.post(
         "/api/v1/cloud-projects",
@@ -1988,68 +2470,53 @@ def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_cla
     assert queued_execution.execution_environment == "local"
     assert queued_execution.executor_owner_user_id == test_user.id
 
-    from app.services.device.capacity import RuntimeCapacity
-    from app.services.loop_item_executions.device_pull import (
-        acknowledge_execution,
-        pull_execution,
-    )
-
     monkeypatch.setattr(
-        "app.services.loop_item_executions.device_pull."
-        "validate_runtime_capacity_observation_sync",
-        lambda *_args, **_kwargs: RuntimeCapacity(
-            runtime_instance_id="runtime-automation-local",
-            limit=1,
-            active=0,
-            active_task_ids=frozenset(),
-            queued=0,
-        ),
-    )
-    monkeypatch.setattr(
-        "app.services.loop_item_executions.service._runtime_capacity_used",
-        lambda *_args, **_kwargs: 0,
-    )
-
-    @contextmanager
-    def test_db_session():
-        yield test_db
-
-    monkeypatch.setattr(
-        "app.services.loop_item_executions.device_pull.get_db_session",
-        test_db_session,
-    )
-
-    pulled = pull_execution(
-        owner_user_id=test_user.id,
-        execution_target_id="automation-local-device",
-        runtime_device_id="automation-runtime-device",
-        runtime_instance_id="runtime-automation-local",
-        environment="local",
-        runtime_capacity={
-            "limit": 1,
-            "active": 0,
-            "active_task_ids": [],
-            "queued": 0,
+        "app.services.device.capacity.cache_manager.get_sync_or_raise",
+        lambda _key: {
+            "runtime_instance_id": "runtime-automation-local",
+            "runtime_capacity": {
+                "limit": 1,
+                "active": 0,
+                "active_task_ids": [],
+                "queued": 0,
+            },
         },
     )
-    assert pulled["success"], pulled
-    task = pulled["task"]
-    assert task is not None
-    assert task["payload"]["message"]
-    assert task["payload"]["executionRequest"]["model_config"]
-    assert task["payload"]["modelId"] == "test-model"
-
-    accepted = acknowledge_execution(
-        owner_user_id=test_user.id,
-        runtime_device_id="automation-runtime-device",
-        runtime_instance_id="runtime-automation-local",
-        execution_id=task["execution_id"],
-        runtime_task_id=task["runtime_task_id"],
-        accepted=True,
-        prompt="Scan bugs.",
-        error=None,
+    claimed = test_client.post(
+        "/api/v1/loop-item-executions/claim-my-next",
+        headers=_auth(test_token),
+        json={
+            "executionDeviceId": "automation-local-device",
+            "leaseSeconds": 300,
+        },
     )
-    assert accepted == {"success": True}
+    assert claimed.status_code == 200, claimed.text
+    execution = claimed.json()
+    assert execution["executionDeviceId"] == "automation-local-device"
+    assert execution["status"] == "claimed"
+    assert execution["displayState"] == "starting"
+    assert execution["observedState"] == "unconfirmed"
+    assert execution["automationRunId"] == run["id"]
+    assert "executionPayload" not in execution
+    assert execution["runtimePayload"]["message"]
+    assert "executionRequest" not in execution["runtimePayload"]
+    assert "executorProfile" not in execution
+    assert execution["runtimePayload"]["modelId"] == "test-model"
+
+    started_runtime = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/executions/{execution['id']}/runtime-start",
+        headers=_auth(test_token),
+        json={
+            "runtime_device_id": "automation-local-device",
+            "runtime_task_id": execution["runtimeTaskId"],
+            "prompt": "Scan bugs.",
+        },
+    )
+    assert started_runtime.status_code == 200, started_runtime.text
+    accepted = started_runtime.json()
+    assert accepted["status"] == "claimed"
+    assert accepted["displayState"] == "waiting_runtime"
+    assert accepted["observedState"] == "accepted"
 
     runs = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/runs",
@@ -2107,10 +2574,16 @@ def test_ai_manager_assignment_endpoint_applies_tool_selected_member(
     )
     test_db.add_all([rule, run])
     test_db.commit()
+    task_token = create_task_token(
+        task_id=0,
+        subtask_id=0,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+    )
 
     assigned = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/automation-runs/{run.id}/assign",
-        headers=_auth(test_token),
+        headers=_auth(task_token),
         json={"assigneeType": "user", "assigneeId": str(test_user.id)},
     )
 
@@ -2295,6 +2768,50 @@ def test_cloud_workspace_file_round_trip(
     assert cloud_file_storage.objects == {}
 
 
+def test_cloud_workspace_file_upload_rolls_back_and_raises_503(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "files503", "name": "Unavailable storage"},
+    ).json()
+    rollback_calls = 0
+    original_rollback = test_db.rollback
+
+    def track_rollback() -> None:
+        nonlocal rollback_calls
+        rollback_calls += 1
+        original_rollback()
+
+    monkeypatch.setattr(cloud_file_service, "storage", UnavailableCloudFileStorage())
+    monkeypatch.setattr(test_db, "rollback", track_rollback)
+
+    with pytest.raises(HTTPException) as exc:
+        cloud_file_service.upload(
+            test_db,
+            project["id"],
+            test_user.id,
+            "research/notes.md",
+            "text/markdown",
+            io.BytesIO(b"# Notes"),
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "Delivery object storage is unavailable"
+    assert rollback_calls == 1
+    assert (
+        test_db.query(CloudProjectFile)
+        .filter(CloudProjectFile.cloud_project_id == project["id"])
+        .count()
+        == 0
+    )
+
+
 def test_cloud_workspace_lists_immutable_delivery_files(
     test_client: TestClient,
     test_db: Session,
@@ -2380,3 +2897,118 @@ def test_cloud_workspace_lists_immutable_delivery_files(
     assert read_content.status_code == 200
     assert read_content.content == b"report"
     assert read_content.headers["content-type"] == "application/pdf"
+
+
+def test_execution_environment_initialization_keeps_the_client_version_token(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed preparation must stay retryable and never hold the project row."""
+
+    monkeypatch.setattr(
+        "app.services.workspaces.environment_status.cache_manager.mget_or_raise",
+        AsyncMock(return_value={}),
+    )
+    device = Kind(
+        kind="Device",
+        name="environment-init-device",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {"deviceType": "local"},
+            "metadata": {"name": "environment-init-device"},
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+    test_db.refresh(device)
+
+    project_response = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "envinit", "name": "Environment initialization"},
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+    bound = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": device.id},
+    )
+    assert bound.status_code == 201, bound.text
+
+    configured = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": project["version"],
+            "executionEnvironment": {
+                "repositories": [
+                    {
+                        "name": "wegent",
+                        "url": "ssh://git@example.invalid:2222/wegent.git",
+                        "ref": "develop",
+                        "path": "wegent",
+                        "primary": True,
+                    }
+                ],
+                "setupSteps": [],
+            },
+        },
+    )
+    assert configured.status_code == 200, configured.text
+    configured_version = configured.json()["version"]
+
+    open_transactions: list[bool] = []
+
+    def prepare(status_value: str, error: str) -> AsyncMock:
+        async def _prepare(*, db: Session, device: Kind, **_: object) -> dict:
+            open_transactions.append(db.in_transaction())
+            return {
+                "status": status_value,
+                "workspace_path": "" if error else "/workspace/ready",
+                "prepared_at": None,
+                "error": error,
+            }
+
+        return AsyncMock(side_effect=_prepare)
+
+    monkeypatch.setattr(
+        "app.services.cloud_projects.service.initialize_execution_environment",
+        prepare("error", "Failed to prepare execution repositories: boom"),
+    )
+    failed = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environment/initialize",
+        headers=_auth(test_token),
+        json={"device_id": device.id, "version": configured_version},
+    )
+    assert failed.status_code == 200, failed.text
+    failed_devices = failed.json()["execution_environment"]["devices"]
+    assert failed_devices[device.name]["status"] == "error"
+    assert failed_devices[device.name]["error"] == (
+        "Failed to prepare execution repositories: boom"
+    )
+    # The preparation result is not a configuration change, so the token survives.
+    assert failed.json()["version"] == configured_version
+
+    monkeypatch.setattr(
+        "app.services.cloud_projects.service.initialize_execution_environment",
+        prepare("ready", ""),
+    )
+    retried = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environment/initialize",
+        headers=_auth(test_token),
+        json={"device_id": device.id, "version": configured_version},
+    )
+    assert retried.status_code == 200, retried.text
+    retried_devices = retried.json()["execution_environment"]["devices"]
+    assert retried_devices[device.name]["status"] == "ready"
+    assert retried_devices[device.name]["workspace_path"] == "/workspace/ready"
+    assert retried.json()["version"] == configured_version
+
+    # The project row must be unlocked while the device prepares the environment.
+    assert open_transactions == [False, False]

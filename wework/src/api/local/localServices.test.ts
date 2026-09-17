@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { getLocalUser, LOCAL_USER } from './localSession'
+import { getLocalUser, LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import {
   createAutomationApiFromIpc,
   createLocalAppServices,
@@ -14,9 +14,15 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import type { LocalExecutorStatus } from '@/desktop/localExecutor'
+import {
+  resetSystemProxyStateForTests,
+  resolveEffectiveLocalCodexProxy,
+} from '@/desktop/systemProxy'
 import type { TurnFileChangesSummary, User } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
+  ['gpt-6-astra', 'GPT-6-Astra', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
   ['gpt-5.6-sol', 'GPT-5.6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
   ['gpt-5.6-terra', 'GPT-5.6-Terra', 'medium', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
   ['gpt-5.6-luna', 'GPT-5.6-Luna', 'medium', ['low', 'medium', 'high', 'xhigh', 'max']],
@@ -27,11 +33,12 @@ const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]
 ]
 
 const OFFICIAL_CODEX_MODELS = OFFICIAL_CODEX_MODEL_DEFINITIONS.map(
-  ([model, displayName, defaultReasoningEffort, efforts], index) => ({
+  ([model, displayName, defaultReasoningEffort, efforts]) => ({
     id: model,
     model,
     displayName,
-    isDefault: index === 0,
+    hidden: model === 'gpt-6-astra',
+    isDefault: model === 'gpt-5.6-sol',
     defaultReasoningEffort,
     supportedReasoningEfforts: efforts.map(reasoningEffort => ({ reasoningEffort })),
   })
@@ -46,6 +53,8 @@ const AUTHENTICATED_CLOUD_USER: User = {
 describe('createLocalAppServices', () => {
   beforeEach(() => {
     localStorage.clear()
+    delete window.weworkElectronNetwork
+    resetSystemProxyStateForTests()
     clearLocalModelConfigs()
     resetLocalRuntimeChatStreamsForTests()
   })
@@ -126,6 +135,12 @@ describe('createLocalAppServices', () => {
     expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
+          name: 'gpt-6-astra',
+          type: 'runtime',
+          modelId: 'gpt-6-astra',
+          runtime: { family: 'openai.openai-responses', provider: 'local' },
+        }),
+        expect.objectContaining({
           name: 'gpt-5.6-sol',
           type: 'runtime',
           modelId: 'gpt-5.6-sol',
@@ -150,6 +165,7 @@ describe('createLocalAppServices', () => {
     const modelIds = models.data.map(model => model.modelId)
     expect(modelIds).toEqual(
       expect.arrayContaining([
+        'gpt-6-astra',
         'gpt-5.6-sol',
         'gpt-5.6-terra',
         'gpt-5.6-luna',
@@ -194,6 +210,193 @@ describe('createLocalAppServices', () => {
       totalTasks: 0,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
+  })
+
+  test('merges partial local user preference updates', async () => {
+    saveLocalUserPreferences({
+      wework_project_work_preferences: {
+        'project:7': {
+          executionMode: 'git_worktree',
+          worktreeBranch: 'feature/alpha',
+        },
+      },
+    })
+    const services = createLocalAppServices({
+      request: vi.fn().mockResolvedValue({}),
+      subscribe: vi.fn(),
+    })
+
+    await expect(
+      services.userApi?.updateCurrentUser({
+        preferences: {
+          wework_new_chat_model_selection: {
+            modelName: 'gpt-5.5',
+            modelType: 'runtime',
+            options: { reasoning: 'high' },
+          },
+        },
+      })
+    ).resolves.toEqual({
+      ...LOCAL_USER,
+      preferences: {
+        wework_project_work_preferences: {
+          'project:7': {
+            executionMode: 'git_worktree',
+            worktreeBranch: 'feature/alpha',
+          },
+        },
+        wework_new_chat_model_selection: {
+          modelName: 'gpt-5.5',
+          modelType: 'runtime',
+          options: { reasoning: 'high' },
+        },
+      },
+    })
+  })
+
+  test('materializes a selected Team locally without extending the Executor protocol', async () => {
+    const materializeRuntimeTask = vi.fn().mockImplementation(async input => ({
+      payload: {
+        schemaVersion: 2,
+        runtime: input.runtime,
+        message: input.message,
+        title: input.title ?? input.taskId,
+        taskId: input.taskId,
+        workspacePath: input.workspacePath,
+        executionRequest: {
+          task_id: input.taskId,
+          team_id: 7,
+          team_name: 'review-team',
+          team_namespace: 'engineering',
+          collaboration_model: 'pipeline',
+          model_config: { model_id: 'team-model', api_format: 'responses' },
+          system_prompt: 'You are a reviewer.\n\nReview the implementation.',
+          prompt: input.message,
+          skill_names: ['review', 'implementation'],
+          skill_configs: [{ name: 'review' }, { name: 'implementation' }],
+          preload_skills: ['review'],
+          bot: [
+            { id: 11, name: 'reviewer' },
+            { id: 12, name: 'implementer' },
+          ],
+          new_session: input.newSession,
+        },
+      },
+      runtimeHandle: { wegentTeam: { id: 7 } },
+    }))
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.create') {
+        return {
+          accepted: true,
+          deviceId: 'device-uuid',
+          taskId: 'team-task',
+          workspacePath: '/Users/me/project',
+          runtime: 'codex',
+        }
+      }
+      return { accepted: true }
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      user: AUTHENTICATED_CLOUD_USER,
+      materializeRuntimeTask,
+    })
+
+    const createResponse = await services.runtimeWorkApi?.createRuntimeTask({
+      wegentTeamId: 7,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'team-task',
+      runtime: 'codex',
+      message: 'Review this change',
+      title: 'Review change',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload).not.toHaveProperty('wegentTeamId')
+    expect(materializeRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schemaVersion: 3,
+        wegentTeamId: 7,
+        deviceId: 'device-uuid',
+        workspacePath: '/Users/me/project',
+      })
+    )
+    expect(payload.runtimeHandle).toEqual({ wegentTeam: { id: 7 } })
+    expect(createResponse?.runtimeHandle).toEqual({ wegentTeam: { id: 7 } })
+    expect(payload.executionRequest).toMatchObject({
+      team_id: 7,
+      team_name: 'review-team',
+      team_namespace: 'engineering',
+      collaboration_model: 'pipeline',
+      model_config: { model_id: 'team-model', api_format: 'responses' },
+      system_prompt: 'You are a reviewer.\n\nReview the implementation.',
+      skill_names: ['review', 'implementation'],
+      preload_skills: ['review'],
+      skill_configs: [{ name: 'review' }, { name: 'implementation' }],
+      bot: [
+        expect.objectContaining({ id: 11, name: 'reviewer' }),
+        expect.objectContaining({ id: 12, name: 'implementer' }),
+      ],
+    })
+
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        taskId: 'team-task',
+        workspacePath: '/Users/me/project',
+        runtimeHandle: payload.runtimeHandle,
+      },
+      message: 'Continue the review',
+    })
+
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    expect(sendPayload.executionRequest).toMatchObject({
+      team_id: 7,
+      team_name: 'review-team',
+      model_config: { model_id: 'team-model', api_format: 'responses' },
+      prompt: 'Continue the review',
+      new_session: false,
+    })
+
+    const restartedMaterializeRuntimeTask = vi.fn(materializeRuntimeTask)
+    const restartedServices = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      user: AUTHENTICATED_CLOUD_USER,
+      materializeRuntimeTask: restartedMaterializeRuntimeTask,
+    })
+
+    await restartedServices.runtimeWorkApi?.interruptAndSendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        taskId: 'team-task',
+        workspacePath: '/Users/me/project',
+        runtimeHandle: payload.runtimeHandle,
+      },
+      message: 'Stop and re-check the implementation',
+    })
+
+    expect(restartedMaterializeRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        wegentTeamId: 7,
+        newSession: false,
+        taskId: 'team-task',
+      })
+    )
+    const interruptPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.interrupt_and_send'
+    )?.[1]
+    expect(interruptPayload.executionRequest).toMatchObject({
+      team_id: 7,
+      team_name: 'review-team',
+      model_config: { model_id: 'team-model', api_format: 'responses' },
+      prompt: 'Stop and re-check the implementation',
+      new_session: false,
+    })
   })
 
   test('generates a branch name with the title model in an isolated ephemeral request', async () => {
@@ -576,6 +779,43 @@ describe('createLocalAppServices', () => {
 
     resolveRestart?.({ restarted: true })
     await Promise.all([firstDevices, secondDevices])
+  })
+
+  test('loads devices and runtime work before Codex startup completes', async () => {
+    const available = vi.fn().mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+      version: '1.9.0',
+      runtimeInstanceId: 'runtime-1',
+    })
+    const ensure = vi.fn(
+      () =>
+        new Promise<LocalExecutorStatus>(() => {
+          // Keep Codex initialization pending to prove shell data does not depend on it.
+        })
+    )
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.list') {
+        return { projects: [], chats: [], totalTasks: 0 }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      available,
+      ensure,
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(services.deviceApi.listDevices()).resolves.toHaveLength(1)
+    await expect(services.runtimeWorkApi?.listRuntimeWork()).resolves.toMatchObject({
+      totalTasks: 0,
+    })
+
+    expect(available).toHaveBeenCalled()
+    expect(ensure).not.toHaveBeenCalled()
+    expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
   test('serializes catalog reconciliation while the runtime identity becomes available', async () => {
@@ -3078,15 +3318,56 @@ describe('createLocalAppServices', () => {
           upstream_api_format: 'openai-responses',
           tool_profile: 'custom',
           codex_catalog_model_id: catalogModelId,
+          native_tool_search: true,
+          native_namespace_tools: true,
           model_context_window: 1_048_576,
           reasoning: { effort: 'high' },
         })
       )
-      expect(payload.executionRequest.model_config).not.toHaveProperty('native_tool_search')
-      expect(payload.executionRequest.model_config).not.toHaveProperty('native_namespace_tools')
       expect(payload.executionRequest.model_config).not.toHaveProperty('vision_sidecar')
     }
   )
+
+  test('bridges Codex tools for a standard Responses local model', async () => {
+    saveLocalModelConfig({
+      id: 'azure-standard-responses',
+      providerProfileId: 'custom',
+      displayName: 'Azure Responses',
+      modelId: 'gpt-deployment',
+      baseUrl: 'https://azure.example/openai/v1',
+      apiFormat: 'openai-responses',
+      codexToolCompatibility: 'standard',
+      toolProfile: 'custom',
+      requestPath: '/responses',
+      apiKey: 'azure-key',
+      catalogReady: true,
+    })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-azure-standard-responses',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Azure Responses',
+      modelId: 'local-model:azure-standard-responses',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        upstream_api_format: 'openai-responses',
+        native_tool_search: false,
+        native_namespace_tools: false,
+      })
+    )
+  })
 
   test('routes DeepSeek images through a configured vision proxy model', async () => {
     const visionCatalog = createDefaultLocalModelCatalogEntry({
@@ -3804,6 +4085,43 @@ describe('createLocalAppServices', () => {
     }
   })
 
+  test('waits for system proxy resolution before building the first local runtime request', async () => {
+    window.weworkElectronNetwork = {
+      resolveCodexProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
+    }
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const ensure = vi.fn().mockImplementation(async () => {
+      await resolveEffectiveLocalCodexProxy()
+      return { running: true, ready: true, deviceId: 'device-uuid' }
+    })
+    const services = createLocalAppServices({
+      available: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+      }),
+      ensure,
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'gpt-5.4',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(ensure).toHaveBeenCalledOnce()
+    expect(payload.executionRequest.model_config.proxy).toEqual({
+      url: 'http://system-proxy.example.com:7890',
+    })
+  })
+
   test('rejects missing local model config instead of falling back to built-in Codex', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
@@ -4042,6 +4360,7 @@ describe('createLocalAppServices', () => {
               title: 'Build',
               runtime: 'codex',
               goal_status: 'active',
+              goal_execution_status: 'recovering',
               continuable: true,
               thread_status: 'idle',
               turn_status: 'completed',
@@ -4058,6 +4377,7 @@ describe('createLocalAppServices', () => {
               workspacePath: '/Users/me/chat',
               title: 'Chat',
               runtime: 'codex',
+              goal_status: null,
               workspaceKind: 'chat',
             },
           ],
@@ -4117,6 +4437,7 @@ describe('createLocalAppServices', () => {
                   workspaceKind: 'worktree',
                   worktreeId: '42',
                   goalStatus: 'active',
+                  goalExecutionStatus: 'recovering',
                   continuable: true,
                   threadStatus: 'idle',
                   turnStatus: 'completed',
@@ -4135,11 +4456,51 @@ describe('createLocalAppServices', () => {
           tasks: [
             expect.objectContaining({
               taskId: 'chat-1',
+              goalStatus: null,
             }),
           ],
         }),
       ],
       totalTasks: 2,
+    })
+  })
+
+  test('uses the remote executor project identity for a local sidebar descriptor', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      workspaces: [
+        {
+          workspacePath: '/srv/project',
+          label: 'Remote project',
+          workspaceSource: 'remote',
+          remoteHostId: 'remote-device',
+          projectKey: 'wegent-remote:remote-device:%2Fsrv%2Fproject',
+          projectKind: 'remote',
+          projectSource: 'remote_project',
+          tasks: [],
+        },
+      ],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const response = await services.runtimeWorkApi?.listRuntimeWork()
+    const project = response?.projects[0]
+
+    expect(project?.project.id).toBe(project?.deviceWorkspaces[0].id)
+    expect(project?.project).toMatchObject({
+      key: 'wegent-remote:remote-device:%2Fsrv%2Fproject',
+      sidebarStateKey: 'wegent-remote:remote-device:%2Fsrv%2Fproject',
+      stateDeviceId: 'local-device',
+    })
+    expect(project?.deviceWorkspaces[0]).toMatchObject({
+      deviceId: 'remote-device',
+      workspacePath: '/srv/project',
+      workspaceSource: 'remote',
+      remoteHostId: 'remote-device',
     })
   })
 

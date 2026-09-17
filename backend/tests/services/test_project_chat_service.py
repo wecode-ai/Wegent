@@ -43,8 +43,13 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBinding,
 )
 from app.schemas.runtime_work import DeviceWorkspaceUpsert
+from app.services.loop_item_executions.profile import WeworkExecutionProfile
+from app.services.loop_item_executions.service import (
+    TaskContext,
+    loop_item_execution_service,
+)
 from app.services.loop_items.service import loop_item_service
-from app.services.project_chat.service import project_chat_service
+from app.services.project_chat.service import bot_config, project_chat_service
 from app.services.runtime_work_service import upsert_device_workspace
 
 
@@ -112,8 +117,23 @@ def make_code_project(db: Session, user: User, name: str = "Code project") -> Pr
 def test_cloud_robot_persists_exact_workspace_binding_in_metadata(
     test_db: Session, test_user: User
 ) -> None:
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+    from app.schemas.base_role import BaseRole
+
     project = create_project(test_db, test_user)
-    make_device(test_db, test_user, "cloud-dev-binding", "cloud")
+    device = make_device(test_db, test_user, "cloud-dev-binding", "cloud")
+    test_db.add(
+        ResourceMember(
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
     code_project = make_code_project(test_db, test_user)
     workspace = upsert_device_workspace(
         db=test_db,
@@ -165,6 +185,80 @@ def test_cloud_robot_persists_exact_workspace_binding_in_metadata(
     assert created.local_project_id == code_project.id
     assert created.workspace_policy == "git_worktree"
     assert [plugin.id for plugin in created.plugins] == ["github@openai"]
+
+
+@pytest.mark.parametrize("environment", ["local", "cloud"])
+def test_project_agent_without_code_project_can_save_and_build_execution(
+    test_db: Session, test_user: User, environment: str
+) -> None:
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+    from app.schemas.base_role import BaseRole
+
+    project = create_project(test_db, test_user)
+    device_id = f"{environment}-project-agent"
+    device = make_device(test_db, test_user, device_id, environment)
+    test_db.add(
+        ResourceMember(
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+    assert test_db.query(Project).count() == 0
+
+    created = project_chat_service.create_agent(
+        test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+        request=ProjectChatAgentCreate.model_validate(
+            {
+                "name": "codex工程师",
+                "runtime": "codex",
+                "capabilityDescription": "支持issue描述的内容",
+                "systemPrompt": "支持issue描述的内容",
+                "executionDeviceId": device_id,
+                "executionEnvironment": environment,
+                "workspaceBinding": {"type": "standalone"},
+            }
+        ),
+    )
+    agents = project_chat_service.list_agents(
+        test_db, user_id=test_user.id, project_id=project.id
+    )
+    saved = next(agent for agent in agents if agent.id == created.id)
+    assert saved.project_id == str(project.id)
+    assert saved.workspace_binding.type == "standalone"
+    assert saved.workspace_binding.status == "ready"
+    assert saved.local_project_id is None
+
+    row = test_db.get(ProjectChatAgent, created.id)
+    request = WeworkExecutionProfile.for_project_robot(row).build_runtime_request(
+        test_db,
+        execution_id=92,
+        runtime_task_id="project-agent-workspace-regression",
+        task=TaskContext(
+            id="issue-workspace-regression",
+            cloud_project_id=str(project.id),
+            title="Implement the issue",
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={},
+        execution_device_id=device_id,
+    )
+    assert request.cloud_project_id == str(project.id)
+    assert request.device_id == device_id
+    assert request.standalone_chat_workspace is True
+    assert request.project_id is None
+    assert request.device_workspace_id is None
+    assert request.runtime_project_key is None
 
 
 def test_legacy_cloud_project_binding_requires_rebind_when_not_unique(
@@ -253,6 +347,78 @@ def test_project_supports_multiple_robots_without_embedded_runtime_config(
     assert by_id[second.id].created_by_user_id == test_user.id
 
 
+def test_project_agent_persists_runtime_skills_and_mcp_servers(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    created = project_chat_service.create_agent(
+        test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+        request=ProjectChatAgentCreate.model_validate(
+            {
+                "name": "Claude reviewer",
+                "runtime": "claude_code",
+                "additionalSkills": [
+                    {"name": "review", "namespace": "default"},
+                ],
+                "mcpServers": {
+                    "repo": {
+                        "command": "node",
+                        "args": ["repo-server.mjs"],
+                    }
+                },
+            }
+        ),
+    )
+
+    row = test_db.get(ProjectChatAgent, created.id)
+    assert row is not None
+    assert row.metadata_json["runtime"] == "claude_code"
+    assert row.metadata_json["additional_skills"] == [
+        {"name": "review", "namespace": "default"}
+    ]
+    assert row.metadata_json["mcp_servers"] == {
+        "repo": {"command": "node", "args": ["repo-server.mjs"]}
+    }
+    assert created.runtime == "claude_code"
+    assert created.additional_skills == [{"name": "review", "namespace": "default"}]
+    assert created.mcp_servers == {
+        "repo": {"command": "node", "args": ["repo-server.mjs"]}
+    }
+    assert bot_config(row)["runtime"] == "claude_code"
+
+    updated = project_chat_service.update_agent(
+        test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+        agent_id=created.id,
+        request=ProjectChatAgentUpdate.model_validate(
+            {
+                "version": created.version,
+                "runtime": "codex",
+                "additionalSkills": [],
+                "mcpServers": {
+                    "issues": {
+                        "url": "https://mcp.example.test/issues",
+                        "type": "http",
+                    }
+                },
+            }
+        ),
+    )
+
+    assert updated.runtime == "codex"
+    assert updated.additional_skills == []
+    assert updated.mcp_servers == {
+        "issues": {
+            "url": "https://mcp.example.test/issues",
+            "type": "http",
+        }
+    }
+    assert updated.model_dump(by_alias=True)["mcpServers"] == updated.mcp_servers
+
+
 def test_update_agent_to_wegent_clears_codex_project_binding(
     test_db: Session,
     test_user: User,
@@ -260,6 +426,7 @@ def test_update_agent_to_wegent_clears_codex_project_binding(
 ) -> None:
     project = create_project(test_db, test_user)
     agent = test_db.query(ProjectChatAgent).filter(ProjectChatAgent.id == "12").one()
+    agent.created_by_user_id = test_user.id
     agent.device_id = "local-dev-1"
     test_db.commit()
     monkeypatch.setattr(
@@ -315,9 +482,18 @@ def test_list_agents_filters_visibility_for_other_members(
         test_db,
         user_id=test_user.id,
         project_id=project.id,
-        request=ProjectChatAgentCreate(
-            name="Public",
-            visibility="public",
+        request=ProjectChatAgentCreate.model_validate(
+            {
+                "name": "Public",
+                "visibility": "public",
+                "mcpServers": {
+                    "private-repository": {
+                        "command": "node",
+                        "args": ["server.mjs", "--token", "secret"],
+                        "env": {"API_TOKEN": "secret"},
+                    }
+                },
+            }
         ),
     )
     member = User(
@@ -356,22 +532,169 @@ def test_list_agents_filters_visibility_for_other_members(
     )
     test_db.commit()
 
-    member_view = {
-        agent.id
+    member_agents = {
+        agent.id: agent
         for agent in project_chat_service.list_agents(
             test_db, user_id=member.id, project_id=project.id
         )
     }
-    assert member_view == {public_bot.id}
+    assert set(member_agents) == {public_bot.id}
+    assert member_agents[public_bot.id].mcp_servers == {"private-repository": {}}
 
-    admin_view = {
-        agent.id
+    admin_agents = {
+        agent.id: agent
         for agent in project_chat_service.list_agents(
             test_db, user_id=admin.id, project_id=project.id
         )
     }
-    assert {public_bot.id, admin_bot.id, "12"} <= admin_view
-    assert private_bot.id not in admin_view
+    assert {public_bot.id, admin_bot.id, "12"} <= set(admin_agents)
+    assert private_bot.id not in admin_agents
+    assert admin_agents[public_bot.id].mcp_servers == {"private-repository": {}}
+
+    creator_agents = {
+        agent.id: agent
+        for agent in project_chat_service.list_agents(
+            test_db, user_id=test_user.id, project_id=project.id
+        )
+    }
+    assert creator_agents[public_bot.id].mcp_servers == {
+        "private-repository": {
+            "command": "node",
+            "args": ["server.mjs", "--token", "secret"],
+            "env": {"API_TOKEN": "secret"},
+        }
+    }
+
+
+def test_only_project_maintainers_can_change_executable_agent_configuration(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+    from app.schemas.base_role import BaseRole
+
+    project = create_project(test_db, test_user)
+    developer = User(
+        user_name="agent_developer",
+        password_hash="unused",
+        email="agent-developer@example.com",
+        is_active=True,
+    )
+    test_db.add(developer)
+    test_db.flush()
+    test_db.add(
+        ResourceMember(
+            resource_type=ResourceType.CLOUD_PROJECT.value,
+            resource_id=project.id,
+            entity_type="user",
+            entity_id=str(developer.id),
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as create_error:
+        project_chat_service.create_agent(
+            test_db,
+            user_id=developer.id,
+            project_id=project.id,
+            request=ProjectChatAgentCreate(name="Unsafe executable config"),
+        )
+    assert create_error.value.status_code == 403
+
+    agent = project_chat_service.create_agent(
+        test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+        request=ProjectChatAgentCreate(name="Maintainer-owned config"),
+    )
+    with pytest.raises(HTTPException) as update_error:
+        project_chat_service.update_agent(
+            test_db,
+            user_id=developer.id,
+            project_id=project.id,
+            agent_id=agent.id,
+            request=ProjectChatAgentUpdate(
+                version=agent.version,
+                mcp_servers={"unsafe": {"command": "sh"}},
+            ),
+        )
+    assert update_error.value.status_code == 403
+
+
+def test_non_creator_maintainer_cannot_change_agent_execution_identity(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+    from app.schemas.base_role import BaseRole
+
+    project = create_project(test_db, test_user)
+    maintainer = User(
+        user_name="other_maintainer",
+        password_hash="unused",
+        email="other-maintainer@example.com",
+        is_active=True,
+    )
+    test_db.add(maintainer)
+    test_db.flush()
+    test_db.add(
+        ResourceMember(
+            resource_type=ResourceType.CLOUD_PROJECT.value,
+            resource_id=project.id,
+            entity_type="user",
+            entity_id=str(maintainer.id),
+            role=BaseRole.Maintainer.value,
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+    agent = project_chat_service.create_agent(
+        test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+        request=ProjectChatAgentCreate(name="Creator-owned Agent"),
+    )
+
+    with pytest.raises(HTTPException) as update_error:
+        project_chat_service.update_agent(
+            test_db,
+            user_id=maintainer.id,
+            project_id=project.id,
+            agent_id=agent.id,
+            request=ProjectChatAgentUpdate(
+                version=agent.version,
+                mcp_servers={"unsafe": {"command": "sh"}},
+            ),
+        )
+
+    assert update_error.value.status_code == 403
+
+    renamed = project_chat_service.update_agent(
+        test_db,
+        user_id=maintainer.id,
+        project_id=project.id,
+        agent_id=agent.id,
+        request=ProjectChatAgentUpdate(
+            version=agent.version,
+            name="Project-managed display name",
+        ),
+    )
+    assert renamed.name == "Project-managed display name"
+
+
+@pytest.mark.parametrize(
+    "skill",
+    [
+        {"name": "../outside", "namespace": "codex"},
+        {"name": "/tmp/outside", "namespace": "codex"},
+        {"name": "nested/skill", "namespace": "codex"},
+    ],
+)
+def test_project_agent_rejects_unsafe_skill_names(skill: dict[str, str]) -> None:
+    with pytest.raises(ValueError):
+        ProjectChatAgentCreate(name="Unsafe Skill", additional_skills=[skill])
 
 
 def test_send_is_idempotent_and_assigns_durable_sequence(
@@ -1065,6 +1388,104 @@ def _running_ai_task(
     assert message.status == "streaming"
     assert (task.metadata_json or {})["ai_state"]["status"] == "running"
     return task, message
+
+
+@pytest.mark.parametrize("unset_value", [None, EPOCH_TIME])
+def test_running_ai_state_clears_completed_at_using_schema_contract(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    unset_value: datetime | None,
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Restart completed task",
+        description="",
+        status="todo",
+        completed_at=datetime(2026, 9, 10, 12),
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id="12",
+        sender_name="Code Reviewer",
+        metadata_json={"run_id": str(uuid.uuid4())},
+    )
+    contract_calls: list[tuple[object, str]] = []
+
+    def unset_for_connection(connection: object, attribute: str) -> datetime | None:
+        contract_calls.append((connection, attribute))
+        return unset_value
+
+    monkeypatch.setattr(
+        "app.services.project_chat.service.loop_unset_datetime_for_connection",
+        unset_for_connection,
+    )
+
+    project_chat_service._set_task_ai_state(
+        test_db,
+        row=row,
+        trigger=None,
+        agent=None,
+        status_value="running",
+    )
+
+    assert task.status == "in_progress"
+    assert task.completed_at == unset_value
+    assert len(contract_calls) == 1
+    assert contract_calls[0][1] == "completed_at"
+
+
+@pytest.mark.parametrize("unset_value", [None, EPOCH_TIME])
+def test_advance_to_review_clears_completed_at_using_schema_contract(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    unset_value: datetime | None,
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Review completed task",
+        description="",
+        status="in_progress",
+        completed_at=datetime(2026, 9, 10, 12),
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id="12",
+    )
+    contract_calls: list[tuple[object, str]] = []
+
+    def unset_for_connection(connection: object, attribute: str) -> datetime | None:
+        contract_calls.append((connection, attribute))
+        return unset_value
+
+    monkeypatch.setattr(
+        "app.services.project_chat.service.loop_unset_datetime_for_connection",
+        unset_for_connection,
+    )
+
+    project_chat_service._advance_task_to_review(test_db, row)
+
+    assert task.status == "in_review"
+    assert task.completed_at == unset_value
+    assert len(contract_calls) == 1
+    assert contract_calls[0][1] == "completed_at"
 
 
 def _expire_ai_lease(
@@ -2335,6 +2756,7 @@ def test_device_runtime_event_projects_bound_workflow_task_status(
     )
 
     continuation = _execution_runtime_event_sync(
+        test_user.id,
         "local-device",
         "codex-queue-workflow-1",
         "runtime.task.completed",
@@ -2431,6 +2853,7 @@ def test_streaming_runtime_event_does_not_project_workflow_status(
     )
 
     continuation = _execution_runtime_event_sync(
+        test_user.id,
         "local-device",
         "codex-queue-stream-1",
         "response.block.updated",

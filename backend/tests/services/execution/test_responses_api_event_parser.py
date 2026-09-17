@@ -50,6 +50,7 @@ class TestResponsesAPIEventParserToolIds:
         assert result is not None
         assert result.type == EventType.THINKING
         assert result.content == "Reasoning chunk."
+        assert result.data == {"thinking_kind": "reasoning_summary"}
 
     def test_response_completed_preserves_streamed_reasoning_content(self):
         parser = ResponsesAPIEventParser()
@@ -708,6 +709,7 @@ class TestResponsesAPIEventParserToolIds:
         assert result is not None
         assert result.type == EventType.THINKING.value
         assert result.content == "Reasoning chunk."
+        assert result.data == {"thinking_kind": "reasoning_summary"}
 
     def test_inprocess_bridge_completed_result_preserves_streamed_reasoning(self):
         transport = EmitterBridgeTransport(

@@ -15,12 +15,20 @@ import {
   RotateCcw,
   Square,
 } from 'lucide-react'
+import { activityDisplayBody } from '@wegent/collaboration'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
+import { projectChatAgentWorkspaceBinding } from '@/api/projectChatAgents'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
-import type { Attachment, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import type {
+  Attachment,
+  ModelSelectionConfig,
+  ProjectWithTasks,
+  RuntimeTaskAddress,
+  UnifiedModel,
+} from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import {
@@ -53,7 +61,7 @@ import {
 } from './taskAiExecution'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { CardCommentComposer, type CardCommentSendResult } from './CardCommentComposer'
-import { executionDisplayStatus, isExecutionFailed } from './executionStatus'
+import { executionDisplayStatus, isExecutionFailed, isExecutionTerminal } from './executionStatus'
 
 interface TaskActivityViewProps {
   client?: ProjectChatClient
@@ -76,7 +84,7 @@ interface TaskActivityViewProps {
   onWorkflowManagerFinished?: () => void
   taskBindings?: LoopItemTaskBinding[]
   onOpenTask?: (task: LoopItemTaskBinding) => void
-  onRefreshTaskBindings?: () => void | Promise<void>
+  onRefreshExecutionArtifacts?: () => void | Promise<void>
 }
 
 interface TaskCardQueuedReply extends RuntimePaneQueuedMessage {
@@ -109,7 +117,7 @@ export function TaskActivityView({
   onWorkflowManagerFinished,
   taskBindings = [],
   onOpenTask,
-  onRefreshTaskBindings,
+  onRefreshExecutionArtifacts,
 }: TaskActivityViewProps) {
   const { t } = useTranslation('common')
   const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
@@ -160,11 +168,35 @@ export function TaskActivityView({
     modelName: string | null
     runStatus: string | null
   } | null>(null)
+  const [agents, setAgents] = useState<ProjectChatAgent[]>([])
+  const assignedAgent = useMemo(
+    () => agents.find(agent => agent.id === task.assignee_agent_id && agent.status === 'active'),
+    [agents, task.assignee_agent_id]
+  )
+  // Continuing the conversation reuses the assigned robot's own model, so the
+  // composer inherits its configured selection until the user picks another
+  // one. An unavailable model resolves to no selection, which keeps the
+  // default-model trigger instead of silently running something else.
+  const assignedAgentModelSelection = useMemo<ModelSelectionConfig | null>(
+    () =>
+      assignedAgent?.model
+        ? {
+            modelName: assignedAgent.model,
+            modelType: assignedAgent.modelType,
+            options: assignedAgent.modelOptions ?? {},
+          }
+        : null,
+    [assignedAgent]
+  )
+  const [modelSelectionOverridden, setModelSelectionOverridden] = useState(false)
   const modelSelection = useWorkbenchModels({
     api: services.modelApi,
     locked: false,
     scopeKey: `task-activity-${project.id}`,
     persistSelection: false,
+    selectionConfig: assignedAgentModelSelection,
+    // Stop following the robot record once this composer has its own model.
+    selectionReady: !modelSelectionOverridden,
   })
   const attachmentSelection = useWorkbenchAttachments({
     uploadAttachment: services.attachmentApi?.uploadAttachment,
@@ -178,6 +210,20 @@ export function TaskActivityView({
     setSelectedModel,
     setSelectedModelOption,
   } = modelSelection
+  const selectCommentModel = useCallback(
+    (model: UnifiedModel | null) => {
+      setModelSelectionOverridden(true)
+      setSelectedModel(model)
+    },
+    [setSelectedModel]
+  )
+  const selectCommentModelOption = useCallback(
+    (optionId: string, value: string) => {
+      setModelSelectionOverridden(true)
+      setSelectedModelOption(optionId, value)
+    },
+    [setSelectedModelOption]
+  )
   const commentProjectChat = useMemo<ProjectChatControls>(
     () => ({
       scopeKey: `task-activity-${project.id}`,
@@ -194,8 +240,8 @@ export function TaskActivityView({
       errors: attachmentSelection.errors,
       isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       isOptionsLocked: false,
-      setSelectedModel,
-      setSelectedModelOption,
+      setSelectedModel: selectCommentModel,
+      setSelectedModelOption: selectCommentModelOption,
       toggleSkill: () => {},
       handleFileSelect: attachmentSelection.handleFileSelect,
       addExistingAttachment: attachmentSelection.addExistingAttachment,
@@ -208,21 +254,34 @@ export function TaskActivityView({
       attachmentSelection,
       availableModels,
       project.id,
+      selectCommentModel,
+      selectCommentModelOption,
       selectedModel,
       selectedModelOptions,
-      setSelectedModel,
-      setSelectedModelOption,
     ]
   )
   const [messages, setMessages] = useState<ProjectChatMessage[]>([])
   const requestedTaskBindingAddresses = useRef(new Set<string>())
-  const [agents, setAgents] = useState<ProjectChatAgent[]>([])
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
   const [cardAiErrors, setCardAiErrors] = useState<Record<string, string>>({})
   const [newCommentDraft, setNewCommentDraft] = useState('')
-  const [selectedCommentProjectId, setSelectedCommentProjectId] = useState<number | ''>(
-    taskPageProject?.id ?? ''
-  )
+  // The code workspace the assigned robot is bound to. Only a rebound backend
+  // project can be selected here; a legacy record that still needs rebinding
+  // and a device-owned workspace carry no selectable project.
+  const assignedAgentProjectId = useMemo(() => {
+    if (!assignedAgent) return null
+    const binding = projectChatAgentWorkspaceBinding(assignedAgent)
+    if (binding.status !== 'ready' || binding.type !== 'backend_project') return null
+    if (!localProjects.some(project => project.id === binding.projectId)) return null
+    return binding.projectId
+  }, [assignedAgent, localProjects])
+  // The comment execution workspace stays an explicit choice: `null` means the
+  // user has not chosen yet, so the composer follows the task's own execution
+  // project and then the assigned robot's bound workspace. `''` records an
+  // explicit "no project", so a later data refresh cannot revive a default.
+  const [commentProjectChoice, setCommentProjectChoice] = useState<number | '' | null>(null)
+  const selectedCommentProjectId =
+    commentProjectChoice ?? taskPageProject?.id ?? assignedAgentProjectId ?? ''
   const [loading, setLoading] = useState(Boolean(client))
   const [sending, setSending] = useState(false)
   const [cancellingMessageId, setCancellingMessageId] = useState<string | null>(null)
@@ -432,7 +491,7 @@ export function TaskActivityView({
     }
     const terminalResponse = messages.find(message => {
       if (message.taskId !== task.id || message.sender.type !== 'agent') return false
-      if (message.status !== 'completed' && message.status !== 'failed') return false
+      if (!isExecutionTerminal(message.status)) return false
       return !refreshedRunIds.current.has(message.messageId)
     })
     if (!terminalResponse) {
@@ -463,9 +522,8 @@ export function TaskActivityView({
       runtimeDeviceId: terminalResponse.runtimeAddress?.deviceId,
       runtimeTaskId: terminalResponse.runtimeAddress?.taskId,
     })
-    void projectDeliveryApi
-      .getLoopItem(task.id)
-      .then(updated => {
+    void Promise.all([
+      projectDeliveryApi.getLoopItem(task.id).then(updated => {
         console.info('[Wework] Task activity refreshed task after terminal AI message', {
           taskId: updated.id,
           taskStatus: updated.status,
@@ -474,12 +532,14 @@ export function TaskActivityView({
           runtimeTaskId: updated.ai_state?.runtime_task_id,
         })
         onTaskUpdated?.(updated)
-      })
-      .catch(cause => {
-        setError(cause instanceof Error ? cause.message : t('workbench.project_chat_load_failed'))
-      })
+      }),
+      onRefreshExecutionArtifacts?.(),
+    ]).catch(cause => {
+      setError(cause instanceof Error ? cause.message : t('workbench.project_chat_load_failed'))
+    })
   }, [
     messages,
+    onRefreshExecutionArtifacts,
     onTaskUpdated,
     projectDeliveryApi,
     t,
@@ -528,12 +588,9 @@ export function TaskActivityView({
     return () => cancelAnimationFrame(frame)
   }, [compact, loading, messages, revealCardBottom, threadMessages])
 
-  const assignedAgent = useMemo(
-    () => agents.find(agent => agent.id === task.assignee_agent_id && agent.status === 'active'),
-    [agents, task.assignee_agent_id]
-  )
-  // Comment execution workspace is an explicit per-run choice. Robot records
-  // no longer provide an implicit device or workspace fallback.
+  // The execution workspace resolves against the device's own projects, so a
+  // project that is not available here keeps the empty placeholder instead of
+  // pointing a run at a workspace this device cannot open.
   const effectiveCommentProject =
     selectedCommentProjectId !== ''
       ? (localProjects.find(project => project.id === selectedCommentProjectId) ?? null)
@@ -550,12 +607,10 @@ export function TaskActivityView({
       pendingProjectWorkspaceProjectId: null,
       executionMode: 'current_workspace',
       executionModeLocked: true,
-      // The execution-mode control is meaningless for comment runs; hide it.
-      isGitProject: false,
       showProjectClearButton: selectedCommentProjectId !== '',
-      onSelectProject: projectId => setSelectedCommentProjectId(projectId ?? ''),
-      onSelectStandaloneDevice: () => setSelectedCommentProjectId(''),
-      onSelectProjectWorkspace: projectId => setSelectedCommentProjectId(projectId),
+      onSelectProject: projectId => setCommentProjectChoice(projectId ?? ''),
+      onSelectStandaloneDevice: () => setCommentProjectChoice(''),
+      onSelectProjectWorkspace: projectId => setCommentProjectChoice(projectId),
       onExecutionModeChange: () => {},
     }),
     [
@@ -575,7 +630,7 @@ export function TaskActivityView({
   const rawExecutionStatus = task.execution_state ?? task.ai_state?.status
   const aiTerminalFailure = isExecutionFailed(rawExecutionStatus)
   useEffect(() => {
-    if (!onRefreshTaskBindings) return
+    if (!onRefreshExecutionArtifacts) return
     const missingAddress = messages
       .flatMap(message =>
         message.sender.type === 'agent' && message.runtimeAddress ? [message.runtimeAddress] : []
@@ -589,10 +644,10 @@ export function TaskActivityView({
     if (!missingAddress) return
     const key = `${missingAddress.deviceId}:${missingAddress.taskId}`
     requestedTaskBindingAddresses.current.add(key)
-    void Promise.resolve(onRefreshTaskBindings()).catch(() => {
+    void Promise.resolve(onRefreshExecutionArtifacts()).catch(() => {
       requestedTaskBindingAddresses.current.delete(key)
     })
-  }, [messages, onRefreshTaskBindings, taskBindings])
+  }, [messages, onRefreshExecutionArtifacts, taskBindings])
   const commentCards = useMemo(() => {
     const ordered: { root: ProjectChatMessage; replies: ProjectChatMessage[] }[] = []
     const byRoot = new Map<string, { root: ProjectChatMessage; replies: ProjectChatMessage[] }>()
@@ -1096,11 +1151,7 @@ export function TaskActivityView({
     setSending(true)
     setError(null)
     try {
-      const userSelectedProject =
-        selectedCommentProjectId !== ''
-          ? (localProjects.find(project => project.id === selectedCommentProjectId) ?? null)
-          : null
-      const executionProject = userSelectedProject
+      const executionProject = effectiveCommentProject
       const activeMentions = assignedAgent
         ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
         : []
@@ -1763,7 +1814,7 @@ function ChatMessage({
   stopping?: boolean
 }) {
   const { t } = useTranslation('common')
-  const text = message.content
+  const text = activityDisplayBody(message.content, '')
   const isAgent = message.sender.type === 'agent'
   const isSubagent = message.metadata.kind === 'task_ai_subagent'
   const runId = typeof message.metadata.run_id === 'string' ? message.metadata.run_id : null

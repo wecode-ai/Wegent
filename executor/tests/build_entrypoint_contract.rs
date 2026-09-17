@@ -2,7 +2,52 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{fs, path::Path};
+use std::{fs, path::Path, process::Command};
+
+#[test]
+fn docker_dependency_layer_can_parse_manifest_without_example_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::copy("Cargo.toml", directory.path().join("Cargo.toml")).unwrap();
+    fs::copy("Cargo.lock", directory.path().join("Cargo.lock")).unwrap();
+    fs::create_dir_all(directory.path().join("src/bin")).unwrap();
+    fs::write(
+        directory.path().join("src/lib.rs"),
+        "pub fn placeholder() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("src/bin/wegent-executor.rs"),
+        "fn main() {}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO"))
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--offline",
+        ])
+        .current_dir(directory.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Docker dependency-layer manifest failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!directory.path().join("examples").exists());
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let example = metadata["packages"][0]["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|target| target["name"] == "terminal_load")
+        .expect("terminal_load must remain declared without example sources");
+    assert_eq!(example["test"], true);
+}
 
 #[test]
 fn executor_tree_contains_no_python_runtime_files() {
@@ -79,6 +124,8 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(!dev_reload.contains("wegent-executor-dev"));
 
     let device_dockerfile = fs::read_to_string("../docker/device/Dockerfile").unwrap();
+    assert!(device_dockerfile.contains("ARG DEVICE_BASE_IMAGE=ubuntu:26.04"));
+    assert!(device_dockerfile.contains("/etc/apt/sources.list.d/ubuntu.sources"));
     assert!(device_dockerfile.contains("pkg-config"));
     assert!(device_dockerfile.contains("libssl-dev"));
     assert!(device_dockerfile.contains("ARG APP_VERSION=dev"));
@@ -114,6 +161,22 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(device_dockerfile
         .contains("ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wecode/wegent-executor/workspace"));
     assert!(device_dockerfile.contains("ENV WEGENT_WORKSPACE_ROOTS=/home/wegent"));
+    assert!(device_dockerfile.contains("ENV DEVICE_CODE_SERVER_ENABLED=true"));
+    assert!(device_dockerfile.contains("ENV DEVICE_TERMINAL_ENABLED=true"));
+    assert!(device_dockerfile.contains(
+        "DEVICE_CODE_SERVER_ENABLED=\"$(normalize_enabled_flag DEVICE_CODE_SERVER_ENABLED)\""
+    ));
+    assert!(device_dockerfile
+        .contains("DEVICE_TERMINAL_ENABLED=\"$(normalize_enabled_flag DEVICE_TERMINAL_ENABLED)\""));
+    assert!(device_dockerfile.contains(
+        "export DEVICE_SESSION_GATEWAY_ENABLED DEVICE_CODE_SERVER_ENABLED DEVICE_TERMINAL_ENABLED"
+    ));
+    assert!(!device_dockerfile.contains(
+        "export DEVICE_CODE_SERVER_ENABLED=\"$(normalize_enabled_flag DEVICE_CODE_SERVER_ENABLED)\""
+    ));
+    assert!(device_dockerfile.contains(
+        "if [ \"$DEVICE_CODE_SERVER_ENABLED\" = \"true\" ] && [ \"$DEVICE_SESSION_GATEWAY_ENABLED\" = \"true\" ]; then"
+    ));
     for persistent_path in [
         "$WEGENT_EXECUTOR_HOME/bin",
         "$WEGENT_EXECUTOR_HOME/runtime-work",

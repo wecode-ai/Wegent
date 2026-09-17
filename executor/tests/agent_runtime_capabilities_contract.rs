@@ -88,7 +88,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         ..ExecutionRequest::default()
     };
 
-    let outcome = engine.run(request).await;
+    let outcome = engine.run(request.clone()).await;
 
     assert_eq!(
         outcome,
@@ -104,6 +104,15 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         .expect("Claude command should include --mcp-config");
     let mcp_config_path = args[mcp_flag_index + 1].as_str().unwrap();
     let mcp_config = read_json(Path::new(mcp_config_path));
+    assert_eq!(
+        Path::new(mcp_config_path),
+        workspace_root.join("7788/.wework/runtime/claude-mcp-7788-99.json")
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        fs::metadata(mcp_config_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
 
     assert_eq!(
         mcp_config["mcpServers"]["request-docs"]["url"],
@@ -121,10 +130,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         json!(["bot-tool"])
     );
     assert_eq!(mcp_config["mcpServers"]["bot-shell"]["env"]["BOT_ENV"], "1");
-    let settings_path = Path::new(mcp_config_path)
-        .parent()
-        .unwrap()
-        .join("settings.json");
+    let settings_path = home.join(".claude/settings.json");
     let settings = read_json(&settings_path);
     let pre_tool_use = settings["hooks"]["PreToolUse"].as_array().unwrap();
     assert!(pre_tool_use.iter().any(|entry| {
@@ -141,6 +147,49 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
                 .as_str()
                 .is_some_and(|command| command.ends_with("defer-interactive-mcp-hook.sh"))
     }));
+
+    let mut followup = request;
+    followup.subtask_id = "100".to_owned();
+    followup.bot = json!([{"id": 7, "shell_type": "ClaudeCode"}]);
+    followup.mcp_servers = vec![json!({
+        "name": "bot-shell", "type": "stdio", "command": "updated-tool"
+    })];
+    assert_eq!(engine.run(followup.clone()).await, outcome);
+    let runtime_dir = Path::new(mcp_config_path).parent().unwrap();
+    let merged = read_json(&runtime_dir.join("claude-mcp-7788-100.json"));
+    assert_eq!(
+        merged["mcpServers"]["request-docs"],
+        mcp_config["mcpServers"]["request-docs"]
+    );
+    assert_eq!(
+        merged["mcpServers"]["bot-shell"],
+        json!({"type": "stdio", "command": "updated-tool"})
+    );
+
+    followup.subtask_id = "101".to_owned();
+    followup.mcp_servers.clear();
+    assert_eq!(engine.run(followup.clone()).await, outcome);
+    let latest_args = read_json(&log_path);
+    let latest_args = latest_args.as_array().unwrap();
+    let index = latest_args
+        .iter()
+        .position(|arg| arg == "--mcp-config")
+        .unwrap();
+    let latest_path = runtime_dir.join("claude-mcp-7788-101.json");
+    assert_eq!(latest_args[index + 1], latest_path.to_str().unwrap());
+    assert_eq!(read_json(&latest_path), merged);
+    assert_eq!(read_json(Path::new(mcp_config_path)), mcp_config);
+
+    // Even a task sharing the same checkout must not inherit these services.
+    followup.task_id = "7789".to_owned();
+    followup.project_workspace_path = Some(workspace_root.join("7788").display().to_string());
+    assert_eq!(engine.run(followup).await, outcome);
+    let other_args = read_json(&log_path);
+    assert!(!other_args
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|arg| arg == "--mcp-config"));
 }
 
 #[tokio::test]
@@ -300,7 +349,7 @@ async fn claude_runtime_downloads_request_skills_before_process_start() {
         }
     );
     server.await.unwrap();
-    let skill_path = home.join(".claude/skills/example-skill/SKILL.md");
+    let skill_path = workspace_root.join("7789/.claude/skills/example-skill/SKILL.md");
     assert_eq!(fs::read_to_string(skill_path).unwrap(), "# Example Skill\n");
 }
 
@@ -431,9 +480,11 @@ async fn claude_runtime_remaps_historical_skill_zip_root_to_skill_name() {
             content: "ok".to_owned()
         }
     );
-    let skill_path = home.join(".claude/skills/requested-skill/SKILL.md");
+    let skill_path = workspace_root.join("7791/.claude/skills/requested-skill/SKILL.md");
     assert_eq!(fs::read_to_string(skill_path).unwrap(), "# Test Skill\n");
-    assert!(!home.join(".claude/skills/unexpected-root").exists());
+    assert!(!workspace_root
+        .join("7791/.claude/skills/unexpected-root")
+        .exists());
     server.await.unwrap();
 }
 
@@ -765,6 +816,7 @@ async fn claude_runtime_keeps_request_auth_out_of_persistent_cli_config() {
 #[tokio::test]
 async fn codex_runtime_authenticates_github_cli_before_start() {
     let _lock = env_lock().await;
+    let executor_home = unique_dir("codex-runtime-git-auth-executor-home");
     let workspace_root = unique_dir("codex-runtime-git-auth-workspace");
     let log_path = unique_dir("codex-runtime-git-auth-log").join("rpc.jsonl");
     let marker = unique_dir("codex-runtime-git-auth-marker").join("token.txt");
@@ -772,6 +824,8 @@ async fn codex_runtime_authenticates_github_cli_before_start() {
     fs::create_dir_all(&bin_dir).unwrap();
     write_fake_gh(&bin_dir, &marker, "github.com");
     let fake_codex = write_fake_codex_app_server(&log_path);
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let path_value = format!(

@@ -80,12 +80,55 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     {
         request.extra.insert("origin".to_owned(), origin);
     }
+    if let Some(model_selection) = payload
+        .get("modelSelection")
+        .or_else(|| payload.get("model_selection"))
+        .filter(|value| value.is_object())
+        .cloned()
+    {
+        request
+            .extra
+            .insert("modelSelection".to_owned(), model_selection);
+    }
     if let Some(attachments) = payload
         .get("attachments")
         .filter(|value| value.is_array())
         .cloned()
     {
         request.extra.insert("attachments".to_owned(), attachments);
+    }
+    if let Some(additional_skills) = payload
+        .get("additionalSkills")
+        .or_else(|| payload.get("additional_skills"))
+        .filter(|value| value.is_array())
+        .cloned()
+    {
+        let skill_names = additional_skills
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|skill| {
+                skill
+                    .as_str()
+                    .or_else(|| skill.get("name").and_then(Value::as_str))
+            })
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .fold(Vec::new(), |mut names, name| {
+                if !names.iter().any(|existing| existing == name) {
+                    names.push(name.to_owned());
+                }
+                names
+            });
+        request
+            .extra
+            .insert("additional_skills".to_owned(), additional_skills);
+        request
+            .extra
+            .insert("preload_skills".to_owned(), json!(skill_names));
+        request
+            .extra
+            .insert("user_selected_skills".to_owned(), json!(skill_names));
     }
     if let Some(additional_context) = payload
         .get("additionalContext")
@@ -188,6 +231,13 @@ pub(crate) fn cloud_project_id(request: &ExecutionRequest) -> Option<Value> {
         .or_else(|| request.extra.get("cloud_project_id"))
         .filter(|value| value.is_string() || value.is_number())
         .cloned()
+}
+
+pub(crate) fn link_is_cloud_project_task(link: &super::response::RuntimeTaskLink) -> bool {
+    link.runtime_handle
+        .get("cloudProjectId")
+        .or_else(|| link.runtime_handle.get("cloud_project_id"))
+        .is_some_and(|value| value.is_string() || value.is_number())
 }
 
 pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_handle: &Value) {
@@ -562,11 +612,11 @@ pub(crate) fn workspace_group_path(path: &str) -> String {
 
 pub(crate) fn workspace_task_path(path: &str, group_path: &str) -> String {
     let normalized = normalize_workspace_path(path);
-    if let Some((worktree_root, _)) = resolved_worktree_root_and_id(&normalized) {
-        return worktree_root;
-    }
     if infer_workspace_kind(&normalized) == "chat" {
         return normalized;
+    }
+    if let Some((worktree_root, _)) = resolved_worktree_root_and_id(&normalized) {
+        return worktree_root;
     }
     if group_path.is_empty() {
         normalized
@@ -816,6 +866,25 @@ mod tests {
     }
 
     #[test]
+    fn cloud_project_task_link_detection_reads_both_key_spellings() {
+        let mut link = super::super::response::RuntimeTaskLink::new_pending(
+            "codex-queue-1".to_owned(),
+            "/tmp/work".to_owned(),
+            "title".to_owned(),
+        );
+        assert!(!link_is_cloud_project_task(&link));
+
+        link.runtime_handle = json!({"cloudProjectId": "3643745902448770561"});
+        assert!(link_is_cloud_project_task(&link));
+
+        link.runtime_handle = json!({"cloud_project_id": 9001});
+        assert!(link_is_cloud_project_task(&link));
+
+        link.runtime_handle = json!({"cloudProjectId": null});
+        assert!(!link_is_cloud_project_task(&link));
+    }
+
+    #[test]
     fn copies_runtime_task_title_from_runtime_payload() {
         let mut request = ExecutionRequest::default();
 
@@ -839,6 +908,72 @@ mod tests {
         assert_eq!(
             request.extra.get("origin"),
             Some(&json!({"type": "project_automation", "run_id": "run-1"}))
+        );
+    }
+
+    #[test]
+    fn copies_runtime_model_selection_from_runtime_payload() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "modelSelection": {
+                    "modelName": "deepseek-v4-pro-responses(public)",
+                    "modelType": "public",
+                    "options": {"reasoning": "medium"}
+                }
+            }),
+        );
+
+        assert_eq!(
+            request.extra.get("modelSelection"),
+            Some(&json!({
+                "modelName": "deepseek-v4-pro-responses(public)",
+                "modelType": "public",
+                "options": {"reasoning": "medium"}
+            }))
+        );
+    }
+
+    #[test]
+    fn normalizes_runtime_additional_skills_for_agent_consumers() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "additionalSkills": [
+                    {
+                        "name": "wework-plugin-creator",
+                        "namespace": "codex",
+                        "is_public": false
+                    },
+                    "review",
+                    {"name": "wework-plugin-creator", "namespace": "codex"}
+                ]
+            }),
+        );
+
+        assert_eq!(
+            request.extra.get("additional_skills"),
+            Some(&json!([
+                {
+                    "name": "wework-plugin-creator",
+                    "namespace": "codex",
+                    "is_public": false
+                },
+                "review",
+                {"name": "wework-plugin-creator", "namespace": "codex"}
+            ]))
+        );
+        assert_eq!(
+            request.extra.get("preload_skills"),
+            Some(&json!(["wework-plugin-creator", "review"]))
+        );
+        assert_eq!(
+            request.extra.get("user_selected_skills"),
+            Some(&json!(["wework-plugin-creator", "review"]))
         );
     }
 
@@ -957,6 +1092,30 @@ mod tests {
 
         assert_eq!(infer_workspace_kind(&nested_path), "workspace");
         assert_eq!(infer_worktree_id(&nested_path), None);
+    }
+
+    #[test]
+    fn standalone_chat_inside_a_worktree_keeps_its_own_workspace() {
+        let directory = tempdir().expect("temporary directory");
+        let common_dir = directory.path().join("repo").join(".git");
+        let outer_worktree = directory.path().join("outer");
+        let outer_git_dir = common_dir.join("worktrees").join("outer");
+        std::fs::create_dir_all(&outer_git_dir).expect("outer worktree metadata");
+        std::fs::create_dir_all(&outer_worktree).expect("outer worktree");
+        std::fs::write(
+            outer_worktree.join(".git"),
+            format!("gitdir: {}\n", outer_git_dir.display()),
+        )
+        .expect("outer worktree git file");
+        let chat = outer_worktree.join("executor-home/Documents/Codex/chat");
+        std::fs::create_dir_all(&chat).expect("standalone chat workspace");
+        let chat_path = chat.display().to_string();
+
+        assert_eq!(infer_workspace_kind(&chat_path), "chat");
+        assert_eq!(
+            workspace_task_path(&chat_path, &outer_worktree.display().to_string()),
+            chat_path
+        );
     }
 
     #[test]

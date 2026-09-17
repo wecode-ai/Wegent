@@ -202,6 +202,7 @@ export function ProjectSpaceChatSidebar({
   )
   const createConversation = useProjectRuntimeTaskComposer({
     project: selectedLocalProject,
+    workspaceExecution: null,
     runtimeContext,
   })
 

@@ -15,6 +15,7 @@ from app.models.delivery import (
     LoopItem,
     LoopItemTaskBinding,
     ProjectAutomationRun,
+    ProjectWorkflowPlanItem,
     ProjectWorkflowRun,
     loop_datetime_is_unset,
     loop_unset_datetime_for_connection,
@@ -27,12 +28,11 @@ from app.schemas.issue_workflow import (
 )
 from app.services.loop_item_status_history import later_project_status
 from app.services.loop_item_unread import advance_content_revision
-from app.services.project_automation_domain import utcnow
+from app.services.project_automation_domain import TERMINAL_RUN_STATUSES, utcnow
 
 COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
 SUCCESS_TASK_STATUSES = {"succeeded", "archived"}
 FAILED_TASK_STATUSES = {"failed", "cancelled"}
-TERMINAL_AUTOMATION_RUN_STATUSES = {"succeeded", "failed", "skipped", "cancelled"}
 logger = logging.getLogger(__name__)
 
 
@@ -119,6 +119,7 @@ def _project_task_status(
     *,
     task_statuses: dict[str, str],
     ordered_task_ids: list[str],
+    loop_item_id: str | None = None,
 ) -> str:
     if any(task_statuses.get(task_id) == "running" for task_id in ordered_task_ids):
         return "running"
@@ -130,7 +131,7 @@ def _project_task_status(
 
         return (
             "awaiting_deliverables"
-            if missing_requirement_ids(db, node)
+            if missing_requirement_ids(db, node, loop_item_id=loop_item_id)
             else "completed"
         )
     if latest_status in FAILED_TASK_STATUSES:
@@ -178,6 +179,7 @@ def reconcile_workflow_task_nodes(
             node,
             task_statuses=task_statuses,
             ordered_task_ids=ordered_task_ids,
+            loop_item_id=(str(bindings[0].loop_item_id) if bindings else None),
         )
         node["task_ids"] = ordered_task_ids
         reconciled.append(node)
@@ -199,11 +201,26 @@ def update_workflow_task_status(
         task_id,
         execution_status,
     )
+    from app.services.loop_item_executions.service import runtime_device_identity_ids
+
+    device_ids = runtime_device_identity_ids(
+        db,
+        device_id,
+        owner_user_id=user_id,
+    )
+    if not device_ids:
+        logger.warning(
+            "[IssueTaskStatusSync] binding missing user=%s device=%s task=%s",
+            user_id,
+            device_id,
+            task_id,
+        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud context not found")
     binding = (
         db.query(LoopItemTaskBinding)
         .filter(
             LoopItemTaskBinding.task_user_id == user_id,
-            LoopItemTaskBinding.device_id == device_id,
+            LoopItemTaskBinding.device_id.in_(device_ids),
             LoopItemTaskBinding.task_id == task_id,
             loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
         )
@@ -235,12 +252,6 @@ def update_workflow_task_status(
     )
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
-    metadata = dict(item.metadata_json or {})
-    workflow = metadata.get("workflow")
-    raw_nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
-    if not isinstance(raw_nodes, list):
-        raise HTTPException(status.HTTP_409_CONFLICT, "Issue has no workflow")
-
     bindings = (
         db.query(LoopItemTaskBinding)
         .filter(
@@ -258,12 +269,94 @@ def update_workflow_task_status(
         for candidate in bindings
         if candidate.workflow_node_id == binding.workflow_node_id
     ]
+    runtime_task_id = f"{binding.device_id}:{task_id}"
+    return _update_workflow_node_task_status(
+        db,
+        item=item,
+        workflow_node_id=binding.workflow_node_id,
+        runtime_task_id=runtime_task_id,
+        execution_status=execution_status,
+        bound_task_ids=[
+            f"{candidate.device_id}:{candidate.task_id}"
+            for candidate in bindings
+            if candidate.device_id and candidate.task_id
+        ],
+    )
+
+
+def update_workflow_plan_task_status(
+    db: Session,
+    *,
+    child_id: str,
+    device_id: str,
+    task_id: str,
+    execution_status: str,
+) -> LoopItem | None:
+    """Project a materialized plan child's Runtime state onto its parent stage."""
+
+    child = db.get(LoopItem, child_id)
+    if child is None or not child.parent_id:
+        return None
+    child_metadata = (
+        child.metadata_json if isinstance(child.metadata_json, dict) else {}
+    )
+    plan_metadata = child_metadata.get("workflow_plan")
+    if not isinstance(plan_metadata, dict):
+        return None
+    workflow_run_id = str(plan_metadata.get("run_id") or "")
+    plan_item_id = str(plan_metadata.get("plan_item_id") or "")
+    workflow_node_id = str(plan_metadata.get("stage_id") or "")
+    if not all((workflow_run_id, plan_item_id, workflow_node_id)):
+        return None
+    workflow_run = db.get(ProjectWorkflowRun, workflow_run_id)
+    plan_item = db.get(ProjectWorkflowPlanItem, plan_item_id)
+    if (
+        workflow_run is None
+        or workflow_run.parent_id != child.parent_id
+        or plan_item is None
+        or plan_item.parent_id != workflow_run.id
+        or plan_item.loop_item_id != child.id
+    ):
+        return None
+    item = (
+        db.query(LoopItem)
+        .filter(LoopItem.id == child.parent_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if item is None:
+        return None
     runtime_task_id = f"{device_id}:{task_id}"
+    return _update_workflow_node_task_status(
+        db,
+        item=item,
+        workflow_node_id=workflow_node_id,
+        runtime_task_id=runtime_task_id,
+        execution_status=execution_status,
+        bound_task_ids=[runtime_task_id],
+    )
+
+
+def _update_workflow_node_task_status(
+    db: Session,
+    *,
+    item: LoopItem,
+    workflow_node_id: str,
+    runtime_task_id: str,
+    execution_status: str,
+    bound_task_ids: list[str],
+) -> LoopItem:
+    metadata = dict(item.metadata_json or {})
+    workflow = metadata.get("workflow")
+    raw_nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+    if not isinstance(raw_nodes, list):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Issue has no workflow")
+
     changed = False
     nodes: list[dict] = []
     for raw_node in raw_nodes:
         node = dict(raw_node) if isinstance(raw_node, dict) else {}
-        if node.get("id") == binding.workflow_node_id:
+        if node.get("id") == workflow_node_id:
             task_statuses = dict(node.get("task_statuses") or {})
             previous_status = task_statuses.get(runtime_task_id)
             if task_statuses.get(runtime_task_id) != execution_status:
@@ -272,11 +365,7 @@ def update_workflow_task_status(
             ordered_task_ids = list(
                 dict.fromkeys(
                     [
-                        *[
-                            f"{candidate.device_id}:{candidate.task_id}"
-                            for candidate in bindings
-                            if candidate.device_id and candidate.task_id
-                        ],
+                        *bound_task_ids,
                         *(node.get("task_ids") or []),
                         runtime_task_id,
                     ]
@@ -287,6 +376,7 @@ def update_workflow_task_status(
                 node,
                 task_statuses=task_statuses,
                 ordered_task_ids=ordered_task_ids,
+                loop_item_id=str(item.id),
             )
             if (
                 node.get("status") != node_status
@@ -300,7 +390,7 @@ def update_workflow_task_status(
                 "[IssueTaskStatusSync] workflow task projected item=%s node=%s "
                 "runtime_task=%s previous=%s next=%s node_status=%s",
                 item.id,
-                binding.workflow_node_id,
+                workflow_node_id,
                 runtime_task_id,
                 previous_status,
                 execution_status,
@@ -326,6 +416,43 @@ def apply_workflow_nodes(
         if node.get("status") in COMPLETED_NODE_STATUSES and node.get("id")
     }
     for node in nodes:
+        if node.get("loop_id"):
+            continue
+        if node.get("node_type") == "branch":
+            continue
+        dependencies = node.get("depends_on")
+        dependencies = dependencies if isinstance(dependencies, list) else []
+        if node.get("status") == "blocked" and all(
+            str(dependency) in completed for dependency in dependencies
+        ):
+            node["status"] = "ready"
+    from app.services.workflow_loop_runtime import (
+        advance_loops,
+        advance_root_branches,
+        catch_up_branch_events,
+    )
+
+    def _arm_catch_up(loop: dict, branch: dict, body: list[dict]) -> None:
+        catch_up_branch_events(
+            db,
+            item,
+            loop=loop,
+            branch=branch,
+            nodes=body,
+        )
+
+    advance_loops(nodes, on_branch_armed=_arm_catch_up)
+    advance_root_branches(nodes)
+    completed = {
+        str(node.get("id"))
+        for node in nodes
+        if node.get("status") in COMPLETED_NODE_STATUSES and node.get("id")
+    }
+    for node in nodes:
+        if node.get("loop_id"):
+            continue
+        if node.get("node_type") == "branch":
+            continue
         dependencies = node.get("depends_on")
         dependencies = dependencies if isinstance(dependencies, list) else []
         if node.get("status") == "blocked" and all(
@@ -333,6 +460,17 @@ def apply_workflow_nodes(
         ):
             node["status"] = "ready"
 
+    from app.services.project_branch_collectors import (
+        ensure_branch_collectors,
+        release_item_collectors,
+    )
+
+    ensure_branch_collectors(
+        db,
+        item,
+        nodes=nodes,
+        actor_user_id=actor_user_id,
+    )
     next_workflow = dict(workflow)
     next_workflow["version"] = int(workflow.get("version") or 1) + 1
     next_workflow["nodes"] = nodes
@@ -344,7 +482,11 @@ def apply_workflow_nodes(
         node.get("status") in COMPLETED_NODE_STATUSES for node in required
     ):
         projected_status = "in_review"
-    elif any(node.get("status") in {"running", "changes_requested"} for node in nodes):
+        release_item_collectors(db, item, nodes=nodes)
+    elif any(
+        node.get("status") in {"running", "changes_requested", "waiting", "reacting"}
+        for node in nodes
+    ):
         projected_status = "in_progress"
     else:
         projected_status = "pending"
@@ -387,7 +529,7 @@ def workflow_automation_run_state(
     if not isinstance(raw_workflow, dict):
         raise RuntimeError("Workflow automation Issue has no workflow snapshot")
     workflow = IssueWorkflowInstance.model_validate({**raw_workflow, "nodes": nodes})
-    required = [node for node in workflow.nodes if node.required]
+    required = [node for node in workflow.nodes if node.required and not node.loop_id]
     if not required:
         return "succeeded", ""
 
@@ -411,8 +553,7 @@ def workflow_automation_run_state(
     active_statuses = {
         state.child_status
         for state in states
-        if state.child_status
-        and state.child_status not in TERMINAL_AUTOMATION_RUN_STATUSES
+        if state.child_status and state.child_status not in TERMINAL_RUN_STATUSES
     }
     if "running" in active_statuses:
         return "running", ""
@@ -437,6 +578,8 @@ def workflow_automation_run_state(
             "awaiting_approval",
             "awaiting_deliverables",
             "changes_requested",
+            "waiting",
+            "reacting",
         }
         for state in states
     ):
@@ -467,6 +610,9 @@ def sync_workflow_automation_status(
         return
     run = db.get(ProjectAutomationRun, run_id)
     if run is None or str(run.task_id or "") != str(item.id):
+        return
+    run_metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
+    if run.status == "cancelled" or run_metadata.get("workflow_cancellation_requested"):
         return
     next_status = (
         run_status
@@ -503,7 +649,7 @@ def reconcile_workflow_automation_run(
 ) -> bool:
     """Repair an active root run from its bound workflow snapshot."""
 
-    if run.status in TERMINAL_AUTOMATION_RUN_STATUSES or not run.task_id:
+    if run.status in TERMINAL_RUN_STATUSES or not run.task_id:
         return False
     item = db.get(LoopItem, str(run.task_id))
     if item is None:
@@ -611,7 +757,7 @@ def sync_automation_workflow_node(
         if node is not None:
             from app.services.workflow_deliverables import missing_requirement_ids
 
-            if missing_requirement_ids(db, node):
+            if missing_requirement_ids(db, node, loop_item_id=str(run.task_id)):
                 node_status = "awaiting_deliverables"
     return update_workflow_node(
         db,

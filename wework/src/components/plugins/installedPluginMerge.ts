@@ -56,6 +56,12 @@ export function storeDirMatchesPluginKey(dirName: string, pluginKeyValue: string
 }
 
 function localMatchesCloudPlugin(local: InstalledPlugin, cloud: InstalledPlugin): boolean {
+  const linkedId = linkedCloudPluginId(local)
+  if (linkedId !== null && typeof cloud.spec.pluginId === 'number') {
+    return linkedId === cloud.spec.pluginId
+  }
+  const linkedInstallId = linkedCloudInstalledPluginId(local)
+  if (linkedInstallId !== null) return String(linkedInstallId) === localPluginId(cloud)
   const identity = pluginIdentity(cloud)
   const localIdentity = pluginIdentity(local)
   if (identity && localIdentity === identity) return true
@@ -105,7 +111,25 @@ export function mergeLocalInstalledWithStorePackages(
     if (identity) existingIdentities.add(identity)
     return true
   })
-  return extra.length === 0 ? localItems : [...localItems, ...extra]
+  const enriched = localItems.map(item => {
+    const store = storePackages.find(
+      candidate =>
+        (Boolean(localPluginId(item)) && localPluginId(candidate) === localPluginId(item)) ||
+        (Boolean(pluginIdentity(item)) && pluginIdentity(candidate) === pluginIdentity(item))
+    )
+    if (!store?.spec.sourcePayload?.managedByWegent) return item
+    return {
+      ...item,
+      spec: {
+        ...item.spec,
+        sourcePayload: {
+          ...(item.spec.sourcePayload ?? {}),
+          ...store.spec.sourcePayload,
+        },
+      },
+    }
+  })
+  return [...enriched, ...extra]
 }
 
 export function mergeInstalledPlugins(
@@ -125,6 +149,7 @@ export function mergeInstalledPlugins(
   )
   const locallyPublishedPluginIds = new Set(
     localItems
+      .filter(item => item.spec.origin === 'created' || item.spec.source.type === 'local')
       .map(linkedCloudPluginId)
       .filter((pluginId): pluginId is number => pluginId !== null)
       .map(String)
@@ -277,6 +302,11 @@ export function installedPluginSourceLabel(item: InstalledPlugin): string {
 
 export function isCloudManagedInstalledPlugin(item: InstalledPlugin): boolean {
   return typeof item.spec.pluginId === 'number'
+}
+
+/** Package materialized from the account capability manifest into Wegent's managed store. */
+export function isWegentManagedStorePlugin(item: InstalledPlugin): boolean {
+  return item.spec.sourcePayload?.managedByWegent === true
 }
 
 function payloadString(payload: Record<string, unknown> | null | undefined, key: string): string {

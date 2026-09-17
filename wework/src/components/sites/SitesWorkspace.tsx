@@ -17,6 +17,9 @@ import {
 import { ApplicationContextToolbar } from './ApplicationContextToolbar'
 import { DeleteSiteDialog } from './DeleteSiteDialog'
 import { EditSiteDialog } from './EditSiteDialog'
+import { EnvironmentVariablesDialog } from './EnvironmentVariablesDialog'
+import { SiteCollaboratorsDialog } from './SiteCollaboratorsDialog'
+import { SiteAccessDialog } from './SiteAccessDialog'
 import { useApplicationTypeDefinitions } from './useApplicationTypeDefinitions'
 
 interface SitesWorkspaceProps {
@@ -241,6 +244,9 @@ export function SitesWorkspace({
   const [pendingEditSite, setPendingEditSite] = useState<Site | null>(null)
   const [editingSiteId, setEditingSiteId] = useState<string | null>(null)
   const [editError, setEditError] = useState<string | null>(null)
+  const [pendingEnvironmentSite, setPendingEnvironmentSite] = useState<Site | null>(null)
+  const [pendingCollaboratorsSite, setPendingCollaboratorsSite] = useState<Site | null>(null)
+  const [pendingAccessSite, setPendingAccessSite] = useState<Site | null>(null)
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 180)
@@ -266,6 +272,22 @@ export function SitesWorkspace({
     loadFailedMessage,
   })
   const items = collection.items.filter(activeDefinition.isItem)
+
+  useEffect(() => {
+    const params = new URLSearchParams(search)
+    if (params.get('view') !== 'environment-variables') return
+    const projectId = params.get('project_id')
+    if (!projectId || collection.loading) return
+    const site = items.find(
+      item =>
+        item.app_type === 'web' && (item.project_id === projectId || item.siteid === projectId)
+    )
+    if (site?.app_type !== 'web') return
+    setPendingEnvironmentSite(site)
+    params.delete('view')
+    params.delete('project_id')
+    replaceTo(`/sites?${params.toString()}`)
+  }, [collection.loading, items, search])
 
   const selectAppType = useCallback((appType: ApplicationWorkspaceType) => {
     setQuery('')
@@ -642,6 +664,9 @@ export function SitesWorkspace({
                           setEditError(null)
                           setPendingEditSite(siteToEdit)
                         },
+                        onConfigureEnvironment: setPendingEnvironmentSite,
+                        onManageCollaborators: setPendingCollaboratorsSite,
+                        onManageAccess: setPendingAccessSite,
                         onDelete: siteToDelete => {
                           setDeleteError(null)
                           setPendingDeleteSite(siteToDelete)
@@ -701,6 +726,27 @@ export function SitesWorkspace({
             setPendingEditSite(null)
           }}
           onConfirm={input => void editSite(input)}
+        />
+      )}
+      {pendingEnvironmentSite && (
+        <EnvironmentVariablesDialog
+          api={api}
+          site={pendingEnvironmentSite}
+          onClose={() => setPendingEnvironmentSite(null)}
+        />
+      )}
+      {pendingCollaboratorsSite && (
+        <SiteCollaboratorsDialog
+          api={api}
+          site={pendingCollaboratorsSite}
+          onClose={() => setPendingCollaboratorsSite(null)}
+        />
+      )}
+      {pendingAccessSite && (
+        <SiteAccessDialog
+          api={api}
+          site={pendingAccessSite}
+          onClose={() => setPendingAccessSite(null)}
         />
       )}
     </main>

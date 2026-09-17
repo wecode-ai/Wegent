@@ -4,6 +4,7 @@
 
 """End-to-end API tests for immutable TODO delivery snapshots."""
 
+import asyncio
 import io
 import json
 import uuid
@@ -24,12 +25,14 @@ from app.models.delivery import (
     LoopItem,
     ProjectAutomationRule,
     ProjectAutomationRun,
+    ProjectIncomingEvent,
 )
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.issue_workflow import WorkflowPlanView
+from app.services import runtime_work_service
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import (
     DeliveryObjectNotFoundError,
@@ -37,6 +40,7 @@ from app.services.delivery.storage import (
 )
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.project_automations import project_automation_execution
+from app.services.project_incoming_hooks import project_incoming_hook_service
 
 
 class FakeDeliveryStorage:
@@ -210,6 +214,104 @@ def test_external_loop_items_forward_assignee_filters(
     assert captured == {"assignee_type": "user", "assignee_id": str(test_user.id)}
 
 
+def test_external_loop_item_comments_reject_unauthorized_private_project_access(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.loop_items.external_provider import external_loop_item_provider
+
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="PRIVATECOMMENTS",
+        name="Private external comments",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={
+            "visibility": "private",
+            "task_provider": "github",
+            "provider_config": {"repository": "octo/private"},
+        },
+    )
+    unauthorized_user = User(
+        user_name="external-comments-outsider",
+        password_hash=get_password_hash("outsider-password"),
+        email="external-comments-outsider@example.com",
+        is_active=True,
+    )
+    test_db.add_all([project, unauthorized_user])
+    test_db.commit()
+
+    issue_loader = MagicMock()
+    monkeypatch.setattr(external_loop_item_provider, "_get_issue", issue_loader)
+    token = create_access_token(data={"sub": unauthorized_user.user_name})
+
+    response = test_client.get(
+        "/api/v1/loop-items/PRIVATECOMMENTS-7/comments",
+        headers=_auth(token),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Cloud project not found"
+    issue_loader.assert_not_called()
+
+
+def test_external_loop_item_comments_return_empty_list_for_authorized_user(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.loop_items.external_provider import external_loop_item_provider
+
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="EMPTYCOMMENTS",
+        name="Empty external comments",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={
+            "visibility": "private",
+            "task_provider": "github",
+            "provider_config": {"repository": "octo/empty"},
+        },
+    )
+    test_db.add(project)
+    test_db.commit()
+
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_get_issue",
+        MagicMock(return_value={"number": 7}),
+    )
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_response",
+        MagicMock(return_value={"can_view_detail": True}),
+    )
+    comment_loader = MagicMock(return_value=[])
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_list_comments",
+        comment_loader,
+    )
+
+    response = test_client.get(
+        "/api/v1/loop-items/EMPTYCOMMENTS-7/comments",
+        headers=_auth(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+    comment_loader.assert_called_once_with(project, 7)
+
+
 def test_loop_items_support_unbounded_hierarchy_and_reject_cycles(
     test_client: TestClient,
     test_token: str,
@@ -270,9 +372,19 @@ def test_board_snapshot_returns_first_screen_dependencies(
             "deviceId": "local-device",
             "taskId": "snapshot-runtime-task",
             "taskTitle": "Snapshot runtime task",
+            "modelSelection": {
+                "modelName": "gpt-5.6-codex",
+                "modelType": "public",
+                "options": {"reasoning": "high"},
+            },
         },
     )
     assert binding.status_code == 201
+    assert binding.json()["modelSelection"] == {
+        "modelName": "gpt-5.6-codex",
+        "modelType": "public",
+        "options": {"reasoning": "high"},
+    }
 
     response = test_client.get(
         f"/api/v1/cloud-projects/{delivery_project.id}/board-snapshot",
@@ -587,6 +699,104 @@ def test_workflow_delivery_rejects_empty_fulfillments(
     assert detail.json()["status"] == "draft"
 
 
+def test_pull_request_delivery_creates_change_request_binding(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "nodes": [
+                {
+                    "id": "implementation",
+                    "name": "Implementation",
+                    "kind": "my_task",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "composer",
+                    "required_deliverables": [
+                        {
+                            "id": "pull-request",
+                            "name": "Pull request",
+                            "description": "",
+                            "value_type": "pull_request",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    test_db.commit()
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Ship pull request"},
+    ).json()
+    source_task = {
+        "deviceId": "local-device",
+        "taskId": "implementation-task",
+        "taskTitle": "Implement feature",
+        "workflowNodeId": "implementation",
+    }
+    binding_response = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json=source_task,
+    )
+    assert binding_response.status_code == 201
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "# Complete", "source_task": source_task},
+    )
+    assert draft.status_code == 201
+
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{draft.json()['id']}/finalize",
+        headers=_auth(test_token),
+        json={
+            "fulfillments": [
+                {
+                    "requirement_id": "pull-request",
+                    "kind": "pull_request",
+                    "provider": "github",
+                    "url": "https://github.com/acme/app/pull/7",
+                    "number": 7,
+                    "state": "draft",
+                    "head_branch": "feature/events",
+                    "base_branch": "main",
+                    "head_commit": "abc1234",
+                }
+            ]
+        },
+    )
+
+    assert finalized.status_code == 200, finalized.text
+    binding = test_db.get(LoopItemTaskBinding, binding_response.json()["id"])
+    assert binding is not None
+    assert binding.change_requests == [
+        {
+            "provider": "github",
+            "instance_url": "https://github.com",
+            "repository": "acme/app",
+            "number": 7,
+            "url": "https://github.com/acme/app/pull/7",
+            "head_branch": "feature/events",
+            "base_branch": "main",
+            "head_commit": "abc1234",
+            "source": "delivery",
+            "bound_at": binding.change_requests[0]["bound_at"],
+            "last_confirmed_at": binding.change_requests[0]["last_confirmed_at"],
+        }
+    ]
+
+
 @pytest.mark.parametrize("initial_status", ["inbox", "pending"])
 def test_binding_task_preserves_unstarted_todo_until_runtime_starts(
     test_client: TestClient,
@@ -732,7 +942,7 @@ def test_crossing_processing_boundary_starts_orchestrated_issue_workflow(
     dispatch.assert_awaited_once()
 
 
-def test_ai_issue_created_in_pending_waits_for_configuration_then_starts(
+def test_ai_issue_creation_rejects_missing_configuration_before_persisting(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
@@ -780,34 +990,38 @@ def test_ai_issue_created_in_pending_waits_for_configuration_then_starts(
         json={"title": "Configure before AI planning", "status": "pending"},
     )
 
-    assert created_response.status_code == 201
-    created = created_response.json()
-    assert created["status"] == "pending"
-    assert created["workflow"]["execution_config"]["model"] is None
+    assert created_response.status_code == 422
+    detail = created_response.json()["detail"]
+    assert detail["error_code"] == "COORDINATOR_EXECUTION_CONFIG_INCOMPLETE"
+    assert detail["missing_fields"] == ["device", "model"]
+    assert test_db.query(LoopItem).count() == 0
     assert test_db.query(ProjectAutomationRun).count() == 0
     dispatch.assert_not_awaited()
 
-    workflow = created["workflow"]
-    workflow["execution_config"] = {
-        "agent_id": None,
-        "runtime_profile_id": None,
-        "execution_device_id": "local-device",
-        "model": "gpt-5-codex",
-        "model_type": "runtime",
-        "model_options": {},
-        "workspace_binding": {"type": "standalone"},
+    workflow = {
+        **delivery_project.metadata_json["workflow_definition"],
+        "execution_config": {
+            "agent_id": None,
+            "runtime_profile_id": None,
+            "execution_device_id": "local-device",
+            "model": "gpt-5-codex",
+            "model_type": "runtime",
+            "model_options": {},
+            "workspace_binding": {"type": "standalone"},
+        },
     }
-    started_response = test_client.patch(
-        f"/api/v1/loop-items/{created['id']}",
+    started_response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
         json={
-            "version": created["version"],
+            "title": "Configured AI planning",
             "status": "pending",
             "workflow": workflow,
         },
     )
 
-    assert started_response.status_code == 200
+    assert started_response.status_code == 201, started_response.text
+    created = started_response.json()
     run = test_db.query(ProjectAutomationRun).one()
     assert run.task_id == created["id"]
     assert (run.metadata_json or {})["workflow_execution_config"]["model"] == (
@@ -881,14 +1095,15 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rule = SimpleNamespace(id="rule-1")
-    process = AsyncMock(return_value=1)
+    ingest = AsyncMock(return_value=1)
     monkeypatch.setattr(
         "app.services.project_automations.project_automation_processor.matching_rules",
         MagicMock(return_value=[rule]),
     )
     monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.process",
-        process,
+        deliveries_endpoint.project_incoming_hook_service,
+        "ingest_internal",
+        ingest,
     )
 
     response = test_client.post(
@@ -900,12 +1115,12 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     assert response.status_code == 201
     created = response.json()
     assert created["status"] == "inbox"
-    process.assert_awaited_once()
-    event = process.await_args.args[1]
+    ingest.assert_awaited_once()
+    event = ingest.await_args.args[1]
     assert event.event_type == "task.created"
     assert event.project_id == str(delivery_project.id)
     assert event.subject_id == created["id"]
-    assert process.await_args.kwargs["automation_id"] == "rule-1"
+    assert ingest.await_args.kwargs["automation_id"] == "rule-1"
 
     updated = test_client.patch(
         f"/api/v1/loop-items/{created['id']}",
@@ -914,8 +1129,8 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     )
 
     assert updated.status_code == 200
-    assert process.await_count == 2
-    status_event = process.await_args_list[1].args[1]
+    assert ingest.await_count == 2
+    status_event = ingest.await_args_list[1].args[1]
     assert status_event.event_type == "task.status_changed"
     assert status_event.subject_id == created["id"]
 
@@ -1028,15 +1243,16 @@ def test_status_update_requires_one_automation_before_entering_processing(
         SimpleNamespace(id="rule-2", title="Review", description="Review the request"),
     ]
     matching = MagicMock(return_value=matching_rules)
-    process = AsyncMock(return_value=1)
+    ingest = AsyncMock(return_value=1)
     start = AsyncMock(return_value=1)
     monkeypatch.setattr(
         "app.services.project_automations.project_automation_processor.matching_rules",
         matching,
     )
     monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.process",
-        process,
+        deliveries_endpoint.project_incoming_hook_service,
+        "ingest_internal",
+        ingest,
     )
     monkeypatch.setattr(
         deliveries_endpoint.issue_workflow_start_service,
@@ -1073,7 +1289,7 @@ def test_status_update_requires_one_automation_before_entering_processing(
     ).json()
     assert unchanged["status"] == "inbox"
     assert unchanged["version"] == created["version"]
-    process.assert_not_awaited()
+    ingest.assert_not_awaited()
 
     selected_response = test_client.patch(
         f"/api/v1/loop-items/{created['id']}",
@@ -1088,8 +1304,8 @@ def test_status_update_requires_one_automation_before_entering_processing(
     assert selected_response.status_code == 200
     assert selected_response.json()["status"] == "pending"
     start.assert_not_awaited()
-    process.assert_awaited_once()
-    assert process.await_args.kwargs["automation_id"] == "rule-2"
+    ingest.assert_awaited_once()
+    assert ingest.await_args.kwargs["automation_id"] == "rule-2"
 
 
 def test_issue_creation_requires_one_automation_when_multiple_rules_match(
@@ -1149,10 +1365,11 @@ def test_issue_creation_dispatches_only_the_selected_matching_automation(
         "app.services.project_automations.project_automation_processor.matching_rules",
         MagicMock(return_value=matching_rules),
     )
-    process = AsyncMock(return_value=1)
+    ingest = AsyncMock(return_value=1)
     monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.process",
-        process,
+        deliveries_endpoint.project_incoming_hook_service,
+        "ingest_internal",
+        ingest,
     )
 
     response = test_client.post(
@@ -1165,8 +1382,71 @@ def test_issue_creation_dispatches_only_the_selected_matching_automation(
     )
 
     assert response.status_code == 201
-    process.assert_awaited_once()
-    assert process.await_args.kwargs["automation_id"] == "rule-2"
+    ingest.assert_awaited_once()
+    assert ingest.await_args.kwargs["automation_id"] == "rule-2"
+
+
+def test_tag_update_requires_and_dispatches_one_matching_automation(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Choose tag automation"},
+    ).json()
+    matching_rules = [
+        SimpleNamespace(id="rule-1", title="Implement", description=""),
+        SimpleNamespace(id="rule-2", title="Review", description=""),
+    ]
+    monkeypatch.setattr(
+        "app.services.project_automations.project_automation_processor.matching_rules",
+        MagicMock(return_value=matching_rules),
+    )
+    ingest = AsyncMock(return_value=1)
+    monkeypatch.setattr(
+        deliveries_endpoint.project_incoming_hook_service,
+        "ingest_internal",
+        ingest,
+    )
+
+    selection_response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": created["version"], "tags": ["review"]},
+    )
+
+    assert selection_response.status_code == 409
+    assert (
+        selection_response.json()["detail"]["code"] == "automation_selection_required"
+    )
+    unchanged = test_db.get(LoopItem, created["id"])
+    assert unchanged is not None
+    test_db.refresh(unchanged)
+    assert unchanged.tags == []
+    assert unchanged.version == created["version"]
+    ingest.assert_not_awaited()
+
+    selected_response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "tags": ["review"],
+            "automation_rule_id": "rule-2",
+        },
+    )
+
+    assert selected_response.status_code == 200
+    assert selected_response.json()["tags"] == ["review"]
+    ingest.assert_awaited_once()
+    event = ingest.await_args.args[1]
+    assert event.event_type == "task.tag_added"
+    assert event.payload["added_tags"] == ["review"]
+    assert ingest.await_args.kwargs["automation_id"] == "rule-2"
 
 
 def test_issue_created_in_inbox_starts_its_existing_workflow(
@@ -1175,12 +1455,7 @@ def test_issue_created_in_inbox_starts_its_existing_workflow(
     delivery_project: CloudProject,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    process = AsyncMock(return_value=0)
     start = AsyncMock(return_value=1)
-    monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.process",
-        process,
-    )
     monkeypatch.setattr(
         deliveries_endpoint.issue_workflow_start_service,
         "start",
@@ -2060,3 +2335,218 @@ def test_mark_loop_item_read_repairs_legacy_metadata_without_read_revisions(
     test_db.refresh(item)
     assert item.metadata_json["legacy"] is True
     assert item.metadata_json["read_revisions"][str(item.created_by_user_id)] == 3
+
+
+def _github_webhook_headers(
+    *,
+    delivery_id: str,
+) -> dict[str, str]:
+    return {
+        "Content-Type": "application/json",
+        "X-GitHub-Event": "check_run",
+        "X-GitHub-Delivery": delivery_id,
+    }
+
+
+def _failed_check_payload() -> dict[str, object]:
+    return {
+        "action": "completed",
+        "check_run": {
+            "id": 100,
+            "status": "completed",
+            "conclusion": "failure",
+            "head_sha": "abc1234",
+            "pull_requests": [
+                {
+                    "number": 7,
+                    "html_url": "https://github.example/acme/app/pull/7",
+                    "head": {"ref": "fix/checks", "sha": "abc1234"},
+                    "base": {"ref": "main"},
+                }
+            ],
+        },
+        "repository": {
+            "id": 42,
+            "full_name": "acme/app",
+            "html_url": "https://github.example/acme/app",
+        },
+    }
+
+
+def test_pr_delivery_resolves_unresolved_external_event_and_binds_run(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    test_user: User,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An MR/PR delivery closes the loop for an event that arrived before its
+    change request was bound: the run starts skipped/unresolved, the delivery
+    binds the change request and requeues the event, and reprocessing succeeds
+    on the same task."""
+
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "nodes": [
+                {
+                    "id": "implementation",
+                    "name": "Implementation",
+                    "kind": "my_task",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "composer",
+                    "required_deliverables": [
+                        {
+                            "id": "pull-request",
+                            "name": "Pull request",
+                            "description": "",
+                            "value_type": "pull_request",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    test_db.commit()
+
+    subscription = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/incoming-hooks",
+        headers=_auth(test_token),
+        json={
+            "name": "GitHub repository",
+            "source_type": "github",
+            "collection_mode": "webhook",
+            "resource": {
+                "resource_type": "repository",
+                "url": "https://github.example/acme/app",
+            },
+        },
+    )
+    assert subscription.status_code == 201, subscription.text
+    hook = subscription.json()
+
+    rule_response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Resume bound task",
+            "prompt": "Fix the failing checks in the bound task.",
+            "triggerType": "event",
+            "eventType": "change_request.checks_failed",
+            "eventConfig": {
+                "subscription_id": hook["id"],
+                "execution_target": "continue_binding",
+                "target_branches": ["main"],
+            },
+            "assignmentMode": "manual",
+            "roleSource": "generic",
+            "runtimeSource": "runtime_user",
+            "runtimeUserId": test_user.id,
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Feature implementation"},
+    ).json()
+    source_task = {
+        "deviceId": "local-device",
+        "taskId": "implementation-task",
+        "taskTitle": "Implement feature",
+        "workflowNodeId": "implementation",
+    }
+    binding_response = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json=source_task,
+    )
+    assert binding_response.status_code == 201, binding_response.text
+
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        AsyncMock(),
+    )
+
+    payload = _failed_check_payload()
+    body = json.dumps(payload, separators=(",", ":"))
+    delivered = test_client.post(
+        str(hook["webhookUrl"]),
+        headers=_github_webhook_headers(delivery_id="delivery-unresolved"),
+        content=body,
+    )
+    assert delivered.status_code == 202
+    asyncio.run(
+        project_incoming_hook_service.process_event(
+            test_db,
+            delivered.json()["eventId"],
+        )
+    )
+
+    run = test_db.query(ProjectAutomationRun).one()
+    event = test_db.query(ProjectIncomingEvent).one()
+    test_db.refresh(run)
+    test_db.refresh(event)
+    assert run.status == "skipped"
+    assert "binding" in (run.description or "").lower()
+    assert event.status == "unresolved"
+
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "# Complete", "source_task": source_task},
+    )
+    assert draft.status_code == 201, draft.text
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{draft.json()['id']}/finalize",
+        headers=_auth(test_token),
+        json={
+            "fulfillments": [
+                {
+                    "requirement_id": "pull-request",
+                    "kind": "pull_request",
+                    "provider": "github",
+                    "url": "https://github.example/acme/app/pull/7",
+                    "number": 7,
+                    "state": "draft",
+                    "head_branch": "feature/events",
+                    "base_branch": "main",
+                    "head_commit": "abc1234",
+                }
+            ]
+        },
+    )
+    assert finalized.status_code == 200, finalized.text
+
+    bound = test_db.get(LoopItemTaskBinding, binding_response.json()["id"])
+    assert bound is not None
+    assert len(bound.change_requests) == 1
+    assert bound.change_requests[0]["number"] == 7
+    assert bound.change_requests[0]["provider"] == "github"
+
+    test_db.refresh(event)
+    assert event.status == "received"
+
+    send_runtime_message = AsyncMock(
+        return_value=SimpleNamespace(accepted=True, error=None)
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        send_runtime_message,
+    )
+    asyncio.run(project_incoming_hook_service.process_event(test_db, str(event.id)))
+
+    test_db.refresh(run)
+    test_db.refresh(event)
+    assert run.status == "succeeded"
+    assert run.task_id == str(item["id"])
+    assert event.status == "processed"
+    send_runtime_message.assert_awaited_once()

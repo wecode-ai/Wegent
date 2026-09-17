@@ -1,6 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
-import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
+import {
+  ChevronDown,
+  Clock3,
+  Copy,
+  CopyCheck,
+  FileDiff,
+  Image as ImageIcon,
+  Search,
+  Wrench,
+} from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { terminalOutputToText } from '@/lib/terminal-text'
@@ -8,7 +17,7 @@ import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { track } from '@/telemetry/client'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
-import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import type { ProcessingBlock, SubagentBlock, ToolBlock } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { ActivityShimmerText } from '../ActivityShimmerText'
 import { AssistantMarkdown } from '../AssistantMarkdown'
@@ -19,6 +28,7 @@ import {
   getToolActivityFilePaths,
   getToolActivityKind,
   isWebSearchToolName,
+  unwrapShellCommand,
 } from './toolBlockActivity'
 import {
   getFileInputPath,
@@ -28,6 +38,7 @@ import {
   isFileCreateToolName,
   isFileEditToolName,
   isGuidanceToolName,
+  isImageGenerationToolName,
   isImageViewToolName,
   isFileReadToolName,
   isNodeReplToolName,
@@ -40,9 +51,8 @@ const INLINE_DIFF_MAX_LINES = 96
 const RECONNECTING_DISPLAY_DELAY_MS = 10_000
 
 interface ToolBlockItemProps {
-  block: ProcessingBlock
+  block: Exclude<ProcessingBlock, SubagentBlock>
   compact?: boolean
-  shimmer?: boolean
   durationStartedAt?: number
   durationEndAt?: number
   fileEditDurations?: FileEditDurationsByBlock
@@ -50,15 +60,12 @@ interface ToolBlockItemProps {
   stateKey?: string
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
   onExpandedChange?: (expanded: boolean) => void
 }
 
 export function ToolBlockItem({
   block,
   compact = false,
-  shimmer = false,
   durationStartedAt,
   durationEndAt,
   fileEditDurations,
@@ -66,8 +73,6 @@ export function ToolBlockItem({
   stateKey,
   onOpenWorkspaceFile,
   onOpenAssistantPlan,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
   onExpandedChange,
 }: ToolBlockItemProps) {
   const { t } = useTranslation('chat')
@@ -112,7 +117,6 @@ export function ToolBlockItem({
     return (
       <ProcessFileChangesBlockItem
         block={block}
-        shimmer={shimmer}
         fileEditDurations={fileEditDurations}
         onExpandedChange={onExpandedChange}
       />
@@ -173,6 +177,9 @@ export function ToolBlockItem({
     searchError: t('tool_activity.search_error'),
     imageView: filename => t('tool_activity.image_view', { filename }),
     imageViewFallback: t('tool_activity.image_view_fallback'),
+    imageGenerationRunning: t('tool_activity.image_generation_running'),
+    imageGenerationDone: t('tool_activity.image_generation_done'),
+    imageGenerationError: t('tool_activity.image_generation_error'),
     javascriptRunning: t('tool_activity.javascript_running'),
     javascriptDone: t('tool_activity.javascript_done'),
     javascriptError: t('tool_activity.javascript_error'),
@@ -181,7 +188,7 @@ export function ToolBlockItem({
   const labelContent = (
     <>
       {icon}
-      {isRunning || shimmer ? (
+      {isRunning ? (
         <ActivityShimmerText variant="tool" className="min-w-0 truncate">
           {label}
         </ActivityShimmerText>
@@ -249,9 +256,7 @@ export function ToolBlockItem({
         </span>
       </div>
       {expanded ? (
-        <div className="mt-2 min-w-0 overflow-x-clip">
-          {renderBlockDetail(block, { onLoadFullTranscript, loadingFullTranscript })}
-        </div>
+        <div className="mt-2 min-w-0 overflow-x-clip">{renderBlockDetail(block)}</div>
       ) : null}
     </div>
   )
@@ -267,13 +272,15 @@ function PlanBlockItem({
   if (!block.content.trim()) return null
 
   const isStreaming = block.status !== 'done' && block.status !== 'error'
-  const openPlan = () => {
-    onOpenAssistantPlan?.({
-      blockId: block.id,
-      subtaskId: String(block.subtaskId),
-      content: block.content,
-    })
-  }
+  const openPlan = onOpenAssistantPlan
+    ? () => {
+        onOpenAssistantPlan({
+          blockId: block.id,
+          subtaskId: String(block.subtaskId),
+          content: block.content,
+        })
+      }
+    : undefined
 
   return (
     <div data-processing-block-id={block.id}>
@@ -284,12 +291,10 @@ function PlanBlockItem({
 
 function ProcessFileChangesBlockItem({
   block,
-  shimmer,
   fileEditDurations,
   onExpandedChange,
 }: {
   block: Extract<ProcessingBlock, { type: 'file_changes' }>
-  shimmer: boolean
   fileEditDurations?: FileEditDurationsByBlock
   onExpandedChange?: (expanded: boolean) => void
 }) {
@@ -327,7 +332,7 @@ function ProcessFileChangesBlockItem({
                 className="group relative z-10 flex min-h-8 w-full max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
               >
                 <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
-                {isRunning || shimmer ? (
+                {isRunning ? (
                   <ActivityShimmerText variant="tool" className="min-w-0 truncate">
                     {fileChangeRowLabel(file, t, isRunning)}
                   </ActivityShimmerText>
@@ -952,7 +957,7 @@ function ProcessTextBlockItem({
 
   return (
     <div
-      className="min-w-0 overflow-x-hidden text-chat text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-chat text-text-primary"
       data-processing-block-id={block.id}
       data-message-selectable-text
       role={isRunning ? 'status' : undefined}
@@ -986,6 +991,9 @@ type GenericToolLabels = {
   searchError: string
   imageView: (filename: string) => string
   imageViewFallback: string
+  imageGenerationRunning: string
+  imageGenerationDone: string
+  imageGenerationError: string
   javascriptRunning: string
   javascriptDone: string
   javascriptError: string
@@ -1032,7 +1040,9 @@ function getBlockLabel(
       }
     }
     const command = getInputField(block, 'command', 'cmd', 'commandLine')
-    const shortCmd = command ? truncate(command.split('\n')[0], 40) : block.toolName
+    const shortCmd = command
+      ? truncate(unwrapShellCommand(command).split('\n')[0], 40)
+      : block.toolName
     return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
   }
   if (isFileCreateToolName(name)) {
@@ -1055,6 +1065,18 @@ function getBlockLabel(
     return {
       icon: <FileIcon />,
       label: path ? genericLabels.imageView(basename(path)) : genericLabels.imageViewFallback,
+    }
+  }
+  if (isImageGenerationToolName(name)) {
+    const label =
+      block.status === 'error'
+        ? genericLabels.imageGenerationError
+        : block.status === 'done'
+          ? genericLabels.imageGenerationDone
+          : genericLabels.imageGenerationRunning
+    return {
+      icon: <ImageIcon className="h-4 w-4" strokeWidth={1.7} />,
+      label,
     }
   }
   if (isGuidanceToolName(name)) {
@@ -1223,17 +1245,11 @@ function ToolIcon() {
   )
 }
 
-function renderBlockDetail(
-  block: ToolBlock,
-  options: {
-    onLoadFullTranscript?: () => Promise<void> | void
-    loadingFullTranscript?: boolean
-  }
-) {
+function renderBlockDetail(block: ToolBlock) {
   const name = block.toolName.toLowerCase()
 
   if (isCommandToolName(name)) {
-    return <BashBlockDetail block={block} {...options} />
+    return <BashBlockDetail block={block} />
   }
   if (isFileCreateToolName(name)) {
     return <FileWriteDetail block={block} />
@@ -1256,7 +1272,7 @@ function renderBlockDetail(
 
 function hasBlockDetail(block: ToolBlock): boolean {
   const name = block.toolName.toLowerCase()
-  if (isGuidanceToolName(name)) return false
+  if (isGuidanceToolName(name) || isImageGenerationToolName(name)) return false
   if (
     isCommandToolName(name) ||
     isFileCreateToolName(name) ||
@@ -1454,15 +1470,7 @@ function getWorkspaceFilePath(block: ToolBlock): string | undefined {
   return getFileInputPath(block)
 }
 
-function BashBlockDetail({
-  block,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
-}: {
-  block: ToolBlock
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
-}) {
+function BashBlockDetail({ block }: { block: ToolBlock }) {
   const command = getInputField(block, 'command', 'cmd', 'commandLine')
   const cwd = getInputField(block, 'cwd', 'workdir', 'workingDirectory')
   const output = block.toolOutput
@@ -1536,30 +1544,6 @@ function BashBlockDetail({
       )}
       {outputText && (
         <>
-          {block.toolOutputTruncated ? (
-            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-muted">
-              <span>
-                早期输出已从当前视图卸载
-                {typeof block.toolOutputOriginalChars === 'number'
-                  ? `，原始约 ${block.toolOutputOriginalChars.toLocaleString()} 字`
-                  : typeof block.toolOutputOriginalBytes === 'number'
-                    ? `，原始约 ${block.toolOutputOriginalBytes.toLocaleString()} 字节`
-                    : ''}
-                。
-              </span>
-              {onLoadFullTranscript ? (
-                <button
-                  type="button"
-                  data-testid="load-full-runtime-transcript-button"
-                  onClick={() => void onLoadFullTranscript()}
-                  disabled={loadingFullTranscript}
-                  className="h-8 rounded border border-border bg-base px-2 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
-                >
-                  {loadingFullTranscript ? '正在加载完整输出' : '加载完整输出'}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
           <pre
             ref={outputRef}
             className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary"

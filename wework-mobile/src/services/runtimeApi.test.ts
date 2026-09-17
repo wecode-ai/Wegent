@@ -19,27 +19,6 @@ const config = {
 describe('RuntimeApi', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('loads runtime work with bearer authentication', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ projects: [], chats: [], totalTasks: 0 }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    )
-    vi.stubGlobal('fetch', fetchMock)
-
-    await new RuntimeApi(config).listWork()
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://wegent.example/api/v1/runtime-work',
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: 'Bearer secret-token',
-        }),
-      })
-    )
-  })
-
   it('loads the Wework model catalog including execution configuration', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ data: [] }), {
@@ -309,7 +288,7 @@ describe('RuntimeApi', () => {
       )
     )
 
-    await expect(new RuntimeApi(config).listWork()).rejects.toEqual(
+    await expect(new RuntimeApi(config).listDevices()).rejects.toEqual(
       new RuntimeApiError('executor offline', 502, {
         detail: 'executor offline',
       })

@@ -36,6 +36,8 @@ from urllib.parse import urlsplit
 
 import socketio
 from prometheus_client import Counter
+from pydantic import ValidationError
+from redis.exceptions import RedisError
 from socketio.exceptions import ConnectionRefusedError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -77,6 +79,7 @@ from app.schemas.device import (
     DeviceStatusPayload,
     DeviceType,
 )
+from app.schemas.runtime_work import RuntimeModelSelection
 from app.services.channels.callback import (
     forward_event_to_channel_callbacks,
 )
@@ -84,11 +87,19 @@ from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 from app.services.device.capability_sync_service import device_capability_sync_service
-from app.services.device.remote_control_policy import (
-    remote_control_is_enabled,
+from app.services.device.identity import record_route_id
+from app.services.device.record_operations import app_identity_lock
+from app.services.device.terminal_metrics import record_terminal_event
+from app.services.device.terminal_protocol import (
+    get_browser_socket_id,
+    get_consumer_id,
+    get_protocol_version,
+    parse_terminal_event,
 )
 from app.services.device.terminal_session_service import (
+    TerminalSessionAuthorizationUnavailable,
     TerminalSessionRecord,
+    normalize_terminal_session_id,
     terminal_session_service,
 )
 from app.services.device_service import (
@@ -123,6 +134,7 @@ from app.services.user_runtime_config import (
 from app.stores.tasks import subtask_store
 from shared.models import EventType
 from shared.telemetry.context import set_request_context, set_user_context
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +149,7 @@ DEVICE_CONNECT_RATE_LIMIT_MAX_ATTEMPTS = 30
 DEVICE_REGISTER_UPSERT_DEBOUNCE_SECONDS = 10
 REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS = 120
 DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS = 2
+TERMINAL_END_DISPATCH_TIMEOUT_SECONDS = 5
 RUNTIME_TASK_TERMINAL_STATUSES = {
     "done",
     "complete",
@@ -154,6 +167,44 @@ RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES = {
     "cancelled",
     "canceled",
 }
+DEVICE_TRACE_EXCLUDED_EVENTS = {
+    "plugin.auth.local_lifecycle",
+    "plugin.auth.automatic",
+    "plugin.auth.prepare",
+    "plugin.auth.transfer.stage",
+    "plugin.auth.transfer.prepare",
+    "plugin.auth.transfer.finish",
+    "plugin.auth.transfer.abort",
+    "plugin.auth.execute",
+    "plugin.auth.oauth.begin",
+    "plugin.auth.oauth.finish",
+    "plugin.auth.oauth.revocations",
+    "plugin.auth.oauth.revoke_begin",
+    "plugin.auth.oauth.revoke_finish",
+    "plugin.auth.enroll",
+    "plugin.auth.read",
+    "connect",
+    "terminal:output",
+}
+TERMINAL_END_DISPATCHABLE_REJECTION_CODES = {
+    "terminal_session_not_found",
+    "terminal_session_expired",
+    "terminal_session_device_mismatch",
+}
+
+
+def _terminal_event_error(
+    code: str,
+    message: str,
+    *,
+    retryable: bool = False,
+    terminal_end_dispatched: bool = False,
+) -> dict:
+    """Return a machine-readable terminal delivery rejection."""
+    error = {"error": message, "code": code, "retryable": retryable}
+    if terminal_end_dispatched:
+        error["terminal_end_dispatched"] = True
+    return error
 
 
 @dataclass(frozen=True)
@@ -275,7 +326,7 @@ def _register_device(
     runtime_transfer_host: Optional[str] = None,
     runtime_instance_id: Optional[str] = None,
     app_device_id: Optional[str] = None,
-) -> tuple[bool, Optional[str], Optional[str]]:
+) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
     """
     Register or update device CRD in database.
 
@@ -290,7 +341,7 @@ def _register_device(
         runtime_instance_id: Stable runtime installation ID shared by all routes
         app_device_id: Desktop app IPC device ID for app registrations
 
-    Returns (success, persisted_display_name, error_message).
+    Returns (success, persisted_display_name, error_message, online_route_id).
     """
     try:
         with _db_session() as db:
@@ -309,10 +360,11 @@ def _register_device(
             persisted_display_name = (
                 device_kind.json.get("spec", {}).get("displayName") or name
             )
-        return True, persisted_display_name, None
+            route_id = record_route_id(device_kind)
+        return True, persisted_display_name, None, route_id
     except Exception as e:
         logger.error(f"[Device WS] Error registering device: {e}")
-        return False, None, str(e)
+        return False, None, str(e), None
 
 
 def _normalize_runtime_transfer_host(value: Any) -> Optional[str]:
@@ -620,6 +672,39 @@ def _is_runtime_task_reply_status(status: Any) -> bool:
     )
 
 
+def _runtime_task_notification_address(
+    *,
+    device_id: str,
+    local_task_id: str,
+    payload: dict[str, Any],
+    workspace_path: str = "",
+) -> dict[str, Any]:
+    """Build a replyable runtime address from a trusted executor event."""
+
+    address: dict[str, Any] = {
+        "deviceId": device_id,
+        "localTaskId": local_task_id,
+    }
+    if workspace_path:
+        address["workspacePath"] = workspace_path
+
+    raw_selection = payload.get("modelSelection") or payload.get("model_selection")
+    if not isinstance(raw_selection, dict):
+        return address
+    try:
+        model_selection = RuntimeModelSelection.model_validate(raw_selection)
+    except ValidationError:
+        logger.warning(
+            "[RuntimeTaskNotification] Ignored invalid model selection: "
+            "device_id=%s local_task_id=%s",
+            device_id,
+            local_task_id,
+        )
+        return address
+    address["modelSelection"] = model_selection.model_dump(by_alias=True)
+    return address
+
+
 def _summarize_runtime_notification_results(
     notification: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -718,17 +803,30 @@ def _project_execution_workflow_status(
         )
         .first()
     )
-    if binding is None or not binding.workflow_node_id:
+    if binding is None:
         return None
 
     from app.models.delivery import LoopItem
+    from app.services.project_workflow_projection import (
+        update_workflow_plan_task_status,
+    )
 
-    item = update_workflow_task_status(
-        db,
-        user_id=user_id,
-        device_id=device_id,
-        task_id=task_id,
-        execution_status=projected_status,
+    item = (
+        update_workflow_task_status(
+            db,
+            user_id=user_id,
+            device_id=device_id,
+            task_id=task_id,
+            execution_status=projected_status,
+        )
+        if binding.workflow_node_id
+        else update_workflow_plan_task_status(
+            db,
+            child_id=loop_item_id,
+            device_id=binding.device_id,
+            task_id=task_id,
+            execution_status=projected_status,
+        )
     )
     if item is None:
         return None
@@ -812,11 +910,27 @@ def _project_bound_runtime_event_status(
     projected_status = _workflow_status_for_runtime_event(event_name, payload)
     if projected_status is None:
         return None
+    from app.services.loop_item_executions.service import runtime_device_identity_ids
+
+    device_ids = runtime_device_identity_ids(
+        db,
+        device_id,
+        owner_user_id=user_id,
+    )
+    if not device_ids:
+        logger.info(
+            "[IssueTaskRuntimeSync] binding_miss user=%s device=%s task=%s " "event=%s",
+            user_id,
+            device_id,
+            task_id,
+            event_name,
+        )
+        return None
     binding = (
         db.query(LoopItemTaskBinding)
         .filter(
             LoopItemTaskBinding.task_user_id == user_id,
-            LoopItemTaskBinding.device_id == device_id,
+            LoopItemTaskBinding.device_id.in_(device_ids),
             LoopItemTaskBinding.task_id == task_id,
             loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
         )
@@ -1074,6 +1188,7 @@ def _project_chat_runtime_event_sync(
             db,
             runtime_device_id=device_id,
             runtime_task_id=runtime_task_id,
+            owner_user_id=user_id,
         )
         ready_before = (
             _execution_ready_robot_stage_ids(db, execution)
@@ -1089,6 +1204,7 @@ def _project_chat_runtime_event_sync(
             runtime_task_id=runtime_task_id,
             event_name=event_name,
             payload=payload,
+            owner_user_id=user_id,
             allow_unsequenced_terminal=trusted_terminal_snapshot,
         )
         if execution is not None and matched_execution is None:
@@ -1177,7 +1293,11 @@ def _project_chat_runtime_event_sync(
 
 
 def _execution_runtime_event_sync(
-    device_id: str, task_id: object, event_name: str, payload: dict
+    user_id: int,
+    device_id: str,
+    task_id: object,
+    event_name: str,
+    payload: dict,
 ) -> dict[str, Any] | None:
     """Project device runtime events onto the matching robot execution."""
 
@@ -1187,6 +1307,7 @@ def _execution_runtime_event_sync(
                 db,
                 runtime_device_id=device_id,
                 runtime_task_id=str(task_id),
+                owner_user_id=user_id,
             )
             projected_status = _workflow_status_for_runtime_event(event_name, payload)
             ready_before = (
@@ -1205,6 +1326,7 @@ def _execution_runtime_event_sync(
                 runtime_task_id=str(task_id),
                 event_name=event_name,
                 payload=payload,
+                owner_user_id=user_id,
             )
             if matched is not None:
                 workflow_continuation = (
@@ -1271,6 +1393,21 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "device:status": "on_device_status",
             "device:upgrade_status": "on_device_upgrade_status",
             "runtime:event": "on_runtime_event",
+            "plugin.auth.local_lifecycle": "on_plugin_auth_local_lifecycle",
+            "plugin.auth.automatic": "on_plugin_auth_automatic",
+            "plugin.auth.prepare": "on_plugin_auth_prepare",
+            "plugin.auth.transfer.stage": "on_plugin_auth_transfer_stage",
+            "plugin.auth.transfer.prepare": "on_plugin_auth_transfer_prepare",
+            "plugin.auth.transfer.finish": "on_plugin_auth_transfer_finish",
+            "plugin.auth.transfer.abort": "on_plugin_auth_transfer_abort",
+            "plugin.auth.execute": "on_plugin_auth_execute",
+            "plugin.auth.oauth.begin": "on_plugin_auth_oauth_begin",
+            "plugin.auth.oauth.finish": "on_plugin_auth_oauth_finish",
+            "plugin.auth.oauth.revocations": "on_plugin_auth_oauth_revocations",
+            "plugin.auth.oauth.revoke_begin": "on_plugin_auth_oauth_revoke_begin",
+            "plugin.auth.oauth.revoke_finish": "on_plugin_auth_oauth_revoke_finish",
+            "plugin.auth.enroll": "on_plugin_auth_enroll",
+            "plugin.auth.read": "on_plugin_auth_read",
             "runtime.tasks.pull": "on_runtime_tasks_pull",
             "runtime.tasks.accept": "on_runtime_tasks_accept",
             "runtime.tasks.updated": "on_runtime_task_updated",
@@ -1396,7 +1533,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         return self._runtime_event_locks[sid]
 
     @trace_websocket_event(
-        exclude_events={"connect"},
+        exclude_events=DEVICE_TRACE_EXCLUDED_EVENTS,
         extract_event_data=True,
     )
     async def trigger_event(self, event: str, sid: str, *args):
@@ -1727,12 +1864,32 @@ class DeviceNamespace(socketio.AsyncNamespace):
             logger.error(f"[Device WS] Error in disconnect handler: {e}")
         finally:
             self._runtime_event_locks.pop(sid, None)
+            terminal_session_service.invalidate_socket(sid)
 
     # ============================================================
     # Device Registration and Heartbeat Events
     # ============================================================
 
+    @trace_async("device.register", tracer_name="backend.device")
     async def on_device_register(self, sid: str, data: dict) -> dict:
+        if isinstance(data, dict) and data.get("device_type") == "app":
+            session = await self.get_session(sid)
+            if not session.get("user_id"):
+                return {"error": "Not authenticated"}
+            try:
+                async with app_identity_lock(session["user_id"]):
+                    return await self._register_device_session(sid, data)
+            except (RedisError, TimeoutError):
+                logger.warning(
+                    "[Device WS] App identity operation unavailable for user=%s",
+                    session["user_id"],
+                )
+                return {
+                    "error": "Device identity operation is temporarily unavailable; reconnect to retry"
+                }
+        return await self._register_device_session(sid, data)
+
+    async def _register_device_session(self, sid: str, data: dict) -> dict:
         """
         Handle device:register event.
 
@@ -1782,6 +1939,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             app_device_id=str(payload.app_device_id or "").strip(),
         )
         is_cloud_device = False
+        route_id = payload.device_id
         logical_device_id: Optional[str] = None
         if payload.device_type == DeviceType.CLOUD:
             try:
@@ -1815,21 +1973,29 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 payload.device_id,
                 registration_fingerprint,
             )
-            if persisted_display_name is None:
-                success, persisted_display_name, error = await run_sync_in_executor(
-                    _register_device,
-                    user_id,
-                    payload.device_id,
-                    payload.name,
-                    client_ip,
-                    payload.device_type.value,
-                    payload.bind_shell.value,
-                    runtime_transfer_host,
-                    payload.runtime_instance_id,
-                    payload.app_device_id,
+            requires_identity_check = payload.device_type in {
+                DeviceType.APP,
+                DeviceType.CLOUD,
+                DeviceType.REMOTE,
+            }
+            if persisted_display_name is None or requires_identity_check:
+                success, persisted_display_name, error, registered_route_id = (
+                    await run_sync_in_executor(
+                        _register_device,
+                        user_id,
+                        payload.device_id,
+                        payload.name,
+                        client_ip,
+                        payload.device_type.value,
+                        payload.bind_shell.value,
+                        runtime_transfer_host,
+                        payload.runtime_instance_id,
+                        payload.app_device_id,
+                    )
                 )
                 if not success:
                     return {"error": f"Registration failed: {error}"}
+                route_id = registered_route_id or payload.device_id
                 self._remember_registration(
                     user_id,
                     payload.device_id,
@@ -1843,17 +2009,17 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         # Update the Socket.IO session before marking the device online. If the
         # connection disappeared, the online socket would be stale immediately.
-        session["device_id"] = payload.device_id
-        session["logical_device_id"] = logical_device_id or payload.device_id
+        session["reported_device_id"] = payload.device_id
+        session["device_id"] = route_id
+        session["logical_device_id"] = logical_device_id or route_id
         session["device_name"] = effective_device_name
         session["runtime_transfer_host"] = runtime_transfer_host
         session["runtime_instance_id"] = payload.runtime_instance_id
         session["device_type"] = payload.device_type.value
         session["execution_target_id"] = payload.app_device_id or payload.device_id
-        session["execution_environment"] = "local" if payload.app_device_id else "cloud"
         session["registered"] = True
 
-        device_room = f"device:{user_id}:{payload.device_id}"
+        device_room = f"device:{user_id}:{route_id}"
         execution_target_room = (
             f"execution-target:{user_id}:{session['execution_target_id']}"
         )
@@ -1876,7 +2042,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # setup have succeeded.
         await device_service.set_device_online(
             user_id=user_id,
-            device_id=payload.device_id,
+            device_id=route_id,
             socket_id=sid,
             name=effective_device_name,
             executor_version=payload.executor_version,
@@ -1894,26 +2060,23 @@ class DeviceNamespace(socketio.AsyncNamespace):
         )
 
         # Broadcast device online event to user room (via chat namespace)
-        await self._broadcast_device_online(
-            user_id, payload.device_id, effective_device_name
-        )
+        await self._broadcast_device_online(user_id, route_id, effective_device_name)
         self._schedule_background_task(
             self._sync_global_capabilities_to_registered_device(
                 user_id=user_id,
-                device_id=payload.device_id,
+                device_id=route_id,
             ),
             "sync global capabilities after device registration",
         )
-        if remote_control_is_enabled(payload.device_type):
-            from app.tasks.robot_queue_tasks import reconcile_device_executions
+        from app.tasks.robot_queue_tasks import reconcile_device_executions
 
-            self._schedule_background_task(
-                reconcile_device_executions(
-                    user_id=int(user_id),
-                    device_id=payload.device_id,
-                ),
-                "reconcile active executions after device registration",
-            )
+        self._schedule_background_task(
+            reconcile_device_executions(
+                user_id=int(user_id),
+                device_id=route_id,
+            ),
+            "reconcile active executions after device registration",
+        )
 
         logger.info(
             f"[Device WS] Device registered: user={user_id}, device={payload.device_id}"
@@ -1938,16 +2101,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     user_id=user_id,
                     device_id=device_id,
                 )
-                payload = device_capability_sync_service.build_desired_capabilities(
-                    db,
+            result = (
+                await device_capability_sync_service.sync_current_device_capabilities(
                     user_id=user_id,
                     device_id=device_id,
+                    timeout_seconds=REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS,
                 )
-            result = await device_capability_sync_service.sync_device_payload(
-                user_id=user_id,
-                device_id=device_id,
-                payload=payload,
-                timeout_seconds=REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS,
             )
             with _db_session() as db:
                 plugin_device_installation_service.record_device_sync_result(
@@ -2079,13 +2238,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
-        session_device_id = session.get("device_id")
+        session_device_id = session.get("reported_device_id", session.get("device_id"))
 
         if not user_id:
             return {"error": "Not authenticated"}
 
         if session_device_id != payload.device_id:
             return {"error": "Device ID mismatch"}
+
+        payload.device_id = session["device_id"]
 
         online_info = await device_service.get_device_online_info(
             user_id, payload.device_id
@@ -2213,23 +2374,156 @@ class DeviceNamespace(socketio.AsyncNamespace):
             f"[Device WS] Heartbeat received: user={user_id}, device={payload.device_id}, "
             f"running_tasks={len(payload.running_task_ids)}"
         )
-        try:
-            device_type = DeviceType(session.get("device_type"))
-        except (TypeError, ValueError):
-            device_type = None
-        if remote_control_is_enabled(device_type):
-            from app.tasks.robot_queue_tasks import reconcile_device_executions
+        from app.tasks.robot_queue_tasks import reconcile_device_executions
 
-            self._schedule_background_task(
-                reconcile_device_executions(
-                    user_id=int(user_id),
-                    device_id=payload.device_id,
-                    needs_confirmation_only=True,
-                ),
-                "reconcile unconfirmed executions after device heartbeat",
-            )
+        self._schedule_background_task(
+            reconcile_device_executions(
+                user_id=int(user_id),
+                device_id=payload.device_id,
+                needs_confirmation_only=True,
+            ),
+            "reconcile unconfirmed executions after device heartbeat",
+        )
 
         return {"success": True}
+
+    async def on_plugin_auth_oauth_revocations(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="oauth_revocations",
+            data=data,
+        )
+
+    async def on_plugin_auth_oauth_revoke_begin(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="oauth_revoke_begin",
+            data=data,
+        )
+
+    async def on_plugin_auth_oauth_revoke_finish(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="oauth_revoke_finish",
+            data=data,
+        )
+
+    async def on_plugin_auth_oauth_begin(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="oauth_begin",
+            data=data,
+        )
+
+    async def on_plugin_auth_oauth_finish(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="oauth_finish",
+            data=data,
+        )
+
+    async def on_plugin_auth_execute(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid, session=await self.get_session(sid), operation="execute", data=data
+        )
+
+    async def on_plugin_auth_transfer_stage(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="transfer_stage",
+            data=data,
+        )
+
+    async def on_plugin_auth_transfer_prepare(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="transfer_prepare",
+            data=data,
+        )
+
+    async def on_plugin_auth_transfer_abort(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="transfer_abort",
+            data=data,
+        )
+
+    async def on_plugin_auth_transfer_finish(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="transfer_finish",
+            data=data,
+        )
+
+    async def on_plugin_auth_local_lifecycle(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="local_lifecycle",
+            data=data,
+        )
+
+    async def on_plugin_auth_automatic(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="automatic",
+            data=data,
+        )
+
+    async def on_plugin_auth_prepare(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid, session=await self.get_session(sid), operation="prepare", data=data
+        )
+
+    async def on_plugin_auth_enroll(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid, session=await self.get_session(sid), operation="enroll", data=data
+        )
+
+    async def on_plugin_auth_read(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid, session=await self.get_session(sid), operation="read", data=data
+        )
 
     async def on_runtime_tasks_pull(self, sid: str, data: dict) -> dict:
         """Return one atomically claimed execution to this Executor."""
@@ -2238,22 +2532,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
         user_id = session.get("user_id")
         runtime_device_id = session.get("device_id")
         execution_target_id = session.get("execution_target_id")
-        environment = session.get("execution_environment")
         runtime_instance_id = session.get("runtime_instance_id")
-        try:
-            device_type = DeviceType(session.get("device_type"))
-        except (TypeError, ValueError):
-            device_type = None
         if (
             not user_id
             or not runtime_device_id
             or not execution_target_id
-            or environment not in {"local", "cloud"}
             or not runtime_instance_id
         ):
             return {"success": False, "error": "Device is not registered"}
-        if not remote_control_is_enabled(device_type):
-            return {"success": True, "task": None}
         runtime_capacity = (
             data.get("runtime_capacity")
             if isinstance(data, dict) and isinstance(data.get("runtime_capacity"), dict)
@@ -2266,7 +2552,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 execution_target_id=str(execution_target_id),
                 runtime_device_id=str(runtime_device_id),
                 runtime_instance_id=str(runtime_instance_id),
-                environment=str(environment),
+                # The Executor pull channel only carries cloud work; local rows
+                # are claimed by the desktop App which resolves local model
+                # credentials at claim time and never writes them to the queue.
+                environment="cloud",
                 runtime_capacity=runtime_capacity,
             )
         )
@@ -2325,13 +2614,18 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
-        session_device_id = session.get("device_id")
+        session_device_id = session.get("reported_device_id", session.get("device_id"))
 
         if not user_id:
             return {"error": "Not authenticated"}
 
         if session_device_id != payload.device_id:
             return {"error": "Device ID mismatch"}
+
+        payload.device_id = session["device_id"]
+        online = await device_service.get_device_online_info(user_id, payload.device_id)
+        if not online or online.get("socket_id") != sid:
+            return {"error": "Stale device connection"}
 
         # Update status in Redis
         await device_service.update_device_status_in_redis(
@@ -2373,13 +2667,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
-        session_device_id = session.get("device_id")
+        session_device_id = session.get("reported_device_id", session.get("device_id"))
 
         if not user_id:
             return {"error": "Not authenticated"}
 
         if session_device_id != payload.device_id:
             return {"error": "Device ID mismatch"}
+
+        payload.device_id = session["device_id"]
 
         logger.info(
             f"[Device WS] Upgrade status: user={user_id}, device={payload.device_id}, "
@@ -2400,11 +2696,19 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
     async def on_terminal_output(self, sid: str, data: dict) -> dict:
         """Forward executor PTY output to the browser terminal namespace."""
+        try:
+            payload = parse_terminal_event(data, output=True)
+        except ValueError as exc:
+            return {"error": str(exc)}
+
         record, error = await self._authorize_terminal_event(sid, data)
         if error:
-            return error
+            return await self._finish_terminal_event_rejection(
+                data,
+                error,
+                output_complete=False,
+            )
 
-        payload = dict(data)
         payload["session_id"] = record.session_id
         await get_sio().emit(
             "terminal:output",
@@ -2412,25 +2716,60 @@ class DeviceNamespace(socketio.AsyncNamespace):
             room=f"terminal:{record.session_id}",
             namespace="/terminal",
         )
+        record_terminal_event(source="device", event="output")
         return {"success": True}
 
     async def on_terminal_exit(self, sid: str, data: dict) -> dict:
         """Forward executor PTY exit and remove the terminal session record."""
+        try:
+            payload = parse_terminal_event(data, output=False)
+        except ValueError as exc:
+            return {"error": str(exc)}
         record, error = await self._authorize_terminal_event(sid, data)
         if error:
-            return error
-
-        payload = dict(data)
-        payload["session_id"] = record.session_id
-        try:
-            await get_sio().emit(
-                "terminal:exit",
-                payload,
-                room=f"terminal:{record.session_id}",
-                namespace="/terminal",
+            session_id = normalize_terminal_session_id(
+                data.get("session_id") if isinstance(data, dict) else None
             )
-        finally:
-            await terminal_session_service.delete(record.session_id)
+            if error.get("code") == "terminal_session_not_found" and session_id:
+                try:
+                    durably_revoked = await terminal_session_service.is_durably_revoked(
+                        session_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "[Device WS] Failed to verify terminal revocation "
+                        "session=%s",
+                        session_id,
+                    )
+                    return _terminal_event_error(
+                        "terminal_session_authorization_unavailable",
+                        "Terminal session authorization is temporarily unavailable",
+                        retryable=True,
+                    )
+                if durably_revoked:
+                    dispatched = await self._finish_terminal_event_rejection(
+                        data,
+                        error,
+                        output_complete=True,
+                    )
+                    if dispatched.get("terminal_end_dispatched") is True:
+                        return {"success": True}
+                    return dispatched
+            return await self._finish_terminal_event_rejection(
+                data,
+                error,
+                output_complete=True,
+            )
+
+        payload["session_id"] = record.session_id
+        await get_sio().emit(
+            "terminal:exit",
+            payload,
+            room=f"terminal:{record.session_id}",
+            namespace="/terminal",
+        )
+        await terminal_session_service.delete(record.session_id)
+        record_terminal_event(source="device", event="exit")
         return {"success": True}
 
     async def _authorize_terminal_event(
@@ -2443,22 +2782,165 @@ class DeviceNamespace(socketio.AsyncNamespace):
         user_id = session.get("user_id")
         device_id = session.get("device_id")
         if not user_id or not device_id:
-            return None, {"error": "Not authenticated or not registered"}
+            return None, _terminal_event_error(
+                "terminal_not_registered",
+                "Not authenticated or not registered",
+                retryable=True,
+            )
 
-        session_id = data.get("session_id") if isinstance(data, dict) else None
-        if not isinstance(session_id, str) or not session_id.strip():
-            return None, {"error": "Missing session_id"}
+        session_id = normalize_terminal_session_id(
+            data.get("session_id") if isinstance(data, dict) else None
+        )
+        if not session_id:
+            return None, _terminal_event_error(
+                "terminal_session_id_missing",
+                "Missing session_id",
+            )
 
-        record = await terminal_session_service.get(session_id.strip())
+        try:
+            record = await terminal_session_service.get(session_id)
+        except TerminalSessionAuthorizationUnavailable:
+            return None, _terminal_event_error(
+                "terminal_session_authorization_unavailable",
+                "Terminal session authorization is temporarily unavailable",
+                retryable=True,
+            )
         if not record:
-            return None, {"error": "Terminal session not found"}
-        if (
-            record.user_id != user_id
-            or record.device_id != device_id
-            or record.socket_id != sid
-        ):
-            return None, {"error": "Terminal session does not belong to this device"}
+            return None, _terminal_event_error(
+                "terminal_session_not_found",
+                "Terminal session not found",
+            )
+        if record.is_expired():
+            return None, _terminal_event_error(
+                "terminal_session_expired",
+                "Terminal session expired",
+            )
+        if record.user_id != user_id or record.device_id != device_id:
+            return None, _terminal_event_error(
+                "terminal_session_device_mismatch",
+                "Terminal session does not belong to this device",
+            )
+        if record.socket_id != sid:
+            online_info = await device_service.get_device_online_info(
+                user_id, device_id
+            )
+            if not online_info or online_info.get("socket_id") != sid:
+                return None, _terminal_event_error(
+                    "terminal_session_stale_socket",
+                    "Terminal session belongs to a stale device socket",
+                    retryable=True,
+                )
+            try:
+                record = await terminal_session_service.rebind_socket(record, sid)
+            except TerminalSessionAuthorizationUnavailable:
+                return None, _terminal_event_error(
+                    "terminal_session_authorization_unavailable",
+                    "Terminal session authorization is temporarily unavailable",
+                    retryable=True,
+                )
+            if not record:
+                return None, _terminal_event_error(
+                    "terminal_session_rebind_failed",
+                    "Terminal session could not be rebound",
+                    retryable=True,
+                )
         return record, None
+
+    async def _finish_terminal_event_rejection(
+        self,
+        data: dict,
+        error: dict,
+        *,
+        output_complete: bool,
+    ) -> dict:
+        """Dispatch a session-scoped terminal end before permanent retirement."""
+        if error.get("retryable") is not False:
+            return error
+        code = error.get("code")
+        if code not in TERMINAL_END_DISPATCHABLE_REJECTION_CODES:
+            return error
+
+        session_id = normalize_terminal_session_id(
+            data.get("session_id") if isinstance(data, dict) else None
+        )
+        consumer_id = get_consumer_id(data)
+        protocol_version = get_protocol_version(
+            data,
+            default=2 if consumer_id else 1,
+        )
+        if not session_id or protocol_version is None:
+            return error
+
+        payload = {
+            "session_id": session_id,
+            "exit_code": (
+                data.get("exit_code")
+                if output_complete and isinstance(data, dict)
+                else None
+            ),
+            "error": str(error.get("error") or "Terminal session ended"),
+            "reason_code": code,
+            "output_complete": output_complete,
+        }
+        if protocol_version == 2:
+            if not consumer_id:
+                return error
+            payload["protocol_version"] = 2
+            payload["consumer_id"] = consumer_id
+
+        browser_socket_id = get_browser_socket_id(data)
+        if not browser_socket_id:
+            return _terminal_event_error(
+                "terminal_end_dispatch_failed",
+                "Failed to dispatch terminal session end",
+                retryable=True,
+            )
+
+        sio = get_sio()
+        manager = getattr(sio, "manager", None)
+        local_target_connected = (
+            manager.is_connected(browser_socket_id, "/terminal")
+            if manager is not None
+            else None
+        )
+
+        try:
+            call_options = (
+                {"ignore_queue": True} if local_target_connected is True else {}
+            )
+            acknowledged = await sio.call(
+                "terminal:exit",
+                payload,
+                to=browser_socket_id,
+                namespace="/terminal",
+                timeout=TERMINAL_END_DISPATCH_TIMEOUT_SECONDS,
+                **call_options,
+            )
+            if (
+                not isinstance(acknowledged, dict)
+                or acknowledged.get("success") is not True
+            ):
+                raise RuntimeError("Terminal end was not acknowledged")
+        except Exception:
+            logger.exception(
+                "[Device WS] Failed to confirm terminal end session=%s code=%s "
+                "target_sid=%s",
+                session_id,
+                code,
+                browser_socket_id,
+            )
+            return _terminal_event_error(
+                "terminal_end_dispatch_failed",
+                "Failed to dispatch terminal session end",
+                retryable=True,
+            )
+
+        record_terminal_event(source="device", event="forced_exit")
+        return _terminal_event_error(
+            str(code),
+            str(error.get("error") or "Terminal session ended"),
+            terminal_end_dispatched=True,
+        )
 
     # ============================================================
     # OpenAI Responses API Event Handler
@@ -2502,6 +2984,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if isinstance(event_data, dict) and event_data.get("task_id"):
             workflow_continuation = await run_sync_in_executor(
                 _execution_runtime_event_sync,
+                int(user_id),
                 device_id,
                 event_data.get("task_id"),
                 event_type,
@@ -2662,12 +3145,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if not device_id or not local_task_id:
             return {"error": "Invalid runtime task update payload"}
 
-        address = {
-            "deviceId": device_id,
-            "localTaskId": local_task_id,
-        }
-        if workspace_path:
-            address["workspacePath"] = workspace_path
+        address = _runtime_task_notification_address(
+            device_id=device_id,
+            local_task_id=local_task_id,
+            payload=data,
+            workspace_path=workspace_path,
+        )
 
         status = str(data.get("status") or "updated")
         if not _is_runtime_task_terminal_status(status):
@@ -2862,6 +3345,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
             room=wework_runtime_user_room(user_id),
             namespace=WEWORK_RUNTIME_NAMESPACE,
         )
+        from app.services.wework_api.events import publish_runtime_event
+
+        await publish_runtime_event(user_id, device_id, payload)
         await self._local_task_responses.forward_runtime_event_to_channels(
             device_id=logical_device_id,
             payload=payload["payload"],
@@ -2936,10 +3422,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
             notification = (
                 await im_notification_dispatcher.send_runtime_task_update_for_user(
                     user_id=user_id,
-                    address={
-                        "deviceId": device_id,
-                        "localTaskId": local_task_id,
-                    },
+                    address=_runtime_task_notification_address(
+                        device_id=device_id,
+                        local_task_id=local_task_id,
+                        payload=payload,
+                    ),
                     title=title or local_task_id,
                     status=status,
                     content=content,

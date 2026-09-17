@@ -83,6 +83,34 @@ GIT_PUSH_COMMAND = (
     'exec git push -u origin "$branch"\''
 )
 
+GIT_APPLY_PATCH_SCRIPT = """
+import base64
+import subprocess
+import sys
+
+
+action = sys.argv[1] if len(sys.argv) > 1 else ""
+encoded_patch = sys.argv[2] if len(sys.argv) > 2 else ""
+args_by_action = {
+    "stage": ["git", "apply", "--cached", "--whitespace=nowarn", "-"],
+    "unstage": ["git", "apply", "--cached", "--reverse", "--whitespace=nowarn", "-"],
+    "revert": ["git", "apply", "--reverse", "--whitespace=nowarn", "-"],
+}
+git_args = args_by_action.get(action)
+if git_args is None:
+    print("Unsupported patch action", file=sys.stderr)
+    raise SystemExit(64)
+
+try:
+    patch = base64.b64decode(encoded_patch, validate=True)
+except Exception:
+    print("Invalid patch payload", file=sys.stderr)
+    raise SystemExit(64)
+
+result = subprocess.run(git_args, input=patch, check=False)
+raise SystemExit(result.returncode)
+""".strip()
+
 GIT_HOSTING_CLI_STATUS_SCRIPT = """
 import json
 import re
@@ -814,6 +842,29 @@ finish(
 
 SETUP_SHARED_SKILLS_COMMAND = f"python3 -c {shlex.quote(SETUP_SHARED_SKILLS_SCRIPT)}"
 
+RUNTIME_AUTH_FILE_PATH_HELPER = """
+def runtime_auth_file(runtime: str) -> Path:
+    if runtime != "codex":
+        fail(f"unsupported runtime: {runtime}")
+
+    configured_home = os.environ.get("WEGENT_CODEX_HOME", "").strip()
+    if configured_home:
+        codex_home = Path(configured_home)
+    else:
+        executor_home = os.environ.get("WEGENT_EXECUTOR_HOME", "").strip()
+        base = (
+            Path(executor_home)
+            if executor_home
+            else Path.home() / ".wegent-executor"
+        )
+        codex_home = base / "codex"
+
+    try:
+        return codex_home.resolve(strict=False) / "auth.json"
+    except OSError as exc:
+        fail(f"failed to resolve runtime auth path: {exc}")
+""".strip()
+
 SYNC_RUNTIME_AUTH_FILE_SCRIPT = """
 import json
 import os
@@ -826,14 +877,13 @@ def fail(message, code=64):
     sys.exit(code)
 
 
+__RUNTIME_AUTH_FILE_PATH_HELPER__
+
 runtime = os.environ.get("WEGENT_RUNTIME_CONFIG_RUNTIME", "").strip()
-target_path = os.environ.get("WEGENT_RUNTIME_CONFIG_TARGET_PATH", "").strip()
 content = os.environ.get("WEGENT_RUNTIME_CONFIG_CONTENT", "")
 
 if not runtime:
     fail("runtime is required")
-if not target_path.startswith("~/"):
-    fail("target path must be inside the user home directory")
 if not content:
     fail("runtime config content is required")
 
@@ -844,15 +894,8 @@ except json.JSONDecodeError as exc:
 if not isinstance(parsed, dict):
     fail("runtime config content must be a JSON object")
 
-home = Path.home().resolve()
-target = Path(target_path).expanduser()
-try:
-    resolved_target = target.resolve(strict=False)
-except OSError as exc:
-    fail(f"failed to resolve target path: {exc}")
-
-if home not in [resolved_target, *resolved_target.parents]:
-    fail("target path must stay inside the user home directory")
+target = runtime_auth_file(runtime)
+target_path = str(target)
 
 if target.exists():
     print(
@@ -885,7 +928,10 @@ print(
         ensure_ascii=False,
     )
 )
-""".strip()
+""".replace(
+    "__RUNTIME_AUTH_FILE_PATH_HELPER__",
+    RUNTIME_AUTH_FILE_PATH_HELPER,
+).strip()
 
 SYNC_RUNTIME_AUTH_FILE_COMMAND = (
     f"python3 -c {shlex.quote(SYNC_RUNTIME_AUTH_FILE_SCRIPT)}"
@@ -903,23 +949,14 @@ def fail(message, code=64):
     sys.exit(code)
 
 
+__RUNTIME_AUTH_FILE_PATH_HELPER__
+
 runtime = os.environ.get("WEGENT_RUNTIME_CONFIG_RUNTIME", "").strip()
-target_path = os.environ.get("WEGENT_RUNTIME_CONFIG_TARGET_PATH", "").strip()
 
 if not runtime:
     fail("runtime is required")
-if not target_path.startswith("~/"):
-    fail("target path must be inside the user home directory")
-
-home = Path.home().resolve()
-target = Path(target_path).expanduser()
-try:
-    resolved_target = target.resolve(strict=False)
-except OSError as exc:
-    fail(f"failed to resolve target path: {exc}")
-
-if home not in [resolved_target, *resolved_target.parents]:
-    fail("target path must stay inside the user home directory")
+target = runtime_auth_file(runtime)
+target_path = str(target)
 if not target.is_file():
     fail("runtime auth file does not exist", code=66)
 
@@ -946,7 +983,10 @@ print(
         ensure_ascii=False,
     )
 )
-""".strip()
+""".replace(
+    "__RUNTIME_AUTH_FILE_PATH_HELPER__",
+    RUNTIME_AUTH_FILE_PATH_HELPER,
+).strip()
 
 READ_RUNTIME_AUTH_FILE_COMMAND = (
     f"python3 -c {shlex.quote(READ_RUNTIME_AUTH_FILE_SCRIPT)}"
@@ -1546,6 +1586,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
             '"${WEGENT_EXECUTOR_PROJECTS_DIR:-${WECODE_HOME:-$HOME/.wecode}/wegent-executor/workspace/projects}"\''
         ),
     ),
+    "environment_prepare": LocalDeviceCommandDefinition(
+        command="environment-prepare",
+        post_processor="json",
+    ),
     "ls_a": LocalDeviceCommandDefinition(
         command="ls -a",
         post_processor="file_list",
@@ -1704,6 +1748,9 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command='sh -c \'git -C "$1" cat-file -e "$2^{commit}"\' --'
     ),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
+    "git_apply_patch": LocalDeviceCommandDefinition(
+        command=f"python3 -c {shlex.quote(GIT_APPLY_PATCH_SCRIPT)}"
+    ),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
     "git_push": LocalDeviceCommandDefinition(command=GIT_PUSH_COMMAND),
     "git_generate_commit_message": LocalDeviceCommandDefinition(

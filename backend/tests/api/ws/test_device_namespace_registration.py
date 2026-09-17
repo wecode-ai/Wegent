@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,6 +12,88 @@ from app.api.ws import device_namespace
 from app.api.ws.device_namespace import DeviceNamespace, DeviceRegistrationFingerprint
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
+
+
+@pytest.mark.asyncio
+async def test_new_app_identity_registers_with_independent_record_route(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.services.device_service import device_service
+
+    @asynccontextmanager
+    async def identity_lock(user_id):
+        yield
+
+    monkeypatch.setattr(device_namespace, "app_identity_lock", identity_lock)
+
+    original = device_service.upsert_device_crd(
+        test_db,
+        test_user.id,
+        "app-route",
+        "Wework",
+        device_type="app",
+        runtime_instance_id="runtime-original",
+        app_device_id="electron-original",
+    )
+
+    @contextmanager
+    def db_session():
+        yield test_db
+
+    async def run_inline(func, *args):
+        return func(*args)
+
+    namespace = DeviceNamespace()
+    monkeypatch.setattr(device_namespace, "_db_session", db_session)
+    monkeypatch.setattr(device_namespace, "run_sync_in_executor", run_inline)
+    monkeypatch.setattr(
+        namespace, "get_session", AsyncMock(return_value={"user_id": test_user.id})
+    )
+    save_session, enter_room, set_online = AsyncMock(), AsyncMock(), AsyncMock()
+    monkeypatch.setattr(namespace, "save_session", save_session)
+    monkeypatch.setattr(namespace, "enter_room", enter_room)
+    monkeypatch.setattr(device_service, "set_device_online", set_online)
+    monkeypatch.setattr(namespace, "_broadcast_device_online", AsyncMock())
+
+    def close_background_task(coro, _description):
+        coro.close()
+
+    monkeypatch.setattr(namespace, "_schedule_background_task", close_background_task)
+
+    result = await namespace.on_device_register(
+        "new-app",
+        {
+            "device_id": "app-route",
+            "name": "Other Wework",
+            "device_type": "app",
+            "runtime_instance_id": "runtime-other",
+            "app_device_id": "electron-other",
+        },
+    )
+
+    persisted = (
+        test_db.query(Kind)
+        .filter_by(
+            user_id=test_user.id,
+            kind="Device",
+            namespace="default",
+            name="app-route",
+        )
+        .order_by(Kind.id)
+        .all()
+    )
+    replacement = next(device for device in persisted if device.id != original.id)
+    replacement_route = f"app-record-{replacement.id}"
+
+    assert result == {"success": True, "device_id": "app-route"}
+    assert len(persisted) == 2
+    assert original.json["spec"]["runtimeInstanceId"] == "runtime-original"
+    assert replacement.json["spec"]["runtimeInstanceId"] == "runtime-other"
+    assert save_session.await_args.args[1]["device_id"] == replacement_route
+    assert enter_room.await_count == 2
+    assert set_online.await_args.kwargs["device_id"] == replacement_route
 
 
 def test_register_device_reads_display_name_before_session_closes(
@@ -32,13 +114,15 @@ def test_register_device_reads_display_name_before_session_closes(
     device_id = "device-detached-registration"
 
     try:
-        success, persisted_display_name, error = device_namespace._register_device(
-            user_id=user_id,
-            device_id=device_id,
-            name="Windows-Device-detached",
-            client_ip="127.0.0.1",
-            device_type=DeviceType.LOCAL.value,
-            bind_shell="claudecode",
+        success, persisted_display_name, error, route_id = (
+            device_namespace._register_device(
+                user_id=user_id,
+                device_id=device_id,
+                name="Windows-Device-detached",
+                client_ip="127.0.0.1",
+                device_type=DeviceType.LOCAL.value,
+                bind_shell="claudecode",
+            )
         )
     finally:
         cleanup_db = expiring_session_local()

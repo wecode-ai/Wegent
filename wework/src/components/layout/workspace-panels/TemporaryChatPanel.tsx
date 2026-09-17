@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight, MessageCircle } from 'lucide-react'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
+import {
+  applyRequestUserInputResponseToBlock,
+  requestUserInputPayloadKey,
+  requestUserInputResponseText,
+} from '@/components/chat/requestUserInputMessages'
 import type { ChatSubmitOptions, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
+import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRetry'
 import {
   DESKTOP_CHAT_CONTENT_WIDTH_CLASS,
   DESKTOP_MESSAGE_LIST_CLASS,
@@ -24,11 +31,8 @@ import {
   getRuntimeConversationTurnIds,
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
+  updateRuntimeConversationBlocks,
 } from '@/features/workbench/runtimeConversationCache'
-import {
-  resolveTemporaryChatActiveModel,
-  resolveTemporaryChatModelSelection,
-} from '@/features/workbench/temporaryChatModelContext'
 import {
   consumeRuntimeTaskLifecycleBlock,
   type RuntimeTaskLifecycleSnapshot,
@@ -48,9 +52,11 @@ import type {
   ModelOptions,
   ModelType,
   ProjectWithTasks,
+  RequestUserInputResponse,
   RuntimeSendRequest,
   RuntimeGoalCreateInput,
   RuntimeTaskAddress,
+  UnifiedModel,
 } from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
 
@@ -93,6 +99,9 @@ interface TemporaryChatPanelProps {
   projectWorkBarMiddleContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
   onRestoreConversation?: () => void
+  initialScrollPosition?: 'restore' | 'latest'
+  scrollOrigin?: 'top' | 'bottom'
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 }
 
 export function TemporaryChatPanel({
@@ -118,6 +127,9 @@ export function TemporaryChatPanel({
   projectWorkBarMiddleContext,
   projectWorkBarTrailingContext,
   onRestoreConversation,
+  initialScrollPosition = 'restore',
+  scrollOrigin = 'bottom',
+  onOpenRuntimeTask,
 }: TemporaryChatPanelProps) {
   const { t } = useTranslation('common')
   const {
@@ -130,6 +142,8 @@ export function TemporaryChatPanel({
     cancelRuntimePaneTask,
     subscribeRuntimeTaskStream,
     loadRuntimeTranscriptForPane,
+    loadTurnFileChangesDiff,
+    revertTurnFileChanges,
   } = useWorkbenchPaneContext()
   const attachmentSelection = useWorkbenchAttachments({
     uploadAttachment: services.attachmentApi?.uploadAttachment,
@@ -137,22 +151,35 @@ export function TemporaryChatPanel({
     scopeKey: instanceId,
   })
   const [address, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
-  const activeModel = useMemo(
-    () => resolveTemporaryChatActiveModel(projectChat.models, state.runtimeWork, address),
-    [address, projectChat.models, state.runtimeWork]
-  )
-  const activeModelSelection = useMemo(
-    () => resolveTemporaryChatModelSelection(state.runtimeWork, address),
-    [address, state.runtimeWork]
-  )
+  const taskModelSelection = address ? projectChat.resolveRuntimeTaskModelSelection(address) : null
   const globalSelectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
   const globalSelectedModelOptions =
     projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
-  const taskModelIdentityPending = Boolean(address && !activeModelSelection)
+  const taskModelIdentityPending = Boolean(
+    address &&
+    !taskModelSelection?.taskSelection &&
+    (state.isBootstrapping || state.runtimeWork === null)
+  )
   const sideChatProjectChat = useMemo(
     () => ({
       ...projectChat,
-      activeModel,
+      ...(address && taskModelSelection
+        ? {
+            activeModel: taskModelSelection.activeModel,
+            selectedModel: taskModelSelection.selectedModel,
+            selectedModelOptions: taskModelSelection.selectedModelOptions,
+            setSelectedModel: (model: UnifiedModel | null) =>
+              projectChat.setRuntimeTaskSelectedModel(address, model),
+            setSelectedModelAndOptions: (model: UnifiedModel, options: ModelOptions) =>
+              projectChat.setRuntimeTaskSelectedModelAndOptions(address, model, options),
+            setSelectedModelOption: (optionId: string, value: string) =>
+              projectChat.setRuntimeTaskSelectedModelOption(address, optionId, value),
+            getSelectedModel: () =>
+              projectChat.resolveRuntimeTaskModelSelection(address).selectedModel,
+            getSelectedModelOptions: () =>
+              projectChat.resolveRuntimeTaskModelSelection(address).selectedModelOptions,
+          }
+        : {}),
       hasConversationContext: Boolean(address),
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -163,7 +190,7 @@ export function TemporaryChatPanel({
       removeAttachment: attachmentSelection.removeAttachment,
       resetAttachments: attachmentSelection.resetAttachments,
     }),
-    [activeModel, address, attachmentSelection, projectChat]
+    [address, attachmentSelection, projectChat, taskModelSelection]
   )
   const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
     initialAddress ? getRuntimeConversationMessages(initialAddress) : []
@@ -173,7 +200,9 @@ export function TemporaryChatPanel({
   const [sending, setSending] = useState(false)
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
-  const [loadingFullTranscript, setLoadingFullTranscript] = useState(false)
+  const [hiddenRequestUserInputIds, setHiddenRequestUserInputIds] = useState<ReadonlySet<string>>(
+    () => new Set()
+  )
   const lifecycleStore = useRuntimeTaskLifecycleStore()
   const taskLifecycle = useRuntimeTaskLifecycle(address)
   const paneStatus = useMemo(
@@ -191,6 +220,7 @@ export function TemporaryChatPanel({
   const queuedMessagesRef = useRef(queuedMessages)
   const createdAddressKeyRef = useRef<string | null>(null)
   const autoSubmittedInitialInputRef = useRef(false)
+  const retryInFlightRef = useRef(false)
 
   useEffect(() => {
     queuedMessagesRef.current = queuedMessages
@@ -265,34 +295,6 @@ export function TemporaryChatPanel({
     }
   }, [address, lifecycleStore, loadRuntimeTranscriptForPane, sendEphemeral])
 
-  const loadFullTranscript = useCallback(async () => {
-    if (!address || loadingFullTranscript) return
-    setLoadingFullTranscript(true)
-    const hydrationToken = beginRuntimeConversationHydration(address)
-    try {
-      const transcript = await loadRuntimeTranscriptForPane(address, {
-        includeFullContent: true,
-        refresh: true,
-      })
-      lifecycleStore.syncTranscript(address, transcript, {
-        preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isTurnActive ?? false,
-      })
-      const nextMessages = completeRuntimeConversationHydration(
-        address,
-        hydrationToken,
-        transcript.turns
-      )
-      if (nextMessages.length > 0) {
-        setMessages(nextMessages)
-      }
-    } catch (caughtError) {
-      abortRuntimeConversationHydration(address, hydrationToken)
-      setError(caughtError instanceof Error ? caughtError.message : '加载完整输出失败')
-    } finally {
-      setLoadingFullTranscript(false)
-    }
-  }, [address, lifecycleStore, loadRuntimeTranscriptForPane, loadingFullTranscript])
-
   useEffect(() => {
     if (!address) return
     return subscribeRuntimeTaskStream(address, {
@@ -322,27 +324,35 @@ export function TemporaryChatPanel({
   }, [address, subscribeRuntimeTaskStream])
 
   const selectedModelFields = useMemo(() => {
-    if (address && activeModelSelection) {
-      return {
-        modelId: activeModelSelection.modelName,
-        modelType: activeModelSelection.modelType,
-        modelOptions: activeModelSelection.options ?? {},
+    if (address && taskModelSelection) {
+      if (taskModelSelection.selectedModel) {
+        return selectedModelExecutionFields(
+          taskModelSelection.selectedModel,
+          taskModelSelection.selectedModelOptions
+        )
+      }
+      if (taskModelSelection.taskSelection?.modelName) {
+        return {
+          modelId: taskModelSelection.taskSelection.modelName,
+          modelType: taskModelSelection.taskSelection.modelType,
+          modelOptions: taskModelSelection.selectedModelOptions,
+        }
       }
     }
     return selectedModelExecutionFields(globalSelectedModel, globalSelectedModelOptions)
-  }, [activeModelSelection, address, globalSelectedModel, globalSelectedModelOptions])
+  }, [address, globalSelectedModel, globalSelectedModelOptions, taskModelSelection])
 
   useEffect(() => {
     if (!address) return
     console.info('[runtime-v2] task conversation identity resolved', {
       deviceId: address.deviceId,
       taskId: address.taskId,
-      taskModel: activeModelSelection?.modelName ?? null,
-      taskModelType: activeModelSelection?.modelType ?? null,
-      resolvedCatalogModel: activeModel?.name ?? null,
+      taskModel: taskModelSelection?.taskSelection?.modelName ?? null,
+      taskModelType: taskModelSelection?.taskSelection?.modelType ?? null,
+      resolvedCatalogModel: taskModelSelection?.activeModel?.name ?? null,
       globalComposerModel: globalSelectedModel?.name ?? null,
     })
-  }, [activeModel, activeModelSelection, address, globalSelectedModel])
+  }, [address, globalSelectedModel, taskModelSelection])
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: RuntimePaneQueuedMessage) => {
@@ -735,6 +745,101 @@ export function TemporaryChatPanel({
     }).finally(() => setSending(false))
   }, [address, cancelRuntimePaneTask])
 
+  const openRuntimeTask = useCallback(() => {
+    if (!address || !onOpenRuntimeTask) return
+    void onOpenRuntimeTask(address)
+  }, [address, onOpenRuntimeTask])
+
+  const retryFailedMessage = useCallback(
+    async (message: WorkbenchMessage): Promise<boolean> => {
+      if (!address || retryInFlightRef.current) return false
+      const failedMessage = messages.find(
+        candidate =>
+          candidate.id === message.id &&
+          candidate.role === 'assistant' &&
+          candidate.status === 'failed'
+      )
+      if (!failedMessage) {
+        setError(t('workbench.retry_message_missing', '未找到可重试的失败消息'))
+        return false
+      }
+
+      retryInFlightRef.current = true
+      setError(null)
+      const clientUserMessageId = `runtime-retry-continuation-${Date.now()}`
+      const visibleMessage = createRuntimeUserMessage(
+        t('workbench.retry_continue_message', '继续'),
+        [],
+        { id: clientUserMessageId }
+      )
+      setMessages(
+        applyRuntimeConversationAction(address, {
+          type: 'user_added',
+          message: visibleMessage,
+        })
+      )
+      try {
+        const sent = await sendRuntimePaneMessage({
+          address,
+          message: RUNTIME_RETRY_CONTINUATION_PROMPT,
+          clientUserMessageId,
+          ...selectedModelFields,
+          ...runtimeContext,
+        })
+        if (!sent) {
+          setMessages(removeRuntimeConversationTurn(address, { clientUserMessageId }))
+        }
+        return sent
+      } catch (caughtError) {
+        setMessages(removeRuntimeConversationTurn(address, { clientUserMessageId }))
+        setError(caughtError instanceof Error ? caughtError.message : t('workbench.retry_failed'))
+        return false
+      } finally {
+        retryInFlightRef.current = false
+      }
+    },
+    [address, messages, runtimeContext, selectedModelFields, sendRuntimePaneMessage, t]
+  )
+
+  const submitRequestUserInput = useCallback(
+    async (response: RequestUserInputResponse): Promise<boolean> => {
+      if (!address) return false
+      const sent = await sendRuntimePaneMessage({
+        address,
+        message: requestUserInputResponseText(response),
+        requestUserInputResponse: response,
+        ...runtimeContext,
+      })
+      if (!sent) return false
+      setMessages(
+        updateRuntimeConversationBlocks(address, block =>
+          applyRequestUserInputResponseToBlock(block, response)
+        )
+      )
+      return true
+    },
+    [address, runtimeContext, sendRuntimePaneMessage]
+  )
+
+  const ignoreRequestUserInput = useCallback(
+    async (payload: RequestUserInputPayload) => {
+      if (!address) return
+      const key = requestUserInputPayloadKey(payload)
+      if (key) {
+        setHiddenRequestUserInputIds(current => new Set(current).add(key))
+      }
+      const cancelled = await cancelRuntimePaneTask(address)
+      if (!cancelled && key) {
+        setHiddenRequestUserInputIds(current => {
+          const next = new Set(current)
+          next.delete(key)
+          return next
+        })
+      }
+    },
+    [address, cancelRuntimePaneTask]
+  )
+
   return (
     <section data-testid={testId} className="flex min-h-0 min-w-0 flex-1 flex-col">
       {messages.length === 0 ? (
@@ -751,8 +856,35 @@ export function TemporaryChatPanel({
           className="min-h-0 flex-1"
           messageListClassName={`${DESKTOP_MESSAGE_LIST_CLASS} pb-4 pt-5`}
           scrollTestId="right-workspace-chat-scroll-area"
-          onLoadFullTranscript={loadFullTranscript}
-          loadingFullTranscript={loadingFullTranscript}
+          onRetryFailedMessage={
+            address
+              ? message => {
+                  void retryFailedMessage(message)
+                }
+              : undefined
+          }
+          onSwitchModelForFailedMessage={onOpenRuntimeTask ? openRuntimeTask : undefined}
+          onLoadFileChangesDiff={
+            address
+              ? (subtaskId, fileChanges) =>
+                  loadTurnFileChangesDiff(subtaskId, messages, fileChanges, address)
+              : undefined
+          }
+          onRevertFileChanges={
+            address
+              ? (subtaskId, fileChanges) =>
+                  revertTurnFileChanges(subtaskId, messages, fileChanges, address)
+              : undefined
+          }
+          onOpenFileChangesReview={onOpenRuntimeTask ? openRuntimeTask : undefined}
+          onOpenWorkspaceFile={onOpenRuntimeTask ? openRuntimeTask : undefined}
+          onOpenLocalSkillFile={onOpenRuntimeTask ? openRuntimeTask : undefined}
+          onRequestUserInputSubmit={address ? submitRequestUserInput : undefined}
+          onRequestUserInputIgnore={address ? ignoreRequestUserInput : undefined}
+          onOpenAssistantPlan={onOpenRuntimeTask ? openRuntimeTask : undefined}
+          hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+          initialScrollPosition={initialScrollPosition}
+          scrollOrigin={scrollOrigin}
         />
       )}
       <div

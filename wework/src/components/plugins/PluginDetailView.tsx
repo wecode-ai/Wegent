@@ -3,7 +3,6 @@ import {
   BookOpenText,
   Boxes,
   ExternalLink,
-  Link2,
   MessageCircle,
   MoreHorizontal,
   Plus,
@@ -14,13 +13,13 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import { navigateTo } from '@/lib/navigation'
 import type { InstalledPlugin, PluginPublicationRequestItem } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { useOptionalAppearance } from '@/features/appearance'
 import type { ResolvedAppearanceMode } from '@/features/appearance/types'
 import { resolvePreferredPluginLogo } from './plugin-assets'
 import { formatPluginVersion } from './plugin-display'
+import { PluginConnectorSection } from './PluginConnectorSection'
 import { PluginSourceAvatar } from './PluginSourceAvatar'
 import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
 import { PluginPublicationProgressCard } from './PluginPublicationProgressCard'
@@ -765,7 +764,6 @@ export function PluginDetailView({
       </button>
     ) : null
 
-  const connectorItems = componentItems.filter(item => item.type === 'connector')
   const capabilityItems = componentItems.filter(item => item.type !== 'connector')
   const guideTemplateSection = guideExamples.length > 0 && (
     <section className="mt-7 space-y-3" data-testid="plugin-detail-get-started">
@@ -943,55 +941,13 @@ export function PluginDetailView({
 
         {autoUpdateSection}
 
-        {connectorItems.length > 0 && (
-          <section className="mt-7 space-y-3">
-            <h2 className="text-base font-medium leading-5 text-text-primary">
-              {t('workbench.plugin_detail_authorization', '应用授权')}{' '}
-              <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
-                {connectorItems.length}
-              </span>
-            </h2>
-            <div className="overflow-hidden rounded-xl border border-border/30">
-              {connectorItems.map(item => (
-                <div
-                  key={`connector-${item.key}`}
-                  className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3"
-                >
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
-                    <Link2 className="h-4 w-4" />
-                  </span>
-                  <span className="min-w-0">
-                    <strong className="block truncate text-sm font-medium">{item.name}</strong>
-                    <small className="block truncate text-xs leading-4 text-text-secondary">
-                      {item.description}
-                    </small>
-                  </span>
-                  <button
-                    type="button"
-                    data-testid={`plugin-connection-manage-${item.componentKey}`}
-                    disabled={!isInstalled}
-                    className="h-8 rounded-lg bg-surface px-3 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() => {
-                      if (onManageConnector) {
-                        onManageConnector(item.name)
-                        return
-                      }
-                      navigateTo('/settings/connections')
-                    }}
-                  >
-                    {isInstalled
-                      ? connectorAuthBySlug?.[item.name] === 'connected'
-                        ? t('workbench.plugin_disconnect_connection', '退出登录')
-                        : connectorAuthBySlug?.[item.name] === 'disconnected'
-                          ? t('workbench.plugin_connect_login', '登录')
-                          : t('workbench.plugin_manage_connection', '管理连接')
-                      : t('workbench.plugin_connect_after_install', '安装后可连接')}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+        <PluginConnectorSection
+          key={plugin.id}
+          connectors={plugin.raw.spec.components.connectors ?? []}
+          installed={isInstalled}
+          authBySlug={connectorAuthBySlug}
+          onManage={onManageConnector}
+        />
 
         {capabilityItems.length > 0 && (
           <section className="mt-7 space-y-3" data-testid="plugin-detail-capabilities">

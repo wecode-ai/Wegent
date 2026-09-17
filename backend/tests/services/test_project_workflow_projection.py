@@ -8,14 +8,21 @@ from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
 from app.models.delivery import (
+    Delivery,
     LoopItem,
     LoopItemTaskBinding,
     ProjectAutomationRun,
+    ProjectWorkflowPlanItem,
+    ProjectWorkflowRun,
 )
+from app.models.kind import Kind
 from app.models.user import User
 from app.services.delivery import delivery_service
+from app.services.loop_item_executions.service import runtime_device_identity_ids
 from app.services.project_workflow_projection import (
+    sync_workflow_automation_status,
     update_workflow_node,
+    update_workflow_plan_task_status,
     update_workflow_task_status,
 )
 
@@ -190,6 +197,54 @@ def test_workflow_projection_updates_owning_automation_run(
     assert run.completed_at is not None
 
 
+def test_cancelled_workflow_root_is_not_reopened_by_late_projection(
+    test_db: Session,
+    workflow_project: CloudProject,
+) -> None:
+    run = ProjectAutomationRun(
+        cloud_project_id=workflow_project.id,
+        parent_id="automation-rule",
+        task_id="cancelled-workflow-item",
+        source="event",
+        status="cancelled",
+        created_by_user_id=workflow_project.created_by_user_id,
+        metadata_json={"workflow_cancellation_requested": True},
+    )
+    item = LoopItem(
+        id="cancelled-workflow-item",
+        cloud_project_id=workflow_project.id,
+        created_by_user_id=workflow_project.created_by_user_id,
+        title="Cancelled workflow",
+        status="in_progress",
+        priority="none",
+        metadata_json={
+            "workflow_automation": {
+                "rule_id": "automation-rule",
+                "run_id": run.id,
+            },
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "nodes": [],
+            },
+        },
+    )
+    test_db.add_all([run, item])
+    test_db.commit()
+    version = run.version
+
+    sync_workflow_automation_status(
+        test_db,
+        item,
+        run_status="succeeded",
+    )
+    test_db.commit()
+
+    test_db.refresh(run)
+    assert run.status == "cancelled"
+    assert run.version == version
+
+
 def test_direct_robot_task_succeeds_without_automation_rule(
     test_db: Session,
     workflow_project: CloudProject,
@@ -247,6 +302,104 @@ def test_direct_robot_task_succeeds_without_automation_rule(
     assert node["status"] == "completed"
     assert node["task_statuses"]["local-device:direct-task"] == "succeeded"
     assert updated.status == "in_review"
+
+
+def test_workflow_plan_child_runtime_projects_onto_parent_stage(
+    test_db: Session,
+    workflow_project: CloudProject,
+) -> None:
+    parent = LoopItem(
+        id="workflow-plan-parent",
+        cloud_project_id=workflow_project.id,
+        sequence_number=105,
+        created_by_user_id=workflow_project.created_by_user_id,
+        title="Workflow plan parent",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "nodes": [
+                    {
+                        "id": "claude",
+                        "name": "Claude",
+                        "execution_mode": "robot",
+                        "depends_on": [],
+                        "required": True,
+                        "status": "ready",
+                        "task_ids": [],
+                        "task_statuses": {},
+                    },
+                    {
+                        "id": "codex",
+                        "name": "Codex",
+                        "execution_mode": "robot",
+                        "depends_on": ["claude"],
+                        "required": True,
+                        "status": "blocked",
+                    },
+                ],
+            }
+        },
+    )
+    workflow_run = ProjectWorkflowRun(
+        id="workflow-plan-run",
+        cloud_project_id=workflow_project.id,
+        parent_id=parent.id,
+        status="running",
+        created_by_user_id=workflow_project.created_by_user_id,
+        metadata_json={"stage_id": "claude", "plan_version": 1},
+    )
+    child = LoopItem(
+        id="workflow-plan-child",
+        cloud_project_id=workflow_project.id,
+        parent_id=parent.id,
+        sequence_number=106,
+        created_by_user_id=workflow_project.created_by_user_id,
+        title="Claude child",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        metadata_json={
+            "workflow_plan": {
+                "run_id": workflow_run.id,
+                "plan_item_id": "workflow-plan-item",
+                "stage_id": "claude",
+            }
+        },
+    )
+    plan_item = ProjectWorkflowPlanItem(
+        id="workflow-plan-item",
+        cloud_project_id=workflow_project.id,
+        parent_id=workflow_run.id,
+        loop_item_id=child.id,
+        title=child.title,
+        description="",
+        status="materialized",
+        created_by_user_id=workflow_project.created_by_user_id,
+        metadata_json={"stage_id": "claude"},
+    )
+    test_db.add_all([parent, workflow_run, child, plan_item])
+    test_db.commit()
+
+    running = update_workflow_plan_task_status(
+        test_db,
+        child_id=child.id,
+        device_id="cloud-device",
+        task_id="codex-queue-2",
+        execution_status="running",
+    )
+
+    assert running is not None
+    running_node = running.metadata_json["workflow"]["nodes"][0]
+    assert running_node["status"] == "running"
+    assert running_node["task_ids"] == ["cloud-device:codex-queue-2"]
+    assert running_node["task_statuses"] == {"cloud-device:codex-queue-2": "running"}
+    assert running.metadata_json["workflow"]["nodes"][1]["status"] == "blocked"
 
 
 def test_direct_robot_delivery_does_not_complete_before_runtime_success(
@@ -355,3 +508,199 @@ def test_direct_robot_delivery_completes_after_runtime_success(
     nodes = item.metadata_json["workflow"]["nodes"]
     assert [node["status"] for node in nodes] == ["completed", "ready"]
     assert item.status == "in_progress"
+
+
+def test_direct_robot_delivery_derived_from_binding_when_node_link_is_missing(
+    test_db: Session,
+    workflow_project: CloudProject,
+) -> None:
+    item = LoopItem(
+        id="direct-robot-delivery-derived-item",
+        cloud_project_id=workflow_project.id,
+        sequence_number=103,
+        created_by_user_id=workflow_project.created_by_user_id,
+        title="Direct robot delivery derived from binding",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "nodes": [
+                    {
+                        "id": "develop",
+                        "name": "Develop",
+                        "execution_mode": "robot",
+                        "automation_rule_id": None,
+                        "depends_on": [],
+                        "required": True,
+                        "status": "awaiting_deliverables",
+                        "delivery_ids": [],
+                        "required_deliverables": [
+                            {
+                                "id": "req-1",
+                                "name": "MR",
+                                "value_type": "pull_request",
+                            }
+                        ],
+                    }
+                ],
+            }
+        },
+    )
+    test_db.add(item)
+    test_db.flush()
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(workflow_project.id),
+        loop_item_id=item.id,
+        task_user_id=workflow_project.created_by_user_id,
+        device_id="local-device",
+        task_id="derived-task",
+        linked_by_user_id=workflow_project.created_by_user_id,
+        metadata_json={"workflow_node_id": "develop"},
+    )
+    test_db.add(binding)
+    test_db.flush()
+    delivery = Delivery(
+        cloud_project_id=str(workflow_project.id),
+        loop_item_id=item.id,
+        status="delivered",
+        created_by_user_id=workflow_project.created_by_user_id,
+        source_task_binding_id=str(binding.id),
+        source_task_snapshot={"taskId": "derived-task"},
+        metadata_json={
+            "fulfillments": [
+                {
+                    "requirement_id": "req-1",
+                    "kind": "pull_request",
+                    "provider": "gitlab",
+                    "url": "https://gitlab.example/repo/-/merge_requests/1",
+                    "number": 1,
+                    "state": "draft",
+                    "head_branch": "feat/x",
+                    "base_branch": "main",
+                    "head_commit": "abc1234",
+                }
+            ]
+        },
+    )
+    test_db.add(delivery)
+    test_db.commit()
+    test_db.refresh(item)
+
+    delivery_service._complete_automated_node_if_fulfilled(
+        test_db,
+        item,
+        "develop",
+    )
+
+    nodes = item.metadata_json["workflow"]["nodes"]
+    assert nodes[0]["status"] == "completed"
+    assert nodes[0]["delivery_ids"] == []
+
+
+def test_runtime_device_identity_ids_resolve_executor_and_app_ids(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    test_db.add(
+        Kind(
+            kind="Device",
+            name="executor-dev",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={
+                "spec": {
+                    "deviceId": "executor-dev",
+                    "appDeviceId": "app-device-1",
+                }
+            },
+        )
+    )
+    test_db.commit()
+
+    assert runtime_device_identity_ids(
+        test_db,
+        "executor-dev",
+        owner_user_id=test_user.id,
+    ) == [
+        "executor-dev",
+        "app-device-1",
+    ]
+
+
+def test_workflow_projection_matches_binding_through_device_identity(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    test_db.add(
+        Kind(
+            kind="Device",
+            name="executor-dev",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={
+                "spec": {
+                    "deviceId": "executor-dev",
+                    "appDeviceId": "app-device-1",
+                }
+            },
+        )
+    )
+    item = LoopItem(
+        id="device-identity-workflow-item",
+        cloud_project_id=workflow_project.id,
+        sequence_number=104,
+        created_by_user_id=workflow_project.created_by_user_id,
+        title="Device identity workflow",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "nodes": [
+                    {
+                        "id": "develop",
+                        "name": "Develop",
+                        "execution_mode": "robot",
+                        "automation_rule_id": None,
+                        "depends_on": [],
+                        "required": True,
+                        "status": "running",
+                    }
+                ],
+            }
+        },
+    )
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(workflow_project.id),
+        loop_item_id=item.id,
+        task_user_id=workflow_project.created_by_user_id,
+        device_id="app-device-1",
+        task_id="identity-task",
+        linked_by_user_id=workflow_project.created_by_user_id,
+        metadata_json={"workflow_node_id": "develop"},
+    )
+    test_db.add_all([item, binding])
+    test_db.commit()
+
+    updated = update_workflow_task_status(
+        test_db,
+        user_id=workflow_project.created_by_user_id,
+        device_id="executor-dev",
+        task_id="identity-task",
+        execution_status="succeeded",
+    )
+
+    assert updated is not None
+    node = updated.metadata_json["workflow"]["nodes"][0]
+    assert node["status"] == "completed"
+    assert node["task_statuses"]["app-device-1:identity-task"] == "succeeded"

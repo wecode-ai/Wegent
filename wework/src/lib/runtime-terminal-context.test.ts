@@ -217,4 +217,34 @@ describe('runtime terminal context', () => {
 
     expect(context).toBeUndefined()
   })
+
+  test('does not capture output while terminal context injection is disabled', () => {
+    const workspacePath = `/tmp/runtime-terminal-context-disabled-append-${Date.now()}`
+    window.dispatchEvent(
+      new CustomEvent(APP_PREFERENCES_CHANGED_EVENT, {
+        detail: { ...defaultAppPreferences, terminalContextInjectionEnabled: false },
+      })
+    )
+
+    appendRuntimeTerminalContext({
+      sessionId: `session-disabled-append-${Date.now()}`,
+      workspacePath,
+      kind: 'local',
+      data: 'terminal output must not be stored',
+    })
+
+    window.dispatchEvent(
+      new CustomEvent(APP_PREFERENCES_CHANGED_EVENT, {
+        detail: { ...defaultAppPreferences, terminalContextInjectionEnabled: true },
+      })
+    )
+
+    expect(
+      readRuntimeTerminalAdditionalContext({
+        deviceId: 'device-1',
+        workspacePath,
+        taskId: 'task-1',
+      })
+    ).toBeUndefined()
+  })
 })

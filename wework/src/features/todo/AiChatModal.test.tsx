@@ -25,6 +25,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => ({
     createProjectRuntimeTask: mocks.createProjectRuntimeTask,
+    state: {
+      devices: [
+        { device_id: 'cloud-device', name: '云端构建机', device_type: 'cloud', status: 'online' },
+      ],
+    },
   }),
 }))
 
@@ -445,7 +450,7 @@ describe('AiChatModal', () => {
       />
     )
 
-    expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('私信 AI')
+    expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('问AI')
     expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('WEG-1 · Implement cloud MCP')
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-project-id', '91')
   })
@@ -649,6 +654,53 @@ describe('AiChatModal', () => {
 
     await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('shows the execution device in the embedded conversation header', () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'cloud-device', taskId: 'runtime-1' }}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('ai-chat-execution-device')).toHaveTextContent('云端构建机')
+  })
+
+  it('shows the execution device name in the split task detail', () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'cloud-device', taskId: 'runtime-1' }}
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('ai-chat-execution-device')).toHaveTextContent('云端构建机')
+  })
+
+  it('falls back to the device id when the device is unknown', () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'retired-device', taskId: 'runtime-1' }}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('ai-chat-execution-device')).toHaveTextContent('retired-device')
   })
 
   it('notifies the parent only once when a new task address becomes available', () => {

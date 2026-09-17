@@ -886,6 +886,10 @@ class SubtaskStore(Protocol):
         self, db: Session, *, executor_name: str
     ) -> list[Subtask]: ...
 
+    def has_active_by_executor_names(
+        self, db: Session, *, user_id: int, executor_names: list[str]
+    ) -> bool: ...
+
     def list_by_executor_ref(
         self, db: Session, *, executor_namespace: str, executor_name: str
     ) -> list[Subtask]: ...

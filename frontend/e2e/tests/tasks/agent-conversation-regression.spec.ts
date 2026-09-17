@@ -3,9 +3,9 @@
  *
  * These tests use the real frontend, backend, Socket.IO, Chat Shell, and
  * backend execution routing. CI uses:
- * - mock-model-server for Chat Shell and ClaudeCode model requests
- * - real executor-manager plus a real ClaudeCode executor image for ClaudeCode HTTP tasks
- * - real local executor in local mode for device WebSocket tasks
+ * - mock-model-server for Chat Shell, ClaudeCode, and Codex model requests
+ * - real executor-manager plus a real coding executor image for ClaudeCode and Codex HTTP tasks
+ * - real local executor registered as a Wework app device for device WebSocket tasks
  */
 
 import { APIRequestContext, Page, expect, test } from '@playwright/test'
@@ -16,15 +16,18 @@ import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
 const CLAUDE_MODEL_SERVER_URL = process.env.E2E_CLAUDE_MODEL_SERVER_URL || MOCK_MODEL_SERVER_URL
+const CODEX_MODEL_SERVER_URL = process.env.E2E_CODEX_MODEL_SERVER_URL || MOCK_MODEL_SERVER_URL
 const LOCAL_CLAUDE_MODEL_SERVER_URL =
   process.env.E2E_LOCAL_CLAUDE_MODEL_SERVER_URL || MOCK_MODEL_SERVER_URL
 const DEVICE_ID = process.env.E2E_DEVICE_ID || 'e2e-claudecode-device'
 const TEST_PREFIX = `e2e-agent-reg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 const CHAT_MODEL_NAME = `${TEST_PREFIX}-chat-model`
 const CLAUDE_MODEL_NAME = `${TEST_PREFIX}-claude-model`
+const CODEX_MODEL_NAME = `${TEST_PREFIX}-codex-model`
 const DEVICE_CLAUDE_MODEL_NAME = `${TEST_PREFIX}-device-claude-model`
 const CLAUDE_SHELL_NAME = `${TEST_PREFIX}-claude-shell`
-const CLAUDE_EXECUTOR_IMAGE =
+const CODEX_SHELL_NAME = `${TEST_PREFIX}-codex-shell`
+const CODING_EXECUTOR_IMAGE =
   process.env.E2E_CLAUDE_EXECUTOR_IMAGE || 'wegent/e2e-claudecode-executor:latest'
 const RESPONSE_TIMEOUT_MS = 120_000
 // Mock control requests can race with Node closing an idle keep-alive socket.
@@ -77,6 +80,7 @@ test.describe('Agent conversation regression', () => {
   let chatShellTeam: CreatedTeam
   let claudeChatTeam: CreatedTeam
   let codeTeam: CreatedTeam
+  let codexCodeTeam: CreatedTeam
   let deviceTeam: CreatedTeam
   let manualPipelineTeam: CreatedPipelineTeam
   let automaticPipelineTeam: CreatedPipelineTeam
@@ -84,6 +88,7 @@ test.describe('Agent conversation regression', () => {
   const createdProjectIds = new Set<number>()
   const createdGitAccountIds = new Set<string>()
   const streamRuleMatchTexts = new Set<string>()
+  const toolScenarioMatchTexts = new Set<string>()
 
   test.beforeAll(async ({ request }) => {
     apiClient = createApiClient(request)
@@ -98,6 +103,7 @@ test.describe('Agent conversation regression', () => {
 
   test.afterEach(async ({ request }) => {
     await cleanupStreamRules(request)
+    await cleanupToolScenarios(request)
     await clearMockModelRequests(request)
     await cleanupCreatedTasks(request)
     await cleanupCreatedProjects(request)
@@ -423,17 +429,151 @@ test.describe('Agent conversation regression', () => {
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
   })
 
-  test('device mode ClaudeCode supports dialogue and follow-up', async ({ page, request }) => {
-    const contextToken = makeContextToken('device')
-    const firstPrompt = `Remember this device context token: ${contextToken}`
-    const followUpPrompt = 'What context token did I provide in the previous device turn?'
+  test('coding mode Codex executes through app-server and resumes a follow-up', async ({
+    page,
+    request,
+  }) => {
+    const contextToken = makeContextToken('codex_code')
+    const firstPrompt = `Remember this Codex context token: ${contextToken}`
+    const followUpPrompt = 'What context token did I provide in the previous Codex turn?'
 
-    await waitForLocalDeviceOnline(request)
-    await openTaskPage(page, `/devices/chat?deviceId=${DEVICE_ID}`, deviceTeam.id, 'task')
+    await openTaskPage(page, '/chat?agent=code', codexCodeTeam.id, 'code')
 
     await sendMessage(page, firstPrompt)
     const taskId = await waitForTaskId(page)
     createdTaskIds.add(taskId)
+    await expect(page.getByTestId('messages-container')).toContainText(
+      `Mock model remembered ${contextToken}`,
+      { timeout: RESPONSE_TIMEOUT_MS }
+    )
+    await waitForBackendTerminal(request, taskId)
+
+    const firstRequest = await waitForCapturedModelRequest(
+      request,
+      capture =>
+        isOpenAIResponsesRequest(capture) && extractText(capture.body).includes(firstPrompt),
+      `Codex Responses request containing ${firstPrompt}`
+    )
+    expect(firstRequest.url).toContain('/responses')
+
+    await sendMessage(page, `${followUpPrompt} Reply with only that token.`)
+    await expect(page.getByTestId('messages-container')).toContainText(
+      `Mock model resumed with ${contextToken}`,
+      { timeout: RESPONSE_TIMEOUT_MS }
+    )
+    await waitForBackendTerminal(request, taskId)
+
+    const secondRequest = await waitForCapturedModelRequest(
+      request,
+      capture =>
+        isOpenAIResponsesRequest(capture) && extractText(capture.body).includes(followUpPrompt),
+      `resumed Codex Responses request containing ${followUpPrompt}`
+    )
+    expect(extractText(secondRequest.body)).toContain(contextToken)
+    expect(extractText(secondRequest.body)).toContain(firstPrompt)
+  })
+
+  test('coding mode Codex uses configured Skill and MCP', async ({ page, request }) => {
+    const prompt = `CODEX_SKILL_MCP_E2E_${makeContextToken('capability')}`
+    const successMarker = 'CODEX_SKILL_MCP_EFFECTIVE'
+    await resetMockMcp(request)
+    await configureToolScenario(request, prompt, [
+      {
+        toolCalls: [
+          {
+            toolName: 'exec_command',
+            arguments: {
+              cmd: "test -f .codex/skills/interactive/SKILL.md && printf 'CODEX_SKILL_DEPLOYED'",
+            },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolName: 'get_document_info',
+            arguments: { nodeId: 'doc-d1' },
+          },
+        ],
+      },
+      { responseContent: successMarker },
+    ])
+
+    await openTaskPage(page, '/chat?agent=code', codexCodeTeam.id, 'code')
+    await sendMessage(page, prompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+    await expect(page.getByTestId('messages-container')).toContainText(successMarker, {
+      timeout: RESPONSE_TIMEOUT_MS,
+    })
+    await waitForBackendTerminal(request, taskId)
+
+    const calls = await getMockMcpCalls(request)
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        name: 'get_document_info',
+        arguments: expect.objectContaining({ nodeId: 'doc-d1' }),
+        isError: false,
+      })
+    )
+    const captures = await loadCapturedModelRequests(request)
+    expect(
+      captures.some(capture => JSON.stringify(capture.body).includes('CODEX_SKILL_DEPLOYED'))
+    ).toBe(true)
+  })
+
+  test('Wework app device supports ClaudeCode dialogue and follow-up', async ({
+    page,
+    request,
+  }) => {
+    const contextToken = makeContextToken('device')
+    const firstPrompt = `Remember this device context token: ${contextToken}`
+    const followUpPrompt = 'What context token did I provide in the previous device turn?'
+
+    await waitForWeworkDeviceOnline(request)
+    const deviceResponse = await request.get(`${API_BASE_URL}/api/devices`, {
+      headers: authHeaders(),
+    })
+    expect(deviceResponse.status()).toBe(200)
+    const deviceBody = await deviceResponse.json()
+    const targetId = deviceBody.items.find(
+      (device: { device_id: string }) => device.device_id === DEVICE_ID
+    )?.execution_target_id
+    expect(targetId).toMatch(/^app-record-\d+$/)
+    await configureTaskPagePreferences(page, deviceTeam.id, 'task')
+    const [loadedDevices] = await Promise.all([
+      page.waitForResponse(
+        response =>
+          new URL(response.url()).pathname === '/api/devices' &&
+          response.request().method() === 'GET'
+      ),
+      page.goto('/devices', { waitUntil: 'domcontentloaded' }),
+    ])
+    expect(loadedDevices.status()).toBe(200)
+    await expect(page.getByTestId('device-section-local')).toContainText('E2E ClaudeCode Device')
+    const startChatButton = page.getByTestId(`start-device-chat-${DEVICE_ID}`)
+    await expect(startChatButton).toBeEnabled()
+    await startChatButton.click()
+    await expect(page).toHaveURL(url => {
+      return url.pathname === '/devices/chat' && url.searchParams.get('deviceId') === targetId
+    })
+    await dismissOnboardingTour(page)
+    await ensureMessageInputReady(page)
+    const deviceSelector = page.getByTestId('device-chat-target-select')
+    await expect(deviceSelector).toHaveValue(targetId)
+    await expect(page.getByTestId(`device-chat-option-${targetId}`)).toContainText(
+      'E2E ClaudeCode Device'
+    )
+    await selectModel(page, DEVICE_CLAUDE_MODEL_NAME)
+
+    await sendMessage(page, firstPrompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+    await expect(page).toHaveURL(url => {
+      return url.pathname === '/devices/chat' && url.searchParams.get('taskId') === String(taskId)
+    })
+    await expect(deviceSelector).toHaveValue(targetId)
+    await expect(deviceSelector).toBeDisabled()
     await expect(page.getByTestId('messages-container')).toContainText(
       `Mock model remembered ${contextToken}`,
       { timeout: RESPONSE_TIMEOUT_MS }
@@ -465,7 +605,7 @@ test.describe('Agent conversation regression', () => {
     const prompt = `Remember this device Git context token: ${contextToken}`
 
     try {
-      await waitForLocalDeviceOnline(request)
+      await waitForWeworkDeviceOnline(request)
 
       const gitAccountResponse = await request.put(`${API_BASE_URL}/api/users/me`, {
         headers: authHeaders(),
@@ -686,6 +826,35 @@ test.describe('Agent conversation regression', () => {
     )
     expect([200, 201]).toContain(claudeModelResponse.status())
 
+    const codexModelResponse = await request.post(
+      `${API_BASE_URL}/api/v1/namespaces/default/models`,
+      {
+        headers: authHeaders(),
+        data: {
+          apiVersion: 'agent.wecode.io/v1',
+          kind: 'Model',
+          metadata: {
+            name: CODEX_MODEL_NAME,
+            namespace: 'default',
+          },
+          spec: {
+            protocol: 'openai-responses',
+            apiFormat: 'responses',
+            modelConfig: {
+              env: {
+                model: 'openai',
+                model_id: 'gpt-5.1-codex',
+                api_key: 'mock-api-key',
+                OPENAI_API_KEY: 'mock-api-key',
+                base_url: `${CODEX_MODEL_SERVER_URL}/v1`,
+              },
+            },
+          },
+        },
+      }
+    )
+    expect([200, 201]).toContain(codexModelResponse.status())
+
     const deviceClaudeModelResponse = await request.post(
       `${API_BASE_URL}/api/v1/namespaces/default/models`,
       {
@@ -714,7 +883,7 @@ test.describe('Agent conversation regression', () => {
     )
     expect([200, 201]).toContain(deviceClaudeModelResponse.status())
 
-    await createClaudeShell(request)
+    await createCodingShells(request)
 
     const interactiveSkillRef = await resolveSkillRef(request, 'interactive')
     chatShellTeam = await createTeam(request, {
@@ -741,6 +910,23 @@ test.describe('Agent conversation regression', () => {
       shellName: CLAUDE_SHELL_NAME,
       bindMode: ['code'],
       modelName: CLAUDE_MODEL_NAME,
+    })
+    codexCodeTeam = await createTeam(request, {
+      teamName: `${TEST_PREFIX}-codex-code-team`,
+      botName: `${TEST_PREFIX}-codex-code-bot`,
+      shellName: CODEX_SHELL_NAME,
+      bindMode: ['code'],
+      modelName: CODEX_MODEL_NAME,
+      skills: ['interactive'],
+      skillRefs: { interactive: interactiveSkillRef },
+      preloadSkills: ['interactive'],
+      preloadSkillRefs: { interactive: interactiveSkillRef },
+      mcpServers: {
+        'e2e-docs': {
+          type: 'streamable-http',
+          url: `${CODEX_MODEL_SERVER_URL}/mcp?service=docs`,
+        },
+      },
     })
     deviceTeam = await createTeam(request, {
       teamName: `${TEST_PREFIX}-device-team`,
@@ -773,17 +959,28 @@ test.describe('Agent conversation regression', () => {
     })
   }
 
-  async function createClaudeShell(request: APIRequestContext): Promise<void> {
-    const response = await request.post(`${API_BASE_URL}/api/shells`, {
-      headers: authHeaders(),
-      data: {
+  async function createCodingShells(request: APIRequestContext): Promise<void> {
+    for (const shell of [
+      {
         name: CLAUDE_SHELL_NAME,
         displayName: 'E2E ClaudeCode Executor',
         baseShellRef: 'ClaudeCode',
-        baseImage: CLAUDE_EXECUTOR_IMAGE,
       },
-    })
-    expect([200, 201]).toContain(response.status())
+      {
+        name: CODEX_SHELL_NAME,
+        displayName: 'E2E Codex Executor',
+        baseShellRef: 'Codex',
+      },
+    ]) {
+      const response = await request.post(`${API_BASE_URL}/api/shells`, {
+        headers: authHeaders(),
+        data: {
+          ...shell,
+          baseImage: CODING_EXECUTOR_IMAGE,
+        },
+      })
+      expect([200, 201]).toContain(response.status())
+    }
   }
 
   async function createTeam(
@@ -798,6 +995,7 @@ test.describe('Agent conversation regression', () => {
       skillRefs?: Record<string, SkillRefMeta>
       preloadSkills?: string[]
       preloadSkillRefs?: Record<string, SkillRefMeta>
+      mcpServers?: Record<string, unknown>
     }
   ): Promise<CreatedTeam> {
     const botResponse = await request.post(`${API_BASE_URL}/api/bots`, {
@@ -814,6 +1012,7 @@ test.describe('Agent conversation regression', () => {
         skill_refs: options.skillRefs,
         preload_skills: options.preloadSkills,
         preload_skill_refs: options.preloadSkillRefs,
+        mcp_servers: options.mcpServers,
         namespace: 'default',
         is_active: true,
       },
@@ -996,6 +1195,7 @@ test.describe('Agent conversation regression', () => {
       automaticPipelineTeam,
       manualPipelineTeam,
       deviceTeam,
+      codexCodeTeam,
       codeTeam,
       claudeChatTeam,
       chatShellTeam,
@@ -1018,7 +1218,12 @@ test.describe('Agent conversation regression', () => {
       }
     }
 
-    for (const modelName of [DEVICE_CLAUDE_MODEL_NAME, CLAUDE_MODEL_NAME, CHAT_MODEL_NAME]) {
+    for (const modelName of [
+      DEVICE_CLAUDE_MODEL_NAME,
+      CODEX_MODEL_NAME,
+      CLAUDE_MODEL_NAME,
+      CHAT_MODEL_NAME,
+    ]) {
       await request
         .delete(`${API_BASE_URL}/api/v1/namespaces/default/models/${modelName}`, {
           headers: authHeaders(),
@@ -1026,11 +1231,13 @@ test.describe('Agent conversation regression', () => {
         .catch(() => null)
     }
 
-    await request
-      .delete(`${API_BASE_URL}/api/shells/${CLAUDE_SHELL_NAME}`, {
-        headers: authHeaders(),
-      })
-      .catch(() => null)
+    for (const shellName of [CODEX_SHELL_NAME, CLAUDE_SHELL_NAME]) {
+      await request
+        .delete(`${API_BASE_URL}/api/shells/${shellName}`, {
+          headers: authHeaders(),
+        })
+        .catch(() => null)
+    }
   }
 
   async function cleanupCreatedTasks(request: APIRequestContext): Promise<void> {
@@ -1101,6 +1308,60 @@ test.describe('Agent conversation regression', () => {
       },
     })
     expect(response.status()).toBe(200)
+  }
+
+  async function configureToolScenario(
+    request: APIRequestContext,
+    matchText: string,
+    steps: Array<{
+      toolCalls?: Array<{ toolName: string; arguments: Record<string, unknown> }>
+      responseContent?: string
+    }>
+  ): Promise<void> {
+    toolScenarioMatchTexts.add(matchText)
+    const response = await request.post(`${MOCK_MODEL_SERVER_URL}/tool-scenarios`, {
+      ...MOCK_MODEL_CONTROL_REQUEST_OPTIONS,
+      data: { matchText, steps },
+    })
+    expect(response.status()).toBe(200)
+  }
+
+  async function cleanupToolScenarios(request: APIRequestContext): Promise<void> {
+    const matchTexts = [...toolScenarioMatchTexts]
+    toolScenarioMatchTexts.clear()
+    await Promise.all(
+      matchTexts.map(matchText =>
+        request
+          .delete(
+            `${MOCK_MODEL_SERVER_URL}/tool-scenarios?matchText=${encodeURIComponent(matchText)}`,
+            MOCK_MODEL_CONTROL_REQUEST_OPTIONS
+          )
+          .catch(() => null)
+      )
+    )
+  }
+
+  async function resetMockMcp(request: APIRequestContext): Promise<void> {
+    const response = await request.post(
+      `${MOCK_MODEL_SERVER_URL}/mcp-control/reset`,
+      MOCK_MODEL_CONTROL_REQUEST_OPTIONS
+    )
+    expect(response.status()).toBe(200)
+  }
+
+  async function getMockMcpCalls(request: APIRequestContext): Promise<
+    Array<{
+      name: string
+      arguments: Record<string, unknown>
+      isError: boolean
+    }>
+  > {
+    const response = await request.get(
+      `${MOCK_MODEL_SERVER_URL}/mcp-control/calls`,
+      MOCK_MODEL_CONTROL_REQUEST_OPTIONS
+    )
+    expect(response.status()).toBe(200)
+    return response.json()
   }
 
   function containsInteractiveFormAnswer(
@@ -1197,6 +1458,19 @@ test.describe('Agent conversation regression', () => {
     teamId: number,
     mode: 'chat' | 'code' | 'task'
   ): Promise<void> {
+    await configureTaskPagePreferences(page, teamId, mode)
+
+    const separator = path.includes('?') ? '&' : '?'
+    await page.goto(`${path}${separator}teamId=${teamId}`, { waitUntil: 'domcontentloaded' })
+    await dismissOnboardingTour(page)
+    await ensureMessageInputReady(page)
+  }
+
+  async function configureTaskPagePreferences(
+    page: Page,
+    teamId: number,
+    mode: 'chat' | 'code' | 'task'
+  ): Promise<void> {
     await page.addInitScript(
       ({ selectedTeamId, selectedMode }) => {
         localStorage.setItem('user_onboarding_completed', 'true')
@@ -1211,11 +1485,21 @@ test.describe('Agent conversation regression', () => {
       },
       { selectedTeamId: teamId, selectedMode: mode }
     )
+  }
 
-    const separator = path.includes('?') ? '&' : '?'
-    await page.goto(`${path}${separator}teamId=${teamId}`, { waitUntil: 'domcontentloaded' })
-    await dismissOnboardingTour(page)
-    await ensureMessageInputReady(page)
+  async function selectModel(page: Page, modelName: string): Promise<void> {
+    const modelSelector = page.getByTestId('model-selector')
+    await expect(modelSelector).toBeEnabled()
+    await modelSelector.click()
+
+    const modelSearch = page.getByTestId('model-cascade-search-input')
+    await modelSearch.fill(modelName)
+    const modelOption = page.getByTestId(`model-option-${modelName}`)
+    await expect(modelOption).toBeVisible()
+    await modelOption.click()
+
+    await expect(modelSelector).toHaveAttribute('aria-expanded', 'false')
+    await expect(modelSelector).toContainText(modelName)
   }
 
   async function sendMessage(page: Page, message: string): Promise<void> {
@@ -1329,7 +1613,7 @@ test.describe('Agent conversation regression', () => {
     throw new Error(`Timed out waiting for ${label}`)
   }
 
-  async function waitForLocalDeviceOnline(request: APIRequestContext): Promise<void> {
+  async function waitForWeworkDeviceOnline(request: APIRequestContext): Promise<void> {
     await expect
       .poll(
         async () => {
@@ -1340,17 +1624,24 @@ test.describe('Agent conversation regression', () => {
             return `HTTP_${response.status()}`
           }
           const body = (await response.json()) as {
-            items?: Array<{ device_id: string; status: string; bind_shell?: string }>
+            items?: Array<{
+              device_id: string
+              status: string
+              bind_shell?: string
+              device_type?: string
+            }>
           }
           const device = body.items?.find(item => item.device_id === DEVICE_ID)
-          return device ? `${device.status}:${device.bind_shell || ''}` : 'missing'
+          return device
+            ? `${device.status}:${device.bind_shell || ''}:${device.device_type || ''}`
+            : 'missing'
         },
         {
-          message: 'Local ClaudeCode executor device should be online',
+          message: 'Wework app device should be online',
           timeout: 30_000,
         }
       )
-      .toBe('online:claudecode')
+      .toBe('online:claudecode:app')
   }
 
   async function expectServiceHealthy(
@@ -1411,6 +1702,10 @@ test.describe('Agent conversation regression', () => {
 
   function isAnthropicMessagesRequest(capture: CapturedModelRequest): boolean {
     return capture.url.includes('/messages') && !capture.url.includes('/messages/count_tokens')
+  }
+
+  function isOpenAIResponsesRequest(capture: CapturedModelRequest): boolean {
+    return capture.url.includes('/responses')
   }
 
   function requestContainsAll(capture: CapturedModelRequest, expectedTexts: string[]): boolean {

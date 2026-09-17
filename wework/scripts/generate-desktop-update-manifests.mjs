@@ -6,6 +6,8 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
+import { componentReleaseScope } from './desktop-component-release.mjs'
+
 const [
   assetsDirectory,
   outputDirectory,
@@ -44,12 +46,12 @@ const notes = await readFile(resolve(notesPath), 'utf8')
 const releaseDate = new Date().toISOString()
 const releaseBaseUrl = `https://github.com/${repository}/releases/download/${releaseTag}`
 const sharedComponentBaseUrl = `https://github.com/${repository}/releases/download/wework-updater`
-const sharedComponentIds = new Set(['coreDsh', 'codex', 'dws'])
+const useComponentizedHostUpdate = process.env.WEWORK_USE_COMPONENTIZED_HOST_UPDATE === 'true'
 await mkdir(output, { recursive: true })
 
-const macArm = await asset(`WeWork_${version}_macos_arm64.zip`)
-const macX64 = await asset(`WeWork_${version}_macos_x64.zip`)
-const windows = await asset(`WeWork_${version}_windows_x64-setup.exe`)
+const macArm = await updateAsset(`macos_arm64.zip`)
+const macX64 = await updateAsset(`macos_x64.zip`)
+const windows = await updateAsset(`windows_x64-setup.exe`)
 await Promise.all([macArm, macX64, windows].map(file => requireAsset(`${file.name}.blockmap`)))
 const electronChannels = channel === 'stable' ? ['latest', 'beta'] : ['beta']
 
@@ -64,38 +66,6 @@ for (const targetChannel of electronChannels) {
     electronManifest(version, releaseDate, notes, [windows]),
     'utf8'
   )
-}
-
-const tauriSource = {
-  version,
-  notes,
-  pub_date: releaseDate,
-  platforms: {
-    'darwin-aarch64': await tauriEntry(`WeWork_${version}_macos_arm64.app.tar.gz`),
-    'darwin-x86_64': await tauriEntry(`WeWork_${version}_macos_x64.app.tar.gz`),
-    'windows-x86_64': await tauriEntry(`WeWork_${version}_windows_x64-setup.exe`),
-  },
-}
-const tauriChannels = channel === 'stable' ? ['stable', 'beta'] : ['beta']
-for (const targetChannel of tauriChannels) {
-  for (const [platform, entry] of Object.entries(tauriSource.platforms)) {
-    const [operatingSystem, ...architecture] = platform.split('-')
-    const target = `${targetChannel}-${operatingSystem}`
-    await writeFile(
-      resolve(output, `${target}-${architecture.join('-')}.json`),
-      `${JSON.stringify(
-        {
-          version,
-          notes,
-          pub_date: releaseDate,
-          platforms: { [target]: entry },
-        },
-        null,
-        2
-      )}\n`,
-      'utf8'
-    )
-  }
 }
 
 for (const [platform, architecture] of [
@@ -114,6 +84,12 @@ for (const [platform, architecture] of [
   }
   const components = {}
   for (const [id, component] of Object.entries(source.components ?? {})) {
+    const releaseScope = componentReleaseScope(id)
+    if (component.releaseScope !== releaseScope) {
+      throw new Error(
+        `Component release scope mismatch for ${id}: expected ${releaseScope}, received ${component.releaseScope}`
+      )
+    }
     const archivePath = resolve(assets, component.assetName)
     const archive = await localAsset(component.assetName)
     const archiveSha256 = await sha256(archivePath)
@@ -127,11 +103,12 @@ for (const [platform, architecture] of [
       contentSha256: component.contentSha256,
       archiveSha256,
       archiveBytes: archive.size,
-      downloadUrl: `${sharedComponentIds.has(id) ? sharedComponentBaseUrl : releaseBaseUrl}/${encodeURIComponent(component.assetName)}`,
+      downloadUrl: `${releaseScope === 'shared' ? sharedComponentBaseUrl : releaseBaseUrl}/${encodeURIComponent(component.assetName)}`,
       entryPath: component.entryPath,
     }
   }
-  for (const targetChannel of tauriChannels) {
+  const componentChannels = channel === 'stable' ? ['stable', 'beta'] : ['beta']
+  for (const targetChannel of componentChannels) {
     await writeFile(
       resolve(output, `components-${targetChannel}-${platform}-${architecture}.json`),
       `${JSON.stringify(
@@ -143,6 +120,9 @@ for (const [platform, architecture] of [
           platform,
           arch: architecture,
           releaseDate,
+          capabilities: {
+            componentizedHostUpdate: 1,
+          },
           components,
         },
         null,
@@ -161,6 +141,11 @@ async function asset(name) {
   }
 }
 
+async function updateAsset(suffix) {
+  const prefix = useComponentizedHostUpdate ? 'WeWorkHostUpdate' : 'WeWork'
+  return asset(`${prefix}_${version}_${suffix}`)
+}
+
 async function localAsset(name) {
   const path = resolve(assets, name)
   const file = await stat(path)
@@ -176,14 +161,6 @@ async function requireAsset(name) {
   const path = resolve(assets, name)
   const file = await stat(path).catch(() => null)
   if (!file?.isFile()) throw new Error(`Desktop release asset is missing: ${path}`)
-}
-
-async function tauriEntry(name) {
-  const signaturePath = resolve(assets, `${name}.sig`)
-  return {
-    signature: (await readFile(signaturePath, 'utf8')).trim(),
-    url: `${releaseBaseUrl}/${encodeURIComponent(name)}`,
-  }
 }
 
 function electronManifest(releaseVersion, date, releaseNotes, files) {

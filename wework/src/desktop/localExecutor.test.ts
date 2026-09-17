@@ -13,6 +13,7 @@ import {
   ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
+  getKnownLocalExecutorDeviceId,
   getLocalExecutorStatus,
   readLocalExecutorLog,
   requestLocalExecutor,
@@ -61,6 +62,7 @@ function mockStartup(): void {
 describe('localExecutor', () => {
   beforeEach(() => {
     localStorage.clear()
+    delete window.weworkElectronNetwork
     resetLocalExecutorStateForTests()
     describeDshExecutorMock.mockReset()
     requestDshExecutorMock.mockReset()
@@ -80,6 +82,7 @@ describe('localExecutor', () => {
     expect(describeDshExecutorMock).toHaveBeenCalledOnce()
     expect(requestDshExecutorMock).not.toHaveBeenCalled()
     expect(getInitializedBundledPluginMarketplace()).toBeNull()
+    expect(getKnownLocalExecutorDeviceId()).toBe('electron-device')
   })
 
   test('starts the Electron-managed DSH executor and caches its marketplace', async () => {
@@ -109,13 +112,26 @@ describe('localExecutor', () => {
     })
   })
 
+  test('passes the system proxy into the startup barrier when no local proxy is configured', async () => {
+    window.weworkElectronNetwork = {
+      resolveCodexProxy: vi.fn().mockResolvedValue('http://127.0.0.1:7891'),
+    }
+
+    await ensureLocalExecutorStarted()
+
+    expect(requestDshExecutorMock).toHaveBeenCalledWith('runtime.codex.runtime_config.update', {
+      proxyUrl: 'http://127.0.0.1:7891',
+    })
+  })
+
   test('reuses the initialized executor status for repeated startup checks', async () => {
     const first = await ensureLocalExecutorStarted()
 
     await expect(getLocalExecutorStatus()).resolves.toEqual(first)
 
     expect(describeDshExecutorMock).toHaveBeenCalledOnce()
-    expect(requestDshExecutorMock).toHaveBeenCalledTimes(3)
+    // Startup also reconciles the bundled marketplace into Codex (local RPC).
+    expect(requestDshExecutorMock).toHaveBeenCalledTimes(4)
   })
 
   test('invalidates the initialized status after an executor request failure', async () => {
@@ -144,7 +160,7 @@ describe('localExecutor', () => {
     await ensureLocalExecutorStarted()
 
     expect(describeDshExecutorMock).toHaveBeenCalledOnce()
-    expect(requestDshExecutorMock).toHaveBeenCalledTimes(4)
+    expect(requestDshExecutorMock).toHaveBeenCalledTimes(5)
   })
 
   test('installs a declared bundled plugin through Codex app-server', async () => {
@@ -153,15 +169,25 @@ describe('localExecutor', () => {
         return { ready: true, started: true, initializeElapsedMs: 37 }
       }
       if (method === 'executor.plugins.initialize_bundled_marketplace') return marketplace
+      if (method === 'runtime.codex.plugin.reconcile_bundled_marketplace') {
+        return { marketplaceName: marketplace.id, action: 'added' }
+      }
       if (method !== 'codex.app_server_request') return {}
       const request = params as { method?: string }
-      if (request.method === 'marketplace/add') return { marketplaceName: marketplace.id }
       if (request.method === 'config/read') return { config: { plugins: {} } }
       if (request.method === 'plugin/install') return {}
       throw new Error(`Unexpected request: ${request.method}`)
     })
 
     await ensureBundledPluginInstalled('smart-app-builder')
+
+    expect(requestDshExecutorMock).toHaveBeenCalledWith(
+      'runtime.codex.plugin.reconcile_bundled_marketplace',
+      {
+        marketplaceId: marketplace.id,
+        source: marketplace.path,
+      }
+    )
 
     expect(requestDshExecutorMock).toHaveBeenCalledWith('codex.app_server_request', {
       method: 'plugin/install',

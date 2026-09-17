@@ -15,6 +15,7 @@ import {
   OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION,
   assert,
   join,
+  readPositiveInteger,
 } from './shared.mjs'
 
 function createSse(events) {
@@ -189,6 +190,11 @@ function encryptedReasoningItem(id, encryptedContent) {
 }
 
 function streamingMarkdownReport() {
+  const sectionCount = readPositiveInteger(
+    process.env.WEWORK_E2E_MEMORY_SECTION_COUNT,
+    80,
+    'WEWORK_E2E_MEMORY_SECTION_COUNT'
+  )
   const section = index =>
     [
       `### Memory section ${index}`,
@@ -205,7 +211,7 @@ function streamingMarkdownReport() {
       'This section exercises incremental Markdown parsing, syntax highlighting, React reconciliation, and WebKit layout allocation.',
       '',
     ].join('\n')
-  return `${Array.from({ length: 80 }, (_, index) => section(index + 1)).join('\n')}\n${MEMORY_COMPLETION_TEXT}`
+  return `${Array.from({ length: sectionCount }, (_, index) => section(index + 1)).join('\n')}\n${MEMORY_COMPLETION_TEXT}`
 }
 
 function streamingTextEvents(id, text) {
@@ -391,7 +397,10 @@ function json(response, statusCode, value) {
 
 function cors(response) {
   response.setHeader('Access-Control-Allow-Origin', '*')
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID')
+  response.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, X-Request-ID, Idempotency-Key'
+  )
   response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
 }
 
@@ -401,7 +410,11 @@ function requestContainsToolOutput(request, callId) {
     if (!value || typeof value !== 'object') return false
 
     const type = value.type
-    const isToolOutput = type === 'function_call_output' || type === 'custom_tool_call_output'
+    const isToolOutput =
+      type === 'function_call_output' ||
+      type === 'mcp_tool_call_output' ||
+      type === 'custom_tool_call_output' ||
+      type === 'tool_search_output'
     if (isToolOutput && (!callId || value.call_id === callId)) return true
 
     return Object.values(value).some(containsOutput)
@@ -413,6 +426,34 @@ function requestContainsToolOutput(request, callId) {
 function requestAdvertisesShellTool(request) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   return tools.some(tool => tool?.name === 'exec_command' || tool?.name === 'shell_command')
+}
+
+function programmaticExecTools(request) {
+  const input = Array.isArray(request.input) ? request.input : []
+  return input
+    .filter(item => item?.type === 'additional_tools')
+    .flatMap(item => (Array.isArray(item.tools) ? item.tools : []))
+    .filter(namespace => namespace?.type === 'namespace' && namespace.name === 'functions')
+    .flatMap(namespace => (Array.isArray(namespace.tools) ? namespace.tools : []))
+    .filter(tool => tool?.type === 'custom' && tool.name === 'exec')
+}
+
+function serializedOutputReportsSuccess(value) {
+  return typeof value === 'string' && /\\*"ok\\*"\s*:\s*true/u.test(value)
+}
+
+function requestAdvertisesProgrammaticExec(request) {
+  return programmaticExecTools(request).length > 0
+}
+
+function selectProgrammaticExec(request, input) {
+  const tools = programmaticExecTools(request)
+  assert.equal(
+    tools.length,
+    1,
+    `Real Codex did not advertise exactly one programmatic exec tool: ${tools.length}`
+  )
+  return { name: tools[0].name, input }
 }
 
 function requestAdvertisesViewImageTool(request) {
@@ -461,7 +502,8 @@ function selectOfficialPluginMcpTool(request, argumentsValue) {
 }
 
 function selectMcpTool(request, namespaceName, toolName, argumentsValue) {
-  const namespaces = requestToolSearchResults(request).filter(
+  const advertisedTools = Array.isArray(request.tools) ? request.tools : []
+  const namespaces = [...advertisedTools, ...requestToolSearchResults(request)].filter(
     candidate => candidate?.type === 'namespace' && candidate.name === namespaceName
   )
   assert.ok(namespaces.length > 0, `tool_search did not return MCP namespace ${namespaceName}`)
@@ -494,6 +536,17 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
       (tool?.type === 'function' &&
         ['tool_search', 'search_deferred_tools'].includes(tool?.name ?? tool?.function?.name))
   )
+  const namespace = tools.find(
+    tool =>
+      tool?.type === 'namespace' &&
+      tool.tools?.some(candidate => candidate?.type === 'function' && candidate.name === toolName)
+  )
+  if (!advertisesToolSearch && namespace) {
+    return {
+      mode: 'direct',
+      ...selectMcpTool(request, namespace.name, toolName, argumentsValue),
+    }
+  }
   if (!advertisesToolSearch && directToolName && names.includes(directToolName)) {
     return {
       mode: 'direct',
@@ -515,7 +568,14 @@ function mcpToolRequestEvents(
     mode: selection.mode,
     events:
       selection.mode === 'direct'
-        ? functionCall(toolCallId, selection.name, selection.arguments)
+        ? selection.namespace
+          ? namespacedFunctionCall(
+              toolCallId,
+              selection.namespace,
+              selection.name,
+              selection.arguments
+            )
+          : functionCall(toolCallId, selection.name, selection.arguments)
         : toolSearchResponseEvents(searchCallId, selection),
   }
 }
@@ -535,9 +595,9 @@ function selectToolSearch(request, query) {
     `Real Codex did not advertise exactly one deferred tool search: ${toolNames.join(', ')}`
   )
   assert.equal(
-    tools.some(tool => tool?.type === 'namespace'),
+    tools.some(tool => tool?.type === 'namespace' && tool.name !== 'image_gen'),
     false,
-    'Real Codex eagerly advertised namespace tools before tool_search'
+    'Real Codex eagerly advertised deferred namespace tools before tool_search'
   )
   assert.equal(
     toolNames.some(name => /(^|__)browser_/.test(name)),
@@ -690,8 +750,11 @@ export {
   json,
   cors,
   requestContainsToolOutput,
+  requestAdvertisesProgrammaticExec,
+  serializedOutputReportsSuccess,
   requestAdvertisesShellTool,
   requestAdvertisesViewImageTool,
+  selectProgrammaticExec,
   selectTool,
   selectOfficialPluginMcpTool,
   selectMcpTool,

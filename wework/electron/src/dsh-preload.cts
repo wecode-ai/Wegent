@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld('weworkElectronLifecycle', {
     ipcRenderer.on('system:resume', handler)
     return () => ipcRenderer.off('system:resume', handler)
   },
+  onWindowFocusChanged: (listener: (focused: boolean) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, focused: boolean) => listener(focused)
+    ipcRenderer.on('window:focus-changed', handler)
+    return () => ipcRenderer.off('window:focus-changed', handler)
+  },
 })
 
 contextBridge.exposeInMainWorld('weworkElectronCloudCredentials', {
@@ -37,4 +42,8 @@ contextBridge.exposeInMainWorld('weworkElectronExecutionEnvironments', {
   list: () => ipcRenderer.invoke('runtime:list-execution-environments'),
   chooseNodeExecutable: () => ipcRenderer.invoke('runtime:choose-node-executable'),
   useBuiltinNode: () => ipcRenderer.invoke('runtime:use-builtin-node'),
+})
+
+contextBridge.exposeInMainWorld('weworkElectronNetwork', {
+  resolveCodexProxy: () => ipcRenderer.invoke('runtime:resolve-codex-proxy'),
 })

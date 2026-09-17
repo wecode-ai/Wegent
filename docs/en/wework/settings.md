@@ -6,7 +6,10 @@ sidebar_position: 9
 
 Settings cover language and startup behavior, the top-level tab activated when the main workspace opens, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
-The context indicator beside the task composer shows the current model's context usage. Its used
+The context indicator beside the task composer shows the current model's context usage. The ratio
+is measured against the context available to the input, which is the model's maximum context minus
+its configured maximum output; upstream providers charge the completion budget against the same
+window as the input, so the context cannot grow any further once the ratio reaches 100%. Its used
 arc and remaining track automatically adapt their contrast for light and dark themes. When usage
 reaches the compaction threshold, the indicator switches to a warning color and, when compaction
 is available, offers the compact action.
@@ -15,6 +18,17 @@ The permission-mode control appears as the current mode's icon immediately befor
 indicator. Hover to see the active mode, or click to choose **Read only**, **Workspace**, or
 **Full access**. After selecting a project space, the composer chip shows only the board name;
 its hover text still explains that sending creates a task on that board.
+
+Under **Settings → General → General**, choose the Wework feature mode:
+
+- **Focus mode** hides the Code hosting and Worktrees entries and disables Wework's built-in Git
+  plugin. Use it when local code-development features are not needed.
+- **Developer mode** enables Wework's built-in Git plugin and shows the complete coding navigation.
+  This is the default mode.
+
+The preference stays on the current device. Switching modes automatically restarts the managed
+Core DSH runtime so the plugin state takes effect immediately. Mode controls the Git plugin, so it
+cannot be enabled or disabled separately from the plugin management page.
 
 Under **Settings → General → Basic**, set **Default page** to **Tasks**, **Project spaces**, or
 **Agent**. This device-local preference activates the matching top-level tab when the Wework main

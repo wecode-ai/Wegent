@@ -21,7 +21,7 @@ from urllib.parse import urlsplit
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 
 from app.models.delivery import (
     CloudProject,
@@ -36,6 +36,7 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage, project_chat_message_key
 from app.models.user import User
+from app.schemas.plugin_config import validate_non_secret_plugin_configs
 from app.schemas.runtime_work import RuntimeTaskCreateRequest
 from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
@@ -47,6 +48,7 @@ from app.services.project_automation_domain import (
     assignment_mode,
     manager_type,
 )
+from app.services.workspaces.storage import workspace_id_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -131,19 +133,81 @@ def runtime_task_id_for(execution_id: int) -> str:
     return f"{RUNTIME_TASK_ID_PREFIX}-{execution_id}"
 
 
+def runtime_device_identity_ids(
+    db: Session,
+    runtime_device_id: str,
+    *,
+    owner_user_id: int | None = None,
+) -> list[str]:
+    """Resolve every identity of the device that reported a Runtime event.
+
+    Record routes are already globally unambiguous. Legacy aliases are expanded
+    only inside the authenticated owner's device namespace.
+    """
+
+    submitted = runtime_device_id.strip()
+    if not submitted:
+        return []
+    if owner_user_id is None:
+        return [submitted]
+    from app.services.device.identity import (
+        device_identity_ids,
+        resolve_owned_device_alias,
+    )
+
+    device = resolve_owned_device_alias(
+        db,
+        user_id=owner_user_id,
+        device_id=submitted,
+    )
+    if device is None:
+        return [submitted]
+    return list(dict.fromkeys([submitted, *device_identity_ids(device)]))
+
+
+def _same_runtime_device(
+    db: Session,
+    *,
+    owner_user_id: int,
+    left_device_id: str,
+    right_device_id: str,
+) -> bool:
+    """Return whether two authenticated Runtime identities name one device."""
+
+    left_ids = set(
+        runtime_device_identity_ids(
+            db,
+            left_device_id,
+            owner_user_id=owner_user_id,
+        )
+    )
+    right_ids = set(
+        runtime_device_identity_ids(
+            db,
+            right_device_id,
+            owner_user_id=owner_user_id,
+        )
+    )
+    return bool(left_ids.intersection(right_ids))
+
+
 def runtime_configuration_complete(
     *,
     execution_device_id: str | None,
     model: object,
+    require_model: bool = True,
     workspace_binding_required: bool = False,
     workspace_binding: object = None,
 ) -> bool:
-    """Return whether an execution snapshot contains a runnable Runtime."""
+    """Return whether non-device Runtime configuration is complete.
 
+    A project-authorized Runtime selects and binds the device when it claims
+    the execution, so assignment does not require a pre-bound device.
+    """
+
+    del execution_device_id
     return bool(
-        execution_device_id
-        and isinstance(model, str)
-        and model.strip()
+        (not require_model or (isinstance(model, str) and bool(model.strip())))
         and (not workspace_binding_required or isinstance(workspace_binding, dict))
     )
 
@@ -307,11 +371,16 @@ def _runtime_capacity_used(
 ) -> int | None:
     """Combine Runtime truth with durable reservations without double-counting."""
 
+    # Managed Wegent runs execute in the Chat runtime, never occupy a device
+    # Runtime slot, and therefore never carry a runtime instance identity.
+    # Treating them as ambiguous would stall every device claim for this owner
+    # for as long as one Wegent run holds capacity.
     ambiguous = (
         db.query(LoopItemExecution.id)
         .filter(
             LoopItemExecution.executor_owner_user_id == owner_user_id,
             LoopItemExecution.status.in_(CAPACITY_STATUSES),
+            LoopItemExecution.execution_environment != "wegent",
             LoopItemExecution.runtime_instance_id == "",
         )
         .first()
@@ -334,6 +403,163 @@ def _runtime_capacity_used(
         if not runtime_task_id or runtime_task_id not in runtime_active_task_ids
     )
     return runtime_active + pending_reservations
+
+
+def _canonical_execution_device(
+    db: Session,
+    *,
+    owner_user_id: int,
+    submitted_device_id: str,
+) -> str:
+    """Resolve a submitted device identity to the canonical logical id.
+
+    The local App puller submits the desktop App registration id (for example
+    ``electron-b93c95cf-...``), while queue rows persist the canonical logical
+    device id (for example ``local-device``) at enqueue time. Claim matching
+    must use the same canonical id the row was written with, otherwise the
+    queued run can never be claimed. Unresolved identities are returned as-is
+    so legacy rows keep their original matching semantics.
+    """
+
+    if not submitted_device_id:
+        return submitted_device_id
+    from app.services.device.runtime_route import normalize_execution_device_id
+
+    return (
+        normalize_execution_device_id(
+            db,
+            user_id=owner_user_id,
+            submitted_device_id=submitted_device_id,
+        )
+        or submitted_device_id
+    )
+
+
+def _owned_execution_device_ids(
+    db: Session,
+    *,
+    owner_user_id: int,
+    submitted_device_id: str,
+) -> list[str]:
+    """Return every queue identity for one user-owned device."""
+
+    from app.services.device.identity import (
+        device_identity_ids,
+        resolve_owned_device_alias,
+    )
+
+    device = resolve_owned_device_alias(
+        db,
+        user_id=owner_user_id,
+        device_id=submitted_device_id,
+    )
+    return device_identity_ids(device) if device is not None else [submitted_device_id]
+
+
+def _project_allows_device(
+    db: Session,
+    *,
+    cloud_project_id: str,
+    owner_user_id: int,
+    submitted_device_id: str,
+) -> bool:
+    """Apply the optional Device-to-project allowlist for an owned device."""
+
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+    from app.services.device.identity import resolve_owned_device_alias
+
+    device = resolve_owned_device_alias(
+        db,
+        user_id=owner_user_id,
+        device_id=submitted_device_id,
+    )
+    if device is None:
+        return False
+    grants = (
+        db.query(ResourceMember.resource_id)
+        .join(Kind, Kind.id == ResourceMember.resource_id)
+        .filter(
+            ResourceMember.resource_type == ResourceType.DEVICE.value,
+            ResourceMember.entity_type == "project",
+            ResourceMember.entity_id == str(cloud_project_id),
+            ResourceMember.status == MemberStatus.APPROVED.value,
+            Kind.kind == "Device",
+            Kind.user_id == owner_user_id,
+            Kind.is_active.is_(True),
+        )
+        .all()
+    )
+    return not grants or int(device.id) in {
+        int(resource_id) for (resource_id,) in grants
+    }
+
+
+def _issue_runtime_device(
+    db: Session,
+    *,
+    loop_item_id: str,
+    exclude_execution_id: int,
+) -> str:
+    """Return the latest device that actually claimed this Issue."""
+
+    previous = (
+        db.query(LoopItemExecution)
+        .filter(
+            LoopItemExecution.loop_item_id == loop_item_id,
+            LoopItemExecution.id != exclude_execution_id,
+            LoopItemExecution.runtime_device_id != "",
+        )
+        .order_by(LoopItemExecution.id.desc())
+        .first()
+    )
+    return str(previous.runtime_device_id or "") if previous is not None else ""
+
+
+def _matches_issue_device_affinity(
+    db: Session,
+    *,
+    execution: LoopItemExecution,
+    owner_user_id: int,
+    submitted_device_id: str,
+) -> bool:
+    """Keep every execution of one Issue on its latest claimed device."""
+
+    affinity_device_id = _issue_runtime_device(
+        db,
+        loop_item_id=execution.loop_item_id,
+        exclude_execution_id=execution.id,
+    )
+    return not affinity_device_id or _same_runtime_device(
+        db,
+        owner_user_id=owner_user_id,
+        left_device_id=affinity_device_id,
+        right_device_id=submitted_device_id,
+    )
+
+
+def _execution_is_claimable_by_device(
+    db: Session,
+    *,
+    execution: LoopItemExecution,
+    owner_user_id: int,
+    submitted_device_id: str,
+) -> bool:
+    """Apply default-owner access, optional project allowlist, and affinity."""
+
+    if not execution.execution_device_id and not _project_allows_device(
+        db,
+        cloud_project_id=execution.cloud_project_id,
+        owner_user_id=owner_user_id,
+        submitted_device_id=submitted_device_id,
+    ):
+        return False
+    return _matches_issue_device_affinity(
+        db,
+        execution=execution,
+        owner_user_id=owner_user_id,
+        submitted_device_id=submitted_device_id,
+    )
 
 
 def _active_agent_counts(
@@ -427,6 +653,40 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _agent_text_produced(db: Session, execution: LoopItemExecution) -> bool | None:
+    """Report whether a run emitted assistant text, or None when unknowable.
+
+    Device runs key their activity row by the Runtime task identity. Managed
+    Wegent runs execute in the Chat runtime, never claim a device, and key the
+    same row by loop item plus agent instead. A run carrying neither identity
+    cannot be probed at all.
+    """
+
+    if execution.runtime_device_id and execution.runtime_task_id:
+        identity = (
+            ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
+            ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
+        )
+    elif execution.agent_id:
+        identity = (
+            ProjectChatMessage.task_id == execution.loop_item_id,
+            ProjectChatMessage.agent_id == execution.agent_id,
+        )
+    else:
+        return None
+    message = (
+        db.query(ProjectChatMessage)
+        .filter(
+            *identity,
+            ProjectChatMessage.sender_type == "agent",
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .order_by(ProjectChatMessage.id.desc())
+        .first()
+    )
+    return message is not None and bool((message.content or "").strip())
+
+
 class LoopItemExecutionService:
     """Lifecycle, profile compilation, and claiming for Wework executions."""
 
@@ -454,7 +714,7 @@ class LoopItemExecutionService:
         enters the queue immediately.
         """
 
-        from app.services.project_chat.service import bot_config
+        from app.services.project_chat.service import bot_config, compiled_bot_config
 
         inferred_context, _ = self._task_automation_context(db, loop_item_id)
         effective_context = (
@@ -462,14 +722,12 @@ class LoopItemExecutionService:
             if automation_context is not None
             else inferred_context
         )
-        config = bot_config(agent)
-        mode = str(config.get("execution_mode") or "auto")
-        runtime = str(config.get("runtime") or "codex")
-        team_id = int(config["wegent_team_id"]) if runtime == "wegent" else None
+        persisted_config = bot_config(agent)
+        mode = str(persisted_config.get("execution_mode") or "auto")
         runtime_source = str(effective_context.get("runtime_source") or "agent_default")
         runtime_profile_id = effective_context.get("runtime_profile_id")
         if runtime_source == "agent_default":
-            runtime_profile_id = config.get("default_runtime_profile_id")
+            runtime_profile_id = persisted_config.get("default_runtime_profile_id")
         runtime_profile = (
             db.get(RuntimeProfile, str(runtime_profile_id))
             if runtime_profile_id
@@ -491,6 +749,13 @@ class LoopItemExecutionService:
             or (task.created_by_user_id if task else 0)
             or assigner_user_id
         )
+        config = compiled_bot_config(
+            db,
+            agent,
+            execution_user_id=runtime_subject_user_id,
+        )
+        runtime = str(config["runtime"])
+        team_id = int(config["wegent_team_id"]) if runtime == "wegent" else None
         profile_metadata = (
             dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
         )
@@ -514,12 +779,25 @@ class LoopItemExecutionService:
         owner_user_id = int(
             runtime_profile.user_id if runtime_profile else runtime_subject_user_id
         )
+        from app.services.loop_item_executions.profile import (
+            inherited_workflow_workspace_source,
+        )
+
+        inherited_workspace_source = inherited_workflow_workspace_source(
+            effective_context
+        )
+        inherited_device_id = (
+            inherited_workspace_source["deviceId"]
+            if inherited_workspace_source is not None
+            else None
+        )
         device_id = (
             None
             if runtime == "wegent"
             else (
                 str(
-                    effective_context.get("execution_device_id")
+                    inherited_device_id
+                    or effective_context.get("execution_device_id")
                     or (
                         runtime_profile.device_id
                         if runtime_profile is not None
@@ -591,6 +869,7 @@ class LoopItemExecutionService:
         team: Kind,
         assigner_user_id: int,
         priority: str | None,
+        automation_context: dict[str, Any] | None = None,
     ) -> LoopItemExecution:
         """Create the authoritative run for a Wegent Team assignment."""
 
@@ -606,7 +885,7 @@ class LoopItemExecutionService:
             environment="managed",
             execution_device_id=None,
             priority=priority,
-            automation_context=None,
+            automation_context=automation_context,
             requires_approval=False,
         )
 
@@ -696,6 +975,7 @@ class LoopItemExecutionService:
         waiting_runtime = not runtime_configuration_complete(
             execution_device_id=device_id,
             model=selected_model,
+            require_model=False,
             workspace_binding_required=workspace_binding_required,
             workspace_binding=automation_context.get("workspace_binding"),
         )
@@ -752,6 +1032,20 @@ class LoopItemExecutionService:
         waiting_runtime: bool = False,
     ) -> LoopItemExecution:
         """Persist queue identity and its immutable non-secret V2 intent."""
+
+        # A queued run may be resolved from a desktop App registration id that
+        # is not unique across active devices. Persisting the canonical logical
+        # device id keeps the row claimable by the names the App puller sends.
+        if execution_device_id:
+            from app.services.device.runtime_route import normalize_execution_device_id
+
+            normalized = normalize_execution_device_id(
+                db,
+                user_id=owner_user_id,
+                submitted_device_id=execution_device_id,
+            )
+            if normalized:
+                execution_device_id = normalized
 
         # Project robots keep the shipped assignment semantics: their target
         # is validated when the robot is configured, and legacy local targets
@@ -814,7 +1108,7 @@ class LoopItemExecutionService:
             max_retries=DEFAULT_MAX_RETRIES,
             approval_status="pending" if requires_approval else "",
             execution_note=(
-                "Select a device and model before this execution can start"
+                "Select a model or workspace before this execution can start"
                 if waiting_runtime
                 else ""
             ),
@@ -831,7 +1125,11 @@ class LoopItemExecutionService:
         db.add(row)
         db.flush()
         row.runtime_task_id = runtime_task_id_for(row.id)
-        if not waiting_runtime and executor_type != "wegent_team":
+        if (
+            not waiting_runtime
+            and executor_type != "wegent_team"
+            and execution_device_id
+        ):
             self._persist_runtime_request_intent(db, execution=row)
         self._set_automation_run_status(
             db,
@@ -852,6 +1150,18 @@ class LoopItemExecutionService:
         origin_context: dict[str, Any],
         runtime_request: dict[str, Any] | None = None,
     ) -> str:
+        validate_non_secret_plugin_configs(
+            origin_context.get("project_plugins"),
+            field_name="origin_context.project_plugins",
+        )
+        if runtime_request is not None:
+            validate_non_secret_plugin_configs(
+                runtime_request.get(
+                    "projectPlugins",
+                    runtime_request.get("project_plugins"),
+                ),
+                field_name="runtime_request.projectPlugins",
+            )
         value: dict[str, Any] = {
             "schema_version": 2,
             "runtime_selection": runtime_selection,
@@ -945,6 +1255,7 @@ class LoopItemExecutionService:
         needs_runtime = not row.team_id and not runtime_configuration_complete(
             execution_device_id=row.execution_device_id,
             model=row.runtime_selection.get("model"),
+            require_model=row.executor_type != "generic_robot",
             workspace_binding_required="workspace_binding" in origin_context,
             workspace_binding=origin_context.get("workspace_binding"),
         )
@@ -955,7 +1266,7 @@ class LoopItemExecutionService:
         row.approved_by_user_id = user_id
         row.approved_at = now
         row.execution_note = (
-            "Select a device and model before this execution can start"
+            "Select a model or workspace before this execution can start"
             if needs_runtime
             else ""
         )
@@ -1085,9 +1396,11 @@ class LoopItemExecutionService:
         if expected_version is not None and row.version != expected_version:
             return row
         start_was_delivered = not loop_datetime_value_is_unset(row.start_requested_at)
-        if row.status in {STATUS_PENDING_APPROVAL, STATUS_QUEUED} or (
-            row.status == STATUS_CLAIMED and not start_was_delivered
-        ):
+        if row.status in {
+            STATUS_WAITING_RUNTIME,
+            STATUS_PENDING_APPROVAL,
+            STATUS_QUEUED,
+        } or (row.status == STATUS_CLAIMED and not start_was_delivered):
             terminal = self._transition_terminal(
                 db,
                 execution_id=execution_id,
@@ -1212,6 +1525,17 @@ class LoopItemExecutionService:
         below keeps a single claim atomic even without it.
         """
 
+        submitted_execution_device_id = execution_device_id
+        execution_device_ids = _owned_execution_device_ids(
+            db,
+            owner_user_id=owner_user_id,
+            submitted_device_id=execution_device_id,
+        )
+        canonical_execution_device_id = _canonical_execution_device(
+            db,
+            owner_user_id=owner_user_id,
+            submitted_device_id=execution_device_id,
+        )
         running_count = _runtime_capacity_used(
             db,
             owner_user_id=owner_user_id,
@@ -1236,8 +1560,13 @@ class LoopItemExecutionService:
             .filter(
                 LoopItemExecution.executor_owner_user_id == owner_user_id,
                 LoopItemExecution.agent_id == agent_id,
-                LoopItemExecution.execution_device_id == execution_device_id,
-                LoopItemExecution.execution_environment == environment,
+                or_(
+                    and_(
+                        LoopItemExecution.execution_device_id.in_(execution_device_ids),
+                        LoopItemExecution.execution_environment == environment,
+                    ),
+                    LoopItemExecution.execution_device_id == "",
+                ),
                 LoopItemExecution.status == STATUS_QUEUED,
             )
             .order_by(
@@ -1248,7 +1577,19 @@ class LoopItemExecutionService:
         )
         if assigner_filter is not None:
             query = query.filter(LoopItemExecution.assigner_user_id == assigner_filter)
-        candidate = query.first()
+        candidate = next(
+            (
+                row
+                for row in query.all()
+                if _execution_is_claimable_by_device(
+                    db,
+                    execution=row,
+                    owner_user_id=owner_user_id,
+                    submitted_device_id=execution_device_id,
+                )
+            ),
+            None,
+        )
         if candidate is None:
             return None
         if candidate.execution_scope in _occupied_execution_scopes(
@@ -1267,10 +1608,14 @@ class LoopItemExecutionService:
             .update(
                 {
                     "status": STATUS_CLAIMED,
+                    "execution_device_id": (
+                        candidate.execution_device_id or canonical_execution_device_id
+                    ),
+                    "execution_environment": environment,
                     "claimed_at": now,
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
-                    "runtime_device_id": execution_device_id,
+                    "runtime_device_id": submitted_execution_device_id,
                     "runtime_instance_id": runtime_instance_id,
                     "runtime_task_id": runtime_task_id_for(candidate.id),
                     "version": LoopItemExecution.version + 1,
@@ -1299,6 +1644,17 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Claim one queued run for a stable execution target."""
 
+        submitted_execution_device_id = execution_device_id
+        execution_device_ids = _owned_execution_device_ids(
+            db,
+            owner_user_id=owner_user_id,
+            submitted_device_id=execution_device_id,
+        )
+        canonical_execution_device_id = _canonical_execution_device(
+            db,
+            owner_user_id=owner_user_id,
+            submitted_device_id=execution_device_id,
+        )
         running_count = _runtime_capacity_used(
             db,
             owner_user_id=owner_user_id,
@@ -1310,8 +1666,13 @@ class LoopItemExecutionService:
             return None
         queue_filters = (
             LoopItemExecution.executor_owner_user_id == owner_user_id,
-            LoopItemExecution.execution_device_id == execution_device_id,
-            LoopItemExecution.execution_environment == environment,
+            or_(
+                and_(
+                    LoopItemExecution.execution_device_id.in_(execution_device_ids),
+                    LoopItemExecution.execution_environment == environment,
+                ),
+                LoopItemExecution.execution_device_id == "",
+            ),
             LoopItemExecution.status == STATUS_QUEUED,
         )
         agent_ids = {
@@ -1324,44 +1685,9 @@ class LoopItemExecutionService:
         active_counts = _active_agent_counts(db, agent_ids)
         limits = _agent_limits(db, agent_ids)
 
-        active_execution = aliased(LoopItemExecution)
-        scope_is_available = or_(
-            LoopItemExecution.execution_scope == "",
-            ~db.query(active_execution.id)
-            .filter(
-                active_execution.status.in_(CAPACITY_STATUSES),
-                active_execution.execution_scope == LoopItemExecution.execution_scope,
-            )
-            .exists(),
-        )
-        ranked = (
-            db.query(
-                LoopItemExecution.id.label("execution_id"),
-                func.row_number()
-                .over(
-                    partition_by=LoopItemExecution.agent_id,
-                    order_by=(
-                        LoopItemExecution.priority_weight.desc(),
-                        LoopItemExecution.queued_at.asc(),
-                        LoopItemExecution.id.asc(),
-                    ),
-                )
-                .label("agent_queue_rank"),
-            )
-            .filter(*queue_filters, scope_is_available)
-            .subquery()
-        )
-        candidate_ids = [
-            int(execution_id)
-            for (execution_id,) in db.query(ranked.c.execution_id)
-            .filter(ranked.c.agent_queue_rank == 1)
-            .all()
-        ]
-        if not candidate_ids:
-            return None
         rows = (
             db.query(LoopItemExecution)
-            .filter(LoopItemExecution.id.in_(candidate_ids))
+            .filter(*queue_filters)
             .order_by(
                 LoopItemExecution.priority_weight.desc(),
                 LoopItemExecution.queued_at.asc(),
@@ -1369,16 +1695,30 @@ class LoopItemExecutionService:
             )
             .all()
         )
+        rows = [
+            row
+            for row in rows
+            if _execution_is_claimable_by_device(
+                db,
+                execution=row,
+                owner_user_id=owner_user_id,
+                submitted_device_id=execution_device_id,
+            )
+        ]
+        occupied_scopes = _occupied_execution_scopes(
+            db,
+            {row.execution_scope for row in rows if row.execution_scope},
+        )
         candidate = _fair_single_candidate(
             rows,
-            occupied_scopes=set(),
+            occupied_scopes=occupied_scopes,
             active_counts=active_counts,
             limits=limits,
         )
         if candidate is None:
             return None
         now = utcnow()
-        claimed_runtime_device_id = runtime_device_id or execution_device_id
+        claimed_runtime_device_id = runtime_device_id or submitted_execution_device_id
         claimed = (
             db.query(LoopItemExecution)
             .filter(
@@ -1388,6 +1728,10 @@ class LoopItemExecutionService:
             .update(
                 {
                     "status": STATUS_CLAIMED,
+                    "execution_device_id": (
+                        candidate.execution_device_id or canonical_execution_device_id
+                    ),
+                    "execution_environment": environment,
                     "claimed_at": now,
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
@@ -1571,80 +1915,19 @@ class LoopItemExecutionService:
         runtime_active_task_ids: set[str] | frozenset[str],
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ) -> Optional[LoopItemExecution]:
-        """Claim a legacy project-robot run without a persisted device binding."""
+        """Use the unified project-authorized claim path for old callers."""
 
-        occupied = _runtime_capacity_used(
+        return self.claim_next_for_device(
             db,
-            owner_user_id=owner_user_id,
+            execution_device_id=execution_device_id,
+            environment="local",
             runtime_instance_id=runtime_instance_id,
+            device_capacity=device_capacity,
             runtime_active=runtime_active,
             runtime_active_task_ids=runtime_active_task_ids,
+            owner_user_id=owner_user_id,
+            lease_seconds=lease_seconds,
         )
-        if occupied is None or occupied >= device_capacity:
-            return None
-        candidates = (
-            db.query(LoopItemExecution)
-            .join(ProjectChatAgent, ProjectChatAgent.id == LoopItemExecution.agent_id)
-            .filter(
-                LoopItemExecution.executor_owner_user_id == owner_user_id,
-                LoopItemExecution.execution_environment == "local",
-                LoopItemExecution.status == STATUS_QUEUED,
-                or_(
-                    LoopItemExecution.execution_device_id.is_(None),
-                    LoopItemExecution.execution_device_id == "",
-                ),
-                ProjectChatAgent.created_by_user_id == owner_user_id,
-                ProjectChatAgent.status == "active",
-            )
-            .order_by(
-                LoopItemExecution.priority_weight.desc(),
-                LoopItemExecution.queued_at.asc(),
-                LoopItemExecution.id.asc(),
-            )
-            .all()
-        )
-        agent_ids = {row.agent_id for row in candidates if row.agent_id}
-        execution_scopes = {
-            row.execution_scope for row in candidates if row.execution_scope
-        }
-        occupied_scopes = _occupied_execution_scopes(db, execution_scopes)
-        active_counts = _active_agent_counts(db, agent_ids)
-        limits = _agent_limits(db, agent_ids)
-        candidate = _fair_single_candidate(
-            candidates,
-            occupied_scopes=occupied_scopes,
-            active_counts=active_counts,
-            limits=limits,
-        )
-        if candidate is None:
-            return None
-
-        now = utcnow()
-        claimed = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.id == candidate.id,
-                LoopItemExecution.status == STATUS_QUEUED,
-            )
-            .update(
-                {
-                    "status": STATUS_CLAIMED,
-                    "execution_device_id": execution_device_id,
-                    "claimed_at": now,
-                    "heartbeat_at": now,
-                    "lease_expires_at": now + timedelta(seconds=lease_seconds),
-                    "runtime_device_id": execution_device_id,
-                    "runtime_instance_id": runtime_instance_id,
-                    "runtime_task_id": runtime_task_id_for(candidate.id),
-                    "version": LoopItemExecution.version + 1,
-                }
-            )
-        )
-        db.commit()
-        if claimed != 1:
-            return None
-        db.refresh(candidate)
-        return candidate
 
     def mark_start_requested(
         self,
@@ -1737,6 +2020,16 @@ class LoopItemExecutionService:
                 taskId=execution.runtime_task_id,
                 taskTitle=item.title or "",
                 backendTaskId=execution.backend_task_id or None,
+                modelSelection=(
+                    {
+                        "modelName": execution.runtime_selection["model"],
+                        "modelType": execution.runtime_selection.get("model_type"),
+                        "options": execution.runtime_selection.get("model_options")
+                        or {},
+                    }
+                    if execution.runtime_selection.get("model")
+                    else None
+                ),
                 workflowNodeId=workflow_node_id,
             ),
             user_id=execution.executor_owner_user_id,
@@ -1980,19 +2273,27 @@ class LoopItemExecutionService:
         *,
         runtime_device_id: str,
         runtime_task_id: str,
+        owner_user_id: int | None = None,
     ) -> Optional[LoopItemExecution]:
         """Resolve the active execution owned by a Runtime task identity."""
 
-        return (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.runtime_device_id == runtime_device_id,
-                LoopItemExecution.runtime_task_id == runtime_task_id,
-                LoopItemExecution.status.in_(CAPACITY_STATUSES),
-            )
-            .order_by(LoopItemExecution.id.desc())
-            .first()
+        device_ids = runtime_device_identity_ids(
+            db,
+            runtime_device_id,
+            owner_user_id=owner_user_id,
         )
+        if not device_ids:
+            return None
+        query = db.query(LoopItemExecution).filter(
+            LoopItemExecution.runtime_device_id.in_(device_ids),
+            LoopItemExecution.runtime_task_id == runtime_task_id,
+            LoopItemExecution.status.in_(CAPACITY_STATUSES),
+        )
+        if owner_user_id is not None:
+            query = query.filter(
+                LoopItemExecution.executor_owner_user_id == owner_user_id
+            )
+        return query.order_by(LoopItemExecution.id.desc()).first()
 
     def open_execution_activity(
         self,
@@ -3080,6 +3381,7 @@ class LoopItemExecutionService:
         runtime_task_id: str,
         event_name: str,
         payload: dict,
+        owner_user_id: int | None = None,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
         allow_unsequenced_terminal: bool = False,
     ) -> Optional[LoopItemExecution]:
@@ -3089,6 +3391,7 @@ class LoopItemExecutionService:
             db,
             runtime_device_id=device_id,
             runtime_task_id=runtime_task_id,
+            owner_user_id=owner_user_id,
         )
         if row is None:
             return None
@@ -3351,14 +3654,21 @@ class LoopItemExecutionService:
                 )
             )
             if execution_target_id:
-                if request.device_id != execution_target_id:
+                if not _same_runtime_device(
+                    db,
+                    owner_user_id=execution.executor_owner_user_id,
+                    left_device_id=request.device_id,
+                    right_device_id=execution_target_id,
+                ):
                     raise WeworkExecutionProfileError(
                         "Execution request target does not match the claimed queue"
                     )
                 workspace_source_task = request.workspace_source_task
-                if (
-                    workspace_source_task is not None
-                    and workspace_source_task.device_id != execution_target_id
+                if workspace_source_task is not None and not _same_runtime_device(
+                    db,
+                    owner_user_id=execution.executor_owner_user_id,
+                    left_device_id=workspace_source_task.device_id,
+                    right_device_id=execution_target_id,
                 ):
                     raise WeworkExecutionProfileError(
                         "Inherited workflow workspace belongs to a different "
@@ -3439,6 +3749,11 @@ class LoopItemExecutionService:
         except Exception as exc:
             model_label = str(execution.runtime_selection.get("model") or "")
             model_label = model_label or "the selected runtime default"
+            logger.exception(
+                "[RuntimeV2] Execution payload build failed: execution_id=%s model=%s",
+                execution.id,
+                model_label,
+            )
             raise WeworkRuntimeConfigurationError(
                 f"Execution model '{model_label}' is unavailable"
             ) from exc
@@ -3760,6 +4075,9 @@ class LoopItemExecutionService:
         return [
             {
                 "id": execution.id,
+                "workspace_id": workspace_id_for_project(
+                    db, execution.cloud_project_id
+                ),
                 "loop_item_id": execution.loop_item_id,
                 "cloud_project_id": execution.cloud_project_id,
                 "task_title": None,
@@ -4178,20 +4496,10 @@ class LoopItemExecutionService:
         )
         stalled: list[LoopItemExecution] = []
         for execution in candidates:
-            if not execution.runtime_device_id or not execution.runtime_task_id:
-                continue
-            message = (
-                db.query(ProjectChatMessage)
-                .filter(
-                    ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
-                    ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
-                    ProjectChatMessage.sender_type == "agent",
-                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-                )
-                .order_by(ProjectChatMessage.id.desc())
-                .first()
-            )
-            if message is not None and (message.content or "").strip():
+            produced_text = _agent_text_produced(db, execution)
+            # None means the run exposes no probeable identity, so a stall can
+            # never be proven; True means real progress.
+            if produced_text is None or produced_text:
                 continue
             requested = self.cancel(
                 db,

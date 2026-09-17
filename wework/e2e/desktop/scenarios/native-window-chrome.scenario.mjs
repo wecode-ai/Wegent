@@ -15,6 +15,19 @@ async function waitForWindowState(control, predicate, message, timeoutMs) {
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
+async function readWindowControlText(control, testId, attribute) {
+  return control.command('getAttribute', `[data-testid="${testId}"]`, { value: attribute })
+}
+
+async function assertNaturalLanguageWindowControlText(control, testId, attribute) {
+  const rawKeyPattern = /^(?:common\.|todo\.|windows\.)?window\./
+  const text = await readWindowControlText(control, testId, attribute)
+  assert.ok(
+    text.trim().length > 0 && !rawKeyPattern.test(text),
+    `The ${attribute} for ${testId} should be natural language, got "${text}"`
+  )
+}
+
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   return {
     async verify(control) {
@@ -51,14 +64,21 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
           timeoutMs: uiTimeoutMs,
         })
         assert.equal(
-          await control.command(
-            'getComputedStyleValue',
-            '[data-testid="window-frame-controls"]',
-            { value: '-webkit-app-region' }
-          ),
+          await control.command('getComputedStyleValue', '[data-testid="window-frame-controls"]', {
+            value: '-webkit-app-region',
+          }),
           'no-drag',
           'Window frame controls were not excluded from the Electron drag region'
         )
+
+        for (const testId of [
+          'window-minimize-button',
+          'window-maximize-button',
+          'window-close-button',
+        ]) {
+          await assertNaturalLanguageWindowControlText(control, testId, 'title')
+          await assertNaturalLanguageWindowControlText(control, testId, 'aria-label')
+        }
 
         await control.command('click', '[data-testid="window-minimize-button"]')
         await waitForWindowState(

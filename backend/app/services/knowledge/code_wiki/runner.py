@@ -39,13 +39,21 @@ from app.schemas.task import TaskCreate
 from app.services.knowledge import KnowledgeService
 from app.services.knowledge.code_wiki.generation import (
     SOURCE_COMMIT_KEY,
+    SOURCE_TRACKED_FILE_COUNT_KEY,
     FailureCode,
     GenerationInFlight,
     GenerationWikiNotFound,
     finish_generation,
     published_commit,
+    published_tracked_file_count,
     record_failure_reason,
     start_generation,
+)
+from app.services.knowledge.code_wiki.generation_strategy import (
+    GENERATION_STRATEGY_EXT_KEY,
+    GENERATION_STRATEGY_SPEC_KEY,
+    ResolvedGenerationStrategy,
+    strategy_for_run,
 )
 from app.services.knowledge.code_wiki.prompts import WikiRunContext, build_prompt
 from app.services.knowledge.code_wiki.publisher import (
@@ -58,7 +66,10 @@ from app.services.knowledge.code_wiki.quality_gate import (
     PLAN_ONLY_REVIEW_POLICY,
     require_quality_review,
 )
-from app.services.knowledge.code_wiki.repo_state import read_repository_state
+from app.services.knowledge.code_wiki.repo_state import (
+    read_repository_state,
+    read_repository_tracked_file_count,
+)
 from app.services.knowledge.code_wiki.run_mode import ChangedPath, RunMode
 from app.services.knowledge.code_wiki.side_effects import build_projection_side_effects
 from app.services.knowledge.code_wiki.source import SourceRepository
@@ -83,6 +94,8 @@ class StartedRun:
     reason: str
     mode: str = ""
     task_id: int = 0
+    strategy_id: str = ""
+    strategy_revision: int = 0
 
     @property
     def started(self) -> bool:
@@ -155,7 +168,8 @@ def start_run(
             as unknown — which costs a full rebuild.
         changed_paths: Diff since the published commit. ``None`` asks for it to be
             read from the provider alongside the commit.
-        total_source_files: Repository size, used by the change-ratio threshold.
+        total_source_files: Explicit repository size for callers/tests. Normal runs
+            use the tracked-file count returned by the currently published checkout.
         force_full: Whether an explicit caller requested a fresh full rebuild.
 
     Returns:
@@ -167,9 +181,38 @@ def start_run(
         GenerationWikiNotFound: If the wiki is deleted before the run starts.
     """
     source = source_of(knowledge_base)
-    team, task_user = _resolve_execution_context(db, knowledge_base, user)
+    stored_strategy = ((knowledge_base.json or {}).get("spec") or {}).get(
+        GENERATION_STRATEGY_SPEC_KEY
+    )
+    try:
+        legacy_strategy = strategy_for_run(None, db=db)
+    except ValueError as error:
+        raise CodeWikiRunError(str(error)) from error
+    # Strategy protocols currently describe full rebuilds only. The legacy Team is
+    # therefore deliberately used to make the run-mode decision and to execute an
+    # incremental update, preserving the pre-strategy behaviour until incremental
+    # protocols are explicitly designed.
+    team, task_user = _resolve_execution_context(
+        db, knowledge_base, user, strategy=legacy_strategy
+    )
+    execution = {"strategy": legacy_strategy, "team": team}
+
+    def execution_team_id(mode: RunMode) -> int:
+        if mode is RunMode.FULL:
+            try:
+                strategy = strategy_for_run(stored_strategy, db=db)
+            except ValueError as error:
+                raise CodeWikiRunError(str(error)) from error
+            selected_team, _ = _resolve_execution_context(
+                db, knowledge_base, user, strategy=strategy
+            )
+            execution.update(strategy=strategy, team=selected_team)
+        return execution["team"].id
 
     previous_commit = published_commit(db, knowledge_base)
+    if total_source_files is None:
+        total_source_files = published_tracked_file_count(db, knowledge_base)
+    needs_repository_size = bool(previous_commit and total_source_files is None)
     # Read on every run, including the first.
     #
     # This used to be skipped when nothing was published, on the grounds that a first
@@ -193,10 +236,20 @@ def start_run(
             user_id=task_user.id,
             source=source,
             since_commit=previous_commit,
+            include_tracked_file_count=needs_repository_size,
         )
         head_commit = state.head_commit
         if changed_paths is None:
             changed_paths = state.changed_paths
+        if total_source_files is None:
+            total_source_files = state.tracked_file_count
+    elif needs_repository_size:
+        total_source_files = read_repository_tracked_file_count(
+            db,
+            user_id=task_user.id,
+            source=source,
+            ref=head_commit,
+        )
 
     started = start_generation(
         db,
@@ -209,26 +262,45 @@ def start_run(
         head_commit=head_commit,
         changed_paths=changed_paths,
         total_source_files=total_source_files,
+        require_total_source_files=needs_repository_size,
         force_full=force_full,
         # A real foreign key on wiki_generations. Resolved here rather than defaulted
         # to zero: MySQL rejects the insert outright, and SQLite does not enforce it,
         # so a zero passes every test and fails every deployment.
         project_id=_project_id(db, knowledge_base),
         team_id=team.id,
+        team_id_for_mode=execution_team_id,
     )
     if not started.started:
         return StartedRun(
-            generation=None, reason=started.decision.reason, mode=started.decision.mode
+            generation=None,
+            reason=started.decision.reason,
+            mode=started.decision.mode,
+            strategy_id=legacy_strategy.strategy_id,
+            strategy_revision=legacy_strategy.revision,
         )
 
     generation = started.generation
     full = RunMode(started.decision.mode) is RunMode.FULL
+    strategy = execution["strategy"]
+    team = execution["team"]
+    generation.ext = {
+        **(generation.ext or {}),
+        GENERATION_STRATEGY_EXT_KEY: strategy.snapshot(),
+    }
     reviewer_agent_type = ""
     section_writer_agent_type = ""
-    if full and _uses_coordinate_quality_loop(team):
+    collaboration_model = str(
+        ((team.json or {}).get("spec") or {}).get("collaborationModel", "")
+    )
+    if full and strategy.requires_plan_review(collaboration_model=collaboration_model):
         reviewer_agent_type = _reviewer_agent_type(db, team)
         section_writer_agent_type = _optional_member_agent_type(db, team, "writer")
         require_quality_review(generation, policy=PLAN_ONLY_REVIEW_POLICY)
+    elif full and strategy.requires_section_writer:
+        section_writer_agent_type = _required_member_agent_type(
+            db, team, "writer", "Section Writer"
+        )
     prompt = build_prompt(
         WikiRunContext(
             project_name=source.project_name,
@@ -245,6 +317,7 @@ def start_run(
             ],
             reviewer_agent_type=reviewer_agent_type,
             section_writer_agent_type=section_writer_agent_type,
+            strategy_id=strategy.strategy_id,
         ),
         full=full,
     )
@@ -277,6 +350,8 @@ def start_run(
         reason=started.decision.reason,
         mode=started.decision.mode,
         task_id=task_id,
+        strategy_id=strategy.strategy_id,
+        strategy_revision=strategy.revision,
     )
 
 
@@ -288,6 +363,7 @@ def finish_run(
     error_message: str = "",
     failure_code: str = "",
     head_commit: str = "",
+    tracked_file_count: Optional[int] = None,
 ) -> Optional[PublishResult]:
     """Conclude a run the agent has reported on, and publish it if it succeeded.
 
@@ -300,6 +376,8 @@ def finish_run(
             run started with, because the agent read the working tree and the trigger
             only knew what it was told — and this value is what the next run's mode
             decision compares against.
+        tracked_file_count: Number of Git-tracked files in that same checkout. It is
+            optional for compatibility with historical runs and unavailable worktrees.
 
     Returns:
         The publish outcome, or ``None`` when the run failed or was not publishable.
@@ -320,6 +398,8 @@ def finish_run(
     if head_commit:
         snapshot = dict(generation.source_snapshot or {})
         snapshot[SOURCE_COMMIT_KEY] = head_commit
+        if tracked_file_count is not None:
+            snapshot[SOURCE_TRACKED_FILE_COUNT_KEY] = tracked_file_count
         generation.source_snapshot = snapshot
         db.flush()
 
@@ -353,7 +433,11 @@ def _knowledge_base_of(db: Session, generation: WikiGeneration) -> Optional[Kind
 
 
 def _resolve_execution_context(
-    db: Session, knowledge_base: Kind, user: User
+    db: Session,
+    knowledge_base: Kind,
+    user: User,
+    *,
+    strategy: ResolvedGenerationStrategy,
 ) -> tuple[Kind, User]:
     """Find the team that runs code wikis, and the user it runs as.
 
@@ -383,31 +467,81 @@ def _resolve_execution_context(
         raise CodeWikiRunError(
             f"Code wiki {knowledge_base.id} has no active owner to execute its generation"
         )
-    team_name = wiki_settings.CODE_WIKI_TEAM_NAME
-    if not team_name:
-        raise CodeWikiRunError(
-            "WIKI_CODE_WIKI_TEAM_NAME is not configured, so there is no team to run "
-            "the wiki agent"
-        )
+    team_name = strategy.team_ref.name
+    team_namespace = strategy.team_ref.namespace
 
     team = team_kinds_service.get_team_by_name_and_namespace(
         db=db,
         team_name=team_name,
-        team_namespace="default",
+        team_namespace=team_namespace,
         user_id=task_user.id,
     )
     if not team:
         raise CodeWikiRunError(
-            f"Code wiki team '{team_name}' was not found for user {task_user.id}. "
-            "Check WIKI_CODE_WIKI_TEAM_NAME and that the default resources are loaded."
+            f"Code wiki team '{team_namespace}/{team_name}' was not found for user "
+            f"{task_user.id}. Check WIKI_CODE_WIKI_GENERATION_POLICY and that the "
+            "configured resources are loaded; legacy deployments should also check "
+            "WIKI_CODE_WIKI_TEAM_NAME."
         )
     return team, task_user
 
 
-def _uses_coordinate_quality_loop(team: Kind) -> bool:
-    """Whether this Team has opted its full rebuilds into reviewer evidence."""
-    spec = (team.json or {}).get("spec", {})
-    return spec.get("collaborationModel") == "coordinate"
+def strategy_team_readiness_many(
+    db: Session,
+    user: User,
+    strategies: Sequence[ResolvedGenerationStrategy],
+) -> Dict[str, str]:
+    """Check several strategy bindings while resolving each Team only once."""
+    from app.services.adapters.team_kinds import team_kinds_service
+
+    teams: Dict[tuple[str, str], Optional[Kind]] = {}
+    readiness: Dict[str, str] = {}
+    for strategy in strategies:
+        team_key = (strategy.team_ref.namespace, strategy.team_ref.name)
+        if team_key not in teams:
+            teams[team_key] = team_kinds_service.get_team_by_name_and_namespace(
+                db=db,
+                team_name=strategy.team_ref.name,
+                team_namespace=strategy.team_ref.namespace,
+                user_id=user.id,
+            )
+        readiness[strategy.strategy_id] = _strategy_team_readiness(
+            db, strategy, teams[team_key]
+        )
+    return readiness
+
+
+def strategy_team_readiness(
+    db: Session, user: User, strategy: ResolvedGenerationStrategy
+) -> str:
+    """Return an actionable reason when a policy strategy cannot start for ``user``.
+
+    The capabilities endpoint uses this before advertising a choice. ``start_run``
+    still resolves independently because deployment resources can change after a form
+    opened.
+    """
+    return strategy_team_readiness_many(db, user, (strategy,))[strategy.strategy_id]
+
+
+def _strategy_team_readiness(
+    db: Session, strategy: ResolvedGenerationStrategy, team: Optional[Kind]
+) -> str:
+    if team is None:
+        return (
+            f"Team '{strategy.team_ref.namespace}/{strategy.team_ref.name}' is not "
+            "available"
+        )
+    try:
+        collaboration_model = str(
+            ((team.json or {}).get("spec") or {}).get("collaborationModel", "")
+        )
+        if strategy.requires_plan_review(collaboration_model=collaboration_model):
+            _reviewer_agent_type(db, team)
+        if strategy.requires_section_writer:
+            _required_member_agent_type(db, team, "writer", "Section Writer")
+    except CodeWikiRunError as error:
+        return str(error)
+    return ""
 
 
 def _reviewer_agent_type(db: Session, team: Kind) -> str:
@@ -449,6 +583,17 @@ def _optional_member_agent_type(db: Session, team: Kind, role: str) -> str:
     if bot is None:
         raise CodeWikiRunError(f"Coordinate Code Wiki {role.title()} Bot was not found")
     return _claude_subagent_type(bot.name, bot.id)
+
+
+def _required_member_agent_type(db: Session, team: Kind, role: str, label: str) -> str:
+    """Resolve a member whose strategy cannot execute without it."""
+    agent_type = _optional_member_agent_type(db, team, role)
+    if not agent_type:
+        raise CodeWikiRunError(
+            f"Code Wiki strategy requires a {label} Bot, but Team '{team.name}' "
+            f"has no member with role '{role}'"
+        )
+    return agent_type
 
 
 def _claude_subagent_type(name: str, bot_id: int) -> str:

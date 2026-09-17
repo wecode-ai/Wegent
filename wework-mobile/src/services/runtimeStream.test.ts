@@ -50,7 +50,7 @@ describe('RuntimeStream', () => {
         params: {
           deviceId: 'device-1',
           taskId: 'task-1',
-          limit: 50,
+          limit: 5,
         },
       })
       acknowledge({
@@ -68,6 +68,81 @@ describe('RuntimeStream', () => {
     await expect(
       stream.getTranscript({ deviceId: 'device-1', taskId: 'task-1' })
     ).resolves.toMatchObject({ taskId: 'task-1', messages: [{ content: 'pwd' }] })
+  })
+
+  it('loads the preceding transcript page with the server cursor', async () => {
+    emit.mockImplementation((name, payload, acknowledge) => {
+      expect(name).toBe('runtime:request')
+      expect(payload).toMatchObject({
+        method: 'runtime.tasks.transcript',
+        params: {
+          deviceId: 'device-1',
+          taskId: 'task-1',
+          limit: 5,
+          beforeCursor: 'offset:15',
+        },
+      })
+      acknowledge({
+        ok: true,
+        result: {
+          taskId: 'task-1',
+          workspacePath: '/work',
+          runtime: 'codex',
+          messages: [{ id: 'user-older', role: 'user', content: 'older' }],
+          hasMoreBefore: true,
+          beforeCursor: 'offset:10',
+        },
+      })
+    })
+    const stream = new RuntimeStream(config)
+
+    await expect(
+      stream.getTranscript(
+        { deviceId: 'device-1', taskId: 'task-1' },
+        { beforeCursor: 'offset:15' }
+      )
+    ).resolves.toMatchObject({ beforeCursor: 'offset:10' })
+  })
+
+  it('loads only the selected device work through the Mac runtime protocol', async () => {
+    emit.mockImplementation((name, payload, acknowledge) => {
+      expect(name).toBe('runtime:request')
+      expect(payload).toMatchObject({
+        method: 'runtime.tasks.list',
+        device_id: 'device-1',
+        timeout_seconds: 75,
+        params: {},
+      })
+      acknowledge({
+        ok: true,
+        result: {
+          workspaces: [
+            {
+              workspacePath: '/work/Wegent',
+              label: 'Wegent',
+              tasks: [{ taskId: 'task-1', title: 'Fix loading', runtime: 'codex' }],
+            },
+          ],
+        },
+      })
+    })
+    const stream = new RuntimeStream(config)
+
+    await expect(stream.listWork('device-1', 'Mac Studio')).resolves.toMatchObject({
+      projects: [
+        {
+          project: { name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              deviceName: 'Mac Studio',
+              tasks: [{ taskId: 'task-1', workspacePath: '/work/Wegent' }],
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    })
   })
 
   it('decompresses large transcript acknowledgements', async () => {
@@ -93,6 +168,49 @@ describe('RuntimeStream', () => {
     )
   })
 
+  it('retries an oversized five-turn page as one turn with the same cursor', async () => {
+    emit
+      .mockImplementationOnce((_name, payload, acknowledge) => {
+        expect(payload).toMatchObject({
+          params: { taskId: 'task-1', limit: 5, beforeCursor: 'offset:15' },
+        })
+        acknowledge({
+          ok: false,
+          error: {
+            code: 'runtime_rpc_failed',
+            message: 'Response exceeded the transport payload limit',
+          },
+        })
+      })
+      .mockImplementationOnce((_name, payload, acknowledge) => {
+        expect(payload).toMatchObject({
+          params: { taskId: 'task-1', limit: 1, beforeCursor: 'offset:15' },
+        })
+        acknowledge({
+          ok: true,
+          result: {
+            taskId: 'task-1',
+            workspacePath: '/work',
+            runtime: 'codex',
+            messages: [{ id: 'assistant-1', role: 'assistant', content: 'latest' }],
+            beforeCursor: 'offset:14',
+          },
+        })
+      })
+    const stream = new RuntimeStream(config)
+
+    await expect(
+      stream.getTranscript(
+        { deviceId: 'device-1', taskId: 'task-1' },
+        { beforeCursor: 'offset:15' }
+      )
+    ).resolves.toMatchObject({
+      messages: [{ content: 'latest' }],
+      beforeCursor: 'offset:14',
+    })
+    expect(emit).toHaveBeenCalledTimes(2)
+  })
+
   it('surfaces runtime acknowledgement errors', async () => {
     emit.mockImplementation((_name, _payload, acknowledge) => {
       acknowledge({
@@ -105,6 +223,7 @@ describe('RuntimeStream', () => {
     await expect(stream.getTranscript({ deviceId: 'device-1', taskId: 'task-1' })).rejects.toThrow(
       'device_offline: Executor offline'
     )
+    expect(emit).toHaveBeenCalledOnce()
   })
 
   it('uses the Wework runtime relay contract and strictly scopes events', () => {

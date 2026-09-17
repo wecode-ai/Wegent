@@ -172,7 +172,7 @@ describe('ProjectSpaceChatSidebar', () => {
     expect(screen.getByTestId('project-space-chat-header')).toHaveClass('h-[52px]')
     expect(screen.getByTestId('project-space-chat-runtime-project')).toHaveValue('91')
     expect(screen.getByTestId('project-space-chat-resize-handle')).toHaveAccessibleName(
-      '调整私信 AI 宽度'
+      '调整问AI宽度'
     )
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
       'data-empty-state-text',
@@ -256,6 +256,7 @@ describe('ProjectSpaceChatSidebar', () => {
       '管理当前项目',
       expect.objectContaining({
         project: expect.objectContaining({ id: 91 }),
+        workspaceExecution: null,
         runtime: 'codex',
         optimisticUserMessage: expect.objectContaining({
           id: 'queued-side-chat-1',

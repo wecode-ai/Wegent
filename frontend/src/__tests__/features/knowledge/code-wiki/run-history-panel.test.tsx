@@ -81,6 +81,30 @@ describe('restoring a past version', () => {
     })
   })
 
+  it('keeps the confirmation open while the version is being synchronized', async () => {
+    let finishRepublish: (() => void) | undefined
+    ;(codeWikiApi.republish as jest.Mock).mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          finishRepublish = resolve
+        })
+    )
+    const button = await openHistory()
+
+    fireEvent.click(button)
+    fireEvent.click(await screen.findByTestId(`code-wiki-republish-confirm-${42}`))
+
+    expect(await screen.findByTestId('code-wiki-republish-progress')).toBeInTheDocument()
+    expect(screen.getByTestId('code-wiki-republish-confirm')).toBeInTheDocument()
+    expect(screen.getByTestId('code-wiki-republish-cancel')).toBeDisabled()
+
+    finishRepublish?.()
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('code-wiki-republish-confirm')).not.toBeInTheDocument()
+    )
+  })
+
   it('does not report success when the reader fails to reload restored pages', async () => {
     const onRepublished = jest.fn().mockRejectedValue(new Error('Page reload failed'))
     render(<RunHistory knowledgeBaseId={1} status={null} onRepublished={onRepublished} />)
@@ -115,7 +139,7 @@ describe('a failure reason of any length', () => {
     fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
 
     const reason = await screen.findByTestId('code-wiki-run-error')
-    expect(reason.className).toContain('line-clamp-3')
+    expect(reason.className).toContain('line-clamp-2')
     // Clamped visually, not cut: the text itself is the only diagnostic there is.
     expect(reason).toHaveTextContent('clone failed:')
     expect(reason).toHaveAttribute('title', LONG)
@@ -127,11 +151,35 @@ describe('a failure reason of any length', () => {
 
     const reason = await screen.findByTestId('code-wiki-run-error')
     fireEvent.click(reason)
-    expect(reason.className).toContain('line-clamp-3')
+    expect(reason.className).toContain('line-clamp-2')
     expect(screen.queryByTestId('code-wiki-run-error-details')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('code-wiki-run-error-details-trigger'))
 
     expect(await screen.findByTestId('code-wiki-run-error-details')).toHaveTextContent(LONG)
+  })
+})
+
+describe('history row metadata', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockHistory([
+      {
+        ...RESTORABLE,
+        published: true,
+        strategy_id: 'coordinator_adaptive',
+      },
+    ])
+  })
+
+  it('uses a localized strategy name in the compact execution summary', async () => {
+    render(<RunHistory knowledgeBaseId={1} status={null} />)
+    fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
+
+    const summary = await screen.findByTestId('code-wiki-run-summary')
+    expect(summary).toHaveTextContent(
+      'codeWiki.strategy.options.coordinator_adaptive.title · codeWiki.history.mode.full'
+    )
+    expect(screen.getByTestId('code-wiki-run-details').className).toContain('grid-cols-')
   })
 })

@@ -10,6 +10,7 @@ import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 
 import { CORE_PLUGIN_DIRECTORIES, corePluginTarget } from './lib/core-plugin-resources.mjs'
+import { materializeBundledPluginResources } from './lib/bundled-plugin-resources.mjs'
 
 const execFileAsync = promisify(execFile)
 const scriptDirectory = dirname(fileURLToPath(import.meta.url))
@@ -90,7 +91,6 @@ export async function prepareDevelopmentComponentResources(options) {
 
   const linkedComponents = {
     coreDsh: [options.runtimeRoot, 'harness-runtime'],
-    bundledPlugins: [join(weworkRoot, 'resources', 'bundled-plugins'), 'bundled-plugins'],
     executor: [options.executorPath, join('bin', 'wegent-executor')],
     codex: [options.codexPath, join('codex', 'codex')],
     dws: [options.dwsPath, join('bin', 'dws')],
@@ -103,7 +103,11 @@ export async function prepareDevelopmentComponentResources(options) {
   for (const directory of CORE_PLUGIN_DIRECTORIES) {
     await copyCorePlugin(weworkRoot, directory, join(corePluginsRoot, corePluginTarget(directory)))
   }
+  const bundledPluginsRoot = join(resourcesRoot, 'bundled-plugins')
+  await materializeBundledPluginResources(weworkRoot, bundledPluginsRoot)
   const corePluginsSha256 = await hashTree(corePluginsRoot)
+  const weworkAppStaticRoot = join(resourcesRoot, 'wework-app-static')
+  await mkdir(weworkAppStaticRoot, { recursive: true, mode: 0o700 })
 
   const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
   const weworkPackage = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
@@ -120,7 +124,12 @@ export async function prepareDevelopmentComponentResources(options) {
       path: 'wework-core-plugins',
       sha256: corePluginsSha256,
     },
-    bundledPlugins: component('bundled-plugins', join(weworkRoot, 'resources', 'bundled-plugins')),
+    weworkAppStatic: {
+      version,
+      path: 'wework-app-static',
+      sha256: await hashTree(weworkAppStaticRoot),
+    },
+    bundledPlugins: component('bundled-plugins', bundledPluginsRoot),
     executor: component(join('bin', 'wegent-executor'), options.executorPath),
     codex: component(join('codex', 'codex'), options.codexPath),
     dws: {

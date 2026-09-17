@@ -4,9 +4,10 @@ import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPOSER = '[data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]'
-const FIRST_PROMPT = 'SPLIT LEFT TASK'
+const FIRST_PROMPT = 'SPLIT LEFT TASK: investigate online Connector authentication'
 const SECOND_PROMPT = 'SPLIT RIGHT TASK'
 const THIRD_PROMPT = 'SPLIT OUTSIDE TASK'
+const TABLE_MARKDOWN = '| A | B |\n| --- | --- |\n| 中文 | **bold** |\n| Empty |  |'
 const PANE_SELECTOR = '[data-testid^="workbench-pane-"][data-focused]'
 const SPLIT_ATTACHMENT_FILENAME = 'split-pane-only.png'
 const IMAGE_ARTIFACT_BASE64 =
@@ -147,12 +148,51 @@ async function createTask(control, prompt, timeoutMs) {
     snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
   )
   await control.command('fill', COMPOSER, { value: prompt })
-  await control.command('press', COMPOSER, { key: 'Enter' })
+  await control.command(
+    'clickWhenEnabled',
+    `${ACTIVE_SURFACE} [data-testid="send-message-button"]`,
+    {
+      timeoutMs,
+    }
+  )
   await control.command('waitFor', `${ACTIVE_SURFACE} [data-testid="message-assistant"]`, {
     text: `${prompt}_COMPLETE`,
     timeoutMs,
   })
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'chat-message-input',
+    'The composer did not retain focus after sending a message'
+  )
+  if (prompt === FIRST_PROMPT) await verifyMessageTableActions(control)
   return waitForNewTaskRow(control, knownRows, prompt, timeoutMs)
+}
+
+async function verifyMessageTableActions(control) {
+  const table = `${ACTIVE_SURFACE} [data-testid="markdown-table"]`
+  await control.command('hover', table)
+  await control.command('click', `${table} [data-testid="markdown-table-copy-button"]`)
+  assert.equal(await control.command('getClipboardText', ''), TABLE_MARKDOWN)
+  await control.command('click', `${table} [data-testid="markdown-table-expand-button"]`)
+  await control.command('waitFor', '[data-testid="markdown-table-dialog"]', { visible: true })
+  assert.equal(
+    await control.command('getText', '[data-testid="markdown-table-dialog"] strong'),
+    'bold'
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="markdown-table-dialog"] tr')),
+    3
+  )
+  await control.command('press', '[data-testid="markdown-table-close-button"]', { key: 'Escape' })
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="markdown-table-dialog"]')),
+    0
+  )
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'markdown-table-expand-button'
+  )
+  await control.command('click', `${ACTIVE_SURFACE} [data-testid="chat-message-input"]`)
 }
 
 async function verifyMultilineComposerCaret(control, captureScreenshot) {
@@ -161,6 +201,8 @@ async function verifyMultilineComposerCaret(control, captureScreenshot) {
     /\bcomposer-prosemirror-editor\b/,
     'The split workbench did not render the ProseMirror composer'
   )
+  await verifyComposerLineNavigation(control)
+  await verifyComposerMarkdownEditing(control)
   const beforePaste = '0123456789'
   const pastedText = 'PASTED'
   const afterPaste = 'abcdefghij'
@@ -180,10 +222,36 @@ async function verifyMultilineComposerCaret(control, captureScreenshot) {
 
   await control.command('fill', COMPOSER, { value: '' })
   await control.command('click', COMPOSER)
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'chat-message-input',
+    'The composer did not retain DOM focus while the desktop window stayed inactive'
+  )
   const [singleLineCaretMetrics] = JSON.parse(
     await control.command('getElementMetrics', `${COMPOSER} .composer-empty-caret`)
   )
   assert.ok(singleLineCaretMetrics, 'The empty composer did not render its caret')
+  if (process.platform === 'darwin') {
+    assert.equal(
+      JSON.parse(await control.command('getWindowFocusSnapshot', 'body')).mainFocused,
+      false,
+      'The desktop E2E window unexpectedly became active'
+    )
+    assert.equal(
+      await control.command('getComputedStyleValue', `${COMPOSER} .composer-empty-caret`, {
+        value: 'animation-name',
+      }),
+      'none',
+      'The inactive composer continued animating its empty caret despite retaining DOM focus'
+    )
+    assert.equal(
+      await control.command('getComputedStyleValue', `${COMPOSER} .composer-empty-caret`, {
+        value: 'opacity',
+      }),
+      '0',
+      'The inactive composer continued showing its empty caret'
+    )
+  }
   for (let line = 1; line < 12; line += 1) {
     await control.command('press', COMPOSER, { key: 'Shift+Enter' })
   }
@@ -247,6 +315,89 @@ async function verifyMultilineComposerCaret(control, captureScreenshot) {
     1,
     'Clearing the multiline composer did not restore a single empty paragraph'
   )
+}
+
+async function verifyComposerLineNavigation(control) {
+  const firstLine = `${COMPOSER} > p:first-child`
+  const emptyLine = `${COMPOSER} > p:last-child`
+  // Synthetic keyboard events do not trigger Chromium's native caret movement.
+  await control.command('fill', COMPOSER, { value: 'first' })
+  await control.command('nativePress', COMPOSER, { key: 'Shift+Enter' })
+  assert.equal(await control.command('getValue', COMPOSER), 'first\n')
+
+  await control.command('nativePress', COMPOSER, { key: 'ArrowLeft' })
+  assert.equal(
+    Number(await control.command('getSelectionOffset', firstLine)),
+    5,
+    'Left from a new empty line did not move to the previous line'
+  )
+  await control.command('nativePress', COMPOSER, { key: 'ArrowRight' })
+  assert.equal(
+    Number(await control.command('getSelectionOffset', emptyLine)),
+    0,
+    'Right from the previous line did not move back to the empty line'
+  )
+  await control.command('nativePress', COMPOSER, { key: 'ArrowUp' })
+  const previousLineOffset = Number(await control.command('getSelectionOffset', firstLine))
+  assert.ok(
+    previousLineOffset >= 0 && previousLineOffset <= 5,
+    'Up did not reach the previous line'
+  )
+  await control.command('nativePress', COMPOSER, { key: 'ArrowDown' })
+  assert.equal(
+    Number(await control.command('getSelectionOffset', emptyLine)),
+    0,
+    'Down did not return to the empty line'
+  )
+  assert.equal(await control.command('getValue', COMPOSER), 'first\n')
+}
+
+async function verifyComposerMarkdownEditing(control) {
+  const markdown = '| A | B |\n| --- | --- |\n| X | **bold** |\n| Empty |  |'
+  await control.command('fill', COMPOSER, { value: '' })
+  await control.command('pasteText', COMPOSER, { value: markdown })
+  await control.command('waitFor', `${COMPOSER} table`, { visible: true })
+  assert.equal(await control.command('getValue', COMPOSER), markdown)
+  assert.equal(await control.command('getText', `${COMPOSER} strong`), 'bold')
+  assert.equal(Number(await control.command('getElementCount', `${COMPOSER} tr`)), 3)
+  await control.command('setSelectionOffset', `${COMPOSER} tr:nth-child(2) td:first-child`, {
+    value: '1',
+  })
+  await control.command('pasteText', COMPOSER, { value: 'edited' })
+  assert.match(await control.command('getValue', COMPOSER), /\| Xedited \| \*\*bold\*\* \|/)
+  await control.command('press', COMPOSER, { key: 'Tab' })
+  await control.command('pasteText', COMPOSER, { value: 'replaced' })
+  assert.match(await control.command('getValue', COMPOSER), /replaced/)
+  assert.equal(Number(await control.command('getElementCount', `${COMPOSER} table`)), 1)
+  const url = 'http://example.com/file_name?q=hello_world'
+  await control.command('fill', COMPOSER, { value: url })
+  await control.command('click', `${COMPOSER} [data-testid="composer-text-link"]`)
+  await control.command('waitFor', '[data-testid="link-edit-open-link"]', { visible: true })
+  assert.equal(await control.command('getValue', COMPOSER), url)
+  await control.command('click', '[data-testid="link-edit-edit-text"]')
+  await control.command('fill', '[data-testid="link-edit-text-input"]', {
+    value: String.raw`Example [draft]\done]`,
+  })
+  await control.command('press', '[data-testid="link-edit-text-input"]', { key: 'Enter' })
+  assert.equal(
+    await control.command('getValue', COMPOSER),
+    String.raw`[Example \[draft\]\\done\]](${url})`
+  )
+  await control.command('fill', COMPOSER, { value: '' })
+  await control.command('pasteText', COMPOSER, { value: url })
+  await control.command('setSelectionOffset', COMPOSER, { value: String(url.length) })
+  await control.command('pasteText', COMPOSER, { value: '哈哈哈哈' })
+  assert.equal(
+    await control.command('getText', `${COMPOSER} [data-testid="composer-text-link"]`),
+    url
+  )
+  const bounded = await control.command('getValue', COMPOSER)
+  assert.match(bounded, /\)哈哈哈哈$/)
+  await control.command('click', `${COMPOSER} [data-testid="composer-text-link"]`)
+  await control.command('click', '[data-testid="link-edit-edit-url"]')
+  assert.equal(await control.command('getValue', '[data-testid="link-edit-url-input"]'), url)
+  await control.command('press', '[data-testid="link-edit-url-input"]', { key: 'Escape' })
+  await control.command('fill', COMPOSER, { value: '' })
 }
 
 async function expandProject(control, timeoutMs) {
@@ -432,7 +583,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         response.end(
           sse([
             responseCreated(responseId),
-            assistantMessage(`${prompt}_COMPLETE`),
+            assistantMessage(
+              `${prompt}_COMPLETE${prompt === FIRST_PROMPT ? `\n\n${TABLE_MARKDOWN}` : ''}`
+            ),
             responseCompleted(responseId),
           ])
         )

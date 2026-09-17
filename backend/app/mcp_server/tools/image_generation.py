@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
         "size": "Optional exact output size, for example 1024x1024",
         "max_images": "Number of images to generate, from 1 to 15",
         "reference_images": (
-            "Optional image attachment IDs, HTTP/HTTPS URLs, or base64 data URLs"
+            "Optional image attachment IDs, public HTTP/HTTPS URLs, or base64 data URLs. "
+            "For uploaded or previously generated images, use attachment IDs, "
+            "not Wegent attachment download URLs."
         ),
     },
 )

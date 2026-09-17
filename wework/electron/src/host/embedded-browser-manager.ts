@@ -19,7 +19,10 @@ import {
   type BrowserHistorySearch,
 } from './browser-history-store.js'
 import { prepareLocalFileNavigation } from './local-file-preview.js'
-import { captureWebContentsDataUrl } from './web-contents-capture.js'
+import {
+  captureWebContentsDataUrl,
+  type WebContentsCaptureOptions,
+} from './web-contents-capture.js'
 
 export interface BrowserBounds {
   x: number
@@ -34,6 +37,8 @@ export interface BrowserPageState {
   title: string | null
   url: string | null
   isLoading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
   visible: boolean
   navigationError: {
     code: number
@@ -55,6 +60,14 @@ interface BrowserEntry {
   navigationError: BrowserPageState['navigationError']
   historyId: string | null
   historyGeneration: number
+}
+
+interface BrowserOpenInput {
+  label: string
+  url: string
+  bounds: BrowserBounds
+  visible: boolean
+  navigateExisting: boolean
 }
 
 export interface BrowserHostEvent {
@@ -131,6 +144,9 @@ export interface BrowserBackgroundPageState {
 }
 
 const AGENT_CURSOR_IDLE_HIDE_MS = 4_000
+// Chromium's ERR_ABORTED: the load was superseded by a newer navigation, which
+// is a normal race, not a user-facing failure.
+const NAVIGATION_ABORTED_ERROR_CODE = -3
 export const EMBEDDED_BROWSER_PARTITION = 'persist:wework-browser'
 export const EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX = 'persist:wework-browser-app-route:'
 export const EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR = ':host:'
@@ -337,20 +353,23 @@ export class EmbeddedBrowserManager {
       this.setAgentControlPaused(entry.label, true)
     })
     contents.once('destroyed', () => {
-      if (this.attachedContents.get(normalizedLabel)?.id === contents.id) {
-        this.attachedContents.delete(normalizedLabel)
+      const removedLabels = new Set<string>()
+      for (const [attachedLabel, attached] of this.attachedContents) {
+        if (attached.id !== contents.id) continue
+        this.attachedContents.delete(attachedLabel)
+        removedLabels.add(attachedLabel)
       }
-      if (this.entries.get(normalizedLabel)?.contents.id === contents.id) {
-        this.entries.delete(normalizedLabel)
+      for (const [entryLabel, entry] of this.entries) {
+        if (entry.contents.id !== contents.id) continue
+        this.entries.delete(entryLabel)
+        removedLabels.add(entryLabel)
+      }
+      for (const removedLabel of removedLabels) {
+        this.clearActiveTabReferences(removedLabel)
+        this.clearLabelScopedState(removedLabel)
       }
     })
-    const waiters = this.attachmentWaiters.get(normalizedLabel)
-    if (!waiters) return
-    this.attachmentWaiters.delete(normalizedLabel)
-    for (const waiter of waiters) {
-      clearTimeout(waiter.timeout)
-      waiter.resolve(contents)
-    }
+    this.resolveAttachmentWaiters(normalizedLabel, contents)
   }
 
   requestPopupTab(parentLabel: string, url: string): void {
@@ -373,26 +392,13 @@ export class EmbeddedBrowserManager {
     })
   }
 
-  async open(input: {
-    label: string
-    url: string
-    bounds: BrowserBounds
-    visible: boolean
-    navigateExisting: boolean
-  }): Promise<BrowserPageState> {
+  async open(input: BrowserOpenInput): Promise<BrowserPageState> {
     const label = requiredLabel(input.label)
     const existing = this.entries.get(label)
-    if (existing) {
-      existing.bounds = validBounds(input.bounds)
-      existing.visible = input.visible
-      if (input.navigateExisting && existing.contents.getURL() !== input.url) {
-        const url = validBrowserUrl(input.url)
-        existing.requestedUrl = url
-        await this.load(existing, url)
-      }
-      return this.state(label)
-    }
+    if (existing) return this.openExisting(existing, input)
     const contents = await this.waitForAttachedContents(label)
+    const migrated = this.entries.get(label)
+    if (migrated) return this.openExisting(migrated, input)
     const entry: BrowserEntry = {
       label,
       nativeLabel: `electron-browser-${randomUUID()}`,
@@ -452,6 +458,9 @@ export class EmbeddedBrowserManager {
       if (entry.historyId) void this.history.backfillTitle(entry.historyId, title)
     })
     contents.on('did-navigate', (_event, url) => {
+      // A committed main-frame navigation means a page is on screen again, so
+      // any failure recorded by a superseded load is now stale.
+      entry.navigationError = null
       if (url !== entry.previewDisplayUrl) {
         entry.requestedUrl = url
         entry.previewDisplayUrl = null
@@ -468,7 +477,7 @@ export class EmbeddedBrowserManager {
       emitPageState()
     })
     contents.on('did-fail-load', (_event, code, message, validatedURL, isMainFrame) => {
-      if (!isMainFrame || code === -3) return
+      if (!isMainFrame || code === NAVIGATION_ABORTED_ERROR_CODE) return
       this.recordNavigationFailure(entry, code, message, validatedURL || entry.requestedUrl)
     })
     contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
@@ -486,6 +495,20 @@ export class EmbeddedBrowserManager {
     // The requested URL is already authoritative in state() while Chromium finishes loading.
     await this.load(entry, entry.requestedUrl as string)
     return this.state(label)
+  }
+
+  private async openExisting(
+    entry: BrowserEntry,
+    input: BrowserOpenInput
+  ): Promise<BrowserPageState> {
+    entry.bounds = validBounds(input.bounds)
+    entry.visible = input.visible
+    if (input.navigateExisting && entry.contents.getURL() !== input.url) {
+      const url = validBrowserUrl(input.url)
+      entry.requestedUrl = url
+      await this.load(entry, url)
+    }
+    return this.state(entry.label)
   }
 
   setBounds(label: string, bounds: BrowserBounds, visible: boolean): void {
@@ -606,6 +629,8 @@ export class EmbeddedBrowserManager {
       title: contents.getTitle() || null,
       url: pendingUrl || visibleCurrentUrl || entry.requestedUrl,
       isLoading: contents.isLoading(),
+      canGoBack: contents.navigationHistory.canGoBack(),
+      canGoForward: contents.navigationHistory.canGoForward(),
       visible: entry.visible,
       navigationError: entry.navigationError,
     }
@@ -615,6 +640,28 @@ export class EmbeddedBrowserManager {
     const entry = this.required(fromLabel)
     const target = requiredLabel(toLabel)
     if (this.entries.has(target)) throw new Error(`Browser label already exists: ${target}`)
+    const attached = this.attachedContents.get(entry.label)
+    const targetAttached = this.attachedContents.get(target)
+    if (
+      attached &&
+      targetAttached &&
+      attached.id !== targetAttached.id &&
+      !targetAttached.isDestroyed()
+    ) {
+      targetAttached.close()
+    }
+    this.attachedContents.delete(entry.label)
+    if (attached && !attached.isDestroyed()) this.attachedContents.set(target, attached)
+    for (const [baseLabel, activeLabel] of this.activeTabs) {
+      if (activeLabel === entry.label) this.activeTabs.set(baseLabel, target)
+    }
+    if (this.agentControlPaused.delete(entry.label)) this.agentControlPaused.add(target)
+    for (const approval of this.agentApprovals.values()) {
+      if (approval.label === entry.label) approval.label = target
+    }
+    for (const download of this.downloads.values()) {
+      if (download.label === entry.label) download.label = target
+    }
     this.entries.delete(entry.label)
     entry.label = target
     this.entries.set(target, entry)
@@ -632,6 +679,7 @@ export class EmbeddedBrowserManager {
     this.clearAgentCursorHide(fromLabel)
     if (cursorState && !this.agentActive.has(fromLabel)) this.scheduleAgentCursorHide(target)
     if (this.agentActive.delete(fromLabel)) this.agentActive.add(target)
+    if (attached && !attached.isDestroyed()) this.resolveAttachmentWaiters(target, attached)
   }
 
   setActiveTab(baseLabel: string, activeLabel: string): void {
@@ -857,16 +905,16 @@ export class EmbeddedBrowserManager {
     this.emit('open-request', payload)
   }
 
-  requestClose(label: string): void {
+  async requestClose(label: string): Promise<void> {
     const normalizedLabel = requiredLabel(label)
     const entry = this.entries.get(normalizedLabel)
+    if (!entry) return
     this.close(normalizedLabel)
-    if (entry) {
-      this.emit('close-request', {
-        label: normalizedLabel,
-        nativeLabel: entry.nativeLabel,
-      })
-    }
+    this.emit('close-request', {
+      label: normalizedLabel,
+      nativeLabel: entry.nativeLabel,
+    })
+    await this.waitForAttachedContents(normalizedLabel)
   }
 
   close(label: string, expectedNativeLabel?: string | null): void {
@@ -874,6 +922,18 @@ export class EmbeddedBrowserManager {
     if (!entry) return
     if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
     this.entries.delete(label)
+    this.clearActiveTabReferences(label)
+    this.clearLabelScopedState(label)
+    if (!entry.contents.isDestroyed()) entry.contents.close()
+  }
+
+  private clearActiveTabReferences(label: string): void {
+    for (const [baseLabel, activeLabel] of this.activeTabs) {
+      if (baseLabel === label || activeLabel === label) this.activeTabs.delete(baseLabel)
+    }
+  }
+
+  private clearLabelScopedState(label: string): void {
     this.agentControlPaused.delete(label)
     this.agentActive.delete(label)
     this.clearAgentCursorHide(label)
@@ -884,7 +944,10 @@ export class EmbeddedBrowserManager {
       if (approval.label === label) this.agentApprovals.delete(approvalId)
     }
     this.attachedContents.delete(label)
-    if (!entry.contents.isDestroyed()) entry.contents.close()
+    this.rejectAttachmentWaiters(
+      label,
+      new Error(`Embedded browser webview was closed before attachment: ${label}`)
+    )
   }
 
   closeMany(labels: string[]): void {
@@ -951,9 +1014,13 @@ export class EmbeddedBrowserManager {
     return this.history.remove(ids)
   }
 
-  async capture(label: string, rect?: BrowserBounds): Promise<string> {
+  async capture(
+    label: string,
+    rect?: BrowserBounds,
+    options: Omit<WebContentsCaptureOptions, 'rect'> = {}
+  ): Promise<string> {
     const entry = this.required(label)
-    return captureWebContentsDataUrl(entry.contents, { rect })
+    return captureWebContentsDataUrl(entry.contents, { ...options, rect })
   }
 
   labelForContentsId(contentsId: number): string | null {
@@ -1146,6 +1213,10 @@ export class EmbeddedBrowserManager {
       if (!entry.navigationError) {
         const message = error instanceof Error ? error.message : String(error)
         const code = Number(message.match(/\((-?\d+)\)/)?.[1] ?? -2)
+        // loadURL rejects with ERR_ABORTED when a newer navigation supersedes
+        // this one. The winning navigation reports its own outcome, so an
+        // aborted load must not leave a sticky failure on the entry.
+        if (code === NAVIGATION_ABORTED_ERROR_CODE) return
         this.recordNavigationFailure(entry, code, message, url)
       }
     }
@@ -1258,6 +1329,26 @@ export class EmbeddedBrowserManager {
       waiters.add({ resolve, reject, timeout })
       this.attachmentWaiters.set(label, waiters)
     })
+  }
+
+  private resolveAttachmentWaiters(label: string, contents: WebContents): void {
+    const waiters = this.attachmentWaiters.get(label)
+    if (!waiters) return
+    this.attachmentWaiters.delete(label)
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeout)
+      waiter.resolve(contents)
+    }
+  }
+
+  private rejectAttachmentWaiters(label: string, error: Error): void {
+    const waiters = this.attachmentWaiters.get(label)
+    if (!waiters) return
+    this.attachmentWaiters.delete(label)
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeout)
+      waiter.reject(error)
+    }
   }
 }
 

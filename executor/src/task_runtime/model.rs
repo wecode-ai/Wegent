@@ -65,6 +65,8 @@ pub struct ProjectUpdate {
     pub card_display: Option<Value>,
     pub pull_request_automation: Option<Value>,
     pub workflow_definition: Option<Value>,
+    pub collaboration_groups: Option<Value>,
+    pub automatic_processing_rules: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -100,7 +102,10 @@ pub struct TaskUpdate {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChatAgentCreate {
     pub name: String,
+    #[serde(default = "default_chat_agent_runtime")]
+    pub runtime: String,
     pub model: Option<String>,
+    pub capability_description: Option<String>,
     pub system_prompt: Option<String>,
     pub visibility: Option<String>,
     pub execution_environment: Option<String>,
@@ -116,13 +121,19 @@ pub struct ChatAgentCreate {
     pub created_by_user_id: Option<i64>,
     #[serde(default)]
     pub plugins: Vec<Value>,
+    #[serde(default)]
+    pub additional_skills: Vec<Value>,
+    #[serde(default = "default_mcp_servers")]
+    pub mcp_servers: Value,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChatAgentUpdate {
     pub version: i64,
     pub name: Option<String>,
+    pub runtime: Option<String>,
     pub model: Option<String>,
+    pub capability_description: Option<String>,
     pub system_prompt: Option<String>,
     pub status: Option<String>,
     pub visibility: Option<String>,
@@ -135,6 +146,8 @@ pub struct ChatAgentUpdate {
     #[serde(default)]
     pub local_project_id: Option<Option<i64>>,
     pub plugins: Option<Vec<Value>>,
+    pub additional_skills: Option<Vec<Value>>,
+    pub mcp_servers: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -144,6 +157,7 @@ pub struct ChatAgent {
     pub name: String,
     pub runtime: String,
     pub model: Option<String>,
+    pub capability_description: String,
     pub system_prompt: String,
     pub status: String,
     pub visibility: String,
@@ -154,6 +168,8 @@ pub struct ChatAgent {
     pub workspace_policy: String,
     pub local_project_id: Option<i64>,
     pub plugins: Vec<Value>,
+    pub additional_skills: Vec<Value>,
+    pub mcp_servers: Value,
     pub created_by_user_id: i64,
     pub version: i64,
     pub created_at: String,
@@ -210,13 +226,18 @@ pub struct LocalExecution {
     pub rejected_reason: Option<String>,
     pub runtime_device_id: Option<String>,
     pub runtime_task_id: Option<String>,
+    #[serde(rename = "runtime_payload")]
     pub execution_payload: Option<Value>,
     pub max_retries: i64,
     pub agent_name: String,
     pub agent_system_prompt: String,
     pub agent_model: Option<String>,
+    pub agent_local_project_id: Option<i64>,
     pub agent_max_concurrent_executions: u64,
     pub agent_plugins: Vec<Value>,
+    pub agent_runtime: String,
+    pub agent_additional_skills: Vec<Value>,
+    pub agent_mcp_servers: Value,
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -228,6 +249,14 @@ fn default_max_concurrent_executions() -> u64 {
 
 fn default_workspace_policy() -> String {
     "project".to_owned()
+}
+
+fn default_chat_agent_runtime() -> String {
+    "codex".to_owned()
+}
+
+fn default_mcp_servers() -> Value {
+    Value::Object(Default::default())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -307,6 +336,12 @@ pub struct RuntimeTaskAddress {
     pub task_title: Option<String>,
     #[serde(default, alias = "backendTaskId")]
     pub backend_task_id: Option<i64>,
+    #[serde(
+        default,
+        alias = "modelSelection",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model_selection: Option<Value>,
     #[serde(default, alias = "workflowNodeId")]
     pub workflow_node_id: Option<String>,
 }
@@ -321,6 +356,8 @@ pub struct TaskBinding {
     pub task_id: String,
     pub task_title: Option<String>,
     pub backend_task_id: Option<i64>,
+    #[serde(rename = "modelSelection", skip_serializing_if = "Option::is_none")]
+    pub model_selection: Option<Value>,
     pub workflow_node_id: Option<String>,
     #[serde(default)]
     pub workflow_stage_input: Option<Value>,

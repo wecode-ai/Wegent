@@ -283,6 +283,13 @@ const getPreferredDevice = (devices: DeviceInfo[]): SubscriptionDeviceInfo | nul
   return sortedDevices[0] || null
 }
 
+/**
+ * Create or edit a subscription.
+ *
+ * On update, the payload always sends the current `knowledge_base_refs`,
+ * `skill_refs`, and `notification_webhooks` arrays so that clearing all
+ * items is persisted (an omitted field would keep the old values).
+ */
 export function SubscriptionForm({
   open,
   onOpenChange,
@@ -423,7 +430,7 @@ export function SubscriptionForm({
       setTeamsLoading(true)
       setTeamsLoaded(false)
       try {
-        const response = await teamApis.getTeams({ page: 1, limit: 100 })
+        const response = await teamApis.getAllTeams()
         const loadedTeams = response.items || []
         setTeams(loadedTeams)
 
@@ -817,9 +824,11 @@ export function SubscriptionForm({
             }),
           model_ref: selectedModel ? { name: selectedModel.name, namespace: 'default' } : undefined,
           force_override_bot_model: !!selectedModel,
-          knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
-          skill_refs: skillRefs.length > 0 ? skillRefs : undefined,
-          notification_webhooks: notificationWebhooks.length > 0 ? notificationWebhooks : undefined,
+          // Always send these arrays on update so clearing all items persists
+          // (undefined would be dropped from the request body and keep old values).
+          knowledge_base_refs: knowledgeBaseRefs,
+          skill_refs: skillRefs,
+          notification_webhooks: notificationWebhooks,
           // Expiration settings
           ...(expirationType !== 'none' && {
             expires_at:

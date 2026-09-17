@@ -14,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { ActionButton } from '@/components/ui/action-button'
 import { Button } from '@/components/ui/button'
 import type { UnifiedSkill } from '@/apis/skills'
+import { groupSkillsBySource, type SourceGroupedSkill } from '@/utils/skillGrouping'
 import Link from 'next/link'
 
 interface SkillSelectorPopoverProps {
@@ -24,9 +25,10 @@ interface SkillSelectorPopoverProps {
   /** Already preloaded skill names (filter out for ChatShell) */
   preloadedSkillNames: string[]
   /** Currently selected skill names */
+  selectedSkillIds?: number[]
   selectedSkillNames: string[]
   /** Callback when a skill is toggled */
-  onToggleSkill: (skillName: string) => void
+  onToggleSkill: (skill: UnifiedSkill) => void
   /** Whether this is a Chat Shell (affects filtering behavior) */
   isChatShell: boolean
   /** Whether the selector is disabled (cannot open popover) */
@@ -48,20 +50,15 @@ interface AutoAvailableSkill {
   sources: Array<'agent_builtin' | 'my_default'>
 }
 
-interface GroupedSkill {
-  skill: UnifiedSkill
-  group: 'personal' | 'group' | 'public'
-}
-
 /**
  * SkillSelectorPopover Component
  *
  * A popover button that allows selecting multiple skills for a message.
  * Skills are grouped into:
  * 1. Team Skills - Skills configured for the current agent
- * 2. Personal Skills - User's own uploaded skills (namespace='default', is_public=false)
- * 3. Group Skills - Skills from user's groups (namespace!='default', is_public=false)
- *    - Each group's skills are shown under a separate header with the group name
+ * 2. Personal Skills - Non-public skills without a group source
+ * 3. Group Skills - Group-owned skills and personal skills shared through bindings
+ *    - Group names are shown only for skills stored in a group namespace
  * 4. Public Skills - System-wide public skills (is_public=true)
  */
 const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPopoverProps>(
@@ -70,6 +67,7 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
       skills,
       teamSkillNames,
       preloadedSkillNames,
+      selectedSkillIds = [],
       selectedSkillNames,
       onToggleSkill,
       isChatShell,
@@ -79,7 +77,7 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
     },
     ref
   ) {
-    const { t } = useTranslation()
+    const { t } = useTranslation('common')
     const [open, setOpen] = useState(false)
     const [searchQuery, setSearchQuery] = useState('')
     const buttonRef = useRef<HTMLElement | null>(null)
@@ -88,6 +86,16 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
     useImperativeHandle(ref, () => ({
       getButtonElement: () => buttonRef.current,
     }))
+
+    const groupSkillIds = useMemo(
+      () =>
+        new Set(
+          groupSkillsBySource(skills)
+            .filter(({ group }) => group === 'group')
+            .map(({ skill }) => skill.id)
+        ),
+      [skills]
+    )
 
     const autoAvailableSkills = useMemo<AutoAvailableSkill[]>(() => {
       const teamSkillSet = new Set(teamSkillNames)
@@ -108,7 +116,7 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
     }, [skills, teamSkillNames, preloadedSkillNames])
 
     // Group and filter temporary skills
-    const groupedSkills = useMemo<GroupedSkill[]>(() => {
+    const groupedSkills = useMemo<SourceGroupedSkill[]>(() => {
       const autoSkillNames = new Set(autoAvailableSkills.map(item => item.skill.name))
       const filteredSkills = skills.filter(skill => {
         if (autoSkillNames.has(skill.name)) return false
@@ -116,40 +124,7 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
         return true
       })
 
-      // Group skills
-      const grouped: GroupedSkill[] = []
-      const personalSkills: GroupedSkill[] = []
-      // Use Map to group skills by namespace for proper ordering
-      const groupSkillsByNamespace: Map<string, GroupedSkill[]> = new Map()
-      const publicSkills: GroupedSkill[] = []
-
-      for (const skill of filteredSkills) {
-        if (skill.is_public) {
-          publicSkills.push({ skill, group: 'public' })
-        } else if (skill.namespace && skill.namespace !== 'default') {
-          // Group skills: namespace is not 'default' and not public
-          // Group by namespace for proper ordering
-          const namespace = skill.namespace
-          if (!groupSkillsByNamespace.has(namespace)) {
-            groupSkillsByNamespace.set(namespace, [])
-          }
-          groupSkillsByNamespace.get(namespace)!.push({ skill, group: 'group' })
-        } else {
-          // Personal skills: namespace is 'default' and not public
-          personalSkills.push({ skill, group: 'personal' })
-        }
-      }
-
-      // Flatten group skills, sorted by namespace
-      const sortedNamespaces = Array.from(groupSkillsByNamespace.keys()).sort()
-      const groupSkills: GroupedSkill[] = []
-      for (const namespace of sortedNamespaces) {
-        groupSkills.push(...groupSkillsByNamespace.get(namespace)!)
-      }
-
-      // Sort: Personal -> Group (by namespace) -> Public
-      grouped.push(...personalSkills, ...groupSkills, ...publicSkills)
-      return grouped
+      return groupSkillsBySource(filteredSkills)
     }, [skills, autoAvailableSkills, preloadedSkillNames, isChatShell])
 
     // Filter by search query
@@ -245,7 +220,11 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
 
       for (const { skill, sources } of filteredAutoAvailableSkills) {
         elements.push(
-          <div key={`auto-${skill.id}`} className="flex items-center gap-2 px-2 py-2 rounded-md">
+          <div
+            key={`auto-${skill.id}`}
+            data-testid={`skill-selector-item-${skill.id}`}
+            className="flex items-center gap-2 px-2 py-2 rounded-md"
+          >
             <div className="w-4 h-4 rounded border border-border bg-muted flex items-center justify-center flex-shrink-0 opacity-70">
               <Check className="h-3 w-3 text-text-muted" />
             </div>
@@ -265,6 +244,11 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
                 {sources.includes('my_default') && (
                   <Badge variant="secondary" className="text-[10px]">
                     {t('common:skillSelector.myDefault')}
+                  </Badge>
+                )}
+                {groupSkillIds.has(skill.id) && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    {t('common:skillSelector.group_skills_section')}
                   </Badge>
                 )}
               </div>
@@ -292,27 +276,30 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
         return elements
       }
 
-      for (const { skill, group } of filteredSkills) {
+      for (const { skill, group, groupNamespace } of filteredSkills) {
         // Add section header when group changes
         // For 'group' type, also add header when namespace changes
         const needsHeader =
-          group !== currentGroup || (group === 'group' && skill.namespace !== currentNamespace)
+          group !== currentGroup ||
+          (group === 'group' && (groupNamespace || null) !== currentNamespace)
 
         if (needsHeader) {
           currentGroup = group
           if (group === 'group') {
-            currentNamespace = skill.namespace || null
+            currentNamespace = groupNamespace || null
           }
 
           // For group skills, show the group name (namespace) in the header
           const headerText =
-            group === 'group' && skill.namespace
-              ? `${t('common:skillSelector.group_skills_section')} - ${skill.namespace}`
+            group === 'group' && groupNamespace
+              ? `${t('common:skillSelector.group_skills_section')} - ${groupNamespace}`
               : getSectionHeader(group)
 
           elements.push(
             <div
-              key={group === 'group' ? `header-${group}-${skill.namespace}` : `header-${group}`}
+              key={
+                group === 'group' ? `header-${group}-${groupNamespace || ''}` : `header-${group}`
+              }
               className="px-2 py-1.5 text-xs text-text-muted font-medium flex items-center gap-1.5 border-t border-border first:border-t-0 mt-1 first:mt-0"
             >
               {getGroupIcon(group)}
@@ -321,15 +308,16 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
           )
         }
 
-        const isSelected = selectedSkillNames.includes(skill.name)
+        const isSelected = selectedSkillIds.includes(skill.id)
 
         elements.push(
           <div
             key={skill.id}
+            data-testid={`skill-selector-item-${skill.id}`}
             className={`flex items-center gap-2 px-2 py-2 rounded-md transition-colors ${
               readOnly ? 'cursor-default' : 'cursor-pointer'
             } ${isSelected ? 'bg-primary/10' : readOnly ? '' : 'hover:bg-muted'}`}
-            onClick={readOnly ? undefined : () => onToggleSkill(skill.name)}
+            onClick={readOnly ? undefined : () => onToggleSkill(skill)}
             role={readOnly ? undefined : 'button'}
             tabIndex={readOnly ? -1 : 0}
             onKeyDown={
@@ -338,7 +326,7 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
                 : e => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault()
-                      onToggleSkill(skill.name)
+                      onToggleSkill(skill)
                     }
                   }
             }

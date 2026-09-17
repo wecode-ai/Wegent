@@ -2,9 +2,11 @@ import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } fro
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
+import type { ComposerFollowUpBehavior } from './composerTextareaTypes'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { LocalDeviceApp, ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
+import type { WorkspaceTarget } from '@/types/workspace-files'
 import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
@@ -20,6 +22,9 @@ import {
   runtimePermissionMode,
 } from '@/features/workbench/runtimePermissionMode'
 import { cn } from '@/lib/utils'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
+import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 
 interface ComposerToolbarProps {
   className?: string
@@ -61,6 +66,9 @@ interface ComposerToolbarProps {
   sendButtonTestId?: string
   leadingContext?: ReactNode
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
+  workspaceTarget?: WorkspaceTarget | null
+  sendKey?: 'enter' | 'cmd_enter'
+  followUpBehavior?: ComposerFollowUpBehavior
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -106,6 +114,9 @@ export function ComposerToolbar({
   sendButtonTestId = 'send-message-button',
   leadingContext,
   onListLocalApps,
+  workspaceTarget,
+  sendKey = 'enter',
+  followUpBehavior = 'queue',
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -119,6 +130,11 @@ export function ComposerToolbar({
   const activeModelLabel = activeModel?.displayName || activeModel?.name
   const selectedModelLabel =
     selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
+  const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'Command+Enter'
+  const primaryBusyLabel =
+    followUpBehavior === 'guide'
+      ? t('workbench.guide_current_turn', '引导当前回复')
+      : t('workbench.send_after_turn', '当前回复结束后发送')
 
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current
@@ -139,11 +155,14 @@ export function ComposerToolbar({
       data-testid="composer-toolbar"
       data-compact={compact ? 'true' : 'false'}
       className={cn(
-        'mt-auto flex min-h-8 min-w-0 items-center justify-between gap-2 pt-1',
+        'mt-auto flex min-h-8 min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 pt-1',
         className
       )}
     >
-      <div data-composer-toolbar-group="features" className="flex min-w-0 items-center gap-2">
+      <div
+        data-composer-toolbar-group="features"
+        className="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1"
+      >
         <AddContextMenu
           disabled={disabled}
           onFileSelect={onFileSelect}
@@ -153,6 +172,14 @@ export function ComposerToolbar({
           supervisorEnabled={showExecutionTools && supervisorEnabled}
           supervisorPending={showExecutionTools && supervisorPending}
         />
+        <DshMenuActions disabled={disabled} location="composer.toolbar" />
+        <div className="contents" data-testid="composer-extension-actions">
+          <DshContributionSlotSurface
+            attachedClassName="contents"
+            props={{ compact, disabled, workspaceTarget }}
+            slot={WEWORK_DSH_SLOTS.composerAction}
+          />
+        </div>
         {showExecutionTools ? (
           <>
             <QuickPhraseMenu
@@ -183,7 +210,10 @@ export function ComposerToolbar({
           />
         ) : null}
       </div>
-      <div data-composer-toolbar-group="actions" className="flex min-w-0 items-center gap-1.5">
+      <div
+        data-composer-toolbar-group="actions"
+        className="ml-auto flex min-w-40 flex-1 items-center justify-end gap-1.5"
+      >
         {showExecutionTools ? (
           <>
             <PermissionModeSelector
@@ -215,7 +245,7 @@ export function ComposerToolbar({
                   maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
                 />
               ) : (
-                <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
+                <div className="h-8 w-32 min-w-0 shrink" data-testid="model-selector-loading" />
               ))}
           </>
         ) : null}
@@ -240,18 +270,15 @@ export function ComposerToolbar({
             </button>
           </Tooltip>
         ) : isStreaming && canSend ? (
-          <div className="flex items-center rounded-full bg-text-primary text-background">
-            <Tooltip
-              label={t('workbench.send_after_turn', '当前回复结束后发送')}
-              align="end"
-              testId="composer-send-after-turn-tooltip"
-            >
+          <div className="flex shrink-0 items-center rounded-full bg-text-primary text-background">
+            <Tooltip label={primaryBusyLabel} align="end" testId="composer-send-after-turn-tooltip">
               <button
                 type="submit"
                 data-composer-primary-action="true"
                 data-testid={sendButtonTestId}
+                onMouseDown={event => event.preventDefault()}
                 className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-text-primary/90"
-                aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
+                aria-label={primaryBusyLabel}
               >
                 <ArrowUp className="h-4 w-4" />
               </button>
@@ -267,7 +294,7 @@ export function ComposerToolbar({
                   icon: Clock3,
                   testId: 'send-after-turn-option',
                   onSelect: () => onSubmit(),
-                  shortcut: 'Enter',
+                  shortcut: followUpBehavior === 'queue' ? primarySendShortcut : undefined,
                 },
                 {
                   label:
@@ -283,7 +310,7 @@ export function ComposerToolbar({
                   icon: CornerDownRight,
                   testId: 'guide-current-turn-option',
                   onSelect: () => onSubmit({ guideWhenBusy: true }),
-                  shortcut: 'Command+Enter',
+                  shortcut: followUpBehavior === 'guide' ? primarySendShortcut : undefined,
                 },
                 {
                   label:
@@ -315,6 +342,7 @@ export function ComposerToolbar({
               data-composer-primary-action="true"
               data-testid={sendButtonTestId}
               disabled={!canSend}
+              onMouseDown={event => event.preventDefault()}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background disabled:cursor-not-allowed disabled:bg-text-muted/45"
               aria-label={t('workbench.send_message', '发送消息')}
             >

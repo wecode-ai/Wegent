@@ -1,6 +1,6 @@
 ---
 description: "Submit wiki documentation pages to Wegent backend API. Simplifies the HTTP POST process for wiki content submission."
-version: "2.0.4"
+version: "2.0.7"
 author: "Wegent Team"
 tags: ["wiki", "documentation", "api", "submission"]
 bindShells: ["ClaudeCode"]
@@ -63,6 +63,10 @@ Remove an accidental page before completing the run.
 5. In a full rebuild using the Writer/Reviewer Team, follow `REVIEW_CONTRACT.md`: open a
    persisted Plan handoff, delegate the Reviewer synchronously, and obtain a `passed`
    Plan verdict before submitting pages.
+6. In a full rebuild whose prompt says there is no review loop, record the finished page
+   plan with `plan` before the first page submission. Update it with the full current
+   order if exploration changes the plan. This reports progress to readers; it is not a
+   review or a publishing gate.
 
 ### Before ending the run
 
@@ -154,15 +158,41 @@ node wiki_submit.js remove \
   --path guides/old-setup
 ```
 
+### Record a no-review page plan
+
+Use this only when the run prompt says there is no review loop. It records the current
+ordered page plan so readers can see `writing N / M` progress. It does not request a
+Reviewer verdict and it does not constrain the final publish; rerun it with the complete
+updated order if exploration adds or removes planned pages.
+
+```bash
+node wiki_submit.js plan \
+  --generation-id 123 \
+  --structure-order index,quickstart,architecture,modules
+```
+
 ### Complete the wiki generation
 
 Report the commit you documented, so the next run knows what has already been covered.
+`complete` also records the Git-tracked file count for the same commit. This is
+automatic and lets a later incremental run use a proportional change limit. For older
+published versions without that metadata, the server reads the repository tree before
+making the next run-mode decision.
+
+`complete` requires both `--head-commit` and `--repo-dir`. `--repo-dir` is the exact
+Git checkout you analyzed, not a temporary folder holding generated Markdown. It is
+required even when the command runs outside the checkout: the Skill verifies that its
+HEAD is the reported commit and refuses to publish if that check fails. If the local
+Git tree scan itself cannot run, it warns and publishes without the count; the server
+then reads the provider tree before the next run-mode decision.
 
 ```bash
+REPO_DIR=/absolute/path/to/the/checkout
 node wiki_submit.js complete \
   --generation-id 123 \
-  --head-commit "$(git rev-parse HEAD)" \
-  --structure-order index,quickstart,architecture,modules
+  --head-commit "$(git -C "$REPO_DIR" rev-parse HEAD)" \
+  --structure-order index,quickstart,architecture,modules \
+  --repo-dir "$REPO_DIR"
 ```
 
 `--structure-order` controls the order readers see. Put `index` first and arrange the

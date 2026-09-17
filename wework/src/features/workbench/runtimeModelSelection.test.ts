@@ -196,6 +196,8 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        weworkCloudModelNativeToolSearch: 'true',
+        weworkCloudModelNativeNamespaceTools: 'true',
         weworkCloudVisionSidecar:
           '{"modelName":"cloud-vision","modelType":"user","namespace":"default","resourceUserId":42,"apiFormat":"openai-responses"}',
       },
@@ -260,31 +262,34 @@ describe('runtimeModelSelection', () => {
     )
   })
 
-  test('enables native Responses tools for supported GPT cloud models', () => {
-    const cloudModel: UnifiedModel = {
-      name: 'shared-gpt-model',
-      modelId: 'gpt-5.6-sol',
-      type: 'user',
-      namespace: 'default',
-      resourceUserId: 42,
-      provider: 'openai',
-      runtime: { family: 'openai.openai-responses' },
-      config: {},
-    }
+  test.each(['gpt-5.6-sol', 'gpt-6-astra', 'custom-responses-model'])(
+    'enables native Codex tools by default for Responses cloud model %s',
+    modelId => {
+      const cloudModel: UnifiedModel = {
+        name: 'shared-gpt-model',
+        modelId,
+        type: 'user',
+        namespace: 'default',
+        resourceUserId: 42,
+        provider: 'openai',
+        runtime: { family: 'openai.openai-responses' },
+        config: {},
+      }
 
-    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
-      modelId: 'shared-gpt-model',
-      modelType: 'user',
-      modelOptions: {
-        collaborationMode: 'default',
-        weworkCloudModelNamespace: 'default',
-        weworkCloudModelResourceUserId: '42',
-        weworkCloudModelUpstreamApiFormat: 'openai-responses',
-        weworkCloudModelNativeToolSearch: 'true',
-        weworkCloudModelNativeNamespaceTools: 'true',
-      },
-    })
-  })
+      expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+        modelId: 'shared-gpt-model',
+        modelType: 'user',
+        modelOptions: {
+          collaborationMode: 'default',
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '42',
+          weworkCloudModelUpstreamApiFormat: 'openai-responses',
+          weworkCloudModelNativeToolSearch: 'true',
+          weworkCloudModelNativeNamespaceTools: 'true',
+        },
+      })
+    }
+  )
 
   test.each([
     {
@@ -312,7 +317,7 @@ describe('runtimeModelSelection', () => {
 
       const modelOptions = selectedModelExecutionFields(cloudModel, {}).modelOptions
 
-      expect(modelOptions).not.toHaveProperty(disabledOption)
+      expect(modelOptions).toHaveProperty(disabledOption, 'false')
       expect(modelOptions).toHaveProperty(inferredOption, 'true')
     }
   )

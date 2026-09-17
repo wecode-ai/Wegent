@@ -1,4 +1,4 @@
-from app.core.celery_app import celery_app
+from app.core.celery_app import build_beat_schedule, celery_app
 from app.core.config import settings
 
 
@@ -19,3 +19,9 @@ def test_knowledge_attachment_orphan_cleanup_is_scheduled() -> None:
         "task": "app.tasks.knowledge_tasks.cleanup_knowledge_attachment_orphans",
         "schedule": float(settings.KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS),
     }
+
+
+def test_beat_schedule_is_empty_when_scheduled_tasks_are_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "SCHEDULED_TASKS_ENABLED", False)
+
+    assert build_beat_schedule() == {}

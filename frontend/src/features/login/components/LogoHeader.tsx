@@ -15,6 +15,7 @@ export default function LogoHeader() {
         width={48}
         height={48}
         className="object-contain"
+        unoptimized
       />
       <h2 className="text-3xl font-medium text-text-primary">{t('common:auth.login_title')}</h2>
     </div>

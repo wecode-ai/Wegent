@@ -9,7 +9,6 @@ import {
   useState,
 } from 'react'
 import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
-import type { Element as HastElement } from 'hast'
 import { FileText, Folder, Link2 } from 'lucide-react'
 import { Streamdown } from 'streamdown'
 import { ComposerLinkChip } from './ComposerLinkChip'
@@ -25,6 +24,8 @@ import {
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
+import { MarkdownTable } from './MarkdownTable'
+import { createTableMarkdownRehypePlugins } from './markdownTableSource'
 import { MarkdownDiagramPreview } from './MarkdownDiagramPreview'
 import { CodexInlineVisualizationHost } from './CodexInlineVisualizationHost'
 import { splitStaticMarkdownChunks } from './assistantMarkdownWindowing'
@@ -35,6 +36,7 @@ import { getRecognizedLink } from '@/lib/link-preview'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { navigateTo } from '@/lib/navigation'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -56,6 +58,7 @@ const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HO
 const WEWORK_MARKDOWN_IMAGE_PATH = '/markdown-image'
 const WEWORK_MARKDOWN_IMAGE_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_IMAGE_PATH}?path=`
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
+const tableMarkdownRehypePlugins = createTableMarkdownRehypePlugins(restoreLocalMarkdownLinks)
 const MARKDOWN_WINDOW_ROOT_MARGIN = '1600px 0px'
 const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
 const STREAMING_DIAGRAM_LANGUAGES = new Map([
@@ -68,10 +71,13 @@ const MarkdownStreamingContext = createContext(false)
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
-  variant?: 'default' | 'document' | 'process'
+  variant?: 'default' | 'document' | 'process' | 'user'
+  renderLink?: (href: string, text: string) => ReactNode
   onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   fileChanges?: TurnFileChangesSummary
 }
+
+const MarkdownCustomLinkContext = createContext<AssistantMarkdownProps['renderLink']>(undefined)
 
 const MARKDOWN_HEADING_CLASSES = {
   default: {
@@ -119,24 +125,31 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   variant = 'default',
   onOpenFile,
   fileChanges,
+  renderLink,
 }: AssistantMarkdownProps) {
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
   const streamdownMode =
     variant === 'default' || isStreaming ? ('streaming' as const) : ('static' as const)
   const displayContent = useMemo(
-    () => stripUnsupportedContentReferenceCitations(bufferedContent),
-    [bufferedContent]
+    () =>
+      variant === 'user'
+        ? bufferedContent
+        : stripUnsupportedContentReferenceCitations(bufferedContent),
+    [bufferedContent, variant]
   )
   const windowMarkdown = isElectronRuntime() && variant === 'default'
   const contentParts = useMemo(() => {
-    const parts = splitCodexInlineVisualizations(displayContent)
+    const parts =
+      variant === 'user'
+        ? [{ kind: 'markdown' as const, content: displayContent }]
+        : splitCodexInlineVisualizations(displayContent)
     return parts.flatMap<AssistantMarkdownPart>(part => {
       if (part.kind === 'visualization') return [part]
       const chunks = windowMarkdown ? splitStaticMarkdownChunks(part.content) : [part.content]
       const windowed = windowMarkdown
       return chunks.map(content => ({ kind: 'markdown', content, windowed }))
     })
-  }, [displayContent, windowMarkdown])
+  }, [displayContent, windowMarkdown, variant])
   const openFileRef = useRef(onOpenFile)
 
   useEffect(() => {
@@ -150,7 +163,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     }
     openFileRef.current?.(path)
   }, [])
-  const headingClasses = MARKDOWN_HEADING_CLASSES[variant]
+  const headingClasses = MARKDOWN_HEADING_CLASSES[variant === 'user' ? 'default' : variant]
   const components = useMemo(
     () => ({
       h1: ({ children }: { children?: ReactNode }) => (
@@ -172,7 +185,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       p: ({ children }: { children?: ReactNode }) => (
         <p
           data-scroll-anchor
-          className={`${variant === 'process' ? 'mb-1.5' : 'mb-3'} min-w-0 break-words leading-6`}
+          className={`${variant === 'process' ? 'mb-1.5' : variant === 'user' ? 'mb-2 whitespace-pre-wrap' : 'mb-3'} min-w-0 break-words leading-6`}
         >
           {children}
         </p>
@@ -217,19 +230,29 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           {children}
         </blockquote>
       ),
-      table: ({ children }: { children?: ReactNode }) => (
-        <div data-scroll-anchor className="mb-3 max-w-full overflow-x-auto">
-          <table className="w-full min-w-max border-collapse text-chat">{children}</table>
-        </div>
+      table: MarkdownTable,
+      th: ({ children, style }: HTMLAttributes<HTMLTableCellElement>) => (
+        <th style={style} className="border-b border-border px-3 py-2 text-left font-semibold">
+          {children}
+        </th>
       ),
-      th: ({ children }: { children?: ReactNode }) => (
-        <th className="border-b border-border px-3 py-2 text-left font-semibold">{children}</th>
+      td: ({ children, style }: HTMLAttributes<HTMLTableCellElement>) => (
+        <td style={style} className="border-b border-border px-3 py-2">
+          {children}
+        </td>
       ),
-      td: ({ children }: { children?: ReactNode }) => (
-        <td className="border-b border-border px-3 py-2">{children}</td>
-      ),
-      a: ({ href, children }: { href?: string; children?: ReactNode }) => {
+      a: function MarkdownAnchor({
+        href: rawHref,
+        children,
+      }: {
+        href?: string
+        children?: ReactNode
+      }) {
+        const renderLink = useContext(MarkdownCustomLinkContext)
+        const href = decodeLocalMarkdownHref(rawHref)
         const text = reactNodeToText(children)
+        const customLink = href ? renderLink?.(href, text) : undefined
+        if (customLink !== undefined) return customLink
         const isComposerLink =
           href &&
           /^[a-z][a-z0-9+.-]*:\/\//i.test(href) &&
@@ -253,60 +276,66 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   )
 
   return (
-    <div
-      className={`${variant === 'process' ? 'thinking-markdown text-text-secondary' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
-    >
-      {contentParts.map((part, index) =>
-        part.kind === 'visualization' ? (
-          <CodexInlineVisualizationHost
-            key={`${part.file}-${index}`}
-            file={part.file}
-            fileChanges={fileChanges}
-            mode={part.mode}
-            title={part.title}
-          />
-        ) : part.windowed ? (
-          <WindowedMarkdownChunk
-            key={`markdown-${index}`}
-            content={part.content}
-            eager={index === 0 || index === contentParts.length - 1}
-          >
-            <MarkdownStreamingContext.Provider
-              value={isStreaming && index === contentParts.length - 1}
+    <MarkdownCustomLinkContext.Provider value={renderLink}>
+      <div
+        className={`${variant === 'user' ? 'user-markdown' : variant === 'process' ? 'thinking-markdown' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
+      >
+        {contentParts.map((part, index) =>
+          part.kind === 'visualization' ? (
+            <CodexInlineVisualizationHost
+              key={`${part.file}-${index}`}
+              file={part.file}
+              fileChanges={fileChanges}
+              mode={part.mode}
+              title={part.title}
+            />
+          ) : part.windowed ? (
+            <WindowedMarkdownChunk
+              key={`markdown-${index}`}
+              content={part.content}
+              eager={index === 0 || index === contentParts.length - 1}
             >
+              <MarkdownStreamingContext.Provider
+                value={isStreaming && index === contentParts.length - 1}
+              >
+                <Streamdown
+                  mode={streamdownMode}
+                  isAnimating={false}
+                  controls={false}
+                  linkSafety={{ enabled: false }}
+                  lineNumbers={false}
+                  urlTransform={(url: string) => url}
+                  components={components}
+                  rehypePlugins={tableMarkdownRehypePlugins}
+                >
+                  {prepareAssistantMarkdownContent(
+                    part.content,
+                    isStreaming && index === contentParts.length - 1
+                  )}
+                </Streamdown>
+              </MarkdownStreamingContext.Provider>
+            </WindowedMarkdownChunk>
+          ) : (
+            <MarkdownStreamingContext.Provider key={`markdown-${index}`} value={isStreaming}>
               <Streamdown
                 mode={streamdownMode}
                 isAnimating={false}
                 controls={false}
                 linkSafety={{ enabled: false }}
                 lineNumbers={false}
-                urlTransform={url => url}
+                urlTransform={(url: string) => url}
                 components={components}
+                rehypePlugins={tableMarkdownRehypePlugins}
               >
-                {prepareAssistantMarkdownContent(
-                  part.content,
-                  isStreaming && index === contentParts.length - 1
-                )}
+                {variant === 'user'
+                  ? encodeLocalMarkdownLinks(part.content)
+                  : prepareAssistantMarkdownContent(part.content, isStreaming)}
               </Streamdown>
             </MarkdownStreamingContext.Provider>
-          </WindowedMarkdownChunk>
-        ) : (
-          <MarkdownStreamingContext.Provider key={`markdown-${index}`} value={isStreaming}>
-            <Streamdown
-              mode={streamdownMode}
-              isAnimating={false}
-              controls={false}
-              linkSafety={{ enabled: false }}
-              lineNumbers={false}
-              urlTransform={url => url}
-              components={components}
-            >
-              {prepareAssistantMarkdownContent(part.content, isStreaming)}
-            </Streamdown>
-          </MarkdownStreamingContext.Provider>
-        )
-      )}
-    </div>
+          )
+        )}
+      </div>
+    </MarkdownCustomLinkContext.Provider>
   )
 }, areAssistantMarkdownPropsEqual)
 
@@ -375,7 +404,9 @@ function estimateMarkdownChunkHeight(content: string): number {
 }
 
 type MarkdownCodeProps = {
-  node?: HastElement
+  node?: {
+    properties?: unknown
+  }
   compact?: boolean
 } & HTMLAttributes<HTMLElement>
 
@@ -383,9 +414,14 @@ function MarkdownCode({ className, children, node, compact = false, ...props }: 
   const isStreaming = useContext(MarkdownStreamingContext)
   const match = /language-(\w*)/.exec(className || '')
   const text = reactNodeToText(children)
+  const nodeDataBlock =
+    typeof node?.properties === 'object' &&
+    node.properties !== null &&
+    'dataBlock' in node.properties &&
+    node.properties.dataBlock === 'true'
   const isBlock =
     ('data-block' in props && Boolean(props['data-block'])) ||
-    node?.properties?.dataBlock === 'true' ||
+    nodeDataBlock ||
     Boolean(match) ||
     text.includes('\n')
   if (isBlock) {
@@ -434,7 +470,8 @@ function areAssistantMarkdownPropsEqual(
     previous.content === next.content &&
     previous.isStreaming === next.isStreaming &&
     previous.fileChanges === next.fileChanges &&
-    previous.variant === next.variant
+    previous.variant === next.variant &&
+    previous.renderLink === next.renderLink
   )
 }
 
@@ -534,10 +571,26 @@ function encodeLocalMarkdownLinks(content: string): string {
         : match
     }
     const target = classifyMarkdownLink(href)
-    if (target.kind !== 'file') return match
+    const internal =
+      /^(?:skill|plugin|app|cloud|wework-conversation|wegent-sites-project|folder|file):\/\//.test(
+        href
+      )
+    if (target.kind !== 'file' && !internal) return match
     return `[${label}](${WEWORK_MARKDOWN_FILE_LINK_PREFIX}${encodeURIComponent(
-      decodeMarkdownFilePath(href)
+      internal ? href : decodeMarkdownFilePath(href)
     )})`
+  })
+}
+
+function restoreLocalMarkdownLinks(content: string): string {
+  return content.replace(MARKDOWN_LINK_PATTERN, (match, imageMarker, label, rawHref) => {
+    const { destination, titleSuffix } = splitMarkdownImageDestination(String(rawHref))
+    const decoded = imageMarker
+      ? decodeLocalMarkdownImageSrc(destination)
+      : decodeLocalMarkdownHref(destination)
+    if (!decoded || decoded === destination) return match
+    const href = /\s/.test(decoded) ? `<${decoded}>` : decoded
+    return `${imageMarker}[${label}](${href}${titleSuffix})`
   })
 }
 
@@ -669,6 +722,7 @@ function AssistantMarkdownLink({
 
   if (target.kind === 'file') {
     const filePath = target.path
+    const canOpenWithoutWorkspace = isHtmlFilePath(filePath)
     const lineLabel = formatMarkdownLineLabel(target)
     const tooltip = formatMarkdownFileTooltip(target)
     const openOptions = getMarkdownFileOpenOptions(target)
@@ -683,6 +737,7 @@ function AssistantMarkdownLink({
           type="button"
           className={ASSISTANT_MARKDOWN_LINK_CLASS}
           data-testid="assistant-markdown-link"
+          disabled={!onOpenFile && !canOpenWithoutWorkspace}
           onClick={() => {
             if (isHtmlFilePath(filePath)) {
               if (requestEmbeddedBrowserOpen(filePath)) return
@@ -709,6 +764,20 @@ function AssistantMarkdownLink({
           ) : null}
         </button>
       </Tooltip>
+    )
+  }
+
+  if (target.kind === 'internal') {
+    return (
+      <button
+        type="button"
+        className={ASSISTANT_MARKDOWN_LINK_CLASS}
+        data-testid="assistant-markdown-link"
+        onClick={() => navigateTo(target.path)}
+      >
+        {icon}
+        <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{children}</span>
+      </button>
     )
   }
 

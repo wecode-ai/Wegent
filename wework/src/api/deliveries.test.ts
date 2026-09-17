@@ -36,6 +36,7 @@ describe('createDeliveryApi queue and assignment routes', () => {
     expect(nextTaskTrackingStatus('in_progress', 'cancelled')).toBe('in_review')
     expect(nextTaskTrackingStatus('pending', 'failed')).toBe('in_review')
     expect(nextTaskTrackingStatus('pending', 'succeeded')).toBe('in_review')
+    expect(nextTaskTrackingStatus('in_review', 'succeeded')).toBeNull()
   })
 
   it('lists loop items with queue filters', async () => {
@@ -72,6 +73,62 @@ describe('createDeliveryApi queue and assignment routes', () => {
     expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/board-snapshot')
   })
 
+  it('persists the runtime task model identity when binding a board task', async () => {
+    const post = vi.fn(async () => undefined)
+    const api = createDeliveryApi(clientWith({ post }))
+
+    await api.bindTask(
+      'WEG-1',
+      {
+        deviceId: 'local-device',
+        taskId: 'runtime-1',
+        runtimeHandle: {
+          modelSelection: {
+            modelName: 'gpt-5.6-codex',
+            modelType: 'public',
+            options: { reasoning: 'high' },
+          },
+        },
+      },
+      'Fix board follow-up'
+    )
+
+    expect(post).toHaveBeenCalledWith('/v1/loop-items/WEG-1/tasks', {
+      deviceId: 'local-device',
+      taskId: 'runtime-1',
+      runtimeHandle: {
+        modelSelection: {
+          modelName: 'gpt-5.6-codex',
+          modelType: 'public',
+          options: { reasoning: 'high' },
+        },
+      },
+      taskTitle: 'Fix board follow-up',
+      modelSelection: {
+        modelName: 'gpt-5.6-codex',
+        modelType: 'public',
+        options: { reasoning: 'high' },
+      },
+    })
+  })
+
+  it('loads one external board column page without requesting issue details', async () => {
+    const client = {
+      get: vi.fn(async () => ({ items: [], task_bindings: [], next_cursor: null })),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    await api.listLoopItemsPage(123, {
+      status: 'in_progress',
+      parentId: 'GH-7',
+      cursor: 'next-page',
+    })
+
+    expect(client.get).toHaveBeenCalledWith(
+      '/v1/cloud-projects/123/loop-item-pages?status=in_progress&limit=10&parent_id=GH-7&cursor=next-page'
+    )
+  })
+
   it('lists robot executions through the cloud executions route', async () => {
     const client = {
       get: vi.fn(async () => ({
@@ -96,9 +153,14 @@ describe('createDeliveryApi queue and assignment routes', () => {
     } as unknown as HttpClient
     const api = createDeliveryApi(client)
 
-    const response = await api.listLoopItemExecutions(123, { agent_id: 'bot-1' })
+    const response = await api.listLoopItemExecutions(123, {
+      agent_id: 'bot-1',
+      include_terminal: true,
+    })
 
-    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/executions?agent_id=bot-1')
+    expect(client.get).toHaveBeenCalledWith(
+      '/v1/cloud-projects/123/executions?agent_id=bot-1&include_terminal=true'
+    )
     expect(response.items[0]).toMatchObject({
       loop_item_id: 'GL-1',
       task_title: 'Bot queued task',

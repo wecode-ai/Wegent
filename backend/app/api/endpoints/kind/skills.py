@@ -99,7 +99,14 @@ def _is_runtime_skill_download(request: Request) -> bool:
 
     authorization = request.headers.get("Authorization", "")
     token = authorization[7:] if authorization.startswith("Bearer ") else authorization
-    return bool(token and (is_api_key(token) or verify_task_token(token)))
+    return bool(
+        token
+        and (
+            is_api_key(token)
+            or verify_task_token(token)
+            or verify_skill_identity_token(token)
+        )
+    )
 
 
 def _ensure_system_skill_download_allowed(
@@ -963,7 +970,7 @@ async def update_public_skill_with_upload(
 def download_public_skill(
     skill_id: int,
     request: Request,
-    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
+    current_user: User = Depends(_get_current_user_or_skill_query_identity),
     db: Session = Depends(get_db),
 ):
     """
@@ -1649,7 +1656,7 @@ def download_skill(
         "If provided, allows downloading skills owned by the task owner.",
     ),
     if_none_match: Optional[str] = Header(default=None, alias="If-None-Match"),
-    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
+    current_user: User = Depends(_get_current_user_or_skill_query_identity),
     db: Session = Depends(get_db),
 ):
     """
@@ -1683,6 +1690,12 @@ def download_skill(
     # 2. A marketplace Skill remains owned by its publisher. A personal binding
     # grants download access without copying the source Kind or archive.
     if not skill and skill_id in skill_binding_service.list_user_default_skill_ids(
+        db, current_user.id
+    ):
+        skill, binary_data = _get_skill_archive_by_id(db, skill_id)
+
+    # Group bindings grant access to the source archive in its original namespace.
+    if not skill and skill_id in skill_binding_service.list_user_group_skill_ids(
         db, current_user.id
     ):
         skill, binary_data = _get_skill_archive_by_id(db, skill_id)

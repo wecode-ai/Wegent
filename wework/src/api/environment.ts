@@ -45,10 +45,13 @@ interface EnvironmentLoadDiagnostics {
 }
 
 export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
+export type GitPatchAction = 'stage' | 'unstage' | 'revert'
 
 export interface EnvironmentInfoLoadOptions {
+  changeRequestStatusEnabled?: boolean
   force?: boolean
   onPartialInfo?: (info: EnvironmentInfo) => void
+  shareInflight?: boolean
 }
 
 const ENVIRONMENT_DIFF_COMMANDS: Record<EnvironmentDiffMode, string> = {
@@ -577,6 +580,14 @@ export function parseGitShortStat(value: string): Pick<EnvironmentInfo, 'additio
   }
 }
 
+function porcelainHasTrackedChanges(lines: string[]): boolean {
+  // Porcelain entries that modify, delete, rename or copy tracked files
+  // (index or worktree column) imply a commit baseline exists. Untracked
+  // (`??`) and staged additions (`A `) alone also appear in a repository that
+  // has no commit yet, so they cannot distinguish the two cases by themselves.
+  return lines.some(line => /[MDRC]/.test(line.slice(0, 1)) || /[MDRC]/.test(line.slice(1, 2)))
+}
+
 export function parseGitRemote(remoteUrl: string): GitRemoteParts | null {
   const trimmed = remoteUrl.trim().replace(/\.git$/, '')
   if (!trimmed) {
@@ -685,7 +696,7 @@ async function runGitCommand(
 
   const response = await api.executeCommand(deviceId, request)
 
-  if (!response.success) {
+  if (!response.success || (response.exit_code != null && response.exit_code !== 0)) {
     throw new Error(
       [response.error, response.stderr].filter(Boolean).join('\n') || `${commandKey} failed`
     )
@@ -750,14 +761,16 @@ async function loadBranchDiffShortStat(
   api: DeviceCommandApi,
   deviceId: string,
   path: string
-): Promise<string> {
+): Promise<string | null> {
   // Compare the current branch with its merge base to the primary branch.
   // This includes committed branch changes as well as tracked worktree changes.
   try {
     return await runGitCommand(api, deviceId, 'git_branch_diff_shortstat', path)
   } catch {
-    // HEAD may not exist (no commits yet).
-    return ''
+    // No diff base could be resolved, most commonly because HEAD does not
+    // exist yet (a repository without commits). Callers use this to decide
+    // whether the pending porcelain file count is a valid substitute.
+    return null
   }
 }
 
@@ -797,6 +810,7 @@ async function loadProjectEnvironmentUncached(
   project: ProjectWithTasks | null,
   target?: EnvironmentWorkspaceTarget | null,
   onPartialInfo?: (info: EnvironmentInfo) => void,
+  changeRequestStatusEnabled?: boolean,
   diagnostics: EnvironmentLoadDiagnostics = {
     loadId: ++environmentLoadSequence,
     startedAt: environmentNow(),
@@ -853,11 +867,12 @@ async function loadProjectEnvironmentUncached(
     const remoteUrlPromise = traceEnvironmentOperation(diagnostics, 'git_remote', () =>
       runGitCommand(api, deviceId, 'git_remote_url', path)
     ).catch(() => '')
-    const changeRequestEnabledPromise = traceEnvironmentOperation(
-      diagnostics,
-      'change_request_preference',
-      () => getAppPreferences().then(preferences => preferences.changeRequestStatusEnabled)
-    )
+    const changeRequestEnabledPromise =
+      changeRequestStatusEnabled === undefined
+        ? traceEnvironmentOperation(diagnostics, 'change_request_preference', () =>
+            getAppPreferences().then(preferences => preferences.changeRequestStatusEnabled)
+          )
+        : Promise.resolve(changeRequestStatusEnabled)
     const branchInfoPromise = Promise.all([branchNamePromise, remoteUrlPromise]).then(
       ([branchName, remoteUrl]) => {
         const branchInfo: EnvironmentInfo = {
@@ -908,23 +923,18 @@ async function loadProjectEnvironmentUncached(
       porcelainPromise,
       changeRequestPromise,
     ])
-    const diff = parseGitShortStat(shortStat)
-
-    // Count pending files from porcelain (untracked, staged, modified).
-    // git diff --shortstat only covers tracked files, so we merge
-    // porcelain data to include untracked and no-commit scenarios.
+    const diff = parseGitShortStat(shortStat ?? '')
     const porcelainLines = porcelain.split('\n').filter(line => line.trim().length > 0)
 
-    if (shortStat) {
-      // Repo has commits — diff stat covers tracked changes.
-      // Add untracked file count on top.
-      const untrackedCount = porcelainLines.filter(line => line.startsWith('??')).length
-      if (untrackedCount > 0) {
-        const trackedAdditions = parseInt(diff.additions.replace(/^\+/, ''), 10) || 0
-        diff.additions = `+${trackedAdditions + untrackedCount}`
-      }
-    } else if (porcelainLines.length > 0) {
-      // Repo has no commits — every porcelain line is a pending change.
+    // git diff --shortstat counts changed lines of tracked files, which is the
+    // same basis code hosting uses, so untracked files never inflate the line
+    // counts. Only a repository without any commit baseline falls back to the
+    // pending file count; a committed repository keeps the (empty) shortstat.
+    if (
+      shortStat === null &&
+      porcelainLines.length > 0 &&
+      !porcelainHasTrackedChanges(porcelainLines)
+    ) {
       diff.additions = `+${porcelainLines.length}`
     }
 
@@ -972,18 +982,33 @@ export async function loadProjectEnvironment(
     return cloneEnvironmentInfo(EMPTY_ENVIRONMENT_INFO)
   }
 
-  const cacheKey = environmentInfoCacheKey(project, target)
-  if (!cacheKey) {
+  const workspaceCacheKey = environmentInfoCacheKey(project, target)
+  if (!workspaceCacheKey) {
     logEnvironmentLoad(diagnostics, 'cache_bypassed')
-    return loadProjectEnvironmentUncached(api, project, target, options.onPartialInfo, diagnostics)
+    return loadProjectEnvironmentUncached(
+      api,
+      project,
+      target,
+      options.onPartialInfo,
+      options.changeRequestStatusEnabled,
+      diagnostics
+    )
   }
+  const cacheKey = `${workspaceCacheKey}\0change-request:${String(
+    options.changeRequestStatusEnabled ?? 'preference'
+  )}`
 
   const now = Date.now()
   const environmentInfoCache = getEnvironmentInfoCache(api)
   const cached = environmentInfoCache.get(cacheKey)
-  // Forced polling must still share an in-flight load. Replacing a slow request
-  // on every poll prevents any result from settling the environment loading state.
-  if (cached && (!cached.settled || (!options.force && cached.expiresAt > now))) {
+  const shouldShareInflight = !options.force || options.shareInflight !== false
+  // Background polling shares an in-flight load so slow requests can settle.
+  // Explicit refreshes may supersede it to observe state that changed meanwhile.
+  if (
+    cached &&
+    ((!cached.settled && shouldShareInflight) ||
+      (cached.settled && !options.force && cached.expiresAt > now))
+  ) {
     logEnvironmentLoad(diagnostics, cached.settled ? 'cache_hit' : 'cache_joined', {
       force: Boolean(options.force),
       expiresInMs: cached.expiresAt - now,
@@ -1040,6 +1065,7 @@ export async function loadProjectEnvironment(
         listener(cloneEnvironmentInfo(partialState.info ?? partialInfo))
       )
     },
+    options.changeRequestStatusEnabled,
     diagnostics
   )
   logEnvironmentLoad(diagnostics, 'cache_miss', {
@@ -1086,6 +1112,31 @@ export async function loadProjectEnvironmentDiff(
     timeoutSeconds: 30,
     maxOutputBytes: 5 * 1024 * 1024,
   })
+}
+
+export async function applyProjectEnvironmentPatch(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  action: GitPatchAction,
+  patch: string,
+  target?: EnvironmentWorkspaceTarget | null
+): Promise<void> {
+  const { deviceId, path } = await commandContext(api, project, target)
+  const encodedPatch = bytesToBase64(new TextEncoder().encode(patch))
+  await runGitCommand(api, deviceId, 'git_apply_patch', path, {
+    args: [action, encodedPatch],
+    timeoutSeconds: 30,
+    maxOutputBytes: 64 * 1024,
+  })
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
+  }
+  return btoa(binary)
 }
 
 export async function commitProjectChanges(

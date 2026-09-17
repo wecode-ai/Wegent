@@ -6,6 +6,7 @@
 
 import asyncio
 import copy
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
@@ -27,19 +28,34 @@ class _MemoryDeviceCache:
         value = self.values.get(key)
         return copy.deepcopy(value) if value is not None else None
 
+    async def get_or_raise(self, key: str):
+        return await self.get(key)
+
     async def set(self, key: str, value: dict, expire: int | None = None) -> bool:
         self.values[key] = copy.deepcopy(value)
         return True
+
+    async def set_or_raise(
+        self, key: str, value: dict, expire: int | None = None
+    ) -> bool:
+        return await self.set(key, value, expire)
 
     async def mget(self, keys: list[str]) -> dict[str, dict]:
         return {
             key: copy.deepcopy(self.values[key]) for key in keys if key in self.values
         }
 
+    async def mget_or_raise(self, keys: list[str]) -> dict[str, dict]:
+        return await self.mget(keys)
+
 
 def _runtime_features(*, managed: bool) -> dict:
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 3,
+        "interactiveSessions": {
+            "codeServer": False,
+            "terminal": True,
+        },
         "worktrees": {
             "version": 1,
             "managed": managed,
@@ -101,6 +117,13 @@ def _patch_namespace(
     namespace: DeviceNamespace,
     session: dict,
 ) -> AsyncMock:
+    @asynccontextmanager
+    async def _passthrough_identity_lock(user_id):
+        yield None
+
+    monkeypatch.setattr(
+        device_namespace, "app_identity_lock", _passthrough_identity_lock
+    )
     monkeypatch.setattr(namespace, "get_session", AsyncMock(return_value=session))
     monkeypatch.setattr(namespace, "save_session", AsyncMock())
     monkeypatch.setattr(namespace, "enter_room", AsyncMock())
@@ -115,7 +138,7 @@ def _patch_namespace(
     monkeypatch.setattr(
         device_namespace,
         "run_sync_in_executor",
-        AsyncMock(return_value=(True, "Runtime Device", None)),
+        AsyncMock(return_value=(True, "Runtime Device", None, None)),
     )
     reconcile = AsyncMock(return_value=0)
     monkeypatch.setattr(
@@ -229,7 +252,7 @@ async def test_remote_heartbeat_runtime_features_reach_provider_projection(
 
 
 @pytest.mark.asyncio
-async def test_app_only_heartbeat_does_not_reconcile_cloud_work(
+async def test_app_heartbeat_reconciles_wegent_tasks(
     test_db,
     test_user,
     monkeypatch,
@@ -262,11 +285,21 @@ async def test_app_only_heartbeat_does_not_reconcile_cloud_work(
             "runtime_instance_id": "runtime-instance-app",
         },
     )
+    await _wait_for_registration_followups(namespace)
 
     assert registered == {"success": True, "device_id": device_id}
     assert heartbeat == {"success": True}
     assert session["device_type"] == DeviceType.APP.value
-    reconcile.assert_not_awaited()
+    assert reconcile.await_count == 2
+    reconcile.assert_any_await(
+        user_id=test_user.id,
+        device_id=device_id,
+    )
+    reconcile.assert_any_await(
+        user_id=test_user.id,
+        device_id=device_id,
+        needs_confirmation_only=True,
+    )
 
 
 @pytest.mark.asyncio

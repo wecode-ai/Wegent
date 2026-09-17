@@ -12,6 +12,12 @@ Add files, images, code locations, or an Appshot to the composer when they clari
 
 After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
 
+### Edit Markdown and tables
+
+Pasted Markdown appears as editable content in the composer. Sent messages also render tables, lists, bold text, and code. Use `Shift+Enter` for a new line and `Tab` / `Shift+Tab` to move between table cells.
+
+Hover over a message table to copy its Markdown or expand it; press `Esc` to close the expanded view. Click an HTTP/HTTPS link in the composer to open its actions. Sent links open using your browser preference. Text appended after a pasted link stays separate and does not change its destination.
+
 ## Add a conversation to a project-space board
 
 After enabling Experimental features, open the composer's **+** menu and select **Project space**. The selected destination appears as **Add to board · Project space name** below the composer so you can confirm it before sending. Sending the first message creates the corresponding board task and links the conversation. A project space inherited from the local-project automatic-join setting appears through the same control.
@@ -27,7 +33,7 @@ When the destination differs from the current board, Wework asks you to confirm 
 
 ### Review board-task progress
 
-The linked-task progress area does not repeat the runtime task title. While a task is running, the first row shows the latest AI text or thinking state, and a second indented row with a short vertical guide shows the most recent tool or edit action. PR/MR status remains a trailing action. After execution stops, the card shows only the last non-empty line from the final response of the latest turn and never falls back to an older turn. Unread cards use a subtle background in addition to the unread indicator.
+The linked-task progress area does not repeat the runtime task title. While a task is running, the first row shows the latest AI text or thinking state, and a second indented row with a short vertical guide shows the most recent tool or edit action. PR/MR status remains a trailing action. After execution stops, the card shows only the last non-empty line from the final response of the latest turn and never falls back to an older turn. Unread cards use a distinct blue-accent background and border in addition to the unread indicator, then return to the standard card style after they are opened.
 
 Hover anywhere on a card to open a lightweight task workspace. It initially shows the latest user message and AI response, reusing the Task conversation's thinking, tool-call, and file-edit rendering. Longer conversations scroll inside the transcript area, and **Load earlier history** fetches older turns. The composer stays on one line until clicked, then expands with the same quick phrases and actions available in Task conversations. While the composer is active, the preview stays pinned until its top-right close button is clicked. When one board task has several tasks running, the preview initially lists a summary for each one. Hovering an individual task narrows the preview to that task's progress.
 
@@ -71,6 +77,12 @@ The model provides the AI capability; the device determines where files and comm
 
 When the composer has only one model group, the model selector displays all models in that group directly. When multiple groups are available, choose a group first, then select a model from its expanded submenu.
 
+Wework remembers the model and reasoning effort separately for new-task defaults and active tasks:
+
+- With no task open, the composer selection belongs to the current draft and the next new task. Standalone tasks save this selection as the default for later new tasks.
+- When a local project follows the global default, a project-composer selection updates the global new-task default used by later standalone tasks and other projects that follow the global default. When a project defines its own model and reasoning effort, a temporary composer change applies only to that task; starting another task restores the project default.
+- After a task starts, its model and reasoning effort belong to that task. Sending a follow-up persists the latest selection, so returning to the task restores it without changing the new-task or project default.
+
 After a conversation starts, you can still switch between official GPT/Codex models and third-party models. Wework asks for confirmation when the selected model changes, and the new model applies to the next message.
 
 If the existing context contains encrypted reasoning or compaction state produced by the previous provider, the executor removes those non-portable fields from the switch request so the target model does not return `invalid_encrypted_content`. Portable messages, tool results, and other context remain available.
@@ -104,7 +116,20 @@ Completed processing activity is summarized by type. Terminal commands and Node.
 
 A plan generated in Plan mode remains part of the visible response instead of being placed inside the completed **Processed** disclosure. It stays directly visible after restoring a background task or reopening the conversation. Ordinary commands, file operations, and tool calls continue to use the summary and disclosure behavior described above.
 
+## Manage conversations
+
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
+
+Right-click a started task and select **Move to project** to place it under another available project on the same device. The task retains its session, history, and execution directory, and remains under the destination project after restarting Wework.
+
+### Export a conversation
+
+Select **Export conversation** at the top of a conversation, or open the conversation item's menu, to export the complete conversation as Markdown or HTML. Before exporting, choose whether to include the message body, tool calls and file changes, thinking, images, and other attachments. Included tool calls, file changes, and thinking are collapsed by default in HTML so the conversation remains easy to read.
+
+- **Markdown** includes only the message body by default; images are not selected by default. A text-only export creates an `.md` file. Including images or other attachments creates a ZIP archive whose Markdown file references the packaged assets with relative paths.
+- **HTML** includes the message body and images by default. Images are embedded so the HTML file works offline. Including other attachments that must remain separate creates a ZIP archive.
+
+After you choose a save location, the export window continues to show packaging and writing progress. It reports completion only after the background export task finishes and the destination file is confirmed. When replacing an existing file, a failed write leaves the original file intact.
 
 To branch from a completed AI response, move the pointer to its message actions and choose **Continue in new task**. The new task keeps the conversation context through that response and uses the same workspace. The source task and later messages remain unchanged. The action is hidden for streaming, cancelled, or unmappable Codex turns.
 

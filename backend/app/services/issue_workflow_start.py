@@ -14,11 +14,15 @@ from app.models.delivery import (
     loop_datetime_is_unset,
 )
 from app.schemas.issue_workflow import IssueWorkflowInstance
+from app.services.issue_execution_configuration import (
+    require_coordinator_execution_config,
+)
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.loop_item_status_history import is_processing_status
 from app.services.project_automations import (
     project_automation_service,
 )
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +44,7 @@ class IssueWorkflowStartService:
             return True
         return is_processing_status(project, item.status)
 
+    @trace_async(span_name="issue_workflow.start", tracer_name="backend.issue_workflow")
     async def start(
         self,
         db: Session,
@@ -131,16 +136,7 @@ class IssueWorkflowStartService:
                 item.id,
             )
             return 0
-        if (
-            workflow.execution_config is not None
-            and not workflow.execution_config.is_complete()
-        ):
-            logger.info(
-                "[issue-workflow-start] skipped AI workflow item=%s "
-                "reason=incomplete_execution_config",
-                item.id,
-            )
-            return 0
+        require_coordinator_execution_config(workflow.execution_config)
         planning_run = issue_workflow_planning_service.ensure_run(
             db,
             issue=item,
@@ -196,16 +192,19 @@ class IssueWorkflowStartService:
             if stage_ids is not None and node.id not in stage_ids:
                 continue
             execution_config = workflow.execution_config_for(node)
+            needs_config = workflow.node_needs_execution_config(node)
             logger.info(
                 "[issue-workflow-start] node item=%s node=%s status=%s mode=%s "
-                "rule=%s config_complete=%s agent=%s device=%s model=%s "
-                "workspace=%s",
+                "rule=%s config_complete=%s needs_config=%s policy=%s "
+                "agent=%s device=%s model=%s workspace=%s",
                 item.id,
                 node.id,
                 node.status,
                 node.execution_mode,
                 node.automation_rule_id,
                 bool(execution_config and execution_config.is_complete()),
+                needs_config,
+                node.workspace_policy,
                 bool(execution_config and execution_config.agent_id),
                 bool(execution_config and execution_config.execution_device_id),
                 bool(execution_config and execution_config.model),
@@ -228,7 +227,7 @@ class IssueWorkflowStartService:
                     node.id,
                 )
                 continue
-            if execution_config is None or not execution_config.is_complete():
+            if needs_config:
                 logger.info(
                     "[issue-workflow-start] node skipped item=%s node=%s "
                     "reason=incomplete_execution_config",

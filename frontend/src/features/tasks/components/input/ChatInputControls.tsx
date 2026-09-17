@@ -139,8 +139,9 @@ export interface ChatInputControlsProps {
   availableSkills?: UnifiedSkill[]
   teamSkillNames?: string[]
   preloadedSkillNames?: string[]
+  selectedSkillIds?: number[]
   selectedSkillNames?: string[]
-  onToggleSkill?: (skillName: string) => void
+  onToggleSkill?: (skill: UnifiedSkill) => void
 
   // Ref for skill selector button (for fly animation)
   skillSelectorRef?: React.RefObject<SkillSelectorPopoverRef | null>
@@ -258,6 +259,7 @@ export function ChatInputControls({
   availableSkills = [],
   teamSkillNames = [],
   preloadedSkillNames = [],
+  selectedSkillIds,
   selectedSkillNames = [],
   onToggleSkill,
   skillSelectorRef,
@@ -457,6 +459,7 @@ export function ChatInputControls({
         availableSkills={availableSkills}
         teamSkillNames={teamSkillNames}
         preloadedSkillNames={preloadedSkillNames}
+        selectedSkillIds={selectedSkillIds}
         selectedSkillNames={selectedSkillNames}
         onToggleSkill={onToggleSkill}
         hideSelectors={hideSelectors}
@@ -470,6 +473,8 @@ export function ChatInputControls({
         selectedImageModel={selectedImageModel}
         onImageModelChange={onImageModelChange}
         isImageModelsLoading={isImageModelsLoading}
+        selectedImageSize={selectedImageSize}
+        onImageSizeChange={onImageSizeChange}
         showVideoControlsInChat={showVideoControlsInChat}
         selectedResolution={selectedResolution}
         onResolutionChange={onResolutionChange}
@@ -714,6 +719,7 @@ export function ChatInputControls({
               availableSkills={availableSkills}
               teamSkillNames={teamSkillNames}
               preloadedSkillNames={preloadedSkillNames}
+              selectedSkillIds={selectedSkillIds}
               selectedSkillNames={selectedSkillNames}
               onToggleSkill={onToggleSkill}
               skillSelectorRef={skillSelectorRef}

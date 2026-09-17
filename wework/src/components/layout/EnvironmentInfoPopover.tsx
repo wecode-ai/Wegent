@@ -1,57 +1,35 @@
-import {
-  Check,
-  ChevronDown,
-  CircleDot,
-  Cloud,
-  Copy,
-  FolderOpen,
-  GitCommit,
-  GitBranch,
-  GitPullRequest,
-  Info,
-  Link2,
-  Laptop,
-  LoaderCircle,
-  Square,
-  Upload,
-  CornerDownLeft,
-} from 'lucide-react'
-import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type FormEvent,
-  type ReactNode,
-} from 'react'
+import { GitBranch, Info, Link2 } from 'lucide-react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { BranchSelector } from '@/components/common/BranchSelector'
-import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
-import { changeRequestVisualStatus } from '@/features/workbench/changeRequestStatus'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
+import { buildConversationOutputs } from '@/features/dsh-runtime/conversationOutputs'
+import type {
+  ConversationOutputsHostService,
+  ConversationSummaryResource,
+  EnvironmentHostService,
+} from '@/features/dsh-runtime/conversationHostServices'
+import { WEWORK_HOST_SERVICES } from '@/features/dsh-runtime/conversationHostServices'
+import type { ConversationSummarySurfaceServices } from '@/features/dsh-runtime/conversationSummarySurface'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useTranslation } from '@/hooks/useTranslation'
-import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
-import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
-import { navigateTo } from '@/lib/navigation'
-import {
-  findWorkbenchDevice,
-  getExecutorOfflineDeviceId,
-  getWorkbenchDeviceUnavailableDisplayName,
-  isWorkbenchDeviceOnline,
-} from '@/lib/workbench-device'
 import type { DeviceInfo, RuntimeSupervisorState } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import type { WorkbenchMessage } from '@/types/workbench'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
+import { EnvironmentSummaryOverview } from './EnvironmentSummaryOverview'
 import { TaskSupervisorStatusButton } from './TaskSupervisorControl'
 
 interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
+  isGitRepository?: boolean
+  messages?: readonly WorkbenchMessage[]
   popoverContainer: HTMLElement | null
   docked?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
-  floatingFooter?: ReactNode
+  footer?: ReactNode
   devices?: DeviceInfo[]
   onRefresh?: () => Promise<void>
   onCommitChanges?: (message: string) => Promise<void>
@@ -63,6 +41,7 @@ interface EnvironmentInfoPopoverProps {
   onGenerateBranchName?: (sourceText: string) => Promise<string>
   branchNameSource?: string
   onOpenChangesReview?: () => void
+  onOpenWorkspaceFile?: (path: string) => void
   onDeliver?: () => void
   todoLabel?: string
   onManageTodo?: () => void
@@ -71,32 +50,41 @@ interface EnvironmentInfoPopoverProps {
   onRunSupervisorNow?: () => Promise<RuntimeSupervisorState | null>
 }
 
-type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
-
 const FLOATING_POPOVER_WIDTH = 300
 const FLOATING_POPOVER_GAP = 8
 const FLOATING_POPOVER_MARGIN = 16
 
-function compactWorkspacePath(workspacePath: string): string {
-  const segments = workspacePath
-    .replace(/[\\/]+$/, '')
-    .split(/[\\/]+/)
-    .filter(Boolean)
-  return segments.at(-1) || workspacePath
+function commandStringArgument(args: unknown, key: string): string {
+  if (typeof args !== 'object' || args === null) return ''
+  const value = Reflect.get(args, key)
+  return typeof value === 'string' ? value : ''
 }
 
-function normalizeWorkspacePathForComparison(workspacePath: string): string {
-  const normalizedPath = normalizeRuntimeWorkspacePath(workspacePath.replace(/\\/g, '/'))
-  return /^(?:[A-Za-z]:|\/\/)/.test(normalizedPath) ? normalizedPath.toLowerCase() : normalizedPath
+function gitRepositoryContextValue(
+  info: EnvironmentInfo,
+  isGitRepository?: boolean
+): boolean | undefined {
+  if (isGitRepository !== undefined) return isGitRepository
+  if (info.isGitRepository === false) return false
+  if (
+    info.isGitRepository === true ||
+    Boolean(info.branchName?.trim()) ||
+    Boolean(info.additions || info.deletions)
+  ) {
+    return true
+  }
+  return info.loading === true ? undefined : true
 }
 
 export function EnvironmentInfoPopover({
   info,
+  isGitRepository,
+  messages = [],
   popoverContainer,
   docked = true,
   open,
   onOpenChange,
-  floatingFooter,
+  footer,
   devices = [],
   onRefresh,
   onCommitChanges,
@@ -108,6 +96,7 @@ export function EnvironmentInfoPopover({
   onGenerateBranchName,
   branchNameSource,
   onOpenChangesReview,
+  onOpenWorkspaceFile,
   onDeliver,
   todoLabel,
   onManageTodo,
@@ -116,202 +105,16 @@ export function EnvironmentInfoPopover({
   onRunSupervisorNow,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
-  const [copiedWorkspacePath, setCopiedWorkspacePath] = useState<string | null>(null)
-  const [commitFormOpen, setCommitFormOpen] = useState(false)
-  const [commitMessage, setCommitMessage] = useState('')
-  const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
-  const [commitProgressLabel, setCommitProgressLabel] = useState('')
-  const [commitError, setCommitError] = useState<string | null>(null)
   const [floatingPopoverStyle, setFloatingPopoverStyle] = useState<CSSProperties>()
   const rootRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
-  const copiedWorkspacePathTimeoutRef = useRef<number | null>(null)
-  const additions = info.additions || '+0'
-  const deletions = info.deletions || '-0'
-  const executionDeviceId = info.executionDeviceId ?? info.deviceId
-  const device = executionDeviceId ? findWorkbenchDevice(devices, executionDeviceId) : undefined
-  const deviceName = device?.name?.trim() || ''
-  const executionLabel =
-    info.executionTarget === 'cloud'
-      ? t('workbench.environment_cloud_device')
-      : t('workbench.environment_local', '本地')
-  const executionTargetLabel = t('workbench.environment_execution_target')
-  const deviceLabel = t('workbench.environment_device')
-  const deviceDisplayName = deviceName || t('workbench.environment_device_unknown')
-  const executorDisplayName =
-    info.executionTarget === 'cloud' && !isWorkbenchDeviceOnline(device ?? null)
-      ? getWorkbenchDeviceUnavailableDisplayName(device ?? null) || deviceDisplayName
-      : deviceDisplayName
-  const ExecutorIcon = info.executionTarget === 'cloud' ? Cloud : Laptop
-  const deviceTitle = [deviceLabel, deviceDisplayName].filter(Boolean).join(' · ')
-  const offlineDeviceId = getExecutorOfflineDeviceId(info.error)
-  const offlineDevice = offlineDeviceId ? findWorkbenchDevice(devices, offlineDeviceId) : null
-  const displayError = offlineDeviceId
-    ? t('workbench.conversation_device_offline_notice', {
-        device:
-          getWorkbenchDeviceUnavailableDisplayName(offlineDevice) ||
-          t('workbench.current_device', '当前设备'),
-      })
-    : info.error
-  const gitRepositoryAvailable = info.isGitRepository !== false
-  const hasGitInfo = gitRepositoryAvailable && Boolean(info.branchName?.trim())
-  const canShowBranchSelector = Boolean(
-    gitRepositoryAvailable && onListBranches && onCheckoutBranch
-  )
-  const hasDiffStats = gitRepositoryAvailable && Boolean(info.additions || info.deletions)
-  const showChangesSection = hasDiffStats || hasGitInfo || canShowBranchSelector
   const taskSummaryToggleLabel = t('workbench.task_summary_toggle', '切换摘要')
-  const normalizedWorkspacePath = info.workspacePath
-    ? normalizeWorkspacePathForComparison(info.workspacePath)
-    : ''
-  const workspacePathIsProjectRoot = Boolean(
-    normalizedWorkspacePath &&
-    info.workspaceRoots?.some(
-      workspaceRoot =>
-        normalizeWorkspacePathForComparison(workspaceRoot) === normalizedWorkspacePath
-    )
-  )
-  const workspacePaths =
-    info.workspacePath && !workspacePathIsProjectRoot
-      ? [info.workspacePath]
-      : info.workspaceRoots && info.workspaceRoots.length > 0
-        ? info.workspaceRoots
-        : info.workspacePath
-          ? [info.workspacePath]
-          : []
-  const changeRequest = info.changeRequest?.changeRequest
-  const changeRequestPrefix = changeRequest?.provider === 'gitlab' ? '!' : '#'
-  const changeRequestStatus = changeRequest ? changeRequestVisualStatus(changeRequest) : null
-  const changeRequestStatusLabel = changeRequestStatus
-    ? t(`workbench.change_request_status_${changeRequestStatus}`, changeRequestStatus)
-    : ''
-  const changeRequestChecksStatus =
-    changeRequest?.checks === 'success'
-      ? 'checks_passed'
-      : changeRequest?.checks === 'failure'
-        ? 'checks_failed'
-        : changeRequest?.checks === 'pending'
-          ? 'checks_pending'
-          : null
-  const changeRequestChecksLabel = changeRequestChecksStatus
-    ? t(`workbench.change_request_status_${changeRequestChecksStatus}`, changeRequestChecksStatus)
-    : ''
-
-  function handleCreatePullRequest() {
-    if (!info.createPullRequestUrl) {
-      return
-    }
-    void openExternalUrl(info.createPullRequestUrl)
-  }
-
-  function handleOpenChangeRequest() {
-    if (!changeRequest?.url) return
-    void openExternalUrl(changeRequest.url)
-  }
-
-  function handleOpenChangesReview() {
-    onOpenChangesReview?.()
-    if (!docked) {
-      onOpenChange(false)
-    }
-  }
-
-  async function handleCopyWorkspacePath(workspacePath: string) {
-    await copyTextToClipboard(workspacePath)
-    if (copiedWorkspacePathTimeoutRef.current !== null) {
-      window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
-    }
-    setCopiedWorkspacePath(workspacePath)
-    copiedWorkspacePathTimeoutRef.current = window.setTimeout(() => {
-      setCopiedWorkspacePath(current => (current === workspacePath ? null : current))
-      copiedWorkspacePathTimeoutRef.current = null
-    }, 2000)
-  }
-
-  useEffect(
-    () => () => {
-      if (copiedWorkspacePathTimeoutRef.current !== null) {
-        window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
-      }
-    },
-    []
-  )
-
-  function getCommitErrorMessage(error: unknown) {
-    const fallback = t('workbench.environment_commit_failed', '提交失败')
-    if (!(error instanceof Error) || !error.message) {
-      return fallback
-    }
-    if (
-      error.message === 'No changes to commit' ||
-      error.message === 'No staged changes to summarize'
-    ) {
-      return t('workbench.environment_no_changes_to_commit', '没有可提交的更改')
-    }
-    return error.message
-  }
-
-  function getCommitProgressLabel(action: CommitPanelAction, message: string) {
-    if (action === 'push') {
-      return t('workbench.environment_pushing_changes', '正在推送...')
-    }
-    if (!message) {
-      return t('workbench.environment_generating_commit_message', '正在生成消息...')
-    }
-    if (action === 'commit-and-push') {
-      return t('workbench.environment_commit_and_pushing_changes', '正在提交并推送...')
-    }
-    return t('workbench.environment_committing_changes', '正在提交...')
-  }
-
-  async function handleCommitPanelAction(action: CommitPanelAction) {
-    const trimmedMessage = commitMessage.trim()
-    if (action === 'commit' && !onCommitChanges) return
-    if (action === 'commit-and-push' && !onCommitAndPushChanges) return
-    if (action === 'push' && !onPushChanges) return
-
-    setCommitError(null)
-    setCommitProgressLabel(getCommitProgressLabel(action, trimmedMessage))
-    setCommitStatus('committing')
-    setCommitFormOpen(false)
-    try {
-      if (action === 'push') {
-        await onPushChanges?.()
-      } else if (action === 'commit-and-push') {
-        await onCommitAndPushChanges?.(trimmedMessage)
-      } else {
-        await onCommitChanges?.(trimmedMessage)
-      }
-      setCommitStatus('success')
-      setCommitFormOpen(false)
-      if (action !== 'push') {
-        setCommitMessage('')
-      }
-      window.setTimeout(() => {
-        setCommitStatus('idle')
-        setCommitProgressLabel('')
-      }, 1600)
-    } catch (error) {
-      setCommitStatus('idle')
-      setCommitProgressLabel('')
-      setCommitError(getCommitErrorMessage(error))
-    }
-  }
-
-  async function handleSubmitCommit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    await handleCommitPanelAction('commit')
-  }
 
   function handleToggleOpen() {
     const nextOpen = !open
-    if (nextOpen && !docked) {
-      setFloatingPopoverStyle(getFloatingPopoverPosition())
-    }
+    if (nextOpen && !docked) setFloatingPopoverStyle(getFloatingPopoverPosition())
     onOpenChange(nextOpen)
-    if (nextOpen) {
-      void onRefresh?.()
-    }
+    if (nextOpen) void onRefresh?.()
   }
 
   useEffect(() => {
@@ -339,7 +142,47 @@ export function EnvironmentInfoPopover({
     }
   }
 
-  const branchLabel = info.branchName?.trim() || t('workbench.environment_branch_empty', '暂无分支')
+  const environmentService: EnvironmentHostService = {
+    read: () => ({ devices, info }),
+  }
+  const outputsService: ConversationOutputsHostService = {
+    read: () => buildConversationOutputs(messages),
+  }
+  const commandHandlers: Record<string, ((args?: unknown) => unknown) | undefined> = {
+    'environment.refresh': onRefresh,
+    'git.commit': args => onCommitChanges?.(commandStringArgument(args, 'message')),
+    'git.commit-and-push': args => onCommitAndPushChanges?.(commandStringArgument(args, 'message')),
+    'git.push': onPushChanges,
+    'git.list-branches': () => onListBranches?.() ?? [],
+    'git.checkout-branch': args => onCheckoutBranch?.(commandStringArgument(args, 'branchName')),
+    'git.create-branch': args => onCreateBranch?.(commandStringArgument(args, 'branchName')),
+    'git.generate-branch-name': args =>
+      onGenerateBranchName?.(commandStringArgument(args, 'sourceText')) ?? '',
+    'git.open-changes-review': onOpenChangesReview,
+  }
+  const services: ConversationSummarySurfaceServices = {
+    canExecuteCommand(id) {
+      return commandHandlers[id] !== undefined
+    },
+    getService<T>(id: string): T | undefined {
+      if (id === WEWORK_HOST_SERVICES.environment) return environmentService as T
+      if (id === WEWORK_HOST_SERVICES.conversationOutputs) return outputsService as T
+      return undefined
+    },
+    async openResource(resource: ConversationSummaryResource) {
+      if (resource.kind === 'url') {
+        await openExternalUrl(resource.url, { target: 'system' })
+        return
+      }
+      onOpenWorkspaceFile?.(resource.path)
+    },
+    async executeCommand(id, args) {
+      const handler = commandHandlers[id]
+      if (!handler) throw new Error(`Unavailable conversation summary command: ${id}`)
+      return handler(args)
+    },
+  }
+
   const popoverPortalContainer = docked
     ? popoverContainer
     : typeof document !== 'undefined'
@@ -373,452 +216,73 @@ export function EnvironmentInfoPopover({
               docked ? 'ml-2 mt-3' : 'fixed z-system'
             )}
           >
-            <h2 className="mb-3 text-sm font-medium text-text-primary">
-              {t('workbench.environment_summary_title', '环境')}
-            </h2>
-
-            <div className="space-y-3">
-              <section
-                data-testid="environment-device-section"
-                className="flex w-full min-w-0 flex-col gap-1"
-              >
-                {workspacePaths.map((workspacePath, index) => {
-                  const copied = copiedWorkspacePath === workspacePath
-                  const displayWorkspacePath = compactWorkspacePath(workspacePath)
-                  return (
-                    <div
-                      key={workspacePath}
-                      className="flex min-h-11 min-w-0 items-start gap-2 py-1 md:min-h-0"
-                      data-testid={`environment-workspace-root-row-${index}`}
-                    >
-                      <FolderOpen
-                        className="mt-0.5 h-4 w-4 shrink-0 text-text-muted"
-                        aria-hidden="true"
-                      />
-                      <button
-                        type="button"
-                        data-testid={
-                          index === 0
-                            ? 'environment-workspace-path-button'
-                            : `environment-workspace-root-button-${index}`
-                        }
-                        onClick={() => void handleCopyWorkspacePath(workspacePath)}
-                        title={workspacePath}
-                        aria-label={`${t('workbench.environment_workspace_path')} · ${workspacePath}`}
-                        className="flex min-h-11 min-w-0 flex-1 items-start gap-1 rounded text-left hover:text-text-primary md:min-h-0"
-                      >
-                        <span className="sr-only">{t('workbench.environment_workspace_path')}</span>
-                        <span
-                          data-testid={
-                            index === 0
-                              ? 'environment-workspace-path'
-                              : `environment-workspace-root-${index}`
-                          }
-                          className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary"
-                        >
-                          {displayWorkspacePath}
-                        </span>
-                        <span
-                          data-testid={
-                            index === 0
-                              ? 'environment-workspace-path-copy-icon'
-                              : `environment-workspace-root-copy-icon-${index}`
-                          }
-                          className={cn(
-                            'mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center',
-                            copied ? 'text-green-500' : 'text-text-muted'
-                          )}
-                          aria-hidden="true"
-                        >
-                          {copied ? (
-                            <Check className="h-3.5 w-3.5" />
-                          ) : (
-                            <Copy className="h-3.5 w-3.5" />
-                          )}
-                        </span>
-                        {copied && (
-                          <span role="status" className="sr-only">
-                            {t('workbench.environment_copied')}
-                          </span>
-                        )}
-                      </button>
-                    </div>
-                  )
-                })}
-                <div
-                  data-testid="environment-execution-target-row"
-                  title={`${executionTargetLabel} · ${executionLabel}; ${deviceTitle}`}
-                  className="flex h-7 min-w-0 items-center gap-2 text-xs text-text-secondary"
-                >
-                  <ExecutorIcon className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-                  <span className="sr-only">
-                    {executionTargetLabel} · {executionLabel} ·{' '}
-                  </span>
-                  <div data-testid="environment-device-button" className="min-w-0 truncate">
-                    <span className="sr-only">{deviceLabel}</span>
-                    <span data-testid="environment-device-name" className="whitespace-nowrap">
-                      {executorDisplayName}
-                    </span>
-                  </div>
-                </div>
-              </section>
-
-              {showChangesSection && (
-                <section
-                  data-testid="environment-git-section"
-                  className="space-y-0.5 border-t border-border pt-3"
-                >
-                  <button
-                    type="button"
-                    data-testid="environment-changes-button"
-                    disabled={!onOpenChangesReview}
-                    onClick={handleOpenChangesReview}
-                    className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
-                  >
-                    <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                      <CircleDot className="h-[18px] w-[18px]" />
-                    </span>
-                    <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                      {t('workbench.environment_changes', '变更')}
-                    </span>
-                    <span className="flex gap-1.5 text-sm">
-                      <span className="text-green-500">{additions}</span>
-                      <span className="text-red-500">{deletions}</span>
-                    </span>
-                  </button>
-                  {onListBranches && onCheckoutBranch && (
-                    <BranchSelector
-                      variant="environment"
-                      currentBranch={info.branchName}
-                      loading={info.branchLoading ?? info.loading}
-                      onRefresh={onRefresh}
-                      onListBranches={onListBranches}
-                      onCheckoutBranch={onCheckoutBranch}
-                      onCreateBranch={onCreateBranch}
-                      onGenerateBranchName={onGenerateBranchName}
-                      branchNameSource={branchNameSource}
-                    />
-                  )}
-                  {hasGitInfo && (
-                    <>
-                      {commitStatus === 'committing' ? (
-                        <div
-                          data-testid="environment-commit-progress-row"
-                          className="flex h-8 w-full items-center gap-3 rounded-md bg-hover px-0 text-left text-sm leading-[18px] text-text-secondary"
-                        >
-                          <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                            <LoaderCircle className="h-4 w-4 animate-spin" />
-                          </span>
-                          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                            {commitProgressLabel ||
-                              t('workbench.environment_committing_changes', '正在提交...')}
-                          </span>
-                          <span
-                            data-testid="environment-commit-progress-stop-icon"
-                            className="flex h-4 w-4 shrink-0 items-center justify-center text-text-muted"
-                            aria-hidden="true"
-                          >
-                            <Square className="h-3.5 w-3.5 fill-current" strokeWidth={0} />
-                          </span>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          data-testid="environment-commit-button"
-                          disabled={!onCommitChanges}
-                          onClick={() => {
-                            setCommitFormOpen(open => !open)
-                            setCommitError(null)
-                          }}
-                          className={cn(
-                            'flex h-8 w-full items-center gap-3 rounded-md text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted',
-                            commitFormOpen && 'bg-hover'
-                          )}
-                        >
-                          <span className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary">
-                            <GitCommit className="h-4 w-4" />
-                          </span>
-                          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                            {t('workbench.environment_commit_or_push', '提交或推送')}
-                          </span>
-                          {commitStatus === 'success' && (
-                            <span className="shrink-0 text-xs text-green-500">
-                              {t('workbench.environment_committed', '已提交')}
-                            </span>
-                          )}
-                        </button>
-                      )}
-                      {changeRequest ? (
-                        <div className="flex h-9 w-full items-center gap-2 rounded-md hover:bg-hover">
-                          <ChangeRequestStatusIcon
-                            snapshot={{ changeRequest }}
-                            testId="environment-change-request-status"
-                            glyphSize="environment"
-                            mainIconTestId={
-                              changeRequestStatus === 'merged'
-                                ? 'change-request-merged-icon'
-                                : 'change-request-pull-request-icon'
-                            }
-                          />
-                          <button
-                            type="button"
-                            data-testid="change-request-button"
-                            onClick={handleOpenChangeRequest}
-                            title={`${changeRequest.title} · ${changeRequestStatusLabel}`}
-                            aria-label={`${changeRequestPrefix}${changeRequest.number} ${changeRequest.title}，${changeRequestStatusLabel}`}
-                            className="flex h-9 min-w-0 flex-1 items-center text-left text-sm text-text-primary"
-                          >
-                            <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                              <span
-                                data-testid="change-request-number"
-                                className="shrink-0 font-medium"
-                              >
-                                {changeRequestPrefix}
-                                {changeRequest.number}
-                              </span>
-                              <span
-                                data-testid="change-request-title"
-                                className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
-                              >
-                                {changeRequest.title}
-                              </span>
-                              <span data-testid="change-request-state" className="sr-only">
-                                {changeRequestStatusLabel}
-                              </span>
-                              {changeRequestChecksStatus &&
-                                (changeRequestStatus?.startsWith('checks_') ||
-                                  changeRequestStatus === 'merged') && (
-                                  <span data-testid="change-request-checks" className="sr-only">
-                                    {changeRequestChecksLabel}
-                                  </span>
-                                )}
-                              {changeRequestStatus === 'merge_conflict' && (
-                                <span data-testid="change-request-conflict" className="sr-only">
-                                  {changeRequestStatusLabel}
-                                </span>
-                              )}
-                              {changeRequestStatus?.startsWith('merge_queue_') && (
-                                <span data-testid="change-request-merge-queue" className="sr-only">
-                                  {changeRequestStatusLabel}
-                                </span>
-                              )}
-                            </span>
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          data-testid="create-pull-request-button"
-                          disabled={!info.createPullRequestUrl}
-                          onClick={handleCreatePullRequest}
-                          className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
-                        >
-                          <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                            <GitPullRequest className="h-[18px] w-[18px]" />
-                          </span>
-                          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                            {info.changeRequest?.provider === 'gitlab'
-                              ? t('workbench.environment_create_mr', '创建合并请求')
-                              : t('workbench.environment_create_pr', '创建拉取请求')}
-                          </span>
-                        </button>
-                      )}
-                      {info.changeRequest &&
-                        ['unavailable', 'unauthenticated', 'error'].includes(
-                          info.changeRequest.state
-                        ) && (
-                          <div className="px-7 pb-1">
-                            <p
-                              data-testid="change-request-lookup-hint"
-                              className="text-xs leading-4 text-text-muted"
-                            >
-                              {t(
-                                `workbench.environment_change_request_${info.changeRequest.state}_${info.changeRequest.provider}`,
-                                ''
-                              )}
-                            </p>
-                            <button
-                              type="button"
-                              data-testid="change-request-open-settings"
-                              onClick={() => {
-                                onOpenChange(false)
-                                navigateTo('/settings/git-hosting')
-                              }}
-                              className="mt-1 text-xs text-blue-500 hover:underline"
-                            >
-                              {t(
-                                'workbench.environment_change_request_configure',
-                                '配置代码托管工具'
-                              )}
-                            </button>
-                          </div>
-                        )}
-                    </>
-                  )}
-                </section>
-              )}
-              {(onManageTodo || onDeliver) && (
-                <section className="border-t border-border pt-3">
-                  {onManageTodo && (
-                    <button
-                      type="button"
-                      data-testid="environment-todo-binding-button"
-                      onClick={onManageTodo}
-                      className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
-                    >
-                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                        <Link2 className="h-[18px] w-[18px]" />
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">{todoLabel || '关联项目空间'}</span>
-                    </button>
-                  )}
-                  {onDeliver && (
-                    <button
-                      type="button"
-                      data-testid="environment-delivery-button"
-                      onClick={onDeliver}
-                      className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
-                    >
-                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                        <GitBranch className="h-[18px] w-[18px]" />
-                      </span>
-                      <span>{todoLabel ? t('delivery.action', '交付') : '交付到任务…'}</span>
-                    </button>
-                  )}
-                </section>
-              )}
-              {supervisor && onConfigureSupervisor && (
-                <section
-                  data-testid="environment-supervisor-section"
-                  className="border-t border-border pt-3"
-                >
-                  <TaskSupervisorStatusButton
-                    supervisor={supervisor}
-                    onClick={onConfigureSupervisor}
-                    onRunNow={onRunSupervisorNow}
-                  />
-                </section>
-              )}
-            </div>
-
-            {displayError && (
-              <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">
-                {displayError}
-              </p>
-            )}
-            {commitError && (
-              <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">
-                {commitError}
-              </p>
-            )}
-            {!docked && floatingFooter && (
-              <div className="mt-3 border-t border-border pt-3">{floatingFooter}</div>
-            )}
-          </div>,
-          popoverPortalContainer
-        )}
-      {open &&
-        commitFormOpen &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <form
-            data-testid="environment-commit-form"
-            className="fixed left-1/2 top-[36vh] z-system-popover w-[430px] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-[0_18px_48px_rgba(0,0,0,0.20)]"
-            onSubmit={handleSubmitCommit}
-          >
-            <div className="flex h-10 items-center gap-2 px-4 text-sm leading-[18px] text-text-secondary">
-              <GitBranch className="h-4 w-4 shrink-0" />
-              <span className="min-w-0 flex-1 truncate font-medium">{branchLabel}</span>
-              <ChevronDown className="h-4 w-4 shrink-0" />
-              <span className="ml-3 flex shrink-0 gap-1.5 font-medium">
-                <span className="text-green-500">{additions}</span>
-                <span className="text-red-500">{deletions}</span>
-              </span>
-            </div>
-
-            <textarea
-              data-testid="environment-commit-message-input"
-              value={commitMessage}
-              onChange={event => setCommitMessage(event.target.value)}
-              onKeyDown={event => {
-                if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                  event.preventDefault()
-                  event.currentTarget.form?.requestSubmit()
-                }
+            <EnvironmentSummaryOverview devices={devices} info={info} />
+            <DshContributionSlotSurface
+              attachedClassName="contents"
+              props={{
+                context: {
+                  'conversation.available': true,
+                  'conversation.title': branchNameSource,
+                  'workspace.isGitRepository': gitRepositoryContextValue(info, isGitRepository),
+                },
+                docked,
+                onClose: () => onOpenChange(false),
+                services,
               }}
-              className="min-h-[74px] w-full resize-none bg-background px-4 py-2 text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
-              placeholder={t('workbench.environment_commit_message_placeholder')}
-              autoFocus
+              slot={WEWORK_DSH_SLOTS.conversationSummary}
             />
 
-            <div
-              data-testid="environment-include-unstaged-row"
-              className="flex h-10 items-center gap-2 px-4 text-sm leading-[18px] text-text-primary"
-            >
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border bg-background text-text-primary">
-                <Check className="h-3 w-3" strokeWidth={2.4} />
-              </span>
-              <span className="min-w-0 flex-1 truncate">
-                {t('workbench.environment_include_unstaged_changes', '包含未暂存的更改')}
-              </span>
-            </div>
-
-            <div className="border-t border-border p-1.5">
-              <button
-                type="submit"
-                data-testid="environment-confirm-commit-button"
-                disabled={!onCommitChanges || commitStatus === 'committing'}
-                className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <GitCommit className="h-4 w-4 shrink-0 text-text-secondary" />
-                <span className="min-w-0 flex-1 truncate">
-                  {commitStatus === 'committing'
-                    ? t('workbench.environment_committing', '提交中')
-                    : t('workbench.environment_commit', '提交')}
-                </span>
-                <span className="ml-auto inline-flex h-5 shrink-0 items-center gap-0.5 rounded-md bg-surface px-1.5 text-xs leading-none text-text-muted">
-                  <span>⌘</span>
-                  <CornerDownLeft className="h-3 w-3" aria-hidden="true" />
-                </span>
-              </button>
-              <button
-                type="button"
-                data-testid="environment-commit-and-push-button"
-                disabled={!onCommitAndPushChanges || commitStatus === 'committing'}
-                onClick={() => void handleCommitPanelAction('commit-and-push')}
-                className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
-              >
-                <Upload className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 flex-1 truncate">
-                  {t('workbench.environment_commit_and_push', '提交并推送')}
-                </span>
-              </button>
-              <button
-                type="button"
-                data-testid="environment-push-button"
-                disabled={!onPushChanges || commitStatus === 'committing'}
-                onClick={() => void handleCommitPanelAction('push')}
-                className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
-              >
-                <Upload className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 flex-1 truncate">
-                  {t('workbench.environment_push', '推送')}
-                </span>
-              </button>
-              <button
-                type="button"
-                data-testid="environment-cancel-commit-button"
-                onClick={() => {
-                  setCommitFormOpen(false)
-                  setCommitError(null)
-                }}
-                className="hidden"
-              >
-                {t('workbench.environment_commit_cancel', '取消')}
-              </button>
-            </div>
-          </form>,
-          document.body
+            {(onManageTodo || onDeliver || (supervisor && onConfigureSupervisor)) && (
+              <div className="mt-3 space-y-3">
+                {(onManageTodo || onDeliver) && (
+                  <section className="border-t border-border pt-3">
+                    {onManageTodo && (
+                      <button
+                        type="button"
+                        data-testid="environment-todo-binding-button"
+                        onClick={onManageTodo}
+                        className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                      >
+                        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                          <Link2 className="h-[18px] w-[18px]" />
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">
+                          {todoLabel || '关联项目空间'}
+                        </span>
+                      </button>
+                    )}
+                    {onDeliver && (
+                      <button
+                        type="button"
+                        data-testid="environment-delivery-button"
+                        onClick={onDeliver}
+                        className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                      >
+                        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                          <GitBranch className="h-[18px] w-[18px]" />
+                        </span>
+                        <span>{todoLabel ? t('delivery.action', '交付') : '交付到任务…'}</span>
+                      </button>
+                    )}
+                  </section>
+                )}
+                {supervisor && onConfigureSupervisor && (
+                  <section
+                    data-testid="environment-supervisor-section"
+                    className="border-t border-border pt-3"
+                  >
+                    <TaskSupervisorStatusButton
+                      supervisor={supervisor}
+                      onClick={onConfigureSupervisor}
+                      onRunNow={onRunSupervisorNow}
+                    />
+                  </section>
+                )}
+              </div>
+            )}
+            {footer && <div className="mt-3 border-t border-border pt-3">{footer}</div>}
+          </div>,
+          popoverPortalContainer
         )}
     </div>
   )

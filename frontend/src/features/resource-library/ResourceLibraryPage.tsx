@@ -39,9 +39,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { canEditContent } from '@/types/base-role'
 import type { Group } from '@/types/group'
+import type { Team } from '@/types/api'
 import { listSkillMarketProviders, type SkillMarketProvider } from '@/apis/skillMarketplace'
 import { DiscoverResources } from './components/DiscoverResources'
 import { FeaturedScenarios } from './components/FeaturedScenarios'
@@ -103,16 +105,9 @@ function TeamSkillResources({
 }) {
   const { t } = useTranslation('resource-library')
   const { t: tCommon } = useTranslation('common')
-  const [nativeState, setNativeState] = useState<ResourceListState>(initialResourceListState)
-  const [installedState, setInstalledState] = useState<ResourceListState>(initialResourceListState)
-  const hasItems = nativeState.hasItems || installedState.hasItems
-  const isLoading = !hasItems && (nativeState.loading || installedState.loading)
-  const isEmpty =
-    !hasItems &&
-    !nativeState.loading &&
-    !installedState.loading &&
-    !nativeState.hasError &&
-    !installedState.hasError
+  const [listState, setListState] = useState<ResourceListState>(initialResourceListState)
+  const isLoading = !listState.hasItems && listState.loading
+  const isEmpty = !listState.hasItems && !listState.loading && !listState.hasError
 
   return (
     <div className="space-y-6" data-testid="team-skill-resources">
@@ -121,22 +116,14 @@ function TeamSkillResources({
         selectedGroup={groupName}
         groups={groups}
         sourceFilter="group"
+        sortMode="latest"
         showAutoEnabledSkills={false}
         hideCreateActions
         hideEmptyState
         hideLoadingState
         compact
         searchQuery={keyword}
-        onListStateChange={setNativeState}
-      />
-      <InstalledResources
-        resourceType="skill"
-        keyword={keyword}
-        groupNamespaces={[groupName]}
-        excludeGroupOwned
-        hideLoadingState
-        hideEmptyState
-        onListStateChange={setInstalledState}
+        onListStateChange={setListState}
       />
       {isLoading && (
         <div
@@ -160,6 +147,7 @@ function TeamSkillResources({
 
 export function ResourceLibraryPage() {
   const { t } = useTranslation('resource-library')
+  const { toast } = useToast()
   const skillMarketProvidersLoadFailedLabel = t('external_skill_market.providers_load_failed')
   const router = useRouter()
   const pathname = usePathname()
@@ -195,6 +183,7 @@ export function ResourceLibraryPage() {
   const isUnsupportedSource =
     (source === 'installed' && !supportsInstalledSource) ||
     (source === 'system' && !supportsSystemSource) ||
+    (source === 'personal' && supportsCreatedByMeSource) ||
     (source === 'mine' && !supportsCreatedByMeSource)
   const fallbackSource: MineSource = supportsCreatedByMeSource ? 'mine' : 'personal'
   const effectiveSource = isUnsupportedSource ? fallbackSource : source
@@ -223,6 +212,7 @@ export function ResourceLibraryPage() {
     searchParams.get('teamAction') === 'add'
   const [searchInput, setSearchInput] = useState(keywordParam)
   const [managedRevision, setManagedRevision] = useState(0)
+  const contentRef = useRef<HTMLElement>(null)
   const [publishedRevision, setPublishedRevision] = useState(0)
   const [isAdvancedCreateOpen, setIsAdvancedCreateOpen] = useState(false)
   const [skillMarketProviders, setSkillMarketProviders] = useState<SkillMarketProvider[]>([])
@@ -328,10 +318,48 @@ export function ResourceLibraryPage() {
     })
   }
 
+  const createActionHandled = useRef(false)
+  useEffect(() => {
+    const requestedCreateAgent =
+      searchParams.get('action') === 'create-agent' && resourceType === 'agent'
+
+    if (!requestedCreateAgent) {
+      createActionHandled.current = false
+      return
+    }
+    if (createActionHandled.current) {
+      return
+    }
+    createActionHandled.current = true
+    handleNewCapabilityType('agent')
+    replaceParams({ action: null })
+  }, [replaceParams, resourceType, searchParams])
+
   const handleResourceCreated = () => {
     setCreateRequest(null)
     setManagedRevision(revision => revision + 1)
     setPublishedRevision(revision => revision + 1)
+  }
+
+  const handleTeamSaved = (_team: Team, created: boolean) => {
+    toast({ title: t(created ? 'agent_saved.created' : 'agent_saved.updated') })
+    if (!created) return
+
+    replaceParams({
+      tab: 'mine',
+      type: 'agent',
+      source: 'mine',
+      sort: 'latest',
+      keyword: null,
+      group: null,
+      scope: null,
+      mode: null,
+      tag: null,
+      teamAction: null,
+      action: null,
+      modelCategory: null,
+    })
+    if (contentRef.current) contentRef.current.scrollTop = 0
   }
 
   const handleCreateRequestClose = () => {
@@ -381,17 +409,19 @@ export function ResourceLibraryPage() {
   const handleTypeChange = (nextType: ResourceNavigationType | 'all') => {
     if (nextType === 'all') return
     const nextSupportsInstalledSource = nextType === 'agent' || nextType === 'skill'
-    const nextSupportsCreatedByMeSource = nextType === 'agent'
+    const nextSupportsCreatedByMeSource = nextType === 'agent' || nextType === 'skill'
     const nextSupportsSystemSource =
       nextType === 'model' || nextType === 'shell' || nextType === 'retriever'
     const shouldResetSource =
       (effectiveSource === 'installed' && !nextSupportsInstalledSource) ||
       (effectiveSource === 'system' && !nextSupportsSystemSource) ||
+      (effectiveSource === 'personal' && nextSupportsCreatedByMeSource) ||
       (effectiveSource === 'mine' && !nextSupportsCreatedByMeSource)
+    const nextFallbackSource = nextSupportsCreatedByMeSource ? 'mine' : 'personal'
 
     replaceParams({
       type: nextType,
-      source: shouldResetSource ? 'personal' : undefined,
+      source: shouldResetSource ? nextFallbackSource : undefined,
       group: effectiveSource === 'group' ? undefined : null,
       keyword: null,
       sort: null,
@@ -539,6 +569,7 @@ export function ResourceLibraryPage() {
       if (managedResourceType === 'agent') {
         return (
           <MyResources
+            onTeamSaved={handleTeamSaved}
             key={`${managedRevision}:agent:group:${selectedGroupName || 'all'}`}
             allowedTypes={['agent']}
             fixedSource="group"
@@ -576,6 +607,7 @@ export function ResourceLibraryPage() {
     const fixedSource = effectiveSource as Exclude<MineSource, 'installed'>
     return (
       <MyResources
+        onTeamSaved={handleTeamSaved}
         key={`${managedRevision}:${managedResourceType}:${effectiveSource}:${selectedGroupName || 'all'}`}
         allowedTypes={[managedResourceType]}
         fixedSource={fixedSource}
@@ -607,7 +639,7 @@ export function ResourceLibraryPage() {
       : 'search.placeholder'
 
   return (
-    <main className="h-full overflow-y-auto bg-base text-text-primary">
+    <main ref={contentRef} className="h-full overflow-y-auto bg-base text-text-primary">
       <div className="mx-auto flex w-full max-w-[1600px] flex-col px-4 pb-8 pt-5 sm:px-6 lg:px-8">
         <section className="flex flex-col gap-5" data-testid="resource-library-header">
           <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -870,6 +902,7 @@ export function ResourceLibraryPage() {
 
       {createRequest && (
         <MyResources
+          onTeamSaved={handleTeamSaved}
           allowedTypes={[createRequest.type]}
           fixedSource="personal"
           hideSourceControls

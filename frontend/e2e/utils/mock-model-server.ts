@@ -40,6 +40,7 @@ interface VisionMessage {
 interface ModelRequest {
   model?: string
   messages?: VisionMessage[]
+  input?: unknown
   system?: unknown
   stream?: boolean
   tools?: Array<Record<string, unknown>>
@@ -160,32 +161,7 @@ function extractText(value: unknown): string {
 }
 
 function getRequestText(request: ModelRequest | null): string {
-  if (!request) {
-    return ''
-  }
-
-  const messageText = (request.messages || [])
-    .map(message => {
-      if (typeof message.content === 'string') {
-        return message.content
-      }
-
-      if (Array.isArray(message.content)) {
-        return message.content
-          .map(item => {
-            if (item.type === 'text') {
-              return item.text || ''
-            }
-            return ''
-          })
-          .join(' ')
-      }
-
-      return ''
-    })
-    .join(' ')
-
-  return [extractText(request.system), messageText].join(' ')
+  return extractText(request)
 }
 
 function findStreamRule(request: ModelRequest | null): StreamRule | undefined {
@@ -215,6 +191,34 @@ function resolveToolName(request: ModelRequest | null, requestedName: string): s
     toolNames.find(name => name === requestedName) ??
     toolNames.find(name => name.endsWith(requestedName)) ??
     requestedName
+  )
+}
+
+function resolveResponsesTool(
+  request: ModelRequest | null,
+  requestedName: string
+): { name: string; namespace?: string } {
+  const tools = Array.isArray(request?.tools) ? request.tools : []
+  const candidates = tools.flatMap(tool => {
+    if (!tool || typeof tool !== 'object') return []
+    const candidate = tool as {
+      function?: { name?: string }
+      name?: string
+      namespace?: string
+      tools?: Array<{ function?: { name?: string }; name?: string }>
+    }
+    const nestedTools = Array.isArray(candidate.tools)
+      ? candidate.tools.flatMap(nestedTool => {
+          const name = nestedTool.function?.name || nestedTool.name
+          return name && candidate.name ? [{ name, namespace: candidate.name }] : []
+        })
+      : []
+    const name = candidate.function?.name || (nestedTools.length === 0 ? candidate.name : undefined)
+    return name ? [{ name, namespace: candidate.namespace }, ...nestedTools] : nestedTools
+  })
+  return (
+    candidates.find(tool => tool.name === requestedName) ??
+    candidates.find(tool => tool.name.endsWith(requestedName)) ?? { name: requestedName }
   )
 }
 
@@ -402,6 +406,124 @@ function writeStreamingResponse(
   }
 
   sendChunk()
+}
+
+function writeResponsesSseEvent(res: http.ServerResponse, data: Record<string, unknown>): void {
+  res.write(`event: ${data.type}\n`)
+  res.write(`data: ${JSON.stringify(data)}\n\n`)
+}
+
+function writeResponsesStreamingResponse(
+  res: http.ServerResponse,
+  content: string,
+  model: string,
+  doneDelayMs: number
+): void {
+  const responseId = `resp_${Date.now()}`
+  const messageId = `msg_${Date.now()}`
+  const output = [
+    {
+      id: messageId,
+      type: 'message',
+      role: 'assistant',
+      status: 'completed',
+      content: [{ type: 'output_text', text: content, annotations: [] }],
+    },
+  ]
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  })
+  writeResponsesSseEvent(res, {
+    type: 'response.created',
+    response: {
+      id: responseId,
+      object: 'response',
+      status: 'in_progress',
+      model,
+      output: [],
+    },
+  })
+  writeResponsesSseEvent(res, {
+    type: 'response.output_item.done',
+    output_index: 0,
+    item: output[0],
+  })
+  setTimeout(() => {
+    writeResponsesSseEvent(res, {
+      type: 'response.completed',
+      response: {
+        id: responseId,
+        object: 'response',
+        status: 'completed',
+        model,
+        output,
+        usage: {
+          input_tokens: 100,
+          input_tokens_details: { cached_tokens: 0 },
+          output_tokens: Math.max(1, content.split(' ').length),
+          output_tokens_details: { reasoning_tokens: 0 },
+          total_tokens: 100 + Math.max(1, content.split(' ').length),
+        },
+      },
+    })
+    res.end()
+  }, doneDelayMs)
+}
+
+function writeResponsesToolCalls(
+  res: http.ServerResponse,
+  request: ModelRequest | null,
+  toolCalls: ToolCallRule[],
+  model: string
+): void {
+  const responseId = `resp_${Date.now()}`
+  const output = toolCalls.map((toolCall, index) => {
+    const tool = resolveResponsesTool(request, toolCall.toolName)
+    return {
+      type: 'function_call',
+      call_id: `call_${Date.now()}_${index}`,
+      name: tool.name,
+      ...(tool.namespace ? { namespace: tool.namespace } : {}),
+      arguments: JSON.stringify(toolCall.arguments),
+    }
+  })
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  })
+  writeResponsesSseEvent(res, {
+    type: 'response.created',
+    response: { id: responseId, object: 'response', status: 'in_progress', model, output: [] },
+  })
+  output.forEach((item, outputIndex) => {
+    writeResponsesSseEvent(res, {
+      type: 'response.output_item.done',
+      output_index: outputIndex,
+      item,
+    })
+  })
+  writeResponsesSseEvent(res, {
+    type: 'response.completed',
+    response: {
+      id: responseId,
+      object: 'response',
+      status: 'completed',
+      model,
+      output,
+      usage: {
+        input_tokens: 100,
+        input_tokens_details: { cached_tokens: 0 },
+        output_tokens: 1,
+        output_tokens_details: { reasoning_tokens: 0 },
+        total_tokens: 101,
+      },
+    },
+  })
+  res.end()
 }
 
 function writeAnthropicSseEvent(res: http.ServerResponse, event: string, data: unknown): void {
@@ -771,7 +893,33 @@ const server = http.createServer((req, res) => {
     }
 
     // Handle different endpoints
-    if (req.url?.includes('/chat/completions')) {
+    if (req.url?.includes('/responses')) {
+      const toolScenario = findToolScenario(parsedBody)
+      if (toolScenario && parsedBody) {
+        toolScenario.capturedRequests.push(parsedBody)
+      }
+      const scenarioStep = toolScenario?.steps[toolScenario.nextStep]
+      if (toolScenario && scenarioStep) {
+        toolScenario.nextStep += 1
+        if (scenarioStep.toolCalls?.length) {
+          writeResponsesToolCalls(
+            res,
+            parsedBody,
+            scenarioStep.toolCalls,
+            parsedBody?.model || 'mock-codex'
+          )
+          return
+        }
+      }
+      const streamRule = findStreamRule(parsedBody)
+      const responseContent =
+        scenarioStep?.responseContent ||
+        streamRule?.responseContent ||
+        buildContextAwareResponseContent(parsedBody)
+      const model = parsedBody?.model || 'mock-codex'
+      console.log(`Mock response content: ${truncateForLog(responseContent)}`)
+      writeResponsesStreamingResponse(res, responseContent, model, streamRule?.doneDelayMs ?? 0)
+    } else if (req.url?.includes('/chat/completions')) {
       const toolScenario = findToolScenario(parsedBody)
       if (toolScenario && parsedBody) {
         toolScenario.capturedRequests.push(parsedBody)
@@ -1008,6 +1156,7 @@ server.listen(PORT, () => {
 ║  Server running on: http://localhost:${PORT}                  ║
 ║                                                            ║
 ║  Endpoints:                                                ║
+║    POST /v1/responses        - Mock OpenAI Responses API   ║
 ║    POST /v1/chat/completions - Mock OpenAI chat API        ║
 ║    POST /v1/messages         - Mock Anthropic Messages API ║
 ║    GET  /captured-requests   - View captured requests      ║

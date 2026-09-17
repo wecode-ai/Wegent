@@ -7,18 +7,26 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from typing import Any, Iterable, Optional
 
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.socketio import get_sio
+from app.db.session import get_db_session
 from app.models.kind import Kind
-from app.models.plugin_marketplace import PluginDeviceInstallation, PluginRelease
+from app.models.plugin_marketplace import PluginRelease
 from app.models.user import User
-from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
+from app.schemas.device import (
+    DeviceCapabilityItemResult,
+    DeviceCapabilitySyncResponse,
+    DeviceCapabilitySyncResult,
+)
 from app.services.device.runtime_route import RuntimeRouteError, runtime_route_resolver
 from app.services.device_service import device_service
+from app.services.plugin_device_identity import plugin_device_rows
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
@@ -29,6 +37,41 @@ logger = logging.getLogger(__name__)
 SYNC_EVENT = "device:sync_capabilities"
 SYNC_NAMESPACE = "/local-executor"
 SYNC_TIMEOUT_SECONDS = 180
+DESIRED_STATE_SYNC_ATTEMPTS = 3
+
+
+def capability_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the stable desired state represented by a sync payload."""
+
+    def normalized_items(field: str, identity_fields: tuple[str, ...]) -> list[dict]:
+        items = []
+        for raw in payload.get(field) or []:
+            if not isinstance(raw, dict):
+                continue
+            item = {
+                key: value
+                for key, value in raw.items()
+                if key not in {"download_path", "download_url_expires_at"}
+            }
+            items.append(item)
+        return sorted(
+            items,
+            key=lambda item: tuple(
+                str(item.get(field) or "") for field in identity_fields
+            ),
+        )
+
+    return {
+        "mode": payload.get("mode"),
+        "scope": payload.get("scope"),
+        "skills": normalized_items(
+            "skills", ("installed_skill_id", "skill_id", "name")
+        ),
+        "plugins": normalized_items(
+            "plugins", ("installed_plugin_id", "name", "marketplace")
+        ),
+        "mcps": normalized_items("mcps", ("installed_mcp_id", "name")),
+    }
 
 
 class DeviceCapabilityResolutionError(RuntimeError):
@@ -45,6 +88,12 @@ class DeviceCapabilitySyncError(RuntimeError):
 
 class DeviceCapabilitySyncService:
     """Backend-side resolver and dispatcher for local executor capabilities."""
+
+    def __init__(
+        self,
+        session_factory: Callable[[], AbstractContextManager[Session]] | None = None,
+    ) -> None:
+        self._session_factory = session_factory or get_db_session
 
     def build_desired_capabilities(
         self,
@@ -68,6 +117,17 @@ class DeviceCapabilitySyncService:
             [item.get("name") for item in mcps],
         )
         return {"mode": mode, "skills": skills, "plugins": plugins, "mcps": mcps}
+
+    def build_desired_plugins(
+        self, db: Session, *, user_id: int, device_id: str
+    ) -> dict[str, Any]:
+        return {
+            "mode": "merge",
+            "scope": "plugins",
+            "plugins": self._load_installed_plugins(
+                db, user_id=user_id, device_id=device_id
+            ),
+        }
 
     def resolve_payload(
         self,
@@ -145,21 +205,94 @@ class DeviceCapabilitySyncService:
                     device,
                 )
                 continue
-            payload = self.build_desired_capabilities(
-                db,
-                user_id=user_id,
-                mode=mode,
-                device_id=device_id,
-            )
             results.append(
-                await self.sync_device_payload(
+                await self.sync_current_device_capabilities(
                     user_id=user_id,
                     device_id=device_id,
-                    payload=payload,
+                    mode=mode,
                 )
             )
 
         return self._aggregate_response(results, skipped=skipped, mode=mode)
+
+    async def sync_current_device_capabilities(
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+        mode: str = "replace",
+        timeout_seconds: int = SYNC_TIMEOUT_SECONDS,
+    ) -> DeviceCapabilitySyncResult:
+        """Sync a fresh full snapshot and correct changes made during the round trip."""
+
+        def load_payload() -> dict[str, Any]:
+            with self._session_factory() as snapshot_db:
+                return self.build_desired_capabilities(
+                    snapshot_db,
+                    user_id=user_id,
+                    mode=mode,
+                    device_id=device_id,
+                )
+
+        return await self.sync_latest_device_capabilities(
+            user_id=user_id,
+            device_id=device_id,
+            load_payload=load_payload,
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def sync_latest_device_capabilities(
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+        load_payload: Callable[[], dict[str, Any]],
+        timeout_seconds: int = SYNC_TIMEOUT_SECONDS,
+    ) -> DeviceCapabilitySyncResult:
+        """Dispatch desired state until the acknowledged snapshot is still current."""
+        payload = load_payload()
+        result: DeviceCapabilitySyncResult | None = None
+        for attempt in range(1, DESIRED_STATE_SYNC_ATTEMPTS + 1):
+            result = await self.sync_device_payload(
+                user_id=user_id,
+                device_id=device_id,
+                payload=payload,
+                timeout_seconds=timeout_seconds,
+            )
+            if not result.acknowledged:
+                return result
+
+            latest = load_payload()
+            if capability_snapshot(latest) == capability_snapshot(payload):
+                return result
+            logger.warning(
+                "Capability desired state changed during sync; retrying latest snapshot: "
+                "user_id=%s device_id=%s attempt=%s",
+                user_id,
+                device_id,
+                attempt,
+            )
+            payload = latest
+
+        error = "Capability desired state kept changing during synchronization"
+        logger.warning(
+            "%s: user_id=%s device_id=%s attempts=%s",
+            error,
+            user_id,
+            device_id,
+            DESIRED_STATE_SYNC_ATTEMPTS,
+        )
+        return DeviceCapabilitySyncResult(
+            device_id=device_id,
+            success=False,
+            acknowledged=True,
+            error=error,
+            scope=result.scope if result else None,
+            skills=result.skills if result else [],
+            plugins=result.plugins if result else [],
+            mcps=result.mcps if result else [],
+            errors=result.errors if result else [],
+        )
 
     async def sync_device_capabilities(
         self,
@@ -226,12 +359,11 @@ class DeviceCapabilitySyncService:
         installed_plugin_id: int,
     ) -> DeviceCapabilitySyncResponse:
         """Merge one installed plugin and require its explicit acknowledgement."""
-        response = await self.sync_device_selected_capabilities(
+        response = await self.sync_installed_plugin_to_device_result(
             db,
             user_id=user_id,
             device_id=device_id,
-            installed_plugin_ids=[installed_plugin_id],
-            mode="merge",
+            installed_plugin_id=installed_plugin_id,
         )
         plugin_result = next(
             (
@@ -242,10 +374,35 @@ class DeviceCapabilitySyncService:
             None,
         )
         if not plugin_result or plugin_result.status != "synced":
+            detail = self._item_failure_message(plugin_result)
             raise DeviceCapabilitySyncError(
-                f"InstalledPlugin was not acknowledged by the device: {installed_plugin_id}"
+                detail
+                or f"InstalledPlugin was not acknowledged by the device: {installed_plugin_id}"
             )
         return response
+
+    async def sync_installed_plugin_to_device_result(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str,
+        installed_plugin_id: int,
+    ) -> DeviceCapabilitySyncResponse:
+        """Merge one plugin and preserve its item-level failure in the response."""
+        payload = self.resolve_payload(
+            db,
+            user=User(id=user_id),
+            skill_ids=[],
+            installed_plugin_ids=[installed_plugin_id],
+            mode="merge",
+        )
+        result = await self.sync_device_payload(
+            user_id=user_id,
+            device_id=device_id,
+            payload=payload,
+        )
+        return self._aggregate_response([result], skipped=0, mode="merge")
 
     async def sync_device_payload(
         self,
@@ -336,7 +493,12 @@ class DeviceCapabilitySyncService:
             return DeviceCapabilitySyncResult(
                 device_id=device_id,
                 success=False,
-                error=str(response.get("error") or "device rejected sync"),
+                acknowledged=True,
+                error=str(
+                    response.get("error")
+                    or self._raw_item_failure_message(response)
+                    or "device rejected sync"
+                ),
                 skills=response.get("skills", []),
                 plugins=response.get("plugins", []),
                 mcps=response.get("mcps", []),
@@ -353,6 +515,8 @@ class DeviceCapabilitySyncService:
         return DeviceCapabilitySyncResult(
             device_id=device_id,
             success=True,
+            acknowledged=True,
+            scope=response.get("scope"),
             skills=response.get("skills", []),
             plugins=response.get("plugins", []),
             mcps=response.get("mcps", []),
@@ -441,6 +605,7 @@ class DeviceCapabilitySyncService:
             user_id=user_id,
             installed_plugin_ids=installed_ids,
             release_overrides=release_overrides,
+            strict=True,
         )
 
     def _load_enabled_installed_mcps(
@@ -767,18 +932,7 @@ class DeviceCapabilitySyncService:
     ) -> dict[int, int]:
         if not device_id or not installed_rows:
             return {}
-        rows_by_installed_id = {
-            row.installed_kind_id: row
-            for row in db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.user_id == user_id,
-                PluginDeviceInstallation.installed_kind_id.in_(
-                    [installed.id for installed in installed_rows]
-                ),
-                PluginDeviceInstallation.device_id == device_id,
-            )
-            .all()
-        }
+        rows_by_installed_id = plugin_device_rows(db, user_id, device_id)
         overrides: dict[int, int] = {}
         for installed in installed_rows:
             release_id = installed.json.get("spec", {}).get("releaseId")
@@ -840,6 +994,36 @@ class DeviceCapabilitySyncService:
             skipped=skipped,
             results=results,
         )
+
+    @staticmethod
+    def _item_failure_message(item: DeviceCapabilityItemResult | None) -> str | None:
+        if item is None:
+            return None
+        error = (item.error or "").strip()
+        if not error:
+            return None
+        name = (item.name or str(item.id or "plugin")).strip()
+        stage = (item.stage or "").strip()
+        location = f" during {stage}" if stage else ""
+        return f"Plugin {name} failed{location}: {error}"
+
+    @staticmethod
+    def _raw_item_failure_message(response: dict[str, Any]) -> str | None:
+        for field in ("plugins", "skills", "mcps"):
+            for item in response.get(field) or []:
+                if not isinstance(item, dict) or item.get("status") not in {
+                    "failed",
+                    "error",
+                }:
+                    continue
+                error = str(item.get("error") or "").strip()
+                if not error:
+                    continue
+                name = str(item.get("name") or item.get("id") or field[:-1])
+                stage = str(item.get("stage") or "").strip()
+                location = f" during {stage}" if stage else ""
+                return f"{field[:-1].title()} {name} failed{location}: {error}"
+        return None
 
     def _extract_device_id(self, device: dict[str, Any]) -> Optional[str]:
         value = (

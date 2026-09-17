@@ -538,6 +538,7 @@ function WorkspaceFilePreviewContent({
     >
       <div
         data-testid="workspace-file-preview-code-view"
+        data-file-path={file.path}
         data-theme={themeType}
         className="min-h-0 flex-1 bg-background"
       >
@@ -699,6 +700,8 @@ export function WorkspaceFilePreview({
           path={file.path}
           value={editedContent}
           themeType={themeType}
+          targetLineStart={targetLineStart}
+          targetLineEnd={targetLineEnd}
           onChange={onEditedContentChange}
           onSave={onSave}
         />

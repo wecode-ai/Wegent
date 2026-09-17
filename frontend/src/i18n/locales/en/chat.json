@@ -7,6 +7,7 @@
   },
   "input": {
     "no_team_placeholder": "Please select or create an agent first",
+    "loading_teams_placeholder": "Loading agents...",
     "expand": "Expand input area",
     "collapse": "Collapse input area"
   },
@@ -37,7 +38,7 @@
     "cancel": "Cancel",
     "re_edit": "Re-edit",
     "re_edit_tooltip": "Re-edit",
-    "forward": "Forward"
+    "forward": "Send to Collaboration"
   },
   "edit": {
     "tooltip": "Edit message",
@@ -675,7 +676,7 @@
       "text_contexts": "Message context",
       "structured_contexts": "Attached context",
       "no_text_contexts": "No message context is available.",
-      "no_structured_contexts": "No attachment, knowledge base, or table context is available.",
+      "no_structured_contexts": "No attachment or knowledge base context is available.",
       "confirm": "Continue",
       "confirming": "Continuing...",
       "missing_task": "Task or team information is unavailable",
@@ -757,6 +758,7 @@
     "reference_image": "Reference Image (Optional)",
     "no_models": "No video models available",
     "settings_title": "Video settings",
+    "generation_mode_section": "Video mode",
     "ratio_section": "Aspect ratio",
     "duration_section": "Duration",
     "duration_auto": "Auto",
@@ -772,6 +774,7 @@
   },
   "image": {
     "title": "Image Generation",
+    "settings_title": "Image settings",
     "model_selector": "Select Image Model",
     "search_model": "Search image models...",
     "size_selector": "Select Size",

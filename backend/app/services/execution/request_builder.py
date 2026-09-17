@@ -532,7 +532,6 @@ class TaskRequestBuilder:
             mcp_servers=mcp_servers,
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
-            table_contexts=[],
             is_user_selected_kb=is_user_selected_kb,
             workspace=workspace,
             project_id=request_project_id,
@@ -724,6 +723,8 @@ class TaskRequestBuilder:
                 "namespace": skill_ref.get("namespace", "default"),
                 "is_public": skill_ref.get("is_public", False),
             }
+            if skill_ref.get("skill_id") is not None:
+                explicit_ref["skill_id"] = skill_ref["skill_id"]
 
             if get_mcp_service_by_skill_name(skill_name):
                 explicit_ref["namespace"] = "default"
@@ -920,17 +921,9 @@ class TaskRequestBuilder:
             return None
 
         try:
-            device = (
-                self.db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.name == device_id,
-                    Kind.is_active,
-                )
-                .first()
-            )
+            from app.services.device.identity import owned_active_device
+
+            device = owned_active_device(self.db, user_id, device_id)
         except Exception as e:
             logger.warning(
                 "[TaskRequestBuilder] Failed to resolve device type for %s: %s",

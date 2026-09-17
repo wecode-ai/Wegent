@@ -1,4 +1,5 @@
 import {
+  Blocks,
   ClipboardList,
   CornerDownLeft,
   Cpu,
@@ -28,8 +29,11 @@ import {
 } from '@/features/plugins/pluginTrial'
 import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
 import { executeDshAction, type WeworkDshAction } from '@/features/dsh-runtime/dshActions'
+import { executeDshCommand, getDshExtensionHost } from '@/features/dsh-runtime/dshExtensions'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { useDshComposerReferences } from '@/features/dsh-runtime/useDshComposerReferences'
+import { useDshMenuCommands } from '@/features/dsh-runtime/useDshMenuCommands'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
@@ -90,9 +94,9 @@ import { debugComposerEvent, textMetrics } from './composerDebug'
 import { ComposerMentionMenu, type MentionMenuRow } from './ComposerMentionMenu'
 import { useWorkspaceMentionSearch } from './useWorkspaceMentionSearch'
 import { useComposerMentionCandidates } from './useComposerMentionCandidates'
-import type { ComposerTextareaProps } from './composerTextareaTypes'
+import { primaryComposerSubmitOptions, type ComposerTextareaProps } from './composerTextareaTypes'
 import { OPEN_COMPOSER_SLASH_MENU_EVENT } from './composerEvents'
-import type { ComposerLinkPayload } from './composerLinks'
+import { serializeComposerLink, type ComposerLinkPayload } from './composerLinks'
 
 export type { ComposerSubmitOptions } from './composerTextareaTypes'
 
@@ -150,6 +154,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       onSelectModel,
       onBlockedModelSelect,
       isModelSelectionReady = true,
+      sendKey = 'enter',
+      followUpBehavior = 'queue',
+      isStreaming = false,
     },
     ref
   ) {
@@ -258,6 +265,24 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         )
       )
     }, [activeMenu, externalMentionCandidates])
+    const contributedReferenceEntries = useDshComposerReferences(
+      activeMenu?.kind === 'mention' ? activeMenu.trigger.query : ''
+    )
+    const contributedMentionCandidates = useMemo<ComposerMentionCandidate[]>(
+      () =>
+        contributedReferenceEntries.map(reference => ({
+          kind: 'extension',
+          key: `extension:${reference.id}`,
+          title: reference.title,
+          description: reference.description,
+          metaLabel: reference.metaLabel ?? t('workbench.extensions', '扩展'),
+          testId: reference.id,
+          enabled: reference.enabled,
+          reference: reference.reference,
+          searchAliases: [...(reference.searchAliases ?? [])],
+        })),
+      [contributedReferenceEntries, t]
+    )
 
     const workspaceSearch = useWorkspaceMentionSearch(
       activeMenu?.kind === 'mention' ? activeMenu.trigger.query : '',
@@ -362,6 +387,31 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       return commands
     }, [canOpenSlashModelMenu, onSetGoal, onSetPlanMode, openSlashModelMenu, planModeActive, t])
 
+    const contributedSlashMenuCommands = useDshMenuCommands('composer.slash')
+    const contributedSlashCommands = useMemo<SlashCommand[]>(
+      () =>
+        contributedSlashMenuCommands.map(command => ({
+          id: command.id,
+          title: command.title,
+          description: command.definition.description,
+          group:
+            command.group ??
+            command.definition.category ??
+            t('workbench.slash_command_group_extensions', '扩展'),
+          searchAliases: [command.command, command.definition.category].filter(
+            (value): value is string => Boolean(value)
+          ),
+          Icon: Blocks,
+          enabled: command.enabled,
+          testId: `dsh-command-${command.id}`,
+          extensionCommand: {
+            command: command.command,
+            menuId: command.id,
+          },
+        })),
+      [contributedSlashMenuCommands, t]
+    )
+
     const skillSlashCommands = useMemo<SlashCommand[]>(() => {
       const skillGroup = t('workbench.slash_command_group_skills')
       return skillCandidates.map(candidate => ({
@@ -421,8 +471,13 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     }, [appCandidates, appearanceMode, openPluginCenterAction, t])
 
     const slashCommands = useMemo(
-      () => [...actionSlashCommands, ...pluginSlashCommands, ...skillSlashCommands],
-      [actionSlashCommands, pluginSlashCommands, skillSlashCommands]
+      () => [
+        ...actionSlashCommands,
+        ...contributedSlashCommands,
+        ...pluginSlashCommands,
+        ...skillSlashCommands,
+      ],
+      [actionSlashCommands, contributedSlashCommands, pluginSlashCommands, skillSlashCommands]
     )
 
     const filteredSlashCommands = useMemo(() => {
@@ -457,6 +512,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         }
         return [
           { kind: 'files-action' },
+          ...contributedMentionCandidates.map(
+            candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
+          ),
           ...filteredExternalMentionCandidates.map(
             candidate => ({ kind: 'external', candidate }) as MentionMenuRow
           ),
@@ -484,6 +542,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         ]
       }
       return [
+        ...contributedMentionCandidates.map(
+          candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
+        ),
         ...filteredExternalMentionCandidates.map(
           candidate => ({ kind: 'external', candidate }) as MentionMenuRow
         ),
@@ -498,6 +559,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       cloudProjectScopeActive,
       cloudProjectsOpen,
       cloudSpaceEnabled,
+      contributedMentionCandidates,
       filteredCloudProjectCandidates,
       filteredExternalMentionCandidates,
       filteredMentionCandidates,
@@ -818,6 +880,30 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     )
 
     useEffect(() => {
+      const composer = getDshExtensionHost()?.composer
+      if (!composer || typeof composer.bind !== 'function') return
+      return composer.bind({
+        focus: () => editorRef.current?.focus(),
+        getValue: () => editorRef.current?.getSnapshot().value ?? valueRef.current,
+        insertText: text => {
+          const editor = editorRef.current
+          if (!editor) return
+          const current = editor.getSnapshot()
+          const inserted =
+            current.value.slice(0, current.selectionStart) +
+            text +
+            current.value.slice(current.selectionEnd)
+          commitEditorValue(inserted, current.selectionStart + text.length)
+          editor.focus()
+        },
+        setValue: (nextValue, selectionOffset = nextValue.length) => {
+          commitEditorValue(nextValue, selectionOffset)
+          editorRef.current?.focus()
+        },
+      })
+    }, [commitEditorValue])
+
+    useEffect(() => {
       const openSlashMenu = () => {
         const editor = editorRef.current
         if (!editor) return
@@ -952,7 +1038,38 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
 
         commitEditorValue(nextValue, nextCursor)
         closeAutocompleteMenu()
-        command.onSelect?.()
+        if (command.extensionCommand) {
+          const composer = {
+            focus: () => editor.focus(),
+            getValue: () => editor.getSnapshot().value,
+            insertText: (text: string) => {
+              const current = editor.getSnapshot()
+              const inserted =
+                current.value.slice(0, current.selectionStart) +
+                text +
+                current.value.slice(current.selectionEnd)
+              commitEditorValue(inserted, current.selectionStart + text.length)
+              editor.focus()
+            },
+            setValue: (next: string, selectionOffset = next.length) => {
+              commitEditorValue(next, selectionOffset)
+              editor.focus()
+            },
+          }
+          void executeDshCommand(command.extensionCommand.command, undefined, {
+            composer,
+            menuId: command.extensionCommand.menuId,
+            menuLocation: 'composer.slash',
+            source: 'slash',
+          }).catch(error => {
+            console.error(
+              `[Wework] Failed to execute slash command "${command.extensionCommand?.command}":`,
+              error
+            )
+          })
+        } else {
+          command.onSelect?.()
+        }
         textareaRef.current?.focus()
         editor.focus()
         return true
@@ -1355,18 +1472,23 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
             event.stopPropagation()
             return true
           }
-          if (event.shiftKey && !event.metaKey && !event.ctrlKey) return false
+          const modifierPressed = event.metaKey || event.ctrlKey
+          if (sendKey === 'cmd_enter') {
+            if (!modifierPressed) {
+              event.preventDefault()
+              return editorRef.current?.insertLineBreak() ?? false
+            }
+          } else if (event.shiftKey && !modifierPressed) {
+            return false
+          }
 
           event.preventDefault()
           if (snapshot.value.trim().length > 0 || canSend) {
-            const modifierPressed = event.metaKey || event.ctrlKey
             onSubmit(
               snapshot.value,
-              modifierPressed
-                ? event.shiftKey
-                  ? { interruptWhenBusy: true }
-                  : { guideWhenBusy: true }
-                : undefined
+              modifierPressed && event.shiftKey
+                ? { interruptWhenBusy: true }
+                : primaryComposerSubmitOptions(isStreaming, followUpBehavior)
             )
           }
           return true
@@ -1401,10 +1523,13 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         canSend,
         closeAutocompleteMenu,
         confirmHighlightedMenuSelection,
+        followUpBehavior,
         isComposing,
+        isStreaming,
         moveHighlightedIndex,
         onKeyDown,
         onSubmit,
+        sendKey,
       ]
     )
 
@@ -1548,7 +1673,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
               skillLoadingLabel={t('workbench.loading_slash_command_skills')}
               skillLoadErrorLabel={t('workbench.slash_command_skills_error')}
               skillRetryLabel={t('workbench.retry_local_skills')}
-              onSelectCommand={command => selectSlashCommand(command)}
+              onSelectCommand={command => selectSlashCommand(command, activeMenu?.trigger)}
               onHighlightCommand={setSelectedIndex}
               onRetrySkills={() => loadLocalMentions({ force: true })}
             />
@@ -1589,9 +1714,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
               if (!editor || !editingLinkRange) return
               const snapshot = editor.getSnapshot()
               const nextPayload = { ...editingLink, ...next }
-              const nextMarkdown = nextPayload.label
-                ? `[${nextPayload.label}](${nextPayload.url})`
-                : nextPayload.url
+              const nextMarkdown = serializeComposerLink(nextPayload)
               const nextValue =
                 snapshot.value.slice(0, editingLinkRange.start) +
                 nextMarkdown +

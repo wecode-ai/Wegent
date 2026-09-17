@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-ui-outputs
+      name: '@wegent/dsh-ui-outputs'

@@ -320,7 +320,6 @@ def _summarize_metadata_for_log(metadata: Optional[dict]) -> dict[str, object]:
     knowledge_base_ids = _as_list(metadata.get("knowledge_base_ids"))
     document_ids = _as_list(metadata.get("document_ids"))
     knowledge_base_scopes = _as_list(metadata.get("knowledge_base_scopes"))
-    table_contexts = _as_list(metadata.get("table_contexts"))
 
     return {
         "task_id": metadata.get("task_id"),
@@ -349,7 +348,6 @@ def _summarize_metadata_for_log(metadata: Optional[dict]) -> dict[str, object]:
         "knowledge_base_count": len(knowledge_base_ids),
         "document_count": len(document_ids),
         "knowledge_base_scope_count": len(knowledge_base_scopes),
-        "table_context_count": len(table_contexts),
         "has_auth_token": bool(metadata.get("auth_token")),
         "has_skill_identity_token": bool(metadata.get("skill_identity_token")),
         "has_task_data": bool(metadata.get("task_data")),

@@ -5,6 +5,7 @@ import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-
 import { LocalEndpointEventByteStream } from './local-endpoint-event-stream.js'
 import { ExecutorSessionProjector } from './session-projector.js'
 import { ExecutorSessionProjectionStream } from './session-projection-stream.js'
+import { TranscriptSource } from './transcript-source.js'
 
 export const name = 'wework-executor-runtime'
 export const inject = ['webServer', 'sessions']
@@ -13,12 +14,31 @@ const BASE_PATH = '/wework/executor/v1'
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024
 const MAX_EVENT_FRAME_BYTES = 16 * 1024 * 1024
 const SLOW_CONSUMER_TIMEOUT_MS = 30_000
+const TRANSCRIPT_EXPORT_TIMEOUT_MS = 10 * 60 * 1000
 
 export async function apply(ctx) {
   const client = ExecutorRuntimeClient.fromEnvironment()
   await client.start()
   ctx.effect(() => () => client.stop(), 'wework-executor-runtime: transport')
-  const projector = new ExecutorSessionProjector(ctx.sessions)
+  const transcriptSource = new TranscriptSource({
+    onError: error => {
+      console.error('[wework-executor-runtime] transcript subscriber failed', error)
+    },
+    readTurn: (turn, options) => exportExecutorTranscript(client, turn, options),
+    summarizeTurn: turn => readExecutorTurn(client, turn),
+  })
+  const projector = new ExecutorSessionProjector(ctx.sessions, {
+    onTurnCompleted: turn => transcriptSource.publish(turn),
+  })
+  ctx.effect(
+    () => ctx.reflect.provide('weworkTranscriptSource', transcriptSource),
+    'wework-executor-runtime: transcript source'
+  )
+  const transcriptTarget = createTranscriptTarget(client)
+  ctx.effect(
+    () => ctx.reflect.provide('weworkTranscriptTarget', transcriptTarget),
+    'wework-executor-runtime: transcript target'
+  )
   const projectionStream = new ExecutorSessionProjectionStream(projector, {
     onError: error => {
       console.error('[wework-executor-runtime] DSH session projection failed', error)
@@ -31,6 +51,142 @@ export async function apply(ctx) {
   register(ctx, BASE_PATH, (req, res) => describe(req, res, client))
   register(ctx, `${BASE_PATH}/rpc`, (req, res) => handleExecutorRpc(req, res, client))
   register(ctx, `${BASE_PATH}/events`, (req, res) => handleExecutorEvents(req, res))
+}
+
+export function createTranscriptTarget(client) {
+  return Object.freeze({
+    status(transcript) {
+      return client.request('runtime.tasks.transcript.sync_status', {
+        transcriptId: transcript.transcriptId,
+        ...(transcript.taskId ? { taskId: transcript.taskId } : {}),
+      })
+    },
+    restore(transcript, segments, options = {}) {
+      return client.request('runtime.tasks.transcript.restore', {
+        transcriptId: transcript.transcriptId,
+        ...(transcript.taskId ? { taskId: transcript.taskId } : {}),
+        segments,
+        encryptionKey: options.encryptionKey,
+      })
+    },
+    acknowledge(turn) {
+      return client.request('runtime.tasks.transcript.acknowledge', {
+        transcriptId: turn.transcriptId,
+        taskId: turn.taskId,
+        sequence: turn.cloudSequence,
+        rolloutEnd: turn.rolloutEnd,
+        ...(turn.parentTranscriptId ? { parentTranscriptId: turn.parentTranscriptId } : {}),
+      })
+    },
+  })
+}
+
+export async function exportExecutorTranscript(client, turn, options = {}) {
+  const summarized = options.summary
+    ? { ...turn, payload: options.summary }
+    : await readExecutorTurn(client, turn)
+  const exported = await client.request(
+    'runtime.tasks.transcript.export',
+    {
+      transcriptId: turn.transcriptId,
+      taskId: turn.taskId,
+      baseSequence: options.baseSequence,
+      sequence: options.sequence,
+      snapshot: options.snapshot === true,
+      encryptionKey: options.encryptionKey,
+    },
+    TRANSCRIPT_EXPORT_TIMEOUT_MS
+  )
+  return { ...turn, ...exported, summary: summarized.payload }
+}
+
+export async function readExecutorTurn(client, turn) {
+  let beforeCursor
+  const pages = []
+  const observedCursors = new Set()
+  let taskAvailable = false
+  for (;;) {
+    const transcript = await client.request('runtime.tasks.transcript', {
+      taskId: turn.taskId,
+      limit: 100,
+      ...(beforeCursor ? { beforeCursor } : {}),
+    })
+    const turns = Array.isArray(transcript?.turns) ? transcript.turns : []
+    taskAvailable ||= executorTranscriptTaskAvailable(transcript, turns)
+    pages.push(turns)
+    const matched = turn.executorTurnId
+      ? turns.find(candidate => candidate?.id === turn.executorTurnId)
+      : null
+    if (matched) return { ...turn, payload: executorTurnPayload(matched) }
+    const nextCursor =
+      transcript?.hasMoreBefore && typeof transcript.beforeCursor === 'string'
+        ? transcript.beforeCursor
+        : null
+    if (!nextCursor || observedCursors.has(nextCursor)) break
+    observedCursors.add(nextCursor)
+    beforeCursor = nextCursor
+  }
+  if (!turn.executorTurnId) {
+    const orderedTurns = pages.reverse().flat()
+    const matched = orderedTurns[turn.sequence - 1]
+    if (matched) return { ...turn, payload: executorTurnPayload(matched) }
+  }
+  const code = taskAvailable ? 'transcript_turn_missing' : 'transcript_task_missing'
+  throw new ExecutorRuntimeError(
+    code,
+    `Executor transcript turn is unavailable: ${turn.taskId}#${turn.executorTurnId ?? turn.sequence}`
+  )
+}
+
+function executorTranscriptTaskAvailable(transcript, turns) {
+  if (turns.length > 0) return true
+  if (typeof transcript?.workspacePath === 'string' && transcript.workspacePath.trim()) return true
+  return (
+    typeof transcript?.runtime === 'string' &&
+    transcript.runtime.trim() !== '' &&
+    transcript.runtime !== 'runtime'
+  )
+}
+
+function executorTurnPayload(turn) {
+  const items = Array.isArray(turn.items) ? turn.items : []
+  const userMessages = items
+    .filter(item => item?.type === 'user_message' && item.message)
+    .map(item => ({
+      id: item.message.clientUserMessageId ?? item.message.id ?? item.id,
+      text: typeof item.message.content === 'string' ? item.message.content : '',
+    }))
+    .filter(message => message.text)
+  const assistantMessage = items
+    .filter(
+      item =>
+        (item?.type === 'assistant_text' && typeof item.content === 'string') ||
+        (item?.type === 'agentMessage' && typeof item.text === 'string')
+    )
+    .map(item => item.content ?? item.text)
+    .join('')
+  const reasoning = items
+    .filter(item => item?.type === 'reasoning')
+    .flatMap(item => (Array.isArray(item.summary) ? item.summary : []))
+    .filter(value => typeof value === 'string')
+    .join('')
+  return {
+    userMessages,
+    assistantMessage,
+    reasoning,
+    completion: completionFromExecutorTurn(turn),
+  }
+}
+
+function completionFromExecutorTurn(turn) {
+  const status = String(turn.status ?? turn.runtimeStatus ?? 'done').toLowerCase()
+  if (status === 'failed' || status === 'error') {
+    return { kind: 'error', message: String(turn.error ?? 'Executor turn failed') }
+  }
+  if (status === 'cancelled' || status === 'canceled' || status === 'interrupted') {
+    return { kind: 'interrupted' }
+  }
+  return { kind: 'completed' }
 }
 
 function register(ctx, path, handler) {

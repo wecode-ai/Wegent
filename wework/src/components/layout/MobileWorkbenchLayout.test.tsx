@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useMemo, useState, type ReactNode } from 'react'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type {
@@ -17,6 +17,7 @@ import {
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import '@/i18n'
+import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
@@ -441,6 +442,10 @@ function runtimeWork(
 }
 
 describe('MobileWorkbenchLayout', () => {
+  beforeEach(async () => {
+    await installGitUiTestContributions()
+  })
+
   function createDeferred<T>() {
     let resolve!: (value: T) => void
     let reject!: (error: unknown) => void

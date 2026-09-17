@@ -10,6 +10,7 @@ const updateAppPreferencesMock = vi.hoisted(() => vi.fn())
 const openAppshotsPermissionSettingsMock = vi.hoisted(() => vi.fn())
 
 const defaultPreferences: AppPreferences = {
+  workbenchMode: 'developer',
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   systemDragEnabled: true,
@@ -43,6 +44,7 @@ vi.mock('@/desktop/appshots', () => ({
 
 vi.mock('@/desktop/appPreferences', () => ({
   defaultAppPreferences: {
+    workbenchMode: 'developer',
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
     systemDragEnabled: true,

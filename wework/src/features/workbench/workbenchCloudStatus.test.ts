@@ -447,6 +447,48 @@ describe('cloud runtime sync state', () => {
     ])
   })
 
+  test('keeps the local device id canonical when an app route uses another runtime id', () => {
+    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
+    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
+      devices: {
+        status: 'fulfilled',
+        value: [
+          device({
+            device_id: 'generated-runtime-device',
+            app_device_id: 'local-device',
+            device_type: 'app',
+          }),
+        ],
+      },
+    })
+
+    const visibleDevices = selectVisibleDevices(
+      [
+        device({
+          device_id: 'local-device',
+          name: 'Local Executor',
+          device_type: 'local',
+        }),
+      ],
+      ready
+    )
+
+    expect(visibleDevices).toHaveLength(1)
+    expect(visibleDevices[0]).toMatchObject({
+      device_id: 'local-device',
+      device_type: 'local',
+      app_device_id: 'local-device',
+    })
+    expect(visibleDevices[0].runtime_routes?.map(route => route.kind)).toEqual([
+      'local-ipc',
+      'app-ipc',
+    ])
+    expect(visibleDevices[0].runtime_routes?.map(route => route.device_id)).toEqual([
+      'local-device',
+      'generated-runtime-device',
+    ])
+  })
+
   test('replaces a stale cloud device record with the latest same-route status', () => {
     const staleDevice = device({
       device_id: 'remote-device',
@@ -958,7 +1000,7 @@ describe('cloud runtime sync state', () => {
     ])
   })
 
-  test('preserves a remote executor project UI id after its Codex sidebar descriptor appears', () => {
+  test('preserves one remote project UI id across descriptor and executor sources', () => {
     const workspacePath = '/srv/repo'
     const remoteProject = {
       project: {
@@ -981,6 +1023,7 @@ describe('cloud runtime sync state', () => {
           project: {
             key: 'wegent-remote:remote-device:%2Fsrv%2Frepo',
             sidebarStateKey: 'wegent-remote:remote-device:%2Fsrv%2Frepo',
+            id: remoteProjectId,
             name: 'Remote',
             kind: 'remote',
             source: 'remote_project',
@@ -999,6 +1042,8 @@ describe('cloud runtime sync state', () => {
       chats: [],
       totalTasks: 0,
     }
+
+    expect(runtimeProjectUiId(localDescriptor.projects[0].project)).toBe(remoteProjectId)
 
     const merged = mergeRuntimeWorkLists(
       localDescriptor,

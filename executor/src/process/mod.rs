@@ -29,21 +29,21 @@ use tokio::{
 };
 
 use crate::{
+    agent_session,
     agents::interactive_mcp::{
         deferred_proxy_exception_failure, deferred_proxy_response_decision,
         proxy_deferred_mcp_tool, ClaudeFollowUpQuery, DeferredMcpResponseAction,
     },
-    claude_session,
     emitter::{EventEnvelope, ResponsesEventBuilder},
     logging::{log_executor_event, task_fields},
     process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, EventSink, ExecutionOutcome},
     stream::{
-        collect_claude_stream_summary, compact_claude_stdout_line, extract_claude_child_blocks,
-        extract_claude_result_error, extract_claude_subagent_update, extract_claude_tool_results,
-        extract_claude_tool_uses, extract_reasoning, extract_text, ClaudeAsyncTaskTracker,
-        ClaudeStdoutJsonBuffer, ClaudeStdoutJsonError, ClaudeToolUse,
+        collect_claude_stream_summary, compact_claude_stdout_line, extract_claude_message_blocks,
+        extract_claude_result_error, extract_claude_subagent_update, extract_reasoning,
+        extract_text, ClaudeAsyncTaskTracker, ClaudeChildBlock, ClaudeMessageBlock,
+        ClaudeStdoutJsonBuffer, ClaudeStdoutJsonError, ClaudeToolResult, ClaudeToolUse,
     },
 };
 
@@ -94,6 +94,33 @@ enum QueuedStreamEventKind {
 struct CompactedTextDelta {
     event: EventEnvelope,
     text: String,
+}
+
+#[derive(Default)]
+struct ClaudeOutputTextState {
+    item_id: Option<String>,
+    offset: usize,
+    segment_count: usize,
+}
+
+impl ClaudeOutputTextState {
+    fn item_id(&mut self, task_id: &str, subtask_id: &str) -> String {
+        if let Some(item_id) = self.item_id.as_ref() {
+            return item_id.clone();
+        }
+        self.segment_count += 1;
+        let item_id = format!(
+            "claude-{task_id}-{subtask_id}-output-{}",
+            self.segment_count
+        );
+        self.item_id = Some(item_id.clone());
+        item_id
+    }
+
+    fn finish_segment(&mut self) {
+        self.item_id = None;
+        self.offset = 0;
+    }
 }
 
 fn compact_text_delta(
@@ -460,7 +487,7 @@ impl AgentEngine for StreamProcessEngine {
                 CommandOutcome::Success { stdout } => {
                     let summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
-                        claude_session::save_session_id(&request, session_id);
+                        agent_session::save_session_id(&request, session_id);
                     }
                     let summary = handle_retryable_api_errors(
                         spec.clone(),
@@ -483,9 +510,35 @@ impl AgentEngine for StreamProcessEngine {
                         summary.outcome
                     }
                 }
-                CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
-                    message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
-                },
+                CommandOutcome::Failure { stderr, stdout, .. } => {
+                    let stderr_text = decode_output(stderr.clone().into_bytes());
+                    let stdout_text = decode_output(stdout.clone().into_bytes());
+                    if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
+                        agent_session::delete_saved_session_files(&request);
+                        let retry_spec = claude_spec_without_resume(&spec);
+                        match run_command_output(retry_spec, timeout_seconds).await {
+                            CommandOutcome::Success { stdout } => {
+                                let summary = collect_claude_stream_summary(&stdout);
+                                if let Some(session_id) = &summary.session_id {
+                                    agent_session::save_session_id(&request, session_id);
+                                }
+                                summary.outcome
+                            }
+                            CommandOutcome::Failure { stderr, stdout, .. } => {
+                                ExecutionOutcome::Failed {
+                                    message: failure_message(
+                                        stderr.into_bytes(),
+                                        stdout.into_bytes(),
+                                    ),
+                                }
+                            }
+                        }
+                    } else {
+                        ExecutionOutcome::Failed {
+                            message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
+                        }
+                    }
+                }
             }
         })
     }
@@ -515,7 +568,7 @@ impl AgentEngine for StreamProcessEngine {
                 CommandOutcome::Success { stdout } => {
                     let summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
-                        claude_session::save_session_id(&request, session_id);
+                        agent_session::save_session_id(&request, session_id);
                     }
                     let follow_up_runner = FollowUpCommandRunner::Streaming {
                         sink,
@@ -544,9 +597,60 @@ impl AgentEngine for StreamProcessEngine {
                         summary.outcome
                     }
                 }
-                CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
-                    message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
-                },
+                CommandOutcome::Failure { stderr, stdout, .. } => {
+                    let stderr_text = decode_output(stderr.clone().into_bytes());
+                    let stdout_text = decode_output(stdout.clone().into_bytes());
+                    if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
+                        agent_session::delete_saved_session_files(&request);
+                        let retry_spec = claude_spec_without_resume(&spec);
+                        let runner = FollowUpCommandRunner::Streaming {
+                            sink: sink.clone(),
+                            builder: Box::new(builder.clone()),
+                            task_id: request.task_id.clone(),
+                            subtask_id: request.subtask_id.clone(),
+                        };
+                        match runner.run(retry_spec, timeout_seconds).await {
+                            CommandOutcome::Success { stdout } => {
+                                let summary = collect_claude_stream_summary(&stdout);
+                                if let Some(session_id) = &summary.session_id {
+                                    agent_session::save_session_id(&request, session_id);
+                                }
+                                let summary = handle_retryable_api_errors(
+                                    spec.clone(),
+                                    &request,
+                                    summary,
+                                    timeout_seconds,
+                                    runner.clone(),
+                                )
+                                .await;
+                                if summary.deferred_tool_use.is_some() {
+                                    handle_deferred_mcp_loop(
+                                        spec,
+                                        request,
+                                        summary,
+                                        timeout_seconds,
+                                        runner,
+                                    )
+                                    .await
+                                } else {
+                                    summary.outcome
+                                }
+                            }
+                            CommandOutcome::Failure { stderr, stdout, .. } => {
+                                ExecutionOutcome::Failed {
+                                    message: failure_message(
+                                        stderr.into_bytes(),
+                                        stdout.into_bytes(),
+                                    ),
+                                }
+                            }
+                        }
+                    } else {
+                        ExecutionOutcome::Failed {
+                            message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
+                        }
+                    }
+                }
             }
         })
     }
@@ -578,7 +682,7 @@ async fn handle_retryable_api_errors(
             CommandOutcome::Success { stdout } => {
                 summary = collect_claude_stream_summary(&stdout);
                 if let Some(session_id) = &summary.session_id {
-                    claude_session::save_session_id(request, session_id);
+                    agent_session::save_session_id(request, session_id);
                 }
             }
             CommandOutcome::Failure { stderr, stdout, .. } => {
@@ -632,7 +736,7 @@ async fn handle_deferred_mcp_loop(
                 CommandOutcome::Success { stdout } => {
                     summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
-                        claude_session::save_session_id(&request, session_id);
+                        agent_session::save_session_id(&request, session_id);
                     }
                     continue;
                 }
@@ -706,7 +810,7 @@ async fn handle_deferred_mcp_loop(
                     CommandOutcome::Success { stdout } => {
                         summary = collect_claude_stream_summary(&stdout);
                         if let Some(session_id) = &summary.session_id {
-                            claude_session::save_session_id(&request, session_id);
+                            agent_session::save_session_id(&request, session_id);
                         }
                         if summary.deferred_tool_use.is_none() {
                             return summary.outcome;
@@ -777,6 +881,39 @@ fn claude_follow_up_resume_spec(
     spec
 }
 
+/// Build a copy of the Claude command spec without `--resume` and `--input-format`.
+///
+/// Used when the saved Claude session is no longer present in the sandbox and the
+/// initial `--resume` execution fails with "No conversation found with session ID".
+fn claude_spec_without_resume(base_spec: &CommandSpec) -> CommandSpec {
+    let mut spec = CommandSpec::new(base_spec.program.clone());
+    spec.env = base_spec.env.clone();
+    spec.cwd = base_spec.cwd.clone();
+    spec.stdin = base_spec.stdin.clone();
+    let mut skip_next = false;
+    for arg in &base_spec.args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg == "--resume" || arg == "--input-format" {
+            skip_next = true;
+            continue;
+        }
+        spec.args.push(arg.clone());
+    }
+    spec
+}
+
+/// Check whether the process failure is caused by a missing Claude session.
+///
+/// Claude Code exits with `No conversation found with session ID` when `--resume`
+/// references a session that does not exist in the current sandbox.
+fn is_stale_claude_session_failure(stderr: &str, stdout: &str) -> bool {
+    stderr.contains("No conversation found with session ID")
+        || stdout.contains("No conversation found with session ID")
+}
+
 fn mcp_servers_from_spec(spec: &CommandSpec) -> Option<Value> {
     if let Some(path) = spec.env.get("WEGENT_MCP_CONFIG_PATH") {
         return read_json_file(path);
@@ -821,13 +958,13 @@ enum StreamingStdoutOutcome {
     },
 }
 
-struct ProcessTreeGuard {
+pub(crate) struct ProcessTreeGuard {
     #[cfg(windows)]
     pid: Option<u32>,
 }
 
 impl ProcessTreeGuard {
-    fn new(pid: Option<u32>) -> Self {
+    pub(crate) fn new(pid: Option<u32>) -> Self {
         #[cfg(not(windows))]
         let _ = pid;
         Self {
@@ -836,20 +973,24 @@ impl ProcessTreeGuard {
         }
     }
 
-    fn disarm(&mut self) {
+    pub(crate) fn disarm(&mut self) {
         #[cfg(windows)]
         {
             self.pid = None;
+        }
+    }
+
+    pub(crate) fn terminate(&mut self) {
+        #[cfg(windows)]
+        if let Some(pid) = self.pid.take() {
+            kill_windows_process_tree(pid);
         }
     }
 }
 
 impl Drop for ProcessTreeGuard {
     fn drop(&mut self) {
-        #[cfg(windows)]
-        if let Some(pid) = self.pid.take() {
-            kill_windows_process_tree(pid);
-        }
+        self.terminate();
     }
 }
 
@@ -1132,7 +1273,8 @@ where
     let mut output = String::new();
     let mut debug_stdout_file =
         debug_stdout_path.and_then(|path| open_debug_claude_stdout_file(&path).ok());
-    let mut offset = 0usize;
+    let mut anonymous_block_count = 0usize;
+    let mut output_text_state = ClaudeOutputTextState::default();
     let mut tool_uses: HashMap<String, ClaudeToolUse> = HashMap::new();
     let mut lines = BufReader::new(stdout).lines();
     let mut line_number = 0usize;
@@ -1169,6 +1311,9 @@ where
             continue;
         };
         async_tasks.observe(&value);
+        if value.get("type").and_then(Value::as_str) == Some("user") {
+            output_text_state.finish_segment();
+        }
         if let Some(update) = extract_claude_subagent_update(&value) {
             let parent_tool_use_id = tool_uses
                 .get(&update.tool_use_id)
@@ -1185,50 +1330,26 @@ where
                 &subtask_id,
             );
         }
-        for block in extract_claude_child_blocks(&value) {
-            let event = builder.response_child_block_created(
-                &block.id,
-                &block.block_type,
-                &block.parent_tool_use_id,
-                &block.content,
-            );
-            dispatcher.send(
-                event,
-                "streaming child agent block callback failed",
-                vec![
-                    ("task_id", task_id.clone()),
-                    ("subtask_id", subtask_id.clone()),
-                    ("parent_tool_use_id", block.parent_tool_use_id),
-                ],
-            );
-        }
-        if let Some(reasoning) = extract_reasoning(&value) {
-            if !reasoning.is_empty() {
-                emit_reasoning_chunks(&dispatcher, &builder, &reasoning, &task_id, &subtask_id);
-            }
-        }
-        for tool_use in extract_claude_tool_uses(&value) {
-            emit_claude_tool_use(&dispatcher, &builder, &tool_use, &task_id, &subtask_id);
-            tool_uses.insert(tool_use.id.clone(), tool_use);
-        }
-        for tool_result in extract_claude_tool_results(&value) {
-            let tool_use = tool_uses
-                .remove(&tool_result.tool_use_id)
-                .unwrap_or_else(|| ClaudeToolUse {
-                    id: tool_result.tool_use_id.clone(),
-                    name: "Tool".to_owned(),
-                    input: Value::Object(Default::default()),
-                    parent_tool_use_id: tool_result.parent_tool_use_id.clone(),
-                });
-            emit_claude_tool_result(
+        let message_blocks = extract_claude_message_blocks(&value);
+        if !message_blocks.is_empty() {
+            emit_claude_message_blocks(
                 &dispatcher,
                 &builder,
-                &tool_use,
-                tool_result.content.as_deref(),
-                tool_result.is_error,
+                message_blocks,
+                &mut tool_uses,
+                &mut anonymous_block_count,
+                &mut output_text_state,
+                !async_tasks.has_active_task(),
                 &task_id,
                 &subtask_id,
             );
+            continue;
+        }
+        if let Some(reasoning) = extract_reasoning(&value) {
+            if !reasoning.is_empty() {
+                output_text_state.finish_segment();
+                emit_reasoning_chunks(&dispatcher, &builder, &reasoning, &task_id, &subtask_id);
+            }
         }
         if async_tasks.has_active_task() {
             continue;
@@ -1239,26 +1360,199 @@ where
         if text.is_empty() {
             continue;
         }
-        let emitted = emit_text_chunks(
+        emit_claude_output_text(
             &dispatcher,
             &builder,
             &text,
-            &mut offset,
+            &mut output_text_state,
             &task_id,
             &subtask_id,
         );
-        let fields = vec![
-            ("task_id", task_id.to_string()),
-            ("subtask_id", subtask_id.to_string()),
-            ("chunk_count", emitted.to_string()),
-            ("text_chars", text.chars().count().to_string()),
-        ];
-        log_executor_event("streaming text chunks emitted", &fields);
     }
     dispatcher
         .compact_pending_text_and_flush(&task_id, &subtask_id)
         .await;
     StreamingStdoutOutcome::Success(output.trim().to_owned())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_claude_message_blocks(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    blocks: Vec<ClaudeMessageBlock>,
+    tool_uses: &mut HashMap<String, ClaudeToolUse>,
+    anonymous_block_count: &mut usize,
+    output_text_state: &mut ClaudeOutputTextState,
+    emit_root_text: bool,
+    task_id: &str,
+    subtask_id: &str,
+) {
+    for block in blocks {
+        match block {
+            ClaudeMessageBlock::Root(block) if block.block_type != "text" || emit_root_text => {
+                output_text_state.finish_segment();
+                emit_claude_root_block(
+                    dispatcher,
+                    builder,
+                    block,
+                    anonymous_block_count,
+                    task_id,
+                    subtask_id,
+                );
+            }
+            ClaudeMessageBlock::Root(_) => output_text_state.finish_segment(),
+            ClaudeMessageBlock::OutputText(text) if emit_root_text => {
+                emit_claude_output_text(
+                    dispatcher,
+                    builder,
+                    &text.content,
+                    output_text_state,
+                    task_id,
+                    subtask_id,
+                );
+            }
+            ClaudeMessageBlock::OutputText(_) => output_text_state.finish_segment(),
+            ClaudeMessageBlock::ToolUse(tool_use) => {
+                output_text_state.finish_segment();
+                emit_claude_tool_use(dispatcher, builder, &tool_use, task_id, subtask_id);
+                tool_uses.insert(tool_use.id.clone(), tool_use);
+            }
+            ClaudeMessageBlock::ToolResult(tool_result) => {
+                output_text_state.finish_segment();
+                emit_claude_tool_result_from_state(
+                    dispatcher,
+                    builder,
+                    tool_uses,
+                    tool_result,
+                    task_id,
+                    subtask_id,
+                );
+            }
+            ClaudeMessageBlock::Child(block) => {
+                output_text_state.finish_segment();
+                emit_claude_child_block(dispatcher, builder, block, task_id, subtask_id);
+            }
+        }
+    }
+}
+
+fn emit_claude_output_text(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    text: &str,
+    state: &mut ClaudeOutputTextState,
+    task_id: &str,
+    subtask_id: &str,
+) {
+    let item_id = state.item_id(task_id, subtask_id);
+    emit_text_chunks_with_log(
+        dispatcher,
+        builder,
+        text,
+        &mut state.offset,
+        task_id,
+        subtask_id,
+        Some(&item_id),
+    );
+}
+
+fn emit_claude_root_block(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    block: crate::stream::ClaudeRootBlock,
+    anonymous_block_count: &mut usize,
+    task_id: &str,
+    subtask_id: &str,
+) {
+    let block_id = resolve_claude_block_id(
+        block.id,
+        &block.block_type,
+        anonymous_block_count,
+        task_id,
+        subtask_id,
+    );
+    let event = builder.response_process_block_created(
+        &block_id,
+        &block.block_type,
+        &block.process_kind,
+        &block.content,
+    );
+    dispatcher.send(
+        event,
+        "streaming Claude process block callback failed",
+        vec![
+            ("task_id", task_id.to_owned()),
+            ("subtask_id", subtask_id.to_owned()),
+            ("block_id", block_id),
+        ],
+    );
+}
+
+fn resolve_claude_block_id(
+    block_id: Option<String>,
+    block_type: &str,
+    anonymous_block_count: &mut usize,
+    task_id: &str,
+    subtask_id: &str,
+) -> String {
+    block_id.unwrap_or_else(|| {
+        *anonymous_block_count += 1;
+        format!(
+            "claude-{task_id}-{subtask_id}-{block_type}-{}",
+            *anonymous_block_count
+        )
+    })
+}
+
+fn emit_claude_child_block(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    block: ClaudeChildBlock,
+    task_id: &str,
+    subtask_id: &str,
+) {
+    let event = builder.response_child_block_created(
+        &block.id,
+        &block.block_type,
+        &block.parent_tool_use_id,
+        &block.content,
+    );
+    dispatcher.send(
+        event,
+        "streaming child agent block callback failed",
+        vec![
+            ("task_id", task_id.to_owned()),
+            ("subtask_id", subtask_id.to_owned()),
+            ("parent_tool_use_id", block.parent_tool_use_id),
+        ],
+    );
+}
+
+fn emit_claude_tool_result_from_state(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    tool_uses: &mut HashMap<String, ClaudeToolUse>,
+    tool_result: ClaudeToolResult,
+    task_id: &str,
+    subtask_id: &str,
+) {
+    let tool_use = tool_uses
+        .remove(&tool_result.tool_use_id)
+        .unwrap_or_else(|| ClaudeToolUse {
+            id: tool_result.tool_use_id.clone(),
+            name: "Tool".to_owned(),
+            input: Value::Object(Default::default()),
+            parent_tool_use_id: tool_result.parent_tool_use_id.clone(),
+        });
+    emit_claude_tool_result(
+        dispatcher,
+        builder,
+        &tool_use,
+        tool_result.content.as_deref(),
+        tool_result.is_error,
+        task_id,
+        subtask_id,
+    );
 }
 
 fn emit_claude_tool_use(
@@ -1401,11 +1695,15 @@ fn emit_text_chunks(
     offset: &mut usize,
     task_id: &str,
     subtask_id: &str,
+    item_id: Option<&str>,
 ) -> usize {
     let chunks = split_stream_text(text, stream_text_chunk_chars());
     let chunk_count = chunks.len();
     for delta in chunks {
-        let event = builder.response_text_delta(&delta, *offset);
+        let event = match item_id {
+            Some(item_id) => builder.response_text_delta_for_item(item_id, &delta, *offset),
+            None => builder.response_text_delta(&delta, *offset),
+        };
         let delta_chars = delta.chars().count();
         *offset += delta_chars;
         dispatcher.send_text_delta(
@@ -1419,6 +1717,27 @@ fn emit_text_chunks(
         );
     }
     chunk_count
+}
+
+fn emit_text_chunks_with_log(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    text: &str,
+    offset: &mut usize,
+    task_id: &str,
+    subtask_id: &str,
+    item_id: Option<&str>,
+) {
+    let emitted = emit_text_chunks(
+        dispatcher, builder, text, offset, task_id, subtask_id, item_id,
+    );
+    let fields = vec![
+        ("task_id", task_id.to_owned()),
+        ("subtask_id", subtask_id.to_owned()),
+        ("chunk_count", emitted.to_string()),
+        ("text_chars", text.chars().count().to_string()),
+    ];
+    log_executor_event("streaming text chunks emitted", &fields);
 }
 
 fn split_stream_text(text: &str, chunk_chars: usize) -> Vec<String> {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
@@ -9,6 +9,13 @@ import {
   getLocalCodexOfficialModels,
   saveLocalCodexModelCatalogOverride,
 } from '@/api/local/codexOfficialModels'
+import {
+  cancelLocalCodexLogin,
+  listLocalCodexAccounts,
+  startLocalCodexLogin,
+  switchLocalCodexAccount,
+} from '@/api/local/codexAuth'
+import { getLocalCodexAuthStatus } from '@/api/local/runtimeAuthStatus'
 import { createUserApi } from '@/api/users'
 import { AppearanceProvider } from '@/features/appearance'
 import {
@@ -20,9 +27,8 @@ import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/l
 import { saveLocalModelConfig } from '@/features/model-settings/localModelSettings'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
-import { defaultAppPreferences } from '@/desktop/appPreferences'
-import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
 
@@ -50,18 +56,6 @@ const remoteDeviceOnboardingExtensionMock = vi.hoisted(() => ({
   CommandDetails: vi.fn(() => null),
 }))
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
-const appPreferencesMocks = vi.hoisted(() => ({
-  update: vi.fn(),
-}))
-
-vi.mock('@/desktop/appPreferences', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/desktop/appPreferences')>()
-  return {
-    ...actual,
-    updateAppPreferences: appPreferencesMocks.update,
-  }
-})
-
 vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
   useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
@@ -101,15 +95,14 @@ vi.mock('@/api/local/codexOfficialModels', () => ({
 }))
 
 vi.mock('@/api/local/runtimeAuthStatus', () => ({
-  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({
-    runtime: 'codex',
-    targetPath: '/Users/me/.codex/auth.json',
-    exists: true,
-    updatedAt: '2026-07-01T00:00:00.000Z',
-    sha256: 'abc123',
-    sizeBytes: 128,
-    error: null,
-  }),
+  getLocalCodexAuthStatus: vi.fn(),
+}))
+
+vi.mock('@/api/local/codexAuth', () => ({
+  startLocalCodexLogin: vi.fn(),
+  listLocalCodexAccounts: vi.fn(),
+  switchLocalCodexAccount: vi.fn(),
+  cancelLocalCodexLogin: vi.fn(),
 }))
 
 vi.mock('@/api/local/codexPlugins', () => ({
@@ -155,6 +148,11 @@ const getLocalCodexOfficialModelsMock = vi.mocked(getLocalCodexOfficialModels)
 const getLocalCodexModelCatalogOverridesMock = vi.mocked(getLocalCodexModelCatalogOverrides)
 const saveLocalCodexModelCatalogOverrideMock = vi.mocked(saveLocalCodexModelCatalogOverride)
 const deleteLocalCodexModelCatalogOverrideMock = vi.mocked(deleteLocalCodexModelCatalogOverride)
+const getLocalCodexAuthStatusMock = vi.mocked(getLocalCodexAuthStatus)
+const startLocalCodexLoginMock = vi.mocked(startLocalCodexLogin)
+const listLocalCodexAccountsMock = vi.mocked(listLocalCodexAccounts)
+const switchLocalCodexAccountMock = vi.mocked(switchLocalCodexAccount)
+const cancelLocalCodexLoginMock = vi.mocked(cancelLocalCodexLogin)
 
 function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -223,6 +221,7 @@ describe('ConnectionsSettingsPage', () => {
     createDockerRemoteDeviceCommand: vi.fn(),
     renameDevice: vi.fn(),
     restartCloudDevice: vi.fn(),
+    upgradeDevice: vi.fn(),
     deleteCloudDevice: vi.fn(),
     deleteDevice: vi.fn(),
     getMetrics: vi.fn(),
@@ -240,17 +239,64 @@ describe('ConnectionsSettingsPage', () => {
 
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
+    await installGitUiTestContributions()
     experimentalFeatures.enabled = true
     vi.clearAllMocks()
-    appPreferencesMocks.update.mockResolvedValue({
-      ...defaultAppPreferences,
-      remoteControlEnabled: true,
-    })
     getLocalCodexOfficialModelsMock.mockResolvedValue({ providers: [], models: [] })
     getLocalCodexModelCatalogOverridesMock.mockResolvedValue([])
     saveLocalCodexModelCatalogOverrideMock.mockResolvedValue(undefined)
     deleteLocalCodexModelCatalogOverrideMock.mockResolvedValue(undefined)
+    getLocalCodexAuthStatusMock.mockResolvedValue({
+      runtime: 'codex',
+      targetPath: '/Users/me/.codex/auth.json',
+      exists: true,
+      updatedAt: '2026-07-01T00:00:00.000Z',
+      sha256: 'abc123',
+      sizeBytes: 128,
+      error: null,
+    })
+    startLocalCodexLoginMock.mockResolvedValue({
+      type: 'chatgpt',
+      loginId: 'login-1',
+      authUrl: 'https://chatgpt.com/auth',
+    })
+    listLocalCodexAccountsMock.mockResolvedValue({
+      activeAccountId: 'account-1',
+      accounts: [
+        {
+          id: 'account-1',
+          accountType: 'chatgpt',
+          email: 'one@example.com',
+          planType: 'pro',
+          createdAt: 1,
+          lastUsedAt: 1,
+        },
+      ],
+    })
+    switchLocalCodexAccountMock.mockResolvedValue({
+      activeAccountId: 'account-2',
+      accounts: [
+        {
+          id: 'account-1',
+          accountType: 'chatgpt',
+          email: 'one@example.com',
+          planType: 'pro',
+          createdAt: 1,
+          lastUsedAt: 1,
+        },
+        {
+          id: 'account-2',
+          accountType: 'chatgpt',
+          email: 'two@example.com',
+          planType: 'plus',
+          createdAt: 2,
+          lastUsedAt: 3,
+        },
+      ],
+    })
+    cancelLocalCodexLoginMock.mockResolvedValue(undefined)
     localStorage.clear()
+    delete window.weworkElectronNetwork
     delete window.__WEWORK_RUNTIME_CONFIG__
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -334,7 +380,7 @@ describe('ConnectionsSettingsPage', () => {
       use_user_config: false,
       use_proxy: false,
       configured: true,
-      target_path: '~/.codex/auth.json',
+      target_path: 'auth.json',
       auth_json_sha256: 'abc1234567890',
       auth_json_updated_at: '2026-06-09T00:00:00Z',
       proxy_configured: false,
@@ -348,7 +394,7 @@ describe('ConnectionsSettingsPage', () => {
       use_user_config: true,
       use_proxy: false,
       configured: true,
-      target_path: '~/.codex/auth.json',
+      target_path: 'auth.json',
       auth_json_sha256: 'abc1234567890',
       auth_json_updated_at: '2026-06-09T00:00:00Z',
       proxy_configured: false,
@@ -374,7 +420,7 @@ describe('ConnectionsSettingsPage', () => {
       use_user_config: false,
       use_proxy: false,
       configured: true,
-      target_path: '~/.codex/auth.json',
+      target_path: 'auth.json',
       auth_json_sha256: 'abc1234567890',
       auth_json_updated_at: '2026-06-09T00:00:00Z',
       proxy_configured: false,
@@ -388,7 +434,7 @@ describe('ConnectionsSettingsPage', () => {
       use_user_config: false,
       use_proxy: false,
       configured: true,
-      target_path: '~/.codex/auth.json',
+      target_path: 'auth.json',
       auth_json_sha256: 'abc1234567890',
       auth_json_updated_at: '2026-06-09T00:00:00Z',
       proxy_configured: false,
@@ -430,16 +476,16 @@ describe('ConnectionsSettingsPage', () => {
     expect(
       within(integrationsCategory.parentElement!).queryByTestId('settings-nav-worktrees')
     ).toBeNull()
-    expect(codingCategory.parentElement).toContainElement(gitHostingNav)
+    expect(screen.getAllByTestId('settings-category-coding')).toHaveLength(1)
     expect(within(codingCategory.parentElement!).queryByTestId('settings-nav-plugins')).toBeNull()
     expect(
       pluginsNav.compareDocumentPosition(codingCategory) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
-      gitHostingNav.compareDocumentPosition(harnessesNav) & Node.DOCUMENT_POSITION_FOLLOWING
+      harnessesNav.compareDocumentPosition(gitHostingNav) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
-      harnessesNav.compareDocumentPosition(worktreesNav) & Node.DOCUMENT_POSITION_FOLLOWING
+      gitHostingNav.compareDocumentPosition(worktreesNav) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
       worktreesNav.compareDocumentPosition(archivedCategory) & Node.DOCUMENT_POSITION_FOLLOWING
@@ -624,14 +670,15 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('codex-auth-settings')).toHaveTextContent('Codex 设置')
     expect(screen.getByTestId('codex-auth-settings')).toHaveTextContent('认证信息')
     expect(screen.getByTestId('codex-auth-settings')).toHaveTextContent('模型')
-    expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('设备认证')
-    expect(await screen.findByTestId('runtime-config-status')).toHaveTextContent('已配置')
-    expect(screen.getByText('共享认证')).toBeInTheDocument()
-    expect(screen.getByText('~/.codex/auth.json')).toBeInTheDocument()
-    expect(screen.getByTestId('runtime-config-sync-source-select')).toHaveTextContent('当前设备')
-    expect(screen.getByTestId('runtime-config-sync-auth-button')).toHaveTextContent(
-      '同步到其他设备'
-    )
+    expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('Codex 账号')
+    expect(await screen.findByTestId('runtime-config-status')).toHaveTextContent('认证已保存')
+    expect(screen.getByText('Codex 认证同步')).toBeInTheDocument()
+    expect(
+      screen.getByText('从本机或在线设备保存一份认证；开启后自动同步到同一账号下缺少认证的设备。')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('设备 Codex Home/auth.json')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-config-sync-source-select')).toHaveTextContent('本机')
+    expect(screen.getByTestId('runtime-config-sync-auth-button')).toHaveTextContent('选择并保存')
     expect(screen.queryByTestId('runtime-config-import-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-upload-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-proxy-toggle')).not.toBeInTheDocument()
@@ -649,6 +696,162 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.queryByTestId('runtime-config-sync-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-sync-result')).not.toBeInTheDocument()
+  })
+
+  test('signs in to Codex when this computer has no reusable Codex App auth', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    listLocalCodexAccountsMock
+      .mockResolvedValueOnce({
+        activeAccountId: null,
+        accounts: [],
+      })
+      .mockResolvedValue({
+        activeAccountId: 'account-1',
+        accounts: [
+          {
+            id: 'account-1',
+            accountType: 'chatgpt',
+            email: 'one@example.com',
+            planType: 'pro',
+            createdAt: 1,
+            lastUsedAt: 2,
+          },
+        ],
+      })
+    getLocalCodexAuthStatusMock
+      .mockResolvedValueOnce({
+        runtime: 'codex',
+        targetPath: '/Users/me/.wework/codex/auth.json',
+        exists: false,
+        updatedAt: null,
+        sha256: null,
+        sizeBytes: null,
+        error: null,
+      })
+      .mockResolvedValue({
+        runtime: 'codex',
+        targetPath: '/Users/me/.wework/codex/auth.json',
+        exists: true,
+        updatedAt: '2026-09-10T00:00:00.000Z',
+        sha256: 'signed-in',
+        sizeBytes: 256,
+        error: null,
+      })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    const loginButton = await screen.findByTestId('local-codex-login-button')
+    expect(loginButton).toHaveTextContent('登录')
+    expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent(
+      '登录 ChatGPT 账号以在 Wework 中使用 Codex。'
+    )
+    expect(screen.getByTestId('local-codex-model-row')).not.toHaveTextContent('auth.json')
+    expect(screen.getByTestId('local-codex-model-row')).not.toHaveTextContent('SHA-256')
+
+    await userEvent.click(loginButton)
+
+    await waitFor(() => expect(startLocalCodexLoginMock).toHaveBeenCalledOnce())
+    expect(openExternalUrlMock).toHaveBeenCalledWith('https://chatgpt.com/auth', {
+      target: 'system',
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('local-codex-model-status-pill')).toHaveTextContent('已登录')
+    )
+    expect(listLocalCodexAccountsMock).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('local-codex-login-button')).toHaveTextContent('添加账号')
+    expect(screen.getByTestId('local-codex-account-list')).toHaveTextContent('one@example.com')
+  })
+
+  test('cancels the Codex login session when the browser cannot be opened', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    getLocalCodexAuthStatusMock.mockResolvedValue({
+      runtime: 'codex',
+      targetPath: '/Users/me/.wework/codex/auth.json',
+      exists: false,
+      updatedAt: null,
+      sha256: null,
+      sizeBytes: null,
+      error: null,
+    })
+    openExternalUrlMock.mockResolvedValue(false)
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await userEvent.click(await screen.findByTestId('local-codex-login-button'))
+
+    await waitFor(() => expect(cancelLocalCodexLoginMock).toHaveBeenCalledWith('login-1'))
+    expect(screen.getByTestId('local-codex-login-error')).toHaveTextContent(
+      '无法打开 Codex 登录页面'
+    )
+    expect(cancelLocalCodexLoginMock).toHaveBeenCalledWith('login-1')
+  })
+
+  test('switches the active Codex auth without changing conversation sessions', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    listLocalCodexAccountsMock.mockResolvedValue({
+      activeAccountId: 'account-1',
+      accounts: [
+        {
+          id: 'account-1',
+          accountType: 'chatgpt',
+          email: 'one@example.com',
+          planType: 'pro',
+          createdAt: 1,
+          lastUsedAt: 1,
+        },
+        {
+          id: 'account-2',
+          accountType: 'chatgpt',
+          email: 'two@example.com',
+          planType: 'plus',
+          createdAt: 2,
+          lastUsedAt: 2,
+        },
+      ],
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await userEvent.click(await screen.findByTestId('local-codex-account-switch-account-2'))
+
+    await waitFor(() => expect(switchLocalCodexAccountMock).toHaveBeenCalledWith('account-2'))
+    expect(screen.getByTestId('local-codex-account-account-2')).toHaveTextContent('当前账号')
+  })
+
+  test('imports shared auth from the selected device and explains a missing source file', async () => {
+    api.getAllDevices.mockResolvedValue([
+      localDevice(),
+      cloudDevice({
+        device_id: 'cloud-device',
+        name: 'Cloud Codex Device',
+      }),
+    ])
+    userApi.importRuntimeAuthJson.mockRejectedValueOnce(
+      new Error('runtime auth file does not exist')
+    )
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await screen.findByTestId('runtime-config-status')
+
+    await userEvent.selectOptions(
+      screen.getByTestId('runtime-config-sync-source-select'),
+      'device:cloud-device'
+    )
+    expect(screen.getByTestId('runtime-config-sync-auth-button')).toHaveTextContent('读取并保存')
+
+    await userEvent.click(screen.getByTestId('runtime-config-sync-auth-button'))
+
+    await waitFor(() =>
+      expect(userApi.importRuntimeAuthJson).toHaveBeenCalledWith('codex', 'cloud-device')
+    )
+    expect(await screen.findByTestId('runtime-config-error')).toHaveTextContent(
+      '所选设备没有 Codex 认证，请选择本机或其他已配置设备。'
+    )
   })
 
   test('edits and restores the catalog for a visible Codex model', async () => {
@@ -827,6 +1030,11 @@ describe('ConnectionsSettingsPage', () => {
     expect(within(defaultReasoningSelect).queryByRole('option', { name: 'high' })).toBeNull()
     await userEvent.selectOptions(defaultReasoningSelect, 'high')
     await userEvent.click(screen.getByTestId('local-model-advanced-capabilities-toggle'))
+    expect(screen.getByTestId('local-model-codex-tool-compatibility-select')).toHaveValue('native')
+    await userEvent.selectOptions(
+      screen.getByTestId('local-model-codex-tool-compatibility-select'),
+      'standard'
+    )
     await userEvent.click(screen.getByTestId('local-model-advanced-section-metadata'))
     await userEvent.type(screen.getByTestId('local-model-speed-tiers-input'), 'fast')
     await userEvent.click(screen.getByTestId('local-model-speed-tiers-add'))
@@ -860,6 +1068,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(stored[0]).toMatchObject({
       modelId: 'custom-coder',
       codexCatalogModelId: expect.stringMatching(/^wework-custom-/),
+      codexToolCompatibility: 'standard',
       catalogReady: true,
       imageGenerationEnabled: true,
     })
@@ -1425,7 +1634,7 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
 
     expect(await screen.findByTestId('model-settings-page')).toBeInTheDocument()
-    expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('设备认证')
+    expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('Codex 账号')
     const cloudSyncSection = screen.getByTestId('runtime-config-cloud-sync')
     expect(cloudSyncSection).toHaveClass('bg-background')
     expect(screen.getByTestId('runtime-config-shared-auth-unavailable')).toHaveClass(
@@ -1533,6 +1742,34 @@ describe('ConnectionsSettingsPage', () => {
     expect(userApi.updateProxyConfig).not.toHaveBeenCalled()
   })
 
+  test('shows the effective system proxy used by local Codex', async () => {
+    const disconnectedConnection: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'disconnected',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    window.weworkElectronNetwork = {
+      resolveCodexProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
+    }
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={disconnectedConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    await userEvent.click(screen.getByTestId('settings-nav-proxy'))
+
+    expect(await screen.findByTestId('local-proxy-config-status')).toHaveTextContent('系统代理')
+    expect(screen.getByTestId('local-proxy-effective-url')).toHaveTextContent(
+      'http://system-proxy.example.com:7890'
+    )
+  })
+
   test('updates the local Codex remote apps setting from plugin settings', async () => {
     window.history.pushState({}, '', '/settings/plugins')
     api.getAllDevices.mockResolvedValue([localDevice()])
@@ -1571,7 +1808,9 @@ describe('ConnectionsSettingsPage', () => {
   })
 
   test('keeps uncommon cloud device actions in a compact more menu with confirmation', async () => {
-    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.getAllDevices
+      .mockResolvedValueOnce([cloudDevice({ status: 'offline' })])
+      .mockResolvedValue([cloudDevice()])
     api.restartCloudDevice.mockResolvedValue({ message: 'restart sent' })
     api.deleteCloudDevice.mockResolvedValue({ message: 'deleted' })
 
@@ -1586,6 +1825,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(moreButton).toHaveAccessibleName('更多操作')
 
     await userEvent.click(moreButton)
+    expect(screen.getByTestId('connection-more-menu-device-1')).toBeInTheDocument()
     const restartMenuItem = screen.getByTestId('connection-restart-menu-item-device-1')
     const deleteMenuItem = screen.getByTestId('connection-delete-menu-item-device-1')
     expect(restartMenuItem).toHaveTextContent('重启设备')
@@ -1600,6 +1840,8 @@ describe('ConnectionsSettingsPage', () => {
     expect(restartConfirmButton).toHaveClass('bg-text-primary', 'text-background')
     await userEvent.click(restartConfirmButton)
 
+    await screen.findByText('设备已重新在线。')
+
     await userEvent.click(moreButton)
     await userEvent.click(screen.getByTestId('connection-delete-menu-item-device-1'))
     expect(api.deleteCloudDevice).not.toHaveBeenCalled()
@@ -1607,6 +1849,179 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(api.restartCloudDevice).toHaveBeenCalledWith('device-1')
     expect(api.deleteCloudDevice).toHaveBeenCalledWith('device-1')
+  })
+
+  test('warns about active work and disables sessions while a cloud device restarts', async () => {
+    api.getAllDevices.mockResolvedValue([cloudDevice({ slot_used: 1 })])
+    api.restartCloudDevice.mockResolvedValue({ message: 'restart sent' })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByTestId('connection-device-device-1')
+    await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+    await userEvent.click(screen.getByTestId('connection-restart-menu-item-device-1'))
+
+    expect(screen.getByTestId('confirm-restart-device-dialog')).toHaveTextContent('当前有任务运行')
+    expect(screen.getByTestId('confirm-restart-device-dialog')).toHaveTextContent(
+      '终端、IDE 和桌面不可用'
+    )
+
+    await userEvent.click(screen.getByTestId('confirm-restart-device-button'))
+
+    const notice = await screen.findByTestId('connection-device-restart-status-device-1')
+    expect(notice).toHaveTextContent('设备将短暂离线')
+    expect(screen.getByTestId('connection-terminal-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-code-server-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-cloud-desktop-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-more-button-device-1')).toBeDisabled()
+    expect(
+      within(screen.getByTestId('connection-device-device-1')).getByText('重启中')
+    ).toBeVisible()
+  })
+
+  test('shows a retryable inline error without presenting the device as offline', async () => {
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.restartCloudDevice.mockRejectedValue(new Error('restart rejected'))
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByTestId('connection-device-device-1')
+    await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+    await userEvent.click(screen.getByTestId('connection-restart-menu-item-device-1'))
+    await userEvent.click(screen.getByTestId('confirm-restart-device-button'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('restart rejected')
+    expect(screen.getByTestId('connection-device-restart-retry-device-1')).toBeEnabled()
+    expect(within(screen.getByTestId('connection-device-device-1')).getByText('在线')).toBeVisible()
+  })
+
+  test('upgrades an available cloud device through the restart-aligned flow', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({
+        executor_version: '1.8.5',
+        latest_version: '1.9.0',
+        slot_used: 1,
+        update_available: true,
+      }),
+    ])
+    api.restartCloudDevice.mockResolvedValue({ message: 'restart sent' })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const upgradeBadge = await screen.findByTestId('connection-upgrade-badge-device-1')
+    expect(upgradeBadge).toHaveAccessibleName('当前版本：v1.8.5 · 最新版本：v1.9.0 · 点击升级')
+    await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+    expect(screen.getByTestId('connection-upgrade-menu-item-device-1')).toBeEnabled()
+    await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+    await userEvent.click(upgradeBadge)
+
+    const dialog = screen.getByTestId('confirm-upgrade-device-dialog')
+    expect(dialog).toHaveTextContent('当前有任务运行')
+    expect(dialog).toHaveTextContent('v1.8.5')
+    expect(dialog).toHaveTextContent('v1.9.0')
+    expect(api.restartCloudDevice).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('confirm-upgrade-device-button'))
+
+    expect(api.restartCloudDevice).toHaveBeenCalledWith('device-1')
+    expect(api.upgradeDevice).not.toHaveBeenCalled()
+    expect(
+      await screen.findByTestId('connection-device-upgrade-status-device-1')
+    ).toHaveTextContent('设备将短暂离线')
+    expect(screen.getByTestId('connection-terminal-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-more-button-device-1')).toBeDisabled()
+    const status = within(screen.getByTestId('connection-device-device-1')).getByTestId(
+      'connection-device-status'
+    )
+    expect(status).toHaveTextContent('升级中')
+    expect(status).toHaveClass('shrink-0', 'whitespace-nowrap')
+  })
+
+  test('allows restart-backed upgrades for old executors', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({
+        executor_version: '1.6.4',
+        latest_version: '1.9.0',
+        update_available: true,
+      }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const upgradeBadge = await screen.findByTestId('connection-upgrade-badge-device-1')
+    expect(upgradeBadge).toBeEnabled()
+    expect(upgradeBadge).toHaveAccessibleName('当前版本：v1.6.4 · 最新版本：v1.9.0 · 点击升级')
+
+    await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+    expect(screen.getByTestId('connection-upgrade-menu-item-device-1')).toBeEnabled()
+    await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+    await userEvent.click(upgradeBadge)
+    expect(screen.getByTestId('confirm-upgrade-device-dialog')).toBeVisible()
+  })
+
+  test('refreshes once when the backend is still resolving latest version information', async () => {
+    api.getAllDevices
+      .mockResolvedValueOnce([
+        cloudDevice({
+          executor_version: '1.8.5',
+          latest_version: null,
+          update_available: false,
+        }),
+      ])
+      .mockResolvedValueOnce([
+        cloudDevice({
+          executor_version: '1.8.5',
+          latest_version: '1.9.0',
+          update_available: true,
+        }),
+      ])
+
+    vi.useFakeTimers()
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(api.getAllDevices).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_500)
+      })
+      expect(api.getAllDevices).toHaveBeenCalledTimes(2)
+      expect(screen.getByTestId('connection-upgrade-badge-device-1')).toBeVisible()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('refreshes device version information when the window regains focus', async () => {
+    api.getAllDevices
+      .mockResolvedValueOnce([
+        cloudDevice({
+          executor_version: '1.8.5',
+          latest_version: '1.8.5',
+          update_available: false,
+        }),
+      ])
+      .mockResolvedValueOnce([
+        cloudDevice({
+          executor_version: '1.8.5',
+          latest_version: '1.9.0',
+          update_available: true,
+        }),
+      ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('connection-upgrade-badge-device-1')).not.toBeInTheDocument()
+
+    fireEvent.focus(window)
+
+    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(2))
+    expect(await screen.findByTestId('connection-upgrade-badge-device-1')).toBeVisible()
   })
 
   test('keeps connection settings open after the cloud desktop extension opens', async () => {
@@ -1776,75 +2191,6 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
     expect(screen.getByText('远程设备')).toBeInTheDocument()
     expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
-  })
-
-  test('persists the remote control switch while cloud is connected', async () => {
-    api.getAllDevices.mockResolvedValue([])
-    const renderPage = (remoteControlEnabled: boolean) => (
-      <AppPreferencesContext.Provider
-        value={{
-          loaded: true,
-          preferences: { ...defaultAppPreferences, remoteControlEnabled },
-        }}
-      >
-        <ConnectionsSettingsPage onBack={vi.fn()} />
-      </AppPreferencesContext.Provider>
-    )
-    const view = render(renderPage(false))
-
-    const toggle = await screen.findByTestId('remote-control-toggle')
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
-    expect(toggle).toBeEnabled()
-
-    await userEvent.click(toggle)
-
-    await waitFor(() =>
-      expect(appPreferencesMocks.update).toHaveBeenCalledWith({ remoteControlEnabled: true })
-    )
-
-    view.rerender(renderPage(true))
-    expect(screen.getByTestId('remote-control-toggle')).toHaveAttribute('aria-checked', 'true')
-  })
-
-  test('keeps remote control unavailable until cloud is connected', async () => {
-    const disconnectedConnection: CloudConnectionContextValue = {
-      ...DISCONNECTED_STATE,
-      isConnected: false,
-      serviceKey: 'disconnected',
-      connectWithAuthorization: vi.fn(),
-      refreshUser: vi.fn(),
-      disconnect: vi.fn(),
-    }
-
-    render(
-      <AppPreferencesContext.Provider value={{ preferences: defaultAppPreferences, loaded: true }}>
-        <CloudConnectionContext.Provider value={disconnectedConnection}>
-          <ConnectionsSettingsPage onBack={vi.fn()} />
-        </CloudConnectionContext.Provider>
-      </AppPreferencesContext.Provider>
-    )
-
-    const setting = await screen.findByTestId('remote-control-setting')
-    expect(setting).toHaveTextContent('连接云端后才能开启远程控制')
-    expect(screen.getByTestId('remote-control-toggle')).toBeDisabled()
-    expect(appPreferencesMocks.update).not.toHaveBeenCalled()
-  })
-
-  test('reports a remote control preference save failure without changing state', async () => {
-    api.getAllDevices.mockResolvedValue([])
-    appPreferencesMocks.update.mockRejectedValueOnce(new Error('save failed'))
-
-    render(
-      <AppPreferencesContext.Provider value={{ preferences: defaultAppPreferences, loaded: true }}>
-        <ConnectionsSettingsPage onBack={vi.fn()} />
-      </AppPreferencesContext.Provider>
-    )
-
-    const toggle = await screen.findByTestId('remote-control-toggle')
-    await userEvent.click(toggle)
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('远程控制设置更新失败')
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
   })
 
   test('shows device Git configuration after the cloud and remote device list', async () => {
@@ -2024,6 +2370,31 @@ describe('ConnectionsSettingsPage', () => {
     expect(deviceCard).not.toHaveClass('bg-white')
     expect(terminalButton).toHaveClass('bg-background', 'text-text-primary')
     expect(moreButton).toHaveClass('bg-background', 'text-text-secondary')
+  })
+
+  test('disables remote IDE and terminal actions when the runtime disables them', async () => {
+    api.getAllDevices.mockResolvedValue([
+      remoteDevice({
+        runtime_features: {
+          schemaVersion: 3,
+          interactiveSessions: { codeServer: false, terminal: false },
+        },
+      }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const terminalButton = await screen.findByTestId('connection-terminal-button-remote-device')
+    const ideButton = screen.getByTestId('connection-code-server-button-remote-device')
+    expect(terminalButton).toBeDisabled()
+    expect(terminalButton).toHaveAttribute('title', '此设备未启用终端')
+    expect(ideButton).toBeDisabled()
+    expect(ideButton).toHaveAttribute('title', '此设备未启用项目 IDE')
+
+    await userEvent.click(terminalButton)
+    await userEvent.click(ideButton)
+    expect(api.startTerminal).not.toHaveBeenCalled()
+    expect(api.startCodeServer).not.toHaveBeenCalled()
   })
 
   test('shows cloud device metrics while omitting local devices and scaling guidance', async () => {

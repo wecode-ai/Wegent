@@ -42,6 +42,7 @@ use crate::{
         create_runtime_archive, restore_runtime_archive, ArchiveError, ArchiveMode, ArchiveOptions,
     },
     heartbeat::{RuntimeHeartbeatActivationError, RuntimeHeartbeatController},
+    local::session::terminal_metrics_snapshot,
     logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
     process_environment,
     protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
@@ -337,6 +338,7 @@ async fn envd_health_check() -> StatusCode {
 async fn envd_metrics() -> Json<MetricsResponse> {
     let disk = disk_usage_bytes(Path::new("/")).unwrap_or_default();
     let memory = memory_usage_bytes().unwrap_or_default();
+    let terminal = terminal_metrics_snapshot();
     Json(MetricsResponse {
         ts: chrono::Utc::now().timestamp(),
         cpu_count: std::thread::available_parallelism()
@@ -347,6 +349,12 @@ async fn envd_metrics() -> Json<MetricsResponse> {
         mem_used: memory.used,
         disk_total: disk.total,
         disk_used: disk.used,
+        terminal_output_batches_total: terminal.output_batches_total,
+        terminal_output_bytes_total: terminal.output_bytes_total,
+        terminal_replayed_batches_total: terminal.replayed_batches_total,
+        terminal_replay_bytes: terminal.replay_bytes,
+        terminal_ack_lag_bytes: terminal.ack_lag_bytes,
+        terminal_backpressured_sessions: terminal.backpressured_sessions,
     })
 }
 
@@ -1052,6 +1060,12 @@ struct MetricsResponse {
     mem_used: u64,
     disk_used: u64,
     disk_total: u64,
+    terminal_output_batches_total: u64,
+    terminal_output_bytes_total: u64,
+    terminal_replayed_batches_total: u64,
+    terminal_replay_bytes: u64,
+    terminal_ack_lag_bytes: u64,
+    terminal_backpressured_sessions: u64,
 }
 
 #[derive(Debug, Serialize)]

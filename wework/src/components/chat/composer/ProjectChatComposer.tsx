@@ -30,7 +30,6 @@ import {
   type ComposerTextareaHandle,
 } from './ComposerTextarea'
 import { ProjectWorkBar } from './ProjectWorkBar'
-import { resolveBranchNameGenerationSource } from '@/lib/branch-name'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/desktop/appPreferences'
@@ -46,7 +45,11 @@ import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
-import type { ComposerExternalMentionCandidate } from './composerTextareaTypes'
+import {
+  primaryComposerSubmitOptions,
+  type ComposerExternalMentionCandidate,
+  type ComposerFollowUpBehavior,
+} from './composerTextareaTypes'
 import type { ModelSelectorCloseReason } from './model-selector-types'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import styles from './ProjectChatComposer.module.css'
@@ -123,6 +126,8 @@ interface ProjectChatComposerProps {
   projectWorkBarTrailingContext?: ReactNode
   projectWorkBarEndContext?: ReactNode
   modelSelectorOverride?: ReactNode
+  sendKey?: 'enter' | 'cmd_enter'
+  followUpBehavior?: ComposerFollowUpBehavior
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -206,6 +211,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       projectWorkBarTrailingContext,
       projectWorkBarEndContext,
       modelSelectorOverride,
+      sendKey = 'enter',
+      followUpBehavior = 'queue',
     },
     ref
   ) {
@@ -236,7 +243,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
     )
     const textareaRef = useAutoResizeTextarea(value, 112)
     const canSend =
-      (hasText || attachments.length > 0 || codeComments.length > 0) && !disabled && !submitDisabled
+      (hasText || attachments.length > 0 || codeComments.length > 0) &&
+      isModelSelectionReady &&
+      !disabled &&
+      !submitDisabled
     const canCollapseInShortPane =
       attachments.length === 0 &&
       uploadingFiles.size === 0 &&
@@ -349,29 +359,12 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
             selectedDeviceWorkspaceId={projectWork.selectedDeviceWorkspaceId}
             pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
-            executionMode={projectWork.executionMode}
-            executionModeLocked={projectWork.executionModeLocked}
-            worktreeAvailability={projectWork.worktreeAvailability}
-            isGitProject={projectWork.isGitProject}
+            extensionContext={projectWork}
             onSelectProject={projectWork.onSelectProject}
             onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
             onSelectProjectWorkspace={projectWork.onSelectProjectWorkspace}
             onBindProjectWorkspace={projectWork.onBindProjectWorkspace}
-            onExecutionModeChange={projectWork.onExecutionModeChange}
             onCreateProjectMode={projectWork.onCreateProjectMode}
-            branchName={projectWork.branchName}
-            branchLoading={projectWork.branchLoading}
-            onRefreshBranch={projectWork.onRefreshBranch}
-            onListBranches={projectWork.onListBranches}
-            onCheckoutBranch={projectWork.onCheckoutBranch}
-            onCreateBranch={projectWork.onCreateBranch}
-            onGenerateBranchName={projectWork.onGenerateBranchName}
-            branchNameSource={resolveBranchNameGenerationSource(
-              value,
-              projectWork.branchNameSource
-            )}
-            worktreeBranch={projectWork.worktreeBranch}
-            onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
             showClearButton={projectWork.showProjectClearButton}
             projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
             projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
@@ -415,7 +408,14 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               disabled,
               isStreaming,
             })
-            if (canSend) onSubmit(submittedValue)
+            if (canSend) {
+              const options = primaryComposerSubmitOptions(isStreaming, followUpBehavior)
+              if (options) {
+                onSubmit(submittedValue, options)
+              } else {
+                onSubmit(submittedValue)
+              }
+            }
           }}
         >
           <AttachmentBadges
@@ -515,6 +515,9 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onSelectModel={onSelectModel}
             onBlockedModelSelect={onBlockedModelSelect}
             isModelSelectionReady={isModelSelectionReady}
+            sendKey={sendKey}
+            followUpBehavior={followUpBehavior}
+            isStreaming={isStreaming}
           />
           <ComposerToolbar
             className={styles.toolbar}
@@ -553,17 +556,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             projectWorkMenuContext={
               showWorkspaceMenu
                 ? {
-                    branchName: projectWork.worktreeBranch ?? projectWork.branchName,
                     currentProjectId: projectWork.currentProjectId,
-                    executionMode: projectWork.executionMode,
-                    executionModeLocked: projectWork.executionModeLocked,
-                    worktreeAvailability: projectWork.worktreeAvailability,
-                    isGitProject: projectWork.isGitProject,
+                    extensionContext: projectWork,
                     projectName: projectWork.currentProject?.name,
                     projects: workspaceMenuProjects,
-                    onCheckoutBranch: projectWork.onCheckoutBranch,
-                    onExecutionModeChange: projectWork.onExecutionModeChange,
-                    onListBranches: projectWork.onListBranches,
                     onSelectProject: projectWork.onSelectProject,
                   }
                 : undefined
@@ -571,8 +567,11 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onQuickPhraseSelect={handleQuickPhraseSelect}
             projectPhrases={projectPhrases}
             onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
+            sendKey={sendKey}
+            followUpBehavior={followUpBehavior}
             leadingContext={toolbarLeadingContext}
             onListLocalApps={onListLocalApps}
+            workspaceTarget={workspaceTarget}
           />
         </form>
       </div>

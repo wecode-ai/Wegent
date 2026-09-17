@@ -1,0 +1,151 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import { createTranscriptTarget, exportExecutorTranscript, readExecutorTurn } from './index.js'
+
+const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64')
+
+test('exports a native segment with a separate structured summary', async () => {
+  const client = {
+    async request(method, params, timeoutMs) {
+      if (method === 'runtime.tasks.transcript') {
+        assert.equal(timeoutMs, undefined)
+        assert.deepEqual(params, { taskId: 'task-1', limit: 100 })
+        return {
+          turns: [
+            {
+              id: 'turn-5',
+              status: 'done',
+              items: [
+                {
+                  id: 'user-item',
+                  type: 'user_message',
+                  message: { id: 'user-1', content: 'Continue' },
+                },
+                { id: 'reasoning', type: 'reasoning', summary: ['Checked'] },
+                { id: 'assistant', type: 'assistant_text', content: 'Done' },
+              ],
+            },
+          ],
+        }
+      }
+      assert.equal(method, 'runtime.tasks.transcript.export')
+      assert.equal(timeoutMs, 10 * 60 * 1000)
+      assert.deepEqual(params, {
+        transcriptId: 'transcript-1',
+        taskId: 'task-1',
+        baseSequence: 4,
+        sequence: 5,
+        snapshot: false,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+      })
+      return {
+        path: '/tmp/segment.tgz.aes256gcm',
+        sha256: 'a'.repeat(64),
+        sizeBytes: 100,
+        format: 'codex-delta.v1.tgz.aes256gcm',
+        rolloutEnd: 2048,
+      }
+    },
+  }
+  const result = await exportExecutorTranscript(
+    client,
+    {
+      transcriptId: 'transcript-1',
+      taskId: 'task-1',
+      executorTurnId: 'turn-5',
+    },
+    {
+      baseSequence: 4,
+      sequence: 5,
+      snapshot: false,
+      encryptionKey: TEST_ENCRYPTION_KEY,
+    }
+  )
+  assert.equal(result.path, '/tmp/segment.tgz.aes256gcm')
+  assert.deepEqual(result.summary, {
+    userMessages: [{ id: 'user-1', text: 'Continue' }],
+    assistantMessage: 'Done',
+    reasoning: 'Checked',
+    completion: { kind: 'completed' },
+  })
+})
+
+test('routes restore and acknowledgement through native transcript RPCs', async () => {
+  const requests = []
+  const client = {
+    async request(method, params) {
+      requests.push({ method, params })
+      return { available: true, importedThrough: params.sequence ?? 2 }
+    },
+  }
+  const target = createTranscriptTarget(client)
+  const transcript = { transcriptId: 'shared', taskId: 'local-task' }
+  const segments = [
+    {
+      path: '/tmp/1.tgz.aes256gcm',
+      sha256: 'b'.repeat(64),
+      sequence: 1,
+      format: 'codex-snapshot.v1.tgz.aes256gcm',
+    },
+  ]
+  await target.status(transcript)
+  await target.restore(transcript, segments, { encryptionKey: TEST_ENCRYPTION_KEY })
+  await target.acknowledge({
+    ...transcript,
+    cloudSequence: 2,
+    rolloutEnd: 4096,
+    parentTranscriptId: 'main',
+  })
+  assert.deepEqual(requests, [
+    {
+      method: 'runtime.tasks.transcript.sync_status',
+      params: { transcriptId: 'shared', taskId: 'local-task' },
+    },
+    {
+      method: 'runtime.tasks.transcript.restore',
+      params: {
+        transcriptId: 'shared',
+        taskId: 'local-task',
+        segments,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+      },
+    },
+    {
+      method: 'runtime.tasks.transcript.acknowledge',
+      params: {
+        transcriptId: 'shared',
+        taskId: 'local-task',
+        sequence: 2,
+        rolloutEnd: 4096,
+        parentTranscriptId: 'main',
+      },
+    },
+  ])
+})
+
+test('distinguishes a deleted task from a missing turn in an existing task', async () => {
+  await assert.rejects(
+    readExecutorTurn(
+      {
+        async request() {
+          return { taskId: 'deleted-task', runtime: 'runtime', workspacePath: '', turns: [] }
+        },
+      },
+      { taskId: 'deleted-task', executorTurnId: 'turn-1' }
+    ),
+    error => error.code === 'transcript_task_missing'
+  )
+
+  await assert.rejects(
+    readExecutorTurn(
+      {
+        async request() {
+          return { taskId: 'active-task', runtime: 'Codex', workspacePath: '/workspace', turns: [] }
+        },
+      },
+      { taskId: 'active-task', executorTurnId: 'turn-1' }
+    ),
+    error => error.code === 'transcript_turn_missing'
+  )
+})

@@ -1,5 +1,3 @@
-import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
-
 export type WorkspaceTabKind = 'task' | 'board' | 'agent' | 'auxiliary'
 
 export interface WorkspaceTab {
@@ -43,7 +41,7 @@ function newTabId(kind: WorkspaceTabKind): string {
 export function defaultContentRoute(kind: WorkspaceTabKind): string {
   switch (kind) {
     case 'board':
-      return `/todo?projectId=${DEFAULT_WORK_ITEM_PROJECT_ID}`
+      return '/todo'
     case 'agent':
       return '/app/wegent'
     case 'auxiliary':

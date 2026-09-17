@@ -18,6 +18,7 @@ export function clampContextCompactionThreshold(value: number): number {
 }
 
 export interface AppPreferences {
+  workbenchMode: WorkbenchMode
   appearanceMode: AppearanceModePreference
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
@@ -53,7 +54,6 @@ export interface AppPreferences {
   changeRequestStatusEnabled: boolean
   quickPhrases: QuickPhrase[]
   localHarnesses: LocalHarnessPreference[]
-  remoteControlEnabled: boolean
   cloudConnection: Record<string, unknown> | null
 }
 
@@ -96,6 +96,7 @@ export function isExpiredQuickPhraseStash(phrase: QuickPhrase, now = Date.now())
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
 export type AppearanceModePreference = 'light' | 'dark' | 'system'
 export type BrowserLinkTarget = 'system' | 'wework'
+export type WorkbenchMode = 'focus' | 'developer'
 export type FixedWorkspaceTabKind = 'task' | 'board' | 'agent' | 'smart_app'
 
 export interface FixedWorkspaceTabPreference {
@@ -106,6 +107,7 @@ export interface FixedWorkspaceTabPreference {
 }
 
 export interface AppPreferencesPatch {
+  workbenchMode?: WorkbenchMode
   appearanceMode?: AppearanceModePreference
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
@@ -141,7 +143,6 @@ export interface AppPreferencesPatch {
   changeRequestStatusEnabled?: boolean
   quickPhrases?: QuickPhrase[]
   localHarnesses?: LocalHarnessPreference[]
-  remoteControlEnabled?: boolean
   cloudConnection?: Record<string, unknown> | null
 }
 
@@ -167,6 +168,7 @@ export const defaultQuickPhrases: QuickPhrase[] = [
 ]
 
 export const defaultAppPreferences: AppPreferences = {
+  workbenchMode: 'developer',
   appearanceMode: 'system',
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
@@ -206,7 +208,6 @@ export const defaultAppPreferences: AppPreferences = {
   changeRequestStatusEnabled: true,
   quickPhrases: defaultQuickPhrases,
   localHarnesses: defaultLocalHarnessPreferences,
-  remoteControlEnabled: false,
   cloudConnection: null,
 }
 
@@ -215,6 +216,7 @@ export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
 const supportedLanguagePreferences = new Set<AppLanguagePreference>(['system', 'zh-CN', 'en'])
 const supportedAppearanceModes = new Set<AppearanceModePreference>(['light', 'dark', 'system'])
 const supportedBrowserLinkTargets = new Set<BrowserLinkTarget>(['system', 'wework'])
+const supportedWorkbenchModes = new Set<WorkbenchMode>(['focus', 'developer'])
 const supportedFixedWorkspaceTabKinds = new Set<FixedWorkspaceTabKind>([
   'task',
   'board',
@@ -266,6 +268,11 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       ? storedFixedWorkspaceTabs
       : defaultAppPreferences.fixedWorkspaceTabs
   return {
+    workbenchMode:
+      typeof record.workbenchMode === 'string' &&
+      supportedWorkbenchModes.has(record.workbenchMode as WorkbenchMode)
+        ? (record.workbenchMode as WorkbenchMode)
+        : defaultAppPreferences.workbenchMode,
     appearanceMode:
       typeof record.appearanceMode === 'string' &&
       supportedAppearanceModes.has(record.appearanceMode as AppearanceModePreference)
@@ -407,10 +414,6 @@ function mergeAppPreferences(value: unknown): AppPreferences {
           .filter(item => !isExpiredQuickPhraseStash(item))
       : defaultAppPreferences.quickPhrases,
     localHarnesses: normalizeLocalHarnessPreferences(record.localHarnesses),
-    remoteControlEnabled:
-      typeof record.remoteControlEnabled === 'boolean'
-        ? record.remoteControlEnabled
-        : defaultAppPreferences.remoteControlEnabled,
     cloudConnection:
       record.cloudConnection &&
       typeof record.cloudConnection === 'object' &&

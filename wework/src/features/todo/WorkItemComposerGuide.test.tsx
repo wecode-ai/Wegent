@@ -87,7 +87,7 @@ describe('WorkItemComposerGuide', () => {
     expect(onSelectProject).toHaveBeenCalledWith(teamProject)
   })
 
-  test('uses the goal as primary context and only shows work-item status plus sibling tasks', async () => {
+  test('uses the goal as primary context and only shows sibling tasks', async () => {
     const api = {
       listTaskBindings: vi.fn().mockResolvedValue(taskBindings),
       findCloudContextForTask: vi.fn().mockResolvedValue({
@@ -111,7 +111,7 @@ describe('WorkItemComposerGuide', () => {
       )
     )
     expect(screen.getByTestId('project-space-context-pill')).toHaveTextContent('工作空间')
-    expect(screen.getByTestId('work-item-guide-summary-status')).toHaveTextContent('等待确认')
+    expect(screen.queryByText('等待确认')).not.toBeInTheDocument()
     expect(screen.queryByTestId('work-item-guide-summary-title')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-space-context-pill')).not.toHaveTextContent('我的任务')
     expect(screen.getByTestId('project-space-context-pill')).not.toHaveTextContent('WORK-1')
@@ -137,17 +137,25 @@ describe('WorkItemComposerGuide', () => {
         '完成默认工作项流程'
       )
     )
-    expect(screen.getByTestId('work-item-guide-summary-status')).toHaveTextContent('等待确认')
+    expect(screen.queryByText('等待确认')).not.toBeInTheDocument()
   })
 
-  test('refreshes the work-item status when runtime execution settles', async () => {
-    const runningItem = { ...item, status: 'in_progress' as const }
+  test('refreshes the linked work item when runtime execution settles', async () => {
+    const runningItem = {
+      ...item,
+      title: '执行中的任务',
+      status: 'in_progress' as const,
+    }
+    const settledItem = {
+      ...item,
+      title: '已同步的任务',
+    }
     const api = {
       listTaskBindings: vi.fn().mockResolvedValue(taskBindings),
       findCloudContextForTask: vi
         .fn()
         .mockResolvedValueOnce({ project, loop_item: runningItem })
-        .mockResolvedValueOnce({ project, loop_item: item }),
+        .mockResolvedValueOnce({ project, loop_item: settledItem }),
     } as unknown as ProjectSpaceApi
     const props = {
       item: runningItem,
@@ -157,13 +165,13 @@ describe('WorkItemComposerGuide', () => {
     const { rerender } = render(<WorkItemComposerGuide {...props} refreshKey="running" />)
 
     await waitFor(() =>
-      expect(screen.getByTestId('work-item-guide-summary-status')).toHaveTextContent('进行中')
+      expect(screen.getByTestId('work-item-guide-summary-title')).toHaveTextContent('执行中的任务')
     )
 
     rerender(<WorkItemComposerGuide {...props} refreshKey="done" />)
 
     await waitFor(() =>
-      expect(screen.getByTestId('work-item-guide-summary-status')).toHaveTextContent('等待确认')
+      expect(screen.getByTestId('work-item-guide-summary-title')).toHaveTextContent('已同步的任务')
     )
     expect(api.findCloudContextForTask).toHaveBeenCalledTimes(2)
   })

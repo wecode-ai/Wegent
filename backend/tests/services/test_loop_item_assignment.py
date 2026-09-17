@@ -4,6 +4,7 @@
 """Focused contracts for task assignment, robot approval, and queue state."""
 
 import uuid
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,6 +20,13 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.loop_items.service import loop_item_service
+from tests.utils.agent_resources import create_runnable_wegent_team
+
+
+@pytest.fixture(autouse=True)
+def isolate_notification_delivery():
+    with patch("app.core.async_utils.schedule_async_task"):
+        yield
 
 
 def _make_project(db: Session, user: User) -> CloudProject:
@@ -171,17 +179,11 @@ def test_assign_to_wegent_runtime_robot_keeps_robot_as_queue_identity(
 ) -> None:
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
-    team = Kind(
-        kind="Team",
-        name=f"board-team-{uuid.uuid4().hex[:8]}",
-        namespace="default",
+    team = create_runnable_wegent_team(
+        test_db,
         user_id=test_user.id,
-        is_active=True,
-        json={},
+        name_prefix="board",
     )
-    test_db.add(team)
-    test_db.commit()
-    test_db.refresh(team)
     bot = _make_bot(
         test_db,
         project,
@@ -222,20 +224,26 @@ def test_assign_to_member_records_chain(test_db: Session, test_user: User) -> No
     member = _make_member(test_db, project, "assignee", BaseRole.Developer)
     item = _make_item(test_db, project, test_user)
 
-    updated = loop_item_service.assign(
-        test_db,
-        project_id=int(project.id),
-        item_id=item.id,
-        user_id=test_user.id,
-        values=LoopItemAssign(
-            version=item.version,
-            assignee_type="user",
-            assignee_id=str(member.id),
-        ),
-    )
+    with patch(
+        "app.services.loop_items.service.loop_node_non_nullable_attributes",
+        return_value=frozenset(),
+    ) as nullable_contract:
+        updated = loop_item_service.assign(
+            test_db,
+            project_id=int(project.id),
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                version=item.version,
+                assignee_type="user",
+                assignee_id=str(member.id),
+            ),
+        )
 
+    nullable_contract.assert_called_once()
     assert updated.assignee_user_id == member.id
     assert updated.assignee_agent_id == ""
+    assert updated.assignee_team_id is None
     metadata = updated.metadata_json or {}
     assert metadata["assignment_history"][-1]["to_type"] == "user"
     assert metadata["assignment_history"][-1]["to_name"] == "assignee"
@@ -265,6 +273,8 @@ def test_assign_to_other_member_sends_notification(
         )
 
     notify.assert_called_once_with(
+        test_db,
+        actor_user_id=test_user.id,
         user_id=member.id,
         project_id=str(project.id),
         project_name=project.name,
@@ -590,3 +600,34 @@ def test_my_work_uses_latest_execution_truth_instead_of_task_binding(
     assert row["execution_attempt_no"] == 2
     assert row["execution_last_event_seq"] == 17
     assert row["ai_state"]["status"] == "unknown"
+
+
+def test_my_work_limits_results_before_loading_item_details(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    base_time = datetime(2026, 1, 1)
+    item_ids = [f"LIMIT-{index:03d}" for index in range(105)]
+    test_db.add_all(
+        [
+            LoopItem(
+                id=item_id,
+                cloud_project_id=project.id,
+                title=item_id,
+                description="",
+                status="inbox",
+                created_by_user_id=test_user.id,
+                metadata_json={},
+                updated_at=base_time + timedelta(minutes=index),
+            )
+            for index, item_id in enumerate(item_ids)
+        ]
+    )
+    test_db.commit()
+
+    rows = loop_item_service.list_my_work(test_db, test_user.id)
+
+    assert len(rows) == 100
+    assert [row["id"] for row in rows] == list(reversed(item_ids[5:]))
+    with pytest.raises(ValueError, match="limit must be between 1 and 100"):
+        loop_item_service.list_my_work(test_db, test_user.id, limit=101)

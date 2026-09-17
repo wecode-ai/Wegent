@@ -2,6 +2,43 @@ import { describe, expect, test, vi } from 'vitest'
 import { createResponseApiStreamState, emitResponseApiEvent } from './responseApiStream'
 
 describe('emitResponseApiEvent', () => {
+  test('releases unfinished tool parser state when a response terminates', () => {
+    const state = createResponseApiStreamState()
+
+    emitResponseApiEvent(
+      {},
+      'response.output_item.added',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        data: {
+          item: {
+            id: 'tool-1',
+            type: 'function_call',
+            name: 'exec_command',
+            arguments: '{"cmd":"long-running"}',
+          },
+        },
+      },
+      state
+    )
+
+    expect(state.toolContexts.size).toBe(1)
+
+    emitResponseApiEvent(
+      {},
+      'response.failed',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        data: { error: { message: 'cancelled' } },
+      },
+      state
+    )
+
+    expect(state.toolContexts.size).toBe(0)
+  })
+
   test('preserves a snake-case client user message id when a Codex turn starts', () => {
     const onChatStart = vi.fn()
 
@@ -76,6 +113,26 @@ describe('emitResponseApiEvent', () => {
       subtaskId: 'friendly-title-turn',
       deviceId: 'device-1',
       title: '测试标题生成功能',
+    })
+  })
+
+  test('maps runtime work changes', () => {
+    const onRuntimeWorkChanged = vi.fn()
+
+    emitResponseApiEvent(
+      { onRuntimeWorkChanged },
+      'runtime.work.changed',
+      {
+        taskId: 'task-1',
+        deviceId: 'device-1',
+        data: { taskId: 'task-1' },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onRuntimeWorkChanged).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      deviceId: 'device-1',
     })
   })
 
@@ -297,6 +354,36 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('maps completed Codex refusal text to an item snapshot', () => {
+    const onChatChunk = vi.fn()
+
+    emitResponseApiEvent(
+      { onChatChunk },
+      'response.refusal.done',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        data: {
+          itemId: 'message-1',
+          refusal: 'I cannot help with that.',
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onChatChunk).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'I cannot help with that.',
+      contentMode: 'snapshot',
+      result: {
+        itemId: 'message-1',
+        refusal: 'I cannot help with that.',
+      },
+    })
+  })
+
   test('maps Codex token usage notifications to context usage chunks', () => {
     const onChatChunk = vi.fn()
 
@@ -484,6 +571,43 @@ describe('emitResponseApiEvent', () => {
       blockId: 'text-1',
       contentDelta: 'next',
       status: 'streaming',
+    })
+  })
+
+  test('emits subagent block detail updates', () => {
+    const onBlockUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onBlockUpdated },
+      'response.block.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        deviceId: 'device-1',
+        data: {
+          block_id: 'subagent-thread-1',
+          updates: {
+            summary: 'Completed inspection',
+            output: 'Found the root cause',
+            parent_tool_use_id: 'subagent-parent',
+            agent_status: 'interrupted',
+            status: 'done',
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onBlockUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      blockId: 'subagent-thread-1',
+      summary: 'Completed inspection',
+      output: 'Found the root cause',
+      parentToolUseId: 'subagent-parent',
+      agentStatus: 'interrupted',
+      status: 'done',
     })
   })
 

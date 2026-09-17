@@ -60,7 +60,6 @@ describe('HarnessAppInstallDialog', () => {
         modelOptions={modelOptions}
         preview={preview}
         onCancel={vi.fn()}
-        onChooseAnother={vi.fn()}
         onInstall={onInstall}
         onModelChange={onModelChange}
       />
@@ -71,7 +70,7 @@ describe('HarnessAppInstallDialog', () => {
     expect(screen.getByText('>=22')).toBeInTheDocument()
     expect(screen.getByTestId('harness-app-install-backdrop')).toBeInTheDocument()
     expect(screen.getByTestId('harness-app-install-close')).toBeInTheDocument()
-    expect(screen.getByTestId('harness-app-choose-another')).toBeInTheDocument()
+    expect(screen.queryByTestId('harness-app-choose-another')).not.toBeInTheDocument()
     expect(screen.getByTestId('harness-app-install-cancel')).toBeInTheDocument()
 
     fireEvent.change(screen.getByTestId('harness-app-model-select'), {
@@ -97,7 +96,6 @@ describe('HarnessAppInstallDialog', () => {
           issues: ['plugin-manifest.json 缺失'],
         }}
         onCancel={vi.fn()}
-        onChooseAnother={vi.fn()}
         onInstall={vi.fn()}
         onModelChange={vi.fn()}
       />

@@ -4,6 +4,7 @@ import {
   getElementMetrics,
   getSingleElementMetrics,
   verifyViewImageProcessingBlock,
+  waitForComposerFocus,
   waitForElementInsideScroller,
   waitForOverflowMetrics,
   waitForSnapshot,
@@ -826,13 +827,20 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
   assert.ok(turnMatch, `Unable to identify the virtualized navigation turn from "${assistantText}"`)
 
   assert.equal(Number(turnMatch[1]), turnNumber, 'Scrolled to the wrong navigation turn')
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 750))
 
-  const mountedUserMessages = await control.command(
-    'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
-  )
   const virtualizedOutPrompt = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_1`
+  let mountedUserMessages = ''
+  const virtualizationStartedAt = Date.now()
+  while (Date.now() - virtualizationStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    mountedUserMessages = await control.command(
+      'getText',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+    )
+    if (!mountedUserMessages.includes(virtualizedOutPrompt)) {
+      break
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
   assert.ok(
     !mountedUserMessages.includes(virtualizedOutPrompt),
     'The oldest user row remained mounted, so the turn navigation fixture was not virtualized'
@@ -849,6 +857,17 @@ async function verifyEnvironmentPanelScrollStability(control) {
   const scrollFrameSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-scroll-frame"]`
   const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
   const environmentPanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-container"]`
+  const environmentButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-button"]`
+  if (
+    Number(
+      await control.command(
+        'getElementCount',
+        `${environmentPanelSelector} [data-testid="environment-info-popover"]`
+      )
+    ) === 0
+  ) {
+    await control.command('click', environmentButtonSelector, { visible: true })
+  }
   await control.command(
     'waitFor',
     `${environmentPanelSelector} [data-testid="environment-info-popover"]`,
@@ -971,25 +990,6 @@ async function verifyEnvironmentPanelScrollStability(control) {
   await captureVerificationScreenshot(control, 'environment-panel-scroll-03-downward.png')
 }
 
-export async function waitForComposerFocus(control, timeoutMs, failureMessage) {
-  const focusStartedAt = Date.now()
-  let activeElementTestId = ''
-  while (Date.now() - focusStartedAt < timeoutMs) {
-    activeElementTestId = await control.command('getActiveElementTestId', 'body')
-    if (activeElementTestId === 'chat-message-input') return
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
-    control.command('getComposerFocusSnapshot', 'body'),
-    control.command('getWorkbenchDebugSnapshot', 'body'),
-    control.command('getComposerDiagnosticsSnapshot', 'body'),
-  ])
-  throw new Error(
-    `${failureMessage}; activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
-      `workbench=${workbenchSnapshot}; composerDiagnostics=${composerDiagnostics}`
-  )
-}
-
 async function reopenCurrentTurnNavigationTask(
   control,
   composerSelector,
@@ -1026,17 +1026,22 @@ async function reopenCurrentTurnNavigationTask(
   if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
     const expectedMessageCount = expectedConversationTurnCount * 2
     let paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    if (paginatedSnapshot.pane?.messageSummary.total !== expectedMessageCount) {
+    const paginationStartedAt = Date.now()
+    while (
+      paginatedSnapshot.pane?.messageSummary.total !== expectedMessageCount &&
+      paginatedSnapshot.pane?.transcript.hasMoreBefore === true &&
+      Date.now() - paginationStartedAt < DEFAULT_STEP_TIMEOUT_MS
+    ) {
       await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      const previousMessageCount = paginatedSnapshot.pane?.messageSummary.total ?? 0
       await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
-      const paginationStartedAt = Date.now()
       while (Date.now() - paginationStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
         paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         if (
           paginatedSnapshot.pane?.transcript.loadingMoreBefore === false &&
-          paginatedSnapshot.pane?.messageSummary.total === expectedMessageCount
+          paginatedSnapshot.pane?.messageSummary.total > previousMessageCount
         ) {
           break
         }
@@ -1531,5 +1536,6 @@ export {
   assertLatestScenarioRequestContains,
   verifyPausedQueueLifecycle,
   verifyLastUserMessageEdit,
+  waitForComposerFocus,
   waitForSuccessfulMatrixSubmission,
 }

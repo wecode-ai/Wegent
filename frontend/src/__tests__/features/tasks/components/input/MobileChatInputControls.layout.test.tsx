@@ -124,15 +124,29 @@ jest.mock('@/features/tasks/components/selector/VideoSettingsPopover', () => ({
   default: ({
     showDuration,
     hiddenVideoParams,
+    inline,
   }: {
     showDuration?: boolean
     hiddenVideoParams?: string[]
+    inline?: boolean
   }) => (
     <button
       type="button"
       data-testid="mobile-video-settings"
       data-show-duration={showDuration === false ? 'false' : 'true'}
       data-hidden-video-params={hiddenVideoParams?.join(',')}
+      data-inline={inline ? 'true' : 'false'}
+    />
+  ),
+}))
+
+jest.mock('@/features/tasks/components/selector/ImageSizeSelector', () => ({
+  __esModule: true,
+  default: ({ inline, selectedSize }: { inline?: boolean; selectedSize?: string }) => (
+    <div
+      data-testid="image-size-selector-inline"
+      data-inline={inline ? 'true' : 'false'}
+      data-selected-size={selectedSize}
     />
   ),
 }))
@@ -387,6 +401,44 @@ describe('MobileChatInputControls layout', () => {
     expect(moreDrawer).not.toContainElement(screen.getByTestId('mobile-model-selector'))
   })
 
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    'shows code repositories with team requirement %s and session requirement %s',
+    (teamRequiresWorkspace, requiresWorkspace) => {
+      render(
+        <MobileChatInputControls
+          {...buildProps()}
+          taskType="code"
+          selectedTeam={{
+            ...selectedTeam,
+            agent_type: 'ClaudeCode',
+            requires_workspace: teamRequiresWorkspace,
+          }}
+          showRepositorySelector
+          effectiveRequiresWorkspace={requiresWorkspace}
+        />
+      )
+
+      fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+
+      expect(screen.getByTestId('mobile-input-more-actions-menu')).toContainElement(
+        screen.getByRole('button', { name: 'Repository' })
+      )
+    }
+  )
+
+  it('keeps repository selection hidden when it is unavailable for the current mode', () => {
+    render(<MobileChatInputControls {...buildProps()} />)
+
+    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+
+    expect(screen.queryByRole('button', { name: 'Repository' })).not.toBeInTheDocument()
+  })
+
   it('clears the selected agent from the compact control', () => {
     const onClearTeam = jest.fn()
 
@@ -504,13 +556,21 @@ describe('MobileChatInputControls layout', () => {
       />
     )
 
-    expect(screen.getByTestId('mobile-video-model-selector')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-team-selector-slot')).toContainElement(
       screen.getByTestId('mobile-team-selector')
     )
     expect(screen.queryByTestId('mobile-model-selector-slot')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-video-model-selector')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+    expect(screen.getByTestId('mobile-video-configuration-button')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('mobile-video-configuration-button'))
+    expect(screen.getByTestId('mobile-video-configuration')).toContainElement(
+      screen.getByTestId('mobile-video-model-selector')
+    )
+    expect(screen.getByTestId('mobile-video-model-selector')).toHaveAttribute(
+      'data-trigger-variant',
+      'settings-row'
+    )
     expect(screen.getByTestId('mobile-video-settings')).toHaveAttribute(
       'data-show-duration',
       'false'
@@ -518,6 +578,46 @@ describe('MobileChatInputControls layout', () => {
     expect(screen.getByTestId('mobile-video-settings')).toHaveAttribute(
       'data-hidden-video-params',
       'duration'
+    )
+    expect(screen.getByTestId('mobile-video-settings')).toHaveAttribute('data-inline', 'true')
+  })
+
+  it('moves video mode and model out of the primary row', () => {
+    render(
+      <MobileChatInputControls
+        {...buildProps()}
+        taskType="video"
+        videoGenerationModes={[
+          { id: 'text_to_video', label: 'Text to video' },
+          { id: 'omni_reference', label: 'Omni reference' },
+        ]}
+        selectedVideoGenerationMode="omni_reference"
+        onVideoGenerationModeChange={jest.fn()}
+        selectedVideoModel={null}
+        onVideoModelChange={jest.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mobile-team-selector-slot')).toContainElement(
+      screen.getByTestId('mobile-team-selector')
+    )
+    expect(screen.queryByTestId('video-generation-mode-selector')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-video-model-selector')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-video-configuration-button')).toHaveClass('h-11', 'w-11')
+
+    fireEvent.click(screen.getByTestId('mobile-video-configuration-button'))
+
+    const videoConfiguration = screen.getByTestId('mobile-video-configuration')
+    expect(videoConfiguration).toContainElement(screen.getByTestId('video-generation-mode-options'))
+    expect(videoConfiguration).toContainElement(screen.getByTestId('mobile-video-model-selector'))
+    expect(screen.queryByTestId('video-generation-mode-selector')).not.toBeInTheDocument()
+    expect(screen.getByTestId('video-generation-mode-omni_reference')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('mobile-video-model-selector')).toHaveAttribute(
+      'data-trigger-variant',
+      'settings-row'
     )
   })
 
@@ -548,11 +648,12 @@ describe('MobileChatInputControls layout', () => {
 
     expect(screen.queryByTestId('mobile-video-model-selector')).not.toBeInTheDocument()
     expect(screen.queryByTestId('mobile-video-settings')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-video-configuration-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('mobile-input-more-actions-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('send-button')).toBeInTheDocument()
   })
 
-  it('shows the image agent and model selectors in the primary row', () => {
+  it('moves image model and size controls out of the primary row', () => {
     render(
       <MobileChatInputControls
         {...buildProps()}
@@ -560,19 +661,53 @@ describe('MobileChatInputControls layout', () => {
         selectedImageModel={null}
         onImageModelChange={jest.fn()}
         isImageModelsLoading={false}
+        selectedImageSize="2048x2048"
+        onImageSizeChange={jest.fn()}
       />
     )
 
     expect(screen.getByTestId('mobile-team-selector-slot')).toContainElement(
       screen.getByTestId('mobile-team-selector')
     )
-    expect(screen.getByTestId('mobile-image-model-selector-slot')).toContainElement(
-      screen.getByTestId('mobile-image-model-selector')
-    )
+    expect(screen.queryByTestId('mobile-image-model-selector-slot')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-image-model-selector')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-image-configuration-button')).toHaveClass('h-11', 'w-11')
+
+    fireEvent.click(screen.getByTestId('mobile-image-configuration-button'))
+
+    const imageConfiguration = screen.getByTestId('mobile-image-configuration')
+    expect(imageConfiguration).toContainElement(screen.getByTestId('mobile-image-model-selector'))
+    expect(imageConfiguration).toContainElement(screen.getByTestId('image-size-selector-inline'))
     expect(screen.getByTestId('mobile-image-model-selector')).toHaveAttribute(
       'data-trigger-variant',
-      'compact'
+      'settings-row'
+    )
+    expect(screen.getByTestId('image-size-selector-inline')).toHaveAttribute('data-inline', 'true')
+    expect(screen.getByTestId('image-size-selector-inline')).toHaveAttribute(
+      'data-selected-size',
+      '2048x2048'
     )
     expect(screen.queryByTestId('mobile-model-selector-slot')).not.toBeInTheDocument()
+  })
+
+  it('marks the mobile image configuration trigger when a model is required', () => {
+    render(
+      <MobileChatInputControls
+        {...buildProps()}
+        taskType="image"
+        selectedImageModel={null}
+        onImageModelChange={jest.fn()}
+        isModelSelectionRequired
+      />
+    )
+
+    expect(screen.getByTestId('mobile-image-configuration-button')).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    )
+    expect(screen.getByTestId('mobile-image-configuration-button')).toHaveClass(
+      'border-error',
+      'text-error'
+    )
   })
 })

@@ -44,6 +44,7 @@ import type {
   RuntimeTaskCancelResponse,
   RuntimeTaskCreateRequest,
   RuntimeTaskCreateResponse,
+  RuntimeTaskMaterializeResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
   RuntimeTaskQueueReorderRequest,
@@ -87,6 +88,12 @@ import type {
 import type { HttpClient, HttpRequestOptions } from './http'
 import type { KeybindingOverride } from '@/lib/keybindings'
 
+export const REMOTE_TEAM_BACKEND_UNSUPPORTED = 'REMOTE_TEAM_BACKEND_UNSUPPORTED'
+
+export interface RuntimeWorkListRequestOptions extends Pick<HttpRequestOptions, 'signal'> {
+  preferCached?: boolean
+}
+
 export function createRuntimeWorkApi(client: HttpClient) {
   return {
     prepareRuntimeModel(data: RuntimeModelPrepareRequest): Promise<boolean> {
@@ -94,10 +101,10 @@ export function createRuntimeWorkApi(client: HttpClient) {
       return Promise.resolve(true)
     },
     listRuntimeWork(
-      requestOptions?: Pick<HttpRequestOptions, 'signal'>
+      requestOptions?: RuntimeWorkListRequestOptions
     ): Promise<RuntimeWorkListResponse> {
-      return requestOptions
-        ? client.get('/runtime-work', requestOptions)
+      return requestOptions?.signal
+        ? client.get('/runtime-work', { signal: requestOptions.signal })
         : client.get('/runtime-work')
     },
     getKeybindings(): Promise<{ keybindings: KeybindingOverride[] }> {
@@ -359,6 +366,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       return client.post('/runtime-work/create', data)
+    },
+    materializeRuntimeTask(
+      data: RuntimeTaskCreateRequest
+    ): Promise<RuntimeTaskMaterializeResponse> {
+      return client.post('/runtime-work/materialize', data)
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
       return client.post('/runtime-work/fork', data)

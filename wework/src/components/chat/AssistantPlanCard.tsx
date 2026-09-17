@@ -75,7 +75,11 @@ export function AssistantPlanCard({
             </span>
           ) : null}
         </div>
-        <PlanCardActions content={content} onDownload={handleDownload} onExpand={openPlan} />
+        <PlanCardActions
+          content={content}
+          onDownload={handleDownload}
+          onExpand={onOpenPlan ? openPlan : undefined}
+        />
       </div>
       <div
         data-testid="assistant-plan-card-preview"
@@ -100,7 +104,7 @@ function PlanCardActions({
 }: {
   content: string
   onDownload: () => void | Promise<void>
-  onExpand: () => void
+  onExpand?: () => void
 }) {
   const { t } = useTranslation('chat')
   const [copied, setCopied] = useState(false)
@@ -129,13 +133,17 @@ function PlanCardActions({
       onClick: handleCopy,
       testId: 'assistant-plan-copy-button',
     },
-    {
-      key: 'expand',
-      label: t('plan_card.expand'),
-      icon: <Maximize2 className="h-4 w-4" aria-hidden="true" />,
-      onClick: onExpand,
-      testId: 'assistant-plan-expand-button',
-    },
+    ...(onExpand
+      ? [
+          {
+            key: 'expand',
+            label: t('plan_card.expand'),
+            icon: <Maximize2 className="h-4 w-4" aria-hidden="true" />,
+            onClick: onExpand,
+            testId: 'assistant-plan-expand-button',
+          },
+        ]
+      : []),
   ]
 
   return (

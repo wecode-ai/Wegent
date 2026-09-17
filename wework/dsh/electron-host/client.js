@@ -78,6 +78,9 @@ window.__ModuleLoader__.load({
         app: Object.freeze({
           getVersion: () => invoke('app.getVersion'),
         }),
+        deviceDiagnostics: Object.freeze({
+          microphone: (options = {}) => invoke('deviceDiagnostics.microphone', options),
+        }),
         window: Object.freeze({
           getState: () => invoke('window.getState'),
           minimize: () => invoke('window.minimize'),

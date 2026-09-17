@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   SettingsGroup,
@@ -33,6 +34,7 @@ import {
   type AppPreferences,
   type AppPreferencesPatch,
   type FixedWorkspaceTabPreference,
+  type WorkbenchMode,
 } from '@/desktop/appPreferences'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
@@ -41,6 +43,9 @@ import { useAppPreferencesState } from '@/features/app-preferences/useAppPrefere
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
+import { changeWorkbenchMode } from '@/features/workbench-mode/workbenchMode'
+import { getTelemetryConfig } from '@/telemetry/config'
+import { getPlatform } from '@/lib/platform'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -83,6 +88,7 @@ interface TrayDisplayOption {
 }
 
 export function GeneralSettingsPage() {
+  const telemetryDistribution = getTelemetryConfig().distribution
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const appPreferences = useAppPreferencesState()
@@ -96,9 +102,19 @@ export function GeneralSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showImportDialog, setShowImportDialog] = useState(false)
+  const [pendingWorkbenchMode, setPendingWorkbenchMode] = useState<WorkbenchMode | null>(null)
   const [recordingPopoutShortcut, setRecordingPopoutShortcut] = useState(false)
   const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(DEFAULT_MAX_CONCURRENT_TASKS)
   const [installedSmartApps, setInstalledSmartApps] = useState<HarnessAppInstallation[]>([])
+  const [pendingSendKey, setPendingSendKey] = useState<'enter' | 'cmd_enter' | null>(null)
+  const [pendingFollowUpBehavior, setPendingFollowUpBehavior] = useState<'queue' | 'guide' | null>(
+    null
+  )
+  const persistedSendKey = workbench?.state?.user?.preferences?.send_key ?? 'enter'
+  const sendKey = pendingSendKey ?? persistedSendKey
+  const persistedFollowUpBehavior =
+    workbench?.state?.user?.preferences?.follow_up_behavior ?? 'queue'
+  const followUpBehavior = pendingFollowUpBehavior ?? persistedFollowUpBehavior
 
   useEffect(() => {
     if (appPreferences && !appPreferences.loaded) return
@@ -314,6 +330,75 @@ export function GeneralSettingsPage() {
     }
   }
 
+  const handleSendKeyChange = async (nextSendKey: 'enter' | 'cmd_enter') => {
+    if (nextSendKey === sendKey || !workbench?.updateUserPreferences) return
+
+    setPendingSendKey(nextSendKey)
+    setSaving(true)
+    setError(null)
+    try {
+      await workbench.updateUserPreferences({ send_key: nextSendKey })
+    } catch (saveError) {
+      console.error('[Wework] Failed to update message send shortcut', saveError)
+      setError(t('workbench.general_settings_send_key_save_failed'))
+    } finally {
+      setPendingSendKey(null)
+      setSaving(false)
+    }
+  }
+
+  const handleFollowUpBehaviorChange = async (nextFollowUpBehavior: 'queue' | 'guide') => {
+    if (nextFollowUpBehavior === followUpBehavior || !workbench?.updateUserPreferences) {
+      return
+    }
+
+    setPendingFollowUpBehavior(nextFollowUpBehavior)
+    setSaving(true)
+    setError(null)
+    try {
+      await workbench.updateUserPreferences({
+        follow_up_behavior: nextFollowUpBehavior,
+      })
+    } catch (saveError) {
+      console.error('[Wework] Failed to update follow-up behavior', saveError)
+      setError(t('workbench.general_settings_follow_up_behavior_save_failed'))
+    } finally {
+      setPendingFollowUpBehavior(null)
+      setSaving(false)
+    }
+  }
+
+  const confirmWorkbenchModeChange = async () => {
+    if (!pendingWorkbenchMode) return
+    if (pendingWorkbenchMode === preferences.workbenchMode) {
+      setPendingWorkbenchMode(null)
+      return
+    }
+
+    const previousMode = preferences.workbenchMode
+    const nextMode = pendingWorkbenchMode
+    setPreferences(current => ({ ...current, workbenchMode: nextMode }))
+    setSaving(true)
+    setError(null)
+    try {
+      setPreferences(await changeWorkbenchMode(previousMode, nextMode))
+    } catch (saveError) {
+      console.error('[Wework] Failed to update workbench mode', saveError)
+      try {
+        setPreferences(await getAppPreferences())
+      } catch (refreshError) {
+        console.error(
+          '[Wework] Failed to refresh workbench mode after update failure',
+          refreshError
+        )
+      }
+      setError(t('workbench.general_settings_mode_save_failed'))
+    } finally {
+      setPendingWorkbenchMode(null)
+      setSaving(false)
+    }
+  }
+
   const saveFixedWorkspaceTabs = async (
     fixedWorkspaceTabs: FixedWorkspaceTabPreference[],
     startupWorkspaceTabId = preferences.startupWorkspaceTabId ??
@@ -436,6 +521,42 @@ export function GeneralSettingsPage() {
         </div>
         <SettingsGroup className="rounded-xl !bg-background">
           <SettingsRow
+            label={t('workbench.general_settings_mode')}
+            description={t('workbench.general_settings_mode_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <div className="grid h-8 w-full shrink-0 grid-cols-2 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
+                {(['focus', 'developer'] as const).map(mode => {
+                  const active = preferences.workbenchMode === mode
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      data-testid={`general-workbench-mode-${mode}-button`}
+                      disabled={loading || saving}
+                      title={t(`workbench.general_settings_mode_${mode}_description`)}
+                      aria-pressed={active}
+                      onClick={() => {
+                        if (!active) setPendingWorkbenchMode(mode)
+                      }}
+                      className={[
+                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                        active
+                          ? 'bg-text-primary text-background shadow-sm'
+                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
+                      ].join(' ')}
+                    >
+                      <span className="truncate">
+                        {t(`workbench.general_settings_mode_${mode}`)}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            }
+          />
+          <SettingsRow
             label={t('workbench.general_settings_language_preference')}
             description={t('workbench.general_settings_language_description')}
             className={GENERAL_ROW_CLASS_NAME}
@@ -461,6 +582,80 @@ export function GeneralSettingsPage() {
                       ].join(' ')}
                     >
                       <span className="truncate">{t(`workbench.${option.shortLabelKey}`)}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            }
+          />
+          <SettingsRow
+            label={t('workbench.general_settings_send_key')}
+            description={t('workbench.general_settings_send_key_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <div className="grid h-8 w-full shrink-0 grid-cols-2 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
+                {(['enter', 'cmd_enter'] as const).map(option => {
+                  const active = sendKey === option
+                  const label =
+                    option === 'enter'
+                      ? t('workbench.general_settings_send_key_enter')
+                      : t(
+                          'workbench.general_settings_send_key_command_enter',
+                          '{{modifier}} Enter 发送',
+                          {
+                            modifier: getPlatform() === 'mac' ? '⌘' : 'Ctrl',
+                          }
+                        )
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      data-testid={`general-send-key-${option}-button`}
+                      disabled={loading || saving || !workbench?.updateUserPreferences}
+                      aria-pressed={active}
+                      onClick={() => void handleSendKeyChange(option)}
+                      className={[
+                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                        active
+                          ? 'bg-text-primary text-background shadow-sm'
+                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
+                      ].join(' ')}
+                    >
+                      <span className="truncate">{label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            }
+          />
+          <SettingsRow
+            label={t('workbench.general_settings_follow_up_behavior')}
+            description={t('workbench.general_settings_follow_up_behavior_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <div className="grid h-8 w-full shrink-0 grid-cols-2 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
+                {(['queue', 'guide'] as const).map(option => {
+                  const active = followUpBehavior === option
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      data-testid={`general-follow-up-${option}-button`}
+                      disabled={loading || saving || !workbench?.updateUserPreferences}
+                      aria-pressed={active}
+                      onClick={() => void handleFollowUpBehaviorChange(option)}
+                      className={[
+                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                        active
+                          ? 'bg-text-primary text-background shadow-sm'
+                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
+                      ].join(' ')}
+                    >
+                      <span className="truncate">
+                        {t(`workbench.general_settings_follow_up_behavior_${option}`)}
+                      </span>
                     </button>
                   )
                 })}
@@ -824,19 +1019,21 @@ export function GeneralSettingsPage() {
         </SettingsGroup>
       </section>
 
-      <section data-testid="general-settings-privacy-section" className="mt-12">
-        <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
-          {t('workbench.general_settings_privacy_title')}
-        </div>
-        <SettingsGroup className="rounded-xl !bg-background">
-          {renderSwitchRow({
-            preferenceKey: 'telemetryEnabled',
-            testId: 'general-telemetry-toggle',
-            label: t('workbench.general_settings_telemetry'),
-            description: t('workbench.general_settings_telemetry_description'),
-          })}
-        </SettingsGroup>
-      </section>
+      {telemetryDistribution === 'public' ? (
+        <section data-testid="general-settings-privacy-section" className="mt-12">
+          <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
+            {t('workbench.general_settings_privacy_title')}
+          </div>
+          <SettingsGroup className="rounded-xl !bg-background">
+            {renderSwitchRow({
+              preferenceKey: 'telemetryEnabled',
+              testId: 'general-telemetry-toggle',
+              label: t('workbench.general_settings_telemetry'),
+              description: t('workbench.general_settings_telemetry_description'),
+            })}
+          </SettingsGroup>
+        </section>
+      ) : null}
 
       <section data-testid="general-settings-popout-section" className="mt-12">
         <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
@@ -913,6 +1110,25 @@ export function GeneralSettingsPage() {
       {showImportDialog && (
         <ExternalContentImportDialog onClose={() => setShowImportDialog(false)} />
       )}
+      <ConfirmDialog
+        open={pendingWorkbenchMode !== null}
+        title={
+          pendingWorkbenchMode
+            ? t(`workbench.general_settings_mode_${pendingWorkbenchMode}_confirm_title`)
+            : ''
+        }
+        description={
+          pendingWorkbenchMode
+            ? t(`workbench.general_settings_mode_${pendingWorkbenchMode}_confirm_description`)
+            : ''
+        }
+        cancelLabel={t('common.cancel', '取消')}
+        confirmLabel={t('workbench.general_settings_mode_confirm_action')}
+        confirmTestId="general-workbench-mode-confirm-button"
+        pending={saving}
+        onClose={() => setPendingWorkbenchMode(null)}
+        onConfirm={() => void confirmWorkbenchModeChange()}
+      />
     </SettingsPage>
   )
 }

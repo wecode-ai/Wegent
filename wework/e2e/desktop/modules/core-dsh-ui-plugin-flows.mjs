@@ -18,6 +18,15 @@ const ROOT_SELECTOR = '[data-testid="wework-dsh-root"]'
 const DESKTOP_HOST_INVOKE_PATH = '/wework/electron-host/v1/invoke'
 const UI_PLUGINS = [
   {
+    name: '@wegent/dsh-conversation-export',
+    directory: 'wework-conversation-export',
+    slot: 'wework.shell.overlay',
+    contributions: ['conversation-export.dialog'],
+    navigation: null,
+    route: null,
+    testId: null,
+  },
+  {
     name: '@wegent/dsh-ui-core-apps',
     directory: 'wework-ui-core-apps',
     slot: 'wework.app',
@@ -44,16 +53,32 @@ const UI_PLUGINS = [
       'appshots',
       'plugins',
       'browser',
-      'git-hosting',
       'execution-environments',
       'harnesses',
-      'worktrees',
       'hooks',
       'archived-conversations',
     ],
     navigation: null,
     route: '/settings/appearance',
     testId: 'appearance-settings-page',
+  },
+  {
+    name: '@wegent/dsh-ui-git',
+    directory: 'wework-ui-git',
+    slot: 'wework.settings.page',
+    contributions: ['git-hosting', 'worktrees'],
+    navigation: null,
+    route: '/settings/git-hosting',
+    testId: 'git-hosting-settings-page',
+  },
+  {
+    name: '@wegent/dsh-ui-outputs',
+    directory: 'wework-ui-outputs',
+    slot: 'wework.conversation.summary',
+    contributions: ['outputs-summary'],
+    navigation: null,
+    route: null,
+    testId: null,
   },
   {
     name: '@wegent/dsh-ui-plugin-center',
@@ -97,11 +122,24 @@ const UI_PLUGINS = [
 ]
 const DEMO_PLUGIN = {
   name: '@wegent/dsh-wework-extension-demo',
-  directory: fileURLToPath(new URL('../../../dsh/examples/ui-extension-demo', import.meta.url)),
+  directory: fileURLToPath(
+    new URL(
+      '../../../dsh/plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo',
+      import.meta.url
+    )
+  ),
   contributions: {
     'wework.action': ['dsh-extension-demo.open'],
     'wework.app': ['dsh-extension-demo'],
+    'wework.task.status': ['dsh-extension-demo.task-status'],
+    'wework.conversation.summary': ['dsh-extension-demo.summary-section'],
+    'wework.board.card.status': ['dsh-extension-demo.board-card-status'],
+    'wework.workspace.menu.section': ['demo-workspace-menu'],
+    'wework.plugins.action': ['dsh-extension-demo.create'],
+    'wework.project.create.section': ['dsh-extension-demo.project-create'],
+    'wework.project.work.section': ['dsh-extension-demo.project-work'],
     'wework.route': ['dsh-extension-demo.route'],
+    'wework.runtime-profile.workspace-policy': ['dsh_extension_demo'],
     'wework.sidebar.navigation': ['dsh-extension-demo.navigation'],
     'wework.settings.page': ['dsh-extension-demo.settings'],
     'wework.workspace.tab': ['dsh-extension-demo.workspace'],

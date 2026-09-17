@@ -68,6 +68,7 @@ jest.mock('@/apis/code-wiki', () => ({
   codeWikiApi: {
     pages: jest.fn(),
     cancel: jest.fn(),
+    strategies: jest.fn().mockResolvedValue({ default_strategy: null, strategies: [] }),
   },
 }))
 
@@ -285,6 +286,35 @@ describe('navigating a wiki on a narrow screen', () => {
     expect(configure).toHaveClass('h-11', 'w-11')
     fireEvent.click(configure)
     expect(onConfigure).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses generation copy when no wiki version has been published', async () => {
+    render(<CodeWikiReader wiki={WIKI} canConfigure />)
+
+    fireEvent.click(await screen.findByTestId('code-wiki-regenerate'))
+
+    const dialog = await screen.findByTestId('code-wiki-regenerate-confirm')
+    expect(within(dialog).getByText('codeWiki.reader.generateFirstTitle')).toBeInTheDocument()
+    expect(within(dialog).getByText('codeWiki.reader.generateFirstDescription')).toBeInTheDocument()
+  })
+
+  it('keeps update copy when a wiki version has been published', async () => {
+    mockRunStatus = {
+      status: 'completed',
+      generation_id: 34,
+      error_message: '',
+      failure_code: '',
+      is_stale: false,
+      last_published_at: '2026-09-01T00:00:00Z',
+      last_published_commit: 'published',
+    }
+    render(<CodeWikiReader wiki={WIKI} canConfigure />)
+
+    fireEvent.click(await screen.findByTestId('code-wiki-regenerate'))
+
+    const dialog = await screen.findByTestId('code-wiki-regenerate-confirm')
+    expect(within(dialog).getByText('codeWiki.reader.updateTitle')).toBeInTheDocument()
+    expect(within(dialog).getByText('codeWiki.reader.updateDescription')).toBeInTheDocument()
   })
 
   it('lets a manager stop the in-flight generation from its progress card', async () => {

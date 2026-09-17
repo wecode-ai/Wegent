@@ -17,6 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
   packages: read
 
@@ -36,9 +37,9 @@ jobs:
       - name: Classify changed paths
         id: classify
         env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          FORCE_ALL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
+          FORCE_ALL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
         run: |
           if [[ "$FORCE_ALL" == "true" ]]; then
             .github/scripts/classify-ci-changes.sh --all
@@ -325,6 +326,18 @@ jobs:
       qdrant:
         image: qdrant/qdrant:v1.15.4
 
+      minio:
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r0
+        env:
+          MINIO_ROOT_USER: wegent-e2e
+          MINIO_ROOT_PASSWORD: wegent-e2e-secret
+        options: >-
+          --health-cmd="curl -f http://localhost:9000/minio/health/live"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-start-period=20s
+          --health-retries=6
+
     steps:
       - name: Generate internal service token
         run: |
@@ -361,6 +374,7 @@ jobs:
         uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: "3.11"
+          setup-uv: "false"
 
       - name: Install shared module
         working-directory: ./shared
@@ -377,10 +391,12 @@ jobs:
           uv pip install -e ../shared
 
       - name: Download frontend E2E build
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: frontend-next-build
-          path: .ci-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            frontend-next-build \
+            .ci-artifacts
 
       - name: Install Knowledge Runtime dependencies
         run: uv sync --project knowledge_runtime --frozen
@@ -418,6 +434,11 @@ jobs:
           RAG_RUNTIME_MODE: remote
           KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           CHUNK_STORAGE_ENABLED: "true"
+          ATTACHMENT_S3_ENDPOINT: minio:9000
+          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
+          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
+          ATTACHMENT_S3_USE_SSL: "false"
+          DELIVERY_S3_BUCKET: wegent-deliveries
         run: |
           source .venv/bin/activate
           nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
@@ -476,6 +497,7 @@ jobs:
           wait_for_url http://localhost:8000/api/docs \
             && wait_for_url http://localhost:8200/internal/rag/health \
             && wait_for_url http://qdrant:6333/readyz \
+            && wait_for_url http://minio:9000/minio/health/live \
             && wait_for_url http://localhost:8100/health \
             && wait_for_url http://localhost:3000 \
             && wait_for_url http://localhost:9999/health \
@@ -485,6 +507,20 @@ jobs:
         run: |
           curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
 
+      - name: Run DingTalk private-chat AI Card E2E
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ALGORITHM: HS256
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "true"
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
+
       - name: Verify Chat Shell is running
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
@@ -492,6 +528,7 @@ jobs:
       - name: Run E2E tests (Sharded)
         working-directory: ./frontend
         env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           E2E_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:8000
           MOCK_MODEL_SERVER_URL: http://localhost:9999
@@ -502,7 +539,8 @@ jobs:
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
       - name: Run Provider-native E2E tests serially
-        if: matrix.shardIndex == 1
+        if: matrix.shardIndex == 4
+        timeout-minutes: 15
         working-directory: ./frontend
         env:
           E2E_BASE_URL: http://localhost:3000
@@ -579,6 +617,10 @@ jobs:
 
   executor-e2e-tests:
     name: Executor E2E Tests
+    permissions:
+      actions: read
+      contents: read
+      packages: read
     needs:
       [
         build-frontend-e2e,
@@ -726,10 +768,12 @@ jobs:
           key: ${{ steps.claude-code-cli-cache.outputs.cache-primary-key }}
 
       - name: Download frontend E2E build
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: frontend-next-build
-          path: .ci-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            frontend-next-build \
+            .ci-artifacts
 
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh
@@ -747,10 +791,12 @@ jobs:
 
       - name: Download fork Executor E2E runtime
         if: needs.build-executor-e2e-runtime.outputs.artifact == 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: executor-e2e-runtime
-          path: .ci-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            executor-e2e-runtime \
+            .ci-artifacts
 
       - name: Restore fork Executor E2E runtime
         if: needs.build-executor-e2e-runtime.outputs.artifact == 'true'
@@ -775,6 +821,7 @@ jobs:
           echo "CALLBACK_HOST=http://$DOCKER_BRIDGE_HOST:8001" >> "$GITHUB_ENV"
           echo "TASK_API_DOMAIN=http://$DOCKER_BRIDGE_HOST:8000" >> "$GITHUB_ENV"
           echo "E2E_CLAUDE_MODEL_SERVER_URL=http://$DOCKER_BRIDGE_HOST:9999" >> "$GITHUB_ENV"
+          echo "E2E_CODEX_MODEL_SERVER_URL=http://$DOCKER_BRIDGE_HOST:9999" >> "$GITHUB_ENV"
           echo "Docker bridge host: $DOCKER_BRIDGE_HOST"
 
       - name: Start backend server
@@ -826,7 +873,7 @@ jobs:
           WEGENT_BACKEND_URL: http://localhost:8000
           DEVICE_ID: e2e-claudecode-device
           DEVICE_NAME: E2E ClaudeCode Device
-          DEVICE_TYPE: local
+          DEVICE_TYPE: app
           BIND_SHELL: claudecode
           WEGENT_EXECUTOR_HOME: ${{ runner.temp }}/wegent-executor
           LOCAL_WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace
@@ -951,6 +998,14 @@ jobs:
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
 
+      - name: Run Executor Manager resilience E2E tests
+        working-directory: ./executor_manager
+        env:
+          E2E_REDIS_URL: redis://localhost:6379/15
+          OTEL_ENABLED: "false"
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest e2e_tests/ --no-cov -v
+
       - name: Run Executor E2E tests
         env:
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
@@ -984,6 +1039,7 @@ jobs:
             --env E2E_USE_ISOLATED_USERS \
             --env MOCK_MODEL_SERVER_URL \
             --env E2E_CLAUDE_MODEL_SERVER_URL \
+            --env E2E_CODEX_MODEL_SERVER_URL \
             --env E2E_LOCAL_CLAUDE_MODEL_SERVER_URL \
             --env E2E_CLAUDE_EXECUTOR_IMAGE \
             --env E2E_DEVICE_ID \
@@ -1016,6 +1072,16 @@ jobs:
             kill $(cat executor_manager.pid) 2>/dev/null || true
             rm executor_manager.pid
           fi
+
+      - name: Capture Executor Manager container logs
+        if: failure()
+        run: |
+          mkdir -p executor_manager/container-logs
+          for container_id in $(docker ps -aq --filter label=owner=executor_manager); do
+            container_name=$(docker inspect --format '{{.Name}}' "$container_id" | sed 's#^/##')
+            docker logs "$container_id" \
+              > "executor_manager/container-logs/${container_name}.log" 2>&1 || true
+          done
 
       - name: Remove Executor Manager Containers
         if: always()
@@ -1068,6 +1134,7 @@ jobs:
             frontend/mock-model-server.log
             executor/local-executor.log
             executor_manager/executor_manager.log
+            executor_manager/container-logs/
           retention-days: 7
 
   # Merge test reports from all E2E jobs

@@ -74,20 +74,26 @@ REMOTE_MUTATING_COMMAND_KEYS = frozenset(
         "git_checkout",
         "git_checkout_new",
         "git_add_all",
+        "git_apply_patch",
         "git_commit",
         "git_push",
         "sync_git_credentials",
         "turn_file_changes_revert",
+        "environment_prepare",
     }
 )
-REMOTE_DEVICE_COMMAND_KEYS = (
-    REMOTE_READ_ONLY_COMMAND_KEYS | REMOTE_MUTATING_COMMAND_KEYS
-)
-CLOUD_DEVICE_COMMAND_KEYS = REMOTE_DEVICE_COMMAND_KEYS | frozenset(
+RUNTIME_AUTH_COMMAND_KEYS = frozenset(
     {"read_runtime_auth_file", "sync_runtime_auth_file"}
 )
+REMOTE_DEVICE_COMMAND_KEYS = (
+    REMOTE_READ_ONLY_COMMAND_KEYS
+    | REMOTE_MUTATING_COMMAND_KEYS
+    | RUNTIME_AUTH_COMMAND_KEYS
+)
 LOCAL_COMMAND_DEVICE_TYPES = frozenset({DeviceType.LOCAL, DeviceType.APP})
-INTERNAL_DEVICE_COMMAND_KEYS = frozenset({"sync_git_credentials"})
+INTERNAL_DEVICE_COMMAND_KEYS = frozenset(
+    {"environment_prepare", "sync_git_credentials"}
+)
 
 
 class DeviceCommandError(RuntimeError):
@@ -137,6 +143,10 @@ async def _resolve_dispatch_device_id(
         raise DeviceCommandError(REMOTE_CONTROL_DISABLED_MESSAGE)
 
     if device_type in LOCAL_COMMAND_DEVICE_TYPES:
+        if device_type == DeviceType.APP:
+            from app.services.device.identity import record_route_id
+
+            return record_route_id(device_kind)
         return submitted_device_id
 
     if device_type not in {DeviceType.CLOUD, DeviceType.REMOTE}:
@@ -144,12 +154,7 @@ async def _resolve_dispatch_device_id(
             f"Device command RPC is not supported for {device_type.value} devices"
         )
 
-    supported_command_keys = (
-        CLOUD_DEVICE_COMMAND_KEYS
-        if device_type == DeviceType.CLOUD
-        else REMOTE_DEVICE_COMMAND_KEYS
-    )
-    if command_key not in supported_command_keys:
+    if command_key not in REMOTE_DEVICE_COMMAND_KEYS:
         raise DeviceCommandError(
             f"Device command key '{command_key}' is not supported for "
             f"{device_type.value} devices"
@@ -375,6 +380,8 @@ async def execute_configured_device_command(
         "max_output_bytes": max_output_bytes,
     }
     if command_key in {
+        "environment_prepare",
+        "git_apply_patch",
         "workspace_tree",
         "workspace_read_text_file",
         "workspace_read_file_chunk",

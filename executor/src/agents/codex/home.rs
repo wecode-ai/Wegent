@@ -30,7 +30,8 @@ pub(super) fn prepare_wework_codex_home(codex_home: &Path) -> Result<(), String>
         )
     })?;
     link_user_codex_auth(codex_home)?;
-    normalize_wework_codex_config(codex_home)
+    normalize_wework_codex_config(codex_home)?;
+    crate::local::plugin_creator::install(codex_home)
 }
 
 fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {

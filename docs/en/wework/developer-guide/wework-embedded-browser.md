@@ -207,6 +207,7 @@ In annotation mode:
 - When screenshot, anchor, or design synchronization rebuilds the editor, the preload restores the focused control and its selection so the first focus is not lost.
 - The design editor starts from the target's computed styles and can change text, appearance, and layout properties. The preload applies those changes and rebinds them after target-node replacement.
 - Holding Original View uses the same render/sync path to suppress every design change and restore replaced text. Releasing it reapplies the annotation design.
+- Original View state must be acknowledged by the preload after the page render completes. Only after the Electron host receives an acknowledgement matching the latest request may it advance the runtime revision and publish the applied state to React. Sending the IPC command does not mean the page has finished rendering.
 - A same-URL reload preserves annotations and rebinds anchors. A real cross-URL navigation exits annotation mode and clears the draft so stale page state cannot leak.
 - Same-document SPA navigation updates the annotation scope from the latest URL carried by preload events so save and publish use the same URL key.
 - Published annotations enter the Wework main composer attachment area. Screenshots remain local preview and targeting data; the runtime DTO sent to the model contains element context, comment, and design changes but omits screenshots, timestamps, and other UI-private fields.

@@ -26,14 +26,6 @@ interface WorkItemComposerGuideProps {
   onOpenBoard?: () => void
 }
 
-const itemStatusLabels: Record<CloudLoopItem['status'], string> = {
-  inbox: '待开始',
-  pending: '待开始',
-  in_progress: '进行中',
-  in_review: '等待确认',
-  completed: '已完成',
-}
-
 function isCurrentBinding(binding: TaskBinding, currentTask?: RuntimeTaskAddress | null): boolean {
   return (
     Boolean(currentTask) &&
@@ -112,7 +104,6 @@ function WorkItemComposerGuideContent({
   }, [api, currentTask, item, refreshKey])
 
   const resolvedItem = refreshedItem?.id === item?.id ? refreshedItem : (item ?? null)
-  const statusLabel = resolvedItem ? itemStatusLabels[resolvedItem.status] : null
   const taskCount = taskBindings?.length ?? null
   const otherTaskCount =
     taskBindings == null
@@ -131,7 +122,7 @@ function WorkItemComposerGuideContent({
         : null
 
   const title = resolvedItem
-    ? `${resolvedItem.title} · ${statusLabel}${taskSummary ? ` · ${taskSummary}` : ''}`
+    ? `${resolvedItem.title}${taskSummary ? ` · ${taskSummary}` : ''}`
     : (project?.name ?? t('workbench.default_work_item_board', '我的任务'))
 
   const projectMenu =
@@ -231,12 +222,6 @@ function WorkItemComposerGuideContent({
               {t('workbench.linked_work_item_short', '工作空间')}
             </span>
           )}
-          <span
-            data-testid="work-item-guide-summary-status"
-            className="shrink-0 text-xs text-text-muted"
-          >
-            · {statusLabel}
-          </span>
           {taskSummary ? (
             <span
               data-testid="work-item-guide-summary-details"

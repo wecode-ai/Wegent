@@ -15,12 +15,13 @@ export type RuntimeTaskTurnOutcome = 'succeeded' | 'failed' | 'cancelled' | null
 export interface RuntimeTaskLifecycleState {
   address: RuntimeTaskAddress
   task: RuntimeTaskSummary | null
-  workspaceCreationKind?: 'worktree'
+  workspaceCreationKind?: string
   executionPhase: RuntimeTaskExecutionPhase
   turnPhase: RuntimeTaskTurnPhase
   turnOutcome: RuntimeTaskTurnOutcome
   activeTurnId: string | null
   goalStatus: RuntimeGoalStatus | null
+  hasAuthoritativeGoalStatus: boolean
   continuable: boolean
   unread: boolean
   expectedExecutorRunning: boolean | null
@@ -43,7 +44,7 @@ export interface RuntimeTaskLifecycleSnapshot {
   key: string
   address: RuntimeTaskAddress
   task: RuntimeTaskSummary | null
-  workspaceCreationKind?: 'worktree'
+  workspaceCreationKind?: string
   execution: {
     phase: RuntimeTaskExecutionPhase
     known: boolean
@@ -67,8 +68,9 @@ export type RuntimeTaskLifecycleEvent =
       address: RuntimeTaskAddress
       task: RuntimeTaskSummary
     }
-  | { type: 'send_requested'; workspaceCreationKind?: 'worktree' }
+  | { type: 'send_requested'; workspaceCreationKind?: string }
   | { type: 'send_accepted' }
+  | { type: 'send_queued'; queuePosition?: number | null }
   | { type: 'send_rejected' }
   | { type: 'send_blocked_by_active_turn' }
   | { type: 'stop_requested' }

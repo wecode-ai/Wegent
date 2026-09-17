@@ -507,7 +507,6 @@ def test_featured_discovery_uses_admin_selection(test_db, test_user):
             "spec": {
                 "members": [],
                 "collaborationModel": "solo",
-                "capability": {"marketplace": {"recommendationScore": 0}},
             },
         },
         is_active=True,
@@ -1286,7 +1285,7 @@ def test_archiving_published_skill_revokes_existing_install_access(test_db, test
         current_user=consumer,
     )
 
-    assert listing.current_version.version == "1.1.0"
+    assert listing.current_version.version == "1.0.0"
     assert listing.tags == ["technical_development"]
     assert listing.feature_tags == ["test"]
     assert "listingName" not in source.json["spec"]["capability"]

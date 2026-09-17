@@ -45,10 +45,7 @@ import { taskApis } from '@/apis/tasks'
 import { subtaskApis } from '@/apis/subtasks'
 import { TaskMembersPanel } from '../group-chat'
 import { useUser } from '@/features/common/UserContext'
-import {
-  ForwardMessageDialog,
-  type ForwardableMessage,
-} from '@/features/inbox/components/ForwardMessageDialog'
+import { SendToCollaborationDialog } from '@/features/collaboration/SendToCollaborationDialog'
 import { useMessagePresenter, type DisplayMessage } from '../../presentation/useMessagePresenter'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
@@ -121,7 +118,6 @@ interface StreamingMessageBubbleProps {
   index: number
   isGroupChat?: boolean
   isPendingConfirmation?: boolean
-  onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
   onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
   waitingMessage?: string
 }
@@ -139,7 +135,6 @@ function StreamingMessageBubble({
   index,
   isGroupChat,
   isPendingConfirmation,
-  onContextReselect,
   onUseAsReference,
   waitingMessage,
 }: StreamingMessageBubbleProps) {
@@ -204,7 +199,6 @@ function StreamingMessageBubble({
       onAskUserSubmit={onAskUserSubmit}
       isGroupChat={isGroupChat}
       isPendingConfirmation={isPendingConfirmation}
-      onContextReselect={onContextReselect}
       onUseAsReference={onUseAsReference}
       taskType={selectedTaskDetail?.task_type}
     />
@@ -247,8 +241,6 @@ interface MessagesAreaProps {
    * This is the single source of truth from pipeline_stage_info.is_pending_confirmation.
    */
   isPendingConfirmation?: boolean
-  /** Callback when user clicks on a context badge to re-select it */
-  onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
   /** Hide group chat management button (e.g., in notebook mode) */
   hideGroupChatOptions?: boolean
   /** Callback when user wants to use a generated image as reference for follow-up generation */
@@ -278,7 +270,6 @@ function MessagesArea({
   hasMessages: hasMessagesFromParent,
   pendingTaskId,
   isPendingConfirmation,
-  onContextReselect,
   hideGroupChatOptions = false,
   onUseAsReference,
   onReEdit,
@@ -1153,27 +1144,6 @@ function MessagesArea({
   )
 
   // Convert messages to ForwardableMessage format for the forward dialog
-  const forwardableMessages = useMemo((): ForwardableMessage[] => {
-    return messages
-      .filter(msg => msg.subtaskId && msg.status === 'completed')
-      .map(msg => {
-        // Remove markdown prefix from AI messages if present
-        let content = msg.content || ''
-        if (msg.type === 'ai' && content.startsWith('${$$}$')) {
-          content = content.substring(6)
-        }
-
-        return {
-          subtaskId: msg.subtaskId!,
-          type: msg.type,
-          content,
-          timestamp: msg.timestamp,
-          botName: msg.botName,
-          senderUserName: msg.senderUserName,
-        }
-      })
-  }, [messages])
-
   // Handle forward button click from MessageBubble
   const handleForwardClick = useCallback((subtaskId: number) => {
     setForwardInitialSubtaskId(subtaskId)
@@ -1318,7 +1288,6 @@ function MessagesArea({
                     index={index}
                     isGroupChat={isGroupChat}
                     isPendingConfirmation={isPendingConfirmation}
-                    onContextReselect={onContextReselect}
                     onUseAsReference={onUseAsReference}
                     waitingMessage={waitingMessage}
                   />
@@ -1356,7 +1325,6 @@ function MessagesArea({
                     isCurrentUserMessage={isCurrentUserMessage}
                     isGroupChat={isGroupChat}
                     isPendingConfirmation={isPendingConfirmation}
-                    onContextReselect={onContextReselect}
                     onUseAsReference={onUseAsReference}
                     onReEdit={onReEdit}
                     waitingMessage={waitingMessage}
@@ -1426,7 +1394,6 @@ function MessagesArea({
                   onRetryWithModel={onRetryWithModel}
                   isGroupChat={isGroupChat}
                   isPendingConfirmation={isPendingConfirmation}
-                  onContextReselect={onContextReselect}
                   isEditing={msg.subtaskId ? editingMessageId === String(msg.subtaskId) : false}
                   onEdit={handleEditMessage}
                   onEditSave={handleEditSave}
@@ -1513,14 +1480,13 @@ function MessagesArea({
         />
       )}
 
-      {/* Forward Message Dialog */}
+      {/* Send Message to Collaboration */}
       {selectedTaskDetail?.id && (
-        <ForwardMessageDialog
+        <SendToCollaborationDialog
           taskId={selectedTaskDetail.id}
           subtaskIds={forwardInitialSubtaskId ? [forwardInitialSubtaskId] : undefined}
           open={isForwardDialogOpen}
           onOpenChange={setIsForwardDialogOpen}
-          allMessages={forwardableMessages}
         />
       )}
     </div>

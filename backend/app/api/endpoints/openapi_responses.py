@@ -23,6 +23,7 @@ from slowapi import Limiter
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.endpoints import wework_api
 from app.core import security
 from app.core.config import settings
 from app.core.rate_limit import get_limiter
@@ -35,6 +36,12 @@ from app.schemas.openapi_response import (
     ResponseDeletedObject,
     ResponseError,
     ResponseObject,
+)
+from app.schemas.wework_api import (
+    UnifiedResponseCreate,
+    WeworkResponseCreate,
+    WeworkResponseObject,
+    is_wework_response_id,
 )
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.chat.preprocessing.contexts import link_contexts_to_subtask
@@ -364,7 +371,7 @@ async def _persist_terminal_failure(
 )
 async def create_response(
     request: Request,
-    request_body: ResponseCreateInput,
+    request_body: UnifiedResponseCreate,
     db: Session = Depends(get_db),
     auth_context: security.AuthContext = Depends(security.get_auth_context),
 ):
@@ -407,6 +414,10 @@ async def create_response(
         or ResponseObject with status 'in_progress' (background=true)
         or ResponseObject with status 'queued' (non-Chat Shell)
     """
+    if isinstance(request_body, WeworkResponseCreate):
+        user = wework_api.current_api_user(request, db)
+        return await wework_api.create_response(request, request_body, db, user)
+
     # Extract user and api_key_name from auth context
     current_user = auth_context.user
     api_key_name = auth_context.api_key_name
@@ -461,6 +472,16 @@ async def create_response(
         model_info["team_name"],
     )
     if not team:
+        logger.warning(
+            "[OPENAPI] Team resolution failed: caller_user_id=%s, "
+            "caller_username=%s, team_namespace=%s, team_name=%s, "
+            "api_key_name=%s",
+            current_user.id,
+            current_user.user_name,
+            model_info["namespace"],
+            model_info["team_name"],
+            api_key_name,
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Team '{model_info['namespace']}#{model_info['team_name']}' not found or not accessible",
@@ -1484,7 +1505,7 @@ async def _create_streaming_response_unified(
         finally:
             if pubsub_obj is not None:
                 try:
-                    await pubsub_obj.unsubscribe()
+                    await pubsub_obj.aclose()
                 except Exception:
                     pass
             if pubsub_redis_client is not None:
@@ -1572,11 +1593,13 @@ async def _create_streaming_response_unified(
     )
 
 
-@router.get("/{response_id}", response_model=ResponseObject)
+@router.get("/{response_id}", response_model=WeworkResponseObject | ResponseObject)
 @limiter.limit(settings.RATE_LIMIT_GET_RESPONSE)
 async def get_response(
     request: Request,
     response_id: str,
+    stream: bool = False,
+    starting_after: int | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_flexible),
 ):
@@ -1589,6 +1612,12 @@ async def get_response(
     Returns:
         ResponseObject with current status and output
     """
+    if is_wework_response_id(response_id):
+        user = wework_api.current_api_user(request, db)
+        return await wework_api.get_response(
+            response_id, stream, starting_after, db, user
+        )
+
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):
         raise HTTPException(
@@ -1650,7 +1679,9 @@ async def get_response(
     return _task_to_response_object(task_dict, model_string, subtasks=subtasks)
 
 
-@router.post("/{response_id}/cancel", response_model=ResponseObject)
+@router.post(
+    "/{response_id}/cancel", response_model=WeworkResponseObject | ResponseObject
+)
 @limiter.limit(settings.RATE_LIMIT_CANCEL_RESPONSE)
 async def cancel_response(
     request: Request,
@@ -1673,6 +1704,10 @@ async def cancel_response(
     Returns:
         ResponseObject with status 'cancelled' or current status
     """
+    if is_wework_response_id(response_id):
+        user = wework_api.current_api_user(request, db)
+        return await wework_api.cancel_response(response_id, db, user)
+
     from app.services.chat.storage import db_handler, session_manager
 
     # Extract task_id from response_id

@@ -352,7 +352,7 @@ class ModelAggregationService:
 
         Args:
             provider: Model provider (e.g., 'openai', 'claude')
-            shell_type: Shell type (e.g., 'Agno', 'ClaudeCode')
+            shell_type: Shell type (e.g., 'Agno', 'Codex', 'ClaudeCode')
             support_model: List of supported model providers from shell spec
 
         Returns:
@@ -362,6 +362,7 @@ class ModelAggregationService:
         # Agno supports OpenAI, Claude and Gemini models
         shell_provider_map = {
             "Agno": ["openai", "claude", "gemini"],
+            "Codex": ["openai"],
             "ClaudeCode": ["claude", "openai"],
         }
 
@@ -369,7 +370,7 @@ class ModelAggregationService:
             if provider not in support_model:
                 return False
 
-        if shell_type == "ClaudeCode" and provider == "openai":
+        if shell_type in {"Codex", "ClaudeCode"} and provider == "openai":
             return self._is_codex_compatible_model_config(config or {})
 
         if support_model:
@@ -853,37 +854,35 @@ class ModelAggregationService:
                 ).to_full_dict()
 
         elif model_type == ModelType.PUBLIC:
-            # Get all public models and find by name
-            public_models = public_model_service.get_models(
-                db=db, skip=0, limit=1000, current_user=current_user
+            model_dict = public_model_service.get_model_by_name(
+                db=db,
+                name=name,
+                namespace="default",
+                include_hidden=True,
             )
-
-            for model_dict in public_models:
-                if model_dict.get("name") == name:
-                    return UnifiedModel(
-                        name=model_dict.get("name", ""),
-                        model_type=ModelType.PUBLIC,
-                        display_name=model_dict.get("displayName"),
-                        provider=model_dict.get("provider"),
-                        model_id=model_dict.get("model_id"),
-                        config=model_dict.get("config", {}),
-                        is_active=model_dict.get("is_active", True),
-                        model_category_type=model_dict.get(
-                            "model_category_type", "llm"
-                        ),
-                        is_advanced=model_dict.get("is_advanced", False),
-                        model_group=model_dict.get("modelGroup")
-                        or model_dict.get("model_group"),
-                        model_sub_group=model_dict.get("modelSubGroup")
-                        or model_dict.get("model_sub_group"),
-                        context_window=model_dict.get("contextWindow"),
-                        max_output_tokens=model_dict.get("maxOutputTokens"),
-                        cost_index=model_dict.get("costIndex"),
-                        model_capabilities=model_dict.get("modelCapabilities"),
-                        resource_user_id=0,
-                        created_at=model_dict.get("created_at"),
-                        updated_at=model_dict.get("updated_at"),
-                    ).to_full_dict()
+            if model_dict:
+                return UnifiedModel(
+                    name=model_dict.get("name", ""),
+                    model_type=ModelType.PUBLIC,
+                    display_name=model_dict.get("displayName"),
+                    provider=model_dict.get("provider"),
+                    model_id=model_dict.get("model_id"),
+                    config=model_dict.get("config", {}),
+                    is_active=model_dict.get("is_active", True),
+                    model_category_type=model_dict.get("model_category_type", "llm"),
+                    is_advanced=model_dict.get("is_advanced", False),
+                    model_group=model_dict.get("modelGroup")
+                    or model_dict.get("model_group"),
+                    model_sub_group=model_dict.get("modelSubGroup")
+                    or model_dict.get("model_sub_group"),
+                    context_window=model_dict.get("contextWindow"),
+                    max_output_tokens=model_dict.get("maxOutputTokens"),
+                    cost_index=model_dict.get("costIndex"),
+                    model_capabilities=model_dict.get("modelCapabilities"),
+                    resource_user_id=0,
+                    created_at=model_dict.get("created_at"),
+                    updated_at=model_dict.get("updated_at"),
+                ).to_full_dict()
 
         elif model_type == ModelType.RUNTIME:
             if name == CODEX_RUNTIME_MODEL_NAME and is_codex_runtime_model_enabled(

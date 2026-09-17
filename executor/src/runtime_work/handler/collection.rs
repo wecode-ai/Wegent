@@ -94,6 +94,38 @@ impl RuntimeWorkRpcHandler {
             ],
         );
 
+        self.merge_local_task_links(
+            archived,
+            &mut links,
+            &discovered_thread_ids,
+            &discovered_local_task_ids,
+            started_at,
+        );
+
+        links
+    }
+
+    pub(super) fn collect_cached_links(&self, archived: bool) -> Vec<RuntimeTaskLink> {
+        let started_at = Instant::now();
+        let mut links = Vec::new();
+        self.merge_local_task_links(
+            archived,
+            &mut links,
+            &HashSet::new(),
+            &HashSet::new(),
+            started_at,
+        );
+        links
+    }
+
+    fn merge_local_task_links(
+        &self,
+        archived: bool,
+        links: &mut Vec<RuntimeTaskLink>,
+        discovered_thread_ids: &HashSet<String>,
+        discovered_local_task_ids: &HashSet<String>,
+        started_at: Instant,
+    ) {
         let stage_started_at = Instant::now();
         for mut link in self.local_task_links(true) {
             if self.archived_link_is_deleted(&link) {
@@ -106,7 +138,7 @@ impl RuntimeWorkRpcHandler {
             if link_archived != archived {
                 continue;
             }
-            if is_cached_codex_link_hidden(&link, &discovered_thread_ids) {
+            if is_cached_codex_link_hidden(&link, discovered_thread_ids) {
                 continue;
             }
             if discovered_local_task_ids.contains(&link.local_task_id) {
@@ -132,8 +164,6 @@ impl RuntimeWorkRpcHandler {
             stage_started_at,
             &[("links", links.len().to_string())],
         );
-
-        links
     }
 
     pub(super) async fn codex_threads(&self, archived: bool) -> Vec<Value> {
@@ -262,6 +292,28 @@ impl RuntimeWorkRpcHandler {
         let mut filtered_no_project = 0_usize;
 
         for mut link in links {
+            // Sidebar assignments override creation bindings without changing execution state.
+            let assigned_project = link
+                .thread_id
+                .as_deref()
+                .filter(|id| !project_index.is_projectless_thread(id))
+                .and_then(|id| project_index.sidebar_project_key_for_thread(id))
+                .and_then(|key| project_index.project_for_key(key));
+            if let Some(project) = assigned_project {
+                let source_project = link
+                    .runtime_project_key
+                    .as_deref()
+                    .and_then(|key| project_index.project_for_key(key))
+                    .or_else(|| project_index.project_for_path(&link.workspace_path));
+                link.preserve_execution_path = source_project
+                    .map(|source| source.key != project.key)
+                    .unwrap_or(true);
+                link.group_workspace_path = Some(project.workspace_path.clone());
+                link.group_project_key = Some(project.key.clone());
+                kept_project += 1;
+                visible_links.push(link);
+                continue;
+            }
             if !is_codex_runtime(&link.runtime) {
                 kept_non_codex += 1;
                 log_runtime_project_filter_item(
@@ -784,6 +836,7 @@ impl RuntimeWorkRpcHandler {
         }
         self.store.update_task(&local_task_id, |link| {
             apply_local_execution_state(link, true, None);
+            link.updated_at = now_ms().max(link.updated_at.saturating_add(1));
             link.completed_at = None;
         });
         if let Some(link) = self.local_task_link(&local_task_id) {
@@ -1238,6 +1291,7 @@ impl RuntimeWorkRpcHandler {
         goal_status: Option<String>,
         update_activity_time: bool,
     ) {
+        let goal_is_active = goal_status.as_deref() == Some("active");
         self.store.update_task(local_task_id, |link| {
             if link.goal_status == goal_status {
                 return;
@@ -1247,6 +1301,9 @@ impl RuntimeWorkRpcHandler {
                 link.updated_at = now_ms();
             }
         });
+        if !goal_is_active {
+            self.clear_active_goal_turn(local_task_id);
+        }
     }
 }
 

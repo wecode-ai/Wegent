@@ -4,6 +4,15 @@ import vm from 'node:vm'
 import { describe, expect, test, vi } from 'vitest'
 
 describe('Electron startup shell', () => {
+  test('keeps loading visuals in the startup splash instead of the main window shell', async () => {
+    const html = await readFile(resolve(import.meta.dirname, 'index.html'), 'utf8')
+
+    expect(html).not.toContain('startup-workbench-shell')
+    expect(html).not.toContain('task-placeholder')
+    expect(html).not.toContain('composer-placeholder')
+    expect(html).toContain('startup-runtime-retry')
+  })
+
   test('renders initialization and failure states and retries the runtime', async () => {
     const elements = new Map(
       ['#runtime-status', '#details', '#reload-dsh', '#runtime-overlay', '.runtime-card'].map(

@@ -395,7 +395,28 @@ describe('InstalledResources', () => {
     expect(screen.getByTestId('resource-listing-card-92')).toBeInTheDocument()
   })
 
-  it('loads group installs, filters listing fields locally, and deduplicates listings', async () => {
+  it('preserves the same listing installed in two different groups', async () => {
+    mockedListGroupInstallsBatch.mockResolvedValue({
+      items: [
+        makeInstall('skill', {
+          id: 31,
+          installed_reference: { skill_id: 101, namespace: 'engineering' },
+        }),
+        makeInstall('skill', {
+          id: 32,
+          installed_reference: { skill_id: 101, namespace: 'product' },
+        }),
+      ],
+      total: 2,
+      page: 1,
+      limit: 100,
+    })
+    render(<InstalledResources resourceType="skill" groupNamespaces={['engineering', 'product']} />)
+    expect(await screen.findByTestId('view-shared-skill-31-button')).toBeVisible()
+    expect(screen.getByTestId('view-shared-skill-32-button')).toBeVisible()
+  })
+
+  it('loads group installs, filters listing fields locally, and deduplicates installations', async () => {
     const nameMatch = makeInstall('skill', {
       id: 31,
       listing_id: 101,
@@ -438,13 +459,7 @@ describe('InstalledResources', () => {
     })
 
     mockedListGroupInstallsBatch.mockResolvedValue({
-      items: [
-        nameMatch,
-        displayNameMatch,
-        makeInstall('skill', { ...nameMatch, id: 35 }),
-        descriptionMatch,
-        unrelated,
-      ],
+      items: [nameMatch, displayNameMatch, nameMatch, descriptionMatch, unrelated],
       total: 5,
       page: 1,
       limit: 100,

@@ -1,11 +1,14 @@
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from app.services.execution.schedule_helper import (
     _dispatch_task_async,
+    _DispatchWaitMetric,
     _extract_device_id_from_executor_name,
+    schedule_dispatch,
 )
 
 
@@ -21,6 +24,51 @@ def test_extract_device_id_from_executor_name_ignores_non_device_executor() -> N
     assert _extract_device_id_from_executor_name("executor-123") is None
     assert _extract_device_id_from_executor_name("") is None
     assert _extract_device_id_from_executor_name(None) is None
+
+
+def test_dispatch_wait_metric_finishes_exactly_once() -> None:
+    with patch(
+        "app.services.execution.schedule_helper.record_dispatch_waiting_change"
+    ) as record_waiting:
+        metric = _DispatchWaitMetric()
+        metric.finish_waiting()
+        metric.finish_waiting()
+
+    assert record_waiting.call_args_list == [
+        call(1),
+        call(-1),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_schedule_dispatch_keeps_dispatch_on_running_loop() -> None:
+    """Async callers must not move dispatch onto a separate event loop."""
+    caller_loop = asyncio.get_running_loop()
+    dispatched = asyncio.Event()
+    dispatch_loop = None
+
+    async def dispatch_task(_task_id: int) -> None:
+        nonlocal dispatch_loop
+        dispatch_loop = asyncio.get_running_loop()
+        dispatched.set()
+
+    with (
+        patch(
+            "app.services.execution.schedule_helper._dispatch_task_async",
+            side_effect=dispatch_task,
+        ),
+        patch("app.services.execution.schedule_helper._run_in_new_loop") as run_new,
+        patch(
+            "app.services.execution.schedule_helper.record_dispatch_waiting_change"
+        ) as record_waiting,
+    ):
+        schedule_dispatch(123)
+        await asyncio.wait_for(dispatched.wait(), timeout=1)
+        await asyncio.sleep(0)
+
+    assert dispatch_loop is caller_loop
+    run_new.assert_not_called()
+    assert record_waiting.call_args_list == [call(1), call(-1)]
 
 
 @pytest.mark.asyncio

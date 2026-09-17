@@ -14,6 +14,7 @@ export interface QuickAccessConfig {
 
 export interface UserPreferences {
   send_key: 'enter' | 'cmd_enter'
+  follow_up_behavior?: 'queue' | 'guide'
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
   quick_access?: QuickAccessConfig
   memory_enabled?: boolean
@@ -77,6 +78,7 @@ export interface SkillRefMeta {
 
 /** Skill reference with full identification info for backend */
 export interface SkillRef {
+  skill_id?: number
   name: string
   namespace: string
   is_public: boolean
@@ -661,7 +663,7 @@ export interface MultiAttachmentUploadState {
 }
 
 // Subtask Context Types (unified context system)
-export type ContextType = 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
+export type ContextType = 'attachment' | 'knowledge_base' | 'external_knowledge'
 export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed' | 'empty'
 
 export interface SubtaskContextBrief {
@@ -681,11 +683,6 @@ export interface SubtaskContextBrief {
   folder_names?: string[] | null
   include_subfolders?: boolean | null
   scope_restricted?: boolean | null
-  // Table fields (from type_data)
-  document_id?: number | null
-  source_config?: {
-    url?: string
-  } | null
   // External knowledge fields
   external_provider?: string | null
   external_mode?: string | null

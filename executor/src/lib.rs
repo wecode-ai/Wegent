@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod agent_session;
 pub mod agents;
 pub mod app;
 pub mod attachments;
 pub mod browser_mcp;
 pub mod callback;
-mod claude_session;
 mod codex_phase;
 pub mod computer_use_mcp;
 pub mod config;
@@ -22,6 +22,7 @@ pub mod local;
 pub mod logging;
 pub mod mcp_utils;
 mod path_compat;
+pub mod plugin_account_auth;
 pub mod plugin_workspace_cli;
 pub mod process;
 pub mod process_environment;
@@ -33,6 +34,7 @@ pub mod server;
 pub mod services;
 pub mod stream;
 pub mod task_runtime;
+mod url_origin;
 pub mod version;
 
 #[cfg(test)]

@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import secrets
 from datetime import datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, aliased
 
-from app.core.project_automation_secrets import encrypt_webhook_secret
 from app.db.timezone import database_datetime_timezone
 from app.models.delivery import (
     CloudProject,
@@ -21,6 +19,7 @@ from app.models.delivery import (
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
+    ProjectIncomingHook,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
     loop_unset_datetime_for_connection,
@@ -34,8 +33,12 @@ from app.schemas.project_automation import (
 )
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
-from app.services.loop_item_executions.service import loop_item_execution_service
+from app.services.loop_item_executions.service import (
+    ACTIVE_STATUSES,
+    loop_item_execution_service,
+)
 from app.services.project_automation_domain import (
+    ACTIVE_RUN_STATUSES,
     ProjectAutomationEvent,
     assignment_mode,
     integer,
@@ -44,6 +47,7 @@ from app.services.project_automation_domain import (
 from app.services.project_automation_domain import metadata as _metadata
 from app.services.project_automation_domain import next_run as _next_run
 from app.services.project_automation_domain import (
+    project_agent,
     role_config,
     runtime_config,
     text,
@@ -60,6 +64,7 @@ from app.services.project_automation_execution import (
     project_automation_execution,
 )
 from app.services.project_chat.service import bot_config
+from app.services.project_event_sources import EXECUTION_TARGETS, event_source
 from app.services.share import team_share_service
 from app.services.workflow_stage_context import workflow_stage_context_resolver
 
@@ -76,6 +81,10 @@ def _canonical_event_config(
         config["transition"] = "entered_processing"
     else:
         config.pop("transition", None)
+    if event_type in {"task.created", "task.tag_added", "task.status_changed"}:
+        config["execution_target"] = "existing_issue"
+    elif event_type and not config.get("execution_target"):
+        config["execution_target"] = "create_issue"
     return config
 
 
@@ -103,7 +112,7 @@ class ProjectAutomationService:
         values: ProjectAutomationCreate,
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
-        row, webhook_secret = self._create_rule(
+        row = self._create_rule(
             db,
             project_id=project_id,
             user_id=user_id,
@@ -111,7 +120,7 @@ class ProjectAutomationService:
         )
         db.commit()
         db.refresh(row)
-        return self._rule_view(db, row, webhook_secret=webhook_secret)
+        return self._rule_view(db, row)
 
     def migrate_workflow(
         self,
@@ -152,7 +161,7 @@ class ProjectAutomationService:
                 mode="json"
             ),
         }
-        row, webhook_secret = self._create_rule(
+        row = self._create_rule(
             db,
             project_id=project_id,
             user_id=user_id,
@@ -175,11 +184,7 @@ class ProjectAutomationService:
         db.refresh(row)
         db.refresh(project)
         return {
-            "automation": self._rule_view(
-                db,
-                row,
-                webhook_secret=webhook_secret,
-            ),
+            "automation": self._rule_view(db, row),
             "project_version": project.version,
             "workflow_automation_id": str(row.id),
         }
@@ -191,54 +196,83 @@ class ProjectAutomationService:
         project_id: str,
         user_id: int,
         values: ProjectAutomationCreate,
-    ) -> tuple[ProjectAutomationRule, str | None]:
-        configured_mode = values.assignment_mode
-        configured_manager = values.manager_type
-        role_source = values.role_source
-        validate_assignment(
+    ) -> ProjectAutomationRule:
+        dispatch_target = self._validate_dispatch_target(
             db,
             project_id=project_id,
             user_id=user_id,
-            mode=configured_mode,
-            manager=configured_manager,
-            agent_id=values.agent_id,
-            wegent_team_id=values.wegent_team_id,
-            model=values.model,
-            environment=values.execution_environment,
-            device_id=values.execution_device_id,
-            role_source=role_source,
+            target_kind=values.target_kind,
+            target_id=values.target_id,
         )
-        self._validate_runtime_strategy(
-            db,
-            project_id=project_id,
-            user_id=user_id,
-            trigger_type=values.trigger_type,
-            assignment_mode=configured_mode,
-            manager_type=configured_manager,
-            role_source=role_source,
-            agent_id=values.agent_id,
-            runtime_source=values.runtime_source,
-            runtime_profile_id=values.runtime_profile_id,
-            runtime_user_id=values.runtime_user_id,
+        configured_mode = "manual" if dispatch_target else values.assignment_mode
+        configured_manager = None if dispatch_target else values.manager_type
+        role_source = (
+            "agent"
+            if dispatch_target and dispatch_target["kind"] == "agent"
+            else "generic" if dispatch_target else values.role_source
         )
+        agent_id = (
+            str(dispatch_target["id"])
+            if dispatch_target and dispatch_target["kind"] == "agent"
+            else values.agent_id if not dispatch_target else None
+        )
+        runtime_source = (
+            "agent_default"
+            if dispatch_target and dispatch_target["kind"] == "agent"
+            else "runtime_user" if dispatch_target else values.runtime_source
+        )
+        runtime_user_id = user_id if dispatch_target else values.runtime_user_id
+        if dispatch_target is None:
+            validate_assignment(
+                db,
+                project_id=project_id,
+                user_id=user_id,
+                mode=configured_mode,
+                manager=configured_manager,
+                agent_id=agent_id,
+                wegent_team_id=values.wegent_team_id,
+                model=values.model,
+                environment=values.execution_environment,
+                device_id=values.execution_device_id,
+                role_source=role_source,
+            )
+            self._validate_runtime_strategy(
+                db,
+                project_id=project_id,
+                user_id=user_id,
+                trigger_type=values.trigger_type,
+                assignment_mode=configured_mode,
+                manager_type=configured_manager,
+                role_source=role_source,
+                agent_id=agent_id,
+                runtime_source=runtime_source,
+                runtime_profile_id=values.runtime_profile_id,
+                runtime_user_id=runtime_user_id,
+            )
         validate_trigger(values.trigger_type, values.event_type, values.cron_expression)
+        event_config = _canonical_event_config(
+            values.event_type if values.trigger_type == "event" else None,
+            values.event_config,
+        )
+        self._validate_event_config(
+            db,
+            project_id=project_id,
+            trigger_type=values.trigger_type,
+            event_type=values.event_type,
+            event_config=event_config,
+        )
         now = utcnow()
         next_run_at = (
             _next_run(str(values.cron_expression), values.timezone, now)
             if values.trigger_type == "schedule"
             else None
         )
-        webhook_secret = (
-            secrets.token_urlsafe(32) if values.trigger_type == "event" else None
-        )
         row = ProjectAutomationRule(
             cloud_project_id=project_id,
             title=values.name,
             description=values.prompt,
             assignee_agent_id=(
-                str(values.agent_id)
-                if configured_mode == "manual" and values.agent_id
-                else ""
+                str(agent_id) if configured_mode == "manual" and agent_id else ""
             ),
             status="enabled" if values.enabled else "disabled",
             due_at=next_run_at if values.enabled else None,
@@ -251,21 +285,17 @@ class ProjectAutomationService:
                 model=values.model,
                 environment=values.execution_environment,
                 device_id=values.execution_device_id,
-                agent_id=values.agent_id,
+                agent_id=agent_id,
                 role_source=role_source,
-                runtime_source=values.runtime_source,
+                runtime_source=runtime_source,
                 runtime_profile_id=values.runtime_profile_id,
-                runtime_user_id=values.runtime_user_id,
+                runtime_user_id=runtime_user_id,
                 base={
                     "trigger_type": values.trigger_type,
                     "event_type": (
                         values.event_type if values.trigger_type == "event" else None
                     ),
-                    "event_config": _canonical_event_config(
-                        values.event_type if values.trigger_type == "event" else None,
-                        values.event_config,
-                    ),
-                    "webhook_secret_encrypted": None,
+                    "event_config": event_config,
                     "cron_expression": (
                         values.cron_expression
                         if values.trigger_type == "schedule"
@@ -273,6 +303,7 @@ class ProjectAutomationService:
                     ),
                     "timezone": values.timezone,
                     "last_run_at": None,
+                    "dispatch_target": dispatch_target,
                 },
             ),
         )
@@ -285,15 +316,7 @@ class ProjectAutomationService:
         self._validate_workflow_definition(
             _metadata(row).get("event_config"),
         )
-        if webhook_secret:
-            row_metadata = _metadata(row)
-            row_metadata["webhook_secret_encrypted"] = encrypt_webhook_secret(
-                webhook_secret,
-                project_id=project_id,
-                automation_id=str(row.id),
-            )
-            row.metadata_json = row_metadata
-        return row, webhook_secret
+        return row
 
     @staticmethod
     def _bind_self_managed_workflow(
@@ -338,10 +361,69 @@ class ProjectAutomationService:
 
             ProjectWorkflowDefinition.model_validate(raw_definition)
         except ValueError as exc:
+            errors = exc.errors() if hasattr(exc, "errors") else []
+            error_detail = errors[0].get("msg", str(exc)) if errors else str(exc)
+            error_detail = str(error_detail).removeprefix("Value error, ").strip()
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                f"Invalid automation workflow definition: {exc}",
+                f"自动化流程配置无效：{error_detail}",
             ) from exc
+
+    @staticmethod
+    def _validate_event_config(
+        db: Session,
+        *,
+        project_id: str,
+        trigger_type: str,
+        event_type: str | None,
+        event_config: dict,
+    ) -> None:
+        if trigger_type != "event":
+            return
+        target = str(event_config.get("execution_target") or "")
+        if target not in EXECUTION_TARGETS:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Event automation requires a supported execution_target",
+            )
+        if event_type in {"task.created", "task.tag_added", "task.status_changed"}:
+            if target != "existing_issue":
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "Wework task events run on the existing Issue",
+                )
+            return
+        subscription_id = str(event_config.get("subscription_id") or "")
+        if not subscription_id:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "External event automation requires subscription_id",
+            )
+        subscription = db.get(ProjectIncomingHook, subscription_id)
+        if (
+            subscription is None
+            or str(subscription.cloud_project_id) != str(project_id)
+            or not loop_datetime_value_is_unset(subscription.deleted_at)
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Event subscription is unavailable",
+            )
+        subscription_metadata = _metadata(subscription)
+        source_type = str(
+            subscription_metadata.get("source_type") or subscription.source or ""
+        )
+        definition = event_source(source_type)
+        if event_type not in definition.event_types:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"{source_type} does not support {event_type}",
+            )
+        if target not in definition.execution_targets:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"{source_type} does not support execution target {target}",
+            )
 
     def update(
         self,
@@ -382,7 +464,39 @@ class ProjectAutomationService:
             expression = None
         validate_trigger(trigger_type, event_type, expression)
 
-        if values.assignment_mode is None:
+        current_target = rule_metadata.get("dispatch_target")
+        current_target = (
+            dict(current_target) if isinstance(current_target, dict) else None
+        )
+        target_changed = "target_kind" in values.model_fields_set
+        dispatch_target = (
+            self._validate_dispatch_target(
+                db,
+                project_id=project_id,
+                user_id=user_id,
+                target_kind=values.target_kind,
+                target_id=values.target_id,
+            )
+            if target_changed
+            else current_target
+        )
+        if dispatch_target is not None:
+            configured_mode = "manual"
+            configured_manager = None
+            agent_id = (
+                str(dispatch_target["id"])
+                if dispatch_target["kind"] == "agent"
+                else None
+            )
+            wegent_team_id = None
+            model = None
+            environment = None
+            device_id = (
+                values.execution_device_id
+                if "execution_device_id" in values.model_fields_set
+                else text(dispatch_target.get("execution_device_id"))
+            )
+        elif values.assignment_mode is None:
             configured_mode = assignment_mode(rule_metadata)
             configured_manager = manager_type(rule_metadata)
             agent_id = row.assignee_agent_id or None
@@ -402,10 +516,24 @@ class ProjectAutomationService:
             device_id = values.execution_device_id
         current_role = role_config(rule_metadata)
         current_runtime = runtime_config(rule_metadata)
-        role_source = values.role_source or str(current_role.get("source") or "agent")
+        role_source = (
+            "agent"
+            if dispatch_target and dispatch_target["kind"] == "agent"
+            else (
+                "generic"
+                if dispatch_target
+                else values.role_source or str(current_role.get("source") or "agent")
+            )
+        )
         runtime_source = values.runtime_source or str(
             current_runtime.get("source") or "agent_default"
         )
+        if dispatch_target:
+            runtime_source = (
+                "agent_default"
+                if dispatch_target["kind"] == "agent"
+                else "runtime_user"
+            )
         runtime_profile_id = (
             values.runtime_profile_id
             if "runtime_profile_id" in values.model_fields_set
@@ -417,32 +545,33 @@ class ProjectAutomationService:
             else integer(current_runtime.get("user_id"))
         )
 
-        validate_assignment(
-            db,
-            project_id=project_id,
-            user_id=row.created_by_user_id,
-            mode=configured_mode,
-            manager=configured_manager,
-            agent_id=agent_id,
-            wegent_team_id=wegent_team_id,
-            model=model,
-            environment=environment,
-            device_id=device_id,
-            role_source=role_source,
-        )
-        self._validate_runtime_strategy(
-            db,
-            project_id=project_id,
-            user_id=row.created_by_user_id,
-            trigger_type=trigger_type,
-            assignment_mode=configured_mode,
-            manager_type=configured_manager,
-            role_source=role_source,
-            agent_id=agent_id,
-            runtime_source=runtime_source,
-            runtime_profile_id=runtime_profile_id,
-            runtime_user_id=runtime_user_id,
-        )
+        if dispatch_target is None:
+            validate_assignment(
+                db,
+                project_id=project_id,
+                user_id=row.created_by_user_id,
+                mode=configured_mode,
+                manager=configured_manager,
+                agent_id=agent_id,
+                wegent_team_id=wegent_team_id,
+                model=model,
+                environment=environment,
+                device_id=device_id,
+                role_source=role_source,
+            )
+            self._validate_runtime_strategy(
+                db,
+                project_id=project_id,
+                user_id=row.created_by_user_id,
+                trigger_type=trigger_type,
+                assignment_mode=configured_mode,
+                manager_type=configured_manager,
+                role_source=role_source,
+                agent_id=agent_id,
+                runtime_source=runtime_source,
+                runtime_profile_id=runtime_profile_id,
+                runtime_user_id=runtime_user_id,
+            )
         row.assignee_agent_id = (
             str(agent_id) if configured_mode == "manual" and agent_id else ""
         )
@@ -461,6 +590,13 @@ class ProjectAutomationService:
                 else rule_metadata.get("event_config", {})
             ),
         )
+        self._validate_event_config(
+            db,
+            project_id=project_id,
+            trigger_type=trigger_type,
+            event_type=str(event_type) if event_type else None,
+            event_config=event_config,
+        )
         rule_metadata.update(
             {
                 "trigger_type": trigger_type,
@@ -468,6 +604,14 @@ class ProjectAutomationService:
                 "event_config": event_config,
                 "cron_expression": expression,
                 "timezone": timezone_name,
+                "dispatch_target": (
+                    {
+                        **dispatch_target,
+                        "execution_device_id": device_id,
+                    }
+                    if dispatch_target
+                    else None
+                ),
             }
         )
         row.metadata_json = self._bind_self_managed_workflow(
@@ -500,34 +644,6 @@ class ProjectAutomationService:
         db.commit()
         db.refresh(row)
         return self._rule_view(db, row)
-
-    def rotate_webhook_secret(
-        self,
-        db: Session,
-        project_id: str,
-        automation_id: str,
-        user_id: int,
-    ) -> dict:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
-        row = self._rule(db, project_id, automation_id, for_update=True)
-        rule_metadata = _metadata(row)
-        if rule_metadata.get("trigger_type") != "event":
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Only event automations have webhook secrets",
-            )
-        webhook_secret = secrets.token_urlsafe(32)
-        rule_metadata["webhook_secret_encrypted"] = encrypt_webhook_secret(
-            webhook_secret,
-            project_id=project_id,
-            automation_id=str(row.id),
-        )
-        row.metadata_json = rule_metadata
-        row.updated_by_user_id = user_id
-        row.version += 1
-        db.commit()
-        db.refresh(row)
-        return self._rule_view(db, row, webhook_secret=webhook_secret)
 
     def delete(
         self, db: Session, project_id: str, automation_id: str, user_id: int
@@ -602,10 +718,27 @@ class ProjectAutomationService:
                 status.HTTP_409_CONFLICT,
                 "Workflow automations can only run from a workflow stage",
             )
+        definition = project_automation_execution._workflow_definition(rule)
+        if definition is not None and definition.advancement_policy == "ai":
+            from app.services.issue_execution_configuration import (
+                project_automation_execution_config,
+                require_coordinator_execution_config,
+            )
+
+            config = definition.execution_config
+            if config is None or not config.is_complete():
+                config = project_automation_execution_config(
+                    db,
+                    rule,
+                    issue_creator_user_id=int(rule.created_by_user_id or user_id),
+                )
+            require_coordinator_execution_config(config)
         run = self._create_run(db, rule, "manual", utcnow())
         await project_automation_execution.dispatch(db, rule, run)
         return self._run_view(
-            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+            run,
+            str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
+            _metadata(rule),
         )
 
     async def run_for_workflow_node(
@@ -624,6 +757,7 @@ class ProjectAutomationService:
         )
         if item is None or str(item.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+        self._require_active_workflow_root(db, item)
         workflow = (
             item.metadata_json.get("workflow")
             if isinstance(item.metadata_json, dict)
@@ -661,7 +795,7 @@ class ProjectAutomationService:
         workflow_snapshot = IssueWorkflowInstance.model_validate(workflow)
         node_snapshot = WorkflowNodeInstance.model_validate(node)
         execution_config = workflow_snapshot.execution_config_for(node_snapshot)
-        if execution_config is None or not execution_config.is_complete():
+        if workflow_snapshot.node_needs_execution_config(node_snapshot):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Workflow execution configuration is incomplete",
@@ -697,7 +831,9 @@ class ProjectAutomationService:
         db.refresh(run)
         await project_automation_execution.dispatch(db, rule, run)
         return self._run_view(
-            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+            run,
+            str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
+            _metadata(rule),
         )
 
     async def run_ai_workflow_manager(
@@ -749,6 +885,7 @@ class ProjectAutomationService:
         return self._run_view(
             run,
             str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
+            _metadata(rule),
         )
 
     @staticmethod
@@ -760,6 +897,22 @@ class ProjectAutomationService:
         if not isinstance(binding, dict):
             return None
         return text(binding.get("run_id")) or None
+
+    @classmethod
+    def _require_active_workflow_root(cls, db: Session, item: LoopItem) -> None:
+        parent_run_id = cls._workflow_parent_run_id(item)
+        if not parent_run_id:
+            return
+        parent_run = db.get(ProjectAutomationRun, parent_run_id)
+        if parent_run is None:
+            return
+        if parent_run.status == "cancelled" or _metadata(parent_run).get(
+            "workflow_cancellation_requested"
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Workflow automation run is cancelled",
+            )
 
     async def run_direct_workflow_node(
         self,
@@ -777,6 +930,7 @@ class ProjectAutomationService:
         )
         if item is None or str(item.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+        self._require_active_workflow_root(db, item)
         workflow = (
             item.metadata_json.get("workflow")
             if isinstance(item.metadata_json, dict)
@@ -810,15 +964,15 @@ class ProjectAutomationService:
         workflow_snapshot = IssueWorkflowInstance.model_validate(workflow)
         node_snapshot = WorkflowNodeInstance.model_validate(node)
         execution_config = workflow_snapshot.execution_config_for(node_snapshot)
-        if execution_config is None or not execution_config.is_complete():
+        if workflow_snapshot.node_needs_execution_config(node_snapshot):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Workflow execution configuration is incomplete",
             )
-        if execution_config.agent_id:
+        if not execution_config.agent_id and not execution_config.execution_device_id:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Robot preset workflow execution requires an automation rule",
+                "Workflow node execution requires a Runtime target",
             )
 
         scheduled_for = utcnow()
@@ -885,20 +1039,39 @@ class ProjectAutomationService:
             "workflow_stage_input": run_metadata.get("workflow_stage_input"),
             **execution_config.runtime_request_options(),
         }
-        execution = loop_item_execution_service.enqueue_generic_robot(
-            db,
-            loop_item_id=str(item.id),
-            cloud_project_id=str(project_id),
-            runtime_subject_user_id=runtime_subject_user_id,
-            runtime_profile=runtime_profile,
-            execution_device_id=execution_config.execution_device_id,
-            model=execution_config.model,
-            model_type=execution_config.model_type,
-            model_options=execution_config.model_options,
-            assigner_user_id=user_id,
-            priority=item.priority or "medium",
-            automation_context=context,
-        )
+        if execution_config.agent_id:
+            agent = project_agent(
+                db,
+                str(project_id),
+                execution_config.agent_id,
+            )
+            execution = loop_item_execution_service.create_for_assignment(
+                db,
+                loop_item_id=str(item.id),
+                cloud_project_id=str(project_id),
+                agent=agent,
+                assigner_user_id=user_id,
+                environment="local",
+                execution_device_id=execution_config.execution_device_id,
+                priority=item.priority or "medium",
+                automation_context=context,
+                instruction=str(node.get("prompt") or ""),
+            )
+        else:
+            execution = loop_item_execution_service.enqueue_generic_robot(
+                db,
+                loop_item_id=str(item.id),
+                cloud_project_id=str(project_id),
+                runtime_subject_user_id=runtime_subject_user_id,
+                runtime_profile=runtime_profile,
+                execution_device_id=execution_config.execution_device_id,
+                model=execution_config.model,
+                model_type=execution_config.model_type,
+                model_options=execution_config.model_options,
+                assigner_user_id=user_id,
+                priority=item.priority or "medium",
+                automation_context=context,
+            )
         run.device_id = execution.execution_device_id
         run.status = (
             "waiting_device" if execution.status == "waiting_runtime" else "queued"
@@ -959,7 +1132,9 @@ class ProjectAutomationService:
         except AutomationRunNotRetryable as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         return self._run_view(
-            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+            run,
+            str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
+            _metadata(rule),
         )
 
     def list_runs(
@@ -1020,7 +1195,10 @@ class ProjectAutomationService:
                 .all()
             )
             visible_rows = [row for row in rows if self._is_visible_run(row)][:100]
-        return [self._run_view(row, timezone_name) for row in visible_rows]
+        rule_metadata = _metadata(rule)
+        return [
+            self._run_view(row, timezone_name, rule_metadata) for row in visible_rows
+        ]
 
     async def cancel_run(
         self, db: Session, project_id: str, run_id: str, user_id: int
@@ -1029,6 +1207,53 @@ class ProjectAutomationService:
         run = db.get(ProjectAutomationRun, run_id)
         if run is None or str(run.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation run not found")
+        if self._is_workflow_root_run(db, run):
+            run_metadata = _metadata(run)
+            if not run_metadata.get("workflow_cancellation_requested"):
+                run.metadata_json = {
+                    **run_metadata,
+                    "workflow_cancellation_requested": True,
+                }
+                run.version += 1
+                db.commit()
+            processed_child_ids: set[str] = set()
+            while True:
+                children = [
+                    child
+                    for child in self._workflow_child_runs(db, run)
+                    if str(child.id) not in processed_child_ids
+                ]
+                if not children:
+                    break
+                for child in children:
+                    processed_child_ids.add(str(child.id))
+                    if child.status in ACTIVE_RUN_STATUSES:
+                        await self._cancel_single_run(db, child)
+            db.expire_all()
+            run = db.get(ProjectAutomationRun, run_id)
+            if run is None:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, "Automation run not found"
+                )
+            if run.status in ACTIVE_RUN_STATUSES:
+                await self._cancel_single_run(db, run)
+                db.expire_all()
+                run = db.get(ProjectAutomationRun, run_id)
+                if run is None:
+                    raise HTTPException(
+                        status.HTTP_404_NOT_FOUND, "Automation run not found"
+                    )
+            if run.status != "cancelled":
+                self._finish_cancelled_run(db, run)
+            return self._run_view_from_db(db, run)
+        return await self._cancel_single_run(db, run)
+
+    async def _cancel_single_run(
+        self,
+        db: Session,
+        run: ProjectAutomationRun,
+    ) -> dict:
+        run_id = str(run.id)
         if loop_item_execution_service.reconcile_automation_run_projection(
             db, run_id=run_id
         ):
@@ -1038,32 +1263,12 @@ class ProjectAutomationService:
                 raise HTTPException(
                     status.HTTP_404_NOT_FOUND, "Automation run not found"
                 )
-            rule = (
-                db.get(ProjectAutomationRule, run.parent_id)
-                if run.parent_id is not None
-                else None
-            )
-            timezone_name = (
-                str(_metadata(rule).get("timezone") or "Asia/Shanghai")
-                if rule is not None
-                else "Asia/Shanghai"
-            )
-            return self._run_view(run, timezone_name)
-        if run.status not in {"pending", "queued", "waiting_device", "running"}:
+            return self._run_view_from_db(db, run)
+        if run.status not in ACTIVE_RUN_STATUSES:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Automation run cannot be cancelled"
             )
 
-        rule = (
-            db.get(ProjectAutomationRule, run.parent_id)
-            if run.parent_id is not None
-            else None
-        )
-        timezone_name = (
-            str(_metadata(rule).get("timezone") or "Asia/Shanghai")
-            if rule is not None
-            else "Asia/Shanghai"
-        )
         # An AI-managed run may retain the manager's Backend Task id after the
         # manager has selected a project robot. The selected robot is then the
         # only active executor, so always stop the active Wework execution
@@ -1072,15 +1277,7 @@ class ProjectAutomationService:
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.automation_run_id == str(run.id),
-                LoopItemExecution.status.in_(
-                    [
-                        "pending_approval",
-                        "queued",
-                        "claimed",
-                        "running",
-                        "cancel_requested",
-                    ]
-                ),
+                LoopItemExecution.status.in_(ACTIVE_STATUSES),
             )
             .order_by(LoopItemExecution.id.desc())
             .first()
@@ -1107,7 +1304,7 @@ class ProjectAutomationService:
                         "Runtime did not confirm cancellation",
                     )
             db.refresh(run)
-            return self._run_view(run, timezone_name)
+            return self._run_view_from_db(db, run)
 
         if run.backend_task_id:
             from app.services.project_automation_managed_execution import (
@@ -1136,8 +1333,28 @@ class ProjectAutomationService:
                 raise HTTPException(
                     status.HTTP_404_NOT_FOUND, "Automation run not found"
                 )
-            return self._run_view(run, timezone_name)
+            return self._run_view_from_db(db, run)
 
+        self._finish_cancelled_run(db, run)
+        return self._run_view_from_db(db, run)
+
+    @staticmethod
+    def _run_timezone(db: Session, run: ProjectAutomationRun) -> str:
+        rule = (
+            db.get(ProjectAutomationRule, run.parent_id)
+            if run.parent_id is not None
+            else None
+        )
+        return (
+            str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+            if rule is not None
+            else "Asia/Shanghai"
+        )
+
+    @staticmethod
+    def _finish_cancelled_run(db: Session, run: ProjectAutomationRun) -> None:
+        if run.status == "cancelled":
+            return
         run.status = "cancelled"
         run.version += 1
         from app.services.project_workflow_projection import (
@@ -1153,7 +1370,53 @@ class ProjectAutomationService:
         )
         db.commit()
         db.refresh(run)
-        return self._run_view(run, timezone_name)
+
+    @staticmethod
+    def _is_workflow_root_run(db: Session, run: ProjectAutomationRun) -> bool:
+        if not run.task_id or _metadata(run).get("workflow_parent_run_id"):
+            return False
+        item = db.get(LoopItem, str(run.task_id))
+        if item is None:
+            return False
+        item_metadata = (
+            item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        )
+        binding = item_metadata.get("workflow_automation")
+        return isinstance(binding, dict) and str(binding.get("run_id") or "") == str(
+            run.id
+        )
+
+    @staticmethod
+    def _workflow_child_runs(
+        db: Session,
+        root: ProjectAutomationRun,
+    ) -> list[ProjectAutomationRun]:
+        rows = (
+            db.query(ProjectAutomationRun)
+            .filter(
+                ProjectAutomationRun.cloud_project_id == root.cloud_project_id,
+                ProjectAutomationRun.task_id == root.task_id,
+                loop_datetime_is_unset(ProjectAutomationRun.deleted_at),
+            )
+            .order_by(ProjectAutomationRun.created_at, ProjectAutomationRun.id)
+            .all()
+        )
+        descendants: list[ProjectAutomationRun] = []
+        parent_ids = {str(root.id)}
+        remaining = [row for row in rows if str(row.id) != str(root.id)]
+        while remaining:
+            matched = [
+                row
+                for row in remaining
+                if str(_metadata(row).get("workflow_parent_run_id") or "") in parent_ids
+            ]
+            if not matched:
+                break
+            descendants.extend(matched)
+            parent_ids.update(str(row.id) for row in matched)
+            matched_ids = {str(row.id) for row in matched}
+            remaining = [row for row in remaining if str(row.id) not in matched_ids]
+        return descendants
 
     async def check_due(self, db: Session) -> int:
         now = utcnow()
@@ -1322,8 +1585,6 @@ class ProjectAutomationService:
     def _rule_view(
         db: Session,
         row: ProjectAutomationRule,
-        *,
-        webhook_secret: str | None = None,
     ) -> dict:
         rule_metadata = _metadata(row)
         configured_mode = assignment_mode(rule_metadata)
@@ -1379,6 +1640,10 @@ class ProjectAutomationService:
             model = None
         last_run = rule_metadata.get("last_run_at")
         database_timezone = database_datetime_timezone(db)
+        dispatch_target = rule_metadata.get("dispatch_target")
+        dispatch_target = (
+            dict(dispatch_target) if isinstance(dispatch_target, dict) else None
+        )
         return {
             "id": row.id,
             "project_id": str(row.cloud_project_id),
@@ -1389,10 +1654,6 @@ class ProjectAutomationService:
             "event_config": rule_metadata.get("event_config") or {},
             "assignment_mode": configured_mode,
             "manager_type": configured_manager,
-            "webhook_event_id": (
-                row.id if rule_metadata.get("trigger_type") == "event" else None
-            ),
-            "webhook_secret": webhook_secret,
             "cron_expression": rule_metadata.get("cron_expression"),
             "timezone": str(rule_metadata.get("timezone") or "Asia/Shanghai"),
             "agent_id": row.assignee_agent_id or None,
@@ -1400,7 +1661,18 @@ class ProjectAutomationService:
             "model": model,
             "agent_name": display_name,
             "execution_environment": environment,
-            "execution_device_id": device_id,
+            "execution_device_id": (
+                text(dispatch_target.get("execution_device_id"))
+                if dispatch_target
+                else device_id
+            ),
+            "target_kind": (
+                str(dispatch_target.get("kind")) if dispatch_target else None
+            ),
+            "target_id": (str(dispatch_target.get("id")) if dispatch_target else None),
+            "target_name": (
+                str(dispatch_target.get("name")) if dispatch_target else None
+            ),
             "role_source": str(role.get("source") or "agent"),
             "runtime_source": str(runtime.get("source") or "agent_default"),
             "runtime_profile_id": text(runtime.get("runtime_profile_id")),
@@ -1419,6 +1691,73 @@ class ProjectAutomationService:
             "created_at": _utc_aware(row.created_at, database_timezone),
             "updated_at": _utc_aware(row.updated_at, database_timezone),
         }
+
+    @staticmethod
+    def _validate_dispatch_target(
+        db: Session,
+        *,
+        project_id: str,
+        user_id: int,
+        target_kind: str | None,
+        target_id: str | None,
+    ) -> dict[str, object] | None:
+        if target_kind is None or target_id is None:
+            return None
+        if target_kind == "human":
+            member = next(
+                (
+                    item
+                    for item in cloud_project_service.list_members(
+                        db, int(project_id), user_id
+                    )
+                    if str(item["user_id"]) == str(target_id)
+                ),
+                None,
+            )
+            if member is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Dispatch target is not a Project member",
+                )
+            return {
+                "kind": "human",
+                "id": str(target_id),
+                "name": str(member["user_name"]),
+            }
+        if target_kind == "agent":
+            agent = project_agent(db, project_id, target_id)
+            return {
+                "kind": "agent",
+                "id": str(agent.id),
+                "name": str(agent.title or agent.name or "AI"),
+            }
+        if target_kind == "collaboration_group":
+            from app.services.workspaces import workspace_service
+
+            group = next(
+                (
+                    item
+                    for item in workspace_service.list_project_collaboration_groups(
+                        db, int(project_id), user_id
+                    )
+                    if str(item["id"]) == str(target_id)
+                ),
+                None,
+            )
+            if group is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Collaboration group is not available in this Project",
+                )
+            return {
+                "kind": "collaboration_group",
+                "id": str(group["id"]),
+                "name": str(group["name"]),
+            }
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Unknown dispatch target kind",
+        )
 
     @staticmethod
     def _validate_runtime_strategy(
@@ -1483,8 +1822,17 @@ class ProjectAutomationService:
     def _run_view(
         row: ProjectAutomationRun,
         fallback_timezone: str = "Asia/Shanghai",
+        rule_metadata: dict | None = None,
     ) -> dict:
         run_metadata = _metadata(row)
+        automation_metadata = rule_metadata or {}
+        trigger_type = text(automation_metadata.get("trigger_type")) or None
+        event = run_metadata.get("event")
+        event_type = (
+            text(event.get("type"))
+            if isinstance(event, dict)
+            else text(automation_metadata.get("event_type"))
+        )
         scheduled = run_metadata.get("scheduled_for")
         return {
             "id": row.id,
@@ -1508,7 +1856,31 @@ class ProjectAutomationService:
             "updated_at": _utc_aware(row.updated_at),
             "completed_at": _utc_aware(row.completed_at),
             "retryable": row.status == "failed",
+            "trigger_type": trigger_type,
+            "event_type": event_type or None,
+            "event_config": (
+                automation_metadata.get("event_config")
+                if trigger_type == "event"
+                else None
+            ),
         }
+
+    @classmethod
+    def _run_view_from_db(
+        cls,
+        db: Session,
+        row: ProjectAutomationRun,
+    ) -> dict:
+        rule = (
+            db.get(ProjectAutomationRule, row.parent_id)
+            if row.parent_id is not None
+            else None
+        )
+        return cls._run_view(
+            row,
+            cls._run_timezone(db, row),
+            _metadata(rule) if rule is not None else None,
+        )
 
     @staticmethod
     def _is_visible_run(row: ProjectAutomationRun) -> bool:
@@ -1521,9 +1893,11 @@ class ProjectAutomationService:
         trigger: str,
         scheduled_for: datetime,
         *,
+        public_id: str | None = None,
         commit: bool = True,
     ) -> ProjectAutomationRun:
         row = ProjectAutomationRun(
+            public_id=public_id,
             cloud_project_id=rule.cloud_project_id,
             parent_id=rule.id,
             assignee_agent_id=rule.assignee_agent_id,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { verifyTrayPositionPersistence } from './tray-position.mjs'
 
 async function readWindowState(control) {
   return JSON.parse(await control.command('getNativeWindowState', 'body'))
@@ -26,8 +27,12 @@ async function waitForRoute(control, expected, timeoutMs) {
   assert.fail(`Expected route ${expected}, received ${latest}`)
 }
 
-export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+export async function createDesktopScenario({ appIdentifier, captureScreenshot, uiTimeoutMs }) {
+  let restartDesktopApp
   return {
+    setRestartDesktopApp(restart) {
+      restartDesktopApp = restart
+    },
     async verify(control) {
       const tray = JSON.parse(await control.command('getTraySnapshot', 'body'))
       assert.equal(tray.created, true, 'The Electron Tray was not created')
@@ -75,7 +80,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
       await control.command('activateTray', 'body', {
         value: JSON.stringify({ type: 'click' }),
       })
-      await control.awaitReadyAfter(readyCountBeforeClose)
       const restored = await waitForWindowState(
         control,
         state => state.visible && !state.minimized,
@@ -85,7 +89,16 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
       if (restored.platform === 'darwin') {
         assert.equal(restored.dockVisible, true, 'Restoring from Tray did not show the Dock icon')
       }
+      await waitForRoute(control, '/settings', uiTimeoutMs)
+      assert.equal(
+        control.readyCount,
+        readyCountBeforeClose,
+        'Restoring a hidden window unnecessarily reloaded its renderer'
+      )
       await captureScreenshot(control, 'tray-lifecycle-restored.png', 'body')
+      if (restored.platform === 'darwin') {
+        await verifyTrayPositionPersistence(control, appIdentifier, restartDesktopApp)
+      }
     },
 
     diagnostics() {

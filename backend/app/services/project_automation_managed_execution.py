@@ -21,7 +21,8 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.kind import Task
+from app.schemas.kind import Task, Team
+from app.services.chat.config.model_resolver import resolve_model_name_for_bot
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
     create_chat_task,
@@ -31,6 +32,7 @@ from app.services.project_automation_completion import (
     mark_project_automation_dispatch_started,
     register_project_automation_task_completion_handler,
 )
+from app.services.readers import KindType, kindReader
 from app.stores.tasks import subtask_store, task_store
 from shared.telemetry.decorators import trace_async
 
@@ -56,6 +58,28 @@ class _ExecutionObjects:
     assistant_subtask: Subtask
     team: Kind
     user: User
+
+
+def _resolve_primary_team_model_id(
+    db: Session,
+    *,
+    team: Kind,
+    user_id: int,
+) -> str | None:
+    """Resolve the primary Bot model that will execute a Team task."""
+
+    team_crd = Team.model_validate(team.json)
+    for member in team_crd.spec.members:
+        bot = kindReader.get_by_name_and_namespace(
+            db,
+            team.user_id,
+            KindType.BOT,
+            member.botRef.namespace,
+            member.botRef.name,
+        )
+        if bot is not None:
+            return resolve_model_name_for_bot(db, bot, user_id)
+    return None
 
 
 class ProjectAutomationManagedExecutionService:
@@ -178,12 +202,17 @@ class ProjectAutomationManagedExecutionService:
         ):
             raise ValueError("Board Team execution does not match its assignment")
 
+        model_id = _resolve_primary_team_model_id(
+            db,
+            team=team,
+            user_id=owner.id,
+        )
         params = TaskCreationParams(
             message=normalized_prompt,
             title=title.strip() or "Board task",
             task_type="chat",
             source="board_team_assignment",
-            auto_delete_executor="true",
+            auto_delete_executor="false",
         )
         result = await create_chat_task(
             db=db,
@@ -215,6 +244,8 @@ class ProjectAutomationManagedExecutionService:
                 "weworkSpaceTaskId": loop_item_id,
             }
         )
+        if model_id:
+            labels["modelId"] = model_id
         task_store.update_json(db, task=result.task, payload=task_json)
         execution.backend_task_id = result.task.id
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
