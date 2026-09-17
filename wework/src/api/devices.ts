@@ -300,6 +300,14 @@ export function createDeviceApi(client: HttpClient) {
         : client.post<DeviceSessionResponse>(`/devices/${encodeURIComponent(deviceId)}/code-server`)
     },
 
+    async startVnc(deviceId: string): Promise<DeviceSessionResponse> {
+      return client.post<DeviceSessionResponse>(`/devices/${encodeURIComponent(deviceId)}/vnc`)
+    },
+
+    async revokeVnc(sessionId: string): Promise<void> {
+      return client.delete(`/devices/vnc-sessions/${encodeURIComponent(sessionId)}`)
+    },
+
     async openLocalTerminal(deviceId: string, cwd?: string): Promise<void> {
       const args = cwd?.trim() ? [cwd.trim()] : []
       const response = await client.post<DeviceCommandResponse>(

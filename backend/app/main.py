@@ -945,7 +945,7 @@ def create_socketio_asgi_app():
     from app.api.ws.device_namespace import register_device_namespace
     from app.api.ws.terminal_namespace import register_terminal_namespace
     from app.api.ws.wework_runtime_namespace import register_wework_runtime_namespace
-    from app.core.socketio import create_socketio_app, get_sio
+    from app.core.socketio import get_sio
 
     sio = get_sio()
 
@@ -966,12 +966,17 @@ def create_socketio_asgi_app():
     register_wework_runtime_namespace(sio)
     _logger.info("Wework runtime namespace registered during ASGI app creation")
 
-    socketio_app = create_socketio_app(sio)
+    # Create VNC interceptor wrapper for FastAPI
+    # This intercepts VNC WebSocket connections before they reach FastAPI
+    from app.api.vnc_websocket_middleware import create_vnc_interceptor_app
 
-    # Create combined ASGI app
+    vnc_interceptor_app = create_vnc_interceptor_app(_fastapi_app)
+
+    # Create Socket.IO ASGI app with the VNC interceptor as other_asgi_app
+    # This ensures Socket.IO handles /socket.io/* and everything else goes to vnc_interceptor_app
     return socketio.ASGIApp(
         sio,
-        other_asgi_app=_fastapi_app,
+        other_asgi_app=vnc_interceptor_app,
         socketio_path="/socket.io",
     )
 

@@ -362,14 +362,15 @@ Cloud devices display online status, executor version, CPU, memory, and disk usa
 
 Local devices display device name, online status, and executor version. They do not show CPU, MEM, or disk monitoring data or the resource monitoring note, and they do not show cloud-only actions such as Terminal, IDE, cloud desktop, restart, or cloud-resource deletion. Offline local devices show a delete entry for removing the device registration. If the device reconnects, it automatically registers again.
 
-Online cloud and remote Docker devices can open interactive sessions directly:
+Online cloud and remote Docker devices can open Terminal and IDE sessions directly. Device Desktop is available only for cloud devices; remote Docker and local devices do not show the Desktop entry and cannot create VNC sessions.
 
-| Action       | Backend API                                 | Description                                                                                                                                                                                           |
-| ------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Terminal** | `POST /api/devices/{device_id}/terminal`    | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
-| **IDE**      | `POST /api/devices/{device_id}/code-server` | Opens a code-server session; the request body may include `path` for a remote project directory within the allowed roots, or omit it to use the default workspace                                     |
+| Action       | Supported devices               | Backend API                                 | Description                                                                                                                                                                                           |
+| ------------ | ------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Terminal** | Cloud and remote Docker devices | `POST /api/devices/{device_id}/terminal`    | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
+| **IDE**      | Cloud and remote Docker devices | `POST /api/devices/{device_id}/code-server` | Opens a code-server session; the request body may include `path` for a remote project directory within the allowed roots, or omit it to use the default workspace                                     |
+| **Desktop**  | Cloud devices only              | `POST /api/devices/{device_id}/vnc`         | Creates a short-lived VNC session and opens the shared noVNC viewer inside Wework's Chromium renderer                                                                                                 |
 
-Terminal sessions do not expose device ports. IDE sessions return a short-lived session-token URL exposed through the device-side session gateway. Terminal and IDE buttons are disabled while the device is offline.
+Terminal sessions do not expose device ports. IDE sessions return a short-lived session-token URL exposed through the device-side session gateway. Desktop sessions return a short-lived `/vnc-proxy/sessions/{session_id}` WebSocket URL with a single-use ticket. Backend keeps provider credentials and upstream routing private, and the viewer requests a fresh session after disconnect instead of reusing a consumed ticket. Buttons for supported sessions are disabled while the device is offline.
 
 The more menu contains lower-frequency management actions:
 

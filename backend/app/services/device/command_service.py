@@ -66,6 +66,7 @@ REMOTE_READ_ONLY_COMMAND_KEYS = frozenset(
         "git_gitlab_merge_requests_batch",
         "git_generate_commit_message",
         "turn_file_changes_review",
+        "vnc_clipboard_read",
     }
 )
 REMOTE_MUTATING_COMMAND_KEYS = frozenset(
@@ -80,6 +81,7 @@ REMOTE_MUTATING_COMMAND_KEYS = frozenset(
         "sync_git_credentials",
         "turn_file_changes_revert",
         "environment_prepare",
+        "vnc_clipboard_write",
     }
 )
 RUNTIME_AUTH_COMMAND_KEYS = frozenset(

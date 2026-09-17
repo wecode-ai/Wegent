@@ -23,6 +23,10 @@ import './i18n'
 import { telemetryFeatureForLocation } from './telemetry/routes'
 import App from './App'
 
+function TestDeviceDesktopRoute() {
+  return <div data-testid="test-device-desktop-route" />
+}
+
 const telemetryMocks = vi.hoisted(() => ({ track: vi.fn(), trackEvent: vi.fn() }))
 
 vi.hoisted(() => {
@@ -37,6 +41,15 @@ vi.mock('@/telemetry/client', async importOriginal => ({
 }))
 
 const TEST_DSH_ROUTES = [
+  {
+    id: 'device-desktop.root',
+    icon: 'monitor',
+    module: 'plugins/wework-ui-device-desktop.js',
+    path: '/device-desktop',
+    restorePolicy: 'none',
+    telemetryFeature: 'cloud_work',
+    title: '设备桌面',
+  },
   {
     id: 'plugin-center.catalog',
     icon: 'plug',
@@ -133,6 +146,7 @@ function installTestDshUiPlugins() {
     }),
   }
   window.__WEWORK_DSH_UI_MODULES__ = {
+    'plugins/wework-ui-device-desktop.js': { default: TestDeviceDesktopRoute },
     'plugins/wework-ui-applications.js': { default: ApplicationsRoute },
     'plugins/wework-ui-core-apps.js': { default: CoreAppSurface },
     'plugins/wework-ui-plugin-center-catalog.js': { default: PluginCatalogRoute },
@@ -1098,6 +1112,18 @@ describe('App plugins route', () => {
     renderApp()
 
     await screen.findByTestId('app-shell')
+    await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
+  })
+
+  test('renders an isolated VNC child without the global navigation shell', async () => {
+    window.history.pushState({}, '', '/device-desktop?deviceId=cloud-device&vncSurface=isolated')
+
+    renderApp()
+
+    expect(await screen.findByTestId('test-device-desktop-route')).toBeInTheDocument()
+    expect(screen.getByTestId('vnc-surface-route')).toBeInTheDocument()
+    expect(screen.queryByTestId('chrome-titlebar')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-workspace-tab-content]')).toBeNull()
     await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
   })
 

@@ -364,14 +364,15 @@ wegent-executor
 
 本地设备会显示设备名称、在线状态和 executor 版本，但不会展示 CPU、MEM、磁盘监控数据和资源监控说明，也不会展示终端、IDE、云桌面、重启或删除云资源等云设备专属操作。离线本地设备会显示删除入口，用于移除该设备的注册记录；如果设备重新连接，它会自动重新注册。
 
-在线云设备和远程 Docker 设备支持直接打开交互式会话：
+在线云设备和远程 Docker 设备支持直接打开终端和 IDE；设备桌面仅云设备支持，远程 Docker 设备和本地设备不显示桌面入口，也不能创建 VNC 会话。
 
-| 操作     | 后端接口                                    | 说明                                                                                                                                 |
-| -------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **终端** | `POST /api/devices/{device_id}/terminal`    | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
-| **IDE**  | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话；请求 body 可传 `path` 指定允许范围内的远程项目目录，不传时使用默认工作目录                                    |
+| 操作     | 适用设备                 | 后端接口                                    | 说明                                                                                                                                 |
+| -------- | ------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **终端** | 云设备、远程 Docker 设备 | `POST /api/devices/{device_id}/terminal`    | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
+| **IDE**  | 云设备、远程 Docker 设备 | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话；请求 body 可传 `path` 指定允许范围内的远程项目目录，不传时使用默认工作目录                                    |
+| **桌面** | 仅云设备                 | `POST /api/devices/{device_id}/vnc`         | 创建短时 VNC 会话，并在 Wework 的 Chromium 渲染进程中打开共享 noVNC viewer                                                           |
 
-终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。设备离线时，终端和 IDE 按钮不可用。
+终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。桌面会话返回 `/vnc-proxy/sessions/{session_id}` 下的短时 WebSocket 地址和一次性 ticket；Backend 对客户端隐藏 provider 凭据和上游路由，viewer 在断开后申请新会话，而不是复用已消费的 ticket。设备离线时，对应按钮不可用。
 
 更多菜单提供低频管理操作：
 

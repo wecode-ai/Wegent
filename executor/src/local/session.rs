@@ -66,6 +66,7 @@ fn subtract_metric(metric: &AtomicU64, value: usize) {
 pub enum SessionType {
     Terminal,
     CodeServer,
+    Vnc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,6 +285,42 @@ impl LocalSession {
             path,
             port: 0,
             terminal: Some(terminal),
+            terminal_attached: false,
+            terminal_protocol: None,
+            terminal_consumer_id: None,
+            terminal_browser_socket_id: None,
+            terminal_next_sequence: 1,
+            terminal_acked_sequence: 0,
+            terminal_last_sent_sequence: 0,
+            terminal_highest_sent_sequence: 0,
+            terminal_replay: VecDeque::new(),
+            terminal_replay_bytes: 0,
+            terminal_ack_lag_bytes: 0,
+            terminal_backpressured: false,
+            terminal_utf8_decoder: TerminalUtf8Decoder::default(),
+            terminal_exit: None,
+            terminal_delivery_retry_attempts: 0,
+            terminal_delivery_retry_not_before: None,
+            expires_at,
+            code_server_authenticated: false,
+        }
+    }
+
+    pub fn vnc(
+        session_id: &str,
+        access_token: &str,
+        project_id: u64,
+        port: u16,
+        expires_at: u64,
+    ) -> Self {
+        Self {
+            session_id: session_id.to_owned(),
+            session_type: SessionType::Vnc,
+            access_token: access_token.to_owned(),
+            project_id,
+            path: PathBuf::new(),
+            port,
+            terminal: None,
             terminal_attached: false,
             terminal_protocol: None,
             terminal_consumer_id: None,
@@ -599,8 +636,10 @@ pub struct LocalSessionHandler {
     pub gateway_enabled: bool,
     pub code_server_enabled: bool,
     pub terminal_enabled: bool,
+    pub vnc_enabled: bool,
     pub public_base_url: String,
     pub code_server_port: u16,
+    pub vnc_port: u16,
     pub workspace_root: PathBuf,
     pub sessions: HashMap<String, LocalSession>,
     pty_manager: Arc<dyn SessionPtyManager>,
@@ -623,8 +662,10 @@ impl LocalSessionHandler {
             gateway_enabled,
             code_server_enabled: true,
             terminal_enabled: true,
+            vnc_enabled: false,
             public_base_url: public_base_url.trim_end_matches('/').to_owned(),
             code_server_port,
+            vnc_port: 5901,
             workspace_root,
             sessions: HashMap::new(),
             pty_manager,
@@ -643,6 +684,12 @@ impl LocalSessionHandler {
         self
     }
 
+    pub fn with_vnc_desktop(mut self, enabled: bool, port: u16) -> Self {
+        self.vnc_enabled = enabled;
+        self.vnc_port = port;
+        self
+    }
+
     pub fn terminal_event_notifier(&self) -> Arc<Notify> {
         Arc::clone(&self.terminal_event_notifier)
     }
@@ -655,12 +702,11 @@ impl LocalSessionHandler {
             SessionType::Terminal if !self.terminal_enabled => {
                 return SessionResult::error("Terminal sessions are disabled on this device");
             }
+            SessionType::Vnc if !self.vnc_enabled => {
+                return SessionResult::error("VNC desktop sessions are disabled on this device");
+            }
             _ => {}
         }
-        let path = match self.project_path(&request.path, request.create_if_missing) {
-            Ok(path) => path,
-            Err(error) => return SessionResult::error(error),
-        };
         if self.sessions.contains_key(&request.session_id) {
             if let Some(mut existing) = self.sessions.remove(&request.session_id) {
                 if let Some(mut terminal) = existing.terminal.take() {
@@ -669,9 +715,17 @@ impl LocalSessionHandler {
                 }
             }
         }
+        if request.session_type == SessionType::Vnc {
+            return self.start_vnc_session(request);
+        }
+        let path = match self.project_path(&request.path, request.create_if_missing) {
+            Ok(path) => path,
+            Err(error) => return SessionResult::error(error),
+        };
         match request.session_type {
             SessionType::CodeServer => self.start_code_server_session(request, path),
             SessionType::Terminal => self.start_terminal_session(request, path),
+            SessionType::Vnc => unreachable!("VNC sessions return before workspace validation"),
         }
     }
 
@@ -769,6 +823,41 @@ impl LocalSessionHandler {
         }
     }
 
+    fn start_vnc_session(&mut self, request: SessionStartRequest) -> SessionResult {
+        if !self.gateway_enabled {
+            return SessionResult::error("Session gateway is disabled");
+        }
+        let address = std::net::SocketAddr::from(([127, 0, 0, 1], self.vnc_port));
+        if std::net::TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_err() {
+            return SessionResult::error("VNC desktop is not ready on this device");
+        }
+        let expires_at =
+            epoch_seconds() + request.ttl_seconds.unwrap_or(DEFAULT_SESSION_TTL_SECONDS);
+        let session = LocalSession::vnc(
+            &request.session_id,
+            &request.access_token,
+            request.project_id,
+            self.vnc_port,
+            expires_at,
+        );
+        self.sessions.insert(request.session_id.clone(), session);
+        SessionResult {
+            success: true,
+            error: None,
+            session_id: Some(request.session_id.clone()),
+            project_id: Some(request.project_id),
+            session_type: Some(SessionType::Vnc),
+            path: None,
+            url: self.build_session_url(
+                SessionType::Vnc,
+                &request.session_id,
+                &request.access_token,
+                None,
+            ),
+            transport: Some("websocket".to_owned()),
+        }
+    }
+
     fn project_path(&self, path: &str, create_if_missing: bool) -> Result<PathBuf, String> {
         let requested_path = PathBuf::from(path);
         let project_path = if path.trim().is_empty() {
@@ -849,6 +938,17 @@ impl LocalSessionHandler {
                 query.push_str("&folder=");
                 query.push_str(&form_urlencode(path));
             }
+        }
+        if session_type == SessionType::Vnc {
+            let websocket_base_url =
+                if let Some(rest) = self.public_base_url.strip_prefix("https://") {
+                    format!("wss://{rest}")
+                } else if let Some(rest) = self.public_base_url.strip_prefix("http://") {
+                    format!("ws://{rest}")
+                } else {
+                    self.public_base_url.clone()
+                };
+            return format!("{websocket_base_url}/s/{session_id}/websockify?{query}");
         }
         format!("{}/s/{session_id}/?{query}", self.public_base_url)
     }

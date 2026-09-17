@@ -1189,6 +1189,27 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudServices.deviceApi.executeCommand).not.toHaveBeenCalled()
   })
 
+  it('routes fixed VNC clipboard commands through the Backend command API', async () => {
+    mocks.cloudServices.deviceApi.executeCommand.mockResolvedValueOnce({
+      success: true,
+      exit_code: 0,
+      stdout: '',
+      stderr: '',
+    })
+    const services = createServices()
+
+    await services.deviceApi.executeCommand('cloud-device', {
+      command_key: 'vnc_clipboard_write',
+      env: { WEWORK_VNC_CLIPBOARD_BASE64: 'dGV4dA==' },
+    })
+
+    expect(mocks.cloudServices.deviceApi.executeCommand).toHaveBeenCalledWith('cloud-device', {
+      command_key: 'vnc_clipboard_write',
+      env: { WEWORK_VNC_CLIPBOARD_BASE64: 'dGV4dA==' },
+    })
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+  })
+
   it('resolves an uncached cloud executor before running workspace commands', async () => {
     mocks.cloudListDevices.mockResolvedValue([
       {
