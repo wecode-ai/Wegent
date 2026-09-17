@@ -19,10 +19,10 @@ from pymilvus import MilvusClient
 from knowledge_engine.storage.errors import StorageBackendError
 from knowledge_engine.storage.milvus_native import (
     INDEX_BINDING_COLLECTION,
-    MilvusDocumentStore,
     build_scope_filter,
     sanitize_filter_value,
 )
+from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
 
 class MilvusCleanup:

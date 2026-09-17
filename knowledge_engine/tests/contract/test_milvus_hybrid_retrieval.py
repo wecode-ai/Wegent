@@ -25,7 +25,11 @@ from knowledge_engine.storage.errors import IndexMissingError
 from knowledge_engine.storage.milvus_backend import MilvusBackend
 from shared.models import RetrievalScope
 
-from .conftest import DeterministicEmbedding, MilvusContractEnv
+from .conftest import (
+    DeterministicEmbedding,
+    MilvusContractEnv,
+    await_document_visibility,
+)
 
 pytestmark = pytest.mark.milvus
 
@@ -108,6 +112,12 @@ def _index_nodes(
         nodes=nodes,
         chunk_metadata=chunk_metadata,
         embed_model=model,
+    )
+    await_document_visibility(
+        backend,
+        knowledge_id=knowledge_id,
+        doc_ref=doc_ref,
+        expected_chunks=len(nodes),
     )
 
 

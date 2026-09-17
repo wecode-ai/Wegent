@@ -25,7 +25,7 @@ from knowledge_engine.storage.milvus_errors import (
     rpc_failure,
     rpc_status_code,
 )
-from knowledge_engine.storage.milvus_native import MilvusDocumentStore
+from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
 TIMEOUT_SECONDS = 3.0
 

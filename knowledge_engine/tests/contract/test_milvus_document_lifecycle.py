@@ -32,6 +32,7 @@ from .conftest import (
     CONTRACT_DIMENSION,
     DeterministicEmbedding,
     MilvusContractEnv,
+    await_document_visibility,
     drop_collection_with_contract,
 )
 
@@ -101,6 +102,13 @@ def _index_document(
             splitter_config=splitter_config,
             document_id=document_id,
         )
+    )
+    await_document_visibility(
+        backend,
+        knowledge_id=knowledge_id,
+        doc_ref=str(document_id),
+        expected_chunks=result["chunk_count"],
+        user_id=user_id,
     )
     return backend, model, result
 

@@ -19,10 +19,10 @@ from typing import Any, Callable, Dict, List
 from llama_index.core.schema import BaseNode
 
 from knowledge_engine.storage.milvus_native import (
-    MilvusDocumentStore,
     build_scope_filter,
     sanitize_filter_value,
 )
+from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
 logger = logging.getLogger(__name__)
 

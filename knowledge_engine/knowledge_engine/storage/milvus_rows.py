@@ -29,9 +29,9 @@ from knowledge_engine.storage.milvus_native import (
     METADATA_FIELD,
     RETRIEVAL_TEXT_FIELD,
     SOURCE_FILE_FIELD,
-    MilvusDocumentStore,
     build_scope_filter,
 )
+from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
 MAX_READ_LIMIT = 10000
 # Milvus answers one unordered page per request, so a complete read walks

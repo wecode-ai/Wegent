@@ -40,7 +40,11 @@ from knowledge_engine.storage.milvus_native import (
 )
 from shared.models import RetrievalScope
 
-from .conftest import DeterministicEmbedding, MilvusContractEnv
+from .conftest import (
+    DeterministicEmbedding,
+    MilvusContractEnv,
+    await_document_visibility,
+)
 
 pytestmark = pytest.mark.milvus
 
@@ -86,6 +90,12 @@ def _index_nodes(
         chunk_metadata=chunk_metadata,
         embed_model=model,
     )
+    await_document_visibility(
+        backend,
+        knowledge_id=knowledge_id,
+        doc_ref=doc_ref,
+        expected_chunks=len(nodes),
+    )
     return model
 
 
@@ -100,7 +110,7 @@ def _index_text_document(
     """Index one document through the public document service."""
     backend = backend or env.backend()
     service = DocumentService(storage_backend=backend)
-    asyncio.run(
+    result = asyncio.run(
         service.index_document_from_binary(
             knowledge_id=knowledge_id,
             binary_data=text.encode("utf-8"),
@@ -110,6 +120,12 @@ def _index_text_document(
             user_id=1,
             document_id=document_id,
         )
+    )
+    await_document_visibility(
+        backend,
+        knowledge_id=knowledge_id,
+        doc_ref=str(document_id),
+        expected_chunks=result["chunk_count"],
     )
     return backend
 

@@ -18,8 +18,8 @@ from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus_native import (
     DENSE_VECTOR_FIELD,
     INDEX_BINDING_COLLECTION,
-    MilvusDocumentStore,
 )
+from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
 CONTRACT_DIMENSION = 4
 # Literals on purpose: these tests pin the level each RPC must send, so reading
@@ -166,15 +166,6 @@ def test_delete_verification_row_count_stays_strong():
     client = _RecordingClient()
 
     _store(client).count_rows(client, "wegent_kb_1", 'knowledge_id == "1"')
-
-    assert client.consistency_levels("query") == [WRITE_CONSISTENCY]
-
-
-def test_waiting_for_the_newest_state_stays_strong():
-    """Waiting on a write is a write-path read, not a retrieval read."""
-    client = _RecordingClient()
-
-    _store(client).await_newest_state(client, "wegent_kb_1", 'knowledge_id == "1"')
 
     assert client.consistency_levels("query") == [WRITE_CONSISTENCY]
 

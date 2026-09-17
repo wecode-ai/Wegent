@@ -297,6 +297,48 @@ export async function getDocumentChunks(
   token: string,
   documentId: number
 ): Promise<string> {
+  return readDocumentChunks(request, token, documentId)
+}
+
+/**
+ * Read the chunks of a document that was just indexed, retrying while the
+ * vector store catches up.
+ *
+ * Document status turns successful when the index write returns, and Milvus
+ * answers the first reads after that write from a snapshot that can predate it
+ * (measured 0.3-0.5s on the pinned 2.5.4 fixture; the write does not wait for
+ * it by design). A bounded retry keeps this flow honest on every storage
+ * backend instead of asserting inside that window; a document that never
+ * becomes readable still fails, with the time it waited.
+ */
+export async function readDocumentChunksAfterIndexing(
+  request: APIRequestContext,
+  token: string,
+  documentId: number,
+  marker: string,
+  options: { timeout?: number } = {}
+): Promise<string> {
+  let latest = ''
+  await expect
+    .poll(
+      async () => {
+        latest = await readDocumentChunks(request, token, documentId)
+        return latest.includes(marker)
+      },
+      {
+        timeout: options.timeout ?? 10_000,
+        message: `chunks of document ${documentId} should become readable`,
+      }
+    )
+    .toBe(true)
+  return latest
+}
+
+async function readDocumentChunks(
+  request: APIRequestContext,
+  token: string,
+  documentId: number
+): Promise<string> {
   const response = await request.get(
     `${PROVIDER_NATIVE_API_URL}/api/knowledge-documents/${documentId}/chunks?page=1&page_size=50`,
     { headers: authHeaders(token) }

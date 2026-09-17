@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Iterator
@@ -32,6 +33,16 @@ from tests.contract.milvus_fault_injection import (
 CONTRACT_URI_ENV = "MILVUS_CONTRACT_URI"
 CONTRACT_DIMENSION = 1536
 CONTRACT_CREATED_AT = "2026-01-01T00:00:00Z"
+# Retrieval reads at Bounded, so the first reads after a write may be answered
+# from a snapshot that predates it. Measured on the pinned 2.5.4 fixture, one
+# fresh collection per round and five chunks per document: dense search ~0.42s,
+# keyword search ~0.63s, document read up to ~0.87s (0.3-0.5s when the
+# collection is already warmed). The write path returns without waiting for that
+# window (ticket 11), so a contract test that asserts on a document it just
+# wrote waits it out instead of asserting inside it.
+VISIBILITY_WINDOW_SECONDS = 0.9
+VISIBILITY_TIMEOUT_SECONDS = 2.0
+VISIBILITY_POLL_SECONDS = 0.05
 
 
 @pytest.fixture
@@ -105,6 +116,56 @@ def index_nodes(
         chunk_metadata=chunk_metadata,
         embed_model=DeterministicEmbedding(dimension),
     )
+    await_document_visibility(
+        backend,
+        knowledge_id=knowledge_id,
+        doc_ref=doc_ref,
+        expected_chunks=len(nodes),
+    )
+
+
+def await_document_visibility(
+    backend: MilvusBackend,
+    *,
+    knowledge_id: str,
+    doc_ref: str,
+    expected_chunks: int | None = None,
+    timeout: float = VISIBILITY_TIMEOUT_SECONDS,
+    **read_kwargs,
+):
+    """Wait until the reading path serves a document that was just written.
+
+    Milvus answers a ``Bounded`` read from a timestamp it keeps behind the
+    newest data, so a read issued within ``VISIBILITY_WINDOW_SECONDS`` of a
+    write can come back empty or partial. The product accepts that window - the
+    write returns as soon as the server accepted the rows (ticket 11) - and
+    contract tests wait for it here rather than loosening their assertions.
+
+    The poll uses the product's own reading path, so this proves the write
+    becomes readable. It never becomes a silent skip: a document that is still
+    missing when the deadline passes fails with the time it waited, because a
+    write that never lands is not the window the spec accepts.
+    """
+    started = time.monotonic()
+    deadline = started + timeout
+    while True:
+        try:
+            document = backend.get_document(knowledge_id, doc_ref, **read_kwargs)
+        except ValueError:
+            document = None
+        if document is not None:
+            visible_chunks = int(document.get("chunk_count") or 0)
+            if expected_chunks is None or visible_chunks >= expected_chunks:
+                return document
+        if time.monotonic() >= deadline:
+            waited = time.monotonic() - started
+            raise AssertionError(
+                f"document {doc_ref} of knowledge base {knowledge_id} was still "
+                f"not readable {waited:.2f}s after its write returned; the "
+                f"measured visibility window is ~{VISIBILITY_WINDOW_SECONDS}s, "
+                "so this is a write that did not land, not that window."
+            )
+        time.sleep(VISIBILITY_POLL_SECONDS)
 
 
 def is_milvus_lite(uri: str) -> bool:

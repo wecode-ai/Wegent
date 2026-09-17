@@ -190,7 +190,6 @@ class FakeStore:
         self.searches: list[dict] = []
         self.sparse_searches: list[dict] = []
         self.sparse_hits: list[dict] = list(sparse_hits or [])
-        self.visible_reads: list[str] = []
         self.clients_created = 0
         self.clients_closed = 0
 
@@ -266,10 +265,6 @@ class FakeStore:
     def count_rows(self, client, collection_name, filter_expr):
         self.queries.append({"filter": filter_expr, "count": True})
         return sum(1 for row in self.rows if self._filter_matches(row, filter_expr))
-
-    def await_newest_state(self, client, collection_name, filter_expr):
-        self.calls.append(("await_newest_state", collection_name, filter_expr))
-        self.visible_reads.append(filter_expr)
 
     def delete_rows(
         self, client, collection_name, filter_expr, *, flush: bool = True
@@ -530,10 +525,13 @@ def test_index_writes_the_document_with_a_single_upsert():
     assert result["status"] == "success"
 
 
-def test_index_writes_without_waiting_for_a_flush():
-    """The write path does not seal the segment per document.
+def test_index_returns_as_soon_as_the_rows_are_written():
+    """One write, no per-document flush and no write-side visibility wait.
 
-    The reasoning behind dropping the per-document flush is recorded on
+    Retrieval reads at ``Bounded``, so the write returns as soon as the server
+    accepted the rows and the next ~0.5s of reads may miss them; the parity
+    spec accepts that window instead of paying for it on every write. The
+    reasoning behind dropping the per-document flush is recorded on
     ``MilvusBackend._drop_failed_write``.
     """
     backend = _backend()
@@ -547,34 +545,9 @@ def test_index_writes_without_waiting_for_a_flush():
     )
 
     assert all(call[0] != "flush" for call in store.calls)
-
-
-def test_index_waits_for_the_newest_state_of_the_written_document():
-    """The write ends by waiting on its own scope at the write level.
-
-    Reads answer at ``Bounded`` and may be served from an older snapshot, so
-    the rows written here would be missing from the very next query without
-    this wait. It asserts nothing: the write stays a single write with no
-    publication state, and the wait is over before the caller sees success.
-    """
-    backend = _backend()
-    store = FakeStore()
-    backend._store = store
-
-    backend.index_with_metadata(
-        nodes=_nodes(),
-        chunk_metadata=_chunk_metadata(),
-        embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
-    )
-
-    [scope] = store.visible_reads
-    assert 'knowledge_id == "1"' in scope
-    assert 'doc_ref in ["42"]' in scope
-    written = [i for i, call in enumerate(store.calls) if call[0] == "upsert_rows"]
-    visible = [
-        i for i, call in enumerate(store.calls) if call[0] == "await_newest_state"
-    ]
-    assert visible[0] > written[0]
+    # The last storage call of a successful write is the write itself: no read
+    # back, no second pass.
+    assert store.calls[-1][0] == "upsert_rows"
 
 
 def test_index_reuses_existing_node_embeddings_without_calling_the_model():

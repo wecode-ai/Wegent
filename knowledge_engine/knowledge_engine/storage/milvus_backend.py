@@ -66,12 +66,9 @@ from knowledge_engine.storage.milvus_native import (
     ID_FIELD,
     KNOWLEDGE_ID_FIELD,
     METADATA_FIELD,
-    NODE_KIND_CHUNK,
-    NODE_KIND_FIELD,
     RETRIEVAL_TEXT_FIELD,
     SCHEMA_VERSION,
     SOURCE_FILE_FIELD,
-    MilvusDocumentStore,
     MilvusIndexBinding,
     build_scope_filter,
     contract_token_field,
@@ -83,6 +80,7 @@ from knowledge_engine.storage.milvus_rows import (
     MilvusRowReader,
     row_metadata,
 )
+from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 from shared.models import DEFAULT_SCORE_THRESHOLD, RetrievalScope
 
 logger = logging.getLogger(__name__)
@@ -280,14 +278,11 @@ class MilvusBackend(BaseStorageBackend):
         required, which scope it honours and why the index contract is
         confirmed by ``ensure_index`` first.
 
-        The rows are written once and never published in a second pass. The
-        write then waits until the server can serve a state that includes them
-        (``await_newest_state`` owns why that wait is needed), because the read
-        path's ``Bounded`` consistency would otherwise answer the next query
-        from an older snapshot. A write that cannot be made readable is treated
-        like a write that did not happen - its rows are removed and the caller
-        retries - because replacing them keeps "the caller saw a failure" and
-        "the index holds nothing of this document" true together.
+        The rows are written once and never published in a second pass, and the
+        write returns as soon as the server accepted them. Retrieval reads at
+        ``Bounded``, so a read issued in the first ~0.5s after this write can
+        miss the document; the parity spec accepts that window instead of
+        buying it back with a write-side wait.
 
         Milvus has no transaction spanning the write, so the failure path is
         explicit: the document's rows are removed again at this write
@@ -306,13 +301,6 @@ class MilvusBackend(BaseStorageBackend):
         try:
             with self._store.client() as client:
                 self._store.upsert_rows(client, collection_name, rows)
-                # Retrieval reads at Bounded: end this write only when the
-                # server can serve the rows it just stored.
-                self._store.await_newest_state(
-                    client,
-                    collection_name,
-                    build_scope_filter(knowledge_id=knowledge_id, doc_refs=[doc_ref]),
-                )
         except Exception as write_error:
             self._drop_failed_write(collection_name, knowledge_id, doc_ref, write_error)
 
@@ -350,6 +338,10 @@ class MilvusBackend(BaseStorageBackend):
         the write removes the document's rows before it writes them again, so
         the retry converges instead of layering a second version.
 
+        It runs while the caller handles that write failure, so the final bare
+        ``raise`` re-raises it - a cleanup that could not prove its removal is
+        the only failure this helper raises itself.
+
         Neither this write nor the one it cleans up waits for a server-side
         flush: Milvus persists in the background, so a crash before its own
         flush can lose rows this write already reported as written. The
@@ -371,7 +363,7 @@ class MilvusBackend(BaseStorageBackend):
                 },
                 retryable=True,
             ) from write_error
-        raise write_error
+        raise
 
     def _node_has_content(self, node: BaseNode) -> bool:
         """A chunk with neither retrieval nor display text is not indexable."""
@@ -431,7 +423,6 @@ class MilvusBackend(BaseStorageBackend):
             KNOWLEDGE_ID_FIELD: knowledge_id,
             DOC_REF_FIELD: doc_ref,
             SOURCE_FILE_FIELD: str(metadata.get("source_file") or ""),
-            NODE_KIND_FIELD: NODE_KIND_CHUNK,
             CHUNK_INDEX_FIELD: chunk_index,
             RETRIEVAL_TEXT_FIELD: self.get_node_embedding_text(node),
             DISPLAY_TEXT_FIELD: self.get_node_display_text(node),

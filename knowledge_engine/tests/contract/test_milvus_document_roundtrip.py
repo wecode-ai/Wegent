@@ -31,7 +31,11 @@ from knowledge_engine.storage.errors import (
 )
 from shared.models import RetrievalScope
 
-from .conftest import DeterministicEmbedding, MilvusContractEnv
+from .conftest import (
+    DeterministicEmbedding,
+    MilvusContractEnv,
+    await_document_visibility,
+)
 
 pytestmark = pytest.mark.milvus
 
@@ -59,6 +63,13 @@ def _index_document(
             user_id=1,
             document_id=document_id,
         )
+    )
+    await_document_visibility(
+        backend,
+        knowledge_id=knowledge_id,
+        doc_ref=str(document_id),
+        expected_chunks=result["chunk_count"],
+        user_id=1,
     )
     return backend, model, result
 
@@ -256,7 +267,7 @@ def test_partial_write_is_not_queryable(
     milvus_env: MilvusContractEnv, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A failed write never leaves retrievable content behind."""
-    from knowledge_engine.storage.milvus_native import MilvusDocumentStore
+    from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
     knowledge_id = milvus_env.new_knowledge_id()
     backend = milvus_env.backend()
