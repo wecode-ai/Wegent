@@ -1640,6 +1640,7 @@ function ScrollableMessagePaneContent({
                 key={currentScrollKey ?? 'keyless-conversation'}
                 messages={messages}
                 onBeforeUserMessageToggle={preserveUserMessagePosition}
+                onVirtualLayoutChange={handleContentLayoutChange}
                 scrollElementRef={scrollRef}
                 initialDistanceFromBottomPx={getInitialDistanceFromBottomPx(currentScrollKey)}
                 className={messageListClassName}

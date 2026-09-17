@@ -14,12 +14,14 @@ const {
   resizeItemMock,
   useVirtualizerMock,
   virtualizerInstances,
+  virtualizerLayout,
 } = vi.hoisted(() => ({
   measureElementMock: vi.fn(),
   observeElementOffsetMock: vi.fn(),
   resizeItemMock: vi.fn(),
   useVirtualizerMock: vi.fn(),
   virtualizerInstances: [] as Array<Record<string, unknown>>,
+  virtualizerLayout: { height: 10_000 },
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
@@ -52,7 +54,7 @@ vi.mock('@tanstack/react-virtual', () => ({
     })
     const virtualizer = {
       getDistanceFromEnd: () => 0,
-      getTotalSize: () => 10_000,
+      getTotalSize: () => virtualizerLayout.height,
       getVirtualItems: () =>
         visibleIndexes.map(index => ({
           index,
@@ -81,6 +83,7 @@ describe('MessageList desktop virtualization', () => {
     resizeItemMock.mockClear()
     useVirtualizerMock.mockClear()
     virtualizerInstances.length = 0
+    virtualizerLayout.height = 10_000
     vi.unstubAllGlobals()
   })
 
@@ -277,6 +280,37 @@ describe('MessageList desktop virtualization', () => {
     )
 
     expect(scrollElement.scrollTop).toBe(-72)
+  })
+
+  test('notifies the scroll owner in the commit that changes the virtual list height', () => {
+    const messages = buildMessages(20, 'layout')
+    const scrollElementRef = { current: createScrollElement(200) }
+    const heights: string[] = []
+    const onVirtualLayoutChange = () => {
+      const list = screen.getByText('layout message 19').closest('[data-index]')?.parentElement
+      heights.push(list?.style.height ?? '')
+    }
+    const { rerender } = render(
+      <MessageList
+        messages={messages}
+        scrollElementRef={scrollElementRef}
+        onVirtualLayoutChange={onVirtualLayoutChange}
+        bottomOrigin
+      />
+    )
+    expect(heights).toEqual(['10000px'])
+
+    virtualizerLayout.height = 10_040
+    rerender(
+      <MessageList
+        messages={[...messages]}
+        scrollElementRef={scrollElementRef}
+        onVirtualLayoutChange={onVirtualLayoutChange}
+        bottomOrigin
+      />
+    )
+    // No ResizeObserver callback or animation frame has run between commit and this assertion.
+    expect(heights).toEqual(['10000px', '10040px'])
   })
 
   test('keeps only the end-anchored overscan range mounted for long conversations', () => {

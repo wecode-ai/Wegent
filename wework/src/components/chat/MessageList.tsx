@@ -96,6 +96,7 @@ interface MessageListProps {
   scrollElementRef?: RefObject<HTMLDivElement | null>
   initialDistanceFromBottomPx?: number
   onBeforeUserMessageToggle?: () => void
+  onVirtualLayoutChange?: () => void
   className?: string
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
@@ -205,6 +206,7 @@ export const MessageList = memo(function MessageList({
   scrollElementRef,
   initialDistanceFromBottomPx = 0,
   onBeforeUserMessageToggle,
+  onVirtualLayoutChange,
   className,
   conversationKey,
   isWaitingForAssistant = false,
@@ -335,6 +337,10 @@ export const MessageList = memo(function MessageList({
       : preserveScrollPositionOutsideVirtualizer,
   })
   const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
+
+  useLayoutEffect(() => {
+    if (virtualMessages) onVirtualLayoutChange?.()
+  }, [onVirtualLayoutChange, virtualMessages, virtualTotalSize])
 
   useLayoutEffect(() => {
     const previousIds = previousVisibleMessageIdsRef.current
@@ -728,6 +734,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.onBeforeUserMessageToggle !== next.onBeforeUserMessageToggle
       ? 'onBeforeUserMessageToggle'
       : null,
+    previous.onVirtualLayoutChange !== next.onVirtualLayoutChange ? 'onVirtualLayoutChange' : null,
     previous.className !== next.className ? 'className' : null,
     previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
     previous.isWaitingForAssistant !== next.isWaitingForAssistant ? 'isWaitingForAssistant' : null,
