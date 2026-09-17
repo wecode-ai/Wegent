@@ -30,7 +30,7 @@ sidebar_position: 12
 - 在 Wiki 管理后台 **Admin → API** 创建 API Key，权限组需包含：
   - `read:pages`（页面读取）
   - `read:source`（源码读取，缺少时无法读取页面正文）
-  - `manage:pages`（Wiki.js 2.x 的 `single` / `singleByPath` resolver 会校验该权限；也可使用包含 `delete:pages` 的权限组）
+  - `manage:pages`（Wiki.js 2.x 的 `single` resolver 会校验该权限；也可使用包含 `delete:pages` 的权限组）
 - 环境开关 `EXTERNAL_DOC_SYNC_ENABLED` 已启用（默认启用）。关闭时绑定入口会提示"外部文档同步功能未启用"。
 
 ---

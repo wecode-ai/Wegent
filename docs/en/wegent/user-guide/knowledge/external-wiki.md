@@ -30,7 +30,7 @@ Difference from web scraping: web scraping is a one-time import with manual refr
 - An API key created in the wiki admin console (**Admin → API**) whose permission group includes:
   - `read:pages` (page reading)
   - `read:source` (source reading; page bodies cannot be fetched without it)
-  - `manage:pages` (the Wiki.js 2.x `single` / `singleByPath` resolvers require it; a group containing `delete:pages` also satisfies the upstream check)
+  - `manage:pages` (the Wiki.js 2.x `single` resolver requires it; a group containing `delete:pages` also satisfies the upstream check)
 - The environment switch `EXTERNAL_DOC_SYNC_ENABLED` is on (default). When disabled, the binding entry reports "external document sync is not enabled".
 
 ---

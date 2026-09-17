@@ -123,19 +123,6 @@ class WikiConnector(ABC):
             retryable=False,
         )
 
-    async def get_page_metadata_by_path(
-        self,
-        config: WikiSiteConfig,
-        path: str,
-        locale: str | None = None,
-    ) -> WikiPageMeta | None:
-        """Resolve one picker selection without downloading its body."""
-        raise WikiApiError(
-            "wiki_lookup_unsupported",
-            "当前 Wiki 连接器不支持按路径查询页面元数据",
-            retryable=False,
-        )
-
     async def inspect_page_metadata_by_ids(
         self,
         config: WikiSiteConfig,
@@ -161,15 +148,6 @@ class WikiConnector(ABC):
             "当前 Wiki 连接器不支持按资源 ID 查询页面正文",
             retryable=False,
         )
-
-    @abstractmethod
-    async def get_page(
-        self,
-        config: WikiSiteConfig,
-        path: str,
-        locale: str | None = None,
-    ) -> WikiPage | None:
-        """Read one page by its path-style identity."""
 
 
 @dataclass

@@ -25,13 +25,6 @@ def _config(url: str = "https://wiki.example.com") -> WikiSiteConfig:
     return WikiSiteConfig(site_url=url, api_key="key-123")
 
 
-def _async_returning(value):
-    async def _return(*_args, **_kwargs):
-        return value
-
-    return _return
-
-
 def test_scheduled_sync_capability_is_opt_in() -> None:
     assert WikiConnector.supports_scheduled_sync is False
     assert WikijsConnector.supports_scheduled_sync is True
@@ -51,17 +44,17 @@ class TestValidateWikiSiteUrl:
             == "http://wiki.example.com"
         )
 
-    def test_rejects_other_schemes(self):
+    @pytest.mark.parametrize(
+        "site_url",
+        [
+            "ftp://wiki.example.com",
+            "https://",
+            "https://user:pass@wiki.example.com",
+        ],
+    )
+    def test_rejects_invalid_urls(self, site_url):
         with pytest.raises(WikiApiError):
-            validate_wiki_site_url("ftp://wiki.example.com")
-
-    def test_rejects_missing_host(self):
-        with pytest.raises(WikiApiError):
-            validate_wiki_site_url("https://")
-
-    def test_rejects_embedded_credentials(self):
-        with pytest.raises(WikiApiError):
-            validate_wiki_site_url("https://user:pass@wiki.example.com")
+            validate_wiki_site_url(site_url)
 
     @pytest.mark.parametrize(
         "site_url",
@@ -279,7 +272,7 @@ class TestGetPageById:
                         "updatedAt": "2026-09-13T02:00:00Z",
                         "locale": "zh",
                         "content": "# Renamed",
-                        "tags": [],
+                        "tags": [{"id": 1, "tag": "arch", "title": "Architecture"}],
                     }
                 }
             }
@@ -288,10 +281,13 @@ class TestGetPageById:
             page = await connector.get_page_by_id(_config(), "5001")
 
         assert "single(id: $id)" in captured["query"]
+        assert "tags { id tag title }" in captured["query"]
+        assert "isPublished" not in captured["query"]
         assert captured["variables"] == {"id": 5001}
         assert page is not None
         assert page.path == "docs/renamed"
         assert page.content == "# Renamed"
+        assert page.tags == ("arch",)
 
     @pytest.mark.asyncio
     async def test_falls_back_to_render_when_source_content_is_blank(self):
@@ -396,187 +392,6 @@ class TestGraphqlRequest:
         assert session.post.call_args.kwargs["allow_redirects"] is False
 
 
-class TestPageQuerySchema:
-    """Lock the field shapes required by the Wiki.js schema (2.x)."""
-
-    @pytest.mark.asyncio
-    async def test_page_query_selects_tag_subfields(self):
-        connector = WikijsConnector()
-        captured = {}
-
-        async def fake_post(config, query, variables):
-            captured["query"] = query
-            return {
-                "pages": {
-                    "singleByPath": {
-                        "id": 7,
-                        "path": "docs/a",
-                        "title": "A",
-                        "description": "",
-                        "updatedAt": "2026-09-01T00:00:00Z",
-                        "locale": "zh",
-                        "content": "# A",
-                        "render": "",
-                        "tags": [{"id": 1, "tag": "arch", "title": "Architecture"}],
-                    }
-                }
-            }
-
-        with patch.object(connector, "_post_graphql", side_effect=fake_post):
-            page = await connector.get_page(_config(), "docs/a")
-
-        # Page.tags is [PageTag]!: the query must use a subfield selection and
-        # must not select auth-gated fields (content needs read:source,
-        # isPublished needs write:pages).
-        assert "tags { id tag title }" in captured["query"]
-        assert "isPublished" not in captured["query"]
-        assert page is not None
-        assert page.content == "# A"
-        assert page.tags == ("arch",)
-        assert page.is_private is False
-
-    @pytest.mark.asyncio
-    async def test_path_query_falls_back_to_render_when_source_read_is_forbidden(self):
-        connector = WikijsConnector()
-        requests = []
-
-        async def fake_request(config, query, variables):
-            requests.append(query)
-            if "content render" in query:
-                return {
-                    "data": {"pages": {"singleByPath": None}},
-                    "errors": [
-                        {
-                            "message": "Forbidden",
-                            "path": ["pages", "singleByPath", "content"],
-                        }
-                    ],
-                }
-            return {
-                "data": {
-                    "pages": {
-                        "singleByPath": {
-                            "id": 7,
-                            "path": "docs/a",
-                            "title": "A",
-                            "updatedAt": "2026-09-01T00:00:00Z",
-                            "locale": "zh",
-                            "render": "<h1>A</h1><p>Body</p>",
-                            "tags": [],
-                        }
-                    }
-                }
-            }
-
-        with patch.object(connector, "_request_graphql", side_effect=fake_request):
-            page = await connector.get_page(_config(), "docs/a", "zh")
-
-        assert len(requests) == 2
-        assert "content" not in requests[1]
-        assert page is not None
-        assert page.content == "# A\n\nBody"
-
-
-class TestGetPageLocaleFallback:
-    """singleByPath requires an exact locale match; Wiki.js reports a miss
-    as a GraphQL error ("This page does not exist.")."""
-
-    @staticmethod
-    def _connector_with_locales(monkeypatch, locales):
-        from app.services.wiki.connectors import wikijs as wikijs_module
-
-        monkeypatch.setattr(wikijs_module, "_SITE_LOCALES_CACHE", {})
-        connector = WikijsConnector()
-        monkeypatch.setattr(
-            connector,
-            "_installed_locales",
-            _async_returning(locales),
-        )
-        return connector
-
-    @pytest.mark.asyncio
-    async def test_default_locale_miss_falls_back_to_installed(self, monkeypatch):
-        connector = self._connector_with_locales(monkeypatch, ["en", "zh"])
-        tried = []
-
-        async def fake_post(config, query, variables):
-            if "localization" in query:
-                return {"localization": {"locales": []}}
-            tried.append(variables["locale"])
-            if variables["locale"] != "en":
-                raise WikiApiError(
-                    "upstream_error", "Wiki 站点返回错误：This page does not exist."
-                )
-            return {
-                "pages": {
-                    "singleByPath": {
-                        "id": 7,
-                        "path": "docs/a",
-                        "title": "A",
-                        "locale": "en",
-                        "content": "# A",
-                        "tags": [],
-                    }
-                }
-            }
-
-        with patch.object(connector, "_post_graphql", side_effect=fake_post):
-            page = await connector.get_page(
-                WikiSiteConfig(
-                    site_url="https://wiki.example.com",
-                    api_key="k",
-                    default_locale="zh",
-                ),
-                "docs/a",
-            )
-        # default_locale zh first, then installed fallbacks
-        assert tried == ["zh", "en"]
-        assert page is not None
-        assert page.locale == "en"
-
-    @pytest.mark.asyncio
-    async def test_explicit_locale_is_strict(self, monkeypatch):
-        connector = self._connector_with_locales(monkeypatch, ["en", "zh"])
-
-        async def fake_post(config, query, variables):
-            raise WikiApiError(
-                "upstream_error", "Wiki 站点返回错误：This page does not exist."
-            )
-
-        with patch.object(connector, "_post_graphql", side_effect=fake_post):
-            page = await connector.get_page(_config(), "docs/a", "ja")
-        assert page is None
-
-    @pytest.mark.asyncio
-    async def test_all_locales_miss_returns_none(self, monkeypatch):
-        connector = self._connector_with_locales(monkeypatch, ["en", "zh"])
-        calls = []
-
-        async def fake_post(config, query, variables):
-            if "localization" in query:
-                return {"localization": {"locales": []}}
-            calls.append(variables["locale"])
-            raise WikiApiError(
-                "upstream_error", "Wiki 站点返回错误：This page does not exist."
-            )
-
-        with patch.object(connector, "_post_graphql", side_effect=fake_post):
-            page = await connector.get_page(_config(), "docs/a")
-        assert page is None
-        assert calls == ["en", "zh"]
-
-    @pytest.mark.asyncio
-    async def test_other_errors_propagate(self, monkeypatch):
-        connector = self._connector_with_locales(monkeypatch, ["en"])
-
-        async def fake_post(config, query, variables):
-            raise WikiApiError("wiki_auth_failed", "bad key")
-
-        with patch.object(connector, "_post_graphql", side_effect=fake_post):
-            with pytest.raises(WikiApiError):
-                await connector.get_page(_config(), "docs/a")
-
-
 class TestInspectPageMetadataByIds:
     @pytest.mark.asyncio
     async def test_maps_partial_success_missing_and_forbidden(self):
@@ -649,27 +464,23 @@ class TestInspectPageMetadataByIds:
 
 
 class TestConnectionCompatibility:
+    @pytest.mark.parametrize(
+        ("version", "expected_message"),
+        [
+            ("2.5.274", "2.5.300"),
+            ("3.0.0", "2.x"),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_rejects_wikijs_older_than_supported_minimum(self):
+    async def test_rejects_unsupported_wikijs_versions(self, version, expected_message):
         connector = WikijsConnector()
 
-        with patch.object(connector, "_probe_version", return_value="2.5.274"):
+        with patch.object(connector, "_probe_version", return_value=version):
             result = await connector.test_connection(_config())
 
         assert result.ok is False
-        assert "2.5.300" in result.message
-        assert result.version == "2.5.274"
-
-    @pytest.mark.asyncio
-    async def test_rejects_wikijs_other_major_versions(self):
-        connector = WikijsConnector()
-
-        with patch.object(connector, "_probe_version", return_value="3.0.0"):
-            result = await connector.test_connection(_config())
-
-        assert result.ok is False
-        assert "2.x" in result.message
-        assert result.version == "3.0.0"
+        assert expected_message in result.message
+        assert result.version == version
 
     @pytest.mark.asyncio
     async def test_structured_forbidden_error_is_auth_failure(self):
@@ -706,7 +517,7 @@ class TestConnectionCompatibility:
         assert "不能确认" in result.message
 
     @pytest.mark.asyncio
-    async def test_probes_path_and_body_for_supported_site(self):
+    async def test_probes_metadata_and_body_for_supported_site(self):
         connector = WikijsConnector()
         list_data = {
             "pages": {
@@ -719,8 +530,8 @@ class TestConnectionCompatibility:
             patch.object(connector, "_probe_version", return_value="2.5.314"),
             patch.object(connector, "_post_graphql", return_value=list_data),
             patch.object(
-                connector, "get_page_metadata_by_path", return_value=metadata
-            ) as get_by_path,
+                connector, "get_page_metadata_by_id", return_value=metadata
+            ) as get_metadata,
             patch.object(
                 connector, "get_page_by_id", return_value=metadata
             ) as get_by_id,
@@ -728,5 +539,5 @@ class TestConnectionCompatibility:
             result = await connector.test_connection(_config())
 
         assert result.ok is True
-        get_by_path.assert_awaited_once_with(_config(), "docs/a", "zh")
+        get_metadata.assert_awaited_once_with(_config(), "7")
         get_by_id.assert_awaited_once_with(_config(), "7")

@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import time
 from typing import Any
 from urllib.parse import urlparse
 
@@ -51,90 +50,41 @@ query ($limit: Int, $locale: String) {
 }
 """
 
-_PAGE_META_BY_ID_QUERY = """
-query ($id: Int!) {
-  pages {
-    single(id: $id) {
-      id path title description updatedAt locale
-      tags { id tag title }
-    }
-  }
-}
-"""
+_PAGE_COMMON_FIELDS = "id path title description updatedAt locale"
+_PAGE_TAG_FIELDS = "tags { id tag title }"
+_PAGE_META_FIELDS = f"{_PAGE_COMMON_FIELDS} {_PAGE_TAG_FIELDS}"
+_PAGE_CONTENT_FIELDS = f"{_PAGE_COMMON_FIELDS} content render {_PAGE_TAG_FIELDS}"
+_PAGE_RENDER_FIELDS = f"{_PAGE_COMMON_FIELDS} render {_PAGE_TAG_FIELDS}"
 
-_PAGE_BY_ID_QUERY = """
-query ($id: Int!) {
-  pages {
-    single(id: $id) {
-      id path title description updatedAt locale content render
-      tags { id tag title }
-    }
-  }
-}
-"""
 
-_PAGE_BY_ID_RENDER_QUERY = """
-query ($id: Int!) {
-  pages {
-    single(id: $id) {
-      id path title description updatedAt locale render
-      tags { id tag title }
-    }
-  }
-}
-"""
+def _single_page_query(
+    variable_declaration: str,
+    selector: str,
+    fields: str,
+) -> str:
+    return f"query ({variable_declaration}) {{ pages {{ {selector} {{ {fields} }} }} }}"
 
-_PAGE_META_BY_PATH_QUERY = """
-query ($path: String!, $locale: String!) {
-  pages {
-    singleByPath(path: $path, locale: $locale) {
-      id path title description updatedAt locale
-      tags { id tag title }
-    }
-  }
-}
-"""
 
+_PAGE_META_BY_ID_QUERY = _single_page_query(
+    "$id: Int!", "single(id: $id)", _PAGE_META_FIELDS
+)
+_PAGE_BY_ID_QUERY = _single_page_query(
+    "$id: Int!", "single(id: $id)", _PAGE_CONTENT_FIELDS
+)
+_PAGE_BY_ID_RENDER_QUERY = _single_page_query(
+    "$id: Int!", "single(id: $id)", _PAGE_RENDER_FIELDS
+)
 # Field notes from the Wiki.js schema (server/graph/schemas/page.graphql):
 # - Page.tags is [PageTag]! and needs a subfield selection (tags { id tag title })
 # - Page.content requires the read:source scope; isPublished requires
 #   write:pages / manage:system, so a read-only key must not select it
 # - render is kept as an HTML fallback when content is not readable
-_PAGE_QUERY = """
-query ($path: String!, $locale: String!) {
-  pages {
-    singleByPath(path: $path, locale: $locale) {
-      id path title description updatedAt locale content render
-      tags { id tag title }
-    }
-  }
-}
-"""
-
-_PAGE_RENDER_QUERY = """
-query ($path: String!, $locale: String!) {
-  pages {
-    singleByPath(path: $path, locale: $locale) {
-      id path title description updatedAt locale render
-      tags { id tag title }
-    }
-  }
-}
-"""
-
 _VERSION_QUERY = "query { system { info { currentVersion } } }"
-
-# Site locales for singleByPath fallback (exact locale match required).
-_LOCALES_QUERY = """
-query { localization { locales { code isInstalled } } }
-"""
 
 _MAX_ATTEMPTS = 3  # initial call + 2 retries, 5xx/network errors only
 WIKIJS_MIN_VERSION = (2, 5, 300)
 WIKIJS_MIN_VERSION_LABEL = ".".join(str(part) for part in WIKIJS_MIN_VERSION)
 
-_SITE_LOCALES_CACHE: dict[str, tuple[float, list[str]]] = {}
-_SITE_LOCALES_CACHE_TTL_SECONDS = 60
 _HTML_TO_MARKDOWN = HtmlToMarkdownConverter()
 
 
@@ -160,7 +110,7 @@ def validate_wiki_site_url(url: str) -> str:
 
 def _meta_from_node(node: dict[str, Any]) -> WikiPageMeta:
     # tags arrive as [String] from pages.list and as [{id, tag, title}] from
-    # pages.singleByPath; accept both shapes.
+    # pages.single; accept both shapes.
     tags: list[str] = []
     for tag in node.get("tags") or ():
         if isinstance(tag, dict):
@@ -181,9 +131,8 @@ def _meta_from_node(node: dict[str, Any]) -> WikiPageMeta:
 
 
 def _is_missing_page_error(exc: WikiApiError) -> bool:
-    lowered = exc.message.lower()
-    return exc.error_code == "wiki_page_not_found" or any(
-        marker in lowered for marker in ("does not exist", "page not found")
+    return exc.error_code == "wiki_page_not_found" or _is_missing_page_message(
+        exc.message
     )
 
 
@@ -280,6 +229,24 @@ def _page_content(node: dict[str, Any], site_url: str) -> str:
     if isinstance(render, str):
         return _HTML_TO_MARKDOWN.to_markdown(render, base_url=site_url)
     return content if isinstance(content, str) else ""
+
+
+def _parse_page_id(resource_id: str) -> int:
+    try:
+        return int(resource_id)
+    except (TypeError, ValueError) as exc:
+        raise WikiApiError(
+            "bad_request", "Wiki page id must be an integer", retryable=False
+        ) from exc
+
+
+def _page_from_node(node: dict[str, Any], site_url: str) -> WikiPage:
+    return WikiPage(
+        **{
+            **_meta_from_node(node).__dict__,
+            "content": _page_content(node, site_url),
+        }
+    )
 
 
 class WikijsConnector(WikiConnector):
@@ -428,10 +395,8 @@ class WikijsConnector(WikiConnector):
         if page_list:
             first_page = page_list[0]
             try:
-                metadata = await self.get_page_metadata_by_path(
-                    config,
-                    str(first_page.get("path") or ""),
-                    str(first_page.get("locale") or "") or config.default_locale,
+                metadata = await self.get_page_metadata_by_id(
+                    config, str(first_page.get("id") or "")
                 )
                 page = await self.get_page_by_id(
                     config, str(first_page.get("id") or "")
@@ -440,7 +405,7 @@ class WikijsConnector(WikiConnector):
                 return WikiConnectionTest(
                     ok=False,
                     message=(
-                        "连接可用，但 API Key 无法完成页面路径解析与正文读取："
+                        "连接可用，但 API Key 无法完成页面元数据与正文读取："
                         f"{exc.message}。请确认 Wiki.js 版本和 API Key 权限"
                     ),
                     version=version,
@@ -448,7 +413,7 @@ class WikijsConnector(WikiConnector):
             if metadata is None or page is None:
                 return WikiConnectionTest(
                     ok=False,
-                    message="Wiki API Key 无法完成页面路径解析与正文读取",
+                    message="Wiki API Key 无法完成页面元数据与正文读取",
                     version=version,
                 )
         elif version is None:
@@ -528,12 +493,7 @@ class WikijsConnector(WikiConnector):
         config: WikiSiteConfig,
         resource_id: str,
     ) -> WikiPageMeta | None:
-        try:
-            page_id = int(resource_id)
-        except (TypeError, ValueError) as exc:
-            raise WikiApiError(
-                "bad_request", "Wiki page id must be an integer", retryable=False
-            ) from exc
+        page_id = _parse_page_id(resource_id)
         try:
             data = await self._post_graphql(
                 config,
@@ -546,44 +506,6 @@ class WikijsConnector(WikiConnector):
             raise
         node = (data.get("pages") or {}).get("single")
         return _meta_from_node(node) if isinstance(node, dict) else None
-
-    @trace_async(
-        span_name="wikijs_get_page_metadata_by_path",
-        tracer_name="wiki.connector.wikijs",
-    )
-    async def get_page_metadata_by_path(
-        self,
-        config: WikiSiteConfig,
-        path: str,
-        locale: str | None = None,
-    ) -> WikiPageMeta | None:
-        attempts = (
-            [locale]
-            if locale
-            else list(
-                dict.fromkeys(
-                    [
-                        *([config.default_locale] if config.default_locale else []),
-                        *await self._installed_locales(config),
-                    ]
-                )
-            )
-        )
-        for attempt_locale in attempts:
-            try:
-                data = await self._post_graphql(
-                    config,
-                    _PAGE_META_BY_PATH_QUERY,
-                    {"path": path.strip("/"), "locale": attempt_locale},
-                )
-            except WikiApiError as exc:
-                if _is_missing_page_error(exc):
-                    continue
-                raise
-            node = (data.get("pages") or {}).get("singleByPath")
-            if isinstance(node, dict):
-                return _meta_from_node(node)
-        return None
 
     @trace_async(
         span_name="wikijs_inspect_page_metadata_by_ids",
@@ -617,9 +539,7 @@ class WikijsConnector(WikiConnector):
                 aliases[alias] = resource_id
                 variables[f"id{index}"] = page_id
                 fields.append(
-                    f"{alias}: single(id: $id{index}) {{ "
-                    "id path title description updatedAt locale "
-                    "tags { id tag title } }"
+                    f"{alias}: single(id: $id{index}) {{ {_PAGE_META_FIELDS} }}"
                 )
             if not fields:
                 continue
@@ -701,55 +621,13 @@ class WikijsConnector(WikiConnector):
                     )
         return results
 
-    async def _installed_locales(self, config: WikiSiteConfig) -> list[str]:
-        """Resolve the site's installed locales (short process-local cache).
-
-        singleByPath requires an exact locale match and Wiki.js reports a
-        miss as a GraphQL error, so without an explicit/default locale we
-        must know which locales to try.
-        """
-        now = time.monotonic()
-        cached = _SITE_LOCALES_CACHE.get(config.site_url)
-        if cached and now - cached[0] < _SITE_LOCALES_CACHE_TTL_SECONDS:
-            return cached[1]
-        try:
-            data = await self._post_graphql(config, _LOCALES_QUERY, {})
-            raw_locales = ((data.get("localization") or {}).get("locales")) or []
-            codes = [
-                str(item.get("code"))
-                for item in raw_locales
-                if isinstance(item, dict)
-                and item.get("isInstalled")
-                and item.get("code")
-            ]
-        except WikiApiError:
-            codes = []
-        if not codes:
-            codes = ["en"]
-        if (
-            config.site_url not in _SITE_LOCALES_CACHE
-            and len(_SITE_LOCALES_CACHE) >= 64
-        ):
-            oldest_key = min(
-                _SITE_LOCALES_CACHE,
-                key=lambda key: _SITE_LOCALES_CACHE[key][0],
-            )
-            _SITE_LOCALES_CACHE.pop(oldest_key, None)
-        _SITE_LOCALES_CACHE[config.site_url] = (now, codes)
-        return codes
-
     @trace_async(span_name="wikijs_get_page_by_id", tracer_name="wiki.connector.wikijs")
     async def get_page_by_id(
         self,
         config: WikiSiteConfig,
         resource_id: str,
     ) -> WikiPage | None:
-        try:
-            page_id = int(resource_id)
-        except (TypeError, ValueError) as exc:
-            raise WikiApiError(
-                "bad_request", "Wiki page id must be an integer", retryable=False
-            ) from exc
+        page_id = _parse_page_id(resource_id)
         try:
             data = await self._post_graphql(config, _PAGE_BY_ID_QUERY, {"id": page_id})
         except WikiApiError as exc:
@@ -763,57 +641,4 @@ class WikijsConnector(WikiConnector):
         node = (data.get("pages") or {}).get("single")
         if not isinstance(node, dict):
             return None
-        return WikiPage(
-            **{
-                **_meta_from_node(node).__dict__,
-                "content": _page_content(node, config.site_url),
-            }
-        )
-
-    @trace_async(span_name="wikijs_get_page", tracer_name="wiki.connector.wikijs")
-    async def get_page(
-        self,
-        config: WikiSiteConfig,
-        path: str,
-        locale: str | None = None,
-    ) -> WikiPage | None:
-        if locale:
-            # An explicit locale is a strict request: one attempt only.
-            attempts = [locale]
-        else:
-            # default_locale is a preference, not a filter: try it first,
-            # then fall back to the site's other installed locales (pages
-            # may exist in a different locale than the site default).
-            preferred = [config.default_locale] if config.default_locale else []
-            attempts = list(
-                dict.fromkeys([*preferred, *await self._installed_locales(config)])
-            )
-        for attempt_locale in attempts:
-            try:
-                data = await self._post_graphql(
-                    config,
-                    _PAGE_QUERY,
-                    {"path": path.strip("/"), "locale": attempt_locale},
-                )
-            except WikiApiError as exc:
-                # Wiki.js reports a locale miss as a GraphQL error; try the
-                # next installed locale before giving up.
-                if _is_missing_page_error(exc):
-                    continue
-                if exc.error_code != "wiki_source_read_forbidden":
-                    raise
-                data = await self._post_graphql(
-                    config,
-                    _PAGE_RENDER_QUERY,
-                    {"path": path.strip("/"), "locale": attempt_locale},
-                )
-            node = (data.get("pages") or {}).get("singleByPath")
-            if not isinstance(node, dict):
-                return None
-            return WikiPage(
-                **{
-                    **_meta_from_node(node).__dict__,
-                    "content": _page_content(node, config.site_url),
-                }
-            )
-        return None
+        return _page_from_node(node, config.site_url)

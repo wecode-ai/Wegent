@@ -251,11 +251,14 @@ export function WikiDocumentImport({
     return bound.filter(item => matchesWikiSearch(item.name, item.path, boundKeyword))
   }, [bound, boundKeyword])
 
-  const toggle = (pageId: string) => {
+  const updateSelection = (pageIds: readonly string[]) => {
     setSelected(current => {
       const next = new Set(current)
-      if (next.has(pageId)) next.delete(pageId)
-      else next.add(pageId)
+      const select = !pageIds.every(pageId => current.has(pageId))
+      for (const pageId of pageIds) {
+        if (select) next.add(pageId)
+        else next.delete(pageId)
+      }
       return next
     })
   }
@@ -271,34 +274,11 @@ export function WikiDocumentImport({
     : 'wikiSection.select_all'
   const selectionToggleLabel = t(selectionToggleKey)
 
-  const toggleAllFiltered = () => {
-    setSelected(current => {
-      const next = new Set(current)
-      for (const pageId of selectableFilteredPageIds) {
-        if (allFilteredSelected) next.delete(pageId)
-        else next.add(pageId)
-      }
-      return next
-    })
-  }
-
   const toggleDirectory = (path: string) => {
     setExpandedDirectories(current => {
       const next = new Set(current)
       if (next.has(path)) next.delete(path)
       else next.add(path)
-      return next
-    })
-  }
-
-  const toggleDirectorySelection = (pageIds: string[]) => {
-    setSelected(current => {
-      const next = new Set(current)
-      const shouldClear = pageIds.every(pageId => current.has(pageId))
-      for (const pageId of pageIds) {
-        if (shouldClear) next.delete(pageId)
-        else next.add(pageId)
-      }
       return next
     })
   }
@@ -312,33 +292,14 @@ export function WikiDocumentImport({
       setSelected(new Set())
       await loadBound()
       onDone?.()
-      if (summary.createdCount > 0) {
-        toast({
-          title: t('wikiSection.bind_scope_success_n', {
-            count: summary.createdCount,
-          }),
-        })
-      }
-      if (summary.duplicateCount > 0) {
-        toast({
-          title: t('wikiSection.already_bound_n', {
-            count: summary.duplicateCount,
-          }),
-        })
-      }
-      if (summary.updatedCount > 0) {
-        toast({
-          title: t('wikiSection.resynced_n', {
-            count: summary.updatedCount,
-          }),
-        })
-      }
-      if (summary.processingCount > 0) {
-        toast({
-          title: t('wikiSection.processing_n', {
-            count: summary.processingCount,
-          }),
-        })
+      const notifications = [
+        [summary.createdCount, 'wikiSection.bind_scope_success_n'],
+        [summary.duplicateCount, 'wikiSection.already_bound_n'],
+        [summary.updatedCount, 'wikiSection.resynced_n'],
+        [summary.processingCount, 'wikiSection.processing_n'],
+      ] as const
+      for (const [count, key] of notifications) {
+        if (count > 0) toast({ title: t(key, { count }) })
       }
     } catch (error) {
       toast({
@@ -552,7 +513,7 @@ export function WikiDocumentImport({
               size="sm"
               type="button"
               className="min-h-11 shrink-0 px-3 text-xs text-primary md:min-h-8"
-              onClick={toggleAllFiltered}
+              onClick={() => updateSelection(selectableFilteredPageIds)}
               disabled={
                 pagesLoading || selectableFilteredPageIds.length === 0 || !canManageDocuments
               }
@@ -594,9 +555,9 @@ export function WikiDocumentImport({
                   expandedPaths={expandedDirectories}
                   disabled={!canManageDocuments}
                   forceExpanded={Boolean(keyword.trim())}
-                  onTogglePage={toggle}
+                  onTogglePage={pageId => updateSelection([pageId])}
                   onToggleDirectory={toggleDirectory}
-                  onToggleDirectorySelection={toggleDirectorySelection}
+                  onToggleDirectorySelection={updateSelection}
                 />
               </div>
               <div className="shrink-0" data-testid="wiki-import-pagination">
