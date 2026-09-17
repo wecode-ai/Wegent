@@ -203,23 +203,23 @@ class WikiExternalSyncProvider(
         # End the API transaction before concurrent remote Wiki requests. Keep
         # the caller-owned session open because the import phase reuses it.
         db.commit()
-        paths = [
-            path
-            for path in dict.fromkeys(item.strip().strip("/") for item in selections)
-            if path
+        resource_ids = [
+            resource_id
+            for resource_id in dict.fromkeys(item.strip() for item in selections)
+            if resource_id
         ]
         semaphore = asyncio.Semaphore(8)
 
-        async def resolve_path(path: str) -> ResolvedExternalDocument:
+        async def resolve_resource(resource_id: str) -> ResolvedExternalDocument:
             try:
                 async with semaphore:
-                    page = await connection.connector.get_page_metadata_by_path(
-                        connection.config, path
+                    page = await connection.connector.get_page_metadata_by_id(
+                        connection.config, resource_id
                     )
             except WikiApiError as exc:
                 raise ExternalDocumentImportError(exc.message) from exc
             if page is None:
-                raise ExternalDocumentImportError(f"Wiki page not found: {path}")
+                raise ExternalDocumentImportError(f"Wiki page not found: {resource_id}")
             locator = ExternalSyncLocator(
                 self.provider_id, connection.connection_id, page.id
             )
@@ -236,7 +236,11 @@ class WikiExternalSyncProvider(
                 },
             )
 
-        return list(await asyncio.gather(*(resolve_path(path) for path in paths)))
+        return list(
+            await asyncio.gather(
+                *(resolve_resource(resource_id) for resource_id in resource_ids)
+            )
+        )
 
     def preflight_resolved_import(
         self,

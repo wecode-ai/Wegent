@@ -368,6 +368,37 @@ describe('DocumentDetailDialog external source info', () => {
     )
   })
 
+  it('labels a transient synchronization error separately from a missing source', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...externalDocument,
+          external_provider: 'wiki',
+          source_config: {
+            external: {
+              ...externalMeta,
+              provider: 'wiki',
+              status: 'sync_error',
+              last_error: 'temporary failure',
+              sync: {
+                enabled: true,
+                last_error_code: 'wiki_unreachable',
+              },
+            },
+          },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.getByTestId('external-source-inaccessible')).toHaveTextContent(
+      'document.document.sourceSyncFailed'
+    )
+  })
+
   it('hides the source info for regular documents', () => {
     render(
       <DocumentDetailDialog

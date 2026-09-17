@@ -7,11 +7,13 @@
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import inspect
 from sqlalchemy.orm import sessionmaker
 
 from app.api.endpoints import external_wiki
 from app.models.user import User
+from app.services.wiki.connector import WikiApiError
 
 
 class FakeCache:
@@ -169,3 +171,43 @@ async def test_list_pages_keeps_current_user_attached_across_remote_io(
         assert inspect(current_user).detached is False
     finally:
         production_session.close()
+
+
+@pytest.mark.asyncio
+async def test_list_pages_translates_connector_error_to_http_response(monkeypatch):
+    class Connector:
+        async def list_pages(self, *_args, **_kwargs):
+            raise WikiApiError(
+                "wiki_auth_failed",
+                "Wiki API Key 无效或权限不足",
+                retryable=False,
+            )
+
+    connection = SimpleNamespace(
+        connection_id="conn-primary",
+        revision=1,
+        connector=Connector(),
+        config=SimpleNamespace(site_url="https://wiki.example.com"),
+    )
+    monkeypatch.setattr(
+        external_wiki.WikiConnectionService,
+        "get_user_wiki_connection",
+        lambda *_args, **_kwargs: connection,
+    )
+    monkeypatch.setattr(external_wiki, "cache_manager", FakeCache())
+    db = SimpleNamespace(commit=lambda: None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await external_wiki.list_wiki_pages(
+            path=None,
+            locale=None,
+            limit=50,
+            offset=0,
+            refresh=False,
+            connection_id="conn-primary",
+            db=db,
+            current_user=SimpleNamespace(id=7),
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "Wiki API Key 无效或权限不足"

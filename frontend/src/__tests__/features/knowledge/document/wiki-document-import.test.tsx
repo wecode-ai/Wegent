@@ -59,6 +59,7 @@ const { WikiDocumentImport } = jest.requireActual(
 
 const bound: WikiBoundDocument = {
   id: 31,
+  page_id: '1',
   name: 'Elasticsearch 排查',
   path: 'tech-wiki/elasticsearch',
   locale: 'zh',
@@ -309,7 +310,7 @@ describe('WikiDocumentImport', () => {
     }))
     mockListPages.mockResolvedValue({ pages: directoryPages, next_offset: null, warnings: [] })
     mockListKbWikiDocuments.mockResolvedValue([
-      { ...bound, id: 51, path: 'guides/page-02', name: 'Guide 2' },
+      { ...bound, id: 51, page_id: '2', path: 'guides/page-02', name: 'Guide 2' },
     ])
     renderTab()
 
@@ -430,8 +431,33 @@ describe('WikiDocumentImport', () => {
     fireEvent.click(screen.getByTestId('wiki-import-submit-button'))
 
     await waitFor(() =>
-      expect(onImport).toHaveBeenCalledWith(['tech-wiki/etcd'], {
+      expect(onImport).toHaveBeenCalledWith(['2'], {
         connectionId: 'conn-b',
+      })
+    )
+  })
+
+  it('keeps same-path pages in different locales as distinct selections', async () => {
+    mockListKbWikiDocuments.mockResolvedValue([])
+    mockListPages.mockResolvedValue({
+      pages: [
+        { ...pages[1], id: '2-en', locale: 'en' },
+        { ...pages[1], id: '2-zh', locale: 'zh' },
+      ],
+      next_offset: null,
+      warnings: [],
+    })
+    const onImport = jest.fn().mockResolvedValue({ createdCount: 1 })
+    renderTab(onImport)
+
+    const checkboxes = await screen.findAllByTestId('wiki-import-check-tech-wiki/etcd')
+    expect(checkboxes).toHaveLength(2)
+    fireEvent.click(checkboxes[1])
+    fireEvent.click(screen.getByTestId('wiki-import-submit-button'))
+
+    await waitFor(() =>
+      expect(onImport).toHaveBeenCalledWith(['2-zh'], {
+        connectionId: 'conn-primary',
       })
     )
   })

@@ -83,6 +83,7 @@ import {
 } from '../utils/resource-tree'
 import { findDocumentByName, findDocumentForDeepLink } from '../utils/document-lookup'
 import { createDocumentsFromAttachments } from '../utils/document-creation'
+import { isSyncedWikiDocument } from '../utils/documentUtils'
 import { DocumentSourceWorkspaceHeader } from './DocumentSourceWorkspaceHeader'
 import { getDocumentProtection } from '@/apis/knowledge'
 
@@ -799,10 +800,10 @@ export function DocumentList({
     }
   }
 
-  const handleWikiImport = async (paths: string[], options: { connectionId: string }) => {
+  const handleWikiImport = async (pageIds: string[], options: { connectionId: string }) => {
     const { wikiApis } = await import('@/apis/wiki')
 
-    const result = await wikiApis.bindKbWikiDocuments(knowledgeBase.id, paths, {
+    const result = await wikiApis.bindKbWikiDocuments(knowledgeBase.id, pageIds, {
       connectionId: options.connectionId,
       folderId: selectedUploadFolderId || 0,
     })
@@ -916,10 +917,10 @@ export function DocumentList({
   // replacing the attachment and reindexing.
   const handleReindexDocument = async (doc: KnowledgeDocument) => {
     setReindexingDocId(doc.id)
+    const usesImportRetry = doc.source_type === 'external' && !isSyncedWikiDocument(doc)
     try {
       let successMessage = t('document.document.reindexSuccess')
-      const external = doc.source_config?.external as { sync?: { enabled?: boolean } } | undefined
-      if (doc.source_type === 'external' && !external?.sync?.enabled) {
+      if (usesImportRetry) {
         const { retryExternalDocumentImport } = await import('@/apis/knowledge')
         await retryExternalDocumentImport(doc.id)
         successMessage = t('document.document.retryImportSuccess')
@@ -946,10 +947,9 @@ export function DocumentList({
       onDocumentsChanged?.()
     } catch (err) {
       // Use ApiError.errorCode for structured error handling
-      const fallbackMessage =
-        doc.source_type === 'external'
-          ? t('document.document.retryImportFailed')
-          : t('document.document.reindexFailed')
+      const fallbackMessage = usesImportRetry
+        ? t('document.document.retryImportFailed')
+        : t('document.document.reindexFailed')
       let errorMessage = fallbackMessage
       if (err instanceof Error) {
         // Check if it's an ApiError with errorCode for structured error handling
@@ -988,10 +988,11 @@ export function DocumentList({
       toast({ description: t('document.document.resyncSuccess') })
       await refresh()
       onDocumentsChanged?.()
-    } catch {
+    } catch (err) {
       toast({
         variant: 'destructive',
-        description: t('document.document.resyncFailed'),
+        description:
+          err instanceof Error && err.message ? err.message : t('document.document.resyncFailed'),
       })
     } finally {
       setSyncingDocId(null)

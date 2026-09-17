@@ -46,7 +46,7 @@ export interface WikiImportOptions {
 
 interface WikiDocumentImportProps {
   knowledgeBaseId: number
-  onImport: (paths: string[], options: WikiImportOptions) => Promise<WikiBindImportSummary>
+  onImport: (pageIds: string[], options: WikiImportOptions) => Promise<WikiBindImportSummary>
   onDone?: () => void
   onDraftChange: (hasDraft: boolean) => void
   renderFooter: (action: React.ReactNode, status?: React.ReactNode) => React.ReactNode
@@ -172,15 +172,15 @@ export function WikiDocumentImport({
           offset = response.next_offset
         }
         if (requestId !== pagesRequestIdRef.current) return
-        const uniquePages = [...new Map(loadedPages.map(page => [page.path, page])).values()]
+        const uniquePages = [...new Map(loadedPages.map(page => [page.id, page])).values()]
         setPages(uniquePages)
         setPageWarnings([...loadedWarnings])
         setExpandedDirectories(getWikiDirectoryKeys(uniquePages))
         setPickerPage(1)
         setConnectionError(null)
-        const availablePaths = new Set(uniquePages.map(page => page.path))
+        const availablePageIds = new Set(uniquePages.map(page => page.id))
         setSelected(current => {
-          const next = new Set([...current].filter(path => availablePaths.has(path)))
+          const next = new Set([...current].filter(pageId => availablePageIds.has(pageId)))
           return next.size === current.size ? current : next
         })
       } catch (error) {
@@ -219,8 +219,9 @@ export function WikiDocumentImport({
     onDraftChange(selected.size > 0)
   }, [selected, onDraftChange])
 
-  const boundPaths = useMemo(
-    () => new Set(bound.filter(item => item.connection_id === connectionId).map(item => item.path)),
+  const boundPageIds = useMemo(
+    () =>
+      new Set(bound.filter(item => item.connection_id === connectionId).map(item => item.page_id)),
     [bound, connectionId]
   )
 
@@ -250,20 +251,21 @@ export function WikiDocumentImport({
     return bound.filter(item => matchesWikiSearch(item.name, item.path, boundKeyword))
   }, [bound, boundKeyword])
 
-  const toggle = (path: string) => {
+  const toggle = (pageId: string) => {
     setSelected(current => {
       const next = new Set(current)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
+      if (next.has(pageId)) next.delete(pageId)
+      else next.add(pageId)
       return next
     })
   }
 
-  const selectableFilteredPaths = filteredPages
-    .filter(page => !boundPaths.has(page.path))
-    .map(page => page.path)
+  const selectableFilteredPageIds = filteredPages
+    .filter(page => !boundPageIds.has(page.id))
+    .map(page => page.id)
   const allFilteredSelected =
-    selectableFilteredPaths.length > 0 && selectableFilteredPaths.every(path => selected.has(path))
+    selectableFilteredPageIds.length > 0 &&
+    selectableFilteredPageIds.every(pageId => selected.has(pageId))
   const selectionToggleKey = allFilteredSelected
     ? 'wikiSection.clear_selection'
     : 'wikiSection.select_all'
@@ -283,9 +285,9 @@ export function WikiDocumentImport({
   const toggleAllFiltered = () => {
     setSelected(current => {
       const next = new Set(current)
-      for (const path of selectableFilteredPaths) {
-        if (allFilteredSelected) next.delete(path)
-        else next.add(path)
+      for (const pageId of selectableFilteredPageIds) {
+        if (allFilteredSelected) next.delete(pageId)
+        else next.add(pageId)
       }
       return next
     })
@@ -300,24 +302,24 @@ export function WikiDocumentImport({
     })
   }
 
-  const toggleDirectorySelection = (paths: string[]) => {
+  const toggleDirectorySelection = (pageIds: string[]) => {
     setSelected(current => {
       const next = new Set(current)
-      const shouldClear = paths.every(path => current.has(path))
-      for (const path of paths) {
-        if (shouldClear) next.delete(path)
-        else next.add(path)
+      const shouldClear = pageIds.every(pageId => current.has(pageId))
+      for (const pageId of pageIds) {
+        if (shouldClear) next.delete(pageId)
+        else next.add(pageId)
       }
       return next
     })
   }
 
   const handleImport = async () => {
-    const paths = [...selected]
-    if (!paths.length) return
+    const pageIds = [...selected]
+    if (!pageIds.length) return
     try {
       setSubmitting(true)
-      const summary = await onImport(paths, { connectionId })
+      const summary = await onImport(pageIds, { connectionId })
       setSelected(new Set())
       await loadBound()
       onDone?.()
@@ -562,7 +564,9 @@ export function WikiDocumentImport({
               type="button"
               className="min-h-11 shrink-0 px-3 text-xs text-primary md:min-h-8"
               onClick={toggleAllFiltered}
-              disabled={pagesLoading || selectableFilteredPaths.length === 0 || !canManageDocuments}
+              disabled={
+                pagesLoading || selectableFilteredPageIds.length === 0 || !canManageDocuments
+              }
               data-testid="wiki-import-select-all"
             >
               {selectionToggleLabel}
@@ -595,9 +599,9 @@ export function WikiDocumentImport({
               <div className="min-h-0 flex-1 overflow-y-auto pr-1">
                 <WikiPageTree
                   pages={visiblePages}
-                  boundPaths={boundPaths}
-                  selectedPaths={selected}
-                  selectablePaths={selectableFilteredPaths}
+                  boundPageIds={boundPageIds}
+                  selectedPageIds={selected}
+                  selectablePages={filteredPages.filter(page => !boundPageIds.has(page.id))}
                   expandedPaths={expandedDirectories}
                   disabled={!canManageDocuments}
                   forceExpanded={Boolean(keyword.trim())}

@@ -150,7 +150,9 @@ export function getExternalSourceInfo(
     last_success_at: source.last_success_at as string | undefined,
     last_error: source.last_error as string | undefined,
     sync:
-      source.sync && typeof source.sync === 'object'
+      source.sync &&
+      typeof source.sync === 'object' &&
+      typeof (source.sync as Record<string, unknown>).enabled === 'boolean'
         ? (source.sync as ExternalDocumentSyncInfo)
         : undefined,
   }
@@ -173,15 +175,17 @@ function isValidTimestamp(value: string): boolean {
 /**
  * The update timestamp a document list should display.
  *
- * Synchronized Wiki documents prefer the source-observed update time.
+ * Synchronized Wiki documents prefer the successfully synchronized content time.
  * Regular documents keep the existing rule: unmodified rows display '-'.
  */
 export function getDocumentDisplayUpdatedAt(
   document: Pick<KnowledgeDocument, 'source_type' | 'source_config' | 'updated_at' | 'created_at'>
 ): string | null {
   if (isSyncedWikiDocument(document)) {
-    const observed = getExternalSourceInfo(document)?.sync?.observed_version
-    if (observed && isValidTimestamp(observed)) return observed
+    const sync = getExternalSourceInfo(document)?.sync
+    for (const version of [sync?.content_version, sync?.indexed_version]) {
+      if (version && isValidTimestamp(version)) return version
+    }
   }
   if (document.updated_at === document.created_at) return null
   return document.updated_at || null

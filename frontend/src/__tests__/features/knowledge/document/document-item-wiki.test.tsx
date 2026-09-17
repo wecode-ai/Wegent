@@ -44,7 +44,7 @@ const syncedWikiDocument: KnowledgeDocument = {
       url: 'https://wiki.example.com/operations/handbook',
       sync: {
         enabled: true,
-        observed_version: '2026-09-03T12:34:56Z',
+        content_version: '2026-09-03T12:34:56Z',
       },
     },
   },
@@ -185,6 +185,7 @@ describe('DocumentItem external wiki actions', () => {
       'knowledge:document.document.indexStatus.available'
     )
     const sourceStatus = screen.getByTestId('external-source-inaccessible')
+    expect(sourceStatus).toHaveTextContent('knowledge:document.document.sourceSyncFailed')
     await user.hover(sourceStatus)
     expect((await screen.findAllByText('无法连接 Wiki 站点')).length).toBeGreaterThan(0)
   })
@@ -203,12 +204,12 @@ describe('DocumentItem external wiki metadata display', () => {
     expect(type.querySelector('svg')).toHaveClass('lucide-book-open')
   })
 
-  it('shows the observed source page time in compact mode', () => {
+  it('shows the synchronized content time in compact mode', () => {
     render(<DocumentItem document={syncedWikiDocument} compact />)
     expect(screen.getByText('2026/09/03')).toBeInTheDocument()
   })
 
-  it('shows the observed source page time in table mode', () => {
+  it('shows the synchronized content time in table mode', () => {
     render(<DocumentItem document={syncedWikiDocument} />)
     expect(screen.getByTestId('updated-at-cell')).toHaveTextContent(
       formatLocal('2026-09-03T12:34:56Z')
@@ -225,7 +226,7 @@ describe('DocumentItem external wiki metadata display', () => {
     expect(screen.getByText('15 B')).toBeInTheDocument()
   })
 
-  it('does not render an invalid observed version', () => {
+  it('ignores an invalid observed version', () => {
     const document: KnowledgeDocument = {
       ...syncedWikiDocument,
       source_config: {

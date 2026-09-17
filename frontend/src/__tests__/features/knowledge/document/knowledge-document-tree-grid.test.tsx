@@ -558,6 +558,46 @@ describe('KnowledgeDocumentTreeGrid', () => {
     expect(screen.getByTestId('reindex-document-25')).toBeInTheDocument()
   })
 
+  it('disables quick synchronization while the document is processing', () => {
+    const syncedWiki = createDocument({
+      id: 27,
+      source_type: 'external',
+      attachment_id: 270,
+      index_status: 'indexing',
+      source_config: {
+        external: {
+          provider: 'wiki',
+          title: 'Synchronized Wiki',
+          sync: { enabled: true },
+        },
+      },
+    })
+    const onSync = jest.fn()
+    const { nodes, index } = buildKnowledgeResourceTree([], [syncedWiki])
+
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={[]}
+        documents={[syncedWiki]}
+        {...requiredTreeGridProps}
+        showSelectionColumn={false}
+        showActionsColumn
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+        onSync={onSync}
+        syncingDocId={27}
+        canManage={() => true}
+      />
+    )
+
+    const quickSync = screen.getByTestId('quick-sync-document-27')
+    expect(quickSync).toBeDisabled()
+    fireEvent.click(quickSync)
+    expect(onSync).not.toHaveBeenCalled()
+  })
+
   it('activates document rows from the keyboard', () => {
     const onViewDetail = jest.fn()
     const folders: KnowledgeFolder[] = []
@@ -600,7 +640,7 @@ describe('KnowledgeDocumentTreeGrid', () => {
         external: {
           provider: 'wiki',
           title: 'Synced Wiki',
-          sync: { enabled: true, observed_version: '2026-09-03T12:34:56Z' },
+          sync: { enabled: true, content_version: '2026-09-03T12:34:56Z' },
         },
       },
     })

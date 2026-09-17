@@ -110,4 +110,27 @@ describe('ExternalWikiConnectionCard deletion', () => {
     )
     expect(screen.getByText('删除 Wiki 连接')).toBeInTheDocument()
   })
+
+  it('keeps a successful deletion when reloading connections fails', async () => {
+    mockDeleteConnection.mockResolvedValue(undefined)
+    mockListConnections
+      .mockResolvedValueOnce({
+        connections: [namedConnection],
+        available_connectors: namedConnection.available_connectors,
+      })
+      .mockRejectedValueOnce(new Error('reload failed'))
+
+    render(<ExternalWikiConnectionCard />)
+
+    fireEvent.click(await screen.findByTestId('wiki-delete-connection-button'))
+    fireEvent.click(screen.getByTestId('wiki-confirm-delete-connection-button'))
+
+    await waitFor(() => expect(mockDeleteConnection).toHaveBeenCalledWith('conn-primary'))
+    expect(mockToast).toHaveBeenCalledWith({ title: 'Wiki 连接已删除' })
+    expect(mockToast).toHaveBeenCalledWith({
+      variant: 'destructive',
+      title: '加载外部 Wiki 配置失败',
+    })
+    expect(screen.queryByTestId('wiki-delete-connection-button')).not.toBeInTheDocument()
+  })
 })

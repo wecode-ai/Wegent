@@ -503,7 +503,9 @@ export function DocumentDetailDialog({
                           >
                             {sourceInfo.sync?.last_error_code === 'external_source_missing'
                               ? t('document.document.wikiSourceMissing')
-                              : t('document.document.sourceInaccessible')}
+                              : sourceInfo.status === 'sync_error'
+                                ? t('document.document.sourceSyncFailed')
+                                : t('document.document.sourceInaccessible')}
                           </Badge>
                         ) : sourceInfo.status === 'accessible' ? (
                           <Badge

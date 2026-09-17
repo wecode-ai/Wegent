@@ -317,7 +317,7 @@ describe('useDocuments query parameters', () => {
     })
   })
 
-  it('sorts synchronized wiki rows by the observed source page time', async () => {
+  it('sorts synchronized wiki rows by the synchronized content time', async () => {
     const olderWiki = createDocument(1, 'older-wiki.md', {
       source_type: 'external',
       created_at: '2026-09-05T00:00:00Z',
@@ -325,7 +325,7 @@ describe('useDocuments query parameters', () => {
       source_config: {
         external: {
           provider: 'wiki',
-          sync: { enabled: true, observed_version: '2026-09-01T00:00:00Z' },
+          sync: { enabled: true, content_version: '2026-09-01T00:00:00Z' },
         },
       },
     })
@@ -336,7 +336,7 @@ describe('useDocuments query parameters', () => {
       source_config: {
         external: {
           provider: 'wiki',
-          sync: { enabled: true, observed_version: '2026-09-03T12:34:56Z' },
+          sync: { enabled: true, content_version: '2026-09-03T12:34:56Z' },
         },
       },
     })

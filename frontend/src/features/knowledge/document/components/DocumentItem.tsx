@@ -271,12 +271,19 @@ export function DocumentItem({
     isExternal && ['inaccessible', 'sync_error'].includes(externalSource?.status || '')
   const isWikiSourceMissing =
     isSyncedWiki && externalSource?.sync?.last_error_code === 'external_source_missing'
+  const isSourceSyncError = externalSource?.status === 'sync_error'
   const sourceInaccessibleLabel = isWikiSourceMissing
     ? t('knowledge:document.document.wikiSourceMissing')
-    : t('knowledge:document.document.sourceInaccessible')
-  const sourceInaccessibleHint = isWikiSourceMissing
-    ? t('knowledge:document.document.wikiSourceMissingHint')
-    : externalSource?.last_error || t('knowledge:document.document.sourceInaccessibleHint')
+    : isSourceSyncError
+      ? t('knowledge:document.document.sourceSyncFailed')
+      : t('knowledge:document.document.sourceInaccessible')
+  const sourceInaccessibleHint =
+    externalSource?.last_error ||
+    (isWikiSourceMissing
+      ? t('knowledge:document.document.wikiSourceMissingHint')
+      : isSourceSyncError
+        ? t('knowledge:document.document.sourceSyncFailedHint')
+        : t('knowledge:document.document.sourceInaccessibleHint'))
 
   // Get display name - for web documents, remove .md extension
   const displayName =

@@ -141,7 +141,7 @@ def retire_external_wiki_skill(
 ) -> ExternalWikiSkillRetirementReport:
     """Remove recognized references and soft-delete the exact retired Skill."""
     report = inspect_external_wiki_skill(db)
-    if report.skill_id is None or not report.active:
+    if report.skill_id is None:
         return report
     if report.unexpected_reference_ids:
         raise RuntimeError(
@@ -173,12 +173,18 @@ def retire_external_wiki_skill(
                 flag_modified(row, "json")
         db.commit()
 
-    skill_kinds_service.delete_skill(
-        db,
-        skill_id=report.skill_id,
-        user_id=SKILL_OWNER_ID,
+    if report.active:
+        skill_kinds_service.delete_skill(
+            db,
+            skill_id=report.skill_id,
+            user_id=SKILL_OWNER_ID,
+        )
+    report.applied = bool(
+        report.active
+        or report.ghost_ids
+        or report.binding_ids
+        or report.installed_skill_ids
     )
-    report.applied = True
     report.active = False
     return report
 

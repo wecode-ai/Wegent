@@ -412,6 +412,7 @@ def _bound_document(document: KnowledgeDocument) -> WikiBoundDocument:
     index_status = getattr(document.index_status, "value", document.index_status)
     return WikiBoundDocument(
         id=document.id,
+        page_id=str(sync.get("resource_id") or ""),
         name=document.name,
         path=str(sync.get("path") or ""),
         locale=str(sync.get("locale") or ""),
@@ -462,7 +463,7 @@ async def create_kb_binding(
             db,
             current_user,
             body.connection_id,
-            body.paths,
+            body.page_ids,
         )
         result = external_document_import_service.import_resolved_documents(
             db=db,
@@ -624,12 +625,15 @@ async def list_wiki_pages(
             warnings,
         )
 
-    summaries, warnings = await _cached_page_list(
-        cache_scope,
-        locale,
-        refresh,
-        fetch_all,
-    )
+    try:
+        summaries, warnings = await _cached_page_list(
+            cache_scope,
+            locale,
+            refresh,
+            fetch_all,
+        )
+    except WikiApiError as exc:
+        raise _wiki_error(exc) from exc
     batch, next_offset = _filter_and_slice(summaries, path, limit, offset)
     return WikiPagesResponse(
         pages=[WikiPageSummary(**item) for item in batch],

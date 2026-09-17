@@ -49,7 +49,7 @@ Difference from web scraping: web scraping is a one-time import with manual refr
 
 Notes:
 
-- Turning off the **Enable connection** switch invalidates all wiki bindings you added (pages cannot be read).
+- Turning off the **Enable connection** switch stops remote page reads and synchronization. Existing bindings and their last successfully synchronized local content and index remain available.
 - A connection cannot be deleted while synchronized documents still reference it; remove those documents first. The rejection message lists the referencing knowledge bases.
 - The connection test exercises page listing, path resolution, and body reading rather than network reachability alone. A site with no published pages and no readable version does not pass the connection test.
 
@@ -93,7 +93,7 @@ After binding, a background job runs a daily inspection (default 19:00 UTC) with
 | Page content updated | Re-fetch the body and rebuild the index |
 | Body unchanged but index missing | Rebuild the index from the existing body |
 | Page deleted | See the next section |
-| Connection unavailable / permission failure | Document marked "source inaccessible"; existing content is kept and retried next round |
+| Connection unavailable / permission failure | Document marked "synchronization failed"; existing content is kept and retried next round |
 
 Besides the automatic inspection, you can trigger **Sync** from the document detail at any time to force-fetch the latest body (a busy document asks you to retry later).
 
@@ -118,7 +118,7 @@ To remove the content for good, use **Unbind** in the knowledge base document li
 | View bindings | Add Document → External Wiki → Bound documents | Shows path, locale, page update time, index status |
 | Unbind | Bound documents → Unbind | Deletes the local synchronized document and its index |
 | Manual sync | Document detail → Sync | Immediately fetches the latest body and re-indexes |
-| Disable connection | Settings → Integrations → External Wiki | Temporarily disconnect; bindings are kept but unreadable |
+| Disable connection | Settings → Integrations → External Wiki | Stop remote reads and synchronization; bindings and last synchronized local content remain available |
 | Delete connection | Settings → Integrations → External Wiki | All referencing documents must be unbound first |
 
 ### Permissions
@@ -134,8 +134,8 @@ To remove the content for good, use **Unbind** in the knowledge base document li
 **Q: The document stays in "Queued" after binding?**
 Background tasks execute from a queue; wait a moment. If the state does not change after 30 minutes, the inspection task marks it failed — check the error in the detail view and retry.
 
-**Q: "Wiki source document missing" although the page still exists?**
-Usually the API key permissions changed or the page became private. Verify that the API key group still includes `read:pages`, `read:source`, and `manage:pages` (or `delete:pages`); the next inspection recovers automatically once fixed.
+**Q: What is the difference between "Wiki source document missing" and "Synchronization failed"?**
+"Wiki source document missing" means the remote API confirmed that the page no longer exists. "Synchronization failed" means the system could not complete the check or refresh, for example because the connection was unavailable or permission was denied. In both cases the last successfully synchronized local content and index are preserved; transient failures are retried automatically.
 
 **Q: How long until a remote update reaches the knowledge base?**
 At most the next daily inspection (default 19:00 UTC). Use manual **Sync** on the document for immediate effect.

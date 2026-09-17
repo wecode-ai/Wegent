@@ -34,11 +34,11 @@ def test_external_sync_identity_round_trip() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wiki_selection_is_resolved_with_server_metadata(
+async def test_wiki_selection_is_resolved_by_stable_page_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     connector = SimpleNamespace(
-        get_page_metadata_by_path=AsyncMock(
+        get_page_metadata_by_id=AsyncMock(
             return_value=SimpleNamespace(
                 id="42",
                 path="ops/runbook",
@@ -66,11 +66,12 @@ async def test_wiki_selection_is_resolved_with_server_metadata(
 
     db = MagicMock()
     resolved = await wiki_external_sync_provider.resolve_selections(
-        db, SimpleNamespace(id=7), "conn-primary", ["/ops/runbook/"]
+        db, SimpleNamespace(id=7), "conn-primary", ["42"]
     )
 
     db.commit.assert_called_once_with()
     db.close.assert_not_called()
+    connector.get_page_metadata_by_id.assert_awaited_once_with(connection.config, "42")
     assert len(resolved) == 1
     assert resolved[0].encoded_resource_id == "v1:conn-primary:42"
     assert resolved[0].external_metadata()["sync"] == {

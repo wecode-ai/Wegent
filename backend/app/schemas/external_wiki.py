@@ -59,7 +59,7 @@ class WikiConnectionTestResponse(BaseModel):
 class WikiBindingCreateRequest(BaseModel):
     """Import selected Wiki pages as synchronized knowledge documents."""
 
-    paths: list[Annotated[str, Field(min_length=1, max_length=1024)]] = Field(
+    page_ids: list[Annotated[str, Field(min_length=1, max_length=255)]] = Field(
         ..., min_length=1, max_length=50
     )
     connection_id: str = Field(..., min_length=1, max_length=100)
@@ -70,6 +70,7 @@ class WikiBoundDocument(BaseModel):
     """A synchronized Wiki page as it appears in the KB document list."""
 
     id: int
+    page_id: str
     name: str
     path: str
     locale: str = ""

@@ -88,7 +88,7 @@ def _references():
 
 def test_binding_requires_connection_id() -> None:
     with pytest.raises(ValidationError):
-        WikiBindingCreateRequest(paths=["docs/runbook"])
+        WikiBindingCreateRequest(page_ids=["42"])
 
 
 @pytest.mark.asyncio

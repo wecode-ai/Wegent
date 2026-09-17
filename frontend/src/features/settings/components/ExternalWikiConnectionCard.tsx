@@ -123,12 +123,13 @@ export default function ExternalWikiConnectionCard() {
 
   const handleDelete = async () => {
     if (!connectionId) return
+    const deletedConnectionId = connectionId
     try {
       setDeleting(true)
-      await wikiApis.deleteConnection(connectionId)
-      const response = await wikiApis.listConnections()
-      setConnections(response.connections)
-      if (response.connections[0]) applyConnection(response.connections[0])
+      await wikiApis.deleteConnection(deletedConnectionId)
+      const remaining = connections.filter(item => item.id !== deletedConnectionId)
+      setConnections(remaining)
+      if (remaining[0]) applyConnection(remaining[0])
       else resetNewConnection()
       setDeleteDialogOpen(false)
       toast({ title: t('wiki.delete_success') })
@@ -136,6 +137,20 @@ export default function ExternalWikiConnectionCard() {
       toast({
         variant: 'destructive',
         title: (error as Error)?.message || t('wiki.delete_failed'),
+      })
+      setDeleting(false)
+      return
+    }
+
+    try {
+      const response = await wikiApis.listConnections()
+      setConnections(response.connections)
+      if (response.connections[0]) applyConnection(response.connections[0])
+      else resetNewConnection()
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: t('wiki.load_failed'),
       })
     } finally {
       setDeleting(false)

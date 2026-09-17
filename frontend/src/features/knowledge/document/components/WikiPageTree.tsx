@@ -18,15 +18,15 @@ export interface WikiPageTreeNode {
 
 interface WikiPageTreeProps {
   pages: WikiPageSummary[]
-  boundPaths: Set<string>
-  selectedPaths: Set<string>
-  selectablePaths: string[]
+  boundPageIds: Set<string>
+  selectedPageIds: Set<string>
+  selectablePages: WikiPageSummary[]
   expandedPaths: Set<string>
   disabled: boolean
   forceExpanded?: boolean
-  onTogglePage: (path: string) => void
+  onTogglePage: (pageId: string) => void
   onToggleDirectory: (path: string) => void
-  onToggleDirectorySelection: (paths: string[]) => void
+  onToggleDirectorySelection: (pageIds: string[]) => void
 }
 
 function normalizedSegments(page: WikiPageSummary): string[] {
@@ -40,6 +40,10 @@ function normalizedSegments(page: WikiPageSummary): string[] {
 export function buildWikiPageTree(pages: WikiPageSummary[]): WikiPageTreeNode[] {
   const roots: WikiPageTreeNode[] = []
   const nodesByKey = new Map<string, WikiPageTreeNode>()
+  const pathCounts = new Map<string, number>()
+  for (const page of pages) {
+    pathCounts.set(page.path, (pathCounts.get(page.path) || 0) + 1)
+  }
 
   for (const page of pages) {
     const segments = normalizedSegments(page)
@@ -47,10 +51,14 @@ export function buildWikiPageTree(pages: WikiPageSummary[]): WikiPageTreeNode[] 
     let path = ''
     for (const [index, segment] of segments.entries()) {
       path = path ? `${path}/${segment}` : segment
-      let node = nodesByKey.get(path)
+      const nodeKey =
+        index === segments.length - 1 && (pathCounts.get(page.path) || 0) > 1
+          ? `${path}::${page.id}`
+          : path
+      let node = nodesByKey.get(nodeKey)
       if (!node) {
-        node = { key: path, name: segment, page: null, children: [] }
-        nodesByKey.set(path, node)
+        node = { key: nodeKey, name: segment, page: null, children: [] }
+        nodesByKey.set(nodeKey, node)
         siblings.push(node)
       }
       if (index === segments.length - 1) node.page = page
@@ -91,9 +99,9 @@ function isPathInsideDirectory(path: string, directoryPath: string): boolean {
 function TreeNode({
   node,
   depth,
-  boundPaths,
-  selectedPaths,
-  selectablePaths,
+  boundPageIds,
+  selectedPageIds,
+  selectablePages,
   expandedPaths,
   disabled,
   forceExpanded,
@@ -105,15 +113,17 @@ function TreeNode({
   const hasChildren = node.children.length > 0
   const open = hasChildren && (forceExpanded || expandedPaths.has(node.key))
   const page = node.page
-  const isBound = page ? boundPaths.has(page.path) : false
-  const checked = page ? selectedPaths.has(page.path) : false
-  const directoryPaths = hasChildren
-    ? selectablePaths.filter(path => isPathInsideDirectory(path, node.key))
+  const isBound = page ? boundPageIds.has(page.id) : false
+  const checked = page ? selectedPageIds.has(page.id) : false
+  const directoryPageIds = hasChildren
+    ? selectablePages
+        .filter(item => isPathInsideDirectory(item.path, node.key))
+        .map(item => item.id)
     : []
   const directoryChecked =
-    directoryPaths.length > 0 && directoryPaths.every(path => selectedPaths.has(path))
+    directoryPageIds.length > 0 && directoryPageIds.every(pageId => selectedPageIds.has(pageId))
   const directoryIndeterminate =
-    !directoryChecked && directoryPaths.some(path => selectedPaths.has(path))
+    !directoryChecked && directoryPageIds.some(pageId => selectedPageIds.has(pageId))
   const directoryLabel = t(
     open ? 'wikiSection.collapse_directory' : 'wikiSection.expand_directory',
     { name: page?.title || node.name }
@@ -148,7 +158,7 @@ function TreeNode({
         {hasChildren ? (
           <label
             className={`flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1 text-sm ${
-              directoryPaths.length === 0 ? 'cursor-not-allowed opacity-50' : ''
+              directoryPageIds.length === 0 ? 'cursor-not-allowed opacity-50' : ''
             }`}
           >
             <input
@@ -157,8 +167,8 @@ function TreeNode({
                 if (element) element.indeterminate = directoryIndeterminate
               }}
               checked={directoryChecked}
-              disabled={directoryPaths.length === 0 || disabled}
-              onChange={() => onToggleDirectorySelection(directoryPaths)}
+              disabled={directoryPageIds.length === 0 || disabled}
+              onChange={() => onToggleDirectorySelection(directoryPageIds)}
               aria-label={t(
                 directoryChecked
                   ? 'wikiSection.clear_directory_selection'
@@ -198,7 +208,7 @@ function TreeNode({
               type="checkbox"
               checked={checked}
               disabled={isBound || disabled}
-              onChange={() => onTogglePage(page.path)}
+              onChange={() => onTogglePage(page.id)}
               data-testid={`wiki-import-check-${page.path}`}
             />
             <FileText className="h-3.5 w-3.5 shrink-0 text-text-muted" />
@@ -221,9 +231,9 @@ function TreeNode({
               key={child.key}
               node={child}
               depth={depth + 1}
-              boundPaths={boundPaths}
-              selectedPaths={selectedPaths}
-              selectablePaths={selectablePaths}
+              boundPageIds={boundPageIds}
+              selectedPageIds={selectedPageIds}
+              selectablePages={selectablePages}
               expandedPaths={expandedPaths}
               disabled={disabled}
               forceExpanded={forceExpanded}

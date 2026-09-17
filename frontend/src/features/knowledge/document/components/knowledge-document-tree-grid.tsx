@@ -513,13 +513,20 @@ export function KnowledgeDocumentTreeGrid({
             if (isSyncedWikiDocument(document)) {
               if (!onSync || !(canManage?.(document) ?? true)) return null
               const label = t('document.document.resync')
+              const syncBusy =
+                syncingDocId === document.id ||
+                reindexingDocId === document.id ||
+                ['queued', 'indexing', 'converting', 'pending_conversion'].includes(
+                  document.index_status
+                )
               return (
                 <button
-                  className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors"
+                  className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={event => {
                     event.stopPropagation()
                     onSync(document)
                   }}
+                  disabled={syncBusy}
                   title={label}
                   aria-label={label}
                   data-testid={`quick-sync-document-${document.id}`}

@@ -110,6 +110,39 @@ def test_retirement_removes_exact_references_and_is_idempotent(test_db, test_use
     assert repeated.applied is False
 
 
+def test_retirement_cleans_references_when_target_is_already_inactive(
+    test_db, test_user
+):
+    skill = _create_target(test_db)
+    skill.is_active = False
+    ghost = _kind(
+        test_db,
+        user_id=test_user.id,
+        kind="Ghost",
+        name="wiki-agent",
+        json={
+            "spec": {
+                "skills": [skill.name],
+                "skill_refs": {skill.name: {"skill_id": skill.id}},
+            }
+        },
+    )
+    binding = _kind(
+        test_db,
+        user_id=test_user.id,
+        kind="SkillBinding",
+        name=f"user-{test_user.id}-skill-{skill.id}",
+        json={"spec": {"skillRef": {"skillId": skill.id}}},
+    )
+    test_db.commit()
+
+    applied = retire_external_wiki_skill(test_db)
+
+    assert applied.applied is True
+    assert test_db.get(Kind, binding.id).is_active is False
+    assert test_db.get(Kind, ghost.id).json["spec"]["skills"] == []
+
+
 def test_retirement_refuses_ambiguous_installed_skill(test_db, test_user):
     skill = _create_target(test_db)
     ambiguous = _kind(

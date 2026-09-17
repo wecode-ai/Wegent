@@ -28,7 +28,12 @@ function document(overrides: Partial<KnowledgeDocument> = {}): KnowledgeDocument
       external: {
         provider: 'wiki',
         title: 'Wiki page',
-        sync: { enabled: true, observed_version: '2026-09-03T12:34:56Z' },
+        sync: {
+          enabled: true,
+          observed_version: '2026-09-03T12:34:56Z',
+          content_version: '2026-09-02T12:34:56Z',
+          indexed_version: '2026-09-01T12:34:56Z',
+        },
       },
     },
     attachment_id: 12,
@@ -49,23 +54,37 @@ describe('synchronized Wiki document metadata', () => {
         })
       )
     ).toBe(false)
+    expect(
+      isSyncedWikiDocument(
+        document({
+          source_config: {
+            external: { provider: 'wiki', title: 'Wiki', sync: { enabled: 'false' } },
+          },
+        })
+      )
+    ).toBe(false)
   })
 
-  it('uses the observed source version as the display time', () => {
-    expect(getDocumentDisplayUpdatedAt(document())).toBe('2026-09-03T12:34:56Z')
+  it('uses the synchronized content version instead of the observed version', () => {
+    expect(getDocumentDisplayUpdatedAt(document())).toBe('2026-09-02T12:34:56Z')
   })
 
-  it('falls back to normal document time rules for an invalid observed version', () => {
+  it('falls back to the indexed version and then the normal document time', () => {
     const value = document({
       updated_at: '2026-09-05T00:00:00Z',
       source_config: {
         external: {
           provider: 'wiki',
           title: 'Wiki page',
-          sync: { enabled: true, observed_version: 'invalid' },
+          sync: {
+            enabled: true,
+            observed_version: '2026-09-06T00:00:00Z',
+            content_version: 'invalid',
+            indexed_version: '2026-09-04T00:00:00Z',
+          },
         },
       },
     })
-    expect(getDocumentDisplayUpdatedAt(value)).toBe('2026-09-05T00:00:00Z')
+    expect(getDocumentDisplayUpdatedAt(value)).toBe('2026-09-04T00:00:00Z')
   })
 })

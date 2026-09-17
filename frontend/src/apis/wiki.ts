@@ -58,6 +58,7 @@ export interface WikiConnectionTestResponse {
 
 export interface WikiBoundDocument {
   id: number
+  page_id: string
   name: string
   path: string
   locale: string
@@ -125,11 +126,11 @@ export const wikiApis = {
 
   bindKbWikiDocuments: async (
     knowledgeBaseId: number,
-    paths: string[],
+    pageIds: string[],
     options: { connectionId: string; folderId?: number }
   ): Promise<WikiBindingCreateResponse> => {
     return apiClient.post(`/knowledge/${knowledgeBaseId}/wiki-bindings`, {
-      paths,
+      page_ids: pageIds,
       connection_id: options.connectionId,
       folder_id: options?.folderId ?? 0,
     })

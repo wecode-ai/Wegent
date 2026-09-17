@@ -26,6 +26,7 @@ from app.services.plugin_upstream_fetch import (
     UpstreamFetchError,
     _assert_public_host,
 )
+from app.services.web_scraper.markdown.html_to_markdown import HtmlToMarkdownConverter
 from app.services.wiki.connector import (
     WikiApiError,
     WikiConnectionTest,
@@ -76,6 +77,17 @@ query ($id: Int!) {
 }
 """
 
+_PAGE_BY_ID_RENDER_QUERY = """
+query ($id: Int!) {
+  pages {
+    single(id: $id) {
+      id path title description updatedAt locale render
+      tags { id tag title }
+    }
+  }
+}
+"""
+
 _PAGE_META_BY_PATH_QUERY = """
 query ($path: String!, $locale: String!) {
   pages {
@@ -103,6 +115,17 @@ query ($path: String!, $locale: String!) {
 }
 """
 
+_PAGE_RENDER_QUERY = """
+query ($path: String!, $locale: String!) {
+  pages {
+    singleByPath(path: $path, locale: $locale) {
+      id path title description updatedAt locale render
+      tags { id tag title }
+    }
+  }
+}
+"""
+
 _VERSION_QUERY = "query { system { info { currentVersion } } }"
 
 # Site locales for singleByPath fallback (exact locale match required).
@@ -116,14 +139,14 @@ WIKIJS_MIN_VERSION_LABEL = ".".join(str(part) for part in WIKIJS_MIN_VERSION)
 
 _SITE_LOCALES_CACHE: dict[str, tuple[float, list[str]]] = {}
 _SITE_LOCALES_CACHE_TTL_SECONDS = 60
+_HTML_TO_MARKDOWN = HtmlToMarkdownConverter()
 
 
 def validate_wiki_site_url(url: str) -> str:
     """Validate a wiki site URL and return its normalized root form.
 
-    Unlike ``validate_upstream_url`` this allows plain http because many
-    self-hosted Wiki.js deployments are intranet-only. Private hosts are
-    rejected unless the deployment opts in via WIKI_ALLOW_PRIVATE_NETWORK.
+    Plain HTTP is supported for self-hosted intranet deployments. Private hosts
+    are rejected unless the deployment opts in via WIKI_ALLOW_PRIVATE_NETWORK.
     """
     cleaned = url.strip()
     parsed = urlparse(cleaned)
@@ -250,6 +273,31 @@ def _classify_graphql_error(error: dict[str, Any]) -> str:
     return "upstream_error"
 
 
+def _is_source_read_error(error: dict[str, Any]) -> bool:
+    path = error.get("path")
+    path_targets_content = isinstance(path, list) and "content" in path
+    message = str(error.get("message") or "").lower()
+    tokens = " ".join(_extension_strings(error.get("extensions"))).lower()
+    mentions_source_permission = any(
+        marker in f"{tokens} {message}"
+        for marker in ("read:source", "source read", "source permission")
+    )
+    return (path_targets_content or mentions_source_permission) and (
+        _classify_graphql_error(error) in {"wiki_auth_failed", "wiki_page_forbidden"}
+        or _is_forbidden_message(message)
+    )
+
+
+def _page_content(node: dict[str, Any], site_url: str) -> str:
+    content = node.get("content")
+    if isinstance(content, str):
+        return content
+    render = node.get("render")
+    if isinstance(render, str):
+        return _HTML_TO_MARKDOWN.to_markdown(render, base_url=site_url)
+    return ""
+
+
 class WikijsConnector(WikiConnector):
     """Wiki.js 2.x adapter over the GraphQL endpoint."""
 
@@ -263,8 +311,8 @@ class WikijsConnector(WikiConnector):
         query: str,
         variables: dict[str, Any],
     ) -> dict[str, Any]:
-        await asyncio.to_thread(validate_wiki_site_url, config.site_url)
-        endpoint = f"{config.site_url.rstrip('/')}/graphql"
+        site_url = await asyncio.to_thread(validate_wiki_site_url, config.site_url)
+        endpoint = f"{site_url}/graphql"
         headers = {
             "Authorization": f"Bearer {config.api_key}",
             "Content-Type": "application/json",
@@ -280,6 +328,7 @@ class WikijsConnector(WikiConnector):
                         endpoint,
                         json={"query": query, "variables": variables},
                         headers=headers,
+                        allow_redirects=False,
                     ) as response:
                         if response.status in (401, 403):
                             raise WikiApiError(
@@ -349,6 +398,12 @@ class WikijsConnector(WikiConnector):
         if errors:
             raw_error = errors[0] if isinstance(errors[0], dict) else {}
             first = str(raw_error.get("message", "unknown GraphQL error"))
+            if _is_source_read_error(raw_error):
+                raise WikiApiError(
+                    "wiki_source_read_forbidden",
+                    f"Wiki 站点不允许读取页面源码：{first}",
+                    retryable=False,
+                )
             error_code = _classify_graphql_error(raw_error)
             if error_code in {"wiki_auth_failed", "wiki_page_forbidden"}:
                 raise WikiApiError(
@@ -476,7 +531,7 @@ class WikijsConnector(WikiConnector):
             ]
         batch = metas[offset : offset + limit]
         next_offset = offset + limit if len(metas) > offset + limit else None
-        if exceeded_page_cap and next_offset is None:
+        if exceeded_page_cap and next_offset is None and offset < page_cap:
             next_offset = page_cap
         return batch, next_offset
 
@@ -716,14 +771,18 @@ class WikijsConnector(WikiConnector):
         except WikiApiError as exc:
             if _is_missing_page_error(exc):
                 return None
-            raise
+            if exc.error_code != "wiki_source_read_forbidden":
+                raise
+            data = await self._post_graphql(
+                config, _PAGE_BY_ID_RENDER_QUERY, {"id": page_id}
+            )
         node = (data.get("pages") or {}).get("single")
         if not isinstance(node, dict):
             return None
         return WikiPage(
             **{
                 **_meta_from_node(node).__dict__,
-                "content": str(node.get("content") or ""),
+                "content": _page_content(node, config.site_url),
             }
         )
 
@@ -757,14 +816,20 @@ class WikijsConnector(WikiConnector):
                 # next installed locale before giving up.
                 if _is_missing_page_error(exc):
                     continue
-                raise
+                if exc.error_code != "wiki_source_read_forbidden":
+                    raise
+                data = await self._post_graphql(
+                    config,
+                    _PAGE_RENDER_QUERY,
+                    {"path": path.strip("/"), "locale": attempt_locale},
+                )
             node = (data.get("pages") or {}).get("singleByPath")
             if not isinstance(node, dict):
                 return None
             return WikiPage(
                 **{
                     **_meta_from_node(node).__dict__,
-                    "content": str(node.get("content") or ""),
+                    "content": _page_content(node, config.site_url),
                 }
             )
         return None

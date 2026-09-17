@@ -4,7 +4,7 @@
 
 """Tests for the Wiki.js connector (GraphQL adapter)."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -47,7 +47,7 @@ class TestValidateWikiSiteUrl:
             )
 
     def test_accepts_http_scheme(self):
-        # http is allowed as a scheme; private-host policy is a separate check
+        # Self-hosted Wiki.js deployments may only be reachable over intranet HTTP.
         with patch("app.services.wiki.connectors.wikijs._assert_public_host"):
             assert (
                 validate_wiki_site_url("http://wiki.example.com")
@@ -191,6 +191,33 @@ class TestListPages:
 
         assert "orderByDirection: DESC" in captured["query"]
 
+    @pytest.mark.asyncio
+    async def test_page_cap_cursor_does_not_repeat_the_current_offset(
+        self, monkeypatch
+    ):
+        connector = self._connector()
+        monkeypatch.setattr(app_settings, "WIKI_TREE_MAX_PAGES", 2)
+
+        with patch.object(
+            connector,
+            "_post_graphql",
+            return_value={
+                "pages": {
+                    "list": [
+                        {"id": 1, "path": "docs/a", "title": "A"},
+                        {"id": 2, "path": "docs/b", "title": "B"},
+                        {"id": 3, "path": "docs/c", "title": "C"},
+                    ]
+                }
+            },
+        ):
+            pages, next_offset = await connector.list_pages(
+                _config(), limit=2, offset=2
+            )
+
+        assert pages == []
+        assert next_offset is None
+
 
 class TestGetPageMetadataById:
     @pytest.mark.asyncio
@@ -279,6 +306,81 @@ class TestGetPageById:
         assert page.path == "docs/renamed"
         assert page.content == "# Renamed"
 
+    @pytest.mark.asyncio
+    async def test_falls_back_to_render_when_source_read_is_forbidden(self):
+        connector = WikijsConnector()
+        requests = []
+
+        async def fake_request(config, query, variables):
+            requests.append(query)
+            if "content render" in query:
+                return {
+                    "data": {"pages": {"single": None}},
+                    "errors": [
+                        {
+                            "message": "Forbidden",
+                            "path": ["pages", "single", "content"],
+                        }
+                    ],
+                }
+            return {
+                "data": {
+                    "pages": {
+                        "single": {
+                            "id": 5001,
+                            "path": "docs/renamed",
+                            "title": "Renamed",
+                            "updatedAt": "2026-09-13T02:00:00Z",
+                            "locale": "zh",
+                            "render": "<h1>Renamed</h1><p>Body</p>",
+                            "tags": [],
+                        }
+                    }
+                }
+            }
+
+        with patch.object(connector, "_request_graphql", side_effect=fake_request):
+            page = await connector.get_page_by_id(_config(), "5001")
+
+        assert len(requests) == 2
+        assert "content" not in requests[1]
+        assert page is not None
+        assert page.content == "# Renamed\n\nBody"
+
+
+class TestGraphqlRequest:
+    @pytest.mark.asyncio
+    async def test_uses_normalized_https_endpoint_and_disables_redirects(self):
+        connector = WikijsConnector()
+        response = MagicMock()
+        response.status = 200
+        response.json = AsyncMock(return_value={"data": {"ok": True}})
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock(return_value=None)
+        session = MagicMock()
+        session.post.return_value = response
+        manager = MagicMock()
+        manager.__aenter__ = AsyncMock(return_value=session)
+        manager.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch(
+                "app.services.wiki.connectors.wikijs.AsyncSessionManager",
+                return_value=manager,
+            ),
+            patch(
+                "app.services.wiki.connectors.wikijs.validate_wiki_site_url",
+                return_value="https://wiki.example.com",
+            ),
+        ):
+            await connector._request_graphql(
+                _config(" https://WIKI.example.com/ "), "query { ok }", {}
+            )
+
+        session.post.assert_called_once()
+        assert session.post.call_args.args[0] == "https://wiki.example.com/graphql"
+        assert session.post.call_args.kwargs["allow_redirects"] is False
+
 
 class TestPageQuerySchema:
     """Lock the field shapes required by the Wiki.js schema (2.x)."""
@@ -318,6 +420,47 @@ class TestPageQuerySchema:
         assert page.content == "# A"
         assert page.tags == ("arch",)
         assert page.is_private is False
+
+    @pytest.mark.asyncio
+    async def test_path_query_falls_back_to_render_when_source_read_is_forbidden(self):
+        connector = WikijsConnector()
+        requests = []
+
+        async def fake_request(config, query, variables):
+            requests.append(query)
+            if "content render" in query:
+                return {
+                    "data": {"pages": {"singleByPath": None}},
+                    "errors": [
+                        {
+                            "message": "Forbidden",
+                            "path": ["pages", "singleByPath", "content"],
+                        }
+                    ],
+                }
+            return {
+                "data": {
+                    "pages": {
+                        "singleByPath": {
+                            "id": 7,
+                            "path": "docs/a",
+                            "title": "A",
+                            "updatedAt": "2026-09-01T00:00:00Z",
+                            "locale": "zh",
+                            "render": "<h1>A</h1><p>Body</p>",
+                            "tags": [],
+                        }
+                    }
+                }
+            }
+
+        with patch.object(connector, "_request_graphql", side_effect=fake_request):
+            page = await connector.get_page(_config(), "docs/a", "zh")
+
+        assert len(requests) == 2
+        assert "content" not in requests[1]
+        assert page is not None
+        assert page.content == "# A\n\nBody"
 
 
 class TestGetPageLocaleFallback:
