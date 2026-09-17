@@ -21,6 +21,7 @@ these tests exist to catch.
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 import pytest
 from llama_index.core.schema import TextNode
@@ -352,6 +353,70 @@ def test_shared_physical_index_keeps_every_hit_inside_scope(
             query="zebra_pipeline",
         )
         assert _doc_refs(other_kb) == {"7301"}
+    finally:
+        _drop_shared_index(milvus_env, collection_name)
+
+
+def test_a_fixed_collection_keeps_every_read_inside_scope(
+    milvus_env: MilvusContractEnv,
+) -> None:
+    """The fully shared strategy: every knowledge base in one fixed name.
+
+    One collection serves every knowledge base here, so the scope has to hold
+    for the keyword route, the reading paths and the delete path alike.
+    """
+    collection_name = f"wegent_fixed_{uuid.uuid4().hex[:8]}"
+    backend = MilvusBackend(
+        {
+            "url": milvus_env.uri,
+            "indexStrategy": {"mode": "fixed", "fixedName": collection_name},
+            "ext": {"timeout": 30.0},
+        }
+    )
+    first_kb, second_kb = "7601", "7602"
+    try:
+        assert backend.get_index_name(first_kb) == collection_name
+        assert backend.get_index_name(second_kb) == collection_name
+        _index_text_document(
+            milvus_env,
+            knowledge_id=first_kb,
+            document_id=7601,
+            text="固定集合中的第一份文档，主题是范围隔离。",
+            backend=backend,
+        )
+        _index_text_document(
+            milvus_env,
+            knowledge_id=second_kb,
+            document_id=7602,
+            text="越界内容：quasar_marker 只属于另一个知识库。",
+            backend=backend,
+        )
+
+        assert _keyword_query(
+            backend, knowledge_id=first_kb, query="quasar_marker"
+        ) == {"records": []}, "out-of-scope content must not leak"
+        assert _doc_refs(
+            _keyword_query(backend, knowledge_id=first_kb, query="范围隔离")
+        ) == {"7601"}
+        assert _doc_refs(
+            _keyword_query(backend, knowledge_id=second_kb, query="quasar_marker")
+        ) == {"7602"}
+
+        assert [
+            document["doc_ref"]
+            for document in backend.list_documents(first_kb)["documents"]
+        ] == ["7601"]
+        assert {chunk["doc_ref"] for chunk in backend.get_all_chunks(first_kb)} == {
+            "7601"
+        }
+        with pytest.raises(ValueError):
+            backend.get_document(first_kb, "7602")
+
+        deleted = backend.delete_document(first_kb, "7601")
+        assert deleted["deleted_chunks"] >= 1
+        assert _doc_refs(
+            _keyword_query(backend, knowledge_id=second_kb, query="quasar_marker")
+        ) == {"7602"}, "clearing one knowledge base must not touch the other"
     finally:
         _drop_shared_index(milvus_env, collection_name)
 
