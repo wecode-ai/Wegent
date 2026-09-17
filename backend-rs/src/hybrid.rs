@@ -1,15 +1,24 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use std::env;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::Duration;
 
-use http::Uri;
+use http::{Method, Request, Uri};
+use hyper::body::Incoming;
 use tracing::info;
 
 use crate::{
-    Application, BoxError, Gateway, OriginService, RouteTable, RoutesConfig, RustApi, bind, serve,
+    Application, BoxError, Gateway, GatewayResponse, OriginService, PathMatch, RouteRule,
+    RouteTable, RoutesConfig, RustApi, bind, serve,
 };
+
+mod routes;
+use routes::TemplateRoutes;
 
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 8000;
@@ -22,6 +31,7 @@ pub struct HybridConfig {
     pub listen_address: SocketAddr,
     pub python_upstream: Uri,
     pub routes: RouteTable,
+    templates: TemplateRoutes,
     pub shutdown_grace: Duration,
 }
 
@@ -44,14 +54,15 @@ impl HybridConfig {
         let python_upstream = env::var("WEGENT_PYTHON_UPSTREAM_URL")
             .unwrap_or_else(|_| DEFAULT_PYTHON_UPSTREAM.to_owned())
             .parse()?;
-        let routes = match env::var_os("WEGENT_RS_ROUTES_FILE") {
-            Some(path) => RouteTable::compile(RoutesConfig::load(Path::new(&path))?)?,
-            None => RouteTable::empty(),
+        let (routes, templates) = match env::var_os("WEGENT_RS_ROUTES_FILE") {
+            Some(path) => TemplateRoutes::load(Path::new(&path))?,
+            None => (RouteTable::empty(), TemplateRoutes::default()),
         };
         Ok(Self {
             listen_address: SocketAddr::new(host, port),
             python_upstream,
             routes,
+            templates,
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
         })
     }
@@ -63,6 +74,7 @@ impl HybridConfig {
             listen_address,
             python_upstream,
             routes,
+            templates: TemplateRoutes::default(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
         }
     }
@@ -71,6 +83,43 @@ impl HybridConfig {
     pub fn with_shutdown_grace(mut self, shutdown_grace: Duration) -> Self {
         self.shutdown_grace = shutdown_grace;
         self
+    }
+
+    /// Adds route rules from a file, including files it explicitly includes.
+    ///
+    /// # Errors
+    /// Returns an error when a route file cannot be read or has an invalid rule.
+    pub fn with_routes_file(mut self, path: &Path) -> Result<Self, BoxError> {
+        (self.routes, self.templates) = TemplateRoutes::load(path)?;
+        Ok(self)
+    }
+
+    /// Reports whether a request is selected for the Rust API listener.
+    #[must_use]
+    pub fn selects_rust(&self, method: &Method, path: &str) -> bool {
+        self.routes.matches(method, path) || self.templates.matches(method, path)
+    }
+}
+
+#[derive(Clone)]
+struct SelectedOrigin<S> {
+    routes: RouteTable,
+    templates: TemplateRoutes,
+    rust: S,
+    python: OriginService,
+}
+
+impl<S: RustApi> RustApi for SelectedOrigin<S> {
+    async fn call(&self, request: Request<Incoming>, peer_addr: SocketAddr) -> GatewayResponse {
+        if self.routes.matches(request.method(), request.uri().path())
+            || self
+                .templates
+                .matches(request.method(), request.uri().path())
+        {
+            self.rust.call(request, peer_addr).await
+        } else {
+            self.python.call(request, peer_addr).await
+        }
     }
 }
 
@@ -85,13 +134,28 @@ where
     S: RustApi,
     F: Future<Output = ()>,
 {
-    let gateway = Gateway::new(config.routes, api, &config.python_upstream)?;
+    let selected = SelectedOrigin {
+        routes: config.routes.clone(),
+        templates: config.templates.clone(),
+        rust: api,
+        python: OriginService::new(&config.python_upstream)?,
+    };
+    // The outer gateway accepts every request; the selected service applies
+    // both legacy exact/prefix rules and template rules before proxying.
+    let catch_all = RouteTable::compile(RoutesConfig {
+        routes: vec![RouteRule {
+            methods: Vec::new(),
+            path: "/".to_owned(),
+            match_kind: PathMatch::Prefix,
+        }],
+    })?;
+    let gateway = Gateway::new(catch_all, selected, &config.python_upstream)?;
     let listener = bind(config.listen_address).await?;
 
     info!(
         listen = %listener.local_addr()?,
         python_upstream = %config.python_upstream,
-        rust_routes = gateway.routes().len(),
+        rust_routes = config.routes.len() + config.templates.len(),
         "Wegent migration gateway started"
     );
 
@@ -121,8 +185,11 @@ where
         state: _state,
         routes,
     } = application;
-    let api_server =
-        brz_http_server::Server::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), routes).await?;
+    let api_server = brz_http_server::Server::bind(
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        crate::http_fallback::FastApiFallback::new(routes),
+    )
+    .await?;
     let api_address = api_server.local_addr()?;
     let api_origin: Uri = format!("http://{api_address}").parse()?;
     let api = OriginService::new(&api_origin)?;
