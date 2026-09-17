@@ -622,6 +622,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
     },
     taskBindings: {
+      bindTask: deliveryApi.bindTask,
+      unbindTask: deliveryApi.unbindTask,
       async list(issueId, projectId) {
         return (await deliveryApi.listTaskBindings(issueId)).map(binding =>
           mapWorkspaceTaskBindingDto(binding, projectId)

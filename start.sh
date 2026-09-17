@@ -2419,7 +2419,7 @@ start_services() {
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "backend" "backend" \
-            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export WEGENT_SOCKET_URL=\"$WEGENT_SOCKET_URL\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export WEGENT_BACKEND_PUBLIC_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && export LOG_FILE_ENABLED=$LOCAL_LOG_FILE_ENABLED && export LOG_DIR=\"$BACKEND_LOCAL_LOG_DIR\" && source .venv/bin/activate && $backend_process_command" \
+            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export WEGENT_SOCKET_URL=\"$WEGENT_SOCKET_URL\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export WEGENT_BACKEND_PUBLIC_URL=$TASK_API_DOMAIN && export LOG_LEVEL=${LOG_LEVEL:-INFO} && export LOG_FILE_ENABLED=$LOCAL_LOG_FILE_ENABLED && export LOG_DIR=\"$BACKEND_LOCAL_LOG_DIR\" && source .venv/bin/activate && $backend_process_command" \
             "$BACKEND_PORT"
     fi
 

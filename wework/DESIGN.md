@@ -597,6 +597,11 @@ recipe closely:
 The Composer is not a green brand block, a thick outlined form, or a card with
 an exaggerated shadow.
 
+Issue activity composers follow the per-frame geometry and acceptance contract
+in [任务动态评论框交互规范](../docs/zh/wegent/user-guide/coding/issue-comment-interaction.md)
+and its [English version](../docs/en/wegent/user-guide/coding/issue-comment-interaction.md).
+Do not claim pinned scrolling is verified from a static screenshot or CSS declaration alone.
+
 ### 6.3 Navigation and list rows
 
 - A compact navigation row follows the `30px` sidebar recipe.
@@ -697,6 +702,19 @@ illustrations, and marketing headlines. The exact four-card home quick-start
 baseline in section 5.4 is not an empty-state anti-pattern and must not be
 “simplified” into rows.
 
+Board progress conversations open only through an explicit, visible “View
+progress” button. Hovering or focusing an Issue card must not open the
+conversation; clicking the card opens Issue details. Moving the pointer inside
+the panel must not switch conversations or alter the card geometry. Follow the
+[board progress interaction contract](../docs/zh/wegent/user-guide/coding/board-progress-interaction.md)
+and its [English version](../docs/en/wegent/user-guide/coding/board-progress-interaction.md)
+for activation, dismissal, keyboard behavior, and verification boundaries.
+
+The active board page uses arrow cursors for actions, including navigation,
+filters, cards, and portaled menus or popovers. Enforce this at the shared page
+boundary instead of adding per-control cursor fixes. Hidden board tabs must not
+affect other pages. Preserve text editing, drag, and resize cursor semantics.
+
 ## 7. Interaction and state
 
 Every interactive component must account for the applicable states:
@@ -742,6 +760,791 @@ semantics for all three.
   newline shortcuts must remain explicit and tested.
 
 ### 7.2 Navigation and context
+
+- Issue 动态以当前 Issue 的 ProjectChat 消息流为准。接入消息服务的宿主不得再混入
+  REST 评论、指派或执行记录，也不得在订阅失败时切换数据源。Web 的执行选择须排除
+  禁止远程控制的 APP 设备；这些设备的工作目录保留展示但不可用于 Web 发起执行。
+  ProjectChat is the canonical per-Issue activity stream. Connected hosts must not
+  add REST comments, assignments or runs, or switch sources after subscription failure.
+  Browser execution selection excludes APP devices from standalone targets and marks
+  their workspaces unavailable, following the backend remote-control policy.
+  看板卡片、进展弹层、任务侧栏及执行详情还须在挂载会话读取组件前检查设备能力。
+  APP 任务保留入口并提示在 PC App 查看；不发起历史、目标、模型或实时订阅读取，
+  不提供无效的权限错误重试。目录查询临时失败仍显示错误并允许重试。
+  Remote hosts provide checkDeviceAccess; in-process hosts use their existing local access.
+  Cards and viewers gate runtime readers before mounting them, preserve the execution
+  dialog shell and close controls, and offer retries only for catalog lookup failures.
+
+- 看板拖拽以 PC 为准：两端共用 6px 指针激活距离、卡片优先的碰撞检测、
+  卡片前插入与列末尾追加规则，以及 272px 拖动浮层。拖拽注册由共享卡片持有，
+  宿主仅处理持久化；不得另建 HTML 原生拖拽路径。
+  Board dragging shares the PC pointer sensor, 6px activation distance, card-first
+  collision detection, insert-before/append semantics and 272px overlay. Shared
+  cards own drag registration; hosts persist changes without separate HTML drag handlers.
+
+- Web and desktop project boards share their presentation in
+  `@wegent/collaboration`: board/card structure, drawer motion and chrome,
+  thread grouping, activity cards/messages, content expansion, and the comment composer. Hosts supply data, platform services,
+  and capability-specific actions; they must not fork these surfaces.
+
+  ```mermaid
+  flowchart TD
+    Chat[Shared ProjectChat transport] --> Web[Web API adapter]
+    Chat --> Desktop[Desktop runtime adapter]
+    Chat --> IssueScope[Filter messages by current Issue]
+    IssueScope --> Feed
+    Catalog[Account devices and workspaces] --> Policy[Browser remote-control eligibility]
+    Policy --> Models[Eligible device model catalog and execution target]
+    Policy --> Gate[Runtime device access boundary]
+    Gate --> Allowed[Allowed: mount goal and conversation readers]
+    Gate --> Restricted[APP: PC-app guidance without runtime requests]
+    Gate --> Error[Catalog failure: visible error and retry]
+    RPC[Shared runtime RPC: device routing, events and transcript transport] --> Desktop
+    RPC --> Web
+    Projection[Shared transcript normalization and turn merge/update/projection] --> Desktop
+    Projection --> Web
+    Identity[Execution DTO: distinct execution, backend task and runtime address] --> Web
+    Web --> Shared[Shared board and Issue editor]
+    Desktop --> Shared
+    Theme[Shared desktop palette and typography] --> Web
+    Theme --> Desktop
+    Web --> Scope[CollaborationTheme and portal roots]
+    Desktop --> Root[applyAppearance root tokens]
+    Shared --> Board[ProjectBoardBody and ProjectBoardGroupPicker]
+    Board --> Dnd[Shared pointer sensor, collision and drop resolver]
+    Dnd --> Overlay[ProjectBoardDragOverlay]
+    Board --> Card[IssueBoardCard]
+    Card --> Drag[Shared card drag and drop registration]
+    Card --> Progress[IssueCardTaskSummary and task-selection popup]
+    Progress --> CardProjection[Shared runtimeTaskProgress and response preview]
+    CardProjection --> Projection
+    Web --> BoardRuntime[Board runtime-work adapter: actual device/task bindings]
+    BoardRuntime --> Progress
+    Shared --> Drawers[IssueConversationDrawers]
+    Shared --> Activity[IssueActivityThread]
+    Shared --> Feed[IssueActivityFeed: header, list, loading, empty state and footer]
+    Feed --> Tools[IssueActivityTools: approval, status, rerun and acceptance]
+    Web --> ToolActions[Versioned Issue API and shared rerun pipeline]
+    ToolActions --> Tools
+    Desktop --> Tools
+    Feed --> Activity
+    Activity --> Message[IssueChatMessage and IssueActivityContent]
+    Message --> Facts[Shared activity execution turn identity and status]
+    Message --> Cancel[Shared addressed cancellation and error state]
+    Web --> Sessions[Issue-scoped visited runtime sessions]
+    Sessions --> Facts
+    Desktop --> Facts
+    Activity --> Reply[IssueThreadReplyComposer]
+    Shared --> Composer[IssueMainCommentComposer]
+    Composer --> Controls[Shared ModelSelector and PermissionModeSelector]
+    Composer --> Editor[Shared ComposerProseMirrorEditor: Markdown schema, selection and editing]
+    Editor --> EditorHost[Host window focus, empty-caret policy and catalog icon resolution]
+    Editor --> LinkEditor[Shared LinkEditPopover with themed portal roots]
+    Controls --> Menu[Shared ActionMenu, keyboard hints and themed portal roots]
+    Composer --> Attachments[ComposerAttachmentBadges and AttachmentImageView]
+    Web --> Content[Execution content and action slots]
+    Desktop --> Content
+    Content --> Drawers
+    Content --> Execution[RuntimeExecutionConversation: execution modal and complete conversation]
+    Execution --> ExecutionChrome[RuntimeExecutionDetails: status, actions, retry and modal chrome]
+    Execution --> Scroll
+    Web --> Session[Runtime conversation session: history, live events, paging and cleanup]
+    Session --> Projection
+    Session --> RPC
+    Session --> Execution
+    Drawers --> TaskPanel[IssueTaskConversationPanel: PC sidebar header and surface]
+    TaskPanel --> SideLayout[TemporaryConversationLayout: transcript and composer placement]
+    SideLayout --> Scroll
+    SideLayout --> TaskComposer[ProjectChatComposerSurface: native form and responsive styles]
+    TaskComposer --> Toolbar[ComposerToolbar: context menu, mode, permissions, model and sending]
+    TaskComposer --> Editor
+    Toolbar --> Controls
+    Web --> Drafts[Task-scoped browser drafts shared by board popups and drawers]
+    Drafts --> TaskComposer
+    Progress --> SideLayout
+    Cards --> RuntimeQuestions[Answer and ignore through the addressed runtime]
+    RuntimeQuestions --> Session
+    Content --> History[MessageTurnNavigation: markers, previews and history loading]
+    Content --> Cards[Shared file changes, references, plans, runtime questions and selection actions]
+    Cards --> Markdown
+    Content --> Scroll[ScrollableMessageArea: history loading, restoration and streaming follow]
+    Scroll --> List[MessageList: visible rows, virtual measurements, selection and editing]
+    List --> User[UserMessage: Markdown, mentions, images, attachments and comments]
+    User --> Edit[UserMessageEditForm and ComposerTextInput]
+    Edit --> InputPolicy[Shared IME, submit, transfers and link editing]
+    Edit --> Editor
+    List --> Assistant[AssistantMessage: ordered timeline, final response, failures and artifacts]
+    Assistant --> Tools[ToolBlocksDisplay and ToolBlockItem: commands, edits, searches and subagents]
+    Assistant --> Images[GeneratedImageGallery with host image services]
+    Assistant --> Actions[MessageHoverActions with shared clipboard services]
+    Content --> Preview[CodeCommentPreview and ImSourceBadge]
+    Content --> Viewport[Shared viewport cache, height estimation and bottom-origin virtualizer]
+    Tools --> ToolHost[Host file reads, URL opening, settings navigation and telemetry]
+    Message --> Markdown[Shared AssistantMarkdown: code, tables, diagrams, links and images]
+    Web --> Services[MarkdownServices: links, clipboard, attachments and theme]
+    Desktop --> Services
+    Services --> Markdown
+    Content --> Composer
+  ```
+
+  `RuntimeExecutionDetails` owns the desktop execution dialog chrome, status
+  badges, metadata, stop state, transcript error/retry state and footer actions.
+  Its host supplies the authoritative runtime session, transcript body and real
+  callbacks. Never enable an action without its handler.
+  `MessageTurnNavigation` owns history markers, hover previews, missing-history
+  loading and scroll targeting. Turn projection and DOM geometry live in shared
+  helpers; native wrappers supply only the locale. Navigation portals inherit
+  the same theme as their conversation.
+
+  `RuntimeExecutionConversation` owns the entire execution modal, including its
+  `ScrollableMessageArea`; desktop and browser adapters supply session data and
+  real file services. Execution-status actions open this modal. Task-title
+  actions instead open `IssueTaskConversationPanel` in the adjacent drawer;
+  these actions must remain distinct. Preserve the Issue editor and its draft
+  while opening or closing either surface.
+
+  Browser execution sessions subscribe before loading history, preserve newer
+  live state when an older snapshot completes, and invalidate pending requests
+  and subscriptions on cleanup. They use the desktop turn reducers and paging
+  rules from shared core. Workspace attachment reads use the same path, chunk,
+  size and complete-file validation as desktop; device commands and attachment
+  HTTP transport remain host services.
+
+  Conversation leaf presentation also belongs to the shared package:
+  `FileChangesCard` (including hover diffs and revert confirmation),
+  `CodexReferenceList`, `CodexMemoryCitations`, `AssistantThinkingIndicator`,
+  `SelectionActionsPopover`, `AssistantPlanCard`, and `RequestUserInputCard`.
+  `ConversationTranslationProvider` supplies the common locale; desktop adapters
+  additionally provide Markdown platform services. File/review callbacks retain
+  original paths, line ranges, turn IDs and artifacts. User-input payloads,
+  response matching and IME handling are shared core contracts, not host UI
+  logic. Portals keep the conversation theme.
+
+  Tool output rendering, grouping, duration tracking, expansion state, inline
+  diffs and file-change animations are shared by `ToolBlocksDisplay` and
+  `ToolBlockItem`. Keep their focused processing, detail, label and diff modules
+  independent of desktop imports. Markdown services provide local image reads
+  and external URL opening; `ToolInteractionServices` provides settings
+  navigation and output-action telemetry. A host without a settings action
+  cannot expose an enabled settings button. Tool summary plurals use the same
+  locale rules in both hosts. Explicit transition properties avoid collisions
+  with the Web animation plugin.
+
+  `ComposerProseMirrorEditor` and its schema, Markdown parser/serializer,
+  editing commands, mention/link node views and diagnostics belong to the shared
+  composer module. Both hosts use the same tables, lists, selection, undo/redo,
+  structured paste and caret handling. `ComposerEditorServices` supplies window
+  focus subscriptions, platform empty-caret policy and catalog icon lookup;
+  the browser adapter uses DOM focus events and preserves its native empty caret.
+  Desktop mention adapters resolve the actual plugin inventory and appearance;
+  mention parsing, registration and DOM rendering remain shared. Never register
+  a global host resolver that could leak between independently hosted editors.
+  `LinkEditPopover` owns URL/text editing, validation and delete/open actions,
+  and keeps theme tokens when switching between its action and input views.
+  Shared composer CSS owns the same typography, table layout and caret animation.
+  `useComposerInputEvents`, `useComposerTransfers` and `useComposerLinkEditing`
+  own keyboard/IME submission, atomic mention deletion, selected-text/file paste
+  and drop, and link replacements. The native autocomplete composer and shared
+  `ComposerTextInput` consume these same controllers; desktop transfer services
+  resolve real workspace paths. Escape delegates to message cancellation when
+  no autocomplete menu is open.
+
+  `AssistantMessage` owns the complete assistant row, including the order of
+  response text and processing blocks, guidance segments, interrupted-run timing,
+  failure details, retry controls, generated-image galleries and final artifacts.
+  Its native adapter supplies image loading/downloading and inline visualization
+  services. `MessageHoverActions` owns copy/edit/fork controls and localized time
+  labels. `MessageList` owns the complete message-row composition, visibility,
+  virtual measurements, text selection and edit lifecycle. `UserMessage` and
+  `UserMessageEditForm` preserve native rich Markdown, image/document attachment
+  layout, mentions, code comments, collapse controls and edit submission. Hosts
+  provide user-message services for files, images, plugin navigation, editor
+  focus/transfer handling and preview boundaries. Reference tokens keep their
+  source URI even when no host action exists; those tokens are marked disabled.
+  `ScrollableMessageArea` owns the complete scroll surface, history loading,
+  turn navigation, saved reading positions, text anchors during width changes
+  and streaming follow. Its controller and geometry helpers preserve the native
+  top/bottom-origin semantics; hosts supply real loaders and explicit rendering
+  capabilities. Missing history remains visible but cannot be clicked without
+  a loader. Desktop adapters share their visualization and measurement services.
+
+  `CodeCommentPreview` owns code/browser annotation content and hover/focus timing;
+  hosts can supply a right viewport boundary, without embedding desktop DOM
+  selectors in shared code. Its portal inherits collaboration theme variables.
+  `ImSourceBadge` retains authoritative channel labels and shared localized names.
+  Runtime transcript normalization and turn merge/update/projection also belong
+  to `@wegent/chat-core`. Both hosts must preserve canonical turn IDs, ordered
+  tool blocks, terminal outcomes, guidance splits, reference metadata and
+  code/browser comments. Native adapters reexport these shared functions;
+  transport effects remain outside the pure turn state machine.
+  Full runtime conversation/annotation contracts and live activity projection
+  belong to `@wegent/chat-core/runtime-conversation` and related core modules.
+  `conversationViewportCache`, `messagePretextLayout` and
+  `useBottomOriginVirtualizer` preserve the native bounded LRU cache, intrinsic
+  height estimates and bottom-origin resize anchoring. Native conversation
+  eviction must also clear the corresponding shared viewport entry.
+
+  Runtime RPC transport belongs to `@wegent/chat-core`: both hosts must use the
+  same request envelope, acknowledgement deadlines, compressed response decoding
+  and event contract. Authentication and socket discovery remain host services.
+  `response-api-stream` decodes native response events; `runtime-stream-handlers`
+  maps them to the same scoped turn actions for both hosts. Desktop development
+  diagnostics are explicit options, never `import.meta.env` in shared code.
+  Web binds task-title links through the Issue's device/task binding to
+  `IssueTaskConversation`; execution-status actions open the execution modal.
+  Browser task drafts, selected options and uploads are scoped by device/task
+  at the collaboration app boundary and survive switching between a board
+  progress popup and the second drawer. Closing either surface does not discard
+  uploads or release an in-flight submission lock. Both hosts use
+  `ProjectChatComposerSurface`, `ComposerToolbar`, `AddContextMenu` and the
+  same ProseMirror input policy. Host adapters supply model catalogs, attachment
+  APIs and runtime commands. Browser continuation must send the backend's
+  `modelSelection` contract; separate modelId/modelOptions fields do not
+  configure a backend execution. Rejected requests retain the draft and files.
+  Browser question cards send the canonical `requestUserInputResponse` to the
+  original runtime address and mark the matching turn block answered only
+  after acceptance. Rejected answers remain editable. Ignoring a question
+  hides it only after the stop request succeeds; answer and ignore cannot race.
+  The Web host registers `RuntimeConversationClient` on `SharedWorkspaceApi`
+  for canonical transcript reads, scoped live events and accepted stop requests.
+  Missing canonical turns and subscription/stop failures remain explicit errors.
+  `IssueExecutionDetails` consumes this port and the canonical runtime-work API
+  for current task/model/device metadata. The desktop cloud adapter and Web
+  share `createRuntimeConversationApi` for listing, sending, guidance and
+  cancellation; a ProjectChat comment write must never stand in for execution.
+  `@wegent/chat-core/runtime` owns transcript, turn, message, attachment, tool
+  block, file-change and context-usage contracts; desktop API types re-export
+  them so Web and desktop cannot silently reduce different transcript shapes.
+  Execution DTOs preserve the actual runtime device/task address separately from
+  the execution ID and backend task ID; an unbound run has no conversation
+  address and must never borrow its execution ID as a task ID.
+
+  `IssueBoardCard` owns the complete card chrome, assignee tooltip, configuration
+  badge, workflow row, menu, progress trigger and popover task selector.
+  `IssueCardTaskSummary` owns goal indicators, process/tool summaries, shimmer,
+  final-response previews and conversation framing. `runtimeTaskProgress` and
+  `runtime-task-response-preview` compute those summaries from canonical turns
+  for both hosts. The Web board resolves actual device/task bindings from
+  runtime work, then subscribes to the corresponding conversation; terminal
+  live events override stale running metadata. Transcript failures remain
+  visible with an explicit retry. Progress popup and sidebar reuse
+  `BrowserTaskConversationContent`, including the PC transcript and composer.
+  The shared composer surface owns compact-mode expansion on focus/click and
+  outside-click collapse. Desktop subscriptions and
+  change-request contributions remain in the runtime adapter; task conversations
+  are supplied by the host conversation service. Do not fork card markup to bind
+  those services. `ProjectBoardBody` owns all static toolbar icons and tooltips;
+  both hosts use `ProjectBoardGroupPicker` for searchable grouping selection.
+  Desktop appearance and the Web collaboration scope obtain palette, typography
+  and semantic aliases from `resolveThemeVariables`. Web retains its document's
+  light/dark selection; desktop retains its user appearance preferences. Shared
+  portal roots carry the scope's tokens through `useCollaborationPortalTheme`;
+  they must not inherit the Web shell's unrelated palette after leaving the
+  board DOM. The theme scope adds no layout box. Outside a scope, desktop
+  portals continue to inherit the document appearance.
+  `IssueChatMessage` owns message avatars, timestamps, run disclosures, status
+  pills and execution actions. `IssueThreadReplyComposer` owns the complete
+  reply input, attachment chips, uploads, send state and inline errors. Desktop
+  wrappers provide runtime callbacks and rich-content services; Web wrappers
+  provide backend callbacks. Do not reimplement these components in a host.
+  `IssueActivityFeed` owns the activity layout, heading, count, ordering label,
+  loading and empty states, list and composer container in both hosts. Hosts
+  retain the original record identities and supply data and action callbacks;
+  legacy REST comments must not be disguised as ProjectChat messages to reuse
+  presentation. Both record types use `IssueActivityAvatar` and the shared
+  message/card presentation.
+
+  `IssueActivityTools` 统一 PC 与 Web 的批准、拒绝、立即执行、重跑、验收和
+  执行状态按钮及显示条件。宿主只提供实际可用的操作。审批使用服务端授权或
+  明确匹配的机器人创建者身份；身份缺失不能视为匹配。Web 从 ProjectChat
+  快照读取当前用户，批准／拒绝携带 Issue 所属项目和版本。重跑复用
+  `selectActivityRerunModel` 与 `startTaskAiRun`，选择最后一次用户请求的模型，
+  使用默认独立任务设备，不沿用评论框中的代码目录。Web 的主评论、回复和
+  工具栏共享一个执行目录；工具栏与主评论共享 Issue 操作锁而不清空草稿。
+
+  `IssueActivityTools` owns both hosts' approval, rejection, run-now, rerun,
+  acceptance and execution-status controls and visibility rules. Hosts supply
+  working action callbacks. Approval requires an explicit backend capability or
+  a known matching robot creator; missing identities never match. Web reads the
+  user from the ProjectChat snapshot and sends the owning project and Issue
+  version when approving/rejecting. Rerun uses `selectActivityRerunModel` and
+  `startTaskAiRun`, the last user-requested model and the default standalone device,
+  independently of the comment composer's selected code workspace. Browser main
+  comments, replies and tools share one execution catalog. Tools share the Issue
+  operation lock with the main composer and preserve the comment draft.
+
+  ```mermaid
+  flowchart LR
+    PC[Desktop activity adapter] --> Tools[Shared IssueActivityTools]
+    Web[Browser activity adapter] --> Tools
+    Web --> Actions[Versioned Issue approve, reject and update API]
+    Web --> Rerun[Shared model selection and startTaskAiRun]
+    PC --> Rerun
+    Catalog[Browser Issue execution catalog] --> Web
+    Catalog --> Main[Main comment composer]
+    Catalog --> Replies[Card replies]
+    Lock[Issue operation lock and retained draft] --> Web
+    Lock --> Main
+  ```
+
+  A reply retains its draft and attachments after failure and clears both only
+  after successful submission. Uploading files block submission; IME confirmation
+  and Shift+Enter never submit. Status normalization and terminal-message
+  precedence live beside the shared message component.
+  `IssueMainCommentComposer` owns the main textarea, settings/attachment/send
+  toolbar, keyboard and paste behavior, and mention selection. Both hosts use
+  `ComposerAttachmentBadges` and `AttachmentImageView` for document/text cards,
+  upload thumbnails and the image lightbox. Image loading, local file access and
+  downloading are host services; hosts do not render separate preview UI.
+  Card replies share the same queue presentation, scheduler and dispatcher.
+  Persist and execute a reply only after its owning card's session becomes idle;
+  a busy card must not block a different idle card. A persisted reply is removed
+  from the queue even when its execution fails, so retry never duplicates the
+  user comment. Pending entries and in-flight claims outlive drawer remounts.
+  Activity-owned runtime addresses remain authoritative even before they appear
+  in the runtime-work list. Only an explicit session-not-found response permits
+  recreating the session.
+
+  活动卡片和执行详情必须显示同一次执行的事实。两端复用
+  `activity-execution-turn` 的匹配与状态规则；只有完整历史中的唯一执行、
+  唯一轮次才允许关联旧记录。确认后的轮次关联保留到 Issue 关闭，后续轮次
+  不得覆盖旧执行结果。空历史且执行器明确空闲时显示状态待核实，读取失败
+  不能伪装成成功。Web 的 `RuntimeConversationScope` 按设备和任务复用已打开
+  的会话；只查看活动列表不加载全部历史，关闭详情继续订阅已访问的执行，
+  关闭或切换 Issue 时释放订阅。重新打开详情刷新事实并保留已确认的历史。
+
+  Activity cards and execution details use the shared `activity-execution-turn`
+  identity and status rules. Legacy association requires complete history with
+  exactly one execution and one turn. Keep verified turn identity until the Issue
+  closes; later turns cannot overwrite an earlier execution's outcome. Empty
+  history with confirmed idle execution means unknown; failed reads never prove
+  success. Web's `RuntimeConversationScope` shares visited sessions by device and
+  task. Activity lists do not eagerly load history. Closing a viewer retains its
+  live subscription; closing or changing the Issue releases it. Reopening refreshes
+  facts while preserving confirmed history.
+
+  两端活动区的停止操作使用 `useIssueExecutionCancellation`：阻止重复提交，
+  在共享活动区显示可重试的错误，忽略已关闭 Issue 的迟到响应，不自行生成
+  终态。Both activity hosts use `useIssueExecutionCancellation` to prevent duplicate
+  submissions, show retryable errors in the shared feed, ignore stale Issue
+  responses, and leave terminal outcomes to the executor.
+
+  ```mermaid
+  flowchart LR
+    Feed[Activity message] --> Identity[Shared execution identity and status]
+    Viewer[Web execution viewer] --> Scope[Issue scope: device and task]
+    Scope --> Session[Shared runtime conversation session]
+    Session --> Identity
+    Identity --> Badge[Shared card and dialog badges]
+    Native[Desktop conversation cache and lifecycle] --> Identity
+    Feed --> Stop[Shared cancellation hook]
+    Stop --> Runtime[Addressed executor cancel]
+    Stop --> Error[Shared activity error alert]
+  ```
+
+  Browser history invalidation discards stale live busy flags and pauses queue
+  dispatch until subscriptions and the refreshed runtime catalog are ready.
+
+  `useIssueActivityScroll` owns activity-list scrolling for both hosts. A new
+  parent comment reveals the list top; a card reply follows only that card's
+  bottom. Incoming activity alone never moves the list. User scrolling away or
+  a terminal response ends following, and linear mode never scrolls the outer
+  Issue drawer. Draft operations and queue claims live above individual drawers
+  so closing and reopening a drawer cannot send a pending operation twice.
+
+  ```mermaid
+  flowchart LR
+    Reply[Shared reply composer] --> Queue[Shared reply queue store]
+    Queue --> Ready{Owning session idle?}
+    Ready -->|No| Queue
+    Ready -->|Yes| Dispatch[Shared reply dispatcher]
+    Dispatch --> Persist[ProjectChat reply under original root]
+    Persist --> Kind{Execution owner}
+    Kind -->|Codex| Run[Shared startTaskAiRun]
+    Kind -->|Wegent| Team[ProjectChat team continuation]
+    Kind -->|Custom manager| Manager[Manager response and runtime send]
+    Run --> Native[Native runtime port]
+    Run --> HTTP[HTTP runtime port]
+  ```
+
+  The main comment uses the shared `startTaskAiRun` orchestration. A top-level
+  comment creates a new session; a reply continues its own card's address. Bind
+  the Issue, create its durable agent response, and subscribe to runtime failure
+  events before dispatch. A rejected start closes the pending response and rolls
+  back the binding. An ambiguous create timeout retains the binding so a
+  possibly running task stays inspectable and is never automatically duplicated.
+  The browser main composer uses runtime attachment uploads, then imports their
+  actual context IDs into the Issue attachment store. Repeated imports return
+  the existing attachment identities so retrying comment persistence preserves
+  its links. Drafts clear after persistence, even if execution later fails.
+
+  `ProjectWorkBar` and its project/workspace option logic are shared. Host wrappers
+  provide localization, viewport and desktop contribution slots. Code workspace
+  selection belongs to the comment; the assignee record is not an implicit
+  workspace selection. The HTTP adapter uses the actual device/workspace and
+  project identity selected by this menu. Both hosts use the same model identity
+  encoding, provider options, permissions and automatic model resolution.
+
+  ```mermaid
+  sequenceDiagram
+    participant Composer as Shared main comment UI
+    participant Chat as ProjectChat
+    participant Run as Shared startTaskAiRun
+    participant Host as Native / HTTP runtime bridge
+    Composer->>Chat: Persist user comment
+    Composer->>Run: Start comment with selected model and workspace
+    Run->>Host: Prepare runtime task
+    Host->>Run: Bind Issue and establish response + event subscription
+    Run->>Chat: Start durable agent response
+    Host->>Host: Dispatch runtime create
+    Host-->>Run: Accepted or explicit failure
+    Run-->>Composer: Refresh binding / show failure
+  ```
+
+  Model selection presentation, family/control rules, reasoning and power
+  sliders, speed selection, mobile sheet, permission menu and confirmation
+  belong to `@wegent/collaboration/controls`. Model and permission types belong
+  to `@wegent/chat-core`. The desktop adapter supplies locale, viewport, saved
+  keyboard shortcut, settings navigation and native browser occlusion; these
+  effects must not be imported by shared controls. Hosts must persist the
+  selected parameters into the actual execution request before enabling the
+  controls in a new entry point.
+  `AssistantMarkdown` owns the streaming parser, typography, code highlighting,
+  tables and expansion dialogs, diagram preview/export, links and image states.
+  Both activity adapters call it through `IssueActivityMarkdown`; there is no
+  host override for the message body. `MarkdownServices` supplies clipboard,
+  navigation, attachment loading and theme. Local file reads and local HTML
+  visualization hosts remain desktop capabilities. Parser behavior must be
+  tested with the real renderer; Web host tests may mock the ESM parser boundary.
+  Both Tailwind builds consume `@wegent/collaboration/tailwind-preset`; shared
+  styles load the corresponding semantic font sizes and overlay-layer tokens.
+  Web global focus resets and universal theme transitions must exclude the
+  collaboration theme scope, including portals. The scope uses the PC font
+  rasterization defaults; do not add Web-only smoothing or text-rendering
+  overrides. Use explicit transition properties when a Tailwind animation
+  plugin makes a shared duration or easing utility ambiguous.
+  `TemporaryConversationLayout` chooses its empty state from `messageCount`,
+  not from the presence of a host-supplied React element. Switching between
+  empty content and messages keeps the composer mounted.
+
+  Retry and runtime file-change actions use shared orchestration. Hosts provide
+  the addressed send/command transport, structured API-error details and their
+  canonical session updater. A rejected retry removes only its optimistic user
+  message. File review uses the artifact's device/workspace; revert publishes
+  the returned artifact status, including explicit conflict results.
+  Refreshing the same artifact must preserve a locally confirmed reverted or
+  conflicted status when history still reports it as active. A different
+  artifact remains authoritative. Model lookup matches the complete stored
+  provider/namespace/owner identity; sending and retrying preserve that task's
+  settings even before its model catalog is loaded.
+
+  ```mermaid
+  flowchart LR
+    PC[PC temporary conversation] --> Actions[Shared retry and file-change actions]
+    Web[Web conversation] --> Actions
+    Actions --> Transport[Host runtime and device-command ports]
+    Actions --> Turns[Host canonical conversation turns]
+    Turns --> UI[Shared transcript and file-change cards]
+  ```
+
+  Board goal summaries use the shared `IssueCardGoalSummary` presentation and
+  the canonical `/runtime-work/goal/get` client in both hosts. The browser loads
+  goals by the bound device/task address and shares that result between the card
+  title and popup; opening the popup must not issue another goal request.
+  A shared component must not depend on a utility defined only by one host.
+  Temporary conversation queues use one shared controller and the same
+  `ConversationQueuePanel`. Hosts supply addressed transport, lifecycle changes
+  and canonical-message updates. Queued content retains its attachments and
+  selected model. Busy rejections wait for a lifecycle transition; other
+  failures stay visible and editable. Guidance remains pending until an applied
+  event or canonical history confirms it.
+
+  ```mermaid
+  flowchart LR
+    Composer[PC and Web composer] --> Queue[Shared conversation queue]
+    Queue --> Panel[ConversationQueuePanel]
+    Queue --> Ports[Host send and guidance ports]
+    Ports --> Runtime[Addressed Runtime task]
+    Runtime --> Lifecycle[Lifecycle and applied guidance events]
+    Lifecycle --> Queue
+    Ports --> Canonical[Canonical transcript]
+  ```
+
+  Task conversation composers use a shared body for sizing, attachments,
+  disabled/supervisor/context rows, drag feedback, live-value submission and
+  toolbar placement. Both hosts use the same autocomplete controller; native
+  extension services enter through explicit ports. Remaining host tool menus
+  must connect those same capabilities without forking the body or its rules.
+  Keyboard and toolbar submissions use the same eligibility checks and read
+  the live editor value. Runtime side conversations require nonempty message
+  text because their send API rejects attachment-only requests. Transfers must
+  preserve edits made while resolving files and show failures in the composer.
+
+  ```mermaid
+  flowchart LR
+    PC[PC task composer adapter] --> Body[Shared project composer body and input rules]
+    Web[Web task composer adapter] --> Body
+    Body --> Attachments[Shared attachment badges]
+    Body --> Editor[Shared ComposerAutocompleteInput]
+    Editor --> RichEditor[Shared ProseMirror editor and input events]
+    Editor --> Autocomplete[Shared catalog, mention and slash controllers]
+    Autocomplete --> Ports[Host catalog, file and extension services]
+    Body --> Toolbar[Shared toolbar and host capability ports]
+  ```
+
+  Both task composers use `ComposerAutocompleteInput`: trigger parsing, candidate
+  construction, catalog loading, menu selection, keyboard/IME behavior, and the
+  slash model menu have one implementation. Desktop wrappers supply native
+  bindings, extension contributions, plugin usage and logo services. Web supplies
+  the bound device and workspace to the existing runtime skill and file APIs.
+  Catalog snapshots remain host/task scoped; authoritative empty responses and
+  metadata changes invalidate old requests. Unavailable file picking must stay
+  disabled for both mouse and keyboard without consuming the draft trigger.
+  Menu options and search inputs use at least 44px targets below 768px; desktop
+  sizing remains unchanged. File
+  mention search uses one shared request lifecycle: an empty query or absent
+  search capability is idle, stale responses cannot replace a newer query, and
+  retry repeats the failed file search as well as refreshing catalog candidates.
+
+  The plugin picker surface lives in the shared composer package. It shares the
+  catalog controller with slash autocomplete. Both desktop entry points use
+  one catalog adapter; hosts supply sorting, logo resolution, selection effects
+  and marketplace navigation. A completed empty catalog clears the menu and
+  preview icons. Failed refreshes retain loaded rows with a visible retry action;
+  do not use timed retry loops or republish stale React state on every update.
+  Icon slot centering, borders and logo fit belong to shared CSS. Avoid conflicting
+  border utilities; their result otherwise depends on the host CSS import order.
+  Anchor the menu in a themed portal so adjacent drawers cannot clip it. Escape
+  closes the picker and restores trigger focus. Preserve desktop sizing and use
+  44px controls on mobile.
+
+  插件选择必须直接调用所属输入框的引用，不能通过 window 广播插入事件；
+  同时打开的其他抽屉与主输入框必须保留各自草稿和光标。快捷短语在插件菜单前，
+  插件菜单必须使用共享工具栏的 compact 状态，在窄抽屉中收起文字和图标预览。
+  侧边对话遵循 PC TemporaryChatPanel 的 iconOnly 设置，在宽抽屉中也只显示插件图标。
+
+  Plugin selection calls its owning editor handle directly, never a window-wide
+  insertion event. Other mounted drawers and the main editor retain their drafts
+  and selections. Quick phrases precede the plugin menu. Pass the shared toolbar's
+  compact state to the picker so narrow drawers collapse its label and previews.
+  Side conversations use TemporaryChatPanel's icon-only picker even in a wide drawer.
+
+  试用提示使用共享 PluginTrialTemplateStrip；选择、关闭和填入的状态属于当前
+  输入框。主工作台通过显式状态接口展示提示，侧边对话持有独立提示状态，不能继承
+  主工作台的试用模板或填入回调。填入直接更新当前编辑器并恢复焦点，不自动发送。
+  模板替换必须保留对应插件的引用，即使引用不在草稿开头。
+
+  Trial suggestions use the shared PluginTrialTemplateStrip. Selection, dismissal
+  and application belong to the current composer. The main workbench exposes an
+  explicit state interface; side conversations own separate guide state and must
+  not inherit the main workbench's templates or application callback. Applying a
+  template writes to the current editor, restores focus and never auto-sends.
+  Preserve the selected plugin reference even when it is not at the draft's start.
+
+  ```mermaid
+  flowchart LR
+    Host[Host plugin catalog and selection effects] --> Picker[Shared PluginPickerMenu]
+    Picker --> Catalog[Shared catalog controller and store]
+    Slash[Shared slash autocomplete] --> Catalog
+    Picker --> Portal[Themed anchored portal]
+    Picker --> Host
+    Host --> Handle[Owning composer handle]
+    Handle --> Insert[Shared insertion at the live selection]
+    Host --> TrialState[Current composer guide state]
+    TrialState --> TrialUI[Shared PluginTrialTemplateStrip]
+    TrialUI --> Handle
+  ```
+
+  Composer directory reads use the addressed task. The browser calls
+  `runtime.composer.catalog.read`; the executor resolves workspace and project
+  plugin IDs from its task store, never from a stale client workspace string.
+  It reads paginated `app/list`, `plugin/installed`, `skills/list` and the local
+  Wegent plugin store. It must not call `plugin/list`, install/sync mutations or
+  resume persisted work merely to populate a menu. A malformed page, repeated
+  cursor or source failure rejects the snapshot rather than publishing a partial
+  installed catalog. Explicit refresh reaches both app and skill providers.
+  PC and browser responses use the same app/skill decoders. Installed-plugin
+  matching, enabled-state filtering, references and skill-only entries also live
+  in shared core; desktop adapters supply package logos and trial presentation.
+
+  PC 与 Web 通过共享 `buildComposerPluginInventory` 合并实际设备的安装版本、
+  项目启用范围和可见插件。图标、简介与试用模板通过共享展示函数生成；宿主只提供
+  图片地址转换和已有市场元数据。加载失败必须向调用方报告，不能改成空列表或绕过
+  安装筛选。成功的空列表替换旧缓存。PC 离线时明确不请求云端；图标补全复用同一次
+  安装快照，不再次读取库存或恢复已移除条目。
+
+  PC and Web use `buildComposerPluginInventory` for actual-device release membership,
+  project enablement and visible apps. One presentation factory produces logos,
+  descriptions and trial templates; hosts supply image URL resolution and available
+  marketplace metadata. Report inventory failures to the caller instead of treating
+  them as empty or bypassing membership. A successful empty result replaces stale
+  cached apps. Offline PC skips cloud reads explicitly. Logo hydration reuses the
+  same installation snapshot and cannot restore removed entries.
+
+  ```mermaid
+  flowchart LR
+    PC[PC reads: apps and complete local inventory] --> Inventory[Shared device and project inventory]
+    Web[Addressed Web catalog snapshot] --> Inventory
+    Cloud[Connected account: device-scoped installs] --> Inventory
+    Inventory --> Presentation[Shared description, logos and trial templates]
+    Host[Host image resolver and market metadata] --> Presentation
+    Presentation --> UI[Shared picker and autocomplete]
+  ```
+
+  已绑定任务的 PC 侧边对话与 Web 共用 `createRuntimeComposerPluginSource`。
+  `composerCatalogApi` 根据现有设备路由选择本机 IPC 或云端中继，并保留 APP 设备
+  的远程控制限制。每个侧边输入框提供独立目录上下文，菜单和斜杠候选使用同一来源、
+  同一缓存，不能继承主输入框的任务目录。切换任务先清空旧候选并作废旧请求，再读取
+  新任务目录；不能重置草稿来实现目录隔离。插件图片通过同一设备的分块文件接口读取，
+  亮色与暗色图片路径相同时合并读取。尚未创建任务的输入框继续使用项目控制器的目录，
+  但缓存也独立；任务绑定后改用任务目录。
+
+  Bound PC side conversations and Web share `createRuntimeComposerPluginSource`.
+  `composerCatalogApi` uses existing local IPC or cloud relay routing, preserving
+  remote APP-device restrictions. Each side composer supplies its own catalog
+  context: picker and slash share its source and store, never the main task's
+  catalog. A task change clears candidates and invalidates old requests without
+  resetting the draft. Plugin images use the same addressed chunk reader; identical
+  light/dark assets share one request. Before a task exists, project controls still
+  supply the catalog into an isolated store; binding switches to the task source.
+
+  ```mermaid
+  flowchart LR
+    Address[Side conversation device and task] --> Route[Existing executor device route]
+    Route --> Local[Local IPC]
+    Route --> Remote[Cloud runtime relay]
+    Local --> API[Shared catalog API and decoder]
+    Remote --> API
+    API --> Source[Shared task catalog source]
+    Source --> Scope[Composer-owned catalog context]
+    Scope --> Picker[Shared plugin picker]
+    Scope --> Slash[Shared slash candidates]
+    Source --> Images[Shared device image reader]
+  ```
+
+  Web 的任务输入框与 PC 共用插件菜单、安装记录转换、个人插件优先级、
+  设备库存合并、项目启用规则、使用频率排序和光标位置插入逻辑。Web 的菜单与
+  斜杠候选共用任务作用域库存，同时发起的读取合并为一个请求。设备本地图片
+  通过指定设备的文件读取接口转换为图片数据，不能把绝对文件路径当作 Web URL。
+  更换任务必须重建库存，旧任务响应不得发布到新任务。
+
+  The browser task composer and PC share the picker, installed-record normalization,
+  personal-plugin preference, device inventory merge, project enablement, usage
+  sorting and caret insertion. Browser picker and slash share a task-scoped store
+  and coalesce simultaneous reads. Device-local images are read through the addressed
+  file port; absolute device paths must not be used as browser image URLs. Switching
+  tasks creates a new store, isolated from previous task responses.
+
+  ```mermaid
+  flowchart LR
+    PC[PC native catalog adapter] --> Decode[Shared app and skill decoders]
+    Browser[Web task composer] --> RPC[Device-addressed catalog RPC]
+    RPC --> Task[Executor task store: workspace and plugin scope]
+    Task --> Sources[Codex read APIs and local plugin store]
+    Sources --> Decode
+    PC --> Normalize[Shared installed-plugin normalization and merge]
+    Browser --> Cloud[Device-scoped cloud installations]
+    Sources --> Normalize
+    Cloud --> Normalize
+    Normalize --> Match[Shared installed-plugin matching and references]
+    Match --> Picker[Shared picker and slash menus]
+    Browser --> Assets[Addressed device image reader]
+    Assets --> Picker
+    Decode --> Skills[Shared skill autocomplete]
+  ```
+
+  Context usage belongs to the addressed conversation. Both hosts use the shared
+  usage indicator, metrics and revision-aware usage store. A live usage event
+  supersedes an earlier transcript request; loading older history must never
+  replace current usage. Side conversations must not inherit the main composer's
+  usage. The compaction action follows the same addressed send path as the PC.
+  Hover-ring CSS belongs to the shared composer stylesheet. Tooltip hover bridges
+  must anchor above the trigger's full height so a 44px mobile target stays clickable.
+
+  Quick phrase menus and editing controls belong to the shared composer package.
+  Desktop preferences and Web account preferences remain explicit host storage
+  ports; agent quick-launch strings are a separate product and must not be used
+  as composer preferences. The shared menu owns search, keyboard selection,
+  attachment-stash presentation, portal theme and action errors. Hosts own file
+  URL resolution, persistence, telemetry and settings navigation.
+  Semantic heading roles are defined once in the shared Tailwind preset. Hosts
+  must not redefine those roles or leave a shared editor dependent on native CSS.
+
+  ```mermaid
+  flowchart LR
+    Desktop[Desktop preferences adapter] --> Menu[Shared quick phrase menu]
+    Account[Web account preferences adapter] --> Menu
+    Menu --> Selection[Composer insertion and mode selection]
+    Menu --> Editor[Shared quick phrase editor]
+    Editor --> Desktop
+    Editor --> Account
+  ```
+
+  ```mermaid
+  flowchart LR
+    Task[Bound device and task] --> Transcript[Latest transcript]
+    Task --> Live[Scoped usage events]
+    Transcript --> Usage[Shared revision-aware usage store]
+    Live --> Usage
+    Usage --> PC[PC composer adapter]
+    Usage --> Web[Web conversation session]
+    PC --> Indicator[Shared context usage indicator]
+    Web --> Indicator
+    Indicator --> Send[Addressed compact command]
+  ```
+
+  ```mermaid
+  flowchart LR
+    PC[PC adapter] --> Editor[Shared autocomplete controller]
+    Web[Web adapter] --> Editor
+    Editor --> Menus[Shared mention, slash and model menus]
+    Editor --> Parser[Shared trigger parser and command filtering]
+    Editor --> Catalog[Shared catalog and candidates]
+    Catalog --> CatalogPort[Host skill and app catalogs]
+    Editor --> Search[Shared workspace mention search]
+    Search --> FilePort[Device-addressed file search port]
+    Menus --> Selection[Caller selection handlers]
+    Selection --> Editor
+  ```
+
+  Composer execution settings must configure the current comment's execution
+  context. A project-wide configuration action is not a substitute for that
+  command; only enable the control when its matching host service is available.
+
+- Issue details and their task conversations are right-edge sidebars scoped to
+  the project workspace. The first drawer slides in from the right at a bounded
+  width (up to `560px`); it must never replace the board with a full-width page.
+  When the project workspace is at least `1024px` wide, the second drawer slides
+  in from the same edge and pushes the first left by one drawer width plus an
+  `8px` gap. Both panes occupy one translating track: only the track animates,
+  so their separation stays constant on every frame, including reversals. Keep both
+  widths stable and leave the surrounding application navigation in place.
+  Both panes share the same surface, complete `1px` border, `16px` corners, shadow,
+  `52px` header, and close-control styling. In narrower project workspaces,
+  show the conversation alone while keeping the Issue mounted.
+  Both drawer bodies and the conversation input keep scrolling available without visible scrollbar chrome.
+  Back, conversation Close, and Escape return to the Issue without resetting its
+  draft or scroll position. Selecting another execution replaces the right pane;
+  closing the Issue slides both panes out. Keep exiting content mounted and inert
+  until the track's actual animation finishes; do not use a removal timer.
+  Reopening during exit reverses the same track without remounting the Issue.
+  Respect reduced motion and complete removal immediately when no animation runs.
+  Board progress previews must close when an Issue opens and stay disabled while
+  the drawer is present.
+  Load shared drawer CSS from the main shell entry: runtime-imported DSH plugin
+  JavaScript does not automatically load its extracted CSS asset.
+
+  ```mermaid
+  stateDiagram-v2
+    [*] --> Issue: Track enters from right
+    Issue --> Pair: Mount conversation and shift shared track left
+    Pair --> Returning: Back / close conversation / Escape
+    Returning --> Issue: Track finishes; unmount conversation
+    Returning --> Pair: Reopen; reverse track from current position
+    Issue --> Leaving: Close Issue
+    Pair --> Leaving: Close Issue
+    Leaving --> [*]: Track finishes; dismiss overlay
+  ```
 
 - Back returns to the previous meaningful context; Close dismisses a layer.
 - Opening or closing sidebars, previews, terminals, and settings preserves the

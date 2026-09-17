@@ -1,9 +1,12 @@
+import {
+  appendInstalledPluginsAsComposerApps,
+  enrichComposerApps,
+} from '@wegent/chat-core/composer-plugin-metadata'
 import { describe, expect, test } from 'vitest'
 import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
 import {
-  appendInstalledPluginsAsComposerApps,
   composerAppPluginKey,
-  enrichComposerApps,
+  pluginPresentation,
   overlayMarketplaceLogosOnComposerApps,
 } from './composerPluginMetadata'
 
@@ -100,7 +103,9 @@ const superpowersPlugin: InstalledPlugin = {
 
 describe('enrichComposerApps', () => {
   test('uses the installed plugin icon and localized metadata for slash commands', () => {
-    expect(enrichComposerApps([githubApp], [githubPlugin])).toEqual([
+    expect(
+      enrichComposerApps([githubApp], [githubPlugin], plugin => pluginPresentation(plugin, []))
+    ).toEqual([
       expect.objectContaining({
         name: 'GitHub',
         pluginKey: 'github',
@@ -137,7 +142,9 @@ describe('enrichComposerApps', () => {
       pluginDisplayNames: ['微博开放平台内部WIKI'],
     }
 
-    const [app] = enrichComposerApps([localizedApp], [localizedPlugin])
+    const [app] = enrichComposerApps([localizedApp], [localizedPlugin], plugin =>
+      pluginPresentation(plugin, [])
+    )
 
     expect(app?.pluginKey).toBe('weibo-api-wiki')
     expect(app && composerAppPluginKey(app)).toBe('weibo-api-wiki')
@@ -151,7 +158,9 @@ describe('enrichComposerApps', () => {
       source: 'wegent-connector',
     }
 
-    expect(enrichComposerApps([connectorApp], [githubPlugin])).toEqual([
+    expect(
+      enrichComposerApps([connectorApp], [githubPlugin], plugin => pluginPresentation(plugin, []))
+    ).toEqual([
       expect.objectContaining({
         id: 'wegent:github',
         description: '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。',
@@ -168,9 +177,11 @@ describe('enrichComposerApps', () => {
       spec: { ...githubPlugin.spec, installState: 'update_available' as const },
     }
 
-    expect(enrichComposerApps([githubApp], [updateAvailablePlugin])[0]?.description).toBe(
-      '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。'
-    )
+    expect(
+      enrichComposerApps([githubApp], [updateAvailablePlugin], plugin =>
+        pluginPresentation(plugin, [])
+      )[0]?.description
+    ).toBe('检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。')
   })
 
   test('removes apps owned by a disabled plugin from composer menus', () => {
@@ -179,7 +190,9 @@ describe('enrichComposerApps', () => {
       spec: { ...githubPlugin.spec, enabled: false },
     }
 
-    expect(enrichComposerApps([githubApp], [disabledPlugin])).toEqual([])
+    expect(
+      enrichComposerApps([githubApp], [disabledPlugin], plugin => pluginPresentation(plugin, []))
+    ).toEqual([])
   })
 
   test('drops apps that do not belong to an installed plugin', () => {
@@ -190,7 +203,9 @@ describe('enrichComposerApps', () => {
       pluginDisplayNames: ['Calendar'],
     }
 
-    expect(enrichComposerApps([unrelatedApp], [githubPlugin])).toEqual([])
+    expect(
+      enrichComposerApps([unrelatedApp], [githubPlugin], plugin => pluginPresentation(plugin, []))
+    ).toEqual([])
   })
 
   test('drops authorized cloud connectors that are not installed plugins', () => {
@@ -202,14 +217,18 @@ describe('enrichComposerApps', () => {
       source: 'wegent-connector',
     }
 
-    expect(enrichComposerApps([connectorApp], [githubPlugin])).toEqual([])
+    expect(
+      enrichComposerApps([connectorApp], [githubPlugin], plugin => pluginPresentation(plugin, []))
+    ).toEqual([])
   })
 })
 
 describe('appendInstalledPluginsAsComposerApps', () => {
   test('adds skill-only installed plugins that have no Codex app entry', () => {
     expect(
-      appendInstalledPluginsAsComposerApps([githubApp], [githubPlugin, superpowersPlugin])
+      appendInstalledPluginsAsComposerApps([githubApp], [githubPlugin, superpowersPlugin], plugin =>
+        pluginPresentation(plugin, [])
+      )
     ).toEqual([
       githubApp,
       expect.objectContaining({
@@ -225,7 +244,11 @@ describe('appendInstalledPluginsAsComposerApps', () => {
   })
 
   test('does not duplicate plugins already represented by an app', () => {
-    expect(appendInstalledPluginsAsComposerApps([githubApp], [githubPlugin])).toEqual([githubApp])
+    expect(
+      appendInstalledPluginsAsComposerApps([githubApp], [githubPlugin], plugin =>
+        pluginPresentation(plugin, [])
+      )
+    ).toEqual([githubApp])
   })
 
   test('skips disabled skill-only plugins', () => {
@@ -233,7 +256,9 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       ...superpowersPlugin,
       spec: { ...superpowersPlugin.spec, enabled: false },
     }
-    expect(appendInstalledPluginsAsComposerApps([], [disabled])).toEqual([])
+    expect(
+      appendInstalledPluginsAsComposerApps([], [disabled], plugin => pluginPresentation(plugin, []))
+    ).toEqual([])
   })
 
   test('includes installed plugins that only have a mention path and no skill files', () => {
@@ -263,7 +288,11 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       },
     }
 
-    expect(appendInstalledPluginsAsComposerApps([], [mentionOnly])).toEqual([
+    expect(
+      appendInstalledPluginsAsComposerApps([], [mentionOnly], plugin =>
+        pluginPresentation(plugin, [])
+      )
+    ).toEqual([
       expect.objectContaining({
         id: 'plugin:desktop-e2e-plugin',
         name: 'Desktop E2E Plugin',
@@ -292,7 +321,11 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       },
     }
 
-    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+    expect(
+      appendInstalledPluginsAsComposerApps([], [dingtalkCloud], plugin =>
+        pluginPresentation(plugin, [])
+      )
+    ).toEqual([
       expect.objectContaining({
         id: 'plugin:dingtalk',
         name: '钉钉',
@@ -320,7 +353,11 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       },
     }
 
-    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+    expect(
+      appendInstalledPluginsAsComposerApps([], [dingtalkCloud], plugin =>
+        pluginPresentation(plugin, [])
+      )
+    ).toEqual([
       expect.objectContaining({
         id: 'plugin:dingtalk',
         name: '钉钉',
@@ -350,7 +387,11 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       },
     }
 
-    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+    expect(
+      appendInstalledPluginsAsComposerApps([], [dingtalkCloud], plugin =>
+        pluginPresentation(plugin, [])
+      )
+    ).toEqual([
       expect.objectContaining({
         id: 'plugin:dingtalk',
         name: '钉钉',
@@ -379,7 +420,11 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       },
     }
 
-    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+    expect(
+      appendInstalledPluginsAsComposerApps([], [dingtalkCloud], plugin =>
+        pluginPresentation(plugin, [])
+      )
+    ).toEqual([
       expect.objectContaining({
         id: 'plugin:dingtalk',
         name: '钉钉',
@@ -408,7 +453,11 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       },
     }
 
-    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+    expect(
+      appendInstalledPluginsAsComposerApps([], [dingtalkCloud], plugin =>
+        pluginPresentation(plugin, [])
+      )
+    ).toEqual([
       expect.objectContaining({
         id: 'plugin:dingtalk',
         name: '钉钉',
@@ -435,10 +484,16 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       },
     }
 
-    expect(enrichComposerApps([githubApp], [githubPlugin, broken])).toEqual([
-      expect.objectContaining({ id: 'github', name: 'GitHub' }),
-    ])
-    expect(appendInstalledPluginsAsComposerApps([githubApp], [githubPlugin, broken])).toEqual([
+    expect(
+      enrichComposerApps([githubApp], [githubPlugin, broken], plugin =>
+        pluginPresentation(plugin, [])
+      )
+    ).toEqual([expect.objectContaining({ id: 'github', name: 'GitHub' })])
+    expect(
+      appendInstalledPluginsAsComposerApps([githubApp], [githubPlugin, broken], plugin =>
+        pluginPresentation(plugin, [])
+      )
+    ).toEqual([
       githubApp,
       expect.objectContaining({
         id: 'plugin:broken-plugin',

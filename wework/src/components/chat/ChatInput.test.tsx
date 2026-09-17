@@ -19,9 +19,18 @@ import type { WorkbenchContextValue } from '@/features/workbench/workbenchContex
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
+    i18n: { language: 'zh-CN' },
     t: (
       key: string,
-      options?: string | { action?: string; count?: number; device?: string; location?: string },
+      options?:
+        | string
+        | {
+            action?: string
+            count?: number
+            device?: string
+            location?: string
+            defaultValue?: string
+          },
       interpolation?: { model?: string }
     ) => {
       if (typeof options === 'string') {
@@ -38,7 +47,7 @@ vi.mock('@/hooks/useTranslation', () => ({
       if (key === 'workbench.remove_code_comments') {
         return '移除代码评论'
       }
-      return key
+      return options?.defaultValue ?? key
     },
   }),
 }))
@@ -517,7 +526,9 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('runtime-plan-progress')).toHaveClass('z-0')
     expect(screen.getByTestId('project-chat-composer-form')).toHaveClass('z-10')
-    expect(await screen.findByTestId('composer-plugin-picker')).toHaveClass('z-popover')
+    const picker = await screen.findByTestId('composer-plugin-picker')
+    expect(picker).toHaveClass('z-system-popover')
+    expect(picker.parentElement).toBe(document.body)
   })
 
   test('shows the plan mode pill when plan mode is selected', async () => {
@@ -976,7 +987,7 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByText('workbench.runtime_follow_up_queued_position')).toBeInTheDocument()
+    expect(screen.getByText('排队中 · 第 2 位')).toBeInTheDocument()
     expect(screen.getByTestId('queue-force-start-button-runtime-queued-1')).toBeInTheDocument()
     expect(screen.queryByTestId('queue-guidance-button-runtime-queued-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('queue-interrupt-button-runtime-queued-1')).not.toBeInTheDocument()
@@ -1060,7 +1071,7 @@ describe('ChatInput', () => {
 
     const interruptButton = screen.getByTestId('queue-interrupt-button-sending-guidance')
     expect(screen.getByText('引导中')).toBeInTheDocument()
-    expect(interruptButton).toHaveTextContent('workbench.interrupt_and_send_short')
+    expect(interruptButton).toHaveTextContent('立即发送')
     expect(interruptButton).toHaveClass('text-text-secondary', 'hover:bg-muted')
     expect(interruptButton).not.toHaveClass('border', 'bg-base', 'shadow-sm')
     expect(screen.queryByTestId('queue-guidance-button-sending-guidance')).not.toBeInTheDocument()
@@ -1121,6 +1132,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         queuedMessages={queuedMessages}
+        onReorderQueuedMessages={vi.fn()}
         guidanceMessages={[]}
       />
     )
@@ -1970,7 +1982,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-tooltip')).toHaveClass('h-9')
     expect(screen.getByTestId('model-selector-tooltip')).toHaveClass(
       'group-hover/model-selector:opacity-100',
-      'group-hover/model-selector:delay-[1500ms]'
+      'group-hover/model-selector:[transition-delay:1500ms]'
     )
     expect(screen.getByTestId('model-selector-tooltip')).not.toHaveClass(
       'group-focus-within/model-selector:delay-0'
@@ -4054,33 +4066,43 @@ describe('ChatInput', () => {
     })
   })
 
-  test('enables send when only attachments are present', async () => {
-    const onSubmit = vi.fn()
-    const attachment: Attachment = {
-      id: 44,
-      filename: 'brief.pdf',
-      file_size: 1200,
-      mime_type: 'application/pdf',
-      status: 'ready',
-      file_extension: '.pdf',
-      created_at: '2026-05-27T00:00:00.000Z',
+  test.each([false, true])(
+    'applies requireText=%s to attachment-only submissions',
+    async requireText => {
+      const onSubmit = vi.fn()
+      const attachment: Attachment = {
+        id: 44,
+        filename: 'brief.pdf',
+        file_size: 1200,
+        mime_type: 'application/pdf',
+        status: 'ready',
+        file_extension: '.pdf',
+        created_at: '2026-05-27T00:00:00.000Z',
+      }
+
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={onSubmit}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({ attachments: [attachment] })}
+          requireText={requireText}
+        />
+      )
+
+      if (requireText) {
+        expect(screen.getByTestId('send-message-button')).toBeDisabled()
+        fireEvent.keyDown(screen.getByTestId('chat-message-input'), { key: 'Enter' })
+        expect(onSubmit).not.toHaveBeenCalled()
+        return
+      }
+      expect(screen.getByTestId('send-message-button')).toBeEnabled()
+      await userEvent.click(screen.getByTestId('send-message-button'))
+      expect(onSubmit).toHaveBeenCalledTimes(1)
     }
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={onSubmit}
-        disabled={false}
-        variant="desktop"
-        projectChat={projectChatControls({ attachments: [attachment] })}
-      />
-    )
-
-    expect(screen.getByTestId('send-message-button')).toBeEnabled()
-    await userEvent.click(screen.getByTestId('send-message-button'))
-    expect(onSubmit).toHaveBeenCalledTimes(1)
-  })
+  )
 
   test('opens project work menu and selects a project', async () => {
     const onSelectProjectWorkspace = vi.fn()
@@ -4628,7 +4650,6 @@ describe('ChatInput', () => {
   })
 
   test('shows three common plugin tasks and keeps additional tasks secondary', async () => {
-    const applyTrialTemplate = vi.fn()
     const dismissTrialGuide = vi.fn()
     const onSubmit = vi.fn()
     const trialTemplates = Array.from({ length: 4 }, (_, index) => ({
@@ -4650,7 +4671,6 @@ describe('ChatInput', () => {
             logoUrl: 'https://example.com/documents.png',
           },
           trialTemplates,
-          applyTrialTemplate,
           dismissTrialGuide,
         })}
       />
@@ -4672,10 +4692,14 @@ describe('ChatInput', () => {
     expect(screen.getByText('Scenario 4')).toBeInTheDocument()
 
     await userEvent.click(screen.getByText('Scenario 4'))
-    expect(applyTrialTemplate).toHaveBeenCalledWith(trialTemplates[3])
+    expect(
+      (screen.getByTestId('chat-message-input') as HTMLElement & { value: string }).value
+    ).toBe('Prompt 4 ')
 
     await userEvent.click(screen.getByTestId('plugin-trial-recommendation-apply'))
-    expect(applyTrialTemplate).toHaveBeenLastCalledWith(trialTemplates[0])
+    expect(
+      (screen.getByTestId('chat-message-input') as HTMLElement & { value: string }).value
+    ).toBe('Prompt 1 ')
     expect(onSubmit).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('plugin-trial-template-dismiss'))
@@ -4702,8 +4726,6 @@ describe('ChatInput', () => {
           projectChat={projectChatControls({
             trialPluginName: 'Browser',
             trialTemplates: [template],
-            applyTrialTemplate: selectedTemplate =>
-              setValue(`${pluginReference} ${selectedTemplate.description} `),
           })}
         />
       )

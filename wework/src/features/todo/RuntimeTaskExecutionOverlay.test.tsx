@@ -15,7 +15,17 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
           {
             deviceId: 'device-1',
             projectId: null,
-            tasks: [{ taskId: 'codex-queue-1', title: 'Implement quicksort' }],
+            tasks: [
+              {
+                taskId: 'codex-queue-1',
+                title: 'Implement quicksort',
+                modelSelection: {
+                  modelName: 'current-cloud-model',
+                  modelType: 'user',
+                  options: {},
+                },
+              },
+            ],
           },
         ],
         totalTasks: 1,
@@ -50,6 +60,19 @@ vi.mock('@/components/layout/useWorkbenchPaneSession', () => ({
 }))
 
 describe('RuntimeTaskExecutionOverlay', () => {
+  it('shows the runtime model instead of stale activity metadata', () => {
+    render(
+      <RuntimeTaskExecutionOverlay
+        address={{ deviceId: 'device-1', taskId: 'codex-queue-1' }}
+        senderName="Bot"
+        modelName="stale-model"
+        onClose={vi.fn()}
+      />
+    )
+    expect(screen.getByText(/current-cloud-model/)).toBeInTheDocument()
+    expect(screen.queryByText(/stale-model/)).not.toBeInTheDocument()
+  })
+
   it('separates transcript timeout from the running execution and offers retry', async () => {
     const user = userEvent.setup()
 

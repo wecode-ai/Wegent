@@ -1,3 +1,9 @@
+import {
+  transcriptRangeFromPage,
+  mergeTranscriptRanges,
+  runtimeTurnNavigationLoadOptions,
+} from '@wegent/chat-core/runtime-transcript-page'
+export { runtimeTurnNavigationLoadOptions } from '@wegent/chat-core/runtime-transcript-page'
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react'
 import i18n from '@/i18n'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -95,6 +101,7 @@ import {
   clearInterruptedRuntimeConversationGuidanceExcept,
   completeRuntimeConversationHydration,
   getRuntimeConversationMessages,
+  getRuntimeConversationTurns,
   getRuntimeConversationMetadata,
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueuePausedByKey,
@@ -108,6 +115,7 @@ import {
   replaceRuntimeConversationFromUserMessage,
   runtimeConversationMessageHasStartedTurn,
   runtimeConversationSnapshotSettlesLatestTurn,
+  runtimeConversationHydrationHasUpdates,
   runtimeConversationKey,
   restoreOptimisticallyInterruptedRuntimeConversation,
   setRuntimeConversationGoal,
@@ -725,6 +733,7 @@ export function useWorkbenchPaneSession({
     setTranscriptFullContent(false)
     setLoadedTranscriptRanges([])
     setTurnNavigation([])
+    const turnsAtLoadStart = getRuntimeConversationTurns(address)
     void Promise.resolve()
       .then(() =>
         loadRuntimeTranscriptForPaneRef.current(address, {
@@ -734,6 +743,8 @@ export function useWorkbenchPaneSession({
       .then(transcript => {
         if (!cancelled) {
           const preserveActiveTurn =
+            (runtimeConversationHydrationHasUpdates(address, hydrationToken) ||
+              getRuntimeConversationTurns(address) !== turnsAtLoadStart) &&
             (lifecycleStore.getTask(address)?.derived.isRunning ?? false) &&
             !runtimeConversationSnapshotSettlesLatestTurn(address, transcript.turns)
           lifecycleStore.syncTranscript(address, transcript, { preserveActiveTurn })
@@ -3368,98 +3379,6 @@ function setLruMapValue<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number)
     const oldestKey = map.keys().next().value
     if (oldestKey === undefined) return
     map.delete(oldestKey)
-  }
-}
-
-function transcriptRangeFromPage(transcript: RuntimePaneTranscript): LoadedTranscriptRange[] {
-  const indexedRange = transcriptRangeFromMessageIndexes(transcript.messages)
-  const rangeStart =
-    numericValue(transcript.rangeStart) ??
-    cursorOffset(transcript.beforeCursor) ??
-    indexedRange?.start ??
-    (transcript.hasMoreBefore ? null : 0)
-  const rangeEnd =
-    numericValue(transcript.rangeEnd) ??
-    cursorOffset(transcript.afterCursor) ??
-    indexedRange?.end ??
-    (rangeStart === null ? null : rangeStart + transcript.messages.length)
-
-  if (rangeStart === null || rangeEnd === null || rangeEnd < rangeStart) return []
-  return [{ start: rangeStart, end: rangeEnd }]
-}
-
-function transcriptRangeFromMessageIndexes(
-  messages: WorkbenchMessage[]
-): LoadedTranscriptRange | null {
-  const indexes = messages
-    .map(message =>
-      typeof message.runtimeMessageIndex === 'number' &&
-      Number.isFinite(message.runtimeMessageIndex)
-        ? message.runtimeMessageIndex
-        : null
-    )
-    .filter((index): index is number => index !== null)
-  if (indexes.length === 0) return null
-  return {
-    start: Math.min(...indexes),
-    end: Math.max(...indexes) + 1,
-  }
-}
-
-function mergeTranscriptRanges(
-  currentRanges: LoadedTranscriptRange[],
-  incomingRanges: LoadedTranscriptRange[]
-): LoadedTranscriptRange[] {
-  const ranges = [...currentRanges, ...incomingRanges]
-    .filter(range => range.end > range.start)
-    .sort((left, right) => left.start - right.start)
-
-  const merged: LoadedTranscriptRange[] = []
-  for (const range of ranges) {
-    const previous = merged[merged.length - 1]
-    if (!previous || range.start > previous.end) {
-      merged.push({ ...range })
-      continue
-    }
-    previous.end = Math.max(previous.end, range.end)
-  }
-  return merged
-}
-
-function numericValue(value: number | null | undefined): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
-function cursorOffset(cursor: string | null | undefined): number | null {
-  if (!cursor) return null
-  const match = /^offset:(\d+)$/.exec(cursor.trim())
-  if (!match) return null
-  return Number.parseInt(match[1], 10)
-}
-
-export function runtimeTurnNavigationLoadOptions(
-  item: RuntimeTurnNavigationItem,
-  loadedRanges: LoadedTranscriptRange[],
-  pageSize: number
-) {
-  if (item.cursor && !item.cursor.startsWith('offset:')) {
-    return {
-      limit: pageSize,
-      beforeCursor: item.cursor,
-    }
-  }
-
-  const messageIndex = Number.isFinite(item.messageIndex) ? Math.max(0, item.messageIndex) : 0
-  const sortedRanges = mergeTranscriptRanges(loadedRanges, [])
-  const nextLoadedRange = sortedRanges.find(range => range.start > messageIndex)
-  const pageEnd = Math.max(
-    messageIndex + 1,
-    Math.min(nextLoadedRange?.start ?? messageIndex + pageSize, messageIndex + pageSize)
-  )
-
-  return {
-    limit: pageSize,
-    beforeCursor: `offset:${pageEnd}`,
   }
 }
 

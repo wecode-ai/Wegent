@@ -1,3 +1,9 @@
+import {
+  createRuntimeComposerApi,
+  decodeRuntimeSkills,
+} from '@wegent/chat-core/runtime-composer-api'
+import type { InstalledPlugin } from '@wegent/chat-core/installed-plugin-types'
+import { codexRuntimeModels } from '@wegent/chat-core/runtime-model-catalog'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   harnessLaunchThroughMessagesProxy,
@@ -25,7 +31,6 @@ import type {
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
   RuntimeTaskSummary,
-  LocalDeviceSkill,
   ModelSelectionConfig,
   ModelType,
   RuntimeArchiveProjectConversationsRequest,
@@ -140,10 +145,7 @@ import {
 } from '@/features/workbench/runtimePermissionMode'
 import { requestLocalCodexOfficialModels } from './codexOfficialModels'
 import {
-  codexModelPickerLabel,
-  codexModelPickerSortOrder,
   codexOfficialModelIdFromModelName,
-  codexOfficialModelName,
   CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME,
   CODEX_RUNTIME_MODEL_ID,
   type CodexOfficialModel,
@@ -210,79 +212,6 @@ const WEWORK_EXECUTION_IDENTITY = {
   name: 'Wework',
 }
 
-function localCodexModelFamily(model: CodexOfficialModel): string {
-  if (model.providerType !== 'provider') return 'codex-official'
-  return `codex-provider:${encodeURIComponent(model.providerId.toLowerCase())}`
-}
-
-function localCodexModel(model: CodexOfficialModel, codexAuthConfigured: boolean): UnifiedModel {
-  const modelFamily = localCodexModelFamily(model)
-  const providerFamilyLabel = model.providerType === 'provider' ? model.providerName : undefined
-  const modelLabel = codexModelPickerLabel(model.modelId)
-  return {
-    name: codexOfficialModelName(model),
-    type: 'runtime',
-    displayName: modelLabel,
-    provider: 'local',
-    modelId: model.modelId,
-    config: {
-      protocol: OPENAI_RESPONSES_PROTOCOL,
-      apiFormat: RESPONSES_API_FORMAT,
-      weworkModelKind: model.providerType === 'provider' ? 'codex-provider' : 'codex-official',
-      codexAuthConfigured,
-      codexOfficialModelId: model.id,
-      codexProviderId: model.providerId,
-      codexProviderName: model.providerName,
-      codexProviderType: model.providerType,
-      ui: {
-        family: modelFamily,
-        ...(providerFamilyLabel ? { familyLabel: providerFamilyLabel } : {}),
-        modelLabel,
-        reasoningEfforts: model.supportedReasoningEfforts,
-        defaultReasoningEffort: model.defaultReasoningEffort,
-        controls: ['speed'],
-        sortOrder:
-          (model.providerType === 'provider' ? 100 : 0) + codexModelPickerSortOrder(model.modelId),
-      },
-    },
-    runtime: {
-      family: 'openai.openai-responses',
-      provider: 'local',
-    },
-    isActive: true,
-  }
-}
-
-function unavailableCodexModel(message: string): UnifiedModel {
-  return {
-    name: CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME,
-    type: 'runtime',
-    displayName: 'CodeX 模型不可用',
-    provider: 'local',
-    modelId: null,
-    config: {
-      protocol: OPENAI_RESPONSES_PROTOCOL,
-      apiFormat: RESPONSES_API_FORMAT,
-      weworkModelKind: 'codex-official',
-      codexAuthConfigured: false,
-      unavailableReason: message,
-      ui: {
-        family: 'codex-official',
-        modelLabel: 'CodeX 模型不可用',
-        controls: [],
-        sortOrder: 10,
-      },
-    },
-    runtime: {
-      family: 'openai.openai-responses',
-      provider: 'local',
-    },
-    isActive: false,
-    compatibilityDisabled: true,
-    compatibilityDisabledReason: 'unavailable',
-  }
-}
-
 function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel {
   const group = config.group?.trim()
   const family = group
@@ -343,25 +272,8 @@ function localRuntimeModels(
   codexOfficialError: string | null = null,
   codexAuthConfigured = false
 ): UnifiedModel[] {
-  const officialCatalogModels = codexOfficialModels.filter(
-    model => model.providerType === 'official'
-  )
-  const officialModels = !codexAuthConfigured
-    ? []
-    : codexOfficialError || officialCatalogModels.length === 0
-      ? [
-          unavailableCodexModel(
-            codexOfficialError || 'Codex model list returned no available models'
-          ),
-        ]
-      : officialCatalogModels.map(model => localCodexModel(model, true))
-  const providerModels = codexOfficialModels
-    .filter(model => model.providerType === 'provider')
-    .map(model => localCodexModel(model, codexAuthConfigured))
-
   return [
-    ...officialModels,
-    ...providerModels,
+    ...codexRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
     ...listLocalModelConfigs()
       .filter(config => config.enabled && config.catalogReady)
       .map(localModelConfigToUnifiedModel),
@@ -372,6 +284,7 @@ type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>
 type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
 interface LocalAppServicesDeps {
+  listCloudInstalledPlugins?: (deviceId: string) => Promise<InstalledPlugin[]>
   available?: () => Promise<LocalExecutorStatus>
   ensure?: () => Promise<LocalExecutorStatus>
   request?: LocalExecutorRequest
@@ -620,44 +533,6 @@ function commandStringList(response: DeviceCommandResponse): string[] {
   return Array.isArray(response.stdout)
     ? response.stdout.filter((item): item is string => typeof item === 'string')
     : []
-}
-
-function commandSkills(response: DeviceCommandResponse): LocalDeviceSkill[] {
-  const output = typeof response.stdout === 'string' ? JSON.parse(response.stdout) : response.stdout
-  return Array.isArray(output)
-    ? sortSkillsByName(
-        dedupeSkillsByName(
-          output.filter(
-            (item): item is LocalDeviceSkill =>
-              typeof item === 'object' && item !== null && 'name' in item && 'path' in item
-          )
-        )
-      )
-    : []
-}
-
-function dedupeSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
-  const deduped = new Map<string, LocalDeviceSkill>()
-  skills.forEach(skill => {
-    const key = skill.name.trim().toLowerCase()
-    if (!key) return
-    const current = deduped.get(key)
-    deduped.set(key, current ? preferSkill(current, skill) : skill)
-  })
-  return Array.from(deduped.values())
-}
-
-function preferSkill(left: LocalDeviceSkill, right: LocalDeviceSkill): LocalDeviceSkill {
-  const leftRank = left.source_priority ?? 99
-  const rightRank = right.source_priority ?? 99
-  if (leftRank !== rightRank) return leftRank < rightRank ? left : right
-  return (left.mtime ?? 0) >= (right.mtime ?? 0) ? left : right
-}
-
-function sortSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
-  return [...skills].sort((left, right) =>
-    left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
-  )
 }
 
 function assertCommandSuccess(response: DeviceCommandResponse, fallback: string): void {
@@ -3595,7 +3470,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         max_output_bytes: 1024 * 256,
       })
       assertCommandSuccess(response, 'Failed to list skills')
-      return commandSkills(response)
+      return decodeRuntimeSkills(response.stdout)
     },
     async listWorkspaceEntries(
       _deviceId: string,
@@ -3834,6 +3709,16 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
     },
     runtimeWorkApi,
+    composerCatalogApi: createRuntimeComposerApi(
+      {
+        request: async (method, params, deviceId) => {
+          const localDeviceId = await getLocalDeviceId()
+          if (deviceId !== localDeviceId) throw new Error(`executor-not-local:${deviceId}`)
+          return request(method, params)
+        },
+      },
+      deps.listCloudInstalledPlugins ?? (async () => [])
+    ),
     pluginApi: projectPluginApi,
     branchNameApi,
     automationApi,

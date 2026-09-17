@@ -206,6 +206,24 @@ export function mapCollaborationExecutionDto(
     ),
     agent_id: nullableString(camelOrSnake(row, "agentId", "agent_id")),
     team_id: nullableNumber(camelOrSnake(row, "teamId", "team_id")),
+    backend_task_id: nullableNumber(
+      camelOrSnake(row, "backendTaskId", "backend_task_id"),
+    ),
+    execution_environment: nullableString(
+      camelOrSnake(row, "executionEnvironment", "execution_environment"),
+    ),
+    execution_device_id: nullableString(
+      camelOrSnake(row, "executionDeviceId", "execution_device_id"),
+    ),
+    runtime_instance_id: nullableString(
+      camelOrSnake(row, "runtimeInstanceId", "runtime_instance_id"),
+    ),
+    runtime_device_id: nullableString(
+      camelOrSnake(row, "runtimeDeviceId", "runtime_device_id"),
+    ),
+    runtime_task_id: nullableString(
+      camelOrSnake(row, "runtimeTaskId", "runtime_task_id"),
+    ),
     assigner_user_id: Number(
       camelOrSnake(row, "assignerUserId", "assigner_user_id") ?? 0,
     ),

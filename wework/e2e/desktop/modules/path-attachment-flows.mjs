@@ -590,6 +590,24 @@ async function verifySideChatAttachmentIsolation({
     'The side chat exposed a runtime busy error instead of queueing the follow-up'
   )
   await captureVerificationScreenshot(control, '04-side-chat-follow-up-queued.png')
+  await control.command('click', `${sideChatSelector} [data-testid^="queue-more-button-"]`)
+  await control.command('click', '[data-testid^="queue-edit-button-"]')
+  await control.command('waitFor', sideComposerSelector, {
+    text: SIDE_CHAT_QUEUE_FOLLOW_UP,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'Editing a side-chat reply did not remove its pending queue entry',
+    DEFAULT_STEP_TIMEOUT_MS,
+    sideChatSelector
+  )
+  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
+    text: SIDE_CHAT_QUEUE_FOLLOW_UP,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', `${sideChatSelector} [data-testid^="queue-cancel-button-"]`)
   await waitForSnapshot(
     control,
@@ -618,6 +636,13 @@ async function verifySideChatAttachmentIsolation({
   await captureVerificationScreenshot(control, '05-side-chat-follow-up-guiding.png')
   control.releaseSideChatGuidanceResponse()
   await control.awaitScenarioRequestCount('side_chat_guidance', 2)
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'Applied guidance remained in the side-chat queue',
+    DEFAULT_STEP_TIMEOUT_MS,
+    sideChatSelector
+  )
 
   await control.command('click', '[data-testid="toggle-right-workspace-panel-expanded-button"]')
   await control.command(

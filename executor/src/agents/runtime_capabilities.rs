@@ -2964,24 +2964,25 @@ mod tests {
             let address = listener.local_addr().unwrap();
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
-                let mut request = Vec::new();
-                let mut buffer = [0; 1024];
-                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let mut request_bytes = Vec::new();
+                while !request_bytes.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let mut buffer = [0; 1024];
                     let read = stream.read(&mut buffer).await.unwrap();
+                    assert!(read > 0, "connection closed before request headers");
+                    request_bytes.extend_from_slice(&buffer[..read]);
                     assert!(
-                        read > 0,
-                        "connection closed before complete request headers"
+                        request_bytes.len() <= 8192,
+                        "request headers exceeded limit"
                     );
-                    request.extend_from_slice(&buffer[..read]);
                 }
-                let request = String::from_utf8_lossy(&request);
+                let request = String::from_utf8_lossy(&request_bytes);
                 assert!(request.starts_with("GET /api/attachments/1/executor-download "));
-                assert!(request.lines().any(|line| {
-                    line.split_once(':').is_some_and(|(name, value)| {
-                        name.eq_ignore_ascii_case("authorization")
-                            && value.trim() == "Bearer test-token"
-                    })
-                }));
+                let authorization = request
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                    .map(|(_, value)| value.trim());
+                assert_eq!(authorization, Some("Bearer test-token"));
                 let body = b"image-bytes";
                 let header = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",

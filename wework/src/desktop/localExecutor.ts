@@ -1,3 +1,4 @@
+import type { RuntimeEvent as LocalExecutorEvent } from '@wegent/chat-core'
 import {
   DshExecutorTransportError,
   describeDshExecutor,
@@ -52,11 +53,7 @@ export interface LocalExecutorLog {
   status: LocalExecutorStatus
 }
 
-export interface LocalExecutorEvent {
-  event: string
-  payload: Record<string, unknown>
-  sequence?: number
-}
+export type { RuntimeEvent as LocalExecutorEvent } from '@wegent/chat-core'
 
 interface CodexStartupStatus {
   ready: boolean

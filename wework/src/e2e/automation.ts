@@ -1,4 +1,5 @@
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
+import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import {
@@ -85,6 +86,7 @@ interface ScrollStabilitySample {
 }
 
 interface ElementMetricsSamplePoint {
+  elements?: ReturnType<ReturnType<typeof createElementFrameSampler>>
   connected: boolean
   height: number
   label: string | null
@@ -1985,6 +1987,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       activeElementMetricsSample?.stop()
       const startedAt = performance.now()
       let animationFrame = 0
+      const sampleElements = command.target
+        ? createElementFrameSampler(initialElement, command.target)
+        : undefined
       const sample: ElementMetricsSample = {
         done: false,
         frames: [],
@@ -2004,6 +2009,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
               .filter((testId): testId is string => Boolean(testId))
           : []
         sample.frames.push({
+          elements: sampleElements?.(),
           connected: element?.isConnected ?? false,
           height: rect?.height ?? 0,
           label: element?.dataset.weworkBrowserWebview ?? null,
@@ -2022,7 +2028,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       sample.stop = finish
       activeElementMetricsSample = sample
-      animationFrame = window.requestAnimationFrame(captureFrame)
+      captureFrame(performance.now())
       return ''
     }
     case 'getElementMetricsSample': {

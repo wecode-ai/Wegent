@@ -704,7 +704,9 @@ function PlatformControllerHarness({
   );
 }
 
+const originalGetAnimations = Element.prototype.getAnimations;
 beforeEach(() => {
+  Element.prototype.getAnimations = vi.fn(() => []);
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal(
     "ResizeObserver",
@@ -729,6 +731,9 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
+  if (originalGetAnimations)
+    Element.prototype.getAnimations = originalGetAnimations;
+  else Reflect.deleteProperty(Element.prototype, "getAnimations");
 });
 
 describe("CollaborationPlatformApp real component flow", () => {
@@ -1674,7 +1679,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       "请先确认接口契约",
     );
 
-    await click(byTestId("collaboration-issue-mention-trigger"));
+    await change(comment, "@");
     await click(
       byTestId(`collaboration-issue-mention-member-${member.user_id}`),
     );
@@ -1684,18 +1689,24 @@ describe("CollaborationPlatformApp real component flow", () => {
       issue.id,
       `@${member.user_name} 请处理交互设计`,
     );
-    await click(byTestId("collaboration-issue-assignment-trigger"));
-    await click(
-      byTestId(`collaboration-issue-assign-member-${member.user_id}`),
+    await change(
+      byTestId("cloud-todo-detail-assignee") as HTMLSelectElement,
+      `user:${member.user_id}`,
     );
-    expect(api.assignments?.create).toHaveBeenLastCalledWith(issue.id, {
-      targetType: "human",
-      targetId: String(member.user_id),
-      workflowStep: null,
-      notifyTarget: true,
+    expect(
+      container.querySelector(
+        '[data-testid="wework-assignment-notify-confirm"]',
+      ),
+    ).toBeNull();
+    await click(byTestId("cloud-todo-save"));
+    expect(api.issues.assign).toHaveBeenLastCalledWith(project.id, issue.id, {
+      version: issue.version,
+      assigneeType: "user",
+      assigneeId: String(member.user_id),
+      notifyAssignee: true,
     });
 
-    await click(byTestId("collaboration-issue-mention-trigger"));
+    await change(comment, "@");
     await click(byTestId(`collaboration-issue-mention-agent-${agent.id}`));
     await change(comment, `@${agent.name} 请开始实现`);
     await click(byTestId("collaboration-issue-comment-submit"));
@@ -1703,13 +1714,15 @@ describe("CollaborationPlatformApp real component flow", () => {
       issue.id,
       `@${agent.name} 请开始实现`,
     );
-    await click(byTestId("collaboration-issue-assignment-trigger"));
-    await click(byTestId(`collaboration-issue-assign-agent-${agent.id}`));
-    expect(api.assignments?.create).toHaveBeenLastCalledWith(issue.id, {
-      targetType: "agent",
-      targetId: agent.id,
-      workflowStep: null,
-      notifyTarget: true,
+    await change(
+      byTestId("cloud-todo-detail-assignee") as HTMLSelectElement,
+      `agent:${agent.id}`,
+    );
+    await click(byTestId("cloud-todo-save"));
+    expect(api.issues.assign).toHaveBeenLastCalledWith(project.id, issue.id, {
+      version: issue.version,
+      assigneeType: "agent",
+      assigneeId: agent.id,
     });
   });
 

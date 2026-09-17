@@ -3,6 +3,15 @@ import { createRuntimeWorkApi } from './runtimeWork'
 import type { HttpClient } from './http'
 
 describe('createRuntimeWorkApi', () => {
+  test('loads the addressed board goal through the shared runtime API', async () => {
+    const response = { accepted: true, taskId: 'task-1', goal: null }
+    const post = vi.fn().mockResolvedValue(response)
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = { address: { deviceId: 'device-1', taskId: 'task-1' } }
+
+    await expect(api.getRuntimeGoal(request)).resolves.toEqual(response)
+    expect(post).toHaveBeenCalledWith('/runtime-work/goal/get', request)
+  })
   test('uses the canonical create endpoint for Team execution', async () => {
     const post = vi.fn().mockResolvedValue({ accepted: true })
     const api = createRuntimeWorkApi({ post } as unknown as HttpClient)

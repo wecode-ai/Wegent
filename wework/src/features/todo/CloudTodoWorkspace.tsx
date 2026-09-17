@@ -10,19 +10,14 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { createPortal } from 'react-dom'
+import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core'
 import {
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  pointerWithin,
-  useDroppable,
-  useSensor,
-  useSensors,
-  type CollisionDetection,
-  type DragEndEvent,
-  type DragStartEvent,
-} from '@dnd-kit/core'
+  projectBoardDnd,
+  projectBoardCollisionDetection,
+  projectBoardDrop,
+  useProjectBoardSensors,
+} from '@wegent/collaboration/project-board/projectBoardDnd'
+import { ProjectBoardDragOverlay } from '@wegent/collaboration/project-board/ProjectBoardDragOverlay'
 import {
   Archive,
   ArrowLeft,
@@ -38,9 +33,7 @@ import {
   HardDrive,
   ListTodo,
   LoaderCircle,
-  Maximize2,
   MessageSquare,
-  Minimize2,
   Plus,
   Search,
   X,
@@ -84,6 +77,7 @@ import {
   createStandardCloudBoardColumns,
   executeStandardCloudBoardMutation,
   ProjectBoardBody,
+  ProjectBoardGroupPicker,
   useStandardCloudBoardController,
   type ProjectBoardColumn,
   type ProjectBoardGroupBy,
@@ -345,146 +339,7 @@ function aitableCellLabels(value: unknown): string[] {
     .filter(Boolean)
 }
 
-function AITableGroupFieldPicker({
-  fields,
-  value,
-  onChange,
-  testIdPrefix = 'dingtalk-board-group',
-  searchPlaceholder = '搜索表格字段',
-}: {
-  fields: AITableField[]
-  value: string
-  onChange: (fieldId: string) => void
-  testIdPrefix?: string
-  searchPlaceholder?: string
-}) {
-  const rootRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(false)
-  const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 })
-  const [query, setQuery] = useState('')
-  const selected = fields.find(field => field.id === value)
-  const visibleFields = fields
-    .filter(field => `${field.name} ${field.type}`.toLowerCase().includes(query.toLowerCase()))
-    .sort((left, right) => {
-      const recommended = (field: AITableField) =>
-        /状态|负责人|优先级|所属项目/.test(field.name) ? 0 : 1
-      return recommended(left) - recommended(right)
-    })
-
-  useEffect(() => {
-    if (!open) return
-    const close = (event: MouseEvent) => {
-      const target = event.target
-      if (
-        target instanceof Node &&
-        !rootRef.current?.contains(target) &&
-        !menuRef.current?.contains(target)
-      ) {
-        setOpen(false)
-      }
-    }
-    const closeOnScroll = (event: Event) => {
-      const target = event.target
-      if (target instanceof Node && menuRef.current?.contains(target)) return
-      setOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('scroll', closeOnScroll, true)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('mousedown', close)
-      document.removeEventListener('scroll', closeOnScroll, true)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [open])
-
-  const openMenu = () => {
-    const trigger = triggerRef.current
-    if (!trigger) return
-    const rect = trigger.getBoundingClientRect()
-    const menuWidth = 256
-    const margin = 8
-    const estimatedHeight = 320
-    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - menuWidth - margin))
-    const below = Math.round(rect.bottom + 4)
-    const top =
-      below + estimatedHeight <= window.innerHeight - margin
-        ? below
-        : Math.max(margin, Math.round(rect.top - 4 - estimatedHeight))
-    setMenuPosition({ left: Math.round(left), top })
-    setOpen(true)
-    setQuery('')
-  }
-
-  return (
-    <div ref={rootRef} className="shrink-0">
-      <button
-        ref={triggerRef}
-        type="button"
-        data-testid={`${testIdPrefix}-by`}
-        onClick={openMenu}
-        className="flex h-8 min-w-32 items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted"
-        aria-expanded={open}
-      >
-        <span className="max-w-32 truncate">{selected?.name ?? '选择分组字段'}</span>
-        <ChevronDown className="h-3 w-3 shrink-0" />
-      </button>
-      {open
-        ? createPortal(
-            <div
-              ref={menuRef}
-              data-testid={`${testIdPrefix}-menu`}
-              style={{ left: menuPosition.left, top: menuPosition.top }}
-              className="fixed z-system-popover w-64 overflow-hidden rounded-xl border border-border bg-background p-1.5 shadow-lg"
-            >
-              <label className="flex h-8 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-muted">
-                <Search className="h-3.5 w-3.5" />
-                <input
-                  autoFocus
-                  data-testid={`${testIdPrefix}-search`}
-                  value={query}
-                  onChange={event => setQuery(event.target.value)}
-                  placeholder={searchPlaceholder}
-                  className="min-w-0 flex-1 bg-transparent text-xs text-text-primary outline-none"
-                />
-              </label>
-              <div className="mt-1 max-h-72 overflow-y-auto overscroll-contain">
-                {visibleFields.map(field => (
-                  <button
-                    key={field.id}
-                    type="button"
-                    data-testid={`${testIdPrefix}-option-${field.id}`}
-                    onClick={() => {
-                      onChange(field.id)
-                      setOpen(false)
-                      setQuery('')
-                    }}
-                    className={cn(
-                      'flex h-9 w-full items-center rounded-lg px-2.5 text-left text-sm hover:bg-muted',
-                      field.id === value && 'bg-muted font-medium'
-                    )}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{field.name}</span>
-                    <span className="ml-2 shrink-0 text-xs text-text-muted">{field.type}</span>
-                    {field.id === value ? <Check className="ml-2 h-3.5 w-3.5" /> : null}
-                  </button>
-                ))}
-                {visibleFields.length === 0 ? (
-                  <p className="px-3 py-6 text-center text-xs text-text-muted">没有匹配字段</p>
-                ) : null}
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
-    </div>
-  )
-}
+const AITableGroupFieldPicker = ProjectBoardGroupPicker
 
 type LocatedCloudProject = LocatedProjectSpace
 type LocatedLoopItem = CloudLoopItem & {
@@ -650,11 +505,6 @@ export interface CloudTodoWorkspaceProps {
   onLogout?: () => void
 }
 
-function boardStatusFromDropId(id: string | number | undefined): string | null {
-  if (typeof id !== 'string' || !id.startsWith('todo-column:')) return null
-  return id.slice('todo-column:'.length) || null
-}
-
 // Signature of the complete first-screen snapshot. Live events or fallback
 // polling compare against the last applied value so unchanged reads do not
 // re-render the workspace or downstream views.
@@ -669,20 +519,6 @@ function boardSnapshotKey(
   }
 ): string {
   return `${projectKey}\u0000${error ?? ''}\u0000${JSON.stringify([items, context ?? null])}`
-}
-
-function boardCardIdFromDropId(id: string | number | undefined): string | null {
-  if (typeof id !== 'string' || !id.startsWith('todo-card:')) return null
-  return id.slice('todo-card:'.length)
-}
-
-// Cards sit inside their lane dropzone, so both match under the pointer.
-// Prefer the card target: dropping on a card inserts before it, dropping on
-// the lane itself appends at the end.
-const boardCollisionDetection: CollisionDetection = args => {
-  const collisions = pointerWithin(args)
-  const cardCollision = collisions.find(collision => boardCardIdFromDropId(collision.id))
-  return cardCollision ? [cardCollision] : collisions.slice(0, 1)
 }
 
 // Placeholder shown while a project's items load. Renders the familiar board
@@ -1147,9 +983,7 @@ export function CloudTodoWorkspace({
   const [pendingExecutionConfiguration, setPendingExecutionConfiguration] =
     useState<PendingExecutionConfiguration | null>(null)
   const executionFailureByItemRef = useRef(new Map<string, boolean>())
-  const boardSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
-  )
+  const boardSensors = useProjectBoardSensors()
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   const [globalSearchQuery, setGlobalSearchQuery] = useState('')
   const [projectSearchOpen, setProjectSearchOpen] = useState(false)
@@ -3676,12 +3510,7 @@ export function CloudTodoWorkspace({
 
   function finishBoardDrop(event: DragEndEvent) {
     setActiveDragItemId(null)
-    const beforeCardId = boardCardIdFromDropId(event.over?.id)
-    standardBoardController.moveDroppedItem({
-      activeItemId: String(event.active.id),
-      beforeItemId: beforeCardId,
-      columnDropKey: beforeCardId ? null : boardStatusFromDropId(event.over?.id),
-    })
+    standardBoardController.moveDroppedItem(projectBoardDrop(event))
   }
 
   async function saveGlobalGroupBy() {
@@ -4871,10 +4700,10 @@ export function CloudTodoWorkspace({
                       columns={boardColumns as ProjectBoardColumn[]}
                       currentParent={boardParent}
                       currentParentId={boardParentId}
-                      dnd={{ DndContext, DragOverlay, useDroppable }}
+                      dnd={projectBoardDnd}
                       dndContextProps={{
                         sensors: boardSensors,
-                        collisionDetection: boardCollisionDetection,
+                        collisionDetection: projectBoardCollisionDetection,
                         onDragStart: (event: DragStartEvent) => {
                           setPinnedBoardPreview(null)
                           setActiveDragItemId(String(event.active.id))
@@ -4998,9 +4827,6 @@ export function CloudTodoWorkspace({
                       }
                       onBreadcrumbSelect={setBoardParentId}
                       onSaveGlobalGroupBy={saveGlobalGroupBy}
-                      renderAddIcon={() => <Plus className="h-5 w-5" />}
-                      renderChevronDown={className => <ChevronDown className={className} />}
-                      renderChevronRight={className => <ChevronRight className={className} />}
                       renderColumnFooter={(column, _items, state) => {
                         const status = column.status as CloudLoopItem['status']
                         return canCreateBoardTask &&
@@ -5097,7 +4923,7 @@ export function CloudTodoWorkspace({
                       }}
                       renderDragOverlay={() =>
                         activeDragItemId ? (
-                          <div className="w-[272px] rotate-1 rounded-xl border border-border bg-background p-3 text-left shadow-lg">
+                          <ProjectBoardDragOverlay>
                             <CloudTodoCardContent
                               item={
                                 activeBoardSourceItems.find(item => item.id === activeDragItemId)!
@@ -5109,7 +4935,7 @@ export function CloudTodoWorkspace({
                               )}
                               agentNames={agentNameById}
                             />
-                          </div>
+                          </ProjectBoardDragOverlay>
                         ) : null
                       }
                       renderExternalGroupPicker={() => (
@@ -5122,13 +4948,6 @@ export function CloudTodoWorkspace({
                           }}
                         />
                       )}
-                      renderFocusIcon={focused =>
-                        focused ? (
-                          <Minimize2 className="h-3.5 w-3.5" />
-                        ) : (
-                          <Maximize2 className="h-3.5 w-3.5" />
-                        )
-                      }
                       renderGroupPicker={(value, onChange) => (
                         <AITableGroupFieldPicker
                           fields={nativeBoardGroupFields}
@@ -5249,7 +5068,6 @@ export function CloudTodoWorkspace({
                           />
                         ) : null
                       }
-                      renderSearchIcon={() => <Search className="h-3.5 w-3.5" />}
                       renderSkeleton={() =>
                         startupActive ? (
                           <CloudTodoStartupAnimation
@@ -5281,7 +5099,6 @@ export function CloudTodoWorkspace({
                           </p>
                         ) : null
                       }
-                      renderTooltip={(label, child) => <Tooltip label={label}>{child}</Tooltip>}
                       rootLabel={isMyTasksBoard ? '任务' : isAITableProject ? '父任务' : 'Issue'}
                       rootUnitLabel={
                         isMyTasksBoard ? '个任务' : isAITableProject ? '条记录' : '个 Issue'

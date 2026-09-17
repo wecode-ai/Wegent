@@ -302,11 +302,11 @@ test.describe('Collaboration agent execution', () => {
     )
     await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
     await capture(page, testInfo, `wegent-${agentCase.label.toLowerCase()}-02-issue-created`)
-    await page.getByTestId('collaboration-issue-assignment-trigger').click()
-    await expect(page.getByTestId('collaboration-issue-assignment-popup')).toBeVisible()
-    await page.getByTestId(`collaboration-issue-assign-agent-${agentCase.agent.id}`).click()
-    await expect(page.getByTestId('collaboration-current-assignment')).toContainText(
-      agentCase.agent.name
+    await page.getByTestId('cloud-todo-detail-assignee').selectOption(`agent:${agentCase.agent.id}`)
+    await page.getByTestId('cloud-todo-save').click()
+    await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveValue(
+      `agent:${agentCase.agent.id}`
     )
     const assignedIssue = await apiRequest<CollaborationIssue>(
       request,

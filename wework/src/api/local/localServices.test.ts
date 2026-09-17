@@ -59,6 +59,43 @@ describe('createLocalAppServices', () => {
     resetLocalRuntimeChatStreamsForTests()
   })
 
+  test('reads the composer catalog from the exact local task and includes scoped cloud membership', async () => {
+    const wire = {
+      taskId: 'side-task',
+      workspacePath: '/side',
+      projectPluginIds: [],
+      apps: [],
+      skills: [],
+      marketplaces: [],
+      store: { storePath: '/store', plugins: [] },
+    }
+    const request = vi.fn().mockResolvedValue(wire)
+    const cloud = vi.fn().mockResolvedValue([])
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-one' }),
+      request,
+      subscribe: vi.fn().mockResolvedValue(vi.fn()),
+      listCloudInstalledPlugins: cloud,
+    })
+    await expect(
+      services.composerCatalogApi!.readCatalog({ deviceId: 'local-one', taskId: 'side-task' }, true)
+    ).resolves.toMatchObject({
+      taskId: 'side-task',
+      workspacePath: '/side',
+      cloudInstalledPlugins: [],
+    })
+    expect(request).toHaveBeenCalledWith('runtime.composer.catalog.read', {
+      taskId: 'side-task',
+      forceRefresh: true,
+    })
+    expect(cloud).toHaveBeenCalledWith('local-one')
+    request.mockClear()
+    await expect(
+      services.composerCatalogApi!.readCatalog({ deviceId: 'remote', taskId: 'side-task' })
+    ).rejects.toThrow('executor-not-local:remote')
+    expect(request).not.toHaveBeenCalled()
+  })
+
   test('rejects cloud runtime construction without authenticated user identity', () => {
     expect(() =>
       createRuntimeWorkApiFromIpc(vi.fn(), async () => 'cloud-device', {

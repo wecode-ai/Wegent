@@ -1,12 +1,12 @@
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getPlatform } from '@/lib/platform'
+import { getPlatform } from '@wegent/collaboration/controls/platform'
 import { ComposerToolbar } from './ComposerToolbar'
 
 let resizeCallback: ResizeObserverCallback | null = null
 
-vi.mock('@/lib/platform', () => ({
+vi.mock('@wegent/collaboration/controls/platform', () => ({
   getPlatform: vi.fn(() => 'mac'),
 }))
 
@@ -60,6 +60,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -104,6 +105,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -122,6 +124,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -158,6 +161,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -181,6 +185,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -218,6 +223,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -248,6 +254,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
