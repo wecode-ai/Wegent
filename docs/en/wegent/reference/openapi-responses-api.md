@@ -506,4 +506,4 @@ This appends to the same task, maintaining conversation context.
 - Bot/Ghost MCP tools configured in the CRD are always available
 - Use `wegent_chat_bot` tool to enable full server-side capabilities
 - Streaming is only supported for Chat Shell type Teams
-- Set `omit_mcp_binary_output` to `true` to replace binary payloads in `mcp_call` output, such as base64 images, with a summary placeholder like `<image/jpeg payload omitted: 2048 bytes>`; text output is returned unchanged and model calls still use the complete original content
+- Raw `mcp_call` output is returned by default; set `omit_mcp_binary_output` to `true` to replace binary payloads such as base64 images with a summary placeholder like `<image/jpeg payload omitted: 2048 bytes>`. Text output is returned unchanged and model calls still use the complete original content

@@ -638,6 +638,74 @@ class TestStreamingServiceReasoning:
         ]
 
     @pytest.mark.asyncio
+    async def test_block_events_only_sanitize_mcp_tool_output(self, streaming_service):
+        payload = base64.b64encode(b"\x00" * 2048).decode()
+
+        async def block_stream():
+            yield StreamingChunk(
+                type="block_created",
+                data={
+                    "block": {
+                        "id": "mcp_block",
+                        "type": "tool",
+                        "tool_protocol": "mcp_call",
+                        "tool_name": "example-media-tool",
+                        "status": "done",
+                        "tool_output": [
+                            {"type": "image", "mimeType": "image/jpeg", "data": payload}
+                        ],
+                    }
+                },
+            )
+            # Updates omit tool_protocol, so the protocol is resolved from the
+            # block already streamed under the same id.
+            yield StreamingChunk(
+                type="block_updated",
+                data={
+                    "block_id": "mcp_block",
+                    "updates": {
+                        "tool_output": [
+                            {"type": "image", "mimeType": "image/jpeg", "data": payload}
+                        ]
+                    },
+                },
+            )
+            yield StreamingChunk(
+                type="block_created",
+                data={
+                    "block": {
+                        "id": "shell_block",
+                        "type": "tool",
+                        "tool_protocol": "shell_call",
+                        "status": "done",
+                        "tool_output": {"stdout": "ok"},
+                    }
+                },
+            )
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_blocks",
+            model_string="gpt-4",
+            chat_stream=block_stream(),
+            created_at=1234567890,
+            omit_mcp_binary_output=True,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        created_blocks = {
+            e["block"]["id"]: e["block"]
+            for e in events
+            if e["type"] == "response.block.created"
+        }
+        updated = next(e for e in events if e["type"] == "response.block.updated")
+
+        omitted = "<image/jpeg payload omitted: 2048 bytes>"
+        assert created_blocks["mcp_block"]["tool_output"][0]["data"] == omitted
+        assert updated["updates"]["tool_output"][0]["data"] == omitted
+        assert created_blocks["shell_block"]["tool_output"] == {"stdout": "ok"}
+
+    @pytest.mark.asyncio
     async def test_image_block_is_included_as_generation_output_item(
         self, streaming_service
     ):

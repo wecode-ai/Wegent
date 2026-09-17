@@ -506,4 +506,4 @@ data: {"type":"response.completed","response":{"id":"resp_123","status":"complet
 - CRD 中配置的 Bot/Ghost MCP 工具始终可用
 - 使用 `wegent_chat_bot` 工具启用完整的服务端能力
 - 流式输出仅支持 Chat Shell 类型的 Team
-- `mcp_call` 输出中的图片等二进制负载（base64）会被替换为摘要占位符，例如 `<image/jpeg payload omitted: 2048 bytes>`，文本输出原样返回；模型调用时仍使用完整原始内容
+- 默认返回 `mcp_call` 的原始输出；将 `omit_mcp_binary_output` 设为 `true` 后，其中的图片等二进制负载（base64）会被替换为摘要占位符，例如 `<image/jpeg payload omitted: 2048 bytes>`，文本输出原样返回，模型调用时仍使用完整原始内容
