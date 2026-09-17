@@ -76,6 +76,13 @@ def sanitize_no_proxy_env() -> list[str]:
     real IP networks are removed; URL-form entries such as
     ``NO_PROXY=http://localhost`` keep working.
 
+    The change targets the process environment on purpose: every httpx client
+    built with ``trust_env=True`` derives its proxy mounts from ``NO_PROXY``,
+    so unsupported entries also break unrelated plain clients such as the ones
+    in ``app.services.oidc`` or ``app.services.channels``. Restoring the
+    variables after a traced client is constructed would leave those clients
+    failing. The call is idempotent and only removes entries httpx cannot use.
+
     Returns:
         The removed entries, for logging and assertions.
     """
