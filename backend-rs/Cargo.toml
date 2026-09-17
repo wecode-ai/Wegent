@@ -47,7 +47,10 @@ url = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [lints.rust]
-unsafe_code = "forbid"
+# `deny` rather than `forbid` so `config::init_env` can relax it for the single
+# `env::set_var` call that ports the reference dotenv export. Everything else
+# stays unsafe-free.
+unsafe_code = "deny"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }

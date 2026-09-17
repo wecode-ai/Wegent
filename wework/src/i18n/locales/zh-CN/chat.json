@@ -102,6 +102,9 @@
     "renamed_file": "重命名 {{filename}}"
   },
   "assistant_status": {
+    "working": "处理中",
+    "working_for": "已处理 {{duration}}",
+    "worked_for": "用时 {{duration}}",
     "stopped": "已停止",
     "stopped_after": "你在 {{duration}} 后停止了"
   },
