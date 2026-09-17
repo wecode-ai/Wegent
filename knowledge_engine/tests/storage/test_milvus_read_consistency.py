@@ -170,11 +170,11 @@ def test_delete_verification_row_count_stays_strong():
     assert client.consistency_levels("query") == [WRITE_CONSISTENCY]
 
 
-def test_write_visibility_read_stays_strong():
-    """Making a write readable is a write-path read, not a retrieval read."""
+def test_waiting_for_the_newest_state_stays_strong():
+    """Waiting on a write is a write-path read, not a retrieval read."""
     client = _RecordingClient()
 
-    _store(client).advance_read_visibility(client, "wegent_kb_1", 'knowledge_id == "1"')
+    _store(client).await_newest_state(client, "wegent_kb_1", 'knowledge_id == "1"')
 
     assert client.consistency_levels("query") == [WRITE_CONSISTENCY]
 

@@ -899,21 +899,24 @@ class MilvusDocumentStore:
             )
         return len(rows)
 
-    def advance_read_visibility(
+    def await_newest_state(
         self, client: MilvusClient, collection_name: str, filter_expr: str
     ) -> None:
-        """Serve one read at the write level so later readers see a write.
+        """Wait until the server can serve a state that includes a write.
 
-        Retrieval reads at ``Bounded`` (see ``READ_CONSISTENCY_LEVEL``) to skip
-        the linearizable wait that costs hundreds of milliseconds, so Milvus
-        may answer from a snapshot a few hundred milliseconds old - longer than
-        the gap between a write and the query that follows it, which makes a
-        document that was just written missing from the next query. Reading the
-        written scope once at the write level makes the server serve the newest
-        rows, so the write is readable by the readers that follow it.
+        Retrieval reads at ``Bounded`` (see ``READ_CONSISTENCY_LEVEL``), which
+        the server answers from a timestamp it keeps a configured interval
+        behind the newest data - measured at 0.3-0.5s on the 2.5.4 contract
+        fixture. A query that reaches the server inside that window therefore
+        misses rows the caller has just written, so the write path reads its
+        own document scope once at the write level before it returns: that read
+        cannot complete until the server can serve the newest state, so the
+        window has closed by the time the caller is told the write succeeded.
 
-        This is not a publication check: it asserts nothing about the result,
-        returns nothing and introduces no state of its own.
+        The read carries nothing else: it asserts nothing about its result,
+        returns nothing and holds no state, so it is a barrier rather than a
+        publication check. A fixed sleep is not equivalent, because the window
+        follows the server (load, ticks) instead of the client.
         """
         self._query_write_level(
             client,

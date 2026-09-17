@@ -281,12 +281,13 @@ class MilvusBackend(BaseStorageBackend):
         confirmed by ``ensure_index`` first.
 
         The rows are written once and never published in a second pass. The
-        write ends by making them readable, because the read path's ``Bounded``
-        consistency would otherwise answer the next query from an older
-        snapshot. A write that cannot be made readable is treated like a write
-        that did not happen - its rows are removed and the caller retries -
-        because replacing them keeps "the caller saw a failure" and "the index
-        holds nothing of this document" true together.
+        write then waits until the server can serve a state that includes them
+        (``await_newest_state`` owns why that wait is needed), because the read
+        path's ``Bounded`` consistency would otherwise answer the next query
+        from an older snapshot. A write that cannot be made readable is treated
+        like a write that did not happen - its rows are removed and the caller
+        retries - because replacing them keeps "the caller saw a failure" and
+        "the index holds nothing of this document" true together.
 
         Milvus has no transaction spanning the write, so the failure path is
         explicit: the document's rows are removed again at this write
@@ -305,7 +306,9 @@ class MilvusBackend(BaseStorageBackend):
         try:
             with self._store.client() as client:
                 self._store.upsert_rows(client, collection_name, rows)
-                self._store.advance_read_visibility(
+                # Retrieval reads at Bounded: end this write only when the
+                # server can serve the rows it just stored.
+                self._store.await_newest_state(
                     client,
                     collection_name,
                     build_scope_filter(knowledge_id=knowledge_id, doc_refs=[doc_ref]),

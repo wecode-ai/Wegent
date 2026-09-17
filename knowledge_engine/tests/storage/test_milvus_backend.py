@@ -267,8 +267,8 @@ class FakeStore:
         self.queries.append({"filter": filter_expr, "count": True})
         return sum(1 for row in self.rows if self._filter_matches(row, filter_expr))
 
-    def advance_read_visibility(self, client, collection_name, filter_expr):
-        self.calls.append(("advance_read_visibility", collection_name, filter_expr))
+    def await_newest_state(self, client, collection_name, filter_expr):
+        self.calls.append(("await_newest_state", collection_name, filter_expr))
         self.visible_reads.append(filter_expr)
 
     def delete_rows(
@@ -549,13 +549,13 @@ def test_index_writes_without_waiting_for_a_flush():
     assert all(call[0] != "flush" for call in store.calls)
 
 
-def test_index_makes_the_written_document_readable():
-    """The write ends by serving its own scope at the write level.
+def test_index_waits_for_the_newest_state_of_the_written_document():
+    """The write ends by waiting on its own scope at the write level.
 
     Reads answer at ``Bounded`` and may be served from an older snapshot, so
     the rows written here would be missing from the very next query without
-    this read. It asserts nothing: the write stays a single write with no
-    publication state.
+    this wait. It asserts nothing: the write stays a single write with no
+    publication state, and the wait is over before the caller sees success.
     """
     backend = _backend()
     store = FakeStore()
@@ -572,7 +572,7 @@ def test_index_makes_the_written_document_readable():
     assert 'doc_ref in ["42"]' in scope
     written = [i for i, call in enumerate(store.calls) if call[0] == "upsert_rows"]
     visible = [
-        i for i, call in enumerate(store.calls) if call[0] == "advance_read_visibility"
+        i for i, call in enumerate(store.calls) if call[0] == "await_newest_state"
     ]
     assert visible[0] > written[0]
 
