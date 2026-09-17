@@ -39,6 +39,7 @@ from .opencut_support import truthy as _truthy
 from .opencut_support import (
     validate_converted_media_tracks,
 )
+from .opencut_text_templates import text_template_import, text_template_save
 from .opencut_urls import create_opencut_urls, verify_opencut_token
 
 router = APIRouter()
@@ -632,10 +633,33 @@ def build_storycut_bundle(
             }
         )
 
+    text_templates = []
+    for index, item in enumerate(tracks["text_animations"], 1):
+        template = text_template_import(
+            item,
+            element_id=str(
+                item.get("storycut_element_id")
+                or item.get("id")
+                or _stable_id("text-template", index)
+            ),
+            window=_time_window(item),
+        )
+        text_templates.append(template)
+        if not any(track["id"] == template["trackId"] for track in track_defs):
+            track_defs.append(
+                {
+                    "id": template["trackId"],
+                    "locked": bool(item.get("storycut_track_locked", False)),
+                    "label": template["metadata"]["storycut_track_label"],
+                    "type": "text",
+                    "projectId": project_id,
+                }
+            )
+
     duration = max(
         [
             int(item.get("timestamp") or 0) + int(item.get("duration") or 0)
-            for item in [*keyframes, *subtitles, *stickers]
+            for item in [*keyframes, *subtitles, *stickers, *text_templates]
         ]
         or [0]
     )
@@ -662,7 +686,7 @@ def build_storycut_bundle(
         "keyframes": keyframes,
         "subtitles": subtitles,
         "stickers": stickers,
-        "textTemplates": tracks["text_animations"],
+        "textTemplates": text_templates,
         "transitions": tracks["transitions"],
     }
 
@@ -928,10 +952,13 @@ def storycut_payload_to_tracks(
                     result["stickers"].append(item)
             elif element_type == "text-template":
                 result["text_animations"].append(
-                    {
-                        **_original_metadata(element),
-                        "timeline_window": _element_window(element),
-                    }
+                    text_template_save(
+                        element,
+                        metadata=_original_metadata(element),
+                        window=_element_window(element),
+                        track=track,
+                        track_index=track_index,
+                    )
                 )
             else:
                 item = _visual_item(element, track, media_by_id, track_index)
