@@ -1,3 +1,5 @@
+import { readdir } from 'node:fs/promises'
+
 import {
   distanceFromBottom,
   distanceFromTop,
@@ -42,6 +44,7 @@ import {
   WINDOW_LIFECYCLE_SCROLL_MARKER,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  commandOutput,
   ensureModelOptionVisible,
   join,
   processIsAlive,
@@ -983,6 +986,33 @@ async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
   throw new Error('The attachment-only tasks did not persist durable attachment previews')
 }
 
+async function waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, expectedCount) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const attachments = await findAttachmentFiles(runtimeAttachmentRoot)
+    if (attachments.length >= expectedCount) return attachments
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('The remote device did not persist attachments in its private runtime root')
+}
+
+async function findAttachmentFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  const files = await Promise.all(
+    entries.map(entry => {
+      const path = join(directory, entry.name)
+      return entry.isDirectory() ? findAttachmentFiles(path) : [path]
+    })
+  )
+  return files.flat().filter(path => path.endsWith(ATTACHMENT_ONLY_FILENAME))
+}
+
+function readGitStatus(workspacePath) {
+  return commandOutput('git', ['status', '--porcelain', '--untracked-files=all'], {
+    cwd: workspacePath,
+  })
+}
+
 async function verifyAttachmentOnlySidebarLifecycle({
   app,
   appBundlePath,
@@ -990,7 +1020,10 @@ async function verifyAttachmentOnlySidebarLifecycle({
   composerSelector,
   control,
   executorHome,
+  runtimeAttachmentRoot,
+  workspacePath,
 }) {
+  const gitStatusBefore = workspacePath ? readGitStatus(workspacePath) : null
   control.setScenario('attachment_only')
   const rowsBeforeAttachmentOnly = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
@@ -1031,6 +1064,16 @@ async function verifyAttachmentOnlySidebarLifecycle({
   })
   if (executorHome) {
     await waitForDurableAttachmentPreviews(executorHome, 2)
+  }
+  if (runtimeAttachmentRoot) {
+    await waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, 2)
+  }
+  if (workspacePath) {
+    assert.equal(
+      readGitStatus(workspacePath),
+      gitStatusBefore,
+      'Uploading remote device attachments changed the project Git status'
+    )
   }
 
   const twoTaskSnapshot = await waitForSnapshot(

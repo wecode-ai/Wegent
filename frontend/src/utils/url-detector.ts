@@ -24,7 +24,8 @@ const IMAGE_EXTENSIONS = [
 // Regex pattern for detecting URLs in text
 // Matches http:// or https:// URLs
 // Excludes common Chinese punctuation marks to prevent them from being parsed as part of the URL
-const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`[\]。，、；：？！""''（）【】《》]+/gi
+const URL_REGEX =
+  /https?:\/\/[^\s<>"{}|\\^`[\]\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF]+/gi
 
 // Regex pattern for Markdown image syntax: ![alt](url)
 const MARKDOWN_IMAGE_REGEX = /!\[([^\]]*)\]\(([^)]+)\)/g
