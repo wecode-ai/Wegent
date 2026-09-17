@@ -4,9 +4,18 @@
 
 """Real Milvus index failures stay distinguishable from an empty result.
 
-These run against the pinned standalone service: the contract binding is
-written, then the physical index state is changed underneath it, and the
-adapter must report a stable code instead of answering with no matches.
+These run against the pinned standalone service: the physical index state is
+changed underneath the knowledge base and the adapter must report a stable code
+instead of answering with no matches.
+
+The index contract lives in the description of the collection it describes
+(ticket 12), so the failures worth reporting here are the ones that are still
+observable: a collection whose contract this code cannot read, and a contract
+that does not match the collection it is stored with. A collection dropped
+outside the product leaves nothing behind, which is the observation limitation
+the parity spec retains - no second record of the index exists to detect it,
+and this file asserts that reading such a knowledge base answers as unindexed
+instead of inventing a failure.
 """
 
 from __future__ import annotations
@@ -16,17 +25,19 @@ from llama_index.core.schema import TextNode
 from pymilvus import MilvusClient
 
 from knowledge_engine.storage.errors import (
+    IndexContractIncompatibleError,
     IndexMissingError,
-    StorageBackendError,
 )
-from knowledge_engine.storage.milvus_native import INDEX_BINDING_COLLECTION
 from tests.contract.conftest import (
     CONTRACT_DIMENSION,
+    LEGACY_INDEX_REGISTRY_COLLECTION,
     DeterministicEmbedding,
     index_nodes,
 )
 
 pytestmark = pytest.mark.milvus
+
+INDEX_REGISTRY_COLLECTION = LEGACY_INDEX_REGISTRY_COLLECTION
 
 
 def _nodes(count: int = 2) -> list[TextNode]:
@@ -48,23 +59,23 @@ def _drop_physical_collection(uri: str, collection_name: str) -> None:
         client.close()
 
 
-def test_a_deleted_index_reports_every_read_path_as_missing(milvus_env) -> None:
-    backend = milvus_env.backend()
-    knowledge_id = milvus_env.new_knowledge_id()
-    collection_name = milvus_env.collection_name(knowledge_id)
-    index_nodes(
-        backend,
-        knowledge_id=knowledge_id,
-        doc_ref="1",
-        nodes=_nodes(),
-    )
-    _drop_physical_collection(milvus_env.uri, collection_name)
+def _create_foreign_collection(uri: str, collection_name: str) -> None:
+    """Create a collection of the same dimension that declares no contract."""
+    client = MilvusClient(uri=uri)
+    try:
+        if client.has_collection(collection_name):
+            client.drop_collection(collection_name)
+        client.create_collection(
+            collection_name=collection_name,
+            dimension=CONTRACT_DIMENSION,
+        )
+    finally:
+        client.close()
 
-    read_calls = (
-        lambda: backend.get_document(knowledge_id, "1"),
-        lambda: backend.list_documents(knowledge_id),
-        lambda: backend.get_all_chunks(knowledge_id, max_chunks=5),
-        lambda: backend.retrieve(
+
+def _read_paths(backend, knowledge_id: str):
+    return {
+        "retrieve": lambda: backend.retrieve(
             knowledge_id=knowledge_id,
             query="failure contract",
             embed_model=DeterministicEmbedding(CONTRACT_DIMENSION),
@@ -74,17 +85,20 @@ def test_a_deleted_index_reports_every_read_path_as_missing(milvus_env) -> None:
                 "score_threshold": 0.0,
             },
         ),
-    )
-    for call in read_calls:
-        with pytest.raises(IndexMissingError) as failure:
-            call()
-        assert failure.value.code == "index_missing"
-        assert failure.value.retryable is False
-        assert collection_name in str(failure.value)
+        "get_document": lambda: backend.get_document(knowledge_id, "1"),
+        "list_documents": lambda: backend.list_documents(knowledge_id),
+        "get_all_chunks": lambda: backend.get_all_chunks(knowledge_id, max_chunks=5),
+    }
 
 
-def test_a_deleted_index_never_degrades_into_an_empty_result(milvus_env) -> None:
-    """A confirmed binding without its collection is a failure, not no matches."""
+def test_a_dropped_index_reads_as_a_never_indexed_knowledge_base(milvus_env) -> None:
+    """A collection dropped outside the product leaves no contract behind.
+
+    The contract travels with the collection, so an external drop takes it with
+    it and the knowledge base reads exactly like one that was never indexed.
+    That is the observation limitation the parity spec retains; nothing in the
+    product records a second copy of the index that could tell them apart.
+    """
     backend = milvus_env.backend()
     knowledge_id = milvus_env.new_knowledge_id()
     collection_name = milvus_env.collection_name(knowledge_id)
@@ -96,33 +110,58 @@ def test_a_deleted_index_never_degrades_into_an_empty_result(milvus_env) -> None
     )
     _drop_physical_collection(milvus_env.uri, collection_name)
 
-    with pytest.raises(StorageBackendError):
-        backend.get_all_chunks(knowledge_id, max_chunks=5)
+    assert backend.retrieve(
+        knowledge_id=knowledge_id,
+        query="failure contract",
+        embed_model=DeterministicEmbedding(CONTRACT_DIMENSION),
+        retrieval_setting={
+            "retrieval_mode": "vector",
+            "top_k": 5,
+            "score_threshold": 0.0,
+        },
+    ) == {"records": []}
+    assert backend.get_all_chunks(knowledge_id, max_chunks=5) == []
+    assert backend.list_documents(knowledge_id)["documents"] == []
+    with pytest.raises(ValueError):
+        backend.get_document(knowledge_id, "1")
+    # Deleting stays idempotent, and reading created no resource again.
+    assert backend.delete_document(knowledge_id, "1")["deleted_chunks"] == 0
+    assert milvus_env.has_collection(knowledge_id) is False
 
 
-def test_a_collection_without_a_contract_is_not_adopted(milvus_env) -> None:
-    """A foreign collection is rejected, never claimed or overwritten."""
-    from knowledge_engine.storage.errors import IndexContractIncompatibleError
+def test_a_replaced_index_fails_every_read_path_loudly(milvus_env) -> None:
+    """A foreign collection that took the index's name is never adopted.
 
+    This is the half of "the index was deleted outside the product" that stays
+    observable: whatever answers under the collection name afterwards declares
+    no contract of ours, so every reading path reports a stable code instead of
+    answering with no matches.
+    """
     backend = milvus_env.backend()
     knowledge_id = milvus_env.new_knowledge_id()
     collection_name = milvus_env.collection_name(knowledge_id)
+    index_nodes(
+        backend,
+        knowledge_id=knowledge_id,
+        doc_ref="1",
+        nodes=_nodes(),
+    )
+    _create_foreign_collection(milvus_env.uri, collection_name)
 
-    client = MilvusClient(uri=milvus_env.uri)
-    try:
-        if client.has_collection(collection_name):
-            client.drop_collection(collection_name)
-        client.create_collection(
-            collection_name=collection_name,
-            dimension=CONTRACT_DIMENSION,
-        )
-        if client.has_collection(INDEX_BINDING_COLLECTION):
-            client.delete(
-                collection_name=INDEX_BINDING_COLLECTION,
-                filter=f'collection_name == "{collection_name}"',
-            )
-    finally:
-        client.close()
+    for name, call in _read_paths(backend, knowledge_id).items():
+        with pytest.raises(IndexContractIncompatibleError) as failure:
+            call()
+        assert failure.value.code == "index_contract_incompatible", name
+        assert failure.value.retryable is False, name
+        assert collection_name in str(failure.value), name
+
+
+def test_a_collection_without_a_contract_is_not_adopted(milvus_env) -> None:
+    """A foreign collection is rejected on the write path, never claimed."""
+    backend = milvus_env.backend()
+    knowledge_id = milvus_env.new_knowledge_id()
+    collection_name = milvus_env.collection_name(knowledge_id)
+    _create_foreign_collection(milvus_env.uri, collection_name)
 
     with pytest.raises(IndexContractIncompatibleError) as failure:
         backend.get_all_chunks(knowledge_id, max_chunks=5)
@@ -130,17 +169,106 @@ def test_a_collection_without_a_contract_is_not_adopted(milvus_env) -> None:
     assert failure.value.code == "index_contract_incompatible"
     assert failure.value.retryable is False
 
+    # The foreign collection is still there and still exactly as it was.
+    client = MilvusClient(uri=milvus_env.uri)
+    try:
+        assert client.has_collection(collection_name)
+    finally:
+        client.close()
+
 
 def test_a_stable_failure_does_not_expose_the_connection(milvus_env) -> None:
     """The safe message carries the code, not the Milvus target."""
     backend = milvus_env.backend()
     knowledge_id = milvus_env.new_knowledge_id()
     collection_name = milvus_env.collection_name(knowledge_id)
-    index_nodes(backend, knowledge_id=knowledge_id, doc_ref="1", nodes=_nodes())
-    _drop_physical_collection(milvus_env.uri, collection_name)
+    _create_foreign_collection(milvus_env.uri, collection_name)
 
-    with pytest.raises(IndexMissingError) as failure:
+    with pytest.raises(IndexContractIncompatibleError) as failure:
         backend.get_all_chunks(knowledge_id, max_chunks=5)
 
     assert milvus_env.uri not in str(failure.value)
     assert milvus_env.uri not in repr(failure.value.details)
+
+
+def test_the_index_contract_needs_no_registry_collection(milvus_env) -> None:
+    """The contract is stored in the collection, so no registry collection is made.
+
+    A knowledge base written and read through the product keeps its contract in
+    its own collection, and the product creates no registry collection next to
+    it. The session fixture already refused a service that still holds the
+    registry the previous mechanism created, so absence is asserted outright
+    here and the fixture, not this test, reports that environment.
+    """
+    client = MilvusClient(uri=milvus_env.uri)
+    try:
+        before = set(client.list_collections())
+    finally:
+        client.close()
+
+    backend = milvus_env.backend()
+    knowledge_id = milvus_env.new_knowledge_id()
+    collection_name = milvus_env.collection_name(knowledge_id)
+    index_nodes(
+        backend,
+        knowledge_id=knowledge_id,
+        doc_ref="1",
+        nodes=_nodes(),
+    )
+    assert backend.get_all_chunks(knowledge_id, max_chunks=5)
+
+    client = MilvusClient(uri=milvus_env.uri)
+    try:
+        after = set(client.list_collections())
+    finally:
+        client.close()
+    created = after - before
+    assert INDEX_REGISTRY_COLLECTION not in created, "this code never creates it"
+    assert INDEX_REGISTRY_COLLECTION not in after
+    assert collection_name in created
+
+
+def test_a_physical_drop_needs_the_contract_the_index_declares(milvus_env) -> None:
+    """The physical drop is refused when the index it must confirm is gone.
+
+    Dropping the knowledge base's storage drops its parent sidecar, and that is
+    only allowed behind the contract the index collection declares. With the
+    index collection gone nothing confirms that those names were ours, so the
+    drop fails loudly and leaves the sidecar where it is. An intact knowledge
+    base still drops both collections.
+    """
+    backend = milvus_env.backend()
+    knowledge_id = milvus_env.new_knowledge_id()
+    collection_name = milvus_env.collection_name(knowledge_id)
+    parent_collection_name = f"{collection_name}__parents"
+    backend.save_parent_nodes(
+        knowledge_id=knowledge_id,
+        parent_nodes=[TextNode(text="parent body", metadata={"doc_ref": "1"})],
+    )
+    index_nodes(backend, knowledge_id=knowledge_id, doc_ref="1", nodes=_nodes())
+
+    _drop_physical_collection(milvus_env.uri, collection_name)
+
+    with pytest.raises(IndexMissingError) as failure:
+        backend.drop_knowledge_index(knowledge_id)
+    assert failure.value.code == "index_missing"
+    assert failure.value.retryable is False
+
+    client = MilvusClient(uri=milvus_env.uri)
+    try:
+        assert client.has_collection(parent_collection_name), "refused means intact"
+    finally:
+        client.close()
+
+    # Once the index is back, the contract confirms the drop and both go.
+    index_nodes(backend, knowledge_id=knowledge_id, doc_ref="1", nodes=_nodes())
+    dropped = backend.drop_knowledge_index(knowledge_id)
+    assert dropped["status"] == "dropped"
+    assert dropped["dropped_parent_collection"] is True
+
+    client = MilvusClient(uri=milvus_env.uri)
+    try:
+        assert not client.has_collection(collection_name)
+        assert not client.has_collection(parent_collection_name)
+    finally:
+        client.close()

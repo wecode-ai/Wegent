@@ -29,14 +29,14 @@ from pymilvus import DataType, MilvusClient
 from knowledge_engine.query.executor import QueryExecutor
 from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from knowledge_engine.storage.errors import (
-    IndexContractIncompatibleError,
-    IndexMissingError,
-)
+from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus_backend import MilvusBackend
 from knowledge_engine.storage.milvus_native import (
-    INDEX_BINDING_COLLECTION,
+    INDEX_TYPE,
+    METRIC_TYPE,
+    SCHEMA_VERSION,
     MilvusIndexBinding,
+    index_contract_description,
 )
 from shared.models import RetrievalScope
 
@@ -299,11 +299,6 @@ def test_shared_physical_index_keeps_every_hit_inside_scope(
     )
     first_kb, second_kb = "7201", "7202"
     collection_name = rolling_backend.get_index_name(first_kb)
-    # A previous run that was interrupted between dropping the collection and
-    # dropping its binding leaves a confirmed contract with no collection, and
-    # re-running this test would fail on that leftover instead of the behaviour
-    # under test. Clear both up front so the test is repeatable.
-    _drop_shared_index(milvus_env, collection_name)
     try:
         _index_text_document(
             milvus_env,
@@ -604,13 +599,33 @@ def test_metadata_conditions_keep_their_documented_semantics(
 def test_keyword_on_a_legacy_dense_only_index_fails_loudly(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """An index without the keyword capability never answers with empty hits."""
+    """An index without the keyword capability never answers with empty hits.
+
+    The capability is part of the contract, so this collection is built as an
+    older contract would have declared it: the same physical schema, a stored
+    schema version that is no longer current and no analyzer at all.
+    """
     knowledge_id = milvus_env.new_knowledge_id()
     backend = milvus_env.backend()
     collection_name = backend.get_index_name(knowledge_id)
+    legacy_contract = MilvusIndexBinding(
+        collection_name=collection_name,
+        connection=backend._store.connection_identity(),
+        database=backend._store.db_name,
+        schema_version=SCHEMA_VERSION - 1,
+        embedding_space="sha256:legacy",
+        dimension=DIMENSION,
+        metric_type=METRIC_TYPE,
+        index_type=INDEX_TYPE,
+        analyzer="",
+    )
     client = MilvusClient(uri=milvus_env.uri)
     try:
-        schema = client.create_schema(auto_id=False, enable_dynamic_field=False)
+        schema = client.create_schema(
+            auto_id=False,
+            enable_dynamic_field=False,
+            description=index_contract_description(legacy_contract),
+        )
         schema.add_field("id", DataType.VARCHAR, is_primary=True, max_length=128)
         schema.add_field("knowledge_id", DataType.VARCHAR, max_length=512)
         schema.add_field("dense_vector", DataType.FLOAT_VECTOR, dim=DIMENSION)
@@ -636,20 +651,6 @@ def test_keyword_on_a_legacy_dense_only_index_fails_loudly(
             ],
         )
         client.flush(collection_name)
-        backend._store.write_binding(
-            client,
-            MilvusIndexBinding(
-                collection_name=collection_name,
-                connection=backend._store.connection_identity(),
-                database=backend._store.db_name,
-                schema_version=1,
-                embedding_space="sha256:legacy",
-                dimension=DIMENSION,
-                metric_type="COSINE",
-                index_type="AUTOINDEX",
-                analyzer="",
-            ),
-        )
 
         with pytest.raises(IndexContractIncompatibleError):
             _keyword_query(backend, knowledge_id=knowledge_id, query="legacy")
@@ -671,6 +672,39 @@ def test_keyword_on_a_legacy_dense_only_index_fails_loudly(
         client.close()
 
 
+def test_keyword_on_an_index_without_the_analyzer_fails_loudly(
+    milvus_env: MilvusContractEnv,
+) -> None:
+    """The analyzer in the contract decides keyword capability, nothing else.
+
+    The collection carries the current physical schema, so nothing in the row
+    layout stops a keyword query; its contract declares no analyzer, which is
+    exactly the older index whose Chinese BM25 answers would be silently empty.
+    """
+    from dataclasses import replace
+
+    from knowledge_engine.embedding.space import compute_embedding_space
+
+    knowledge_id = milvus_env.new_knowledge_id()
+    backend = milvus_env.backend()
+    collection_name = backend.get_index_name(knowledge_id)
+    store = backend._store
+    requested = store.build_binding(
+        collection_name,
+        dimension=DIMENSION,
+        embedding_space=compute_embedding_space(DeterministicEmbedding(DIMENSION)),
+    )
+
+    with store.client() as client:
+        store._create_collection(client, replace(requested, analyzer=""))
+
+    with pytest.raises(IndexContractIncompatibleError) as failure:
+        _keyword_query(backend, knowledge_id=knowledge_id, query="中文关键词")
+
+    assert failure.value.code == "index_contract_incompatible"
+    assert failure.value.details["analyzer"] == ""
+
+
 def test_keyword_on_a_never_indexed_knowledge_base_creates_nothing(
     milvus_env: MilvusContractEnv,
 ) -> None:
@@ -684,10 +718,17 @@ def test_keyword_on_a_never_indexed_knowledge_base_creates_nothing(
     assert not milvus_env.has_collection(knowledge_id)
 
 
-def test_index_of_a_missing_bound_collection_is_reported_as_missing(
+def test_keyword_of_a_dropped_index_reads_as_a_never_indexed_knowledge_base(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """A confirmed index that disappeared is not an empty knowledge base."""
+    """A dropped collection takes its contract with it.
+
+    Keyword retrieval needs the contract to decide the analyzer, and the
+    contract is stored in the collection, so a collection that is gone leaves
+    nothing to check: the knowledge base reads as unindexed. A collection that
+    replaced the index under the same name is refused instead (covered in
+    ``test_milvus_index_failures``).
+    """
     knowledge_id = milvus_env.new_knowledge_id()
     backend = _index_text_document(
         milvus_env,
@@ -701,19 +742,16 @@ def test_index_of_a_missing_bound_collection_is_reported_as_missing(
     finally:
         client.close()
 
-    with pytest.raises(IndexMissingError):
-        _keyword_query(backend, knowledge_id=knowledge_id, query="临时文档")
+    assert _keyword_query(backend, knowledge_id=knowledge_id, query="临时文档") == {
+        "records": []
+    }
 
 
 def _drop_shared_index(env: MilvusContractEnv, collection_name: str) -> None:
+    """Drop the shared collection the rolling strategy created for a test."""
     client = MilvusClient(uri=env.uri)
     try:
         if client.has_collection(collection_name):
             client.drop_collection(collection_name)
-        if client.has_collection(INDEX_BINDING_COLLECTION):
-            client.delete(
-                collection_name=INDEX_BINDING_COLLECTION,
-                filter=f'collection_name == "{collection_name}"',
-            )
     finally:
         client.close()

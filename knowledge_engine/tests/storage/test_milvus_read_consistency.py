@@ -7,25 +7,48 @@
 Retrieval answers from data the write path wrote in a single write, so the read
 RPCs run at ``Bounded``. The delete verification and the collection creation
 stay ``Strong``: they are the reads that decide whether the data and the schema
-are really there before the write path reports success. The one read that
-crosses over is the contract fallback, which re-reads a contract the snapshot
-read missed before calling the collection incompatible.
+are really there before the write path reports success. The index contract is
+no longer a row of its own: it travels in the collection's description, so
+reading it is one ``describe_collection`` and no consistency level.
 """
 
 import pytest
 
 from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus_native import (
+    ANALYZER_TYPE,
     DENSE_VECTOR_FIELD,
-    INDEX_BINDING_COLLECTION,
+    INDEX_TYPE,
+    METRIC_TYPE,
+    SCHEMA_VERSION,
+    MilvusIndexBinding,
+    index_contract_description,
 )
 from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
 CONTRACT_DIMENSION = 4
+COLLECTION_NAME = "wegent_kb_1"
 # Literals on purpose: these tests pin the level each RPC must send, so reading
 # them from the module would let a wrong production constant pass unnoticed.
 READ_CONSISTENCY = "Bounded"
 WRITE_CONSISTENCY = "Strong"
+
+
+def _contract(
+    *,
+    embedding_space: str = "sha256:abc",
+) -> MilvusIndexBinding:
+    return MilvusIndexBinding(
+        collection_name=COLLECTION_NAME,
+        connection="http://milvus.test:19530",
+        database="default",
+        schema_version=SCHEMA_VERSION,
+        embedding_space=embedding_space,
+        dimension=CONTRACT_DIMENSION,
+        metric_type=METRIC_TYPE,
+        index_type=INDEX_TYPE,
+        analyzer=ANALYZER_TYPE,
+    )
 
 
 class _IndexParams:
@@ -39,12 +62,14 @@ class _RecordingClient:
     """Records the kwargs of every RPC so the consistency level is visible."""
 
     def __init__(
-        self, *, collection_exists: bool = True, registry_exists: bool = True
+        self,
+        *,
+        collection_exists: bool = True,
+        contract: MilvusIndexBinding | None = None,
     ) -> None:
-        self.exists = {
-            "wegent_kb_1": collection_exists,
-            INDEX_BINDING_COLLECTION: registry_exists,
-        }
+        self.exists = {COLLECTION_NAME: collection_exists}
+        self.contract = contract or _contract()
+        self.description: str | None = None
         self.calls: list[tuple[str, dict]] = []
 
     def _record(self, name: str, kwargs: dict) -> None:
@@ -65,9 +90,17 @@ class _RecordingClient:
     def describe_collection(self, collection_name: str, **kwargs) -> dict:
         self._record("describe_collection", kwargs)
         return {
+            "description": (
+                self.description
+                if self.description is not None
+                else index_contract_description(self.contract)
+            ),
             "fields": [
-                {"name": DENSE_VECTOR_FIELD, "params": {"dim": CONTRACT_DIMENSION}}
-            ]
+                {
+                    "name": DENSE_VECTOR_FIELD,
+                    "params": {"dim": self.contract.dimension},
+                }
+            ],
         }
 
     def query(self, **kwargs) -> list:
@@ -83,7 +116,9 @@ class _RecordingClient:
         return _IndexParams()
 
     def create_collection(self, **kwargs) -> None:
+        """Keep the contract the name already carries when the name is taken."""
         self._record("create_collection", kwargs)
+        self.exists[kwargs["collection_name"]] = True
 
     def upsert(self, **kwargs) -> dict:
         self._record("upsert", kwargs)
@@ -103,32 +138,33 @@ def _store(client: _RecordingClient) -> MilvusDocumentStore:
     )
 
 
-def test_registry_read_uses_the_read_consistency_level():
-    """Reading the stored index contract is a read, not a publication check."""
+def test_the_contract_read_is_one_describe_and_no_row_read():
+    """The contract travels with the collection, without a consistency level."""
     client = _RecordingClient()
 
-    _store(client).read_binding(client, "wegent_kb_1")
+    binding = _store(client).read_contract(client, COLLECTION_NAME)
 
-    assert client.consistency_levels("query") == [READ_CONSISTENCY]
+    assert binding == client.contract
+    assert [name for name, _ in client.calls].count("describe_collection") == 1
+    assert client.consistency_levels("describe_collection") == [None]
+    assert client.consistency_levels("query") == []
 
 
-def test_write_level_contract_re_read_uses_the_write_consistency_level():
-    """The publication-window fallback reads the contract as the writer does.
-
-    It exists to see a contract the snapshot read missed, so it must not be
-    answered from that same snapshot.
-    """
+def test_a_foreign_collection_is_refused_without_reading_its_rows():
+    """A collection that declares no contract of ours is never adopted."""
     client = _RecordingClient()
+    client.description = "wegent knowledge index"
 
-    _store(client).read_binding_strong(client, "wegent_kb_1")
+    with pytest.raises(IndexContractIncompatibleError):
+        _store(client).read_contract(client, COLLECTION_NAME)
 
-    assert client.consistency_levels("query") == [WRITE_CONSISTENCY]
+    assert client.consistency_levels("query") == []
 
 
 def test_paged_read_uses_the_read_consistency_level():
     client = _RecordingClient()
 
-    _store(client).query_rows(client, "wegent_kb_1", 'knowledge_id == "1"', limit=10)
+    _store(client).query_rows(client, COLLECTION_NAME, 'knowledge_id == "1"', limit=10)
 
     assert client.consistency_levels("query") == [READ_CONSISTENCY]
 
@@ -138,7 +174,7 @@ def test_dense_search_uses_the_read_consistency_level():
 
     _store(client).search(
         client,
-        "wegent_kb_1",
+        COLLECTION_NAME,
         query_vector=[0.0, 1.0],
         filter_expr="",
         limit=5,
@@ -152,7 +188,7 @@ def test_sparse_search_uses_the_read_consistency_level():
 
     _store(client).sparse_search(
         client,
-        "wegent_kb_1",
+        COLLECTION_NAME,
         query_text="中文关键词",
         filter_expr="",
         limit=5,
@@ -165,18 +201,18 @@ def test_delete_verification_row_count_stays_strong():
     """Deleting proves the rows are gone through a Strong read."""
     client = _RecordingClient()
 
-    _store(client).count_rows(client, "wegent_kb_1", 'knowledge_id == "1"')
+    _store(client).count_rows(client, COLLECTION_NAME, 'knowledge_id == "1"')
 
     assert client.consistency_levels("query") == [WRITE_CONSISTENCY]
 
 
 def test_collection_creation_stays_strong():
     """Creating the owned collection is a write-path read of the schema."""
-    client = _RecordingClient(collection_exists=False, registry_exists=True)
+    client = _RecordingClient(collection_exists=False)
 
     _store(client).ensure_index(
         client,
-        "wegent_kb_1",
+        COLLECTION_NAME,
         dimension=CONTRACT_DIMENSION,
         embedding_space="sha256:abc",
     )
@@ -186,37 +222,29 @@ def test_collection_creation_stays_strong():
         for name, kwargs in client.calls
         if name == "create_collection"
     }
-    assert created["wegent_kb_1"] == WRITE_CONSISTENCY
+    assert created[COLLECTION_NAME] == WRITE_CONSISTENCY
 
 
-def test_collection_ownership_read_stays_strong():
-    """Rejecting an unclaimed collection reads the registry at the write level.
+def test_the_creation_race_is_settled_by_the_collection_own_contract():
+    """A concurrent writer of another contract is refused, not adopted.
 
-    The creation path decides ownership from this read, so it must see a
-    contract another writer just wrote rather than the read level's snapshot.
+    The create itself is not a compare-and-swap: this writer asks for a
+    collection name another writer has already created with a different
+    embedding space, so the contract read back from that collection is what
+    fails. The losing writer never reads or writes a row.
     """
-    client = _RecordingClient(collection_exists=True, registry_exists=True)
+    client = _RecordingClient(
+        collection_exists=False,
+        contract=_contract(embedding_space="sha256:the-winner"),
+    )
 
     with pytest.raises(IndexContractIncompatibleError):
         _store(client).ensure_index(
             client,
-            "wegent_kb_1",
+            COLLECTION_NAME,
             dimension=CONTRACT_DIMENSION,
             embedding_space="sha256:abc",
         )
 
-    assert client.consistency_levels("query") == [WRITE_CONSISTENCY]
-
-
-def test_delete_path_contract_read_stays_strong():
-    """Authorising a delete reads the contract at the write level too.
-
-    The delete path mutates a collection only behind the contract it declares,
-    so that read is a precondition of a write rather than a retrieval read.
-    """
-    client = _RecordingClient(collection_exists=True, registry_exists=True)
-
-    with pytest.raises(IndexContractIncompatibleError):
-        _store(client).require_bound(client, "wegent_kb_1")
-
-    assert client.consistency_levels("query") == [WRITE_CONSISTENCY]
+    assert client.consistency_levels("query") == []
+    assert client.consistency_levels("upsert") == []

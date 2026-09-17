@@ -27,7 +27,6 @@ from knowledge_engine.query.executor import QueryExecutor
 from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
-    IndexMissingError,
     StorageBackendError,
 )
 from shared.models import RetrievalScope
@@ -310,10 +309,17 @@ def test_partial_write_is_not_queryable(
         backend.get_document(knowledge_id, "505")
 
 
-def test_confirmed_index_loss_is_not_reported_as_an_empty_knowledge_base(
+def test_a_dropped_index_reads_as_unindexed_and_rebuilds_on_the_next_write(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """A confirmed index that disappears must fail, not return empty."""
+    """A dropped collection takes its contract with it and nothing else lingers.
+
+    The contract lives in the collection (ticket 12), so an index dropped
+    outside the product leaves no record behind: the knowledge base reads as
+    unindexed - the observation limitation the parity spec retains - and the
+    next write rebuilds a collection that declares the current contract again.
+    A knowledge base whose index was lost does not stay broken.
+    """
     from pymilvus import MilvusClient
 
     knowledge_id = milvus_env.new_knowledge_id()
@@ -331,7 +337,7 @@ def test_confirmed_index_loss_is_not_reported_as_an_empty_knowledge_base(
     finally:
         client.close()
 
-    with pytest.raises(IndexMissingError):
+    assert (
         _query(
             milvus_env,
             knowledge_id=knowledge_id,
@@ -339,11 +345,31 @@ def test_confirmed_index_loss_is_not_reported_as_an_empty_knowledge_base(
             dimension=1536,
             backend=backend,
             model=model,
-        )
-    with pytest.raises(IndexMissingError):
-        backend.get_all_chunks(knowledge_id)
+        )["records"]
+        == []
+    )
+    assert backend.get_all_chunks(knowledge_id) == []
     # Deleting a document stays idempotent even when the physical index is gone.
     assert backend.delete_document(knowledge_id, "1101")["deleted_chunks"] == 0
+
+    # Re-indexing rebuilds the collection and its contract.
+    _index_document(
+        milvus_env,
+        knowledge_id=knowledge_id,
+        document_id=1101,
+        text="content whose physical index was dropped and rewritten",
+        dimension=1536,
+        backend=backend,
+    )
+    hits = _query(
+        milvus_env,
+        knowledge_id=knowledge_id,
+        query="content whose physical index was dropped",
+        dimension=1536,
+        backend=backend,
+        model=model,
+    )
+    assert hits["records"]
 
 
 def test_invalid_vectors_never_create_an_index(
@@ -588,10 +614,18 @@ def test_concurrent_index_creation_keeps_one_valid_collection(
 def test_concurrent_incompatible_creation_fails_explicitly(
     milvus_server_env: MilvusContractEnv,
 ) -> None:
-    """Same dimension, different model space: both must never succeed."""
+    """Same dimension, different model space: one wins, the other writes nothing.
+
+    The loser reads the collection's own contract back and refuses it, so no row
+    of the losing document may be stored: the collection holds exactly the
+    winning writer's document.
+    """
+    from pymilvus import MilvusClient
+
     milvus_env = milvus_server_env
     knowledge_id = milvus_env.new_knowledge_id()
-    outcomes: list[str] = []
+    outcomes: list[tuple[str, int]] = []
+    stored_document_ids: list[int] = []
     lock = threading.Lock()
     barrier = threading.Barrier(2)
 
@@ -608,12 +642,14 @@ def test_concurrent_incompatible_creation_fails_explicitly(
                 backend=milvus_env.backend(),
             )
             result = "ok"
+            with lock:
+                stored_document_ids.append(document_id)
         except (IndexContractIncompatibleError, EmbeddingDimensionMismatchError) as exc:
             result = f"incompatible:{type(exc).__name__}:{exc}"
         except BaseException as exc:  # noqa: BLE001 - surfaced in the assertion
             result = f"error:{type(exc).__name__}"
         with lock:
-            outcomes.append(result)
+            outcomes.append((result, document_id))
 
     threads = [
         threading.Thread(target=worker, args=("model-a", 1101)),
@@ -624,21 +660,36 @@ def test_concurrent_incompatible_creation_fails_explicitly(
     for thread in threads:
         thread.join()
 
-    assert outcomes.count("ok") <= 1, outcomes
-    assert outcomes.count("ok") == 1, outcomes
-    assert any(outcome.startswith("incompatible") for outcome in outcomes), outcomes
+    results = [result for result, _ in outcomes]
+    assert results.count("ok") == 1, outcomes
+    assert any(result.startswith("incompatible") for result in results), outcomes
+
+    client = MilvusClient(uri=milvus_env.uri)
+    try:
+        rows = client.query(
+            collection_name=milvus_env.collection_name(knowledge_id),
+            filter=f'knowledge_id == "{knowledge_id}"',
+            output_fields=["doc_ref"],
+            limit=10,
+            consistency_level="Strong",
+        )
+    finally:
+        client.close()
+    assert {row["doc_ref"] for row in rows} == {
+        str(document_id) for document_id in stored_document_ids
+    }, "the writer that failed must not have stored any row"
 
 
-def test_interrupted_creation_is_never_adopted_by_any_contract(
+def test_a_creation_declares_its_contract_in_the_same_request(
     milvus_server_env: MilvusContractEnv,
 ) -> None:
-    """The creation window is refused for every writer, without writes.
+    """A collection and its contract are never written apart.
 
-    Reproduces the reviewed interleaving through the real window: a collection
-    exists but its binding was never written (interrupted creation). Neither a
-    same-dimension writer with a different embedding space nor the original
-    contract may confirm it, and nothing may be written: an operator clears
-    the empty collection and retries.
+    The registry this ticket deletes could describe a collection that was never
+    created, or a collection whose creator died before writing its row. The
+    description travels with the collection, so the creator has already
+    declared exactly what it created by the time the create returns, and a name
+    that was never created declares nothing at all.
     """
     from knowledge_engine.embedding.space import compute_embedding_space
 
@@ -654,41 +705,45 @@ def test_interrupted_creation_is_never_adopted_by_any_contract(
         owner_contract = store.build_binding(
             collection_name, dimension=1536, embedding_space=owner_space
         )
-        assert store._create_collection(client, owner_contract) is True
-        # The creator died before writing the binding.
-        assert store.read_binding(client, collection_name) is None
+        store._create_collection(client, owner_contract)
+        # The creator's contract is readable the moment the collection is.
+        assert store.read_contract(client, collection_name) == owner_contract
+        assert store.read_contract(client, f"{collection_name}__never") is None
 
     with store.client() as client:
-        for embedding_space in ("sha256:late-writer", owner_space):
-            with pytest.raises(IndexContractIncompatibleError):
-                store.ensure_index(
-                    client,
-                    collection_name,
-                    dimension=1536,
-                    embedding_space=embedding_space,
-                )
-        assert store.read_binding(client, collection_name) is None
+        # The same space confirms what the collection already declares.
+        assert (
+            store.ensure_index(
+                client,
+                collection_name,
+                dimension=1536,
+                embedding_space=owner_space,
+            )
+            == owner_contract
+        )
+        # A same-dimension writer of another space never adopts it.
+        with pytest.raises(IndexContractIncompatibleError):
+            store.ensure_index(
+                client,
+                collection_name,
+                dimension=1536,
+                embedding_space="sha256:late-writer",
+            )
+        assert store.read_contract(client, collection_name) == owner_contract
 
-    # Reads of that collection fail loudly instead of returning content.
-    with pytest.raises(IndexContractIncompatibleError):
-        backend.get_all_chunks(knowledge_id)
-
-    # The operator clears the interrupted collection; the KB then rebuilds.
-    with store.client() as client:
-        client.drop_collection(collection_name=collection_name)
-
+    # The owner's contract is intact, so the knowledge base keeps working.
     _, model, _ = _index_document(
         milvus_env,
         knowledge_id=knowledge_id,
         document_id=1301,
-        text="content indexed after the interrupted creation was cleared",
+        text="content indexed through the contract the create declared",
         dimension=1536,
         backend=backend,
     )
     hits = _query(
         milvus_env,
         knowledge_id=knowledge_id,
-        query="content indexed after",
+        query="content indexed through",
         dimension=1536,
         backend=backend,
         model=model,
@@ -713,7 +768,7 @@ def test_confirmed_binding_is_not_overwritten_by_an_incompatible_writer(
     store = backend._store
 
     with store.client() as client:
-        confirmed = store.read_binding(client, collection_name)
+        confirmed = store.read_contract(client, collection_name)
         assert confirmed is not None
 
         with pytest.raises(IndexContractIncompatibleError):
@@ -724,7 +779,7 @@ def test_confirmed_binding_is_not_overwritten_by_an_incompatible_writer(
                 embedding_space="sha256:late-writer",
             )
 
-        assert store.read_binding(client, collection_name) == confirmed
+        assert store.read_contract(client, collection_name) == confirmed
 
     hits = _query(
         milvus_env,

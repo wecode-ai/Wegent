@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 from llama_index.core.schema import TextNode
 
-from knowledge_engine.storage.errors import IndexMissingError
+from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus_backend import MilvusBackend
 
 from .conftest import MilvusContractEnv, index_nodes
@@ -277,10 +277,17 @@ def test_reads_of_an_unindexed_knowledge_base_create_nothing(
     assert milvus_env.has_collection(knowledge_id) is False
 
 
-def test_reads_never_report_a_lost_index_as_an_empty_knowledge_base(
+def test_reads_never_adopt_a_collection_that_replaced_the_index(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """A dropped physical index fails every reading path instead of emptying."""
+    """A foreign collection under the index name is refused, not read.
+
+    The contract lives in the collection (ticket 12), so an index that was
+    dropped outside the product leaves nothing to detect. What stays
+    detectable - and must stay loud - is the replacement: a collection that
+    answers under the index name while declaring no contract of ours is never
+    read, so its rows can never be reported as this knowledge base's content.
+    """
     from pymilvus import MilvusClient
 
     knowledge_id = milvus_env.new_knowledge_id()
@@ -295,12 +302,16 @@ def test_reads_never_report_a_lost_index_as_an_empty_knowledge_base(
     client = MilvusClient(uri=milvus_env.uri)
     try:
         client.drop_collection(backend.get_index_name(knowledge_id))
+        client.create_collection(
+            collection_name=backend.get_index_name(knowledge_id),
+            dimension=1536,
+        )
     finally:
         client.close()
 
-    with pytest.raises(IndexMissingError):
+    with pytest.raises(IndexContractIncompatibleError):
         backend.get_all_chunks(knowledge_id)
-    with pytest.raises(IndexMissingError):
+    with pytest.raises(IndexContractIncompatibleError):
         backend.get_document(knowledge_id, "8651")
-    with pytest.raises(IndexMissingError):
+    with pytest.raises(IndexContractIncompatibleError):
         backend.list_documents(knowledge_id)

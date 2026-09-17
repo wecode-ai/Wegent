@@ -14,14 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict
 
-from pymilvus import MilvusClient
-
-from knowledge_engine.storage.errors import StorageBackendError
-from knowledge_engine.storage.milvus_native import (
-    INDEX_BINDING_COLLECTION,
-    build_scope_filter,
-    sanitize_filter_value,
-)
+from knowledge_engine.storage.errors import IndexMissingError, StorageBackendError
+from knowledge_engine.storage.milvus_native import build_scope_filter
 from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
 
@@ -129,9 +123,21 @@ class MilvusCleanup:
 
         with store.client() as client:
             collection_exists = store.has_collection(client, collection_name)
-            if collection_exists:
-                store.require_bound(client, collection_name)
             parent_exists = store.has_collection(client, parent_collection_name)
+            if collection_exists:
+                # A physical drop goes through the contract the collection
+                # declares about itself, exactly as the write path confirms it.
+                store.read_contract(client, collection_name)
+            elif parent_exists:
+                # The knowledge base still holds parents but its index
+                # collection is gone, so nothing confirms that these names were
+                # ours: refuse instead of dropping data through a name that no
+                # contract accounts for.
+                raise IndexMissingError(
+                    collection_name,
+                    "the index collection is gone, so the parent sidecar of "
+                    "this knowledge base cannot be identified as its own",
+                )
             if collection_exists:
                 client.drop_collection(
                     collection_name=collection_name, timeout=store.rpc_timeout
@@ -141,7 +147,6 @@ class MilvusCleanup:
                     collection_name=parent_collection_name, timeout=store.rpc_timeout
                 )
                 dropped_parent_collection = True
-            self._drop_binding(client, collection_name, timeout=store.rpc_timeout)
 
         return {
             "knowledge_id": knowledge_id,
@@ -163,8 +168,9 @@ class MilvusCleanup:
             if not store.has_collection(client, collection_name):
                 return 0
             if require_bound:
-                # The parent sidecar is not part of the retrieval contract.
-                store.require_bound(client, collection_name)
+                # A collection is only mutated through the contract it declares
+                # about itself; the parent sidecar declares none and is exempt.
+                store.read_contract(client, collection_name)
             deleted = store.count_rows(client, collection_name, filter_expr)
             if not deleted:
                 return 0
@@ -177,19 +183,3 @@ class MilvusCleanup:
                 details={"collection_name": collection_name, "remaining": remaining},
             )
         return deleted
-
-    @staticmethod
-    def _drop_binding(
-        client: MilvusClient,
-        collection_name: str,
-        *,
-        timeout: float,
-    ) -> None:
-        if not client.has_collection(INDEX_BINDING_COLLECTION, timeout=timeout):
-            return
-        client.delete(
-            collection_name=INDEX_BINDING_COLLECTION,
-            filter=(f'collection_name == "{sanitize_filter_value(collection_name)}"'),
-            timeout=timeout,
-        )
-        client.flush(INDEX_BINDING_COLLECTION, timeout=timeout)

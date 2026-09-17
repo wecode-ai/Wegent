@@ -24,7 +24,6 @@ from pymilvus import MilvusClient
 
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.milvus_backend import MilvusBackend
-from knowledge_engine.storage.milvus_native import INDEX_BINDING_COLLECTION
 from tests.contract.milvus_fault_injection import (
     SilentTcpTarget,
     SlowRpcMilvusPeer,
@@ -33,6 +32,10 @@ from tests.contract.milvus_fault_injection import (
 CONTRACT_URI_ENV = "MILVUS_CONTRACT_URI"
 CONTRACT_DIMENSION = 1536
 CONTRACT_CREATED_AT = "2026-01-01T00:00:00Z"
+# The registry collection the previous index-contract mechanism created. This
+# code neither creates nor reads it, and the contract tests assert it is absent
+# from the service they run against.
+LEGACY_INDEX_REGISTRY_COLLECTION = "wegent_index_bindings"
 # Retrieval reads at Bounded, so the first reads after a write may be answered
 # from a snapshot that predates it. Measured on the pinned 2.5.4 fixture with one
 # fresh collection per round, the document read, the dense search and the
@@ -176,17 +179,16 @@ def is_milvus_lite(uri: str) -> bool:
 
 
 def drop_collection_with_contract(uri: str, collection_name: str) -> None:
-    """Drop one stored collection, its parent sidecar and its contract."""
+    """Drop one stored collection, its parent sidecar and its contract.
+
+    The contract lives in the collection's own description, so dropping the
+    collection is all it takes to remove it.
+    """
     client = MilvusClient(uri=uri)
     try:
         for name in (collection_name, f"{collection_name}__parents"):
             if client.has_collection(name):
                 client.drop_collection(name)
-        if client.has_collection(INDEX_BINDING_COLLECTION):
-            client.delete(
-                collection_name=INDEX_BINDING_COLLECTION,
-                filter=f'collection_name == "{collection_name}"',
-            )
     finally:
         client.close()
 
@@ -239,22 +241,34 @@ def milvus_uri() -> str:
             "(for example http://localhost:19530); contract tests never skip.",
             pytrace=False,
         )
+    # Fail here, not deep inside a test, when the service cannot answer - and
+    # report a service that still holds the deleted mechanism's registry
+    # instead of failing an unrelated assertion later. Nothing is removed.
+    client = MilvusClient(uri=uri)
+    try:
+        collections = client.list_collections()
+    except Exception as exc:  # pragma: no cover - depends on the environment
+        pytest.fail(
+            f"Milvus contract service at {uri} is unreachable: {exc}",
+            pytrace=False,
+        )
+    finally:
+        client.close()
+    if LEGACY_INDEX_REGISTRY_COLLECTION in collections:
+        pytest.fail(
+            f"Milvus contract service at {uri} still holds "
+            f"'{LEGACY_INDEX_REGISTRY_COLLECTION}', the registry the previous "
+            "index-contract mechanism created. The current code never creates "
+            "or reads it; drop that collection on a disposable contract "
+            "service and re-run.",
+            pytrace=False,
+        )
     return uri
 
 
 @pytest.fixture
 def milvus_env(milvus_uri) -> MilvusContractEnv:
     env = MilvusContractEnv(uri=milvus_uri)
-    try:
-        # Fail here, not deep inside a test, when the service is unreachable.
-        client = MilvusClient(uri=milvus_uri)
-        client.list_collections()
-        client.close()
-    except Exception as exc:  # pragma: no cover - depends on the environment
-        pytest.fail(
-            f"Milvus contract service at {milvus_uri} is unreachable: {exc}",
-            pytrace=False,
-        )
     try:
         yield env
     finally:

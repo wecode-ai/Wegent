@@ -5,9 +5,10 @@
 """Milvus storage backend built directly on the official synchronous PyMilvus.
 
 Scope: dense vector write, retrieval and delete for ordinary documents, plus
-the server-maintained index contract that binds a collection to its embedding
-space, schema and keyword analyzer. Collections are created only by the
-explicit index write path; queries, reads and deletes never create resources.
+the index contract each collection declares about itself - the embedding space,
+schema and keyword analyzer it was created for. Collections are created only by
+the explicit index write path; queries, reads and deletes never create
+resources.
 
 Three retrieval modes are served from one physical collection: ``vector`` uses
 the stored dense vectors with their raw COSINE score, ``keyword`` uses the
@@ -71,7 +72,6 @@ from knowledge_engine.storage.milvus_native import (
     SOURCE_FILE_FIELD,
     MilvusIndexBinding,
     build_scope_filter,
-    contract_token_field,
     node_row_id,
 )
 from knowledge_engine.storage.milvus_parent_store import MilvusParentStore
@@ -230,7 +230,6 @@ class MilvusBackend(BaseStorageBackend):
                 vector,
                 knowledge_id=knowledge_id,
                 doc_ref=doc_ref,
-                embedding_space=embedding_space,
             )
             for node, vector in zip(materialized, vectors)
         ]
@@ -410,7 +409,6 @@ class MilvusBackend(BaseStorageBackend):
         *,
         knowledge_id: str,
         doc_ref: str,
-        embedding_space: str,
     ) -> Dict[str, Any]:
         metadata = dict(node.metadata or {})
         chunk_index = int(metadata.get("chunk_index") or 0)
@@ -429,8 +427,6 @@ class MilvusBackend(BaseStorageBackend):
             METADATA_FIELD: _json_metadata(metadata),
             CREATED_AT_FIELD: str(metadata.get("created_at") or ""),
             DENSE_VECTOR_FIELD: [float(value) for value in vector],
-            # Constant value; the field name carries the contract identity.
-            contract_token_field(embedding_space): "1",
         }
 
     def retrieve(
@@ -615,8 +611,7 @@ class MilvusBackend(BaseStorageBackend):
     ) -> None:
         """Verify the request's contract still serves the requested space."""
         self._require_live_collection(client, collection_name)
-        self._store.verify_bound_contract(
-            client,
+        self._store.confirm_contract(
             collection_name,
             binding,
             dimension=dimension,
@@ -844,45 +839,31 @@ class MilvusBackend(BaseStorageBackend):
     def _read_bound_index(
         self, client: MilvusClient, collection_name: str
     ) -> Optional[MilvusIndexBinding]:
-        """Read this request's index contract, or None when never indexed.
+        """Read the contract the collection itself declares, None if it is absent.
 
-        No stored contract and no collection means the knowledge base was
-        never indexed, which is a valid empty result. A stored contract whose
-        collection is gone is a service fault and must not degrade into empty.
+        The contract lives with the collection, so one read answers everything a
+        request needs about it. No collection means the knowledge base was never
+        indexed, which is a valid empty result: a collection dropped outside the
+        product leaves nothing behind either, so it reads the same way - the
+        observation limitation the parity spec retains instead of recording the
+        index anywhere else.
 
-        A contract an older schema wrote is also a fault: the current code can
-        neither read its columns nor serve its capabilities, and answering with
-        whatever the old layout happens to contain would hide that. Only an
-        explicit operator rebuild moves such a collection forward.
-
-        The contract is read at the snapshot level, which leaves one window
-        open: a collection created moments ago can be visible before its
-        contract row is. A collection that exists without a visible contract is
-        therefore re-read once at the write level, inside this same request and
-        on the same client, before it is called incompatible: a fresh write
-        degrades into a slower answer rather than a failure. A contract that is
-        really missing still fails.
+        A collection that exists without a readable contract, or whose contract
+        an older schema wrote, is a fault: the current code can neither read its
+        columns nor serve its capabilities, and answering with whatever the
+        collection happens to contain would hide that. Only an explicit operator
+        rebuild moves such a collection forward.
         """
-        binding = self._store.read_binding(client, collection_name)
-        exists = self._store.has_collection(client, collection_name)
-        if binding is None and exists:
-            binding = self._store.read_binding_strong(client, collection_name)
+        binding = self._store.read_contract(client, collection_name)
         if binding is None:
-            if exists:
-                raise IndexContractIncompatibleError(
-                    collection_name,
-                    "the collection has no stored index contract",
-                )
             logger.info(
                 "[Milvus] Query on never-indexed knowledge base returns empty: %s",
                 collection_name,
             )
             return None
-        if not exists:
-            raise IndexMissingError(
-                collection_name,
-                "a confirmed index contract exists but its collection is gone",
-            )
+        # The keyword and document paths never compare a request contract, so
+        # the version is checked here for every read path: a collection an older
+        # schema wrote cannot serve this one.
         if binding.schema_version != SCHEMA_VERSION:
             raise IndexContractIncompatibleError(
                 collection_name,

@@ -5,23 +5,22 @@
 """Bounded PyMilvus access: client lifetimes, RPCs and the index contract.
 
 This module owns the talking part - one short-lived official client per bounded
-operation, the RPCs the adapters call, and reading, writing and verifying the
-stored index contract. The row layout, contract vocabulary, row identifiers and
-filters it works with live in ``milvus_native``. It never resolves retrieval
-text or calls an embedding provider, so the adapter above it can be tested
-against real Milvus without a model.
+operation, the RPCs the adapters call, and reading and confirming the index
+contract a collection declares in its own description. The row layout, contract
+vocabulary, row identifiers and filters it works with live in ``milvus_native``.
+It never resolves retrieval text or calls an embedding provider, so the adapter
+above it can be tested against real Milvus without a model.
 """
 
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Sequence
 
 import grpc
-from pymilvus import CollectionSchema, MilvusClient
+from pymilvus import MilvusClient
 from pymilvus.exceptions import MilvusException
 
 from knowledge_engine.storage.errors import (
@@ -32,15 +31,10 @@ from knowledge_engine.storage.errors import (
 from knowledge_engine.storage.milvus_errors import rpc_failure
 from knowledge_engine.storage.milvus_native import (
     ANALYZER_TYPE,
-    BINDING_STATE_FIELD,
-    BINDING_STATE_READY,
-    BINDING_VECTOR_FIELD,
-    BINDING_VECTOR_VALUE,
     DEFAULT_RPC_TIMEOUT_SECONDS,
     DENSE_VECTOR_FIELD,
     HEAVY_RPC_TIMEOUT_SECONDS,
     ID_FIELD,
-    INDEX_BINDING_COLLECTION,
     INDEX_TYPE,
     MAX_COUNT_ROWS,
     METRIC_TYPE,
@@ -52,19 +46,12 @@ from knowledge_engine.storage.milvus_native import (
     SPARSE_VECTOR_FIELD,
     WRITE_CONSISTENCY_LEVEL,
     MilvusIndexBinding,
-    build_binding_collection_schema,
     build_collection_schema,
-    collection_dimension,
-    sanitize_filter_value,
+    read_collection_description,
     strip_connection_credentials,
 )
 
 logger = logging.getLogger(__name__)
-
-# A concurrent creation is allowed a short bounded re-read before it is called
-# a foreign collection; the wait never turns into an unbounded poll.
-CONCURRENT_BINDING_TIMEOUT_SECONDS = 5.0
-CONCURRENT_BINDING_POLL_SECONDS = 0.05
 
 
 class MilvusDocumentStore:
@@ -143,88 +130,63 @@ class MilvusDocumentStore:
             analyzer=ANALYZER_TYPE,
         )
 
-    def read_binding(
+    def read_contract(
         self,
         client: MilvusClient,
         collection_name: str,
-        *,
-        consistency_level: str = READ_CONSISTENCY_LEVEL,
     ) -> MilvusIndexBinding | None:
-        """Read the stored contract for a collection, creating nothing.
+        """Read the index contract a collection declares about itself.
 
-        ``consistency_level`` is an internal convention, not a caller knob.
+        The contract is read from the collection it describes, so this is the
+        only lookup the whole write, read and delete path needs - and it never
+        creates anything. ``None`` means there is no such collection, which is
+        what a knowledge base that was never indexed looks like. A collection
+        that exists without a readable contract was not created by this code and
+        is refused instead of being adopted, and so is one whose own contract
+        disagrees with the dimension it declares.
         """
-        if not client.has_collection(
-            INDEX_BINDING_COLLECTION, timeout=self.rpc_timeout
-        ):
+        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
             return None
-        rows = client.query(
-            collection_name=INDEX_BINDING_COLLECTION,
-            filter=f'collection_name == "{sanitize_filter_value(collection_name)}"',
-            output_fields=["binding_json"],
-            limit=1,
-            consistency_level=consistency_level,
-            timeout=self.rpc_timeout,
+        described = read_collection_description(
+            client, collection_name, timeout=self.rpc_timeout
         )
-        if not rows:
-            return None
-        return MilvusIndexBinding.from_row(rows[0])
-
-    def read_binding_strong(
-        self, client: MilvusClient, collection_name: str
-    ) -> MilvusIndexBinding | None:
-        """Read a contract the write path owns, as soon as it lands."""
-        return self.read_binding(
-            client, collection_name, consistency_level=WRITE_CONSISTENCY_LEVEL
-        )
-
-    def write_binding(
-        self,
-        client: MilvusClient,
-        binding: MilvusIndexBinding,
-    ) -> None:
-        self._ensure_registry_collection(
-            client,
-            INDEX_BINDING_COLLECTION,
-            build_binding_collection_schema(),
-            vector_field=BINDING_VECTOR_FIELD,
-        )
-        row = binding.to_row()
-        row[BINDING_VECTOR_FIELD] = list(BINDING_VECTOR_VALUE)
-        row[BINDING_STATE_FIELD] = BINDING_STATE_READY
-        client.upsert(
-            collection_name=INDEX_BINDING_COLLECTION,
-            data=[row],
-            timeout=HEAVY_RPC_TIMEOUT_SECONDS,
-        )
-        client.flush(INDEX_BINDING_COLLECTION, timeout=HEAVY_RPC_TIMEOUT_SECONDS)
-
-    def _ensure_registry_collection(
-        self,
-        client: MilvusClient,
-        collection_name: str,
-        schema: CollectionSchema,
-        *,
-        vector_field: str,
-    ) -> None:
-        if client.has_collection(collection_name, timeout=self.rpc_timeout):
-            return
-        index_params = client.prepare_index_params()
-        index_params.add_index(
-            field_name=vector_field,
-            index_type=INDEX_TYPE,
-            metric_type="IP",
-        )
-        try:
-            client.create_collection(
-                collection_name=collection_name,
-                schema=schema,
-                index_params=index_params,
-                timeout=HEAVY_RPC_TIMEOUT_SECONDS,
+        binding = described.binding
+        if binding is None:
+            raise IndexContractIncompatibleError(
+                collection_name,
+                "the collection declares no readable index contract",
             )
-        except Exception:
-            if not client.has_collection(collection_name, timeout=self.rpc_timeout):
-                raise
+        if described.dimension != binding.dimension:
+            raise IndexContractIncompatibleError(
+                collection_name,
+                "the collection vector dimension differs from its own contract",
+                details={
+                    "declared_dimension": binding.dimension,
+                    "collection_dimension": described.dimension,
+                },
+            )
+        return binding
+
+    def confirm_contract(
+        self,
+        collection_name: str,
+        binding: MilvusIndexBinding,
+        *,
+        dimension: int,
+        embedding_space: str,
+    ) -> None:
+        """Confirm a contract the caller already read serves this request.
+
+        The comparison is in memory: the caller read the contract from the
+        collection itself, so serving it twice would only add a round trip.
+        """
+        binding.assert_compatible(
+            self.build_binding(
+                collection_name,
+                dimension=dimension,
+                embedding_space=embedding_space,
+            )
+        )
 
     def ensure_index(
         self,
@@ -234,89 +196,34 @@ class MilvusDocumentStore:
         dimension: int,
         embedding_space: str,
     ) -> MilvusIndexBinding:
-        """Create the index once, then verify the bound contract afterwards.
+        """Create the index once, or confirm the contract it already declares.
 
-        The physical collection is the only atomic ownership resource Milvus
-        offers, so exactly one owning contract is guaranteed: the process that
-        successfully creates the collection writes the binding, and any other
-        writer - including one with the same dimension but a different
-        embedding space - is rejected instead of confirming the collection.
+        The collection is the only atomic ownership resource Milvus offers, and
+        its own description carries the contract, so a collection this code
+        created always answers with the contract it was created under. A
+        collection that declares a different contract - including the same
+        dimension in another embedding space - is refused rather than
+        overwritten, and a collection that declares no readable contract is
+        refused rather than adopted.
 
-        A collection that exists without a binding is an interrupted or
-        foreign creation. It is never adopted automatically: the write fails
-        loudly and an operator clears the empty collection before retrying.
+        ``create_collection`` is not a compare-and-swap, so a create is
+        followed by reading the contract back from the collection: a concurrent
+        writer of another contract may have created the name first, and this
+        writer must fail instead of writing rows into a collection it does not
+        own. Nothing waits for that writer: the race either lands on this
+        writer's contract or fails explicitly.
         """
         requested = self.build_binding(
             collection_name,
             dimension=dimension,
             embedding_space=embedding_space,
         )
-        bound = self.read_binding_strong(client, collection_name)
-        collection_exists = client.has_collection(
-            collection_name, timeout=self.rpc_timeout
-        )
-
-        if bound is not None:
-            bound.assert_compatible(requested)
-            if not collection_exists:
-                raise IndexMissingError(
-                    collection_name,
-                    "the bound collection confirmed earlier is gone",
-                )
-            self._assert_collection_dimension(client, requested)
-            return bound
-
-        if collection_exists:
-            raise IndexContractIncompatibleError(
-                collection_name,
-                "the collection exists without a stored index contract",
-            )
-
-        if self._create_collection(client, requested):
-            self._assert_collection_dimension(client, requested)
-            self.write_binding(client, requested)
-            return requested
-        return self._await_binding(client, requested)
-
-    def _await_binding(
-        self, client: MilvusClient, requested: MilvusIndexBinding
-    ) -> MilvusIndexBinding:
-        """Re-read a concurrently created collection until its contract lands."""
-        deadline = time.monotonic() + CONCURRENT_BINDING_TIMEOUT_SECONDS
-        while True:
-            if self.read_binding_strong(client, requested.collection_name) is not None:
-                return self._verify_existing(client, requested)
-            if time.monotonic() >= deadline:
-                raise IndexContractIncompatibleError(
-                    requested.collection_name,
-                    "the collection has no confirmed index contract",
-                )
-            time.sleep(CONCURRENT_BINDING_POLL_SECONDS)
-
-    def verify_bound_contract(
-        self,
-        client: MilvusClient,
-        collection_name: str,
-        binding: MilvusIndexBinding,
-        *,
-        dimension: int,
-        embedding_space: str,
-    ) -> None:
-        """Verify the contract a caller read for this request and space.
-
-        A caller that read the stored contract once verifies it here instead of
-        paying a second registry read. The contract itself is not re-read, so a
-        collection dropped and rebuilt inside the same request window - same
-        dimension, different embedding space - is not detected. The read paths
-        never promised cross-process linearity.
-        """
-        requested = self.build_binding(
-            collection_name,
-            dimension=dimension,
-            embedding_space=embedding_space,
-        )
-        binding.assert_compatible(requested)
-        self._assert_collection_dimension(client, requested)
+        declared = self.read_contract(client, collection_name)
+        if declared is None:
+            self._create_collection(client, requested)
+            declared = self._read_created_collection(client, requested)
+        declared.assert_compatible(requested)
+        return declared
 
     def verify_keyword_binding(
         self, collection_name: str, binding: MilvusIndexBinding
@@ -336,27 +243,10 @@ class MilvusDocumentStore:
                 details={"analyzer": binding.analyzer},
             )
 
-    def require_bound(
-        self, client: MilvusClient, collection_name: str
-    ) -> MilvusIndexBinding | None:
-        """Return the bound contract of an existing collection, None if absent.
-
-        Deletes use this so a collection is never mutated through a contract
-        it does not declare, and they read at the write level to do it.
-        """
-        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
-            return None
-        bound = self.read_binding_strong(client, collection_name)
-        if bound is None:
-            raise IndexContractIncompatibleError(
-                collection_name,
-                "the collection has no stored index contract",
-            )
-        return bound
-
     def _create_collection(
         self, client: MilvusClient, binding: MilvusIndexBinding
-    ) -> bool:
+    ) -> None:
+        """Create the owned collection, contract included, in one request."""
         index_params = client.prepare_index_params()
         index_params.add_index(
             field_name=DENSE_VECTOR_FIELD,
@@ -371,66 +261,39 @@ class MilvusDocumentStore:
         try:
             client.create_collection(
                 collection_name=binding.collection_name,
-                schema=build_collection_schema(
-                    binding.dimension, binding.embedding_space
-                ),
+                schema=build_collection_schema(binding),
                 index_params=index_params,
                 consistency_level=WRITE_CONSISTENCY_LEVEL,
                 timeout=HEAVY_RPC_TIMEOUT_SECONDS,
             )
-            return True
         except Exception:
-            # A concurrent writer may have created the same collection first.
-            if not self._wait_for_collection(client, binding.collection_name):
+            # A create that lost the name race answers with the server's
+            # duplicate-collection rejection - measured on the pinned 2.5.4
+            # fixture: an identical create is idempotent, a different contract
+            # is rejected as "different parameters". This writer never waits
+            # for the other one: it reads the collection back and either
+            # confirms the contract it found or fails, and a create that leaves
+            # nothing to read back is raised as it is.
+            if not self.has_collection(client, binding.collection_name):
                 raise
-            logger.info(
-                "[Milvus] Collection %s was created concurrently",
-                binding.collection_name,
-            )
-            return False
 
-    def _wait_for_collection(self, client: MilvusClient, name: str) -> bool:
-        """Wait briefly for a concurrently created collection to appear."""
-        deadline = time.monotonic() + CONCURRENT_BINDING_TIMEOUT_SECONDS
-        while True:
-            if client.has_collection(name, timeout=self.rpc_timeout):
-                return True
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(CONCURRENT_BINDING_POLL_SECONDS)
-
-    def _verify_existing(
+    def _read_created_collection(
         self, client: MilvusClient, requested: MilvusIndexBinding
     ) -> MilvusIndexBinding:
-        bound = self.read_binding_strong(client, requested.collection_name)
-        if bound is None:
-            raise IndexContractIncompatibleError(
-                requested.collection_name,
-                "the collection has no stored index contract",
-            )
-        self.verify_bound_contract(
-            client,
-            requested.collection_name,
-            bound,
-            dimension=requested.dimension,
-            embedding_space=requested.embedding_space,
-        )
-        return bound
+        """Read the contract the created collection declares about itself.
 
-    def _assert_collection_dimension(
-        self, client: MilvusClient, requested: MilvusIndexBinding
-    ) -> None:
-        actual_dimension = collection_dimension(
-            client,
-            requested.collection_name,
-            timeout=self.rpc_timeout,
-        )
-        if actual_dimension != requested.dimension:
-            raise IndexContractIncompatibleError(
+        This is the post-create read the contract needs: the collection exists,
+        so the caller can compare the contract in its description with the one
+        this writer asked for. A collection that cannot be read back is a fault,
+        not an empty knowledge base.
+        """
+        declared = self.read_contract(client, requested.collection_name)
+        if declared is None:
+            raise IndexMissingError(
                 requested.collection_name,
-                "collection vector dimension differs from the stored contract",
-                details={"actual_dimension": actual_dimension},
+                "the collection is gone immediately after its creation",
             )
+        return declared
 
     def upsert_rows(
         self,

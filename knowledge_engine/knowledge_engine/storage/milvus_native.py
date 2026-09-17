@@ -6,10 +6,14 @@
 
 This module owns what a stored row is: the physical schema, the index contract
 that binds a collection to one embedding space and schema version, row
-identifiers and the filter expressions the read and write paths share. The
-bounded client lifecycle and the RPCs that talk to the service live in
-``milvus_store``; nothing here resolves retrieval text or calls an embedding
-provider, so an adapter can be tested against real Milvus without a model.
+identifiers, the filter expressions the read and write paths share, and the one
+describe that reads a contract back. The contract has exactly one home - the
+description of the collection it describes, written when that collection is
+created and read back from it - so nothing outside the collection records what a
+collection contains. The bounded client lifecycle and the write and search RPCs
+live in ``milvus_store``; nothing here resolves retrieval text or calls an
+embedding provider, so an adapter can be tested against real Milvus without a
+model.
 """
 
 from __future__ import annotations
@@ -41,6 +45,11 @@ SPARSE_INDEX_TYPE = "SPARSE_INVERTED_INDEX"
 ANALYZER_TYPE = "chinese"
 ANALYZER_PARAMS: Dict[str, Any] = {"type": ANALYZER_TYPE}
 BM25_FUNCTION_NAME = "retrieval_text_bm25"
+
+# Marker that separates the stored contract from any other description text.
+# Milvus 2.5.4 round-trips a collection description unchanged (verified on the
+# pinned contract fixture), so the contract needs no column of its own.
+CONTRACT_DESCRIPTION_PREFIX = "wegent-index-contract:"
 
 MAX_ID_LENGTH = 128
 MAX_KEY_LENGTH = 512
@@ -97,21 +106,10 @@ ROW_OUTPUT_FIELDS: List[str] = [
     CREATED_AT_FIELD,
 ]
 
-INDEX_BINDING_COLLECTION = "wegent_index_bindings"
-BINDING_VECTOR_FIELD = "binding_vector"
-# Milvus rejects dimensions below 2, so the registry placeholder is 2d even
-# though it is never searched.
-BINDING_VECTOR_DIM = 2
-BINDING_VECTOR_VALUE = [0.0, 0.0]
-# The registry row keeps a state column for schema stability; a stored binding
-# is always confirmed, so the value is constant.
-BINDING_STATE_FIELD = "state"
-BINDING_STATE_READY = "ready"
-
 
 @dataclass(frozen=True)
 class MilvusIndexBinding:
-    """Server-maintained physical index contract for one knowledge base."""
+    """Physical index contract one collection declares about itself."""
 
     collection_name: str
     connection: str
@@ -129,11 +127,6 @@ class MilvusIndexBinding:
     def to_payload(self) -> Dict[str, Any]:
         return asdict(self)
 
-    def to_row(self) -> Dict[str, Any]:
-        row = self.to_payload()
-        row["binding_json"] = json.dumps(row, sort_keys=True)
-        return row
-
     @classmethod
     def from_payload(cls, payload: Dict[str, Any]) -> "MilvusIndexBinding":
         return cls(
@@ -147,16 +140,6 @@ class MilvusIndexBinding:
             index_type=str(payload["index_type"]),
             analyzer=str(payload.get("analyzer") or ""),
         )
-
-    @classmethod
-    def from_row(cls, row: Dict[str, Any]) -> "MilvusIndexBinding":
-        raw = row.get("binding_json")
-        if not isinstance(raw, str) or not raw:
-            raise IndexContractIncompatibleError(
-                str(row.get("collection_name") or "unknown"),
-                "the stored binding row has no contract payload",
-            )
-        return cls.from_payload(json.loads(raw))
 
     def assert_compatible(self, other: "MilvusIndexBinding") -> None:
         """Raise when the requested contract differs from the bound one."""
@@ -227,41 +210,87 @@ def build_scope_filter(
     return " and ".join(conditions)
 
 
-def contract_token_field(embedding_space: str) -> str:
-    """Field name that pins the collection schema to one embedding space.
+def index_contract_description(binding: MilvusIndexBinding) -> str:
+    """Serialize a contract into the description of the collection it describes.
 
-    Milvus creates a collection idempotently when the request matches an
-    existing one, so "create succeeded" alone cannot tell two writers apart.
-    Encoding the contract in the schema makes the server itself reject a
-    different contract for the same collection name; the field is never
-    queried or searched.
+    The description travels with the collection in every create and read, so the
+    contract has no second home to drift away from it.
     """
-    digest = hashlib.sha256(
-        f"v{SCHEMA_VERSION}|{embedding_space}".encode("utf-8")
-    ).hexdigest()
-    return f"contract_{digest[:16]}"
+    return CONTRACT_DESCRIPTION_PREFIX + json.dumps(
+        binding.to_payload(), sort_keys=True
+    )
 
 
-def build_collection_schema(dimension: int, embedding_space: str) -> CollectionSchema:
+def index_contract_from_description(description: Any) -> MilvusIndexBinding | None:
+    """Read a contract back out of a collection description.
+
+    ``None`` means the description carries no readable contract: a collection
+    this code did not create, or one created by an older schema. Callers refuse
+    such a collection instead of guessing what it contains.
+    """
+    if not isinstance(description, str) or not description.startswith(
+        CONTRACT_DESCRIPTION_PREFIX
+    ):
+        return None
+    try:
+        payload = json.loads(description[len(CONTRACT_DESCRIPTION_PREFIX) :])
+        if not isinstance(payload, dict):
+            return None
+        return MilvusIndexBinding.from_payload(payload)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+@dataclass(frozen=True)
+class CollectionDescription:
+    """One ``describe_collection`` answer, read as contract and dimension.
+
+    Both facts come from the same server call, so the dimension check costs no
+    extra round trip.
+    """
+
+    dimension: int | None
+    binding: MilvusIndexBinding | None
+
+
+def read_collection_description(
+    client: MilvusClient,
+    collection_name: str,
+    *,
+    timeout: float,
+) -> CollectionDescription:
+    """Read the contract and the dense dimension one collection declares."""
+    description = client.describe_collection(collection_name, timeout=timeout)
+    return CollectionDescription(
+        dimension=_dense_dimension(description),
+        binding=index_contract_from_description(description.get("description")),
+    )
+
+
+def _dense_dimension(description: Dict[str, Any]) -> int | None:
+    for field in description.get("fields", []):
+        if field.get("name") == DENSE_VECTOR_FIELD:
+            dim = field.get("params", {}).get("dim")
+            return int(dim) if dim is not None else None
+    return None
+
+
+def build_collection_schema(binding: MilvusIndexBinding) -> CollectionSchema:
     """Build the physical row layout for one Milvus knowledge index.
 
     The collection carries both retrieval paths: a dense vector for semantic
     search and a server-maintained sparse vector whose terms come from the
     BM25 function over the analyzed retrieval text. Filterable metadata is a
-    native JSON column so it is applied by the server before ``top_k``.
+    native JSON column so it is applied by the server before ``top_k``. Its
+    description carries the index contract of the collection it creates.
     """
-    if dimension <= 0:
+    if binding.dimension <= 0:
         raise ValueError("dimension must be a positive integer")
     fields = _scalar_row_fields() + [
         FieldSchema(
-            name=contract_token_field(embedding_space),
-            dtype=DataType.VARCHAR,
-            max_length=MAX_KEY_LENGTH,
-        ),
-        FieldSchema(
             name=DENSE_VECTOR_FIELD,
             dtype=DataType.FLOAT_VECTOR,
-            dim=dimension,
+            dim=binding.dimension,
         ),
         FieldSchema(
             name=SPARSE_VECTOR_FIELD,
@@ -272,7 +301,7 @@ def build_collection_schema(dimension: int, embedding_space: str) -> CollectionS
         fields=fields,
         auto_id=False,
         enable_dynamic_field=False,
-        description=f"wegent knowledge index schema v{SCHEMA_VERSION}",
+        description=index_contract_description(binding),
     )
     schema.add_function(
         Function(
@@ -333,82 +362,6 @@ def _scalar_row_fields() -> List[FieldSchema]:
             max_length=MAX_TEXT_LENGTH,
         ),
     ]
-
-
-def build_binding_collection_schema() -> CollectionSchema:
-    fields = [
-        FieldSchema(
-            name="collection_name",
-            dtype=DataType.VARCHAR,
-            is_primary=True,
-            max_length=MAX_KEY_LENGTH,
-        ),
-    ]
-    fields.extend(_binding_payload_fields())
-    fields.append(
-        FieldSchema(
-            name=BINDING_STATE_FIELD,
-            dtype=DataType.VARCHAR,
-            max_length=MAX_KEY_LENGTH,
-        )
-    )
-    # Milvus requires every collection to own a vector field. This
-    # placeholder is never searched; the registry only answers filters.
-    fields.append(
-        FieldSchema(
-            name=BINDING_VECTOR_FIELD,
-            dtype=DataType.FLOAT_VECTOR,
-            dim=BINDING_VECTOR_DIM,
-        )
-    )
-    return CollectionSchema(
-        fields=fields,
-        auto_id=False,
-        enable_dynamic_field=False,
-        description="wegent index binding registry",
-    )
-
-
-def _binding_payload_fields() -> List[FieldSchema]:
-    """Columns that mirror the stored index contract payload."""
-    return [
-        FieldSchema(
-            name="connection", dtype=DataType.VARCHAR, max_length=MAX_TEXT_LENGTH
-        ),
-        FieldSchema(name="database", dtype=DataType.VARCHAR, max_length=MAX_KEY_LENGTH),
-        FieldSchema(name="schema_version", dtype=DataType.INT64),
-        FieldSchema(
-            name="embedding_space",
-            dtype=DataType.VARCHAR,
-            max_length=MAX_TEXT_LENGTH,
-        ),
-        FieldSchema(name="dimension", dtype=DataType.INT64),
-        FieldSchema(
-            name="metric_type", dtype=DataType.VARCHAR, max_length=MAX_KEY_LENGTH
-        ),
-        FieldSchema(
-            name="index_type", dtype=DataType.VARCHAR, max_length=MAX_KEY_LENGTH
-        ),
-        FieldSchema(name="analyzer", dtype=DataType.VARCHAR, max_length=MAX_KEY_LENGTH),
-        FieldSchema(
-            name="binding_json", dtype=DataType.VARCHAR, max_length=MAX_TEXT_LENGTH
-        ),
-    ]
-
-
-def collection_dimension(
-    client: MilvusClient,
-    collection_name: str,
-    *,
-    timeout: float,
-) -> int | None:
-    """Read the dense vector dimension from an existing collection."""
-    description = client.describe_collection(collection_name, timeout=timeout)
-    for field in description.get("fields", []):
-        if field.get("name") == DENSE_VECTOR_FIELD:
-            dim = field.get("params", {}).get("dim")
-            return int(dim) if dim is not None else None
-    return None
 
 
 def strip_connection_credentials(uri: str) -> str:

@@ -21,7 +21,7 @@ from pymilvus import MilvusClient
 
 from knowledge_engine.query.executor import QueryExecutor
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from knowledge_engine.storage.errors import IndexMissingError
+from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus_backend import MilvusBackend
 from shared.models import RetrievalScope
 
@@ -525,10 +525,17 @@ def test_qa_pair_profile_promotes_vector_mode_to_hybrid(preference_index) -> Non
         )
 
 
-def test_hybrid_of_a_missing_bound_collection_is_reported_as_missing(
+def test_hybrid_never_adopts_a_collection_that_replaced_the_index(
     preference_env: MilvusContractEnv,
 ) -> None:
-    """A confirmed index that disappeared is a fault, not an empty result."""
+    """A foreign collection under the index name is refused, not searched.
+
+    The contract lives in the collection (ticket 12), so an index that was
+    dropped outside the product leaves nothing behind to detect; a collection
+    that answers under the index name while declaring no contract of ours stays
+    detectable, and hybrid retrieval must refuse it instead of searching rows
+    it cannot describe.
+    """
     knowledge_id = preference_env.new_knowledge_id()
     backend = preference_env.backend()
     model = preference_env.preference_model  # type: ignore[attr-defined]
@@ -542,10 +549,14 @@ def test_hybrid_of_a_missing_bound_collection_is_reported_as_missing(
     client = MilvusClient(uri=backend.url)
     try:
         client.drop_collection(backend.get_index_name(knowledge_id))
+        client.create_collection(
+            collection_name=backend.get_index_name(knowledge_id),
+            dimension=DIMENSION,
+        )
     finally:
         client.close()
 
-    with pytest.raises(IndexMissingError):
+    with pytest.raises(IndexContractIncompatibleError):
         _hybrid(backend, knowledge_id, model)
 
 

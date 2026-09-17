@@ -2,7 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for the native Milvus contract and schema layer (no server)."""
+"""Unit tests for the native Milvus contract and schema layer (no server).
+
+The index contract lives in the description of the collection it describes, so
+these tests cover the round trip through that description and the schema the
+contract is written with.
+"""
 
 import json
 
@@ -13,6 +18,7 @@ from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus_native import (
     ANALYZER_TYPE,
     BM25_FUNCTION_NAME,
+    CONTRACT_DESCRIPTION_PREFIX,
     DENSE_VECTOR_FIELD,
     METADATA_FIELD,
     METRIC_TYPE,
@@ -22,8 +28,10 @@ from knowledge_engine.storage.milvus_native import (
     MilvusIndexBinding,
     build_collection_schema,
     build_scope_filter,
-    contract_token_field,
+    index_contract_description,
+    index_contract_from_description,
     node_row_id,
+    read_collection_description,
     strip_connection_credentials,
 )
 
@@ -44,17 +52,53 @@ def _binding(**overrides):
     return MilvusIndexBinding(**payload)
 
 
-def test_binding_row_round_trip():
-    """A binding survives serialization into the registry collection."""
+def test_binding_survives_the_collection_description_round_trip():
+    """The contract is stored in, and read back from, its own collection."""
     binding = _binding()
 
-    assert MilvusIndexBinding.from_row(binding.to_row()) == binding
+    description = index_contract_description(binding)
+
+    assert description.startswith(CONTRACT_DESCRIPTION_PREFIX)
+    assert index_contract_from_description(description) == binding
 
 
-def test_binding_row_without_contract_payload_is_rejected():
-    """A registry row without its contract payload is an explicit failure."""
-    with pytest.raises(IndexContractIncompatibleError):
-        MilvusIndexBinding.from_row({"collection_name": "wegent_kb_1"})
+@pytest.mark.parametrize(
+    "description",
+    [
+        "",
+        "wegent knowledge index schema v4",
+        CONTRACT_DESCRIPTION_PREFIX + "not json",
+        CONTRACT_DESCRIPTION_PREFIX + '["not a contract"]',
+        CONTRACT_DESCRIPTION_PREFIX + '{"collection_name": "wegent_kb_1"}',
+    ],
+)
+def test_a_description_without_a_readable_contract_is_reported_as_absent(
+    description,
+):
+    """Every unreadable description reads as "no contract", never as a guess."""
+    assert index_contract_from_description(description) is None
+
+
+def test_describe_collection_reads_the_contract_and_the_dimension_once():
+    """Both facts a contract check needs come from the one describe call."""
+    binding = _binding()
+    calls: list[dict] = []
+
+    class _Client:
+        def describe_collection(self, collection_name: str, **kwargs) -> dict:
+            calls.append(kwargs)
+            return {
+                "description": index_contract_description(binding),
+                "fields": [
+                    {"name": DENSE_VECTOR_FIELD, "params": {"dim": binding.dimension}}
+                ],
+            }
+
+    described = read_collection_description(_Client(), "wegent_kb_1", timeout=5.0)
+
+    assert described.binding == binding
+    assert described.dimension == binding.dimension
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -114,7 +158,8 @@ def test_scope_filter_rejects_empty_document_scope():
 
 
 def test_collection_schema_declares_required_fields_and_dimension():
-    schema = build_collection_schema(4096, "sha256:space")
+    binding = _binding(dimension=4096, embedding_space="sha256:space")
+    schema = build_collection_schema(binding)
     fields = {field.name: field for field in schema.fields}
 
     assert fields[DENSE_VECTOR_FIELD].params["dim"] == 4096
@@ -128,13 +173,15 @@ def test_collection_schema_declares_required_fields_and_dimension():
         assert name in fields
     for removed in ("generation", "attempt_id", "published", "node_kind"):
         assert removed not in fields
-    assert contract_token_field("sha256:space") in fields
+    # The contract needs no column of its own: the collection carries it.
+    assert schema.description == index_contract_description(binding)
+    assert [name for name in fields if name.startswith("contract")] == []
     assert fields["id"].is_primary
 
 
 def test_collection_schema_declares_server_side_bm25_over_analyzed_retrieval_text():
     """Keyword retrieval is a physical capability of the collection schema."""
-    schema = build_collection_schema(1536, "sha256:space")
+    schema = build_collection_schema(_binding(dimension=1536))
     fields = {field.name: field for field in schema.fields}
 
     text_field = fields[RETRIEVAL_TEXT_FIELD]
@@ -152,19 +199,25 @@ def test_collection_schema_declares_server_side_bm25_over_analyzed_retrieval_tex
     assert function.output_field_names == [SPARSE_VECTOR_FIELD]
 
 
-def test_collection_schema_separates_embedding_spaces():
-    """Milvus only rejects a duplicate create when the schema differs.
+def test_two_same_dimension_embedding_spaces_declare_different_contracts():
+    """The contract, not the schema, separates two embedding spaces.
 
-    The contract token encodes the embedding space, so two same-dimension
-    writers with different spaces produce different schemas and the server
-    refuses the second creation instead of returning an idempotent success.
+    Two same-dimension writers produce identical physical schemas, so the server
+    cannot tell them apart; the contract each one writes into the collection
+    description is what the read-back after creation compares (``milvus_store``
+    owns that comparison).
     """
-    first = {field.name for field in build_collection_schema(1536, "sha256:a").fields}
-    second = {field.name for field in build_collection_schema(1536, "sha256:b").fields}
-    same = {field.name for field in build_collection_schema(1536, "sha256:a").fields}
+    first = build_collection_schema(
+        _binding(dimension=1536, embedding_space="sha256:a")
+    )
+    second = build_collection_schema(
+        _binding(dimension=1536, embedding_space="sha256:b")
+    )
 
-    assert first != second
-    assert first == same
+    assert first.description != second.description
+    assert index_contract_from_description(first.description).embedding_space == (
+        "sha256:a"
+    )
 
 
 def test_strip_connection_credentials_removes_userinfo():

@@ -16,6 +16,7 @@ from knowledge_engine.embedding.vectors import EmptyIndexableContentError
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
+    IndexMissingError,
     StorageBackendError,
     UnsupportedStorageCapabilityError,
 )
@@ -182,8 +183,8 @@ class FakeStore:
         else:
             self.binding = binding or FakeBinding()
         self.calls: list[tuple] = []
-        # Every contract lookup below reads the shared registry in the real
-        # store, so one request costs one registry read per lookup.
+        # Reading the contract describes the collection itself in the real
+        # store, so one request costs one contract read per lookup.
         self.contract_reads = 0
         self.deleted_filters: list[str] = []
         self.queries: list[dict] = []
@@ -210,31 +211,19 @@ class FakeStore:
         self.binding = "bound"
         return self.binding
 
-    def verify_bound_contract(
-        self, client, collection_name, binding, *, dimension, embedding_space
-    ):
+    def confirm_contract(self, collection_name, binding, *, dimension, embedding_space):
         self.calls.append(
-            ("verify_bound_contract", collection_name, dimension, embedding_space)
+            ("confirm_contract", collection_name, dimension, embedding_space)
         )
 
-    def read_binding(self, client, collection_name):
-        self.calls.append(("read_binding", collection_name))
-        self.contract_reads += 1
-        return self.binding if self.collection_exists else None
-
-    def read_binding_strong(self, client, collection_name):
-        self.calls.append(("read_binding_strong", collection_name))
-        self.contract_reads += 1
-        return self.binding if self.collection_exists else None
-
-    def require_bound(self, client, collection_name):
-        self.calls.append(("require_bound", collection_name))
+    def read_contract(self, client, collection_name):
+        self.calls.append(("read_contract", collection_name))
         self.contract_reads += 1
         if not self.collection_exists:
             return None
         if self.binding is None:
             raise IndexContractIncompatibleError(
-                collection_name, "the collection has no stored index contract"
+                collection_name, "the collection declares no readable index contract"
             )
         return self.binding
 
@@ -873,12 +862,11 @@ def test_retrieve_missing_index_does_not_call_the_embedding_provider():
 
 @pytest.mark.parametrize("retrieval_mode", ["vector", "keyword", "hybrid"])
 def test_one_retrieve_reads_the_stored_contract_once(retrieval_mode):
-    """One request reads the registry once and reuses that contract.
+    """One request reads the contract once and reuses what it read.
 
-    The stored contract cannot change while a single request is in flight, so
-    asking the registry again inside the same request only adds a Strong
-    consistency round trip. A contract the read level sees is therefore never
-    re-read: the write-level fallback only answers one it missed.
+    The contract lives in the collection's own description, so the request that
+    read it already owns the only copy: asking again inside the same request
+    would add a round trip without learning anything new.
     """
     backend = _backend()
     store = _hybrid_store()
@@ -896,64 +884,18 @@ def test_one_retrieve_reads_the_stored_contract_once(retrieval_mode):
     )
 
     assert store.contract_reads == 1
-    assert [name for name, *_ in store.calls].count("read_binding_strong") == 0
+    assert [name for name, *_ in store.calls].count("read_contract") == 1
     assert store.searches or store.sparse_searches
-
-
-class _ContractInvisibleToTheReadLevel(FakeStore):
-    """The publication window: the collection is visible, the contract is not."""
-
-    def read_binding(self, client, collection_name):
-        super().read_binding(client, collection_name)
-        return None
-
-
-class _ContractInvisibleAtEveryLevel(_ContractInvisibleToTheReadLevel):
-    """A collection whose contract the request can never observe."""
-
-    def read_binding_strong(self, client, collection_name):
-        super().read_binding_strong(client, collection_name)
-        return None
 
 
 def _exploding_search(*args, **kwargs):
     raise StorageBackendError("the storage call failed")
 
 
-def test_a_contract_invisible_to_the_read_level_is_re_read_once():
-    """A contract committed moments ago answers instead of failing.
-
-    The collection is already visible while its contract row is not, so the
-    request re-reads the contract at the write level on the client it holds.
-    """
+def test_a_collection_without_a_readable_contract_fails_without_creating():
+    """A collection this code did not create is refused, never adopted."""
     backend = _backend()
-    store = _ContractInvisibleToTheReadLevel(
-        rows=[_hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75)]
-    )
-    backend._store = store
-
-    result = backend.retrieve(
-        knowledge_id="1",
-        query="深度学习模型训练 zebra_pipeline_99",
-        embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={
-            "retrieval_mode": "vector",
-            "top_k": 5,
-            "score_threshold": 0.0,
-        },
-    )
-
-    assert [name for name, *_ in store.calls].count("read_binding_strong") == 1
-    assert store.contract_reads == 2
-    assert store.clients_created == 1
-    assert store.clients_closed == 1
-    assert result["records"]
-
-
-def test_a_contract_invisible_at_every_level_still_fails():
-    """A collection that really lost its contract must not degrade to empty."""
-    backend = _backend()
-    store = _ContractInvisibleAtEveryLevel()
+    store = FakeStore(has_contract=False)
     backend._store = store
 
     with pytest.raises(IndexContractIncompatibleError):
@@ -968,7 +910,67 @@ def test_a_contract_invisible_at_every_level_still_fails():
             },
         )
 
-    assert store.contract_reads == 2
+    assert store.contract_reads == 1
+    assert store.clients_created == 1
+    assert store.clients_closed == 1
+    assert not store.searches
+    assert all(call[0] != "ensure_index" for call in store.calls)
+
+
+@pytest.mark.parametrize("retrieval_mode", ["vector", "keyword", "hybrid"])
+def test_a_retrieve_of_a_never_indexed_knowledge_base_creates_nothing(
+    retrieval_mode,
+):
+    """An absent collection is an empty knowledge base, not a failure."""
+    backend = _backend()
+    store = FakeStore(collection_exists=False)
+    backend._store = store
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=ExplodingEmbedModel(),
+        retrieval_setting={
+            "retrieval_mode": retrieval_mode,
+            "top_k": 5,
+            "score_threshold": 0.0,
+        },
+    )
+
+    assert result == {"records": []}
+    assert store.contract_reads == 1
+    assert not store.searches
+
+
+class _CollectionLostAfterTheContractRead(FakeStore):
+    """The contract was read, then the collection disappeared under it."""
+
+    def read_contract(self, client, collection_name):
+        binding = super().read_contract(client, collection_name)
+        self.collection_exists = False
+        return binding
+
+
+@pytest.mark.parametrize("retrieval_mode", ["vector", "keyword", "hybrid"])
+def test_a_collection_lost_during_the_request_fails_loudly(retrieval_mode):
+    """A collection that disappears mid-request is not an empty result."""
+    backend = _backend()
+    store = _CollectionLostAfterTheContractRead()
+    backend._store = store
+
+    with pytest.raises(IndexMissingError) as failure:
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=FakeEmbedModel([[1.0, 0.0]]),
+            retrieval_setting={
+                "retrieval_mode": retrieval_mode,
+                "top_k": 5,
+                "score_threshold": 0.0,
+            },
+        )
+
+    assert failure.value.code == "index_missing"
     assert not store.searches
 
 
@@ -978,8 +980,8 @@ def test_one_retrieve_owns_exactly_one_client(retrieval_mode):
 
     The client is still created per request and closed in ``finally``, so
     concurrent requests keep owning independent connections; the point is that
-    a single request no longer pays the teardown twice - including a request
-    that falls back to the write-level contract read.
+    a single request reads the collection's own contract on the client it holds
+    instead of opening another one for it.
     """
     backend = _backend()
     store = _hybrid_store()

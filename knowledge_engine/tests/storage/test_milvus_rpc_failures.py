@@ -167,6 +167,18 @@ def test_collection_lookup_bounds_the_rpc():
     assert client.timeout_of("has_collection") == TIMEOUT_SECONDS
 
 
+def test_the_contract_read_bounds_both_of_its_rpcs():
+    """The contract read describes the collection under the same deadline."""
+    client = _RecordingClient()
+
+    with pytest.raises(StorageBackendError):
+        # The recording client declares no contract, so the read refuses it.
+        _store(client).read_contract(client, "wegent_kb_1")
+
+    assert client.timeout_of("has_collection") == TIMEOUT_SECONDS
+    assert client.timeout_of("describe_collection") == TIMEOUT_SECONDS
+
+
 def test_an_unresponsive_rpc_reports_the_sdk_failure():
     """A bounded RPC that still fails reports a retryable storage failure."""
 
