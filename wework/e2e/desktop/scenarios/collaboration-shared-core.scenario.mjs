@@ -365,7 +365,7 @@ export function createDesktopScenario({
           visible: false,
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('click', scoped(`[data-testid="collaboration-issue-${issue.id}"]`))
+        await control.command('click', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
         await control.command('waitFor', activitySelector, { timeoutMs: uiTimeoutMs })
         await boardReplyModel.verify(control, issue, scoped, {
           backendUrl,
