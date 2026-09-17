@@ -57,20 +57,22 @@ def read_mcp_identity_userinfo(
     """
     started_at = time.perf_counter()
 
-    rate_limit_status = check_external_mcp_rate_limit(
-        request,
-        namespace="mcp-identity",
-        limit=settings.MCP_IDENTITY_RATE_LIMIT_REQUESTS,
-        window_seconds=settings.MCP_IDENTITY_RATE_LIMIT_WINDOW_SECONDS,
-    )
-    if rate_limit_status == ExternalMcpRateLimitStatus.LIMITED:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many MCP identity lookups",
-            headers={
-                "Retry-After": str(settings.MCP_IDENTITY_RATE_LIMIT_WINDOW_SECONDS)
-            },
+    rate_limit_status = ExternalMcpRateLimitStatus.ALLOWED
+    if settings.RATE_LIMIT_ENABLED and settings.MCP_IDENTITY_RATE_LIMIT_ENABLED:
+        rate_limit_status = check_external_mcp_rate_limit(
+            request,
+            namespace="mcp-identity",
+            limit=settings.MCP_IDENTITY_RATE_LIMIT_REQUESTS,
+            window_seconds=settings.MCP_IDENTITY_RATE_LIMIT_WINDOW_SECONDS,
         )
+        if rate_limit_status == ExternalMcpRateLimitStatus.LIMITED:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many MCP identity lookups",
+                headers={
+                    "Retry-After": str(settings.MCP_IDENTITY_RATE_LIMIT_WINDOW_SECONDS)
+                },
+            )
 
     token = extract_token_from_header(authorization or "")
     token_info = verify_task_token(token or "")
