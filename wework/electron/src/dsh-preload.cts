@@ -45,5 +45,5 @@ contextBridge.exposeInMainWorld('weworkElectronExecutionEnvironments', {
 })
 
 contextBridge.exposeInMainWorld('weworkElectronNetwork', {
-  resolveCodexProxy: () => ipcRenderer.invoke('runtime:resolve-codex-proxy'),
+  resolveProxy: (targetUrl: string) => ipcRenderer.invoke('runtime:resolve-proxy', targetUrl),
 })

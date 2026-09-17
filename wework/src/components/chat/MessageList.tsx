@@ -96,6 +96,7 @@ interface MessageListProps {
   scrollElementRef?: RefObject<HTMLDivElement | null>
   initialDistanceFromBottomPx?: number
   onBeforeUserMessageToggle?: () => void
+  onVirtualLayoutChange?: () => void
   className?: string
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
@@ -205,6 +206,7 @@ export const MessageList = memo(function MessageList({
   scrollElementRef,
   initialDistanceFromBottomPx = 0,
   onBeforeUserMessageToggle,
+  onVirtualLayoutChange,
   className,
   conversationKey,
   isWaitingForAssistant = false,
@@ -283,13 +285,6 @@ export const MessageList = memo(function MessageList({
     () => visibleMessages.findLastIndex(message => message.status === 'streaming'),
     [visibleMessages]
   )
-  const streamingVirtualMessageKeys = useMemo(
-    () =>
-      new Set(
-        visibleMessages.filter(message => message.status === 'streaming').map(message => message.id)
-      ),
-    [visibleMessages]
-  )
   const initialMeasurementsCache = useMemo(
     () => getVirtualMeasurementSnapshot(virtualMeasurementKey, visibleMessages),
     [virtualMeasurementKey, visibleMessages]
@@ -309,8 +304,6 @@ export const MessageList = memo(function MessageList({
   }, [initialMeasurementsCache, messageIntrinsicHeights, visibleMessages])
   const messageVirtualizer = useBottomOriginVirtualizer({
     bottomOrigin,
-    bottomOriginAnchorItemKeys: streamingVirtualMessageKeys,
-    preserveBottomOriginItemResizeAnchor: !virtualAnchorToEnd,
     count: visibleMessages.length,
     enabled: virtualMessages,
     getItemKey: index => visibleMessages[index]?.id ?? index,
@@ -344,6 +337,11 @@ export const MessageList = memo(function MessageList({
       : preserveScrollPositionOutsideVirtualizer,
   })
   const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
+  const virtualRows = messageVirtualizer.getVirtualItems()
+
+  useLayoutEffect(() => {
+    if (virtualMessages) onVirtualLayoutChange?.()
+  }, [onVirtualLayoutChange, virtualMessages, virtualRows])
 
   useLayoutEffect(() => {
     const previousIds = previousVisibleMessageIdsRef.current
@@ -563,7 +561,7 @@ export const MessageList = memo(function MessageList({
         />
       )}
       {(virtualMessages
-        ? messageVirtualizer.getVirtualItems().map(virtualRow => ({
+        ? virtualRows.map(virtualRow => ({
             index: virtualRow.index,
             key: virtualRow.key,
             measureRef: messageVirtualizer.measureElement,
@@ -737,6 +735,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.onBeforeUserMessageToggle !== next.onBeforeUserMessageToggle
       ? 'onBeforeUserMessageToggle'
       : null,
+    previous.onVirtualLayoutChange !== next.onVirtualLayoutChange ? 'onVirtualLayoutChange' : null,
     previous.className !== next.className ? 'className' : null,
     previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
     previous.isWaitingForAssistant !== next.isWaitingForAssistant ? 'isWaitingForAssistant' : null,
