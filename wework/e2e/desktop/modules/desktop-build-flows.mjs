@@ -1352,6 +1352,16 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  const failedDurationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]:has([data-testid="assistant-error-card"]) [data-testid="processing-duration-label"]`
+  await control.command('waitFor', failedDurationSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  const failedDuration = await control.command('getText', failedDurationSelector)
+  assert.match(failedDuration, /用时/, 'The failed turn retained its running duration label')
+  await new Promise(resolve => setTimeout(resolve, 2100))
+  assert.equal(
+    await control.command('getText', failedDurationSelector),
+    failedDuration,
+    'The failed turn duration kept advancing after the error'
+  )
   const retryDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const retryTaskId = retryDebugSnapshot.workbench?.currentRuntimeTask?.taskId
   assert.ok(retryTaskId, 'The failed retry task did not expose its runtime task ID')

@@ -78,6 +78,7 @@ export type WorkbenchMessage = Omit<
   runtimeDisplayItems?: RuntimeAssistantDisplayItem[]
   runtimeMessageIndex?: number | null
   turnId?: string | null
+  runtimeTurnStartedAt?: number
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
@@ -162,6 +163,7 @@ export interface RuntimeConversationTurn {
   itemMerge?: 'prepend'
   items: RuntimeConversationItem[]
   status: RuntimeWorkbenchMessageStatus
+  startedAt?: number
   completedAt?: string | number | null
   error?: string
   errorType?: string

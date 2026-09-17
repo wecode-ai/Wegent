@@ -4410,10 +4410,24 @@ class DesktopE2EServer {
           latestModelInputText(body).includes(RETRY_PROMPT),
           'The initial Codex request did not contain the retry scenario prompt'
         )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          responseFailed(responseId, RETRY_FAILURE_TEXT),
-        ])
+        const processText = '检查失败前的处理状态。'
+        const stream = streamingTextEvents(responseId, processText, 'commentary')
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.write(
+          createSse([
+            ...stream.start,
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: processText,
+              offset: 0,
+            },
+          ])
+        )
+        await new Promise(resolve => setTimeout(resolve, 2100))
+        response.end(createSse([responseFailed(responseId, RETRY_FAILURE_TEXT)]))
         return
       }
       const continuationInput = latestModelInputText(body)
