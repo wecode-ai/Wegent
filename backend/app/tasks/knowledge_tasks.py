@@ -167,8 +167,10 @@ def import_external_document_task(self, document_id: int, expected_generation: i
         attempt = begin_external_import_attempt(db, document_id, expected_generation)
         if not attempt.should_execute:
             logger.info(
-                "[Celery External Import] Skipping document %s: %s",
+                "[Celery External Import] Skipping document_id=%s "
+                "generation=%s reason=%s",
                 document_id,
+                expected_generation,
                 attempt.reason,
             )
             return
@@ -185,6 +187,13 @@ def import_external_document_task(self, document_id: int, expected_generation: i
             )
             return
         user = db.query(User).filter(User.id == document.user_id).first()
+        logger.info(
+            "[Celery External Import] Fetching body document_id=%s generation=%s "
+            "task_id=%s",
+            document_id,
+            attempt.generation,
+            getattr(self.request, "id", None) or "unavailable",
+        )
         run_external_document_import(db, document, user, generation=attempt.generation)
 
 

@@ -31,7 +31,7 @@ export function ComposerLinkChip({ payload }: ComposerLinkChipProps) {
       data-composer-link-url={payload.url}
       data-composer-link-provider={recognized?.provider ?? 'external'}
       href={payload.url}
-      className="composer-link-node composer-mention-link inline-flex cursor-pointer items-center"
+      className="composer-link-node composer-mention-link"
       onClick={event => {
         event.preventDefault()
         event.stopPropagation()

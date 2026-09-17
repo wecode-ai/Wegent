@@ -102,8 +102,8 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
         in response.commands[0].command
     )
     assert (
-        "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED"
-        not in response.commands[1].command
+        "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true"
+        in response.commands[1].command
     )
 
     api_key = (

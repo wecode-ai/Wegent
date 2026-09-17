@@ -96,7 +96,7 @@ import { useWorkspaceMentionSearch } from './useWorkspaceMentionSearch'
 import { useComposerMentionCandidates } from './useComposerMentionCandidates'
 import { primaryComposerSubmitOptions, type ComposerTextareaProps } from './composerTextareaTypes'
 import { OPEN_COMPOSER_SLASH_MENU_EVENT } from './composerEvents'
-import type { ComposerLinkPayload } from './composerLinks'
+import { serializeComposerLink, type ComposerLinkPayload } from './composerLinks'
 
 export type { ComposerSubmitOptions } from './composerTextareaTypes'
 
@@ -1714,9 +1714,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
               if (!editor || !editingLinkRange) return
               const snapshot = editor.getSnapshot()
               const nextPayload = { ...editingLink, ...next }
-              const nextMarkdown = nextPayload.label
-                ? `[${nextPayload.label}](${nextPayload.url})`
-                : nextPayload.url
+              const nextMarkdown = serializeComposerLink(nextPayload)
               const nextValue =
                 snapshot.value.slice(0, editingLinkRange.start) +
                 nextMarkdown +

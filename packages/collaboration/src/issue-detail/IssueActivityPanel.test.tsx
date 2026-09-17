@@ -789,4 +789,59 @@ describe("IssueActivityPanel", () => {
     expect(current?.textContent).not.toContain("已完成");
     expect(current?.textContent).not.toContain("旧运行环境");
   });
+
+  it("shows why a run failed", () => {
+    const assignment = {
+      id: "assignment-1",
+      issue_id: issue.id,
+      target_type: "agent",
+      target_id: "agent-1",
+      target_name: "Codex",
+      workflow_step: null,
+      body: "",
+      comment_id: null,
+      created_by_user_id: 1,
+      created_by_user_name: "李明",
+      status: "active",
+      created_at: "2026-09-12T09:00:00Z",
+      updated_at: "2026-09-12T09:00:00Z",
+    } satisfies CollaborationAssignment;
+    const failedExecution = {
+      id: 2,
+      loop_item_id: issue.id,
+      cloud_project_id: issue.cloud_project_id,
+      task_title: "Failed run",
+      task_status: null,
+      task_priority: null,
+      executor_type: "agent",
+      agent_id: "agent-1",
+      assigner_user_id: 1,
+      executor_owner_user_id: null,
+      status: "failed",
+      display_state: "failed",
+      observed_state: "failed",
+      sync_state: "in_sync",
+      queued_at: null,
+      error_message:
+        "worktree_persistent_storage_unverified: Persistent Worktree storage is not verified",
+      execution_note: "runtime_start_rejected",
+      runtime_profile_id: null,
+      runtime_source: null,
+      can_select_runtime: false,
+      waiting_runtime_reason: null,
+      version: 1,
+      created_at: "2026-09-12T10:00:00Z",
+      updated_at: "2026-09-12T10:00:00Z",
+    } satisfies CollaborationExecution;
+
+    render(issue, {
+      assignments: [assignment],
+      executions: [failedExecution],
+    });
+
+    const error = container.querySelector(
+      '[data-testid="collaboration-run-error-2"]',
+    );
+    expect(error?.textContent).toBe(failedExecution.error_message);
+  });
 });

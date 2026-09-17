@@ -362,6 +362,50 @@ def test_periodic_scan_does_not_dispatch_runtime_work(
     }
 
 
+def test_stall_cancel_routes_managed_runs_to_the_chat_runtime() -> None:
+    """A stalled managed Wegent run has no device Runtime to receive the cancel
+    RPC, so the stop must travel through the managed Chat execution service.
+
+    Regression: such a run was left in cancel_requested with nothing able to
+    acknowledge the stop, so it held capacity forever.
+    """
+
+    from app.models.loop_item_execution import LoopItemExecution
+    from app.tasks.robot_queue_tasks import emit_managed_cancels
+
+    managed = LoopItemExecution(
+        id=11,
+        team_id=7,
+        backend_task_id=4321,
+        executor_owner_user_id=9,
+        runtime_device_id="",
+        runtime_task_id="",
+    )
+    device_run = LoopItemExecution(
+        id=12,
+        team_id=0,
+        backend_task_id=0,
+        executor_owner_user_id=9,
+        runtime_device_id="cloud-device",
+        runtime_task_id="codex-queue-12",
+    )
+    cancel = AsyncMock(return_value=True)
+
+    with patch(
+        "app.services.project_automation_managed_execution."
+        "project_automation_managed_execution_service.cancel",
+        cancel,
+    ):
+        cancelled = emit_managed_cancels([managed, device_run])
+
+    assert cancelled == {11}
+    cancel.assert_awaited_once_with(
+        task_id=4321,
+        user_id=9,
+        source="board_team_assignment",
+    )
+
+
 async def test_queue_wakeup_only_emits_availability(
     test_db: Session,
     test_user: User,

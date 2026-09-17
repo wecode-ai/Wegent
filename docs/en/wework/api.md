@@ -41,6 +41,24 @@ Each user message defines a response turn. A response ID encodes its Runtime add
 
 PC/mobile conversations are accessible too. Use `latest_response.id` from conversation details to inspect, subscribe to, or cancel their latest turn. `is_latest` identifies the last user turn; `status` describes that turn's execution state.
 
+## Current session information available to the model
+
+Every turn in a Codex conversation started from desktop, mobile, or the API receives `wework.session.current` through `additionalContext`. The model can read these values without asking the user to copy IDs:
+
+| Field | Meaning |
+| --- | --- |
+| `base_url` | HTTP API address including `/api/v1`; `null` when no backend is configured |
+| `api_conversation_supported` | Whether the workspace is a standalone conversation supported by the API; does not indicate connectivity or authorization |
+| `conversation_id` | Current `conv_...` ID for conversation queries and follow-ups |
+| `response_id` | Current user turn's `resp_...` ID for querying, streaming, and cancellation |
+| `execution` | `type: "wework"` and the current `device_id` for new requests |
+| `model` | Full cloud model API ID, such as `public:default:0:my-model` |
+| `model_name`, `model_type` | Selected model name and source |
+
+These are HTTP API routing IDs, distinct from native Codex thread/turn IDs. Project-directory and worktree tasks also receive current information, but have `api_conversation_supported: false`; their IDs cannot be used to query or continue conversations through these endpoints. Follow-ups retain the conversation ID, receive a new response ID, and refresh the selected model information. Local models and selections without cloud catalog identity have `model: null`; choose an available model from `GET /models?execution=wework` for HTTP requests.
+
+Each turn includes only these fields and brief usage guidance; full API instructions remain in this document to avoid repeating them in the context. Wait for the current turn to finish before continuing it, use either `conversation` or `previous_response_id`, and omit device and title. No personal API Keys, login tokens, or model secrets are injected; HTTP calls still require a separately supplied personal API Key.
+
 ## Create a task
 
 Call `/devices` to select a device, then `/models` to get a model `id`. The device list uses the same personal API key and returns:

@@ -691,6 +691,37 @@ def test_same_or_older_version_cannot_replace_release(test_db, test_user, monkey
     assert error.value.status_code == 409
 
 
+def test_new_version_accepts_semver_prerelease_not_supported_by_pep440(
+    test_db, test_user, monkeypatch
+):
+    recipient = _user(test_db, "semver-recipient")
+    first_package = _package(version="1.0.0-next.1")
+    _mock_storage(monkeypatch)
+    initialized = smart_app_marketplace_service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=_submission(first_package, recipient, version="1.0.0-next.1"),
+    )
+    _upload_submission(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+        package=first_package,
+    )
+    smart_app_marketplace_service.complete_submission(
+        test_db, submission_id=initialized.submissionId, user_id=test_user.id
+    )
+
+    next_package = _package(version="1.0.0-next.2")
+    next_submission = smart_app_marketplace_service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=_submission(next_package, recipient, version="1.0.0-next.2"),
+    )
+
+    assert next_submission.smartAppId == initialized.smartAppId
+
+
 def test_first_user_release_requires_a_recipient(test_db, test_user, monkeypatch):
     package = _package()
     _mock_storage(monkeypatch)

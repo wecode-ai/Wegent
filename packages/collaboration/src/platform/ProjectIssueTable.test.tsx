@@ -200,4 +200,34 @@ describe("ProjectIssueTable", () => {
       ),
     ).toHaveLength(1);
   });
+
+  it("exposes the execution failure reason next to the execution state", () => {
+    const failedIssue = {
+      ...issue,
+      execution_state: "failed",
+      execution_error:
+        "worktree_persistent_storage_unverified: Persistent Worktree storage is not verified",
+    } satisfies CollaborationIssue;
+    act(() => {
+      root.render(
+        <ProjectIssueTable
+          issues={[failedIssue]}
+          assignmentsByIssueId={{ [failedIssue.id]: [assignment] }}
+          emptyLabel="Empty"
+          issueLabel="Issue"
+          statusLabel="Status"
+          assignmentsLabel="Assignments"
+          executionLabel="Execution"
+          updatedLabel="Updated"
+          onOpen={vi.fn()}
+        />,
+      );
+    });
+
+    const cell = container.querySelector(
+      `[data-testid="collaboration-issue-table-execution-${failedIssue.id}"]`,
+    ) as HTMLTableCellElement;
+    expect(cell.textContent).toBe("failed");
+    expect(cell.title).toBe(failedIssue.execution_error);
+  });
 });

@@ -141,6 +141,8 @@ export interface ProjectBoardIssueCardRenderContext {
     "children" | "className" | "style"
   >;
   onOpen(): void;
+  /** Present only when the host enabled Issue deletion for this board. */
+  onDelete?(): void;
   taskBindings: WorkspaceTaskBinding[];
 }
 
@@ -161,6 +163,7 @@ interface ProjectBoardAdapterProps {
   onOpenBoardSettings?(): void;
   onGroupByChange(groupBy: ProjectBoardGroupBy): Promise<void>;
   onOpen(issue: CollaborationIssue): void;
+  onDeleteIssue?(issue: CollaborationIssue): void;
   onMove(
     issue: CollaborationIssue,
     mutation: StandardCloudBoardMutation<CollaborationIssue>,
@@ -193,6 +196,7 @@ export function ProjectBoardAdapter({
   labels,
   members,
   onCreateIssue,
+  onDeleteIssue,
   onOpenBoardSettings,
   onGroupByChange,
   onMove,
@@ -484,6 +488,10 @@ export function ProjectBoardAdapter({
                 issue,
                 nativeContainerProps,
                 onOpen: () => onOpen(issue),
+                onDelete:
+                  onDeleteIssue && canEditCollaborationIssue(issue)
+                    ? () => onDeleteIssue(issue)
+                    : undefined,
                 taskBindings: taskBindings.filter(
                   (binding) => binding.issueId === issue.id,
                 ),

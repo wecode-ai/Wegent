@@ -17,9 +17,11 @@ from shared.telemetry.decorators import trace_async
 
 def desired_plugins(user_id: int, device_id: str) -> dict[str, Any]:
     with get_db_session() as db:
-        plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
+        changed = plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
             db, user_id=user_id
         )
+        if changed:
+            db.commit()
 
         # Merge is intentional: older executors must never interpret omitted skills
         # and MCPs as a request to delete them. The scope acknowledgement is required.

@@ -58,7 +58,7 @@ def build_beat_schedule() -> dict:
     if not settings.SCHEDULED_TASKS_ENABLED:
         return {}
 
-    return {
+    schedule = {
         "check-due-subscriptions": {
             "task": "app.tasks.subscription_tasks.check_due_subscriptions",
             "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
@@ -116,6 +116,16 @@ def build_beat_schedule() -> dict:
         },
     }
 
+    if settings.DINGTALK_SYNC_SCHEDULE_ENABLED:
+        schedule["sync-dingtalk-copies"] = {
+            "task": "app.tasks.dingtalk_auto_sync_tasks.scan_dingtalk_copies",
+            # Celery evaluates the crontab in UTC: 18:00 UTC is 02:00 in CN.
+            "schedule": crontab(minute=0, hour=18),
+            "options": {"expires": 24 * 60 * 60},
+        }
+
+    return schedule
+
 
 celery_app = Celery(
     "wegent",
@@ -124,6 +134,7 @@ celery_app = Celery(
     include=[
         "app.tasks.subscription_tasks",
         "app.tasks.knowledge_tasks",
+        "app.tasks.dingtalk_auto_sync_tasks",
         "app.tasks.robot_queue_tasks",
         "app.tasks.project_automation_tasks",
         "app.tasks.plugin_marketplace_tasks",

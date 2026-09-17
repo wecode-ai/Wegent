@@ -288,7 +288,19 @@ fn resolve_plugin_root_candidates(
         env::var_os("WEGENT_EXECUTOR_HOME").map(PathBuf::from),
         dirs::home_dir(),
     )?;
+    let codex_homes = ["CODEX_HOME", "WEGENT_CODEX_HOME"]
+        .into_iter()
+        .filter_map(env::var_os)
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    installed_plugin_root_candidates(plugin_key, &executor_home, &codex_homes)
+}
 
+fn installed_plugin_root_candidates(
+    plugin_key: &str,
+    executor_home: &Path,
+    codex_homes: &[PathBuf],
+) -> Result<Vec<PathBuf>, AppIpcError> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     let store_plugins = executor_home.join("capabilities/store/plugins");
     if store_plugins.is_dir() {
@@ -303,12 +315,10 @@ fn resolve_plugin_root_candidates(
     }
 
     let mut cache_roots = vec![executor_home.join("codex/plugins/cache")];
-    for env_key in ["CODEX_HOME", "WEGENT_CODEX_HOME"] {
-        if let Some(codex_home) = env::var_os(env_key) {
-            let cache_root = PathBuf::from(codex_home).join("plugins/cache");
-            if !cache_roots.iter().any(|existing| existing == &cache_root) {
-                cache_roots.push(cache_root);
-            }
+    for codex_home in codex_homes {
+        let cache_root = codex_home.join("plugins/cache");
+        if !cache_roots.iter().any(|existing| existing == &cache_root) {
+            cache_roots.push(cache_root);
         }
     }
     for cache_root in &cache_roots {
@@ -1043,14 +1053,6 @@ fn redact_secrets(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn env_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
 
     fn write_plugin_manifest(plugin_root: &Path) {
         fs::create_dir_all(plugin_root.join(".codex-plugin")).unwrap();
@@ -1364,36 +1366,16 @@ switch ($Action) {
 
     #[test]
     fn resolve_plugin_root_scans_all_marketplace_caches() {
-        let _guard = env_lock();
         let temp = tempfile::tempdir().unwrap();
         let executor_home = temp.path().join("executor-home");
         let plugin_root = executor_home
             .join("codex/plugins/cache/desktop-e2e-marketplace/desktop-e2e-plugin/0.1.0");
         write_plugin_manifest(&plugin_root);
 
-        let previous_executor_home = env::var_os("WEGENT_EXECUTOR_HOME");
-        let previous_codex_home = env::var_os("CODEX_HOME");
-        let previous_wegent_codex_home = env::var_os("WEGENT_CODEX_HOME");
-        env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
-        env::remove_var("CODEX_HOME");
-        env::remove_var("WEGENT_CODEX_HOME");
-
         let candidates =
-            resolve_plugin_root_candidates("desktop-e2e-plugin", &json!({})).expect("candidates");
+            installed_plugin_root_candidates("desktop-e2e-plugin", &executor_home, &[])
+                .expect("candidates");
         assert_eq!(candidates, vec![plugin_root]);
-
-        match previous_executor_home {
-            Some(value) => env::set_var("WEGENT_EXECUTOR_HOME", value),
-            None => env::remove_var("WEGENT_EXECUTOR_HOME"),
-        }
-        match previous_codex_home {
-            Some(value) => env::set_var("CODEX_HOME", value),
-            None => env::remove_var("CODEX_HOME"),
-        }
-        match previous_wegent_codex_home {
-            Some(value) => env::set_var("WEGENT_CODEX_HOME", value),
-            None => env::remove_var("WEGENT_CODEX_HOME"),
-        }
     }
 
     #[test]
@@ -1407,7 +1389,6 @@ switch ($Action) {
 
     #[test]
     fn resolve_plugin_root_prefers_newest_version_directory() {
-        let _guard = env_lock();
         let temp = tempfile::tempdir().unwrap();
         let executor_home = temp.path().join("executor-home");
         let older = executor_home.join("codex/plugins/cache/wegent/demo-plugin/0.1.0");
@@ -1415,29 +1396,9 @@ switch ($Action) {
         write_plugin_manifest(&older);
         write_plugin_manifest(&newer);
 
-        let previous_executor_home = env::var_os("WEGENT_EXECUTOR_HOME");
-        let previous_codex_home = env::var_os("CODEX_HOME");
-        let previous_wegent_codex_home = env::var_os("WEGENT_CODEX_HOME");
-        env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
-        env::remove_var("CODEX_HOME");
-        env::remove_var("WEGENT_CODEX_HOME");
-
-        let candidates =
-            resolve_plugin_root_candidates("demo-plugin", &json!({})).expect("candidates");
+        let candidates = installed_plugin_root_candidates("demo-plugin", &executor_home, &[])
+            .expect("candidates");
         assert_eq!(candidates.first(), Some(&newer));
-
-        match previous_executor_home {
-            Some(value) => env::set_var("WEGENT_EXECUTOR_HOME", value),
-            None => env::remove_var("WEGENT_EXECUTOR_HOME"),
-        }
-        match previous_codex_home {
-            Some(value) => env::set_var("CODEX_HOME", value),
-            None => env::remove_var("CODEX_HOME"),
-        }
-        match previous_wegent_codex_home {
-            Some(value) => env::set_var("WEGENT_CODEX_HOME", value),
-            None => env::remove_var("WEGENT_CODEX_HOME"),
-        }
     }
 
     #[test]

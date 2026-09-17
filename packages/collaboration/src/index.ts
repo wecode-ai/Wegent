@@ -12,6 +12,7 @@ export * from "./files";
 export * from "./http-api";
 export * from "./i18n";
 export * from "./issue-card";
+export * from "./issue-delete";
 export * from "./issue-detail";
 export { IssueCreate, IssueDetail } from "./IssueDetail";
 export * from "./my-work";

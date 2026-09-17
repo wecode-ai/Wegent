@@ -173,6 +173,13 @@
   white-space: nowrap;
 }
 
+.agentActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
 .archiveButton,
 .primaryButton {
   border: 0;

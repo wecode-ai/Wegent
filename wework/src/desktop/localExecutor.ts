@@ -289,6 +289,13 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
       }
       initializedLocalExecutorStatus = status
       availableLocalExecutorStatus = status
+      // Bundled default plugins must reach the Codex plugins cache even when no
+      // renderer ever opens the app/plugin catalog (e.g. isolated plugin
+      // development instances). Reconcile is local-only: it reads the bundled
+      // marketplace from disk and never contacts GitHub.
+      void ensureBundledPluginMarketplaceRegistered().catch(error => {
+        console.warn('[local-ipc] bundled plugin marketplace reconcile failed', error)
+      })
       return status
     })().finally(() => {
       ensureLocalExecutorStartedPromise = null
