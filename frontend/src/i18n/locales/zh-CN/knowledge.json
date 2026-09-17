@@ -71,6 +71,10 @@
     "document": "文档知识"
   },
   "document": {
+    "dingtalkAutoSync": {
+      "label": "自动更新钉钉文档",
+      "description": "每天检查已导入的钉钉文档，有更新时同步到知识库。"
+    },
     "title": "文档知识",
     "personal": "个人知识",
     "team": "团队知识",

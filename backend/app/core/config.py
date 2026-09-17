@@ -448,6 +448,12 @@ class Settings(BaseSettings):
     # workers. Scheduled work can run on a dedicated deployment instead.
     SCHEDULED_TASKS_ENABLED: bool = True
 
+    # Registers the daily DingTalk copy refresh on Celery Beat. Off by default:
+    # the schedule needs Beat plus a Worker on the default queue, and every
+    # knowledge base that opted in turns into provider and indexing work. The
+    # manual trigger endpoint does not depend on this switch.
+    DINGTALK_SYNC_SCHEDULE_ENABLED: bool = False
+
     # Scheduler backend configuration
     # Supported backends: "celery" (default), "apscheduler", "xxljob"
     SCHEDULER_BACKEND: str = "celery"
