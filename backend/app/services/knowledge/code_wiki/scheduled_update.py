@@ -466,12 +466,13 @@ def execute_scheduled_update(
     if execution is None or not is_code_wiki_scheduled_update(snapshot):
         return
     manager = subscription_service.execution_manager
-    manager.update_execution_status(
+    if not manager.update_execution_status(
         db,
         execution_id=execution_id,
         status=BackgroundExecutionStatus.RUNNING,
         skip_notifications=True,
-    )
+    ):
+        return
     # update_execution_status commits. Re-acquire lifecycle locks after it, in the
     # same KB -> plan order used by configuration and deletion, before admitting a
     # generation.

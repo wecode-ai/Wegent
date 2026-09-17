@@ -5,6 +5,7 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -664,6 +665,34 @@ def test_worker_rechecks_the_plan_after_marking_its_execution_running(
 
     assert execution.status == BackgroundExecutionStatus.COMPLETED_SILENT.value
     assert execution.result_summary == "Skipped because scheduled update was deleted"
+
+
+def test_worker_stops_when_marking_its_execution_running_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.knowledge.code_wiki import scheduled_update
+
+    plan = Kind(
+        id=12,
+        kind="Subscription",
+        json={"spec": {"codeWikiRef": {"id": 34}}},
+    )
+    db = Mock()
+    db.get.side_effect = [plan, SimpleNamespace()]
+    update_execution_status = Mock(return_value=False)
+    start_run = Mock()
+    monkeypatch.setattr(
+        scheduled_update.subscription_service.execution_manager,
+        "update_execution_status",
+        update_execution_status,
+    )
+    monkeypatch.setattr(scheduled_update, "start_run", start_run)
+
+    execute_scheduled_update(db, subscription_id=plan.id, execution_id=90)
+
+    update_execution_status.assert_called_once()
+    db.query.assert_not_called()
+    start_run.assert_not_called()
 
 
 def test_disabling_a_scheduled_update_stops_an_already_queued_worker(
