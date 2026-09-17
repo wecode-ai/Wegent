@@ -293,7 +293,7 @@ status:
 **supportModel 说明**:
 
 - 未填写或为空数组 `[]`：不按 provider 限制模型列表。
-- 指定列表：与模型的 `spec.modelConfig.env.model` 匹配，例如 `["claude", "openai"]`；不按运行时名称追加限制。
+- 指定列表：与模型的 `spec.modelConfig.env.model` 匹配，例如 `["claude", "openai"]`；不按运行时名称追加限制。空白 provider 值无效。
 
 #### status 部分
 

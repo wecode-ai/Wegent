@@ -293,7 +293,7 @@ status:
 **supportModel Explanation**:
 
 - Omitted or empty array `[]`: Do not filter the model list by provider.
-- Specified list: Match the model’s `spec.modelConfig.env.model`, for example `["claude", "openai"]`; the runtime name does not add restrictions.
+- Specified list: Match the model’s `spec.modelConfig.env.model`, for example `["claude", "openai"]`; the runtime name does not add restrictions. Blank provider values are invalid.
 
 #### status Section
 

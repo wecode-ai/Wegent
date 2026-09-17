@@ -373,10 +373,9 @@ class ModelAggregationService:
         try:
             shell_crd = Shell.model_validate(shell_json)
             support_model = shell_crd.spec.supportModel or []
-            return (
-                [str(x) for x in support_model if x],
-                shell_crd.spec.shellType,
-            )
+            if any(not provider.strip() for provider in support_model):
+                raise ValueError("Model providers must not be blank")
+            return support_model, shell_crd.spec.shellType
         except (ValueError, KeyError, AttributeError) as e:
             raise HTTPException(
                 status_code=400, detail="Invalid shell configuration"

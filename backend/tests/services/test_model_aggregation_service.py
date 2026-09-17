@@ -845,16 +845,18 @@ class TestModelAggregationService:
         # Custom shell should return the inherited shellType
         assert shell_type == "ClaudeCode"
 
-    @pytest.mark.parametrize("invalid_config", [False, True])
+    @pytest.mark.parametrize(
+        "support_model", [None, "claude", [""], [" "], ["claude", ""]]
+    )
     def test_model_list_rejects_missing_or_invalid_shell(
-        self, test_db: Session, test_user: User, invalid_config: bool
+        self, test_db: Session, test_user: User, support_model: str | list[str] | None
     ) -> None:
         """Lookup failures must not be interpreted as an unrestricted allowlist."""
-        if invalid_config:
+        if support_model is not None:
             shell = self._create_public_shell(test_db, "shell-a", "ClaudeCode")
             shell.json = {
                 **shell.json,
-                "spec": {**shell.json["spec"], "supportModel": "claude"},
+                "spec": {**shell.json["spec"], "supportModel": support_model},
             }
             test_db.commit()
 
@@ -865,7 +867,9 @@ class TestModelAggregationService:
 
         assert error.value.status_code == 400
         assert error.value.detail == (
-            "Invalid shell configuration" if invalid_config else "Shell not found"
+            "Invalid shell configuration"
+            if support_model is not None
+            else "Shell not found"
         )
 
     @pytest.mark.parametrize("shell_type", ["ClaudeCode", "Codex"])
