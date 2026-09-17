@@ -27,10 +27,24 @@ from app.schemas.openapi_response import (
 )
 from app.services.openapi.output_builder import (
     build_generation_output_item_from_block,
-    normalize_tool_output,
+    build_mcp_tool_output,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_block_tool_output(
+    block: Dict[str, Any],
+    *,
+    omit_mcp_binary_output: bool,
+) -> Dict[str, Any]:
+    """Replace binary tool output carried by Wegent block events."""
+    if not omit_mcp_binary_output or "tool_output" not in block:
+        return block
+    return {
+        **block,
+        "tool_output": build_mcp_tool_output(block["tool_output"], omit_binary=True),
+    }
 
 
 def _generate_response_id() -> str:
@@ -117,6 +131,7 @@ class OpenAPIStreamingService:
         created_at: Optional[int] = None,
         previous_response_id: Optional[str] = None,
         task_context: Optional[Dict[str, Any]] = None,
+        omit_mcp_binary_output: bool = False,
     ) -> AsyncGenerator[str, None]:
         """
         Create a streaming response generator in OpenAI v1/responses format.
@@ -130,6 +145,8 @@ class OpenAPIStreamingService:
             chat_stream: Async generator yielding text chunks or StreamingChunk objects
             created_at: Unix timestamp (defaults to now)
             previous_response_id: Optional previous response ID
+            omit_mcp_binary_output: Replace binary payloads in MCP tool output
+                with a compact placeholder
 
         Yields:
             SSE formatted events
@@ -477,7 +494,10 @@ class OpenAPIStreamingService:
                         name = chunk.data["name"]
                         server_label = chunk.data["server_label"]
                         arguments = chunk.data.get("arguments") or ""
-                        tool_output = normalize_tool_output(chunk.data.get("output"))
+                        tool_output = build_mcp_tool_output(
+                            chunk.data.get("output"),
+                            omit_binary=omit_mcp_binary_output,
+                        )
                         tool_output_index = pop_tool_output_index(f"mcp:{item_id}")
                         completed_output_items[tool_output_index] = MCPCallOutputItem(
                             id=item_id,
@@ -551,6 +571,10 @@ class OpenAPIStreamingService:
                         block = chunk.data.get("block")
                         if not isinstance(block, dict) or not block.get("id"):
                             continue
+                        block = _sanitize_block_tool_output(
+                            block,
+                            omit_mcp_binary_output=omit_mcp_binary_output,
+                        )
                         block_id = str(block["id"])
                         response_blocks[block_id] = dict(block)
                         yield _format_sse_event(
@@ -568,6 +592,10 @@ class OpenAPIStreamingService:
                         updates = chunk.data.get("updates")
                         if not block_id or not isinstance(updates, dict):
                             continue
+                        updates = _sanitize_block_tool_output(
+                            updates,
+                            omit_mcp_binary_output=omit_mcp_binary_output,
+                        )
                         block_id = str(block_id)
                         if block_id in response_blocks:
                             response_blocks[block_id].update(updates)

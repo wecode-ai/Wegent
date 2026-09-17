@@ -5,6 +5,7 @@
 """Tests for OpenAPI streaming service with reasoning support."""
 
 import asyncio
+import base64
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -326,6 +327,63 @@ class TestStreamingServiceReasoning:
             not in completed["response"]["output"][0]["output"]
         )
         assert completed["response"]["output"][1]["type"] == "message"
+
+    @pytest.mark.asyncio
+    async def test_mcp_call_stream_omits_binary_output_when_requested(
+        self, streaming_service
+    ):
+        payload = base64.b64encode(b"\x00" * 2048).decode()
+
+        async def mcp_binary_stream():
+            yield StreamingChunk(
+                type="mcp_call_added",
+                data={
+                    "item_id": "mcp_binary",
+                    "name": "example-media-tool",
+                    "server_label": "example-media-server",
+                    "output_index": 0,
+                },
+            )
+            yield StreamingChunk(
+                type="mcp_call_done",
+                data={
+                    "item_id": "mcp_binary",
+                    "name": "example-media-tool",
+                    "server_label": "example-media-server",
+                    "arguments": '{"url": "https://cdn.example.com/photo.jpg"}',
+                    "output_index": 0,
+                    "status": "completed",
+                    "output": [
+                        {"type": "image", "mimeType": "image/jpeg", "data": payload}
+                    ],
+                },
+            )
+            yield StreamingChunk(type="text", content="done")
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_binary",
+            model_string="gpt-4",
+            chat_stream=mcp_binary_stream(),
+            created_at=1234567890,
+            omit_mcp_binary_output=True,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        completed_item = next(
+            e
+            for e in events
+            if e["type"] == "response.output_item.done"
+            and e["item"]["type"] == "mcp_call"
+        )
+        assert completed_item["item"]["output"][0]["data"] == (
+            "<image/jpeg payload omitted: 2048 bytes>"
+        )
+
+        completed_response = next(
+            e for e in events if e["type"] == "response.completed"
+        )
+        assert payload not in json.dumps(completed_response)
 
     @pytest.mark.asyncio
     async def test_shell_call_stream(self, streaming_service):

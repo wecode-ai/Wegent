@@ -856,6 +856,7 @@ class TestOpenAPIResponsesCreate:
                     reasoning=None,
                     attachment_ids=None,
                     wegent_options=None,
+                    omit_mcp_binary_output=False,
                 ),
                 input_text="hello",
                 tool_settings={},

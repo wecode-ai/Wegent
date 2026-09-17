@@ -841,6 +841,7 @@ async def _create_non_streaming_response_unified(
                 subtasks,
                 active_assistant_subtask_id=assistant_subtask_id,
                 active_assistant_status="in_progress",
+                omit_mcp_binary_output=request_body.omit_mcp_binary_output,
             ),
             pending_user_input=pending_user_input or None,
             pending_user_input_payload=pending_user_input_payload,
@@ -889,6 +890,7 @@ async def _create_non_streaming_response_unified(
                 subtasks,
                 active_assistant_subtask_id=assistant_subtask_id,
                 active_assistant_status="in_progress",
+                omit_mcp_binary_output=request_body.omit_mcp_binary_output,
             ),
             pending_user_input=pending_user_input or None,
             pending_user_input_payload=pending_user_input_payload,
@@ -935,6 +937,7 @@ async def _create_non_streaming_response_unified(
             active_assistant_subtask_id=assistant_subtask_id,
             active_assistant_status="completed",
             active_assistant_content=accumulated_content,
+            omit_mcp_binary_output=request_body.omit_mcp_binary_output,
         ),
         pending_user_input=pending_user_input or None,
         pending_user_input_payload=pending_user_input_payload,
@@ -1533,6 +1536,7 @@ async def _create_streaming_response_unified(
                 chat_stream=raw_chat_stream(),
                 created_at=created_at,
                 previous_response_id=request_body.previous_response_id,
+                omit_mcp_binary_output=request_body.omit_mcp_binary_output,
                 task_context=(
                     {
                         "task_id": task_kind_id,
