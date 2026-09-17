@@ -16,7 +16,13 @@ const INITIAL = 'BOARD_REPLY_CLOUD_MODEL_INITIAL'
 const REPLY = 'BOARD_REPLY_CLOUD_MODEL_CONTINUE'
 const PUBLIC_MODEL_ID = 'desktop-e2e-public-upstream-model'
 
-async function verifyPersistedExecutions({ backendUrl, authToken, projectId }, taskId, timeoutMs) {
+async function readPersistedExecutions(
+  { backendUrl, authToken, projectId },
+  taskId,
+  prompts,
+  timeoutMs,
+  requireCompleted = false
+) {
   const { io } = createRequire(
     new URL('../../../../packages/chat-core/package.json', import.meta.url)
   )(process.env.WEWORK_E2E_SOCKET_IO_CLIENT || 'socket.io-client')
@@ -43,33 +49,39 @@ async function verifyPersistedExecutions({ backendUrl, authToken, projectId }, t
         afterSequence: 0,
       })
       assert.equal(ack.ok, true, 'A new client must be able to read persisted execution states')
-      const runs = ack.result.messages.filter(
-        message =>
-          message.sender.type === 'agent' &&
-          [INITIAL, REPLY].some(marker => message.content.includes(`${marker}_DONE`))
-      )
+      const messages = ack.result.messages
+      // Activity events persist identity and status; the runtime owns the transcript.
+      const runs = prompts.map(prompt => {
+        const trigger = messages.find(
+          message => message.sender.type === 'user' && message.content === prompt
+        )
+        return trigger
+          ? messages.find(
+              message =>
+                message.sender.type === 'agent' && message.triggerMessageId === trigger.messageId
+            )
+          : undefined
+      })
       if (
-        runs.length === 2 &&
         runs.every(
-          message => message.status === 'completed' && message.metadata.run_status === 'completed'
+          message =>
+            message?.runtimeAddress?.taskId &&
+            (!requireCompleted ||
+              (message.status === 'completed' && message.metadata.run_status === 'completed'))
         )
       )
-        return
+        return runs
       await new Promise(resolve => setTimeout(resolve, 100))
     }
-    assert.fail('Execution states were not persisted for a fresh client after opening history')
+    assert.fail(`A fresh client could not read persisted executions for ${prompts.join(', ')}`)
   } finally {
     socket.disconnect()
   }
 }
 
-async function verifyExecutionDetail(control, scope, card, expectedText, timeoutMs) {
-  const snapshot = JSON.parse(await control.command('snapshot', card))
-  const badgeId = [...new Set(snapshot.testIds)]
-    .filter(id => id.startsWith('cloud-task-activity-execution-badge-'))
-    .at(-1)
-  assert.ok(badgeId, 'The completed comment must expose its execution status')
-  const badge = scope(`[data-testid="${badgeId}"]`)
+async function verifyExecutionDetail(control, scope, run, expectedText, timeoutMs) {
+  const badge = scope(`[data-testid="cloud-task-activity-execution-badge-${run.messageId}"]`)
+  await control.command('waitFor', badge, { timeoutMs })
   await control.command('click', badge)
   await control.command('waitFor', '[data-testid="runtime-execution-detail-body"]', {
     text: expectedText,
@@ -134,46 +146,38 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
         )
         await control.command('fill', composer, { value: INITIAL })
         await control.command('press', composer, { key: 'Enter' })
-        await control.command('waitFor', activity, {
-          text: `${INITIAL}_DONE`,
-          timeoutMs: uiTimeoutMs,
-        })
+        const [initialRun] = await readPersistedExecutions(cloud, issue.id, [INITIAL], uiTimeoutMs)
+        const initialBadge = await verifyExecutionDetail(
+          control,
+          scope,
+          initialRun,
+          `${INITIAL}_DONE`,
+          uiTimeoutMs
+        )
 
         const readTask = async taskId => {
           const index = JSON.parse(
             await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
           )
-          return Object.values(index.tasks).find(task =>
-            taskId
-              ? task.local_task_id === taskId
-              : task.runtime_handle?.origin?.loopItemId === issue.id && task.title === INITIAL
-          )
+          return Object.values(index.tasks).find(task => task.local_task_id === taskId)
         }
-        const original = await readTask()
+        const original = await readTask(initialRun.runtimeAddress.taskId)
         assert.ok(original, 'The board comment did not create a persisted runtime task')
+        assert.equal(original.runtime_handle.origin.loopItemId, issue.id)
         const selection = original.runtime_handle.modelSelection
         assert.equal(selection.modelName, CLOUD_PUBLIC_MODEL_NAME)
         assert.equal(selection.modelType, 'public')
         const rootId = original.runtime_handle.origin.rootCommentId
         assert.ok(rootId, 'The runtime task has no owning comment')
-        const card = `${activity} [data-testid="cloud-task-activity-card-${rootId}"]`
-        const initialBadge = await verifyExecutionDetail(
-          control,
-          scope,
-          card,
-          `${INITIAL}_DONE`,
-          uiTimeoutMs
-        )
+        assert.equal(rootId, initialRun.triggerMessageId)
         // An unrelated new-comment selection must not override this card's model.
         await selectE2EModel(control, undefined, undefined, `${activity} footer`)
         const reply = `${activity} [data-testid="cloud-task-activity-card-composer-${rootId}"]`
         await control.command('fill', reply, { value: REPLY })
         await control.command('press', reply, { key: 'Enter' })
-        await control.command('waitFor', activity, {
-          text: `${REPLY}_DONE`,
-          timeoutMs: uiTimeoutMs,
-        })
-        await verifyExecutionDetail(control, scope, card, `${REPLY}_DONE`, uiTimeoutMs)
+        const [replyRun] = await readPersistedExecutions(cloud, issue.id, [REPLY], uiTimeoutMs)
+        assert.deepEqual(replyRun.runtimeAddress, initialRun.runtimeAddress)
+        await verifyExecutionDetail(control, scope, replyRun, `${REPLY}_DONE`, uiTimeoutMs)
         await control.command('waitFor', `${initialBadge}[data-status="succeeded"]`, {
           timeoutMs: uiTimeoutMs,
         })
@@ -183,7 +187,17 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
         assert.deepEqual(continued.runtime_handle.modelSelection, selection)
         assert.equal(upstreamModels.get(INITIAL), PUBLIC_MODEL_ID)
         assert.equal(upstreamModels.get(REPLY), PUBLIC_MODEL_ID)
-        await verifyPersistedExecutions(cloud, issue.id, uiTimeoutMs)
+        const persisted = await readPersistedExecutions(
+          cloud,
+          issue.id,
+          [INITIAL, REPLY],
+          uiTimeoutMs,
+          true
+        )
+        assert.deepEqual(
+          persisted.map(run => run.messageId),
+          [initialRun.messageId, replyRun.messageId]
+        )
       } finally {
         active = false
       }
