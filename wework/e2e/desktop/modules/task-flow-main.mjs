@@ -11,6 +11,7 @@ import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 import {
   createCheckpointTaskFixture,
   distanceFromBottom,
+  getElementMetrics,
   getSingleElementMetrics,
   prepareCompletedTurnScreenshot,
   verifyShortConversationLayout,
@@ -272,6 +273,7 @@ import {
 import {
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
+  verifyForkProviderModelPreservation,
   verifyPriorityFilter,
   verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyRunningFollowUpFork,
@@ -874,7 +876,7 @@ async function verifyLocalModelRouting({
     await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
     await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
       visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: initialResponseTimeoutMs,
     })
     const sourceRequestsBeforeSwitch = control.localProtocolStates.get(sourceModel.protocol)
       ?.requests.length
@@ -1161,7 +1163,7 @@ async function main() {
     if (!RUNS_PLUGIN_E2E) {
       await writeCodexConfig(
         codexHome,
-        control.url,
+        desktopScenario?.modelServerUrl ?? control.url,
         `${desktopScenario?.codexConfigToml ?? ''}\n${
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
         }\n${
@@ -1284,7 +1286,9 @@ async function main() {
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
-    const electronLaunchArguments = resolveElectronLaunchArguments()
+    const electronLaunchArguments = resolveElectronLaunchArguments({
+      extraArguments: desktopScenario?.electronLaunchArguments ?? [],
+    })
     let activeAppEnvironment = appEnvironment
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
@@ -2122,6 +2126,22 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
 
+    if (shouldRunDesktopCheckpoint('fork-provider-preservation')) {
+      phase = 'fork-provider-model-preservation'
+      await verifyForkProviderModelPreservation({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+        newConversationSelector: '[data-testid="new-chat-button"]',
+      })
+      if (shouldStopAfterDesktopCheckpoint('fork-provider-preservation')) {
+        console.log(
+          `Wework desktop fork-provider-preservation checkpoint passed. Evidence: ${resultDir}`
+        )
+        return
+      }
+    }
+
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       if (!GUIDANCE_SCROLL_ONLY) {
         phase = 'workspace-document-tabs'
@@ -2328,6 +2348,25 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       text: 'workspace',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
+
+    phase = 'composer-clear-project-preserves-draft'
+    const clearProjectDraft = 'WEWORK_DESKTOP_E2E_CLEAR_PROJECT_PRESERVES_DRAFT'
+    await control.command('fill', composerSelector, { value: clearProjectDraft })
+    await control.command('click', '[data-testid="project-work-button"]')
+    await control.command('waitFor', '[data-testid="no-project-option"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="no-project-option"]')
+    await control.command('waitFor', composerSelector, {
+      text: clearProjectDraft,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    assert.equal(
+      await control.command('getValue', composerSelector),
+      clearProjectDraft,
+      'Clearing the selected project discarded the unsent composer draft'
+    )
+    await control.command('fill', composerSelector, { value: '' })
 
     phase = 'project-folder-remove-immediately'
     await control.command('click', `[data-testid="${projectMenuTestId}"]`)
@@ -3477,13 +3516,34 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The conversation after opening a linked file',
         DEFAULT_STEP_TIMEOUT_MS
       )
-      const filePanelAnchorAfterOpen = await waitForElementTop(
-        control,
-        filePanelAnchorSelector,
-        top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
-        'The linked file paragraph after opening the file panel',
-        DEFAULT_STEP_TIMEOUT_MS
-      )
+      // Capture the settled state before the anchor expectation is read: a failing run has to show where
+      // the paragraph ended up, not only where it started.
+      await captureVerificationScreenshot(control, 'file-panel-anchor-02-after-open.png')
+      let filePanelAnchorAfterOpen
+      try {
+        filePanelAnchorAfterOpen = await waitForElementTop(
+          control,
+          filePanelAnchorSelector,
+          top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
+          'The linked file paragraph after opening the file panel',
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+      } catch (error) {
+        const settled = {
+          anchor: (await getElementMetrics(control, filePanelAnchorSelector)).at(-1) ?? null,
+          scroller: await getSingleElementMetrics(
+            control,
+            conversationScrollerSelector,
+            'The conversation after the anchor expectation failed'
+          ),
+        }
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} (before=${JSON.stringify({
+            anchor: filePanelAnchorBeforeOpen,
+            scroller: filePanelScrollerBeforeOpen,
+          })} settled=${JSON.stringify(settled)})`
+        )
+      }
       assert.ok(
         filePanelScrollerAfterOpen.width < filePanelScrollerBeforeOpen.width - 100,
         `Opening the file panel did not resize the conversation from ${filePanelScrollerBeforeOpen.width}px; after=${filePanelScrollerAfterOpen.width}px`
@@ -3502,7 +3562,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           }
         )}`
       )
-      await captureVerificationScreenshot(control, 'file-panel-anchor-02-after-open.png')
       await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
       await waitForSnapshot(
         control,

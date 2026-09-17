@@ -53,7 +53,11 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await sendPrompt(control, composerSelector, `${FRESH_CHAT_PROMPT} FOLLOW_UP`)
+  await sendPrompt(
+    control,
+    composerSelector,
+    `${FRESH_CHAT_PROMPT} FOLLOW_UP\n${Array.from({ length: 40 }, (_, index) => `Expansion line ${index + 1}`).join('\n')}`
+  )
   await waitForScenarioRequestCount(control, 'fresh_chat', 2)
   await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -160,6 +164,31 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     messageTopOffset <= SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET,
     `The short conversation left ${messageTopOffset}px of blank space above its first message`
   )
+
+  const toggleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-user-message-button"]`
+  const expandableContentSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]:has([data-testid="toggle-user-message-button"]) [data-testid="user-message-content"]`
+  const beforeExpansion = await getSingleElementMetrics(
+    control,
+    expandableContentSelector,
+    'The collapsed user message'
+  )
+  await control.command('click', toggleSelector)
+  await control.command('waitFor', `${toggleSelector}[aria-expanded="true"]`, { stableMs: 300 })
+  const afterExpansion = await getSingleElementMetrics(
+    control,
+    expandableContentSelector,
+    'The expanded user message'
+  )
+  assert.ok(
+    afterExpansion.height > beforeExpansion.height,
+    'Expanding the user message did not reveal more content'
+  )
+  assert.ok(
+    Math.abs(afterExpansion.top - beforeExpansion.top) <= 8,
+    `Expanding the user message moved its top from ${beforeExpansion.top}px to ${afterExpansion.top}px`
+  )
+  await control.command('click', toggleSelector)
+  await control.command('waitFor', `${toggleSelector}[aria-expanded="false"]`, { stableMs: 300 })
 
   const taskRowsBeforeRace = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>

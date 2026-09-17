@@ -30,6 +30,7 @@ from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
 from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
+from app.core.cache import cache_manager
 from app.core.config import settings
 from app.core.exceptions import (
     CustomHTTPException,
@@ -173,6 +174,17 @@ def _load_system_initialization_state(logger: logging.Logger) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Keep the cache available through startup, channel draining and shutdown.
+    await cache_manager.start()
+    try:
+        async with _application_lifespan(app):
+            yield
+    finally:
+        await cache_manager.aclose()
+
+
+@asynccontextmanager
+async def _application_lifespan(app: FastAPI):
     """
     Lifespan context manager for FastAPI application.
     Handles startup and shutdown events.
@@ -346,11 +358,6 @@ async def lifespan(app: FastAPI):
 
     task_run_metric_hooks.register()
     logger.info("✓ Task run metric transaction hooks registered")
-
-    from app.core.cache import cache_manager
-
-    await cache_manager.start()
-    logger.info("✓ Redis cache connection pool initialized")
 
     if settings.SCHEDULED_TASKS_ENABLED:
         logger.info("Starting background jobs...")
@@ -608,16 +615,6 @@ async def lifespan(app: FastAPI):
 
         await stop_device_monitor_async()
         logger.info("✓ Device heartbeat monitor stopped")
-
-        # Close the process-owned Redis cache pool after all cache consumers stop.
-        try:
-            await cache_manager.aclose()
-            logger.info("✓ Redis cache connection pools closed")
-        except Exception:
-            logger.warning(
-                "Failed to close Redis cache connection pools",
-                exc_info=True,
-            )
 
         # Step 8: Shutdown OpenTelemetry
         from shared.telemetry.config import get_otel_config

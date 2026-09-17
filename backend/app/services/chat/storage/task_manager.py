@@ -753,7 +753,15 @@ async def create_task_and_subtasks(
     # Persist user-selected generation parameters for display and retry.
     video_config = None
     image_config = None
-    if params.generate_params and (
+    if params.task_type == "image" and params.generate_params:
+        image_config = {
+            "model": params.model_id or params.generate_params.get("model"),
+            "size": params.generate_params.get("size"),
+        }
+        logger.info(
+            f"[create_task_and_subtasks] Building image_config for task {task_id}: {image_config}"
+        )
+    elif params.generate_params and (
         params.task_type == "video" or params.generate_params.get("model")
     ):
         video_config = {
@@ -766,14 +774,6 @@ async def create_task_and_subtasks(
         }
         logger.info(
             f"[create_task_and_subtasks] Building video_config for task {task_id}: {video_config}"
-        )
-    elif params.task_type == "image" and params.generate_params:
-        image_config = {
-            "model": params.model_id,
-            "size": params.generate_params.get("size"),
-        }
-        logger.info(
-            f"[create_task_and_subtasks] Building image_config for task {task_id}: {image_config}"
         )
 
     prepared_task = None

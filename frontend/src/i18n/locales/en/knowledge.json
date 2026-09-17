@@ -71,6 +71,10 @@
     "document": "Document Knowledge"
   },
   "document": {
+    "dingtalkAutoSync": {
+      "label": "Automatically update DingTalk documents",
+      "description": "Check imported DingTalk documents daily and sync changes to the knowledge base."
+    },
     "title": "Document Knowledge",
     "personal": "Personal Knowledge",
     "team": "Team Knowledge",

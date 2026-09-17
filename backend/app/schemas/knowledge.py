@@ -358,6 +358,7 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
         "auto",
         description="RAG configuration mode: auto-fill or disabled",
     )
+    dingtalk_auto_sync_enabled: bool = Field(default=False)
     summary_enabled: bool = Field(
         default=False,
         description="Enable automatic summary generation for documents",
@@ -439,6 +440,9 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
     retrieval_config: Optional[RetrievalConfigUpdate] = Field(
         None,
         description="Retrieval configuration update (excludes retriever and embedding model)",
+    )
+    dingtalk_auto_sync_enabled: Optional[bool] = Field(
+        default=None, description="Refresh imported DingTalk copies once a day"
     )
     summary_enabled: Optional[bool] = Field(
         None,
@@ -935,6 +939,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
         default_factory=dict,
         description="Safe derived retrieval and query-hint capabilities",
     )
+    dingtalk_auto_sync_enabled: bool = Field(default=False)
     summary_enabled: bool = Field(
         default=False,
         description="Enable automatic summary generation for documents",
@@ -1043,6 +1048,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             retrieval_capabilities=derive_retrieval_capabilities(
                 spec.get("retrievalConfig")
             ),
+            dingtalk_auto_sync_enabled=spec.get("dingtalkAutoSyncEnabled", False),
             summary_enabled=spec.get("summaryEnabled", False),
             summary_model_ref=summary_model_ref,
             execution_model_ref=execution_model_ref,
@@ -1275,6 +1281,15 @@ class ExternalDocumentBatchImportResponse(BaseModel):
     processing: list[KnowledgeDocumentResponse]
     requested_count: int = Field(
         description="Number of distinct external resources in the request"
+    )
+
+
+class DingtalkSyncQueuedResponse(BaseModel):
+    """Receipt of a queued DingTalk copy scan, before any copy has been read."""
+
+    task_id: str = Field(description="Task running the scan of this knowledge base")
+    status: Literal["queued"] = Field(
+        default="queued", description="The scan is queued, not finished"
     )
 
 

@@ -2,12 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
-
-import type { ChangeEvent } from 'react'
+import { useEffect, useState } from 'react'
 import type { ProjectAgentConfigurationHost } from '@wegent/collaboration'
-import { Bot, Code2 } from 'lucide-react'
+import { Bot, Plus } from 'lucide-react'
 
+import type { Bot as AgentBot, Team } from '@/types/api'
 import {
   simpleChoiceCardBaseClass,
   simpleChoiceCardSelectedClass,
@@ -21,7 +20,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -30,15 +28,84 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { useToast } from '@/hooks/use-toast'
+import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
+import { fetchBotsList } from '@/features/settings/services/bots'
+import { fetchTeamsList } from '@/features/settings/services/teams'
+
+function ResourceLibraryAgentCreator({
+  namespace,
+  onClose,
+  onCreated,
+  workspaceName,
+}: {
+  namespace: string
+  onClose(): void
+  onCreated(agent: { name: string; teamId: number }): Promise<void>
+  workspaceName: string
+}) {
+  const { toast } = useToast()
+  const [teams, setTeams] = useState<Team[]>([])
+  const [bots, setBots] = useState<AgentBot[]>([])
+  const resourceScope = namespace === 'default' ? 'personal' : 'group'
+
+  useEffect(() => {
+    let active = true
+    void Promise.all([
+      fetchTeamsList(resourceScope, namespace === 'default' ? undefined : namespace),
+      fetchBotsList(resourceScope, namespace === 'default' ? undefined : namespace),
+    ])
+      .then(([nextTeams, nextBots]) => {
+        if (!active) return
+        setTeams(nextTeams)
+        setBots(nextBots)
+      })
+      .catch(error => {
+        if (!active) return
+        toast({
+          variant: 'destructive',
+          title: error instanceof Error ? error.message : '加载智能体创建配置失败',
+        })
+      })
+    return () => {
+      active = false
+    }
+  }, [namespace, resourceScope, toast])
+
+  return (
+    <TeamEditDialog
+      bots={bots}
+      createTarget={
+        namespace === 'default'
+          ? { scope: 'personal' }
+          : { scope: 'group', groupName: namespace, groupNames: [namespace] }
+      }
+      editingTeamId={0}
+      fixedCreateTargetLabel={workspaceName}
+      onClose={onClose}
+      onSaved={team => onCreated({ name: team.displayName || team.name, teamId: team.id })}
+      open
+      scope={resourceScope}
+      groupName={namespace === 'default' ? undefined : namespace}
+      setBots={setBots}
+      setTeams={setTeams}
+      teams={teams}
+      toast={toast}
+    />
+  )
+}
 
 const modeIcons = {
-  codex: Code2,
-  wegent: Bot,
+  create: Plus,
+  existing: Bot,
 } as const
 
 export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
+  supportsExistingAgentSelection: true,
+  renderAgentCreator(props) {
+    return <ResourceLibraryAgentCreator {...props} />
+  },
   renderDialog({ busy, children, closeLabel, description, onClose, testIds, title }) {
     return (
       <Dialog
@@ -125,17 +192,6 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
         </SelectContent>
       </Select>
     )
-  },
-  renderTextControl({ ariaLabel, multiline, onChange, placeholder, testId, value }) {
-    const props = {
-      'aria-label': ariaLabel,
-      'data-testid': testId,
-      onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-        onChange(event.target.value),
-      placeholder,
-      value,
-    }
-    return multiline ? <Textarea {...props} /> : <Input {...props} />
   },
   renderPrimaryAction({ children, disabled, onClick, testId }) {
     return (

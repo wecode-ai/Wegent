@@ -215,6 +215,7 @@ impl PersistedRuntimeTask {
             sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
+            preserve_execution_path: false,
             pinned: false,
             pinned_order: None,
         }

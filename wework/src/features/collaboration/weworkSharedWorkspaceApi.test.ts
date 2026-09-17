@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from 'vitest'
-import { createSharedWorkspaceAutomationPorts } from '@wegent/collaboration/automation-ui'
 import type {
   CloudLoopItem,
   CloudLoopItemCollaborator,
@@ -273,11 +272,45 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       cardDisplay: project.card_display,
       pullRequestAutomation: { enabled: true },
       workflowDefinition: { version: 1 },
+      executionEnvironment: {
+        repositories: [
+          {
+            name: 'Wegent',
+            url: 'https://github.com/wecode-ai/Wegent.git',
+            ref: 'main',
+            path: 'wegent',
+            primary: true,
+          },
+        ],
+        setupSteps: [
+          {
+            command: 'pnpm install',
+            workingDirectory: 'wegent',
+          },
+        ],
+      },
     })
     expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith('project-1', {
       version: 2,
       pull_request_automation: { enabled: true },
       workflow_definition: { version: 1 },
+      execution_environment: {
+        repositories: [
+          {
+            name: 'Wegent',
+            url: 'https://github.com/wecode-ai/Wegent.git',
+            ref: 'main',
+            path: 'wegent',
+            primary: true,
+          },
+        ],
+        setup_steps: [
+          {
+            command: 'pnpm install',
+            working_directory: 'wegent',
+          },
+        ],
+      },
     })
     await api.projects.archive('project-1', 2)
     await expect(api.myWork.list()).resolves.toEqual([issue])
@@ -662,7 +695,17 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       created_at: '2026-09-11T00:00:00Z',
       updated_at: '2026-09-11T00:00:00Z',
     }
-    const mappedWorkspace = { ...workspace, location: 'cloud' as const }
+    const mappedWorkspace = {
+      ...workspace,
+      location: 'cloud' as const,
+      namespace: 'default',
+      execution_environment: {
+        repositories: [],
+        setup_steps: [],
+        fingerprint: '',
+        devices: {},
+      },
+    }
     const client = {
       get: vi.fn().mockImplementation(async (endpoint: string) => {
         if (endpoint === '/v1/workspaces') return { items: [workspace] }
@@ -919,6 +962,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'automationExecutionCatalog',
         'workspaces',
         'resources',
+        'gitRepositories',
         'projects',
         'myWork',
         'issues',
@@ -1102,7 +1146,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
 })
 
 describe('createWeworkAutomationSharedWorkspaceApi', () => {
-  it('routes local automation and legacy workflow clearing through shared ports', async () => {
+  it('routes local automation and incoming-hook requests', async () => {
     const deliveryApi = createMockDeliveryApi()
     const projectAutomationApi = {
       list: vi.fn().mockResolvedValue([]),
@@ -1126,31 +1170,11 @@ describe('createWeworkAutomationSharedWorkspaceApi', () => {
       projectAutomationApi as never,
       projectIncomingHookApi as never
     )
-    const ports = createSharedWorkspaceAutomationPorts<CloudProject>(workspaceApi)
-    const workflowDefinition = {
-      version: 3,
-      stage_mode: 'none' as const,
-      advancement_policy: 'manual' as const,
-      coordinator_prompt: '',
-      approval_policy: 'required' as const,
-      ai_automation_rule_id: null,
-      execution_config: null,
-      nodes: [],
-    }
-
-    await ports.automationApi.list('project-1')
-    await ports.incomingHooksApi.catalog()
-    await ports.projectApi.clearLegacyWorkflow(
-      { ...project, version: 4 } as CloudProject,
-      workflowDefinition
-    )
+    await workspaceApi.automations?.list('project-1')
+    await workspaceApi.incomingHooks?.catalog()
 
     expect(projectAutomationApi.list).toHaveBeenCalledWith('project-1')
     expect(projectIncomingHookApi.catalog).toHaveBeenCalledOnce()
-    expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith('project-1', {
-      version: 4,
-      workflow_definition: workflowDefinition,
-    })
   })
 })
 

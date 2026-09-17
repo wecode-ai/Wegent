@@ -3,7 +3,8 @@ import type { NodeView } from 'prosemirror-view'
 import { TextSelection } from 'prosemirror-state'
 import type { EditorView } from 'prosemirror-view'
 import { createComposerLinkElement, type ComposerLinkPayload } from './composerLinks'
-import { serializeComposerLinkNode, serializeComposerSlice } from './composerProseMirrorModel'
+import { serializeComposerLinkNode } from './composerProseMirrorModel'
+import { serializedOffsetFromPosition } from './composerMarkdownSerializer'
 
 export interface ComposerLinkNodeViewCallbacks {
   onEditLink?: (
@@ -105,7 +106,6 @@ function computeSerializedRange(
   position: number,
   node: ProseMirrorNode
 ): { start: number; end: number } {
-  const before = serializeComposerSlice(view.state.doc.slice(0, position))
-  const start = before.length
+  const start = serializedOffsetFromPosition(view.state.doc, position)
   return { start, end: start + serializeComposerLinkNode(node).length }
 }

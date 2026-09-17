@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { canEditCollaborationIssue } from "../permissions";
 import type { CollaborationAssignment, CollaborationIssue } from "../types";
 
 export function ProjectIssueTable({
@@ -22,8 +23,11 @@ export function ProjectIssueTable({
   allLabel = "All",
   tagLabel = "Tags",
   manualAssignmentLabel = "Assigned in Issue",
+  actionsLabel,
+  deleteLabel,
   statusName = (status) => status,
   onCreate,
+  onDelete,
   onOpen,
 }: {
   issues: CollaborationIssue[];
@@ -41,8 +45,11 @@ export function ProjectIssueTable({
   allLabel?: string;
   tagLabel?: string;
   manualAssignmentLabel?: string;
+  actionsLabel?: string;
+  deleteLabel?: string;
   statusName?(status: string): string;
   onCreate?(): void;
+  onDelete?(issue: CollaborationIssue): void;
   onOpen(issue: CollaborationIssue): void;
 }) {
   const [query, setQuery] = useState("");
@@ -233,6 +240,11 @@ export function ProjectIssueTable({
             {assignmentSourceLabel ? <th>{assignmentSourceLabel}</th> : null}
             {executionLabel ? <th>{executionLabel}</th> : null}
             <th>{updatedLabel}</th>
+            {onDelete ? (
+              <th className="collaboration-issue-table-actions-head">
+                {actionsLabel}
+              </th>
+            ) : null}
           </tr>
         </thead>
         <tbody>
@@ -263,9 +275,29 @@ export function ProjectIssueTable({
                   </td>
                 ) : null}
                 {executionLabel ? (
-                  <td>{issue.execution_state || "—"}</td>
+                  <td
+                    data-testid={`collaboration-issue-table-execution-${issue.id}`}
+                    title={issue.execution_error || undefined}
+                  >
+                    {issue.execution_state || "—"}
+                  </td>
                 ) : null}
                 <td>{issue.updated_at.slice(0, 10)}</td>
+                {onDelete ? (
+                  <td className="collaboration-issue-table-actions">
+                    {canEditCollaborationIssue(issue) ? (
+                      <button
+                        aria-label={deleteLabel}
+                        className="collaboration-issue-table-delete"
+                        data-testid={`collaboration-issue-table-delete-${issue.id}`}
+                        onClick={() => onDelete(issue)}
+                        type="button"
+                      >
+                        {deleteLabel}
+                      </button>
+                    ) : null}
+                  </td>
+                ) : null}
               </tr>
             );
           })}

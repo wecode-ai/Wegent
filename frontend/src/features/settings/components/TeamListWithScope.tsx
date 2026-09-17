@@ -31,6 +31,7 @@ interface TeamListWithScopeProps {
   hideModeFilter?: boolean
   createRequest?: ResourceCreateRequest
   onCreated?: (team: Team) => void
+  onSaved?: (team: Team, created: boolean) => void
   onCreateRequestClose?: () => void
   creationOnly?: boolean
   compact?: boolean
@@ -53,6 +54,7 @@ export function TeamListWithScope({
   hideModeFilter = false,
   createRequest,
   onCreated,
+  onSaved,
   onCreateRequestClose,
   creationOnly = false,
   compact = false,
@@ -116,6 +118,7 @@ export function TeamListWithScope({
         hideModeFilter={hideModeFilter}
         createRequest={createRequest}
         onCreated={onCreated}
+        onSaved={onSaved}
         onCreateRequestClose={onCreateRequestClose}
         creationOnly={creationOnly}
         compact={compact}
@@ -141,6 +144,7 @@ export function TeamListWithScope({
         hideModeFilter={hideModeFilter}
         createRequest={createRequest}
         onCreated={onCreated}
+        onSaved={onSaved}
         onCreateRequestClose={onCreateRequestClose}
         creationOnly={creationOnly}
         compact={compact}
@@ -176,6 +180,7 @@ export function TeamListWithScope({
         hideModeFilter={hideModeFilter}
         createRequest={createRequest}
         onCreated={onCreated}
+        onSaved={onSaved}
         onCreateRequestClose={onCreateRequestClose}
         creationOnly={creationOnly}
         compact={compact}

@@ -233,16 +233,10 @@ async def sync_installed_plugins_to_device(
         user_id=current_user.id,
         device_id=normalized_device_id,
     )
-    payload = device_capability_sync_service.build_desired_capabilities(
-        db,
-        user_id=current_user.id,
-        device_id=normalized_device_id,
-    )
     db.close()
-    result = await device_capability_sync_service.sync_device_payload(
+    result = await device_capability_sync_service.sync_current_device_capabilities(
         user_id=current_user.id,
         device_id=normalized_device_id,
-        payload=payload,
     )
     with get_db_session() as record_db:
         plugin_device_installation_service.record_device_sync_result(
@@ -250,14 +244,13 @@ async def sync_installed_plugins_to_device(
             user_id=current_user.id,
             result=result,
         )
-    mode = str(payload.get("mode") or "replace")
     errors = list(result.errors or [])
     if result.error:
         errors.append({"device_id": result.device_id, "error": result.error})
     sync = DeviceCapabilitySyncResponse(
         success=bool(result.success),
         device_id=result.device_id,
-        mode=mode if mode in {"merge", "replace"} else "replace",
+        mode="replace",
         skills=result.skills,
         plugins=result.plugins,
         mcps=result.mcps,
@@ -273,6 +266,45 @@ async def sync_installed_plugins_to_device(
         normalized_device_id,
         pending_count,
         result.success,
+    )
+    return PluginDeviceSyncResponse(
+        deviceId=normalized_device_id,
+        pendingCount=pending_count,
+        sync=sync,
+    )
+
+
+@router.post(
+    "/installed/{installed_id}/sync-device",
+    response_model=PluginDeviceSyncResponse,
+)
+async def sync_installed_plugin_to_device(
+    installed_id: int,
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginDeviceSyncResponse:
+    """Merge one installed plugin without changing unrelated device state."""
+    normalized_device_id = device_id.strip()
+    if not normalized_device_id:
+        raise HTTPException(status_code=400, detail="device_id is required")
+    pending_count = plugin_device_installation_service.ensure_plugin_pending_for_device(
+        db,
+        user_id=current_user.id,
+        device_id=normalized_device_id,
+        installed_kind_id=installed_id,
+    )
+    sync = await device_capability_sync_service.sync_installed_plugin_to_device_result(
+        db,
+        user_id=current_user.id,
+        device_id=normalized_device_id,
+        installed_plugin_id=installed_id,
+    )
+    plugin_device_installation_service.record_plugin_sync_response(
+        db,
+        user_id=current_user.id,
+        installed_kind_id=installed_id,
+        response=sync,
     )
     return PluginDeviceSyncResponse(
         deviceId=normalized_device_id,

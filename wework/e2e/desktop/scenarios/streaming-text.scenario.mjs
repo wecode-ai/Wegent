@@ -59,7 +59,11 @@ const SUBAGENT_PROMPT = 'WEWORK_DESKTOP_E2E_SUBAGENT_STREAMING_PANEL'
 const SUBAGENT_SEARCH_CALL_ID = 'wework-subagent-tool-search'
 const SUBAGENT_CALL_ID = 'wework-subagent-streaming-panel'
 const SUBAGENT_WAIT_CALL_ID = 'wework-subagent-wait'
+const SUBAGENT_CHILD_TOOL_CALL_ID = 'wework-subagent-child-tool'
 const SUBAGENT_CHILD_PROMPT = 'Inspect the child event stream and report the routing result.'
+const SUBAGENT_CHILD_TOOL_MARKER = 'WEWORK_DESKTOP_E2E_SUBAGENT_TOOL'
+const SUBAGENT_CHILD_TOOL_START = `${SUBAGENT_CHILD_TOOL_MARKER}_START`
+const SUBAGENT_CHILD_TOOL_COMPLETE = `${SUBAGENT_CHILD_TOOL_MARKER}_COMPLETE`
 const SUBAGENT_CHILD_PARTIAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARTIAL'
 const SUBAGENT_CHILD_COMPLETION = `${SUBAGENT_CHILD_PARTIAL}\n\nWEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE`
 const SUBAGENT_PARENT_COMPLETION = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARENT_COMPLETE'
@@ -867,6 +871,7 @@ export function createDesktopScenario({
   let active = false
   let generatedImageStage = 'initial'
   let subagentStage = 'initial'
+  let subagentChildStage = 'initial'
   let toolRegressionStage = 'initial'
   let timerStage = 'initial'
   let releaseAppend
@@ -1121,7 +1126,6 @@ export function createDesktopScenario({
     await control.command('waitFor', '[data-testid="subagent-activity-chip"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await subagentPartialWritten
     assert.equal(
       (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
         SUBAGENT_CHILD_PARTIAL
@@ -1142,6 +1146,29 @@ export function createDesktopScenario({
       'The subagent conversation was not opened inside the active right workspace tab'
     )
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command(
+      'waitFor',
+      '[data-testid="subagent-conversation-scroll"] [data-testid="tool-block-duration"]',
+      {
+        timeoutMs: uiTimeoutMs,
+      }
+    )
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_TOOL_MARKER
+      ),
+      false,
+      'The running child tool leaked into the root conversation'
+    )
+    await subagentPartialWritten
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
       text: SUBAGENT_CHILD_PARTIAL,
       timeoutMs: uiTimeoutMs,
     })
@@ -1151,6 +1178,13 @@ export function createDesktopScenario({
       ),
       false,
       'The rendered child agent stream leaked into the root conversation'
+    )
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_TOOL_MARKER
+      ),
+      false,
+      'The completed child tool leaked into the root conversation'
     )
     await captureSubagent(control, 'streaming-text-subagent-02-streaming-conversation.png')
     releaseSubagentCompletion()
@@ -1221,6 +1255,17 @@ export function createDesktopScenario({
       text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_TOOL_MARKER
+      ),
+      false,
+      'The restored child tool leaked into the root conversation'
+    )
     await captureSubagent(control, 'streaming-text-subagent-06-restored-history.png')
     await control.command('click', '[data-testid="right-workspace-subagents-tab-close-button"]')
   }
@@ -1266,6 +1311,34 @@ export function createDesktopScenario({
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
       if (request.headers['x-openai-subagent']) {
+        if (subagentChildStage === 'initial') {
+          const tool = selectShellTool(
+            body,
+            workspacePath,
+            `printf '${SUBAGENT_CHILD_TOOL_START}\\n'; sleep 2; printf '${SUBAGENT_CHILD_TOOL_COMPLETE}\\n'`,
+            10_000
+          )
+          subagentChildStage = 'awaiting-tool-output'
+          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+          response.end(
+            sse([
+              responseCreated(responseId),
+              ...functionCall(SUBAGENT_CHILD_TOOL_CALL_ID, tool.name, tool.arguments),
+              responseCompleted(responseId),
+            ])
+          )
+          return true
+        }
+        assert.equal(
+          subagentChildStage,
+          'awaiting-tool-output',
+          `Unexpected subagent child stage: ${subagentChildStage}`
+        )
+        assert.ok(
+          requestContainsToolOutputForCall(body, SUBAGENT_CHILD_TOOL_CALL_ID),
+          'The child tool output was not returned to the subagent'
+        )
+        subagentChildStage = 'streaming-text'
         const stream = streamingEvents(responseId, SUBAGENT_CHILD_COMPLETION, 'final_answer')
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
@@ -1287,6 +1360,7 @@ export function createDesktopScenario({
             )
           )
         )
+        subagentChildStage = 'complete'
         response.end(sse(stream.finish))
         return true
       }
@@ -2380,6 +2454,18 @@ export function createDesktopScenario({
         distanceFromBottom(pinnedBeforeSwitch) <= 8,
         `The scroll-to-bottom button left the growing streaming conversation ${distanceFromBottom(pinnedBeforeSwitch)}px from the bottom`
       )
+      // Regression: the bottom pin must survive past the previous fixed release window so a
+      // response that keeps growing cannot leave the user staring at the middle of the chat.
+      await new Promise(resolve => setTimeout(resolve, 1_200))
+      const pinnedAfterReleaseWindow = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The growing streaming conversation after the bottom release window'
+      )
+      assert.ok(
+        distanceFromBottom(pinnedAfterReleaseWindow) <= 8,
+        `The jump-to-bottom pin was dropped after the release window, leaving the conversation ${distanceFromBottom(pinnedAfterReleaseWindow)}px from the bottom`
+      )
       await capture(control, 'streaming-text-14-scroll-button-followed-layout-growth.png')
       await new Promise(resolve => setTimeout(resolve, 250))
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -2499,10 +2585,87 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       await capture(control, 'streaming-text-18-completed-user-scroll-stable.png')
+
+      // Regression: a small upward scroll that stays within the bottom tolerance must keep
+      // its up-scroll pause so the follow engine cannot snap the viewport straight back to
+      // the bottom (the reported "cannot scroll up while the assistant replies" issue).
       await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
       await waitForBottom(
         control,
-        'The completed conversation after restoring the downstream test precondition',
+        'The completed conversation before the small up-scroll regression',
+        uiTimeoutMs
+      )
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, { value: '3' })
+      const smallUpScrollPosition = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The completed conversation immediately after a small up-scroll'
+      )
+      assert.ok(
+        distanceFromBottom(smallUpScrollPosition) > 0,
+        'The small up-scroll did not move the completed conversation away from the very bottom'
+      )
+      const smallUpScrollDeadline = Date.now() + 2_000
+      while (Date.now() < smallUpScrollDeadline) {
+        const current = await getSingleElementMetrics(
+          control,
+          SCROLLER_SELECTOR,
+          'The completed conversation while pending bottom-follow work could run'
+        )
+        assert.ok(
+          distanceFromBottom(current) > 0,
+          `The small up-scroll was snapped straight back to the bottom (paused follow cleared the up-scroll intent; now ${distanceFromBottom(current)}px from the bottom)`
+        )
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+
+      // Regression: sweeping upward through the history must keep moving the reader away from
+      // the bottom. Re-measured rows used to drag the viewport back down, which the user saw
+      // as small bounces while reading and as being yanked back to the very bottom.
+      const sweepStart = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The completed conversation before the fast upward sweep'
+      )
+      const sweepMaximum = Math.max(
+        1,
+        sweepStart.scrollHeight - sweepStart.clientHeight,
+        distanceFromBottom(sweepStart)
+      )
+      let sweepDistanceFromBottom = distanceFromBottom(sweepStart)
+      let previousSweepFraction = 0
+      for (const fraction of [0.25, 0.5, 0.75, 1]) {
+        await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
+          value: String(Math.round(sweepMaximum * fraction)),
+        })
+        await new Promise(resolve => setTimeout(resolve, 200))
+        const sweepStep = await getSingleElementMetrics(
+          control,
+          SCROLLER_SELECTOR,
+          `The completed conversation after fast upward sweep step ${fraction}`
+        )
+        const stepDistanceFromBottom = distanceFromBottom(sweepStep)
+        // Re-measured rows above the viewport keep the reader's text still, so the distance from the
+        // bottom legitimately lands short of the requested position. What must hold is that the sweep
+        // moves the reader further up the history instead of leaving the viewport near the bottom.
+        const requestedStepDistance = Math.round(sweepMaximum * (fraction - previousSweepFraction))
+        assert.ok(
+          stepDistanceFromBottom >= sweepDistanceFromBottom + requestedStepDistance / 2,
+          `The fast upward sweep did not advance (${Math.round(sweepDistanceFromBottom)}px -> ${Math.round(stepDistanceFromBottom)}px from the bottom)`
+        )
+        sweepDistanceFromBottom = stepDistanceFromBottom
+        previousSweepFraction = fraction
+      }
+      await capture(control, 'streaming-text-19-fast-up-scroll-stable.png')
+      assert.ok(
+        sweepDistanceFromBottom > 0,
+        'The fast upward sweep never left the bottom of the completed conversation'
+      )
+
+      await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
+      await waitForBottom(
+        control,
+        'The completed conversation after clearing the small up-scroll regression',
         uiTimeoutMs
       )
       const completedSnapshot = JSON.parse(

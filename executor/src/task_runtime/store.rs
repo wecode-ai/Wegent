@@ -316,6 +316,12 @@ impl LocalTaskStore {
         if let Some(workflow_definition) = input.workflow_definition {
             metadata["workflow_definition"] = workflow_definition;
         }
+        if let Some(collaboration_groups) = input.collaboration_groups {
+            metadata["collaboration_groups"] = collaboration_groups;
+        }
+        if let Some(automatic_processing_rules) = input.automatic_processing_rules {
+            metadata["automatic_processing_rules"] = automatic_processing_rules;
+        }
         let connection = self.connection()?;
         let updated = connection.execute(
             "UPDATE loop_items
@@ -699,18 +705,21 @@ impl LocalTaskStore {
         input: ChatAgentCreate,
     ) -> Result<ChatAgent, TaskRuntimeError> {
         validate_name(&input.name, "robot name")?;
+        validate_chat_agent_runtime(&input.runtime)?;
         if !(1..=20).contains(&input.max_concurrent_executions) {
             return Err(TaskRuntimeError::Invalid(
                 "Robot max concurrent executions must be between 1 and 20".to_owned(),
             ));
         }
         validate_workspace_policy(&input.workspace_policy)?;
+        validate_mcp_servers(&input.mcp_servers)?;
         let connection = self.connection()?;
         let id = format!("LA-{}", Uuid::new_v4().simple());
         let now = now();
         let mut metadata = json!({
-            "runtime": "codex",
+            "runtime": input.runtime,
             "model": input.model,
+            "capability_description": input.capability_description.unwrap_or_default(),
             "system_prompt": input.system_prompt.unwrap_or_default(),
             "visibility": input.visibility.unwrap_or_else(|| "creator_admin".to_owned()),
             "execution_environment": input.execution_environment.unwrap_or_else(|| "local".to_owned()),
@@ -718,6 +727,8 @@ impl LocalTaskStore {
             "max_concurrent_executions": input.max_concurrent_executions,
             "workspace_policy": input.workspace_policy,
             "plugins": input.plugins,
+            "additional_skills": input.additional_skills,
+            "mcp_servers": input.mcp_servers,
         });
         metadata["execution_device_id"] = json!(input.execution_device_id);
         metadata["local_project_id"] = json!(input.local_project_id);
@@ -762,8 +773,15 @@ impl LocalTaskStore {
         if let Some(name) = input.name.as_ref() {
             validate_name(name, "robot name")?;
         }
+        if let Some(runtime) = input.runtime.as_ref() {
+            validate_chat_agent_runtime(runtime)?;
+            metadata["runtime"] = json!(runtime);
+        }
         if let Some(model) = input.model.as_ref() {
             metadata["model"] = json!(model);
+        }
+        if let Some(description) = input.capability_description.as_ref() {
+            metadata["capability_description"] = json!(description);
         }
         if let Some(prompt) = input.system_prompt.as_ref() {
             metadata["system_prompt"] = json!(prompt);
@@ -797,6 +815,13 @@ impl LocalTaskStore {
         }
         if let Some(plugins) = input.plugins {
             metadata["plugins"] = json!(plugins);
+        }
+        if let Some(additional_skills) = input.additional_skills {
+            metadata["additional_skills"] = json!(additional_skills);
+        }
+        if let Some(mcp_servers) = input.mcp_servers {
+            validate_mcp_servers(&mcp_servers)?;
+            metadata["mcp_servers"] = mcp_servers;
         }
         let status = input
             .status
@@ -3625,6 +3650,20 @@ fn validate_workspace_policy(value: &str) -> Result<(), TaskRuntimeError> {
     ))
 }
 
+fn validate_chat_agent_runtime(value: &str) -> Result<(), TaskRuntimeError> {
+    matches!(value, "codex" | "claude_code")
+        .then_some(())
+        .ok_or_else(|| {
+            TaskRuntimeError::Invalid("Robot runtime must be codex or claude_code".to_owned())
+        })
+}
+
+fn validate_mcp_servers(value: &Value) -> Result<(), TaskRuntimeError> {
+    value.is_object().then_some(()).ok_or_else(|| {
+        TaskRuntimeError::Invalid("Robot MCP servers must be a JSON object".to_owned())
+    })
+}
+
 fn validate_status(value: &str) -> Result<(), TaskRuntimeError> {
     matches!(
         value,
@@ -3780,11 +3819,12 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
         id: row.id.clone(),
         project_id: row.cloud_project_id.clone().unwrap_or_default(),
         name: row.title.or(row.name).unwrap_or_else(|| "AI".to_owned()),
-        runtime: "codex".to_owned(),
+        runtime: text("runtime", "codex"),
         model: metadata
             .get("model")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
+        capability_description: text("capability_description", ""),
         system_prompt: text("system_prompt", ""),
         status: row.status.unwrap_or_else(|| "active".to_owned()),
         visibility: text("visibility", "creator_admin"),
@@ -3806,6 +3846,16 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default(),
+        additional_skills: metadata
+            .get("additional_skills")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+        mcp_servers: metadata
+            .get("mcp_servers")
+            .filter(|value| value.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({})),
         created_by_user_id: row.created_by_user_id,
         version: row.version,
         created_at: row.created_at,
@@ -3999,6 +4049,21 @@ fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default(),
+        agent_runtime: agent_metadata
+            .get("runtime")
+            .and_then(Value::as_str)
+            .unwrap_or("codex")
+            .to_owned(),
+        agent_additional_skills: agent_metadata
+            .get("additional_skills")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+        agent_mcp_servers: agent_metadata
+            .get("mcp_servers")
+            .filter(|value| value.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({})),
     })
 }
 
@@ -4213,10 +4278,15 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
             }).to_string(),
         });
     }
+    let shell_type = if execution.agent_runtime == "claude_code" {
+        "ClaudeCode"
+    } else {
+        "Codex"
+    };
     let mut payload = json!({
         "taskId": execution.runtime_task_id,
         "teamId": 0,
-        "runtime": "codex",
+        "runtime": execution.agent_runtime,
         "message": message,
         "title": execution.task_title,
         "cloudProjectId": execution.cloud_project_id,
@@ -4224,9 +4294,12 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         "bot": [{
             "id": execution.agent_id,
             "name": execution.agent_name,
-            "shell_type": "Codex",
+            "shell_type": shell_type,
             "system_prompt": execution.agent_system_prompt,
+            "mcp_servers": execution.agent_mcp_servers,
         }],
+        "projectPlugins": execution.agent_plugins,
+        "additionalSkills": execution.agent_additional_skills,
         "standaloneChatWorkspace": execution.agent_local_project_id.is_none(),
         "origin": {
             "type": "project_automation",
@@ -4594,7 +4667,9 @@ mod tests {
                 project_id,
                 ChatAgentCreate {
                     name: "Local Bot".to_owned(),
+                    runtime: "codex".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: Some("Be careful.".to_owned()),
                     visibility: Some("creator_admin".to_owned()),
                     execution_environment: Some("local".to_owned()),
@@ -4605,6 +4680,8 @@ mod tests {
                     local_project_id: None,
                     created_by_user_id: Some(7),
                     plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({}),
                 },
             )
             .unwrap()
@@ -5362,7 +5439,9 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Creator Bot".to_owned(),
+                    runtime: "codex".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5378,6 +5457,8 @@ mod tests {
                         "marketplaceId": "openai",
                         "displayName": "GitHub",
                     })],
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({}),
                 },
             )
             .unwrap();
@@ -5389,6 +5470,115 @@ mod tests {
     }
 
     #[test]
+    fn chat_agent_runtime_and_capabilities_round_trip_into_claim_payload() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let create: ChatAgentCreate = serde_json::from_value(json!({
+            "name": "Claude implementer",
+            "runtime": "claude_code",
+            "model": "claude-sonnet-4-5",
+            "capability_description": "Implements and reviews code",
+            "system_prompt": "Use the configured capabilities.",
+            "execution_environment": "local",
+            "execution_mode": "auto",
+            "max_concurrent_executions": 1,
+            "workspace_policy": "project",
+            "created_by_user_id": 7,
+            "plugins": [{"id": "code-review@openai"}],
+            "additional_skills": [{
+                "name": "architecture-review",
+                "namespace": "default",
+            }],
+            "mcp_servers": {
+                "github": {
+                    "command": "github-mcp-server",
+                    "args": ["stdio"],
+                },
+            },
+        }))
+        .unwrap();
+        let agent = store.create_chat_agent(&project.id, create).unwrap();
+
+        assert_eq!(agent.runtime, "claude_code");
+        assert_eq!(agent.additional_skills[0]["name"], "architecture-review");
+        assert_eq!(agent.mcp_servers["github"]["command"], "github-mcp-server");
+        let listed = store.list_chat_agents(&project.id).unwrap();
+        assert_eq!(listed[0].runtime, "claude_code");
+        assert_eq!(listed[0].additional_skills, agent.additional_skills);
+        assert_eq!(listed[0].mcp_servers, agent.mcp_servers);
+
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Implement runtime contract".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "high".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        store
+            .update_task(
+                &project.id,
+                &task.id,
+                TaskUpdate {
+                    version: task.version,
+                    title: None,
+                    description: None,
+                    status: None,
+                    priority: None,
+                    parent_id: None,
+                    tags: None,
+                    assignee_agent_id: Some(Some(agent.id.clone())),
+                    execution_payload: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        let claim = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-instance".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: vec![],
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("Claude Code execution should be claimable");
+        let payload = claim.execution_payload.unwrap();
+        assert_eq!(payload["runtime"], "claude_code");
+        assert_eq!(payload["bot"][0]["shell_type"], "ClaudeCode");
+        assert_eq!(
+            payload["additionalSkills"][0]["name"],
+            "architecture-review"
+        );
+        assert_eq!(
+            payload["bot"][0]["mcp_servers"]["github"]["command"],
+            "github-mcp-server"
+        );
+        assert_eq!(payload["projectPlugins"][0]["id"], "code-review@openai");
+
+        let update: ChatAgentUpdate = serde_json::from_value(json!({
+            "version": agent.version,
+            "runtime": "codex",
+            "additional_skills": [{"name": "release-check"}],
+            "mcp_servers": {"linear": {"url": "https://mcp.invalid"}},
+        }))
+        .unwrap();
+        let updated = store
+            .update_chat_agent(&project.id, &agent.id, update)
+            .unwrap();
+        assert_eq!(updated.runtime, "codex");
+        assert_eq!(updated.additional_skills[0]["name"], "release-check");
+        assert_eq!(updated.mcp_servers["linear"]["url"], "https://mcp.invalid");
+    }
+
+    #[test]
     fn chat_agent_persists_local_project_binding() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
@@ -5397,7 +5587,9 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Bound Bot".to_owned(),
+                    runtime: "codex".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5408,6 +5600,8 @@ mod tests {
                     local_project_id: Some(7),
                     created_by_user_id: Some(7),
                     plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({}),
                 },
             )
             .unwrap();
@@ -5422,7 +5616,9 @@ mod tests {
                 ChatAgentUpdate {
                     version: agent.version,
                     name: None,
+                    runtime: None,
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     status: None,
                     visibility: None,
@@ -5433,6 +5629,8 @@ mod tests {
                     workspace_policy: None,
                     local_project_id: Some(Some(9)),
                     plugins: None,
+                    additional_skills: None,
+                    mcp_servers: None,
                 },
             )
             .unwrap();
@@ -5445,7 +5643,9 @@ mod tests {
                 ChatAgentUpdate {
                     version: updated.version,
                     name: None,
+                    runtime: None,
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     status: None,
                     visibility: None,
@@ -5456,6 +5656,8 @@ mod tests {
                     workspace_policy: None,
                     local_project_id: Some(None),
                     plugins: None,
+                    additional_skills: None,
+                    mcp_servers: None,
                 },
             )
             .unwrap();
@@ -5471,7 +5673,9 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Bot A".to_owned(),
+                    runtime: "codex".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5482,6 +5686,8 @@ mod tests {
                     local_project_id: None,
                     created_by_user_id: None,
                     plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({}),
                 },
             )
             .unwrap();
@@ -5490,7 +5696,9 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Bot B".to_owned(),
+                    runtime: "codex".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5501,6 +5709,8 @@ mod tests {
                     local_project_id: None,
                     created_by_user_id: None,
                     plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({}),
                 },
             )
             .unwrap();
@@ -5585,7 +5795,9 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Parallel Bot".to_owned(),
+                    runtime: "codex".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5596,6 +5808,8 @@ mod tests {
                     local_project_id: None,
                     created_by_user_id: Some(7),
                     plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({}),
                 },
             )
             .unwrap();
@@ -5656,7 +5870,9 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Unbound Bot".to_owned(),
+                    runtime: "codex".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5668,6 +5884,8 @@ mod tests {
                     local_project_id: None,
                     created_by_user_id: Some(7),
                     plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({}),
                 },
             )
             .unwrap();
@@ -5785,7 +6003,9 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Manual Bot".to_owned(),
+                    runtime: "codex".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5796,6 +6016,8 @@ mod tests {
                     local_project_id: None,
                     created_by_user_id: Some(7),
                     plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({}),
                 },
             )
             .unwrap();
@@ -5846,7 +6068,9 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Status Filter Bot".to_owned(),
+                    runtime: "codex".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5857,6 +6081,8 @@ mod tests {
                     local_project_id: None,
                     created_by_user_id: Some(7),
                     plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({}),
                 },
             )
             .unwrap();
@@ -6401,7 +6627,9 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Migrated Bot".to_owned(),
+                    runtime: "codex".to_owned(),
                     model: None,
+                    capability_description: None,
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6412,6 +6640,8 @@ mod tests {
                     local_project_id: None,
                     created_by_user_id: None,
                     plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({}),
                 },
             )
             .unwrap();

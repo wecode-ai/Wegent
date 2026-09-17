@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock, Weak,
     },
     time::{Duration, Instant},
@@ -151,7 +151,7 @@ use super::{
     connectors::ConnectorRuntime,
     events::{
         emit_response_event, emit_runtime_work_changed, is_context_compaction_request,
-        CodexNotificationEventMapper,
+        next_runtime_event_sequence, CodexNotificationEventMapper,
     },
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
@@ -178,10 +178,11 @@ use super::{
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
-        item_type, normalize_device_id, normalize_runtime_goal_timestamps,
-        normalize_workspace_path, now_ms, prompt_text, raw_string_field, restore_cloud_project_id,
-        restore_origin, runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
-        timestamp_ms_field, workspace_group_path, workspace_path,
+        item_type, link_is_cloud_project_task, normalize_device_id,
+        normalize_runtime_goal_timestamps, normalize_workspace_path, now_ms, prompt_text,
+        raw_string_field, restore_cloud_project_id, restore_origin, runtime_task_id,
+        runtime_task_title, set_runtime_task_title, string_field, timestamp_ms_field,
+        workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -555,6 +556,7 @@ pub struct RuntimeWorkRpcHandler {
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
+    startup_recovery_deferred: Arc<AtomicBool>,
     bundled_plugin_marketplace_reconciliation: Arc<AsyncMutex<()>>,
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
@@ -820,6 +822,7 @@ impl RuntimeWorkRpcHandler {
             codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
                 CodexRuntimeProxyConfig::default(),
             )),
+            startup_recovery_deferred: Arc::new(AtomicBool::new(false)),
             bundled_plugin_marketplace_reconciliation: Arc::new(AsyncMutex::new(())),
             event_tx: None,
             next_execution_id: Arc::new(AtomicU64::new(1)),
@@ -884,6 +887,20 @@ impl RuntimeWorkRpcHandler {
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
     ) -> Self {
+        let handler =
+            Self::with_event_sender_deferred_startup_recovery(device_id, codex_binary, event_tx);
+        handler
+            .startup_recovery_deferred
+            .store(false, Ordering::Release);
+        handler.spawn_startup_worktree_reconciliation();
+        handler
+    }
+
+    pub fn with_event_sender_deferred_startup_recovery(
+        device_id: impl Into<String>,
+        codex_binary: impl Into<String>,
+        event_tx: broadcast::Sender<Value>,
+    ) -> Self {
         let handler = Self {
             event_tx: Some(event_tx),
             ..Self::new(device_id, codex_binary)
@@ -891,7 +908,9 @@ impl RuntimeWorkRpcHandler {
         if let Some(sender) = handler.event_tx.clone() {
             handler.hook_service.set_event_sender(sender);
         }
-        handler.spawn_startup_worktree_reconciliation();
+        handler
+            .startup_recovery_deferred
+            .store(true, Ordering::Release);
         handler.start_automation_scheduler();
         handler
     }
@@ -912,12 +931,32 @@ impl RuntimeWorkRpcHandler {
     /// read cloud project data. This mirrors `normalize_local_task_request`
     /// used by the `task:execute` channel so both paths behave identically
     /// regardless of when the executor process was spawned.
+    pub(super) fn backend_connection_snapshot(
+        &self,
+    ) -> Result<Option<ConnectionConfig>, AppIpcError> {
+        self.backend_connection
+            .lock()
+            .map(|guard| guard.clone())
+            .map_err(|_| {
+                AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection state is unavailable",
+                )
+            })
+    }
+
     fn apply_backend_connection(&self, request: &mut ExecutionRequest) {
-        let Ok(guard) = self.backend_connection.lock() else {
-            return;
-        };
-        let Some(connection) = guard.as_ref() else {
-            return;
+        self.rewrite_model_gateway_backend(request);
+        let connection = match self.backend_connection_snapshot() {
+            Ok(Some(connection)) => connection,
+            Ok(None) => return,
+            Err(error) => {
+                log_executor_event(
+                    "backend connection snapshot failed",
+                    &[("error", error.message)],
+                );
+                return;
+            }
         };
         if connection.backend_url.trim().is_empty() || connection.auth_token.trim().is_empty() {
             return;
@@ -938,7 +977,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or("")
             .is_empty()
         {
-            request.auth_token = Some(connection.auth_token.clone());
+            request.auth_token = Some(connection.auth_token);
         }
         if request
             .runtime_auth_token
@@ -948,21 +987,41 @@ impl RuntimeWorkRpcHandler {
             .is_empty()
             && !connection.runtime_auth_token.trim().is_empty()
         {
-            request.runtime_auth_token = Some(connection.runtime_auth_token.clone());
+            request.runtime_auth_token = Some(connection.runtime_auth_token);
         }
     }
 
+    /// Rewrite a loopback cloud-model gateway to the backend this device reaches.
+    ///
+    /// The connection snapshot is unavailable before the device finishes
+    /// connecting, so fall back to the request's own backend URL (environment,
+    /// payload, or task API domain) and leave the gateway untouched when
+    /// neither source yields a reachable address.
+    fn rewrite_model_gateway_backend(&self, request: &mut ExecutionRequest) {
+        let snapshot_backend_url = self
+            .backend_connection_snapshot()
+            .ok()
+            .flatten()
+            .map(|connection| connection.backend_url)
+            .unwrap_or_default();
+        let backend_url = if snapshot_backend_url.trim().is_empty() {
+            crate::agents::request_backend_url(request).unwrap_or_default()
+        } else {
+            snapshot_backend_url
+        };
+        crate::agents::rewrite_loopback_model_gateway(request, &backend_url);
+    }
+
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
-        if !matches!(
-            method,
-            "runtime.tasks.running_count"
-                | "runtime.worktrees.capabilities"
-                | "runtime.worktrees.preflight"
-        ) && self.reconcile_worktrees_once().await
+        let configure_before_startup_recovery = method == "runtime.codex.runtime_config.update";
+        let startup_recovery_deferred = self.startup_recovery_deferred.load(Ordering::Acquire);
+        if !startup_recovery_deferred
+            && !configure_before_startup_recovery
+            && should_resume_persisted_turns_before_rpc(method)
         {
-            self.resume_persisted_turns().await;
+            self.reconcile_and_resume_persisted_turns().await;
         }
-        match method {
+        let result = match method {
             "runtime.tasks.list" => self.list_tasks(&payload).await,
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
@@ -1120,8 +1179,24 @@ impl RuntimeWorkRpcHandler {
                 "unsupported_method",
                 format!("Unsupported runtime RPC method: {unsupported}"),
             )),
+        };
+        if configure_before_startup_recovery && result.is_ok() {
+            self.startup_recovery_deferred
+                .store(false, Ordering::Release);
+            self.reconcile_and_resume_persisted_turns().await;
         }
+        result
     }
+}
+
+fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
+    !matches!(
+        method,
+        "runtime.tasks.running_count"
+            | "runtime.worktrees.capabilities"
+            | "runtime.worktrees.preflight"
+            | "runtime.codex.runtime_config.update"
+    )
 }
 
 fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {

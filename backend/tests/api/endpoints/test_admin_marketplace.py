@@ -6,6 +6,8 @@ import io
 import json
 import zipfile
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.models.kind import Kind
 from app.models.marketplace_resource import MarketplaceResource
 from app.models.plugin_marketplace import Plugin, PluginRelease
@@ -172,6 +174,8 @@ def test_admin_manages_agent_and_skill_marketplace_curation(
         kind="Skill",
         name="market-admin-skill",
     )
+    skill.json["spec"]["capability"]["description"] = "stale marketplace description"
+    flag_modified(skill, "json")
     test_db.add(
         MarketplaceResource(
             kind_id=skill.id,
@@ -231,6 +235,7 @@ def test_admin_manages_agent_and_skill_marketplace_curation(
     assert [item["id"] for item in agents.json()["items"]] == [agent.id]
     assert skills.status_code == 200
     assert [item["id"] for item in skills.json()["items"]] == [skill.id]
+    assert skills.json()["items"][0]["description"] == "market-admin-skill description"
     assert forbidden.status_code == 403
     assert updated.status_code == 200
     assert updated.json()["recommendation_score"] == 90
@@ -240,6 +245,7 @@ def test_admin_manages_agent_and_skill_marketplace_curation(
     ]
     assert updated_skill.status_code == 200
     assert updated_skill.json()["recommendation_score"] == 80
+    assert updated_skill.json()["description"] == "market-admin-skill description"
     assert test_db.get(MarketplaceResource, skill.id).recommendation_score == 80
     assert [item["id"] for item in featured.json()["items"]] == [agent.id]
     assert len(featured.json()["items"][0]["example_conversations"]) == 2

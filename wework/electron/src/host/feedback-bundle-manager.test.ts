@@ -23,6 +23,7 @@ describe('FeedbackBundleManager', () => {
       join(logs, 'executor.log'),
       'Authorization: Bearer top-secret\npassword=hunter2\nstatus=401\n'
     )
+    await writeFile(join(logs, 'executor.log.1'), 'previous plugin sync failure\n')
     const downloadsDirectory = vi.fn(() => join(root, 'downloads'))
     const manager = createManager(root, logs, downloadsDirectory)
     expect(downloadsDirectory).not.toHaveBeenCalled()
@@ -50,6 +51,7 @@ describe('FeedbackBundleManager', () => {
     expect(preview.entries.map(entry => entry.archivePath)).toEqual(
       expect.arrayContaining([
         'logs/executor/executor.log',
+        'logs/executor/executor.log.1',
         'context/task.json',
         'environment.json',
         'screenshot.png',

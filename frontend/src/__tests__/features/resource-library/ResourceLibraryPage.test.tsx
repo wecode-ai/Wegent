@@ -10,14 +10,27 @@ import type { ReactNode } from 'react'
 import { listGroups } from '@/apis/groups'
 import { listSkillMarketProviders } from '@/apis/skillMarketplace'
 import ResourceLibraryPage from '@/features/resource-library/ResourceLibraryPage'
+import type { Team } from '@/types/api'
 
 const mockReplace = jest.fn()
+const mockPush = jest.fn()
+const mockToast = jest.fn()
+const mockSavedTeam = {
+  id: 42,
+  name: 'new-agent',
+  displayName: 'New Agent',
+  bind_mode: ['chat'],
+} as Team
 let mockSearchParams = new URLSearchParams()
 
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: mockReplace }),
+  useRouter: () => ({ replace: mockReplace, push: mockPush }),
   usePathname: () => '/resource-library',
   useSearchParams: () => mockSearchParams,
+}))
+
+jest.mock('@/hooks/use-toast', () => ({
+  useToast: () => ({ toast: mockToast }),
 }))
 
 jest.mock('@/apis/groups', () => ({
@@ -64,6 +77,7 @@ jest.mock('@/features/resource-library/components/MyResources', () => ({
     searchQuery,
     onCreateRequestClose,
     onResourceCreated,
+    onTeamSaved,
   }: {
     createRequest?: { target: { scope: string }; publishAfterCreate?: boolean }
     fixedSource?: string
@@ -72,6 +86,7 @@ jest.mock('@/features/resource-library/components/MyResources', () => ({
     searchQuery?: string
     onCreateRequestClose?: () => void
     onResourceCreated?: () => void
+    onTeamSaved?: (team: Team, created: boolean) => void
   }) => (
     <div
       data-testid="my-resource-management"
@@ -95,11 +110,22 @@ jest.mock('@/features/resource-library/components/MyResources', () => ({
           <button
             type="button"
             data-testid="complete-resource-creation"
-            onClick={onResourceCreated}
+            onClick={() => {
+              onTeamSaved?.(mockSavedTeam, true)
+              onResourceCreated?.()
+            }}
           >
             完成创建
           </button>
         </>
+      )}
+      {!createRequest && (
+        <button
+          data-testid="complete-agent-edit"
+          onClick={() => onTeamSaved?.(mockSavedTeam, false)}
+        >
+          完成编辑
+        </button>
       )}
     </div>
   ),
@@ -202,6 +228,8 @@ jest.mock('@/hooks/useTranslation', () => ({
     t: (key: string) => {
       const translations: Record<string, string> = {
         title: '资源库',
+        'agent_saved.created': '智能体创建成功',
+        'agent_saved.updated': '已保存',
         description: '发现团队与社区发布的能力',
         'mine.title': '我的能力',
         'mine.description': '管理你创建、团队共享或添加的能力',
@@ -260,6 +288,54 @@ const mockedListSkillMarketProviders = listSkillMarketProviders as jest.MockedFu
 >
 
 describe('ResourceLibraryPage', () => {
+  it('reveals the newly created agent with a toast instead of a success dialog', async () => {
+    mockSearchParams = new URLSearchParams(
+      'type=agent&keyword=old&tag=old&mode=code&group=platform&sort=default'
+    )
+    const user = userEvent.setup()
+    const { rerender } = render(<ResourceLibraryPage />)
+    await user.click(screen.getByTestId('new-capability-button'))
+    await user.click(screen.getByTestId('new-capability-type-agent'))
+    await user.click(screen.getByTestId('complete-resource-creation'))
+
+    const nextUrl = mockReplace.mock.calls.at(-1)[0] as string
+    const params = new URL(nextUrl, 'https://example.test').searchParams
+    expect(Object.fromEntries(params)).toEqual({
+      type: 'agent',
+      tab: 'mine',
+      source: 'mine',
+      sort: 'latest',
+    })
+    mockSearchParams = params
+    rerender(<ResourceLibraryPage />)
+    expect(screen.queryByTestId('complete-resource-creation')).not.toBeInTheDocument()
+    expect(mockToast).toHaveBeenCalledTimes(1)
+    expect(mockToast).toHaveBeenCalledWith({ title: '智能体创建成功' })
+    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
+      'data-fixed-source',
+      'mine'
+    )
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('only shows a saved toast after editing and stays in the current filtered list', async () => {
+    mockSearchParams = new URLSearchParams(
+      'tab=mine&type=agent&source=mine&keyword=Agent&sort=latest'
+    )
+    const user = userEvent.setup()
+    render(<ResourceLibraryPage />)
+    await user.click(screen.getByTestId('complete-agent-edit'))
+    expect(mockToast).toHaveBeenCalledTimes(1)
+    expect(mockToast).toHaveBeenCalledWith({ title: '已保存' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
+      'data-search-query',
+      'Agent'
+    )
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(mockReplace).not.toHaveBeenCalled()
+  })
   beforeEach(() => {
     jest.clearAllMocks()
     mockSearchParams = new URLSearchParams()
@@ -419,6 +495,20 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
       'data-fixed-source',
       'mine'
+    )
+  })
+
+  it('opens the standard agent creator when requested by project settings', async () => {
+    mockSearchParams = new URLSearchParams('tab=mine&type=agent&scope=personal&action=create-agent')
+
+    render(<ResourceLibraryPage />)
+
+    expect(screen.getAllByTestId('my-resource-management').at(-1)).toHaveTextContent('personal')
+    await waitFor(() =>
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/resource-library?tab=mine&type=agent&scope=personal',
+        { scroll: false }
+      )
     )
   })
 

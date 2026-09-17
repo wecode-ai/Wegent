@@ -21,7 +21,6 @@ import type {
   CollaborationMember,
   CollaborationProject,
   CollaborationUser,
-  SharedWorkspaceAutomationApi,
   SharedWorkspaceApi,
   WeworkWorkspaceRuntimePort,
   WorkspaceBoardSnapshot,
@@ -54,7 +53,17 @@ type RuntimeProfileApi = ReturnType<typeof createRuntimeProfileApi>
 
 type ProjectMethod = 'list' | 'get' | 'create' | 'update' | 'archive'
 
-export type WeworkAutomationSharedWorkspaceApi = SharedWorkspaceAutomationApi
+export interface WeworkAutomationSharedWorkspaceApi {
+  projects: Pick<SharedWorkspaceApi['projects'], 'update'>
+  automations?: Pick<
+    NonNullable<SharedWorkspaceApi['automations']>,
+    'list' | 'create' | 'migrateWorkflow' | 'update' | 'remove' | 'runNow' | 'listRuns'
+  >
+  incomingHooks?: Pick<
+    NonNullable<SharedWorkspaceApi['incomingHooks']>,
+    'catalog' | 'list' | 'create' | 'update' | 'rotate' | 'remove'
+  >
+}
 
 export interface WeworkDeliverySharedWorkspaceApi {
   projects: Pick<SharedWorkspaceApi['projects'], ProjectMethod>
@@ -157,8 +166,8 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_MISSING_METHODS = {
 } as const satisfies {
   projects: readonly (keyof SharedWorkspaceApi['projects'])[]
   comments: readonly (keyof SharedWorkspaceApi['comments'])[]
-  automations: readonly (keyof SharedWorkspaceApi['automations'])[]
-  incomingHooks: readonly (keyof SharedWorkspaceApi['incomingHooks'])[]
+  automations: readonly (keyof NonNullable<SharedWorkspaceApi['automations']>)[]
+  incomingHooks: readonly (keyof NonNullable<SharedWorkspaceApi['incomingHooks']>)[]
   runtimeProfiles: readonly (keyof SharedWorkspaceApi['runtimeProfiles'])[]
   agents: readonly (keyof SharedWorkspaceApi['agents'])[]
 }
@@ -243,6 +252,7 @@ function toAgent(agent: ProjectBoardSnapshot['agents'][number]): CollaborationAg
   return {
     ...agent,
     id: String(agent.id),
+    ...(agent.wegentTeamId == null ? {} : { team_id: agent.wegentTeamId }),
   }
 }
 
@@ -286,7 +296,7 @@ function toIncomingHook(
 
 function createWeworkAutomationsApi(
   projectAutomationApi: ProjectAutomationApi
-): NonNullable<SharedWorkspaceAutomationApi['automations']> {
+): NonNullable<WeworkAutomationSharedWorkspaceApi['automations']> {
   return {
     async list(projectId) {
       return (await projectAutomationApi.list(projectId)).map(toAutomationRule)
@@ -330,7 +340,7 @@ function createWeworkAutomationsApi(
 
 function createWeworkIncomingHooksApi(
   projectIncomingHookApi: ProjectIncomingHookApi
-): NonNullable<SharedWorkspaceAutomationApi['incomingHooks']> {
+): NonNullable<WeworkAutomationSharedWorkspaceApi['incomingHooks']> {
   return {
     async catalog() {
       return (await projectIncomingHookApi.catalog()).map(item => ({ ...item }))
@@ -442,6 +452,21 @@ export function createWeworkDeliverySharedWorkspaceApi(
               workflow_definition: input.workflowDefinition as Parameters<
                 DeliveryApi['updateCloudProject']
               >[1]['workflow_definition'],
+              collaboration_groups: input.collaborationGroups as Parameters<
+                DeliveryApi['updateCloudProject']
+              >[1]['collaboration_groups'],
+              automatic_processing_rules: input.automaticProcessingRules as Parameters<
+                DeliveryApi['updateCloudProject']
+              >[1]['automatic_processing_rules'],
+              execution_environment: input.executionEnvironment
+                ? {
+                    repositories: input.executionEnvironment.repositories,
+                    setup_steps: input.executionEnvironment.setupSteps.map(step => ({
+                      command: step.command,
+                      working_directory: step.workingDirectory,
+                    })),
+                  }
+                : undefined,
             }) as Parameters<DeliveryApi['updateCloudProject']>[1]
           )
           .then(toProject)
@@ -883,8 +908,10 @@ export function createWeworkSharedWorkspaceApi<
     ...delivery,
     workspaces: sharedHttpApi.workspaces,
     resources: sharedHttpApi.resources,
+    gitRepositories: sharedHttpApi.gitRepositories,
     projects: {
       ...delivery.projects,
+      ...sharedHttpApi.projects,
       async list(workspaceId) {
         if (!workspaceId) return delivery.projects.list()
         const response = await client.get<{ items: CloudProject[] }>(
@@ -929,6 +956,17 @@ export function createWeworkSharedWorkspaceApi<
       removeExecutionEnvironment(projectId, deviceId) {
         return client.delete(
           `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments/${encodeURIComponent(deviceId)}`
+        )
+      },
+      async initializeExecutionEnvironment(projectId, input) {
+        return toProject(
+          await client.post<CloudProject>(
+            `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environment/initialize`,
+            {
+              device_id: input.deviceId,
+              version: input.version,
+            }
+          )
         )
       },
       importMessages(projectId, input) {

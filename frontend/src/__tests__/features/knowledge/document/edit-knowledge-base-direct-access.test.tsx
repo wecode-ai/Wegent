@@ -19,13 +19,16 @@ jest.mock('@/apis/knowledge', () => ({
 
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
   KnowledgeBaseForm: ({
+    advancedExtras,
     directAccessRequirement,
     onDirectAccessRequirementChange,
   }: {
+    advancedExtras?: import('react').ReactNode
     directAccessRequirement: 'read' | 'edit'
     onDirectAccessRequirementChange: (value: 'read' | 'edit') => void
   }) => (
     <div data-testid="knowledge-base-form">
+      {advancedExtras}
       <button
         type="button"
         role="radio"
@@ -145,4 +148,35 @@ describe('EditKnowledgeBaseDialog direct access requirement', () => {
 
     consoleError.mockRestore()
   })
+})
+
+it('loads, enables, and disables automatic DingTalk updates through the existing save action', async () => {
+  const onSubmit = jest.fn(async (_data: KnowledgeBaseUpdate) => {})
+  jest
+    .mocked(getKnowledgeBase)
+    .mockResolvedValue({ ...knowledgeBase, dingtalk_auto_sync_enabled: true })
+  render(
+    <EditKnowledgeBaseDialog
+      open
+      onOpenChange={jest.fn()}
+      knowledgeBase={knowledgeBase}
+      onSubmit={onSubmit}
+    />
+  )
+  const toggle = await screen.findByTestId('knowledge-dingtalk-auto-sync')
+  await waitFor(() => expect(toggle).toBeChecked())
+  fireEvent.click(toggle)
+  fireEvent.click(screen.getByRole('button', { name: 'common:actions.save' }))
+  await waitFor(() =>
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dingtalk_auto_sync_enabled: false })
+    )
+  )
+  fireEvent.click(toggle)
+  fireEvent.click(screen.getByRole('button', { name: 'common:actions.save' }))
+  await waitFor(() =>
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dingtalk_auto_sync_enabled: true })
+    )
+  )
 })

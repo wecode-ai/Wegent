@@ -9,15 +9,19 @@ use ignore::WalkBuilder;
 const WORKSPACE_SEARCH_RESULT_LIMIT: usize = 50;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn reconcile_and_resume_persisted_turns(&self) {
+        if self.reconcile_worktrees_once().await {
+            self.resume_persisted_turns().await;
+        }
+    }
+
     pub(super) fn spawn_startup_worktree_reconciliation(&self) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
         let handler = self.clone();
         runtime.spawn(async move {
-            if handler.reconcile_worktrees_once().await {
-                handler.resume_persisted_turns().await;
-            }
+            handler.reconcile_and_resume_persisted_turns().await;
         });
     }
 
@@ -748,14 +752,14 @@ impl RuntimeWorkRpcHandler {
                 .map_err(|error| AppIpcError::new("codex_runtime_config_update_failed", error))?;
         }
         if if_idle && !force {
-            match self.codex_app_server.restart_if_no_pending_requests().await {
+            match self.codex_app_server.restart_if_idle().await {
                 Ok(()) => {}
-                Err(count) => {
+                Err((active_turn_count, pending_request_count)) => {
                     return Ok(json!({
                         "restarted": false,
                         "requiresConfirmation": true,
-                        "activeTaskCount": active_task_count,
-                        "pendingRequestCount": count,
+                        "activeTaskCount": active_task_count.max(active_turn_count),
+                        "pendingRequestCount": pending_request_count,
                     }));
                 }
             }

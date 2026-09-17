@@ -17,6 +17,9 @@ use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex as AsyncMutex, OwnedMutexGuard};
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
 
+#[path = "support/runtime_task_project_move.rs"]
+mod runtime_task_project_move;
+
 struct EnvLockGuard {
     _guard: OwnedMutexGuard<()>,
 }
@@ -1067,7 +1070,7 @@ async fn runtime_tasks_reject_side_source_without_parent_workspace() {
 }
 
 #[tokio::test]
-async fn runtime_tasks_fork_completed_turn_preserves_workspace_and_rejects_missing_turn() {
+async fn runtime_tasks_fork_completed_turn_preserves_workspace_model_and_rejects_missing_turn() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -1136,6 +1139,39 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_and_rejects_missi
         .expect("turn-bounded thread/fork should be called");
     assert_eq!(fork_call["params"]["threadId"], "thread-1");
     assert_eq!(fork_call["params"]["cwd"], "/tmp/project");
+    assert_eq!(fork_call["params"]["model"], "gpt-5.5");
+    assert_eq!(fork_call["params"]["modelProvider"], "openai");
+    assert_eq!(fork_call["params"]["excludeTurns"], true);
+
+    let follow_up = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "taskId": "thread-fork-1",
+                "workspacePath": "/tmp/project",
+                "message": "follow up",
+                "executionRequest": codex_execution_request(
+                    "follow up",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("fork follow-up should be accepted");
+    assert_eq!(follow_up["accepted"], true);
+    wait_for_turn_count(&log_path, 2).await;
+    wait_until_task_idle(&handler, "thread-fork-1").await;
+
+    let calls = read_json_lines(&log_path);
+    let resume_call = calls
+        .iter()
+        .find(|call| {
+            call["method"] == "thread/resume" && call["params"]["threadId"] == "thread-fork-1"
+        })
+        .expect("fork follow-up should resume the forked thread");
+    assert_eq!(resume_call["params"]["model"], "gpt-5.5");
+    assert_eq!(resume_call["params"]["modelProvider"], "openai");
 
     let missing = handler
         .handle_runtime_rpc(json!({
@@ -3955,6 +3991,7 @@ fn write_fake_codex(log_path: &Path) -> PathBuf {
         r#"#!/bin/sh
 LOG_PATH='{}'
 turn_count=0
+active_thread_id=thread-1
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -3983,7 +4020,15 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
       ;;
     *'"method":"thread/resume"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      case "$line" in
+        *'"threadId":"thread-fork-1"'*)
+          active_thread_id=thread-fork-1
+          ;;
+        *)
+          active_thread_id=thread-1
+          ;;
+      esac
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"'"$active_thread_id"'"}}}}}}'
       ;;
     *'"method":"thread/fork"'*)
       case "$line" in
@@ -3991,6 +4036,7 @@ while IFS= read -r line; do
           printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32602,"message":"fork turn was not found"}}}}'
           ;;
         *'"lastTurnId":"turn-1"'*)
+          active_thread_id=thread-fork-1
           printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-fork-1"}}}}}}'
           ;;
         *)
@@ -4014,9 +4060,6 @@ while IFS= read -r line; do
     *'"method":"thread/rollback"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
-    *'"method":"thread/resume"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
-      ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
       ;;
@@ -4029,14 +4072,14 @@ while IFS= read -r line; do
       progress_id="progress-$turn_count"
       final_id="final-$turn_count"
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"'"$turn_id"'","status":"inProgress"}}}}}}'
-      printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"'"$turn_id"'","status":"inProgress"}}}}}}'
-      printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","phase":"commentary"}}}}}}'
-      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$progress_id"'","delta":"Inspecting "}}}}'
-      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$progress_id"'","delta":"workspace."}}}}'
-      printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
-      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$final_id"'","delta":"done","phase":"finalAnswer"}}}}'
-      printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$final_id"'","type":"agentMessage","text":"done","phase":"finalAnswer"}}}}}}'
-      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"'"$turn_id"'","status":"completed"}}}}}}'
+      printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"'"$active_thread_id"'","turn":{{"id":"'"$turn_id"'","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"item/started","params":{{"threadId":"'"$active_thread_id"'","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","phase":"commentary"}}}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"'"$active_thread_id"'","turnId":"'"$turn_id"'","itemId":"'"$progress_id"'","delta":"Inspecting "}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"'"$active_thread_id"'","turnId":"'"$turn_id"'","itemId":"'"$progress_id"'","delta":"workspace."}}}}'
+      printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"'"$active_thread_id"'","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"'"$active_thread_id"'","turnId":"'"$turn_id"'","itemId":"'"$final_id"'","delta":"done","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"'"$active_thread_id"'","turnId":"'"$turn_id"'","item":{{"id":"'"$final_id"'","type":"agentMessage","text":"done","phase":"finalAnswer"}}}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"'"$active_thread_id"'","turn":{{"id":"'"$turn_id"'","status":"completed"}}}}}}'
       ;;
   esac
 done

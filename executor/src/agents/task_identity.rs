@@ -124,6 +124,10 @@ mod tests {
 
     #[test]
     fn runtime_local_task_id_stabilizes_thread_identity() {
+        let _lock = crate::test_env::lock();
+        let previous_workspace_root = std::env::var_os("WORKSPACE_ROOT");
+        // SAFETY: the shared test environment lock serializes environment mutation.
+        unsafe { std::env::set_var("WORKSPACE_ROOT", "/workspace") };
         let mut request = ExecutionRequest {
             task_id: "execution-1".to_owned(),
             ..ExecutionRequest::default()
@@ -134,6 +138,13 @@ mod tests {
         );
 
         let env = task_identity_env(&request);
+        // SAFETY: restore the environment before releasing the shared lock.
+        unsafe {
+            match previous_workspace_root {
+                Some(value) => std::env::set_var("WORKSPACE_ROOT", value),
+                None => std::env::remove_var("WORKSPACE_ROOT"),
+            }
+        }
 
         assert_eq!(
             env.get("WEGENT_TASK_ID"),

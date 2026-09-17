@@ -1134,6 +1134,7 @@ class KnowledgeBaseSpec(BaseModel):
     retrievalConfig: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
     )
+    dingtalkAutoSyncEnabled: bool = Field(default=False)
     summaryEnabled: bool = Field(
         default=False,
         description="Enable automatic summary generation for documents",

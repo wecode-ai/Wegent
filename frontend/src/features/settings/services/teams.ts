@@ -10,18 +10,52 @@ import {
 } from '@/apis/team'
 import { CheckRunningTasksResponse } from '@/apis/common'
 import { Team } from '@/types/api'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 
-/**
- * Get team list
- * @param scope - Resource scope: 'personal', 'group', or 'all'
- * @param groupName - Optional group name. When omitted with group scope, all accessible groups are returned.
- */
+type ManagedTeamFilters = Omit<
+  Parameters<typeof resourceLibraryApi.searchResources>[0],
+  'resourceType' | 'limit' | 'cursor' | 'ownedOnly'
+>
+export type ManagedTeamsNextPage = { page: number } | { cursor: string }
+
+/** Browse by page number; use the search endpoint only for nonempty keywords. */
+export async function fetchManagedTeamsPage(
+  params: ManagedTeamFilters & { page?: number; cursor?: string },
+  signal?: AbortSignal
+): Promise<{ items: Team[]; next: ManagedTeamsNextPage | null }> {
+  const keyword = params.keyword.trim()
+  if (keyword) {
+    const result = await resourceLibraryApi.searchResources(
+      { ...params, keyword, resourceType: 'agent', limit: 100 },
+      signal
+    )
+    return {
+      items: result.items,
+      next: result.next_cursor ? { cursor: result.next_cursor } : null,
+    }
+  }
+  const page = params.page ?? 1
+  const result = await teamApis.getTeams(
+    {
+      page,
+      limit: 100,
+      groupNames: params.groupNames,
+      sourceFilter: params.sourceFilter,
+      mode: params.mode,
+    },
+    params.scope,
+    params.groupName,
+    { signal }
+  )
+  return { items: result.items, next: page * 100 < result.total ? { page: page + 1 } : null }
+}
+
+/** Get the full catalog only for consumers that explicitly need every agent. */
 export async function fetchTeamsList(
   scope?: 'personal' | 'group' | 'all',
   groupName?: string
 ): Promise<Team[]> {
-  const teamsData = await teamApis.getTeams(undefined, scope, groupName)
-  return Array.isArray(teamsData.items) ? teamsData.items : []
+  return (await teamApis.getAllTeams(scope, groupName)).items
 }
 
 /**

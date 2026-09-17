@@ -58,7 +58,7 @@ import {
   type SharedIssueDetailTaskBinding,
   type SharedIssueDetailWorkflowPlan,
 } from "./issue-detail";
-import { IssueWorkflowDag, type SharedWorkflowNode } from "./issue-detail";
+import { IssueWorkflowStages, type SharedWorkflowNode } from "./issue-detail";
 import "./issue-detail/issue-detail.css";
 import type {
   CollaborationAssignment,
@@ -134,7 +134,7 @@ export interface SharedIssueDetailExtensionContext {
   deliveries: SharedIssueDetailDelivery[];
   selectedTaskId?: string | null;
   workflowManagerRunId?: string;
-  onTaskBindingsChange(): Promise<void>;
+  onExecutionArtifactsChange(): Promise<void>;
   onItemChange(item: SharedEditorIssue): void;
   onOpenManagerExecutionChange(action: (() => void) | null): void;
   onWorkflowManagerFinished(): void;
@@ -589,6 +589,11 @@ export type TodoEditorProps = {
   taskRefreshKey?: string | number;
   initialTaskBindings?: SharedIssueDetailTaskBinding[];
   headerActions?: ReactNode;
+  /**
+   * Delete this Issue. Rendered inside the header overflow menu so the
+   * destructive action stays away from the primary edit and save controls.
+   */
+  onDelete?: () => void;
   selectedTaskId?: string | null;
   onCreateTask?: (workflowNodeId?: string) => void;
   onOpenTaskConversation?: (task: SharedIssueDetailTaskBinding) => void;
@@ -796,6 +801,7 @@ export function TodoEditor(props: TodoEditorProps) {
   initialTaskBindingsRef.current = props.initialTaskBindings;
   const taskBindingsRequestIdRef = useRef(0);
   const deliveriesRequestIdRef = useRef(0);
+  const currentDeliveryRequestIdRef = useRef(0);
   const selectedDeliveryRequestIdRef = useRef(0);
   const attachmentsRequestIdRef = useRef(0);
   const visibleAttachments = useMemo(() => {
@@ -868,6 +874,9 @@ export function TodoEditor(props: TodoEditorProps) {
       // Independent detail sources fail closed without hiding available data.
     }
   }, [editItemId, editorPort]);
+  const refreshExecutionArtifacts = useCallback(async () => {
+    await Promise.all([refreshTaskBindings(), refreshDeliveries()]);
+  }, [refreshDeliveries, refreshTaskBindings]);
   const openDelivery = useCallback(
     async (deliveryId: string) => {
       if (editItemId == null) return;
@@ -949,6 +958,7 @@ export function TodoEditor(props: TodoEditorProps) {
     itemLoadGenerationRef.current += 1;
     taskBindingsRequestIdRef.current += 1;
     deliveriesRequestIdRef.current += 1;
+    currentDeliveryRequestIdRef.current += 1;
     selectedDeliveryRequestIdRef.current += 1;
     attachmentsRequestIdRef.current += 1;
     setDeliveries([]);
@@ -1012,6 +1022,30 @@ export function TodoEditor(props: TodoEditorProps) {
     refreshDeliveries,
     refreshTaskBindings,
   ]);
+
+  useEffect(() => {
+    const requestId = ++currentDeliveryRequestIdRef.current;
+    const currentDeliveryId = item?.current_delivery_id;
+    if (editItemId == null || !currentDeliveryId) return;
+
+    void editorPort.deliveries
+      .get(currentDeliveryId)
+      .then((currentDelivery) => {
+        if (
+          requestId !== currentDeliveryRequestIdRef.current ||
+          loadedEditItemIdRef.current !== editItemId
+        )
+          return;
+        deliveriesRequestIdRef.current += 1;
+        setDeliveries((existing) => [
+          currentDelivery,
+          ...existing.filter((delivery) => delivery.id !== currentDelivery.id),
+        ]);
+      })
+      .catch(() => {
+        // The regular delivery list remains authoritative if hydration fails.
+      });
+  }, [editItemId, editorPort, item?.current_delivery_id]);
 
   const refreshWorkflowPlan = useCallback(() => {
     if (editItemId == null || item?.workflow?.advancement_policy !== "ai")
@@ -1742,7 +1776,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     "",
                 )
               : undefined,
-          onTaskBindingsChange: refreshTaskBindings,
+          onExecutionArtifactsChange: refreshExecutionArtifacts,
           onItemChange: editProps.onUpdated,
           onOpenManagerExecutionChange: registerWorkflowManagerExecution,
           onWorkflowManagerFinished: refreshWorkflowPlan,
@@ -2404,6 +2438,16 @@ export function TodoEditor(props: TodoEditorProps) {
               </summary>
               <div className="task-detail-more-menu-popover">
                 {workspaceProperties}
+                {editable && props.onDelete ? (
+                  <button
+                    className="task-detail-more-menu-danger"
+                    data-testid="cloud-todo-detail-delete"
+                    onClick={props.onDelete}
+                    type="button"
+                  >
+                    {t("todo.delete_issue", "删除任务")}
+                  </button>
+                ) : null}
               </div>
             </details>
           ) : null}
@@ -3026,7 +3070,7 @@ export function TodoEditor(props: TodoEditorProps) {
                         </span>
                       </div>
                       {displayedWorkflow?.nodes?.length ? (
-                        <IssueWorkflowDag
+                        <IssueWorkflowStages
                           translate={workflowTranslate}
                           nodes={
                             displayedWorkflow.nodes as SharedWorkflowNode[]

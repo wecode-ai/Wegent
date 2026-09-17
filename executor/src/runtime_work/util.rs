@@ -97,6 +97,39 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     {
         request.extra.insert("attachments".to_owned(), attachments);
     }
+    if let Some(additional_skills) = payload
+        .get("additionalSkills")
+        .or_else(|| payload.get("additional_skills"))
+        .filter(|value| value.is_array())
+        .cloned()
+    {
+        let skill_names = additional_skills
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|skill| {
+                skill
+                    .as_str()
+                    .or_else(|| skill.get("name").and_then(Value::as_str))
+            })
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .fold(Vec::new(), |mut names, name| {
+                if !names.iter().any(|existing| existing == name) {
+                    names.push(name.to_owned());
+                }
+                names
+            });
+        request
+            .extra
+            .insert("additional_skills".to_owned(), additional_skills);
+        request
+            .extra
+            .insert("preload_skills".to_owned(), json!(skill_names));
+        request
+            .extra
+            .insert("user_selected_skills".to_owned(), json!(skill_names));
+    }
     if let Some(additional_context) = payload
         .get("additionalContext")
         .or_else(|| payload.get("additional_context"))
@@ -198,6 +231,13 @@ pub(crate) fn cloud_project_id(request: &ExecutionRequest) -> Option<Value> {
         .or_else(|| request.extra.get("cloud_project_id"))
         .filter(|value| value.is_string() || value.is_number())
         .cloned()
+}
+
+pub(crate) fn link_is_cloud_project_task(link: &super::response::RuntimeTaskLink) -> bool {
+    link.runtime_handle
+        .get("cloudProjectId")
+        .or_else(|| link.runtime_handle.get("cloud_project_id"))
+        .is_some_and(|value| value.is_string() || value.is_number())
 }
 
 pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_handle: &Value) {
@@ -826,6 +866,25 @@ mod tests {
     }
 
     #[test]
+    fn cloud_project_task_link_detection_reads_both_key_spellings() {
+        let mut link = super::super::response::RuntimeTaskLink::new_pending(
+            "codex-queue-1".to_owned(),
+            "/tmp/work".to_owned(),
+            "title".to_owned(),
+        );
+        assert!(!link_is_cloud_project_task(&link));
+
+        link.runtime_handle = json!({"cloudProjectId": "3643745902448770561"});
+        assert!(link_is_cloud_project_task(&link));
+
+        link.runtime_handle = json!({"cloud_project_id": 9001});
+        assert!(link_is_cloud_project_task(&link));
+
+        link.runtime_handle = json!({"cloudProjectId": null});
+        assert!(!link_is_cloud_project_task(&link));
+    }
+
+    #[test]
     fn copies_runtime_task_title_from_runtime_payload() {
         let mut request = ExecutionRequest::default();
 
@@ -874,6 +933,47 @@ mod tests {
                 "modelType": "public",
                 "options": {"reasoning": "medium"}
             }))
+        );
+    }
+
+    #[test]
+    fn normalizes_runtime_additional_skills_for_agent_consumers() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "additionalSkills": [
+                    {
+                        "name": "wework-plugin-creator",
+                        "namespace": "codex",
+                        "is_public": false
+                    },
+                    "review",
+                    {"name": "wework-plugin-creator", "namespace": "codex"}
+                ]
+            }),
+        );
+
+        assert_eq!(
+            request.extra.get("additional_skills"),
+            Some(&json!([
+                {
+                    "name": "wework-plugin-creator",
+                    "namespace": "codex",
+                    "is_public": false
+                },
+                "review",
+                {"name": "wework-plugin-creator", "namespace": "codex"}
+            ]))
+        );
+        assert_eq!(
+            request.extra.get("preload_skills"),
+            Some(&json!(["wework-plugin-creator", "review"]))
+        );
+        assert_eq!(
+            request.extra.get("user_selected_skills"),
+            Some(&json!(["wework-plugin-creator", "review"]))
         );
     }
 

@@ -10,12 +10,88 @@ use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
+/// Restores one environment variable when a test finishes.
+struct ScalarEnv {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl ScalarEnv {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+impl Drop for ScalarEnv {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+#[path = "task_project_move_tests.rs"]
+mod task_project_move_tests;
+
+#[path = "message_presentation_tests.rs"]
+mod message_presentation_tests;
+
 #[test]
 fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
     let config = CodexRuntimeProxyConfig::default();
 
     assert!(config.initialized);
     assert_eq!(config.proxy_url, None);
+}
+
+#[test]
+fn runtime_proxy_configuration_precedes_persisted_turn_recovery() {
+    assert!(!should_resume_persisted_turns_before_rpc(
+        "runtime.codex.runtime_config.update"
+    ));
+    assert!(should_resume_persisted_turns_before_rpc(
+        "runtime.codex.ensure_started"
+    ));
+    assert!(should_resume_persisted_turns_before_rpc(
+        "runtime.codex.models.list"
+    ));
+}
+
+#[tokio::test]
+async fn runtime_proxy_configuration_releases_deferred_startup_recovery() {
+    let (event_tx, _) = broadcast::channel(1);
+    let handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+        "device-1",
+        "/bin/false",
+        event_tx,
+    );
+    assert!(handler.startup_recovery_deferred.load(Ordering::Acquire));
+
+    handler
+        .dispatch(
+            "runtime.codex.runtime_config.update",
+            json!({"proxyUrl": "http://127.0.0.1:7890"}),
+        )
+        .await
+        .expect("runtime proxy configuration should succeed before recovery");
+
+    let config = handler.codex_runtime_proxy_config.lock().await;
+    assert!(config.initialized);
+    assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+    drop(config);
+    assert!(
+        handler.worktree_reconciliation_state.lock().await.completed,
+        "successful runtime proxy configuration should release deferred recovery"
+    );
+    assert!(!handler.startup_recovery_deferred.load(Ordering::Acquire));
 }
 
 #[test]
@@ -1309,6 +1385,47 @@ fn skips_backend_connection_without_a_configured_connection() {
 }
 
 #[test]
+fn rewrites_loopback_gateway_from_the_payload_backend_url() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut request = ExecutionRequest {
+        backend_url: Some("http://backend.example.com:8000".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.model_config = json!({
+        "base_url": "http://localhost:8000/api/runtime-work/llm-responses-proxy",
+    });
+
+    handler.apply_backend_connection(&mut request);
+
+    assert_eq!(
+        request.model_config["base_url"],
+        json!("http://backend.example.com:8000/api/runtime-work/llm-responses-proxy")
+    );
+}
+
+#[test]
+fn rewrites_loopback_gateway_when_no_connection_snapshot_exists() {
+    let _lock = crate::test_env::lock();
+    let _backend = ScalarEnv::remove("WEGENT_BACKEND_URL");
+    let _mode = ScalarEnv::set("EXECUTOR_MODE", "local");
+    let snapshot: Arc<Mutex<Option<ConnectionConfig>>> = Arc::new(Mutex::new(None));
+    let handler =
+        RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(snapshot);
+    let mut request = ExecutionRequest {
+        backend_url: Some("http://backend.example.com:8000".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.model_config = json!({"baseUrl": "http://127.0.0.1:8000/api/work"});
+
+    handler.apply_backend_connection(&mut request);
+
+    assert_eq!(
+        request.model_config["baseUrl"],
+        json!("http://backend.example.com:8000/api/work")
+    );
+}
+
+#[test]
 fn codex_cached_transcripts_never_expose_offset_pagination() {
     let pagination = transcript_pagination(
         "codex",
@@ -2208,6 +2325,18 @@ fn forked_task_inherits_project_routing_metadata() {
     );
     source.runtime_project_key = Some("project-1".to_owned());
     source.runtime_workspace_roots = vec!["/tmp/project".to_owned(), "/tmp/project/api".to_owned()];
+    source.runtime_handle = json!({
+        "executionRequest": {
+            "model_config": {
+                "model": "openai",
+                "model_id": "gpt-5.6-sol",
+            },
+        },
+        "modelSelection": {
+            "modelName": "gpt-5.6-sol",
+            "modelType": "codex-official",
+        },
+    });
 
     let forked = forked_task_link(
         &source,
@@ -2224,6 +2353,14 @@ fn forked_task_inherits_project_routing_metadata() {
     );
     assert_eq!(forked.workspace_path, source.workspace_path);
     assert_eq!(forked.runtime, source.runtime);
+    assert_eq!(
+        forked.runtime_handle["executionRequest"],
+        source.runtime_handle["executionRequest"]
+    );
+    assert_eq!(
+        forked.runtime_handle["modelSelection"],
+        source.runtime_handle["modelSelection"]
+    );
 }
 
 #[test]

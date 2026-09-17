@@ -141,6 +141,8 @@ export interface ProjectBoardIssueCardRenderContext {
     "children" | "className" | "style"
   >;
   onOpen(): void;
+  /** Present only when the host enabled Issue deletion for this board. */
+  onDelete?(): void;
   taskBindings: WorkspaceTaskBinding[];
 }
 
@@ -158,8 +160,10 @@ interface ProjectBoardAdapterProps {
   statuses: CollaborationStatus[];
   taskBindings: WorkspaceTaskBinding[];
   onCreateIssue(): void;
+  onOpenBoardSettings?(): void;
   onGroupByChange(groupBy: ProjectBoardGroupBy): Promise<void>;
   onOpen(issue: CollaborationIssue): void;
+  onDeleteIssue?(issue: CollaborationIssue): void;
   onMove(
     issue: CollaborationIssue,
     mutation: StandardCloudBoardMutation<CollaborationIssue>,
@@ -192,6 +196,8 @@ export function ProjectBoardAdapter({
   labels,
   members,
   onCreateIssue,
+  onDeleteIssue,
+  onOpenBoardSettings,
   onGroupByChange,
   onMove,
   onOpen,
@@ -402,6 +408,20 @@ export function ProjectBoardAdapter({
             </select>
           </label>
         )}
+        renderBoardSettingsAction={
+          onOpenBoardSettings
+            ? () => (
+                <button
+                  type="button"
+                  className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                  data-testid="collaboration-board-settings"
+                  onClick={onOpenBoardSettings}
+                >
+                  看板设置
+                </button>
+              )
+            : undefined
+        }
         renderItem={(issue, column) => {
           const nativeContainerProps: ProjectBoardIssueCardRenderContext["nativeContainerProps"] =
             {
@@ -468,6 +488,10 @@ export function ProjectBoardAdapter({
                 issue,
                 nativeContainerProps,
                 onOpen: () => onOpen(issue),
+                onDelete:
+                  onDeleteIssue && canEditCollaborationIssue(issue)
+                    ? () => onDeleteIssue(issue)
+                    : undefined,
                 taskBindings: taskBindings.filter(
                   (binding) => binding.issueId === issue.id,
                 ),

@@ -201,12 +201,17 @@ function workspaceTabIframe(
   tab: WorkspaceTab,
   wegentUrl: string | null | undefined
 ): { appKey: string; embeddedBrowserLabel?: string; src: string; title: string } | null {
-  const appId = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)?.[1]
+  const tabUrl = new URL(tab.contentRoute, window.location.origin)
+  const tabPath = stripAppBasePath(tabUrl.pathname)
+  const appId = tabPath.match(/^\/app\/([^/]+)/)?.[1]
   if (!appId) return null
   const app = resolveDshApp(appId)
   if (app?.mode === 'iframe') {
-    const src =
-      app.urlSource === 'cloud-web' ? resolveCloudAppUrl(wegentUrl, app.cloudPath) : app.url
+    const appPrefix = `/app/${appId}`
+    const requestedCloudPath = tabPath.slice(appPrefix.length)
+    const cloudPath = requestedCloudPath || app.cloudPath || ''
+    const destination = `${cloudPath}${tabUrl.search}`
+    const src = app.urlSource === 'cloud-web' ? resolveCloudAppUrl(wegentUrl, destination) : app.url
     return src ? { appKey: app.id, src, title: app.label } : null
   }
   const harnessApp = resolveRunningHarnessApp(appId)
@@ -222,10 +227,9 @@ function workspaceTabIframe(
 
 function resolveCloudAppUrl(
   wegentUrl: string | null | undefined,
-  cloudPath: string | undefined
+  destination: string | undefined
 ): string | null {
   if (!wegentUrl) return null
-  const destination = cloudPath
   if (!destination) return wegentUrl
 
   const url = new URL(wegentUrl)
@@ -233,7 +237,9 @@ function resolveCloudAppUrl(
     url.searchParams.set('redirect', destination)
     return url.toString()
   }
-  url.pathname = `${url.pathname.replace(/\/+$/, '')}${destination}`
+  const requested = new URL(destination, 'https://wework.invalid')
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}${requested.pathname}`
+  url.search = requested.search
   return url.toString()
 }
 
@@ -289,7 +295,6 @@ interface WorkspaceTabSurfaceProps {
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
   nativeWorkbenchKind?: 'task' | 'board'
-  prewarmComposerApps?: boolean
   smartAppsEnabled?: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
@@ -303,7 +308,6 @@ export function WorkspaceTabSurface({
   cloudWebUrl,
   lifecycleStore,
   nativeWorkbenchKind,
-  prewarmComposerApps = false,
   smartAppsEnabled = false,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
@@ -466,7 +470,6 @@ export function WorkspaceTabSurface({
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
               loadTaskComposerCatalogs
-              prewarmComposerApps={prewarmComposerApps}
               publishDebugSnapshots={active && !iframe}
               syncCoreDshModels={
                 tab.fixed &&
@@ -673,9 +676,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const mountedWorkspaceTabs = workspaceTabs.tabs.filter(
     tab => tab.id === workspaceTabs.activeTabId || mountedTabs.ids.has(tab.id)
   )
-  const composerPrewarmTabId = workspaceTabs.tabs.find(
-    tab => nextNativeWorkbenchKinds.get(tab.id) === 'task'
-  )?.id
   const cloudWebUrl = cloudConnection.webUrl
     ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
     : cloudConnection.webUrl
@@ -690,7 +690,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           active={tab.id === workspaceTabs.activeTabId}
           lifecycleStore={lifecycleStore}
           nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
-          prewarmComposerApps={tab.id === composerPrewarmTabId}
           smartAppsEnabled={experimentalFeatures.enabled}
           services={services}
           cloudWebUrl={cloudWebUrl}
@@ -807,7 +806,7 @@ function AppShell() {
   const workspaceTabLabels = useMemo(
     () => ({
       task: t('workbench.workspace_tab_task', '任务'),
-      board: t('workbench.workspace_tab_board', '协作'),
+      board: t('workbench.workspace_tab_board', '协作 (Beta)'),
       agent: t('workbench.workspace_tab_agent', '智能体'),
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
       auxiliaryRoutes: Object.fromEntries(

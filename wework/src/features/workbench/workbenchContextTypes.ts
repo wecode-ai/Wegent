@@ -57,6 +57,7 @@ import type {
   UnifiedModel,
   UnifiedSkill,
   User,
+  UserPreferences,
 } from '@/types/api'
 import type { WorkbenchWorkspaceLaunchOptions } from './workspaceLaunchRequest'
 import type { DeviceUpgradeState } from '@/types/device-events'
@@ -271,6 +272,7 @@ export interface WorkbenchContextValue {
   upgradingDevices: Record<string, DeviceUpgradeState>
   projectExecutionMode: ProjectExecutionMode
   setProjectExecutionMode: (mode: ProjectExecutionMode) => void
+  updateUserPreferences: (patch: UserPreferences) => Promise<UserPreferences>
   setWorkbenchError: (error: string | null) => void
   projectWorktreeBranch: string | null
   setProjectWorktreeBranch: (branchName: string | null) => void
@@ -482,7 +484,10 @@ export type WorkbenchPaneState = Pick<
   | 'error'
 >
 
-export type WorkbenchPaneContextValue = Omit<WorkbenchContextValue, 'state' | 'cloudWorkStatus'> & {
+export type WorkbenchPaneContextValue = Omit<
+  WorkbenchContextValue,
+  'state' | 'cloudWorkStatus' | 'updateUserPreferences'
+> & {
   state: WorkbenchPaneState
 }
 
@@ -496,7 +501,6 @@ export interface WorkbenchProviderProps {
   debugSnapshotEnabled?: boolean
   consumePluginTrials?: boolean
   loadTaskComposerCatalogs?: boolean
-  prewarmComposerApps?: boolean
   publishDebugSnapshots?: boolean
   syncCoreDshModels?: boolean
   syncRemoteProjects?: boolean

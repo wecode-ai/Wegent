@@ -184,6 +184,15 @@
   animation: collaboration-issue-backdrop-enter 160ms ease-out both;
 }
 
+/* A task conversation panel opened from the issue detail is laid out beside the
+   board instead of inside this fixed drawer, so the drawer has to collapse
+   while the conversation is visible. Mirrors
+   `.todo-panel-stack.has-conversation .task-detail-workspace-panel-shell`. The
+   drawer stays mounted so returning from the conversation keeps its state. */
+.collaboration-dialog-backdrop.collaboration-issue-detail-backdrop.has-conversation {
+  display: none;
+}
+
 .collaboration-issue-detail-shared-host {
   position: fixed;
   top: 0;
@@ -789,6 +798,33 @@
   grid-template-columns: none;
   align-items: center;
   gap: 6px;
+}
+
+.automatic-processing-selected {
+  border-color: rgb(var(--color-focus, var(--color-primary)));
+  background: rgb(var(--color-focus, var(--color-primary)) / 0.05);
+}
+
+.automatic-processing-selected-soft {
+  border-color: rgb(var(--color-focus, var(--color-primary)) / 0.6);
+  background: rgb(var(--color-focus, var(--color-primary)) / 0.1);
+}
+
+.automatic-processing-selected-icon {
+  color: rgb(var(--color-focus, var(--color-primary)));
+}
+
+.automatic-processing-selected-avatar {
+  color: rgb(var(--color-focus, var(--color-primary)));
+  background: rgb(var(--color-focus, var(--color-primary)) / 0.1);
+}
+
+.automatic-processing-picker-open {
+  box-shadow: 0 0 0 2px rgb(var(--color-focus, var(--color-primary)) / 0.2);
+}
+
+.automatic-processing-checkbox {
+  accent-color: rgb(var(--color-focus, var(--color-primary)));
 }
 
 @media (max-width: 767px) {

@@ -511,6 +511,32 @@ describe('runtimeConversationCache', () => {
     ])
   })
 
+  test('settles a sent queue item confirmed by transcript hydration without a start event', () => {
+    const acceptedMessage = {
+      id: 'accepted-message',
+      content: 'already completed',
+      status: 'sending' as const,
+      deliveryMode: 'message' as const,
+      awaitingTurnStart: true,
+      createdAt: '2026-09-16T00:00:00Z',
+    }
+    const nextMessage = { ...acceptedMessage, id: 'next-message', status: 'queued' as const }
+    cacheRuntimeConversationQueuedMessages(address, [acceptedMessage, nextMessage])
+    const token = beginRuntimeConversationHydration(address)
+
+    completeRuntimeConversationHydration(address, token, [
+      { id: 'other-turn', clientUserMessageId: 'unrelated-message', status: 'done', items: [] },
+    ])
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([acceptedMessage, nextMessage])
+
+    const acceptedToken = beginRuntimeConversationHydration(address)
+    completeRuntimeConversationHydration(address, acceptedToken, [
+      { id: 'accepted-turn', clientUserMessageId: acceptedMessage.id, status: 'done', items: [] },
+    ])
+
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([nextMessage])
+  })
+
   test('requeues an interrupted send and removes a send already present after transport replacement', () => {
     cacheRuntimeConversationQueuedMessages(address, [
       {

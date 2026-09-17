@@ -4,6 +4,8 @@
 
 """Capability Center marketplace endpoints."""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
@@ -25,9 +27,11 @@ from app.schemas.resource_library import (
     ResourceLibraryPublicationUpdateRequest,
     ResourceLibraryReferenceUsage,
 )
+from app.schemas.resource_search import ResourceSearchResponse
 from app.services.context import context_service
 from app.services.marketplace_tag_service import marketplace_tag_service
 from app.services.resource_library_service import resource_library_service
+from app.services.resource_search import search_resources
 
 router = APIRouter()
 PUBLIC_TEAM_ICON_ASSET_TYPE = "public_team_icon"
@@ -35,6 +39,41 @@ PUBLIC_TEAM_ICON_ASSET_TYPE = "public_team_icon"
 
 def _parse_tags(tags: str | None) -> list[str]:
     return [item.strip() for item in (tags or "").split(",") if item.strip()]
+
+
+@router.get("/search", response_model=ResourceSearchResponse)
+def search_managed_resources(
+    keyword: str = Query(..., min_length=1, max_length=200),
+    resource_type: Literal["agent"] = Query(default="agent"),
+    owned_only: bool = Query(default=False),
+    scope: Literal["personal", "group", "all"] = Query(default="all"),
+    group_name: str | None = Query(default=None, min_length=1, max_length=100),
+    group_names: list[str] | None = Query(default=None, max_length=100),
+    source_filter: Literal["all", "mine", "personal", "group", "system"] = Query(
+        default="all"
+    ),
+    mode: Literal["all", "chat", "code", "task", "knowledge", "video", "image"] = Query(
+        default="all"
+    ),
+    cursor: str | None = Query(default=None, max_length=512),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> ResourceSearchResponse:
+    """Search accessible agents by keyword with paginated results."""
+    return search_resources(
+        db,
+        user_id=current_user.id,
+        keyword=keyword,
+        owned_only=owned_only,
+        scope=scope,
+        group_name=group_name,
+        group_names=group_names,
+        source_filter=source_filter,
+        mode=mode,
+        cursor=cursor,
+        limit=limit,
+    )
 
 
 @router.get("/assets/team-icons/{asset_id}", include_in_schema=False)

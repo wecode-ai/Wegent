@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useCallback, useMemo, type ReactNode } from 'react'
 import {
   TodoEditor as SharedIssueDetailEditor,
   type CollaborationAssignment,
@@ -96,6 +96,8 @@ export type TodoEditorProps = TodoEditorApiProps & {
   headerActions?: ReactNode
   showAdditionalTaskAction?: boolean
   selectedTaskId?: string | null
+  /** Delete this Issue; rendered in the header overflow menu in edit mode. */
+  onDelete?: () => void
   onCreateTask?: (workflowNodeId?: string) => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
   onOpenChildTask?: (task: CloudLoopItem) => void
@@ -149,6 +151,10 @@ export function TodoEditor(props: TodoEditorProps) {
       }),
     [workspaceApi]
   )
+  const loadTeams = useCallback(
+    () => props.teamApi?.listTeams() ?? Promise.resolve([]),
+    [props.teamApi]
+  )
 
   const extensions: SharedIssueDetailExtensions = {
     normalizeDescription: normalizeTaskDescription,
@@ -184,7 +190,7 @@ export function TodoEditor(props: TodoEditorProps) {
           onWorkflowManagerFinished={context.onWorkflowManagerFinished}
           taskBindings={context.tasks as LoopItemTaskBinding[]}
           onOpenTask={props.onOpenTaskConversation}
-          onRefreshTaskBindings={context.onTaskBindingsChange}
+          onRefreshExecutionArtifacts={context.onExecutionArtifactsChange}
           linear
         />
       ) : null,
@@ -221,7 +227,7 @@ export function TodoEditor(props: TodoEditorProps) {
     extensions,
     translate: (key: string, fallback?: string, options?: Record<string, string | number>) =>
       fallback === undefined ? t(key, options) : t(key, fallback, options),
-    loadTeams: () => props.teamApi?.listTeams() ?? Promise.resolve([]),
+    loadTeams,
     allItems: props.allItems as SharedEditorIssue[],
     onClose: props.onClose,
     presentation: props.presentation,
@@ -290,6 +296,7 @@ export function TodoEditor(props: TodoEditorProps) {
       })}
       project={props.project as SharedEditorProject | undefined}
       onUpdated={item => props.onUpdated(item as CloudLoopItem)}
+      onDelete={props.onDelete}
       onAddChild={props.onAddChild}
       onOpenChildTask={
         props.onOpenChildTask ? item => props.onOpenChildTask?.(item as CloudLoopItem) : undefined

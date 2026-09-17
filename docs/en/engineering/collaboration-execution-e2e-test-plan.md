@@ -578,6 +578,31 @@ Evidence screenshots:
 The disabled terminal/IDE checks are capability-reporting boundary coverage, not a substitute
 for task execution coverage.
 
+### `collaboration-agent-automation-chain`
+
+This checkpoint must also cover the record-scoped routing regression for creating a Project
+execution environment on a Wework device:
+
+1. Start the real Executor bundled with the desktop App, then start a second real Executor with
+   the same logical App device ID and a different Runtime identity.
+2. The Backend must persist two independent device records and return different
+   `app-record-{id}` execution routes for them. The test must not pre-seed devices by writing
+   directly to the database.
+3. Add the Wework device associated with the desktop App from Project settings, enter a valid
+   repository and setup step, and click Create Environment.
+4. The environment preparation command must target the selected device record's
+   `app-record-{id}` route, reach `ready`, and persist its state under that route in the
+   execution environment's `devices` map.
+5. After removing that Wework device, initialize the real cloud Executor and complete the
+   existing two-agent automation chain, proving that record-scoped routing does not break
+   subsequent scheduling.
+
+Environment preparation clones repositories with the Git credentials configured on the device,
+matching how tasks dispatched to a device behave: the Backend sends no task-scoped token because
+one execution environment may hold repositories from several domains. A private repository
+therefore requires the Git accounts to be synchronized to that device first, otherwise the clone
+fails for missing credentials.
+
 ### `cloud-device-lifecycle`
 
 This checkpoint reuses the real cloud Executor started by CI and verifies:

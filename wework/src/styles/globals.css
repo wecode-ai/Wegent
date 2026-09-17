@@ -62,6 +62,8 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --color-sidebar-text-primary: 56 58 61;
   --color-sidebar-text-secondary: 87 88 91;
   --color-sidebar-text-muted: 128 129 131;
+  --color-sidebar-scrollbar: 0 0 0 / 0.16;
+  --color-sidebar-scrollbar-hover: 0 0 0 / 0.24;
   --color-mobile-drawer: 238 242 247;
   --color-popover: 255 255 255;
   --color-code-bg: 243 244 246;
@@ -453,9 +455,43 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   z-index: 1;
 }
 
-.runtime-task-title > [data-sidebar-drag-activator] {
+.sidebar-task-title-viewport {
+  --sidebar-title-fade-start: 0px;
+  --sidebar-title-fade-end: 0px;
+  display: block;
+  position: relative;
+  max-width: 100%;
+  overflow: hidden;
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--sidebar-title-fade-start),
+    #000 calc(100% - var(--sidebar-title-fade-end)),
+    transparent
+  );
+}
+
+.sidebar-task-title-text {
+  display: block;
+  width: max-content;
+  white-space: nowrap;
   position: relative;
   z-index: 2;
+}
+
+/* Radix's intrinsic table measurement must not widen the sidebar for long titles. */
+.sidebar-worklists-viewport > div {
+  display: block !important;
+  width: 100%;
+}
+
+.sidebar-worklists-scrollbar-thumb {
+  background-color: rgb(var(--color-sidebar-scrollbar));
+}
+
+.sidebar-worklists-scrollbar:hover .sidebar-worklists-scrollbar-thumb,
+.sidebar-worklists-scrollbar:active .sidebar-worklists-scrollbar-thumb {
+  background-color: rgb(var(--color-sidebar-scrollbar-hover));
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -515,6 +551,8 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --color-sidebar-text-primary: 242 242 242;
   --color-sidebar-text-secondary: 179 179 179;
   --color-sidebar-text-muted: 128 128 128;
+  --color-sidebar-scrollbar: 255 255 255 / 0.2;
+  --color-sidebar-scrollbar-hover: 255 255 255 / 0.3;
   --color-mobile-drawer: 33 33 33;
   --color-popover: 40 40 40;
   --color-code-bg: 33 33 33;
@@ -808,12 +846,13 @@ button:disabled {
   .composer-mention-node,
   .composer-link-node {
     display: inline-flex;
-    align-items: center;
+    align-items: baseline;
     max-width: 100%;
+    margin-inline-end: 4px;
     font-size: inherit;
     font-weight: inherit;
     line-height: inherit;
-    vertical-align: -0.08em;
+    vertical-align: baseline;
     white-space: nowrap;
     user-select: text;
     -webkit-user-select: text;
@@ -827,17 +866,81 @@ button:disabled {
     contain: paint;
   }
 
+  .composer-prosemirror-editor table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    margin-block: 8px;
+  }
+
+  .composer-prosemirror-editor th,
+  .composer-prosemirror-editor td {
+    min-width: 48px;
+    padding: 6px 8px;
+    border: 1px solid rgb(var(--color-border));
+    vertical-align: top;
+    position: relative;
+  }
+
+  .composer-prosemirror-editor .selectedCell {
+    background: rgb(var(--color-text-primary) / 0.08);
+  }
+
+  .composer-prosemirror-editor :is(h1, h2, h3, h4, h5, h6) {
+    font-weight: 600;
+    margin-block: 8px;
+  }
+
+  .composer-prosemirror-editor ul {
+    list-style: disc;
+    padding-left: 24px;
+  }
+  .composer-prosemirror-editor ol {
+    list-style: decimal;
+    padding-left: 24px;
+  }
+  .composer-prosemirror-editor li[data-checked] {
+    list-style: none;
+  }
+  .composer-prosemirror-editor li[data-checked='true']::before {
+    content: '☑ ';
+  }
+  .composer-prosemirror-editor li[data-checked='false']::before {
+    content: '☐ ';
+  }
+  .composer-prosemirror-editor blockquote {
+    border-left: 2px solid rgb(var(--color-border));
+    padding-left: 12px;
+  }
+  .composer-prosemirror-editor code {
+    font-family: var(--font-code);
+    background: rgb(var(--color-text-primary) / 0.05);
+    border-radius: 4px;
+    padding-inline: 2px;
+  }
+  .composer-prosemirror-editor pre {
+    white-space: pre-wrap;
+    padding: 8px;
+    background: rgb(var(--color-text-primary) / 0.05);
+    border-radius: 8px;
+  }
+  .composer-prosemirror-editor pre code {
+    background: none;
+    padding: 0;
+  }
+  .user-markdown p:last-child {
+    margin-bottom: 0;
+  }
+
   .composer-prosemirror-editor:has(.composer-empty-caret) {
     caret-color: transparent;
   }
 
   .composer-empty-caret {
-    display: inline-block;
-    width: 1px;
-    height: 1em;
+    /* Match the native caret's font box and baseline instead of a fixed em square. */
+    display: inline;
+    border-left: 1px solid currentcolor;
     margin-right: -1px;
-    background: currentcolor;
-    vertical-align: text-bottom;
     pointer-events: none;
     opacity: 0;
   }
@@ -857,6 +960,7 @@ button:disabled {
   .composer-mention-icon-slot {
     position: relative;
     display: inline-block;
+    align-self: center;
     flex: none;
     order: -1;
     width: 1em;

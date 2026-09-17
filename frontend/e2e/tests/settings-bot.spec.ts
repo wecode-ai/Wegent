@@ -81,6 +81,12 @@ test.describe('Resource Library - Bot-backed Agent Management', () => {
   test('should expose embedded bot configuration fields', async ({ page }) => {
     const dialog = await openCreateAgentDialog(page)
 
+    const bindModeSettingsToggle = dialog.locator(
+      '[data-testid="simple-bind-mode-settings-toggle"]'
+    )
+    await expect(bindModeSettingsToggle).toBeVisible()
+    await bindModeSettingsToggle.click()
+    await expect(dialog.locator('[data-testid="simple-bind-mode-settings-content"]')).toBeVisible()
     await expect(dialog.locator('[data-testid="simple-bind-mode-chat-card"]')).toBeVisible()
     await expect(dialog.locator('[data-testid="simple-bind-mode-code-card"]')).toBeVisible()
     await expect(dialog.locator('[data-testid="simple-prompt-textarea"]')).toBeVisible()

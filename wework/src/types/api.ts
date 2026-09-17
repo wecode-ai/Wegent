@@ -9,6 +9,7 @@ export interface User {
 
 export interface UserPreferences {
   send_key?: 'enter' | 'cmd_enter'
+  follow_up_behavior?: 'queue' | 'guide'
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
   memory_enabled?: boolean
   mcp_provider_keys?: Record<string, unknown> | null
@@ -1405,6 +1406,7 @@ export interface RuntimeTaskForkResponse {
   source: RuntimeTaskAddress
   target: RuntimeTaskAddress
   runtime: RuntimeName
+  transcript: RuntimeTranscriptResponse
   error?: string | null
 }
 
@@ -2365,6 +2367,9 @@ export interface DeviceCapabilityItemResult {
   id?: string | number | null
   name?: string | null
   status: string
+  stage?: string | null
+  error_code?: string | null
+  retryable?: boolean | null
   error?: string | null
 }
 

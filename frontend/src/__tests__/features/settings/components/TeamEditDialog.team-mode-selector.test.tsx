@@ -80,7 +80,7 @@ jest.mock('@/apis/skills', () => ({
 
 jest.mock('@/contexts/TeamContext', () => ({
   useTeamContext: () => ({
-    refreshTeams: jest.fn(),
+    invalidateTeams: jest.fn(),
   }),
 }))
 

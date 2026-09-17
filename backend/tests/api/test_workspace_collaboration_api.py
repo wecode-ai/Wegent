@@ -12,7 +12,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
-from app.models.delivery import LoopItem, LoopItemComment, ProjectChatAgent
+from app.models.delivery import (
+    LoopItem,
+    LoopItemComment,
+    ProjectAutomationRule,
+    ProjectChatAgent,
+)
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import ResourceMember
@@ -21,6 +26,7 @@ from app.models.wework_notification import WeworkNotification
 from app.services.workspaces.execution_environments import (
     WorkspaceExecutionEnvironmentService,
 )
+from tests.utils.agent_resources import create_runnable_wegent_team
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +43,213 @@ def device_online_infos(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_workspace_persists_shared_execution_environment_defaults(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    created = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"Environment Workspace {uuid.uuid4().hex[:6]}"},
+    )
+    assert created.status_code == 201
+    workspace = created.json()
+
+    updated = test_client.patch(
+        f"/api/v1/workspaces/{workspace['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": workspace["version"],
+            "execution_environment": {
+                "repositories": [
+                    {
+                        "name": "Wegent",
+                        "url": "https://github.com/wecode-ai/Wegent.git",
+                        "ref": "main",
+                        "path": "wegent",
+                        "primary": True,
+                    },
+                    {
+                        "name": "SDK",
+                        "url": "https://github.com/example/sdk.git",
+                        "ref": "v2",
+                        "path": "deps/sdk",
+                        "primary": False,
+                    },
+                ],
+                "setup_steps": [
+                    {"command": "corepack enable", "working_directory": "wegent"},
+                    {"command": "pnpm install", "working_directory": "wegent"},
+                ],
+            },
+        },
+    )
+
+    assert updated.status_code == 200
+    environment = updated.json()["execution_environment"]
+    assert environment == {
+        "repositories": [
+            {
+                "name": "Wegent",
+                "url": "https://github.com/wecode-ai/Wegent.git",
+                "ref": "main",
+                "path": "wegent",
+                "primary": True,
+            },
+            {
+                "name": "SDK",
+                "url": "https://github.com/example/sdk.git",
+                "ref": "v2",
+                "path": "deps/sdk",
+                "primary": False,
+            },
+        ],
+        "setup_steps": [
+            {"command": "corepack enable", "working_directory": "wegent"},
+            {"command": "pnpm install", "working_directory": "wegent"},
+        ],
+        "fingerprint": environment["fingerprint"],
+        "devices": {},
+    }
+    assert len(environment["fingerprint"]) == 64
+
+
+def test_workspace_inherits_personal_or_group_resource_namespace(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    group_name = f"workspace-owner-{uuid.uuid4().hex[:8]}"
+    group_response = test_client.post(
+        "/api/groups",
+        headers=_auth(test_token),
+        json={
+            "name": group_name,
+            "display_name": "Workspace Owner Group",
+            "visibility": "private",
+        },
+    )
+    assert group_response.status_code == 201
+
+    group_workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={
+            "name": f"Group Workspace {uuid.uuid4().hex[:6]}",
+            "namespace": group_name,
+            "is_default": True,
+        },
+    )
+    assert group_workspace_response.status_code == 201
+    group_workspace = group_workspace_response.json()
+    assert group_workspace["namespace"] == group_name
+    assert group_workspace["is_default"] is False
+    stored_workspace = test_db.get(Kind, int(group_workspace["id"]))
+    assert stored_workspace is not None
+    assert stored_workspace.namespace == group_name
+    assert stored_workspace.json["metadata"]["namespace"] == group_name
+
+    personal_workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"Personal Workspace {uuid.uuid4().hex[:6]}"},
+    )
+    assert personal_workspace_response.status_code == 201
+    assert personal_workspace_response.json()["namespace"] == "default"
+
+    outsider, outsider_token = _user(
+        test_db, f"workspace-outsider-{uuid.uuid4().hex[:8]}"
+    )
+    denied_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(outsider_token),
+        json={
+            "name": f"Denied Workspace {outsider.id}",
+            "namespace": group_name,
+        },
+    )
+    assert denied_response.status_code == 403
+
+
+def test_workspace_execution_environment_initialize_preserves_namespace(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    group_name = f"environment-owner-{uuid.uuid4().hex[:8]}"
+    group_response = test_client.post(
+        "/api/groups",
+        headers=_auth(test_token),
+        json={
+            "name": group_name,
+            "display_name": "Environment Owner Group",
+            "visibility": "private",
+        },
+    )
+    assert group_response.status_code == 201
+    workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={
+            "name": f"Initialized Workspace {uuid.uuid4().hex[:6]}",
+            "namespace": group_name,
+        },
+    )
+    assert workspace_response.status_code == 201
+    workspace = workspace_response.json()
+    device = Kind(
+        kind="Device",
+        name=f"initialize-device-{uuid.uuid4().hex[:8]}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": {"deviceType": "local"}},
+    )
+    test_db.add(device)
+    test_db.commit()
+    test_db.refresh(device)
+    binding_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": device.id},
+    )
+    assert binding_response.status_code == 201
+    initialized_state = {
+        "status": "ready",
+        "workspace_path": "/workspace/initialized",
+        "prepared_at": None,
+        "error": "",
+    }
+    initialize = AsyncMock(return_value=initialized_state)
+    monkeypatch.setattr(
+        "app.services.workspaces.execution_environments.initialize_execution_environment",
+        initialize,
+    )
+
+    initialize_response = test_client.post(
+        (f"/api/v1/workspaces/{workspace['id']}" "/execution-environment/initialize"),
+        headers=_auth(test_token),
+        json={"device_id": device.id, "version": workspace["version"]},
+    )
+
+    assert initialize_response.status_code == 200
+    initialized_workspace = initialize_response.json()
+    assert initialized_workspace["namespace"] == group_name
+    assert initialized_workspace["execution_environment"] == {
+        "repositories": [],
+        "setup_steps": [],
+        "fingerprint": "",
+        "devices": {device.name: initialized_state},
+    }
+    stored_workspace = test_db.get(Kind, int(workspace["id"]))
+    assert stored_workspace is not None
+    assert stored_workspace.namespace == group_name
+    assert stored_workspace.json["metadata"]["namespace"] == group_name
+    initialize.assert_awaited_once()
 
 
 def test_workspace_can_be_archived_after_its_projects_are_archived(
@@ -136,15 +349,101 @@ def _workspace_project_with_maintainer(
 
 
 def _wegent_team(test_db: Session, owner: User) -> Kind:
-    team = Kind(
-        kind="Team",
-        name=f"assignment-team-{uuid.uuid4().hex[:8]}",
+    suffix = uuid.uuid4().hex[:8]
+    ghost_name = f"assignment-ghost-{suffix}"
+    shell_name = f"assignment-shell-{suffix}"
+    model_name = f"assignment-model-{suffix}"
+    bot_name = f"assignment-bot-{suffix}"
+    team_name = f"assignment-team-{suffix}"
+    ghost = Kind(
+        kind="Ghost",
+        name=ghost_name,
         namespace="default",
         user_id=owner.id,
         is_active=True,
         json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Ghost",
+            "metadata": {"name": ghost_name, "namespace": "default"},
+            "spec": {"systemPrompt": "Complete the assigned work."},
+        },
+    )
+    shell = Kind(
+        kind="Shell",
+        name=shell_name,
+        namespace="default",
+        user_id=owner.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Shell",
+            "metadata": {"name": shell_name, "namespace": "default"},
+            "spec": {"shellType": "Chat", "baseImage": "assignment:test"},
+            "status": {"state": "Available"},
+        },
+    )
+    model = Kind(
+        kind="Model",
+        name=model_name,
+        namespace="default",
+        user_id=owner.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": model_name, "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {
+                        "model": "test",
+                        "model_id": "assignment-model",
+                        "api_key": "test-key",
+                        "base_url": "https://gateway.example.test",
+                    }
+                }
+            },
+        },
+    )
+    test_db.add_all([ghost, shell, model])
+    test_db.flush()
+    bot = Kind(
+        kind="Bot",
+        name=bot_name,
+        namespace="default",
+        user_id=owner.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": bot_name, "namespace": "default"},
+            "spec": {
+                "ghostRef": {"name": ghost_name, "namespace": "default"},
+                "shellRef": {"name": shell_name, "namespace": "default"},
+                "modelRef": {"name": model_name, "namespace": "default"},
+            },
+        },
+    )
+    test_db.add(bot)
+    test_db.flush()
+    team = Kind(
+        kind="Team",
+        name=team_name,
+        namespace="default",
+        user_id=owner.id,
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
             "kind": "Team",
-            "spec": {},
+            "metadata": {"name": team_name, "namespace": "default"},
+            "spec": {
+                "collaborationModel": "solo",
+                "members": [
+                    {
+                        "botRef": {"name": bot_name, "namespace": "default"},
+                        "role": "leader",
+                    }
+                ],
+            },
             "status": {"state": "Available"},
         },
     )
@@ -152,6 +451,325 @@ def _wegent_team(test_db: Session, owner: User) -> Kind:
     test_db.commit()
     test_db.refresh(team)
     return team
+
+
+def test_workspace_collaboration_group_supports_human_or_agent_leader(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"协作组空间 {uuid.uuid4().hex[:6]}"},
+    )
+    assert workspace_response.status_code == 201
+    workspace = workspace_response.json()
+    project_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/projects",
+        headers=_auth(test_token),
+        json={"name": f"协作组项目 {uuid.uuid4().hex[:6]}"},
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+    team = _wegent_team(test_db, test_user)
+    agent_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/agents",
+        headers=_auth(test_token),
+        json={"team_id": team.id},
+    )
+    assert agent_response.status_code == 201
+
+    create_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/collaboration-groups",
+        headers=_auth(test_token),
+        json={
+            "name": "交付协作组",
+            "description": "人与智能体共同交付",
+            "instructions": "实现工作应该 @智能体 来完成，完成后由负责人验收",
+            "leader": {
+                "kind": "human",
+                "id": str(test_user.id),
+                "responsibility": "确认目标并验收",
+            },
+            "members": [
+                {
+                    "kind": "human",
+                    "id": str(test_user.id),
+                    "responsibility": "确认目标并验收",
+                },
+                {
+                    "kind": "agent",
+                    "id": str(team.id),
+                    "responsibility": "实现并提交结果",
+                },
+            ],
+            "coordination_mode": "manager",
+            "stages": [
+                {
+                    "id": "implement",
+                    "name": "实现",
+                    "description": "完成需求实现",
+                    "assignee": {
+                        "kind": "agent",
+                        "id": str(team.id),
+                        "responsibility": "实现并提交结果",
+                    },
+                }
+            ],
+            "execution_requirements": {"required_tags": ["macos", "workspace-ready"]},
+        },
+    )
+    assert create_response.status_code == 201
+    group = create_response.json()
+    assert group["owner_type"] == "workspace"
+    assert group["owner_id"] == str(workspace["id"])
+    assert group["leader"] == {
+        "kind": "human",
+        "id": str(test_user.id),
+        "responsibility": "确认目标并验收",
+    }
+    assert group["members"] == [
+        {
+            "kind": "human",
+            "id": str(test_user.id),
+            "responsibility": "确认目标并验收",
+        },
+        {
+            "kind": "agent",
+            "id": str(team.id),
+            "responsibility": "实现并提交结果",
+        },
+    ]
+    assert group["stages"][0]["name"] == "实现"
+    assert group["instructions"] == "实现工作应该 @智能体 来完成，完成后由负责人验收"
+    assert group["execution_requirements"] == {
+        "required_tags": ["macos", "workspace-ready"]
+    }
+
+    enable_response = test_client.post(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{group['id']}"
+        ),
+        headers=_auth(test_token),
+    )
+    assert enable_response.status_code == 201
+    assert enable_response.json()["id"] == group["id"]
+    assert test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth(test_token),
+    ).json()["items"] == [group]
+
+    project_only_team = _wegent_team(test_db, test_user)
+    _project_agent(
+        test_db,
+        project_id=str(project["id"]),
+        team_id=project_only_team.id,
+        owner=test_user,
+    )
+    project_group_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth(test_token),
+        json={
+            "name": "项目专属协作组",
+            "leader": {"kind": "human", "id": str(test_user.id)},
+            "members": [
+                {"kind": "human", "id": str(test_user.id)},
+                {"kind": "agent", "id": str(project_only_team.id)},
+            ],
+            "coordination_mode": "manager",
+        },
+    )
+    assert project_group_response.status_code == 201
+    project_group = project_group_response.json()
+    assert project_group["owner_type"] == "project"
+    assert project_group["owner_id"] == str(project["id"])
+
+    codex_agent = ProjectChatAgent(
+        id=str(9_000_000_000_000_000_000 + int(uuid.uuid4().hex[:12], 16)),
+        cloud_project_id=str(project["id"]),
+        title="项目 Codex Agent",
+        name="项目 Codex Agent",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "runtime": "codex",
+            "capability_description": "负责实现与验收",
+        },
+    )
+    test_db.add(codex_agent)
+    test_db.commit()
+    project_codex_group_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth(test_token),
+        json={
+            "name": "项目 Codex 协作组",
+            "leader": {"kind": "agent", "id": codex_agent.id},
+            "members": [{"kind": "agent", "id": codex_agent.id}],
+            "coordination_mode": "manager",
+        },
+    )
+    assert project_codex_group_response.status_code == 201
+    project_codex_group = project_codex_group_response.json()
+    assert project_codex_group["leader"] == {
+        "kind": "agent",
+        "id": codex_agent.id,
+        "responsibility": "",
+    }
+    assert project_codex_group["members"] == [
+        {"kind": "agent", "id": codex_agent.id, "responsibility": ""}
+    ]
+    assert not any(
+        isinstance(rule.metadata_json, dict)
+        and rule.metadata_json.get("collaboration_group_id")
+        == int(project_codex_group["id"])
+        for rule in test_db.query(ProjectAutomationRule).all()
+    )
+    assert test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/collaboration-groups",
+        headers=_auth(test_token),
+    ).json()["items"] == [group, project_codex_group, project_group]
+
+    update_response = test_client.patch(
+        (
+            f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/"
+            f"{group['id']}"
+        ),
+        headers=_auth(test_token),
+        json={
+            "version": group["version"],
+            "leader": {
+                "kind": "agent",
+                "id": str(team.id),
+                "responsibility": "负责拆解和收敛",
+            },
+            "coordination_mode": "manager",
+            "stages": [],
+        },
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["leader"] == {
+        "kind": "agent",
+        "id": str(team.id),
+        "responsibility": "负责拆解和收敛",
+    }
+    assert updated["coordination_mode"] == "manager"
+    assert updated["stages"] == []
+    assert updated["version"] == group["version"] + 1
+
+    project_update_response = test_client.patch(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{project_group['id']}"
+        ),
+        headers=_auth(test_token),
+        json={
+            "version": project_group["version"],
+            "description": "项目内维护的人机协作组织",
+            "members": [
+                {
+                    "kind": "human",
+                    "id": str(test_user.id),
+                    "responsibility": "项目负责人",
+                },
+                {
+                    "kind": "agent",
+                    "id": str(project_only_team.id),
+                    "responsibility": "执行任务",
+                },
+            ],
+        },
+    )
+    assert project_update_response.status_code == 200
+    assert project_update_response.json()["description"] == "项目内维护的人机协作组织"
+
+    list_response = test_client.get(
+        f"/api/v1/workspaces/{workspace['id']}/collaboration-groups",
+        headers=_auth(test_token),
+    )
+    assert list_response.status_code == 200
+    assert list_response.json()["items"] == [updated]
+
+    disable_response = test_client.delete(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{group['id']}"
+        ),
+        headers=_auth(test_token),
+    )
+    assert disable_response.status_code == 204
+
+    delete_project_group_response = test_client.delete(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{project_group['id']}"
+        ),
+        headers=_auth(test_token),
+    )
+    assert delete_project_group_response.status_code == 204
+
+    delete_project_codex_group_response = test_client.delete(
+        (
+            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
+            f"{project_codex_group['id']}"
+        ),
+        headers=_auth(test_token),
+    )
+    assert delete_project_codex_group_response.status_code == 204
+
+    delete_response = test_client.delete(
+        (
+            f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/"
+            f"{group['id']}"
+        ),
+        headers=_auth(test_token),
+    )
+    assert delete_response.status_code == 204
+    assert (
+        test_client.get(
+            f"/api/v1/workspaces/{workspace['id']}/collaboration-groups",
+            headers=_auth(test_token),
+        ).json()["items"]
+        == []
+    )
+
+
+def test_collaboration_group_rejects_stage_assignee_outside_members(
+    test_client: TestClient,
+    test_token: str,
+    test_user: User,
+) -> None:
+    workspace = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"阶段成员校验 {uuid.uuid4().hex[:6]}"},
+    ).json()
+
+    response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/collaboration-groups",
+        headers=_auth(test_token),
+        json={
+            "name": "无效阶段成员",
+            "leader": {"kind": "human", "id": str(test_user.id)},
+            "members": [{"kind": "human", "id": str(test_user.id)}],
+            "stages": [
+                {
+                    "id": "review",
+                    "name": "评审",
+                    "assignee": {"kind": "human", "id": str(test_user.id + 1)},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Collaboration group stage assignee must be a group member"
+    )
 
 
 def _project_agent(
@@ -195,13 +813,10 @@ def test_workspace_resources_and_project_scope_are_separate(
     assert workspace_response.status_code == 201
     workspace = workspace_response.json()
 
-    team = Kind(
-        kind="Team",
-        name=f"workspace-team-{uuid.uuid4().hex[:8]}",
-        namespace="default",
+    team = create_runnable_wegent_team(
+        test_db,
         user_id=test_user.id,
-        is_active=True,
-        json={},
+        name_prefix="workspace",
     )
     device = Kind(
         kind="Device",
@@ -217,19 +832,36 @@ def test_workspace_resources_and_project_scope_are_separate(
             },
         },
     )
-    team.json = {
-        "kind": "Team",
-        "spec": {},
+    unavailable_team = create_runnable_wegent_team(
+        test_db,
+        user_id=test_user.id,
+        name_prefix="workspace-stale-model",
+    )
+    unavailable_team.json = {
+        **unavailable_team.json,
         "status": {"state": "Available"},
     }
-    unavailable_team = Kind(
-        kind="Team",
-        name=f"workspace-unavailable-team-{uuid.uuid4().hex[:8]}",
-        namespace="default",
-        user_id=test_user.id,
-        is_active=True,
-        json={"kind": "Team", "spec": {}, "status": {}},
+    bot_name = unavailable_team.json["spec"]["members"][0]["botRef"]["name"]
+    bot = (
+        test_db.query(Kind)
+        .filter(
+            Kind.kind == "Bot",
+            Kind.user_id == test_user.id,
+            Kind.name == bot_name,
+        )
+        .one()
     )
+    model_name = bot.json["spec"]["modelRef"]["name"]
+    model = (
+        test_db.query(Kind)
+        .filter(
+            Kind.kind == "Model",
+            Kind.user_id == test_user.id,
+            Kind.name == model_name,
+        )
+        .one()
+    )
+    model.is_active = False
     offline_cloud_device = Kind(
         kind="Device",
         name=f"workspace-cloud-device-{uuid.uuid4().hex[:8]}",
@@ -243,7 +875,7 @@ def test_workspace_resources_and_project_scope_are_separate(
             },
         },
     )
-    test_db.add_all([team, unavailable_team, device, offline_cloud_device])
+    test_db.add_all([device, offline_cloud_device])
     test_db.commit()
     test_db.refresh(team)
     test_db.refresh(unavailable_team)

@@ -115,7 +115,7 @@ jest.mock('@/apis/admin', () => ({
 
 jest.mock('@/apis/team', () => ({
   teamApis: {
-    getTeams: jest.fn(),
+    getAllTeams: jest.fn(),
   },
 }))
 
@@ -127,7 +127,7 @@ describe('IMChannelList channel config', () => {
     jest.clearAllMocks()
 
     mockedAdminApis.getIMChannels.mockResolvedValue({ total: 0, items: [] })
-    mockedTeamApis.getTeams.mockResolvedValue({
+    mockedTeamApis.getAllTeams.mockResolvedValue({
       total: 1,
       items: [
         {
@@ -169,7 +169,7 @@ describe('IMChannelList channel config', () => {
 
     await waitFor(() => {
       expect(mockedAdminApis.getIMChannels).toHaveBeenCalled()
-      expect(mockedTeamApis.getTeams).toHaveBeenCalledWith({ page: 1, limit: 100 }, 'all')
+      expect(mockedTeamApis.getAllTeams).toHaveBeenCalledWith('all')
       expect(mockedAdminApis.getPublicModels).toHaveBeenCalled()
       expect(mockedAdminApis.getUsers).toHaveBeenCalled()
     })
@@ -218,7 +218,7 @@ describe('IMChannelList channel config', () => {
   })
 
   test('shows accessible chat agents and excludes code-only agents', async () => {
-    mockedTeamApis.getTeams.mockResolvedValue({
+    mockedTeamApis.getAllTeams.mockResolvedValue({
       total: 2,
       items: [
         {
@@ -255,7 +255,7 @@ describe('IMChannelList channel config', () => {
     render(<IMChannelList />)
 
     await waitFor(() => {
-      expect(mockedTeamApis.getTeams).toHaveBeenCalledWith({ page: 1, limit: 100 }, 'all')
+      expect(mockedTeamApis.getAllTeams).toHaveBeenCalledWith('all')
     })
     fireEvent.click(await screen.findByText('admin:im_channels.create_channel'))
 
@@ -268,7 +268,7 @@ describe('IMChannelList channel config', () => {
 
     await waitFor(() => {
       expect(mockedAdminApis.getIMChannels).toHaveBeenCalled()
-      expect(mockedTeamApis.getTeams).toHaveBeenCalledWith({ page: 1, limit: 100 }, 'all')
+      expect(mockedTeamApis.getAllTeams).toHaveBeenCalledWith('all')
       expect(mockedAdminApis.getUsers).toHaveBeenCalled()
     })
     const createButton = await screen.findByText('admin:im_channels.create_channel')

@@ -1142,7 +1142,11 @@ function upsertRuntimeBlock(
     }
     return upsertBlocks(items, [block])
   }
-  if (turnStatus !== 'done') return upsertBlocks(items, [block])
+  if (turnStatus !== 'done') {
+    return block.type === 'subagent'
+      ? insertDelayedSubagentBlock(items, block)
+      : upsertBlocks(items, [block])
+  }
 
   const terminalTextIndex = items.findLastIndex(item => item.type === 'assistant_text')
   if (terminalTextIndex < 0) return upsertBlocks(items, [block])
@@ -1152,6 +1156,31 @@ function upsertRuntimeBlock(
     type: 'block',
     block: limitWorkbenchProcessingBlock(block),
   })
+  return nextItems
+}
+
+function insertDelayedSubagentBlock(
+  items: RuntimeConversationItem[],
+  block: Extract<ProcessingBlock, { type: 'subagent' }>
+): RuntimeConversationItem[] {
+  const blockItem: Extract<RuntimeConversationItem, { type: 'block' }> = {
+    id: block.id,
+    type: 'block',
+    block: limitWorkbenchProcessingBlock(block),
+  }
+  const insertionIndex = items.findIndex(item => {
+    if (item.type === 'user_message') {
+      if (item.message.runtimeGuidance !== true) return false
+      const createdAt = Date.parse(item.message.createdAt ?? '')
+      return Number.isFinite(createdAt) && createdAt > block.createdAt
+    }
+    const createdAt =
+      item.type === 'assistant_text' ? Date.parse(item.createdAt) : item.block.createdAt
+    return Number.isFinite(createdAt) && createdAt > block.createdAt
+  })
+  if (insertionIndex < 0) return [...items, blockItem]
+  const nextItems = [...items]
+  nextItems.splice(insertionIndex, 0, blockItem)
   return nextItems
 }
 

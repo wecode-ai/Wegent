@@ -1,6 +1,8 @@
+import { composerMarkdownNodes, composerMarkdownMarks } from './composerMarkdownSchema'
+import { findComposerMarkdownLinks, parseComposerMarkdown } from './composerMarkdownParser'
+import { serializeMarkdownDocument, serializeMarkdownFragment } from './composerMarkdownSerializer'
 import {
   Schema,
-  type Fragment,
   type MarkSpec,
   type Node as ProseMirrorNode,
   type NodeSpec,
@@ -15,6 +17,7 @@ import {
 import {
   createComposerLinkElement,
   parseComposerLinks,
+  serializeComposerLink,
   type ComposerLinkPayload,
   type ParsedComposerLink,
 } from './composerLinks'
@@ -93,8 +96,10 @@ const linkNodeSpec: NodeSpec = {
 
 export const composerSchema = new Schema({
   nodes: {
-    doc: { content: 'paragraph+' },
+    doc: { content: 'block+' },
     paragraph: {
+      group: 'block',
+      attrs: { markdown: { default: false }, trailing: { default: false } },
       content: 'inline*',
       toDOM: () => ['p', 0],
       parseDOM: [{ tag: 'p' }],
@@ -107,15 +112,21 @@ export const composerSchema = new Schema({
       toDOM: () => ['br'],
       parseDOM: [{ tag: 'br' }],
     },
+    ...composerMarkdownNodes,
     composer_mention: mentionNodeSpec,
     composer_link: linkNodeSpec,
   },
   marks: {
+    ...composerMarkdownMarks,
     composer_mention_separator: mentionSeparatorMarkSpec,
   },
 })
 
 export function createComposerDocument(value: string): ProseMirrorNode {
+  return parseComposerMarkdown(value, composerSchema, createPlainComposerDocument)
+}
+
+function createPlainComposerDocument(value: string, autolinks = false): ProseMirrorNode {
   const sanitizedValue = value.replace(/\r\n?/g, '\n').replaceAll(OBJECT_REPLACEMENT_CHARACTER, '')
   const paragraphs: ProseMirrorNode[] = []
   let content: ProseMirrorNode[] = []
@@ -126,7 +137,12 @@ export function createComposerDocument(value: string): ProseMirrorNode {
 
   for (const token of tokens) {
     if (token.start < offset) continue
-    content = appendComposerText(paragraphs, content, sanitizedValue.slice(offset, token.start))
+    content = appendComposerText(
+      paragraphs,
+      content,
+      sanitizedValue.slice(offset, token.start),
+      autolinks
+    )
     if (token.kind === 'mention') {
       content.push(composerSchema.nodes.composer_mention.create(token.payload))
     } else {
@@ -140,7 +156,7 @@ export function createComposerDocument(value: string): ProseMirrorNode {
       offset += 1
     }
   }
-  content = appendComposerText(paragraphs, content, sanitizedValue.slice(offset))
+  content = appendComposerText(paragraphs, content, sanitizedValue.slice(offset), autolinks)
   paragraphs.push(composerSchema.node('paragraph', null, content))
   return composerSchema.node('doc', null, paragraphs)
 }
@@ -148,7 +164,8 @@ export function createComposerDocument(value: string): ProseMirrorNode {
 function appendComposerText(
   paragraphs: ProseMirrorNode[],
   initialContent: ProseMirrorNode[],
-  text: string
+  text: string,
+  autolinks: boolean
 ): ProseMirrorNode[] {
   let content = initialContent
   text.split('\n').forEach((line, index) => {
@@ -156,7 +173,18 @@ function appendComposerText(
       paragraphs.push(composerSchema.node('paragraph', null, content))
       content = []
     }
-    if (line) content.push(composerSchema.text(line))
+    let offset = 0
+    for (const link of autolinks ? findComposerMarkdownLinks(line) : []) {
+      if (/^[<[]/.test(line.slice(link.start))) continue
+      if (link.start > offset) content.push(composerSchema.text(line.slice(offset, link.start)))
+      content.push(
+        composerSchema.text(line.slice(link.start, link.end), [
+          composerSchema.marks.link.create({ href: link.url, autolink: true }),
+        ])
+      )
+      offset = link.end
+    }
+    if (offset < line.length) content.push(composerSchema.text(line.slice(offset)))
   })
   return content
 }
@@ -201,44 +229,13 @@ function mergeComposerTokens(
 export function serializeComposerLinkNode(node: ProseMirrorNode): string {
   const label = String(node.attrs.label ?? '')
   const url = String(node.attrs.url ?? '')
-  return label ? `[${label}](${url})` : url
+  return serializeComposerLink({ label, url })
 }
 
 export function serializeComposerDocument(doc: ProseMirrorNode): string {
-  return serializeComposerFragment(doc.content)
+  return serializeMarkdownDocument(doc).text
 }
 
 export function serializeComposerSlice(slice: Slice): string {
-  return serializeComposerFragment(slice.content)
-}
-
-function serializeComposerFragment(fragment: Fragment): string {
-  const parts: string[] = []
-  fragment.forEach((node, _offset, index) => {
-    if (node.type === composerSchema.nodes.paragraph) {
-      if (index > 0) parts.push('\n')
-      appendSerializedComposerContent(parts, node.content)
-      return
-    }
-    appendSerializedComposerNode(parts, node)
-  })
-  return parts.join('')
-}
-
-function appendSerializedComposerContent(parts: string[], fragment: Fragment): void {
-  fragment.forEach(node => appendSerializedComposerNode(parts, node))
-}
-
-function appendSerializedComposerNode(parts: string[], node: ProseMirrorNode): void {
-  if (node.isText) {
-    parts.push(node.text ?? '')
-  } else if (node.type === composerSchema.nodes.composer_mention) {
-    parts.push(String(node.attrs.reference ?? ''))
-  } else if (node.type === composerSchema.nodes.composer_link) {
-    parts.push(serializeComposerLinkNode(node))
-  } else if (node.type === composerSchema.nodes.hard_break) {
-    parts.push('\n')
-  } else {
-    appendSerializedComposerContent(parts, node.content)
-  }
+  return serializeMarkdownFragment(slice.content)
 }

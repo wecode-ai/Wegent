@@ -359,7 +359,7 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
     control,
     snapshot =>
       snapshot.text.includes('目标任务') &&
-      snapshot.text.includes('请先置顶一个本地任务，再使用已安排任务') &&
+      snapshot.text.includes('请先置顶一个可用设备上的任务，再使用已安排任务') &&
       snapshot.text.includes('现有任务') &&
       !snapshot.text.includes('继续当前任务'),
     'The existing-task selector did not match the ChatGPT pinned-task empty state'
@@ -643,8 +643,18 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
   }
 }
 
-async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
+async function verifyCloudAutomationLifecycle(
+  control,
+  cloudDeviceId,
+  {
+    automationSuffix = 'Cloud',
+    deviceName = 'Wework E2E Cloud Device',
+    expectedCompletionIndex = 1,
+  } = {}
+) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const automationName = `${AUTOMATION_NAME} ${automationSuffix}`
+  const completionText = `${AUTOMATION_COMPLETION_TEXT}_${expectedCompletionIndex}`
   assert.ok(
     initialSnapshot.testIds.includes('automation-button'),
     'Automations remained hidden behind the experimental-features preference'
@@ -658,7 +668,7 @@ async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('fill', '[data-testid="automation-name-input"]', {
-    value: `${AUTOMATION_NAME} Cloud`,
+    value: automationName,
   })
   await control.command('fill', '[data-testid="automation-prompt-input"]', {
     value: AUTOMATION_PROMPT,
@@ -668,9 +678,7 @@ async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
   await control.command('click', '[data-testid="automation-source-select-option-cloud"]')
   await waitForSnapshot(
     control,
-    snapshot =>
-      snapshot.text.includes('Wework E2E Cloud Device') &&
-      (snapshot.text.includes('云端') || snapshot.text.includes('Cloud')),
+    snapshot => snapshot.text.includes('云端') || snapshot.text.includes('Cloud'),
     'The cloud automation source did not select the remote executor'
   )
 
@@ -681,7 +689,7 @@ async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
     'The cloud automation device selector did not list the remote executor'
   )
   assert.ok(
-    deviceSnapshot.text.includes('Wework E2E Cloud Device'),
+    deviceSnapshot.text.includes(deviceName),
     'The cloud automation device selector did not show the remote executor name'
   )
   await control.command('click', `[data-testid="automation-device-select-option-${cloudDeviceId}"]`)
@@ -693,26 +701,46 @@ async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
   const createdSnapshot = await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.text.includes(`${AUTOMATION_NAME} Cloud`) &&
-      snapshot.testIds.some(testId => testId.startsWith('automation-open-')),
+      snapshot.text.includes(automationName) &&
+      snapshot.testIds.some(
+        testId => testId.startsWith('automation-open-') && !initialSnapshot.testIds.includes(testId)
+      ),
     'The cloud automation was not persisted by the remote Executor'
   )
   const automationActions = createdSnapshot.testIds.find(testId =>
     testId.startsWith('automation-detail-actions-')
   )
   assert.ok(automationActions, 'The cloud automation detail did not expose its actions menu')
+  assert.notEqual(
+    await control.command('getAttribute', '[data-testid="automation-source-select"]', {
+      value: 'disabled',
+    }),
+    null,
+    'The saved cloud automation still allowed its source to change'
+  )
+  assert.notEqual(
+    await control.command('getAttribute', '[data-testid="automation-device-select"]', {
+      value: 'disabled',
+    }),
+    null,
+    'The saved cloud automation still allowed its Executor to change'
+  )
 
   const previousScenario = control.scenario
   control.setScenario('automation')
   try {
     await control.command('click', `[data-testid="${automationActions}"]`)
     await control.command('click', '[data-testid="automation-run-now-button"]')
-    await control.awaitScenarioRequestCount('automation', 1, WORKBENCH_READY_TIMEOUT_MS)
+    await control.awaitScenarioRequestCount(
+      'automation',
+      expectedCompletionIndex,
+      WORKBENCH_READY_TIMEOUT_MS
+    )
 
     const taskSnapshot = await waitForSnapshot(
       control,
       snapshot =>
-        snapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`) ||
+        snapshot.text.includes(completionText) ||
         snapshot.testIds.some(
           testId =>
             testId.startsWith('runtime-local-task-row-') &&
@@ -728,7 +756,7 @@ async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
     assert.ok(taskRow, 'The cloud automation run did not expose its runtime task')
     await control.command('click', `[data-testid="${taskRow}"]`)
     await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: `${AUTOMATION_COMPLETION_TEXT}_1`,
+      text: completionText,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
     await waitForWorkbenchDebugState(
@@ -736,7 +764,10 @@ async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
       snapshot => snapshot.workbench?.currentRuntimeTask?.deviceId === cloudDeviceId,
       'The cloud automation task did not become active on the selected cloud device'
     )
-    await captureVerificationScreenshot(control, 'automations-03-cloud-complete.png')
+    await captureVerificationScreenshot(
+      control,
+      `automations-03-${automationSuffix.toLowerCase().replaceAll(' ', '-')}-complete.png`
+    )
   } finally {
     control.setScenario(previousScenario)
   }

@@ -39,9 +39,19 @@ running desktop app from the latest build through
 build changes, matching `dev-mac-app.sh`. Branch switches and renderer edits
 therefore take effect without manually syncing packaged plugin artifacts.
 
-Runtime and Executor build caches default to `%LOCALAPPDATA%\wegent\` (override
-with `WEWORK_DEV_CACHE_ROOT` or `WEGENT_CARGO_TARGET_ROOT`); the first
-preparation is slow and later runs are incremental. Pass
+The script also mirrors the macOS development instance model: it derives a
+stable worktree identity and title, gives Electron an isolated application
+identifier and user-data directory, and creates component resources for the
+source Core DSH plugins. A renamed executable bundle is macOS-specific; on
+Windows, the development title is carried by the Electron process identity.
+
+Immutable Runtime archives and Executor build caches default to
+`%LOCALAPPDATA%\wegent\` (override with `WEWORK_DEV_CACHE_ROOT` or
+`WEGENT_CARGO_TARGET_ROOT`). When the system drive is low on space and no cache
+exists yet, Cargo target selection falls back to `D:` through `H:`. Mutable,
+worktree-specific materialized runtimes stay in the checkout's
+`wework/node_modules/.cache` so different worktrees cannot share live files.
+The first preparation is slow and later runs are incremental. Pass
 `-- --executor-isolation` to use a temporary Executor Home, or set
 `WEWORK_DRY_RUN=1` to print only the resolved launch configuration. If a
 download stalls, set the `HTTP_PROXY`/`HTTPS_PROXY` environment variables first.

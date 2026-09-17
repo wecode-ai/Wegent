@@ -10,18 +10,19 @@ use std::{
     time::SystemTime,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use toml_edit::DocumentMut;
 
-use crate::logging::log_executor_event;
+use crate::{agents::replace_config, logging::log_executor_event};
 
 pub const BUNDLED_PLUGIN_MARKETPLACE_SOURCE_ENV: &str = "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR";
 const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 const MARKETPLACE_ID: &str = "wework-personal";
 const CONTENT_HASH_FILE: &str = ".wework-content-sha256";
+const LEGACY_RECOVERY_REGISTRY_FILE: &str = ".wework-personal-legacy-recovery-v1.json";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +32,11 @@ pub struct BundledPluginMarketplace {
     plugin_count: usize,
     default_plugin_names: Vec<String>,
     content_hash: String,
+}
+
+#[derive(Default, Deserialize, Serialize)]
+struct LegacyRecoveryRegistry {
+    marketplace_paths: Vec<String>,
 }
 
 pub fn initialize_bundled_plugin_marketplace() -> Result<BundledPluginMarketplace, String> {
@@ -101,6 +107,15 @@ fn initialize_bundled_plugin_marketplace_from_paths_with_recovery(
         .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
     let staging = parent.join(format!(".{MARKETPLACE_ID}-{}-staging", std::process::id()));
     remove_existing_path(&staging)?;
+    let legacy_recovery_registry_path = parent.join(LEGACY_RECOVERY_REGISTRY_FILE);
+    let recovered_legacy_marketplaces =
+        read_legacy_recovery_registry(&legacy_recovery_registry_path);
+    let pending_legacy_marketplaces = legacy_personal_marketplaces
+        .iter()
+        .filter(|path| {
+            !recovered_legacy_marketplaces.contains(&legacy_marketplace_recovery_key(path))
+        })
+        .collect::<Vec<_>>();
 
     let content_matches = destination.is_dir()
         && fs::read_to_string(destination.join(CONTENT_HASH_FILE))
@@ -110,7 +125,7 @@ fn initialize_bundled_plugin_marketplace_from_paths_with_recovery(
         if !content_matches && destination.is_dir() {
             preserve_personal_plugins(destination, &staging, &codex_plugins)?;
         }
-        for legacy_root in legacy_personal_marketplaces {
+        for legacy_root in &pending_legacy_marketplaces {
             preserve_personal_plugins(legacy_root, &staging, &codex_plugins)?;
         }
         if let Some(codex_home) = codex_home {
@@ -128,6 +143,23 @@ fn initialize_bundled_plugin_marketplace_from_paths_with_recovery(
         return Err(error);
     }
     activate_staged_marketplace(&staging, destination)?;
+    if !pending_legacy_marketplaces.is_empty() {
+        let mut recovered = recovered_legacy_marketplaces;
+        recovered.extend(
+            pending_legacy_marketplaces
+                .into_iter()
+                .map(|path| legacy_marketplace_recovery_key(path)),
+        );
+        if write_legacy_recovery_registry(&legacy_recovery_registry_path, recovered).is_err() {
+            log_executor_event(
+                "failed to record legacy personal plugin recovery",
+                &[(
+                    "registry_path",
+                    legacy_recovery_registry_path.display().to_string(),
+                )],
+            );
+        }
+    }
 
     Ok(BundledPluginMarketplace {
         id: MARKETPLACE_ID.to_owned(),
@@ -136,6 +168,39 @@ fn initialize_bundled_plugin_marketplace_from_paths_with_recovery(
         default_plugin_names,
         content_hash,
     })
+}
+
+fn read_legacy_recovery_registry(path: &Path) -> HashSet<String> {
+    let content = match fs::read(path) {
+        Ok(content) => content,
+        Err(_) => return HashSet::new(),
+    };
+    serde_json::from_slice::<LegacyRecoveryRegistry>(&content)
+        .map(|registry| registry.marketplace_paths.into_iter().collect())
+        .unwrap_or_default()
+}
+
+fn write_legacy_recovery_registry(
+    path: &Path,
+    marketplace_paths: HashSet<String>,
+) -> Result<(), String> {
+    let mut marketplace_paths = marketplace_paths.into_iter().collect::<Vec<_>>();
+    marketplace_paths.sort();
+    let content = serde_json::to_vec_pretty(&LegacyRecoveryRegistry { marketplace_paths })
+        .map_err(|error| format!("Failed to serialize legacy plugin recovery registry: {error}"))?;
+    fs::write(path, content).map_err(|error| {
+        format!(
+            "Failed to write legacy plugin recovery registry {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn legacy_marketplace_recovery_key(path: &Path) -> String {
+    path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string()
 }
 
 fn legacy_personal_marketplace_roots(executor_home: &Path) -> Result<Vec<PathBuf>, String> {
@@ -241,11 +306,13 @@ fn recover_configured_personal_plugins(
         marketplace_plugin_names(&marketplace_root.join(".agents/plugins/marketplace.json"))?
             .into_iter()
             .collect::<HashSet<_>>();
+    let mut unrecoverable = Vec::new();
     for name in configured_personal_plugin_names(codex_home)? {
         if bundled.contains(&name) || existing.contains(&name) {
             continue;
         }
         let Some(cached_plugin) = newest_cached_plugin(codex_home, &name)? else {
+            unrecoverable.push(name);
             continue;
         };
         let destination = marketplace_root.join("plugins").join(&name);
@@ -253,6 +320,65 @@ fn recover_configured_personal_plugins(
         copy_directory_recursive(&cached_plugin, &destination)?;
         append_personal_plugin_manifests(marketplace_root, &name, None, None, &destination)?;
     }
+    remove_unrecoverable_personal_plugin_state(codex_home, &unrecoverable)?;
+    Ok(())
+}
+
+fn remove_unrecoverable_personal_plugin_state(
+    codex_home: &Path,
+    plugin_names: &[String],
+) -> Result<(), String> {
+    if plugin_names.is_empty() {
+        return Ok(());
+    }
+    let config_path = codex_home.join("config.toml");
+    let content = match fs::read_to_string(&config_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!("Failed to read {}: {error}", config_path.display()));
+        }
+    };
+    let mut config = content
+        .parse::<DocumentMut>()
+        .map_err(|error| format!("Failed to parse {}: {error}", config_path.display()))?;
+    let Some(plugins) = config
+        .get_mut("plugins")
+        .and_then(|plugins| plugins.as_table_like_mut())
+    else {
+        return Ok(());
+    };
+    let mut removed = Vec::new();
+    for name in plugin_names {
+        let plugin_key = format!("{name}@{MARKETPLACE_ID}");
+        if plugins.remove(&plugin_key).is_some() {
+            removed.push(name.clone());
+        }
+    }
+    if removed.is_empty() {
+        return Ok(());
+    }
+    replace_config(&config_path, config.to_string())?;
+    let mut cache_cleanup_failures = 0;
+    for name in &removed {
+        if remove_existing_path(
+            &codex_home
+                .join("plugins/cache")
+                .join(MARKETPLACE_ID)
+                .join(name),
+        )
+        .is_err()
+        {
+            cache_cleanup_failures += 1;
+        }
+    }
+    log_executor_event(
+        "removed unrecoverable personal plugin state",
+        &[
+            ("plugin_count", removed.len().to_string()),
+            ("cache_cleanup_failures", cache_cleanup_failures.to_string()),
+        ],
+    );
     Ok(())
 }
 
@@ -863,6 +989,52 @@ mod tests {
     }
 
     #[test]
+    fn removes_unrecoverable_personal_plugin_config_and_invalid_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("destination/wework-personal");
+        let codex_home = root.path().join("codex");
+        fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+        fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+        fs::write(
+            source.join(".agents/plugins/marketplace.json"),
+            r#"{"plugins":[]}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join(".claude-plugin/marketplace.json"),
+            r#"{"plugins":[]}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(codex_home.join("plugins/cache/wework-personal/removed-plugin/1.0.0"))
+            .unwrap();
+        fs::write(
+            codex_home.join("config.toml"),
+            concat!(
+                "[plugins.\"removed-plugin@wework-personal\"]\n",
+                "enabled = true\n",
+                "[plugins.\"unrelated@other-marketplace\"]\n",
+                "enabled = true\n"
+            ),
+        )
+        .unwrap();
+
+        initialize_bundled_plugin_marketplace_from_paths_with_codex_home(
+            &source,
+            &destination,
+            Some(&codex_home),
+        )
+        .unwrap();
+
+        let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+        assert!(!config.contains("removed-plugin@wework-personal"));
+        assert!(config.contains("unrelated@other-marketplace"));
+        assert!(!codex_home
+            .join("plugins/cache/wework-personal/removed-plugin")
+            .exists());
+    }
+
+    #[test]
     fn migrates_personal_plugin_from_legacy_app_marketplace() {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("source");
@@ -916,6 +1088,33 @@ mod tests {
             marketplace_plugin_names(&destination.join(".agents/plugins/marketplace.json"))
                 .unwrap(),
             vec!["personal-tool".to_owned()]
+        );
+
+        remove_existing_path(&destination.join("plugins/personal-tool")).unwrap();
+        fs::write(
+            destination.join(".agents/plugins/marketplace.json"),
+            r#"{"plugins":[]}"#,
+        )
+        .unwrap();
+        fs::write(
+            destination.join(".claude-plugin/marketplace.json"),
+            r#"{"plugins":[]}"#,
+        )
+        .unwrap();
+
+        initialize_bundled_plugin_marketplace_from_paths_with_recovery(
+            &source,
+            &destination,
+            None,
+            std::slice::from_ref(&legacy),
+        )
+        .unwrap();
+
+        assert!(!destination.join("plugins/personal-tool").exists());
+        assert!(
+            marketplace_plugin_names(&destination.join(".agents/plugins/marketplace.json"))
+                .unwrap()
+                .is_empty()
         );
     }
 

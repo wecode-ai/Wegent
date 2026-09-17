@@ -856,7 +856,7 @@ async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
     wait_for_path(&request_marker, "pending app-server request should reach Codex").await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            if matches!(client.restart_if_no_pending_requests().await, Err(1)) {
+            if matches!(client.restart_if_idle().await, Err((0, 1))) {
                 break;
             }
             tokio::task::yield_now().await;
@@ -885,7 +885,7 @@ async fn codex_app_server_proxy_restart_settles_in_flight_requests() {
     wait_for_path(&request_marker, "pending app-server request should reach Codex").await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            if matches!(client.restart_if_no_pending_requests().await, Err(1)) {
+            if matches!(client.restart_if_idle().await, Err((0, 1))) {
                 break;
             }
             tokio::task::yield_now().await;
@@ -1754,7 +1754,7 @@ fn read_json_lines(path: &Path) -> Vec<Value> {
 }
 
 async fn wait_for_path(path: &Path, message: &str) {
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while !path.exists() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }

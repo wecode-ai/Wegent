@@ -446,23 +446,28 @@ pub fn delete_personal_plugin(request: DeletePersonalPluginRequest) -> Result<()
     let marketplace_root = marketplace_root_from_path(&resolved);
     let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
     let plugin_path = marketplace_root.join("plugins").join(plugin_name);
-    let metadata = fs::symlink_metadata(&plugin_path)
-        .map_err(|error| format!("Failed to inspect personal plugin: {error}"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err("Plugin is not a managed personal plugin directory".to_owned());
-    }
-    let canonical_plugin = plugin_path
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve personal plugin: {error}"))?;
-    let canonical_plugins_root = marketplace_root
-        .join("plugins")
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve personal plugin directory: {error}"))?;
-    if canonical_plugin.parent() != Some(canonical_plugins_root.as_path())
-        || !canonical_plugin.join(".codex-plugin/plugin.json").is_file()
-    {
-        return Err("Plugin is not a managed personal plugin".to_owned());
-    }
+    let canonical_plugin = match fs::symlink_metadata(&plugin_path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("Plugin is not a managed personal plugin directory".to_owned());
+            }
+            let canonical_plugin = plugin_path
+                .canonicalize()
+                .map_err(|error| format!("Failed to resolve personal plugin: {error}"))?;
+            let canonical_plugins_root = marketplace_root
+                .join("plugins")
+                .canonicalize()
+                .map_err(|error| format!("Failed to resolve personal plugin directory: {error}"))?;
+            if canonical_plugin.parent() != Some(canonical_plugins_root.as_path())
+                || !canonical_plugin.join(".codex-plugin/plugin.json").is_file()
+            {
+                return Err("Plugin is not a managed personal plugin".to_owned());
+            }
+            Some(canonical_plugin)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("Failed to inspect personal plugin: {error}")),
+    };
 
     let manifest_paths = [
         marketplace_root.join(".agents/plugins/marketplace.json"),
@@ -471,7 +476,7 @@ pub fn delete_personal_plugin(request: DeletePersonalPluginRequest) -> Result<()
     let registered = manifest_paths
         .iter()
         .any(|path| marketplace_manifest_contains_plugin(path, plugin_name).unwrap_or(false));
-    if !registered {
+    if canonical_plugin.is_some() && !registered {
         return Err("Plugin is not registered in this personal marketplace".to_owned());
     }
 
@@ -486,24 +491,31 @@ pub fn delete_personal_plugin(request: DeletePersonalPluginRequest) -> Result<()
         })
         .transpose()?;
 
-    let backup_root = marketplace_root.join(".wegent").join(format!(
-        "plugin-delete-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&backup_root)
-        .map_err(|error| format!("Failed to create personal plugin deletion backup: {error}"))?;
+    let backup_root = canonical_plugin.as_ref().map(|_| {
+        marketplace_root.join(".wegent").join(format!(
+            "plugin-delete-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    });
+    if let Some(backup_root) = &backup_root {
+        fs::create_dir_all(backup_root).map_err(|error| {
+            format!("Failed to create personal plugin deletion backup: {error}")
+        })?;
+    }
     let manifest_backups = manifest_paths
         .iter()
         .map(|path| fs::read(path).ok())
         .collect::<Vec<_>>();
     let cloud_link_path = plugin_cloud_link_registry_path(&marketplace_root);
     let cloud_link_backup = fs::read(&cloud_link_path).ok();
-    fs::rename(&canonical_plugin, backup_root.join("plugin"))
-        .map_err(|error| format!("Failed to stage personal plugin deletion: {error}"))?;
+    if let (Some(canonical_plugin), Some(backup_root)) = (&canonical_plugin, &backup_root) {
+        fs::rename(canonical_plugin, backup_root.join("plugin"))
+            .map_err(|error| format!("Failed to stage personal plugin deletion: {error}"))?;
+    }
 
     let mutation = (|| {
         for path in &manifest_paths {
@@ -541,12 +553,17 @@ pub fn delete_personal_plugin(request: DeletePersonalPluginRequest) -> Result<()
             }
         }
         let _ = restore_optional_file(&copy_registry_path, copy_registry_backup.as_deref());
-        let _ = fs::rename(backup_root.join("plugin"), &canonical_plugin);
-        let _ = fs::remove_dir_all(&backup_root);
+        if let (Some(canonical_plugin), Some(backup_root)) = (&canonical_plugin, &backup_root) {
+            let _ = fs::rename(backup_root.join("plugin"), canonical_plugin);
+            let _ = fs::remove_dir_all(backup_root);
+        }
         return Err(error);
     }
-    fs::remove_dir_all(&backup_root)
-        .map_err(|error| format!("Failed to finalize personal plugin deletion: {error}"))
+    if let Some(backup_root) = backup_root {
+        fs::remove_dir_all(&backup_root)
+            .map_err(|error| format!("Failed to finalize personal plugin deletion: {error}"))?;
+    }
+    Ok(())
 }
 
 fn validate_plugin_copy_request(request: &ImportPersonalPluginCopyRequest) -> Result<(), String> {
@@ -3605,6 +3622,11 @@ mod tests {
         })
         .unwrap();
 
+        delete_personal_plugin(DeletePersonalPluginRequest {
+            marketplace_path: marketplace.display().to_string(),
+            plugin_name: "example-plugin".to_owned(),
+        })
+        .unwrap();
         delete_personal_plugin(DeletePersonalPluginRequest {
             marketplace_path: marketplace.display().to_string(),
             plugin_name: "example-plugin".to_owned(),
