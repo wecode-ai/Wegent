@@ -2,6 +2,7 @@ import { layout, prepare } from '@chenglou/pretext'
 import type { Attachment } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { isImageAttachment } from '@/lib/attachments'
+import { COLLAPSED_PROCESSING_HEIGHT } from './blocks/ToolBlocksDisplay'
 
 const DEFAULT_LAYOUT_WIDTH = 720
 const MIN_TEXT_WIDTH = 160
@@ -21,11 +22,16 @@ const IMAGE_ATTACHMENT_HEIGHT = 80
 const DOCUMENT_ATTACHMENT_HEIGHT = 34
 const FAILED_ASSISTANT_CARD_HEIGHT = 128
 const FINAL_ARTIFACT_CARD_HEIGHT = 76
-const PROCESSING_BLOCK_HEIGHT = 48
 const MESSAGE_VERTICAL_BUFFER = 12
 const WIDTH_BUCKET_SIZE = 32
 const MAX_LAYOUT_CACHE_SIZE = 1200
 const STREAMING_MESSAGE_INTRINSIC_HEIGHT = 220
+// `MarkdownCodeBlock` renders fenced code in a horizontally scrolling `<pre>`: `--text-code` at
+// `line-height: 1.8`, a 40px header, 24px of padding and 20px of margin.
+const CODE_LINE_HEIGHT = 22
+const CODE_BLOCK_CHROME_HEIGHT = 84
+const FENCE_OPEN_PATTERN = /^ {0,3}(`{3,}|~{3,})/
+const FENCE_CLOSE_PATTERN = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
 
 let pretextMeasurementAvailable = true
 const messageLayoutHeightCache = new Map<string, number>()
@@ -99,9 +105,13 @@ function estimateAssistantMessageHeight(message: WorkbenchMessage, containerWidt
   }
 
   const textHeight = message.content.trim()
-    ? measurePretextHeight(message.content, ASSISTANT_FONT, containerWidth, ASSISTANT_LINE_HEIGHT)
+    ? measureAssistantMarkdownHeight(message.content, containerWidth)
     : 0
-  const blockHeight = (message.blocks?.length ?? 0) * PROCESSING_BLOCK_HEIGHT
+  // A finished turn renders its process section collapsed: one summary row, however many blocks it ran.
+  // The per-block rows only exist once the reader opens it, and that re-measure is a real layout change,
+  // so budgeting a block row per block counted heights that were never on screen — the conversation's
+  // height then fell by exactly that much as each row was reached and measured.
+  const blockHeight = (message.blocks?.length ?? 0) > 0 ? COLLAPSED_PROCESSING_HEIGHT : 0
   const finalArtifactsHeight =
     (message.references?.length || message.memoryCitations?.length || message.fileChanges
       ? FINAL_ARTIFACT_CARD_HEIGHT
@@ -111,6 +121,68 @@ function estimateAssistantMessageHeight(message: WorkbenchMessage, containerWidt
     MIN_ASSISTANT_ROW_HEIGHT,
     textHeight + blockHeight + finalArtifactsHeight + HOVER_ACTION_HEIGHT + MESSAGE_VERTICAL_BUFFER
   )
+}
+
+/**
+ * Fenced code does not wrap in the transcript — `MarkdownCodeBlock` renders it in a horizontally
+ * scrolling `<pre>` — so measuring the raw source as wrapped text counts every long code line as two
+ * or more lines. For a code-heavy answer that made the intrinsic height several times the height the
+ * answer actually renders at, which is what pushed the conversation's content height down (and the
+ * scrollbar with it) while the reader scrolled up through it.
+ */
+function measureAssistantMarkdownHeight(source: string, containerWidth: number): number {
+  let height = 0
+  for (const block of splitMarkdownCodeBlocks(source)) {
+    height +=
+      block.kind === 'code'
+        ? Math.max(1, block.lineCount) * CODE_LINE_HEIGHT + CODE_BLOCK_CHROME_HEIGHT
+        : measurePretextHeight(block.content, ASSISTANT_FONT, containerWidth, ASSISTANT_LINE_HEIGHT)
+  }
+  return height
+}
+
+type MarkdownCodeBlock = { kind: 'text'; content: string } | { kind: 'code'; lineCount: number }
+
+/** Splits markdown into the wrapped prose the renderer reflows and the fenced code it does not. */
+function splitMarkdownCodeBlocks(source: string): MarkdownCodeBlock[] {
+  const blocks: MarkdownCodeBlock[] = []
+  let prose = ''
+  let openFence: { marker: string; length: number; code: string } | null = null
+  for (const line of source.match(/.*(?:\n|$)/g) ?? []) {
+    const trimmedLine = line.replace(/\r?\n$/, '')
+    if (openFence) {
+      const closing = trimmedLine.match(FENCE_CLOSE_PATTERN)?.[1]
+      if (closing?.startsWith(openFence.marker) && closing.length >= openFence.length) {
+        blocks.push({ kind: 'code', lineCount: countLines(openFence.code) })
+        openFence = null
+        continue
+      }
+      openFence.code += line
+      continue
+    }
+    const opening = trimmedLine.match(FENCE_OPEN_PATTERN)?.[1]
+    if (opening) {
+      if (prose) {
+        blocks.push({ kind: 'text', content: prose })
+        prose = ''
+      }
+      openFence = { marker: opening[0] ?? '`', length: opening.length, code: '' }
+      continue
+    }
+    prose += line
+  }
+  if (openFence) {
+    blocks.push({ kind: 'code', lineCount: countLines(openFence.code) })
+  }
+  if (prose) {
+    blocks.push({ kind: 'text', content: prose })
+  }
+  return blocks
+}
+
+function countLines(text: string): number {
+  const trimmed = text.replace(/\n$/, '')
+  return trimmed ? trimmed.split('\n').length : 0
 }
 
 function measurePretextHeight(
