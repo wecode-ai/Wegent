@@ -246,6 +246,32 @@ function makeGroup(overrides: Partial<Awaited<ReturnType<typeof listGroups>>['it
 }
 
 describe('MyResources', () => {
+  it.each(['agent', 'skill', 'model', 'shell', 'retriever'] as const)(
+    'keeps %s ordered by updates when a legacy sort parameter has no visible control',
+    async type => {
+      window.history.replaceState(
+        {},
+        '',
+        `/resource-library?tab=mine&type=${type}&source=mine&sort=default`
+      )
+      render(<MyResources allowedTypes={[type]} hideSortControls />)
+      expect(await screen.findByTestId(`${type}-resource-manager`)).toHaveAttribute(
+        'data-sort',
+        'latest'
+      )
+      expect(screen.queryByTestId('resource-sort-select')).not.toBeInTheDocument()
+    }
+  )
+  it.each(['agent', 'skill', 'model', 'shell', 'retriever'] as const)(
+    'defaults the %s manager to latest updates',
+    async type => {
+      render(<MyResources allowedTypes={[type]} />)
+      expect(await screen.findByTestId(`${type}-resource-manager`)).toHaveAttribute(
+        'data-sort',
+        'latest'
+      )
+    }
+  )
   beforeEach(() => {
     jest.clearAllMocks()
     window.history.replaceState({}, '', '/resource-library')
@@ -265,7 +291,7 @@ describe('MyResources', () => {
     render(<MyResources title="资源库" />)
 
     expect(await screen.findByTestId('agent-resource-manager')).toHaveAttribute('data-scope', 'all')
-    expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-sort', 'default')
+    expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-sort', 'latest')
     expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-compact', 'true')
     const header = screen.getByTestId('managed-resource-header')
     expect(within(header).getByRole('heading', { name: '资源库' })).toBeInTheDocument()
@@ -294,7 +320,7 @@ describe('MyResources', () => {
 
     const sortControl = screen.getByTestId('managed-resource-sort-control')
     expect(within(sortControl).getByText('排序')).toBeInTheDocument()
-    expect(within(sortControl).getByTestId('resource-sort-select')).toHaveTextContent('默认')
+    expect(within(sortControl).getByTestId('resource-sort-select')).toHaveTextContent('最新')
 
     await openGroupMenu()
     expect(await screen.findByRole('menuitem', { name: '全部团队' })).toBeInTheDocument()
@@ -590,7 +616,11 @@ describe('MyResources', () => {
   })
 
   it('updates the URL query when switching resource sort modes', async () => {
-    window.history.replaceState({}, '', '/resource-library?tab=mine&type=agent&source=all')
+    window.history.replaceState(
+      {},
+      '',
+      '/resource-library?tab=mine&type=agent&source=all&sort=default'
+    )
     render(<MyResources />)
 
     fireEvent.keyDown(await screen.findByTestId('resource-sort-select'), { key: 'ArrowDown' })
@@ -606,9 +636,12 @@ describe('MyResources', () => {
     fireEvent.click(await screen.findByRole('option', { name: '默认' }))
 
     expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-sort', 'default')
-    expect(mockReplace).toHaveBeenCalledWith('/resource-library?tab=mine&type=agent&source=all', {
-      scroll: false,
-    })
+    expect(mockReplace).toHaveBeenCalledWith(
+      '/resource-library?tab=mine&type=agent&source=all&sort=default',
+      {
+        scroll: false,
+      }
+    )
   })
 
   it('filters to all groups or a selected group from the team source dropdown', async () => {

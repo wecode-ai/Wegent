@@ -65,6 +65,18 @@ async fn active_thread_tracking_counts_each_thread_independently() {
 }
 
 #[tokio::test]
+async fn idle_restart_rejects_active_goal_recovery_before_a_turn_is_reported() {
+    let client = CodexAppServerClient::new("codex-idle-restart-test");
+    client.mark_thread_active("recovering-goal").await;
+
+    let result = client.restart_if_idle().await;
+
+    assert_eq!(result, Err((1, 0)));
+    client.mark_thread_idle("recovering-goal", false).await;
+    assert_eq!(client.restart_if_idle().await, Ok(()));
+}
+
+#[tokio::test]
 async fn auth_mutation_is_rejected_while_a_turn_is_active() {
     let client = CodexAppServerClient::new("codex-auth-mutation-active-test");
     client.mark_thread_active("thread-1").await;

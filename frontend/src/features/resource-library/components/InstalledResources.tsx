@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Eye, MoreHorizontal, Pencil, RefreshCw, Settings2, Unlink } from 'lucide-react'
+import { Eye, MoreHorizontal, Pencil, Plug, RefreshCw, Settings2, Unlink } from 'lucide-react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import {
@@ -42,11 +42,13 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { canEditContent } from '@/types/base-role'
+import type { Team } from '@/types/api'
 import type { Group } from '@/types/group'
 import type { ResourceLibraryInstall, ResourceLibraryListing } from '../types'
 import { ResourceDetailDrawer } from './ResourceDetailDrawer'
 import { ResourceListingCard } from './ResourceListingCard'
 import { AutoEnabledSkillConfigDialog } from '@/features/settings/components/skills/AutoEnabledSkillConfigDialog'
+import { TeamApiCallButton } from '@/features/settings/components/TeamApiCallButton'
 import SkillUploadModal from '@/features/settings/components/skills/SkillUploadModal'
 
 type InstalledResourceType = 'agent' | 'skill'
@@ -99,6 +101,28 @@ function buildAgentUseHref(listing: ResourceLibraryListing, teamId: number): str
     getBindModesTargetPage(listing.bind_modes, 'all'),
     new URLSearchParams({ teamId: String(teamId) })
   )
+}
+
+function buildInstalledAgentTeam(install: InstalledResource): Team | null {
+  const teamId = install.installed_reference.team_id
+  if (typeof teamId !== 'number') return null
+
+  const { listing } = install
+  return {
+    id: teamId,
+    name: install.installed_reference.name || listing.name,
+    displayName: listing.display_name || listing.name,
+    namespace: install.installed_reference.namespace || 'default',
+    description: listing.description || '',
+    bots: [],
+    workflow: {},
+    is_active: true,
+    user_id: install.user_id,
+    created_at: listing.created_at,
+    updated_at: listing.updated_at,
+    bind_mode: listing.bind_modes as Team['bind_mode'],
+    publication_status: listing.status === 'archived' ? 'archived' : 'published',
+  }
 }
 
 function buildConfigurableSkill(install: InstalledResource, binding?: SkillBinding): UnifiedSkill {
@@ -179,6 +203,7 @@ export function InstalledResources({
   const [hasError, setHasError] = useState(false)
   const [selectedListing, setSelectedListing] = useState<ResourceLibraryListing | null>(null)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
+  const [apiCallTeam, setApiCallTeam] = useState<Team | null>(null)
   const [pendingRemoval, setPendingRemoval] = useState<InstalledResource | null>(null)
   const [removingInstallId, setRemovingInstallId] = useState<number | null>(null)
   const requestGenerationRef = useRef(0)
@@ -370,6 +395,7 @@ export function InstalledResources({
           const title = install.listing.display_name || install.listing.name
           const isRemoving = removingInstallId === install.id
           const group = groups.find(item => item.name === install.installed_reference.namespace)
+          const apiTeam = resourceType === 'agent' ? buildInstalledAgentTeam(install) : null
           const canEditGroupSkill =
             isGroupMode &&
             resourceType === 'skill' &&
@@ -391,6 +417,17 @@ export function InstalledResources({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {apiTeam && (
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      window.setTimeout(() => setApiCallTeam(apiTeam), 0)
+                    }}
+                    data-testid={`api-call-installed-agent-${install.id}-button`}
+                  >
+                    <Plug className="mr-2 h-4 w-4" aria-hidden />
+                    {t('common:teams.api_call.action')}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   danger
                   onSelect={() => setPendingRemoval(install)}
@@ -501,6 +538,17 @@ export function InstalledResources({
           onClose={saved => {
             setEditingGroupSkill(null)
             if (saved) void loadInstalls()
+          }}
+        />
+      )}
+
+      {apiCallTeam && (
+        <TeamApiCallButton
+          team={apiCallTeam}
+          hideTrigger
+          open
+          onOpenChange={open => {
+            if (!open) setApiCallTeam(null)
           }}
         />
       )}

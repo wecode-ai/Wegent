@@ -163,7 +163,7 @@
         "transferOwnership": "Transfer ownership",
         "cannotLeave": "Cannot leave group directly (must transfer ownership first)"
       },
-      "RestrictedAnalyst": "Can only view conversation and cannot access knowledge base content to protect sensitive information"
+      "RestrictedAnalyst": "Can chat with agents and search authorized knowledge bases, but cannot browse documents directly"
     }
   }
 }

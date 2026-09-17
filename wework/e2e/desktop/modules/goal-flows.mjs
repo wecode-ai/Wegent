@@ -1048,6 +1048,7 @@ async function verifyGoalRestartRecoveryLifecycle({
     snapshot =>
       snapshot.workbench?.currentRuntimeTask?.taskId === recoveringTaskId &&
       snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
+      snapshot.pane?.transcript?.loading === false &&
       snapshot.pane?.goal?.status === 'active',
     'The automatically recovered Goal did not finish hydrating after Wework restarted'
   )

@@ -2,16 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CollaborationTranslate } from "../i18n";
 import {
   executionEnvironmentStatuses,
   executionEnvironmentStatusLabel,
 } from "../execution-environment/status";
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+import type {
+  SharedWorkspaceApi,
+  WorkspaceGitBranch,
+  WorkspaceGitRepository,
+  WorkspaceGitRepositoryRef,
+} from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationExecutionEnvironment,
+  CollaborationExecutionEnvironmentDeviceState,
   CollaborationExecutionEnvironmentRepository,
   CollaborationExecutionEnvironmentSetupStep,
   CollaborationProject,
@@ -32,6 +38,48 @@ function draftId(prefix: string) {
   return `${prefix}-${nextDraftId}`;
 }
 
+function repositoryKey(repository: WorkspaceGitRepositoryRef) {
+  return `${repository.provider}::${repository.gitDomain}::${repository.fullName}`;
+}
+
+// Device errors embed the executor's absolute paths and the whole git stderr;
+// keep the stage prefix and git's decisive line, the full text stays in title.
+function executionEnvironmentErrorSummary(message: string): string {
+  const fatalLines = message.match(/fatal: [^\n]+/g);
+  if (!fatalLines?.length) {
+    return message;
+  }
+  const detail = fatalLines[fatalLines.length - 1];
+  const stage = message.match(/^(Failed to [^:\n]+):/);
+  return stage ? `${stage[1]}: ${detail}` : detail;
+}
+
+// Short name used for both the display name and the clone directory, for
+// example "wegent" for "wecode-ai/Wegent".
+function repositoryShortName(repository: WorkspaceGitRepository) {
+  const segment =
+    repository.fullName.split("/").filter(Boolean).pop() ?? repository.name;
+  return segment.replace(/\.git$/, "") || repository.name;
+}
+
+type BranchState = {
+  status: "loading" | "ready" | "error";
+  branches: WorkspaceGitBranch[];
+};
+
+// Marks select options that represent a value typed before the repository
+// catalog was available, so the current draft stays visible and selectable.
+const CUSTOM_REPOSITORY_VALUE = "__custom_repository__";
+const CUSTOM_REF_VALUE = "__custom_ref__";
+
+// Stable empty map so the prop-sync effect does not re-run on every render
+// when the environment has never been prepared on any device.
+type DeviceStateMap = Record<
+  string,
+  CollaborationExecutionEnvironmentDeviceState
+>;
+const NO_DEVICE_STATES: DeviceStateMap = {};
+
 type ExecutionEnvironmentScope =
   | {
       project: Pick<
@@ -48,7 +96,7 @@ type ExecutionEnvironmentScope =
       project?: never;
       workspace: Pick<
         CollaborationWorkspace,
-        "id" | "access_role" | "version" | "execution_environment"
+        "id" | "access_role" | "version" | "execution_environment" | "location"
       >;
     };
 
@@ -106,15 +154,13 @@ export function ProjectExecutionEnvironments({
     workspace?.version ?? project!.version,
   );
   const [configSaved, setConfigSaved] = useState(false);
-  const [environmentStatus, setEnvironmentStatus] = useState(
-    initialConfig?.status ?? "uninitialized",
+  const [deviceStates, setDeviceStates] = useState<DeviceStateMap>(
+    initialConfig?.devices ?? NO_DEVICE_STATES,
   );
-  const [preparedDeviceId, setPreparedDeviceId] = useState(
-    initialConfig?.prepared_device_id ?? "",
-  );
-  const [environmentError, setEnvironmentError] = useState(
-    initialConfig?.error ?? "",
-  );
+  // The bottom error line follows the device the user last tried to create
+  // on. A ref, so tracking it never re-triggers the prop-sync effect below.
+  const environmentErrorDeviceKey = useRef("");
+  const [environmentError, setEnvironmentError] = useState("");
   const [statusFilter, setStatusFilter] = useState<
     "all" | CollaborationExecutionEnvironment["status"]
   >("all");
@@ -124,11 +170,180 @@ export function ProjectExecutionEnvironments({
     number | null
   >(null);
   const [error, setError] = useState("");
+  // Rows without a selected Git repository are kept in the form as drafts but
+  // are dropped from the payload, so initialization must not start until the
+  // primary row is fully configured.
+  const configuredRepositories = useMemo(
+    () =>
+      repositories
+        .map(({ id: _id, ...repository }) => ({
+          ...repository,
+          name: repository.name.trim(),
+          url: repository.url.trim(),
+          ref: repository.ref.trim(),
+          path: repository.path.trim(),
+        }))
+        .filter((repository) => repository.url && repository.path),
+    [repositories],
+  );
+  const primaryRepositoryReady = configuredRepositories.some(
+    (repository) => repository.primary,
+  );
   const accessRole = workspace?.access_role ?? project!.access_role;
   const canManage =
     accessRole === "Owner" ||
     accessRole === "Maintainer" ||
     (isWorkspaceScope && accessRole === "Developer");
+
+  // The repository catalog is cloud-only; local workspaces keep the free-text
+  // inputs even when the shared api object carries the cloud capability.
+  const gitRepositoriesApi =
+    workspace?.location === "local" ? undefined : api.gitRepositories;
+  const [repositoryOptions, setRepositoryOptions] = useState<
+    WorkspaceGitRepository[] | null
+  >(null);
+  const [repositoriesLoadFailed, setRepositoriesLoadFailed] = useState(false);
+  const [branchesByRepository, setBranchesByRepository] = useState<
+    Record<string, BranchState>
+  >({});
+  // Last auto-derived values per draft, so a repository switch only replaces
+  // fields the user has not customized.
+  const derivedDefaults = useRef(
+    new Map<string, { name: string; path: string; ref: string }>(),
+  );
+  const branchesInFlight = useRef(new Set<string>());
+  // `saving` is async React state, so two initialize clicks in the same tick
+  // would both pass a state-based guard; the ref flips synchronously and also
+  // blocks a second device's button while one initialization is in flight.
+  const initializationInFlight = useRef(false);
+
+  const incomingVersion = workspace?.version ?? project!.version;
+  const incomingDevices = initialConfig?.devices ?? NO_DEVICE_STATES;
+
+  // The parent re-fetches the project on a poll, so the server-owned per-device
+  // states must follow the prop instead of staying stuck at the mount-time
+  // values. While a create is in flight the flow writes these itself from the
+  // device response, and the form drafts are user input and never re-seeded
+  // here.
+  useEffect(() => {
+    if (initializationInFlight.current || saving) return;
+    setConfigVersion(incomingVersion);
+    setDeviceStates(incomingDevices);
+    const errorKey = environmentErrorDeviceKey.current;
+    setEnvironmentError(errorKey ? (incomingDevices[errorKey]?.error ?? "") : "");
+  }, [incomingVersion, incomingDevices]);
+
+  const loadRepositoryOptions = useCallback(async () => {
+    if (!gitRepositoriesApi) return;
+    setRepositoriesLoadFailed(false);
+    try {
+      setRepositoryOptions(await gitRepositoriesApi.list());
+    } catch {
+      setRepositoriesLoadFailed(true);
+    }
+  }, [gitRepositoriesApi]);
+
+  useEffect(() => {
+    void loadRepositoryOptions();
+  }, [loadRepositoryOptions]);
+
+  const repositoriesByUrl = useMemo(() => {
+    const byUrl = new Map<string, WorkspaceGitRepository>();
+    for (const option of repositoryOptions ?? []) {
+      byUrl.set(option.cloneUrl, option);
+    }
+    return byUrl;
+  }, [repositoryOptions]);
+
+  const loadBranches = useCallback(
+    async (option: WorkspaceGitRepository) => {
+      const key = repositoryKey(option);
+      if (!gitRepositoriesApi || branchesInFlight.current.has(key)) return;
+      branchesInFlight.current.add(key);
+      setBranchesByRepository((current) => ({
+        ...current,
+        [key]: { status: "loading", branches: current[key]?.branches ?? [] },
+      }));
+      try {
+        const branches = await gitRepositoriesApi.listBranches(option);
+        setBranchesByRepository((current) => ({
+          ...current,
+          [key]: { status: "ready", branches },
+        }));
+        const defaultBranch =
+          branches.find((branch) => branch.default) ?? branches[0];
+        if (defaultBranch) {
+          setRepositories((current) =>
+            current.map((draft) => {
+              if (draft.url !== option.cloneUrl) return draft;
+              const derived = derivedDefaults.current.get(draft.id);
+              if (draft.ref && draft.ref !== derived?.ref) return draft;
+              derivedDefaults.current.set(draft.id, {
+                name: derived?.name ?? "",
+                path: derived?.path ?? "",
+                ref: defaultBranch.name,
+              });
+              return { ...draft, ref: defaultBranch.name };
+            }),
+          );
+        }
+      } catch {
+        setBranchesByRepository((current) => ({
+          ...current,
+          [key]: { status: "error", branches: [] },
+        }));
+      } finally {
+        branchesInFlight.current.delete(key);
+      }
+    },
+    [gitRepositoriesApi],
+  );
+
+  // Resolve branches for drafts that already point at a known repository,
+  // including drafts restored from a saved configuration.
+  useEffect(() => {
+    if (!repositoryOptions) return;
+    for (const draft of repositories) {
+      const match = repositoriesByUrl.get(draft.url);
+      if (match && !branchesByRepository[repositoryKey(match)]) {
+        void loadBranches(match);
+      }
+    }
+  }, [
+    repositoryOptions,
+    repositories,
+    repositoriesByUrl,
+    branchesByRepository,
+    loadBranches,
+  ]);
+
+  function selectRepository(id: string, key: string) {
+    const option = (repositoryOptions ?? []).find(
+      (candidate) => repositoryKey(candidate) === key,
+    );
+    if (!option) return;
+    const shortName = repositoryShortName(option);
+    const derivedName = option.name || shortName;
+    setRepositories((current) =>
+      current.map((draft) => {
+        if (draft.id !== id) return draft;
+        const derived = derivedDefaults.current.get(id);
+        const name =
+          !draft.name || draft.name === derived?.name
+            ? derivedName
+            : draft.name;
+        const path =
+          !draft.path || draft.path === derived?.path ? shortName : draft.path;
+        // A previously auto-filled branch is unlikely to exist on the new
+        // repository; the fetched default branch replaces it.
+        const ref = !draft.ref || draft.ref === derived?.ref ? "" : draft.ref;
+        derivedDefaults.current.set(id, { name, path, ref });
+        return { ...draft, url: option.cloneUrl, name, path, ref };
+      }),
+    );
+    setConfigSaved(false);
+    void loadBranches(option);
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -325,22 +540,30 @@ export function ProjectExecutionEnvironments({
   async function createEnvironmentOnDevice(
     device: CollaborationExecutionEnvironment,
   ) {
-    if (saving || device.device_id == null || device.status !== "online")
+    if (
+      initializationInFlight.current ||
+      saving ||
+      device.device_id == null ||
+      device.status !== "online"
+    )
       return;
+    if (!primaryRepositoryReady) {
+      setEnvironmentError(
+        translate(
+          "todo.execution_environment_primary_repository_required",
+          "请先为主仓库选择 Git 仓库，再创建环境。",
+        ),
+      );
+      return;
+    }
+    initializationInFlight.current = true;
     setSaving(true);
     setInitializingDeviceId(device.device_id);
     setError("");
     setConfigSaved(false);
+    const deviceKey = device.device_key ?? String(device.device_id);
     const executionEnvironment = {
-      repositories: repositories
-        .map(({ id: _id, ...repository }) => ({
-          ...repository,
-          name: repository.name.trim(),
-          url: repository.url.trim(),
-          ref: repository.ref.trim(),
-          path: repository.path.trim(),
-        }))
-        .filter((repository) => repository.url && repository.path),
+      repositories: configuredRepositories,
       setupSteps: setupSteps
         .map(({ id: _id, ...step }) => ({
           command: step.command.trim(),
@@ -349,7 +572,8 @@ export function ProjectExecutionEnvironments({
         .filter((step) => step.command),
     };
     try {
-      setEnvironmentStatus("preparing");
+      // The in-flight state belongs to the clicked device (initializingDeviceId);
+      // other devices keep showing their own persisted per-device state.
       setEnvironmentError("");
       const updated = isWorkspaceScope
         ? await api.workspaces!.update(scopeId, {
@@ -370,13 +594,15 @@ export function ProjectExecutionEnvironments({
             version: updated.version,
           });
       const initializedConfig = initialized.execution_environment;
+      const nextDeviceStates = initializedConfig?.devices ?? NO_DEVICE_STATES;
+      const deviceState = nextDeviceStates[deviceKey];
       setConfigVersion(initialized.version);
-      setEnvironmentStatus(initializedConfig?.status ?? "error");
-      setPreparedDeviceId(initializedConfig?.prepared_device_id ?? "");
-      setEnvironmentError(initializedConfig?.error ?? "");
-      if (initializedConfig?.status !== "ready") {
+      setDeviceStates(nextDeviceStates);
+      environmentErrorDeviceKey.current = deviceKey;
+      setEnvironmentError(deviceState?.error ?? "");
+      if (deviceState?.status !== "ready") {
         throw new Error(
-          initializedConfig?.error ||
+          deviceState?.error ||
             translate(
               "todo.execution_environment_initialization_failed",
               "执行环境初始化失败",
@@ -385,19 +611,12 @@ export function ProjectExecutionEnvironments({
       }
       setConfigSaved(true);
     } catch (saveError) {
-      setEnvironmentStatus("error");
+      environmentErrorDeviceKey.current = deviceKey;
       setEnvironmentError(
         saveError instanceof Error ? saveError.message : String(saveError),
       );
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : translate(
-              "todo.execution_environment_config_save_failed",
-              "保存环境配置失败",
-            ),
-      );
     } finally {
+      initializationInFlight.current = false;
       setSaving(false);
       setInitializingDeviceId(null);
     }
@@ -466,126 +685,261 @@ export function ProjectExecutionEnvironments({
                   "主仓库是智能体默认工作目录；其他仓库会克隆到同一环境下的独立目录。",
                 )}
               </p>
+              {repositoriesLoadFailed ? (
+                <p className="mt-2 text-xs text-red-600" role="alert">
+                  {translate(
+                    "todo.repositories_load_failed",
+                    "仓库列表加载失败，可直接填写仓库地址。",
+                  )}{" "}
+                  <button
+                    className="collaboration-link-button"
+                    data-testid={`${testIdPrefix}-repositories-retry`}
+                    type="button"
+                    onClick={() => void loadRepositoryOptions()}
+                  >
+                    {translate("common.retry", "重试")}
+                  </button>
+                </p>
+              ) : null}
 
               <div className="mt-3 space-y-3">
-                {repositories.map((repository, index) => (
-                  <div
-                    className="rounded-lg border border-border p-4"
-                    data-testid={`${testIdPrefix}-repository-${index}`}
-                    key={repository.id}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <label className="flex items-center gap-2 text-sm font-medium">
-                        <input
-                          checked={repository.primary}
-                          disabled={!canManage || saving}
-                          name={`${testIdPrefix}-primary-repository`}
-                          type="radio"
-                          onChange={() =>
-                            updateRepository(repository.id, { primary: true })
-                          }
-                        />
-                        {repository.primary
-                          ? translate(
-                              "todo.execution_environment_primary_repository",
-                              "主仓库",
-                            )
-                          : translate(
-                              "todo.execution_environment_dependency_repository",
-                              "依赖仓库",
-                            )}
-                      </label>
-                      {canManage && repositories.length > 1 ? (
-                        <button
-                          className="text-sm text-text-secondary hover:text-text-primary"
-                          data-testid={`${testIdPrefix}-remove-repository-${index}`}
-                          disabled={saving}
-                          type="button"
-                          onClick={() => removeRepository(repository.id)}
-                        >
-                          {translate("common.remove", "移除")}
-                        </button>
-                      ) : null}
-                    </div>
-                    <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      <label className="text-sm">
-                        <span className="mb-1 block">
-                          {translate("todo.repository_name", "名称")}
-                        </span>
-                        <input
-                          className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                          data-testid={`${testIdPrefix}-repository-name-${index}`}
-                          disabled={!canManage || saving}
-                          placeholder="Wegent"
-                          value={repository.name}
-                          onChange={(event) =>
-                            updateRepository(repository.id, {
-                              name: event.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <label className="text-sm">
-                        <span className="mb-1 block">
-                          {translate("todo.repository_path", "目录")}
-                        </span>
-                        <input
-                          className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                          data-testid={`${testIdPrefix}-repository-path-${index}`}
-                          disabled={!canManage || saving}
-                          placeholder={
-                            repository.primary ? "wegent" : "deps/internal-sdk"
-                          }
-                          value={repository.path}
-                          onChange={(event) =>
-                            updateRepository(repository.id, {
-                              path: event.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                    </div>
-                    <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
-                      <label className="text-sm">
-                        <span className="mb-1 block">
-                          {translate("todo.repository_url", "Git 仓库")}
-                        </span>
-                        <input
-                          className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                          data-testid={`${testIdPrefix}-repository-url-${index}`}
-                          disabled={!canManage || saving}
-                          placeholder="https://github.com/org/repository.git"
-                          value={repository.url}
-                          onChange={(event) =>
-                            updateRepository(repository.id, {
-                              url: event.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <label className="text-sm">
-                        <span className="mb-1 block">
-                          {translate(
-                            "todo.execution_environment_repository_ref",
-                            "分支或 Tag",
+                {repositories.map((repository, index) => {
+                  const matchedOption = repositoriesByUrl.get(repository.url);
+                  const branchState = matchedOption
+                    ? branchesByRepository[repositoryKey(matchedOption)]
+                    : undefined;
+                  const branchOptions =
+                    branchState?.status === "ready" ? branchState.branches : [];
+                  const branchesReady = branchState?.status === "ready";
+                  const branchesFailed = branchState?.status === "error";
+                  const knownRef = branchOptions.some(
+                    (branch) => branch.name === repository.ref,
+                  );
+                  const repositorySelectValue = matchedOption
+                    ? repositoryKey(matchedOption)
+                    : repository.url
+                      ? CUSTOM_REPOSITORY_VALUE
+                      : "";
+                  const refSelectValue = knownRef
+                    ? repository.ref
+                    : repository.ref
+                      ? CUSTOM_REF_VALUE
+                      : "";
+                  return (
+                    <div
+                      className="rounded-lg border border-border p-4"
+                      data-testid={`${testIdPrefix}-repository-${index}`}
+                      key={repository.id}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <label className="flex items-center gap-2 text-sm font-medium">
+                          <input
+                            checked={repository.primary}
+                            disabled={!canManage || saving}
+                            name={`${testIdPrefix}-primary-repository`}
+                            type="radio"
+                            onChange={() =>
+                              updateRepository(repository.id, { primary: true })
+                            }
+                          />
+                          {repository.primary
+                            ? translate(
+                                "todo.execution_environment_primary_repository",
+                                "主仓库",
+                              )
+                            : translate(
+                                "todo.execution_environment_dependency_repository",
+                                "依赖仓库",
+                              )}
+                        </label>
+                        {canManage && repositories.length > 1 ? (
+                          <button
+                            className="text-sm text-text-secondary hover:text-text-primary"
+                            data-testid={`${testIdPrefix}-remove-repository-${index}`}
+                            disabled={saving}
+                            type="button"
+                            onClick={() => removeRepository(repository.id)}
+                          >
+                            {translate("common.remove", "移除")}
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <label className="text-sm">
+                          <span className="mb-1 block">
+                            {translate("todo.repository_name", "名称")}
+                          </span>
+                          <input
+                            className="h-9 w-full rounded-lg border border-border bg-background px-3"
+                            data-testid={`${testIdPrefix}-repository-name-${index}`}
+                            disabled={!canManage || saving}
+                            placeholder="Wegent"
+                            value={repository.name}
+                            onChange={(event) =>
+                              updateRepository(repository.id, {
+                                name: event.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="text-sm">
+                          <span className="mb-1 block">
+                            {translate("todo.repository_path", "目录")}
+                          </span>
+                          <input
+                            className="h-9 w-full rounded-lg border border-border bg-background px-3"
+                            data-testid={`${testIdPrefix}-repository-path-${index}`}
+                            disabled={!canManage || saving}
+                            placeholder={
+                              repository.primary
+                                ? "wegent"
+                                : "deps/internal-sdk"
+                            }
+                            value={repository.path}
+                            onChange={(event) =>
+                              updateRepository(repository.id, {
+                                path: event.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
+                        <label className="text-sm">
+                          <span className="mb-1 block">
+                            {translate("todo.repository_url", "Git 仓库")}
+                          </span>
+                          {repositoryOptions != null &&
+                          repositoryOptions.length > 0 ? (
+                            <select
+                              className="h-9 w-full rounded-lg border border-border bg-background px-3"
+                              data-testid={`${testIdPrefix}-repository-url-${index}`}
+                              disabled={!canManage || saving}
+                              value={repositorySelectValue}
+                              onChange={(event) => {
+                                if (
+                                  event.target.value !== CUSTOM_REPOSITORY_VALUE
+                                ) {
+                                  selectRepository(
+                                    repository.id,
+                                    event.target.value,
+                                  );
+                                }
+                              }}
+                            >
+                              <option disabled value="">
+                                {translate(
+                                  "todo.repository_select_placeholder",
+                                  "选择仓库",
+                                )}
+                              </option>
+                              {repository.url && !matchedOption ? (
+                                <option value={CUSTOM_REPOSITORY_VALUE}>
+                                  {repository.url}
+                                </option>
+                              ) : null}
+                              {repositoryOptions.map((option) => (
+                                <option
+                                  key={repositoryKey(option)}
+                                  value={repositoryKey(option)}
+                                >
+                                  {option.fullName}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              className="h-9 w-full rounded-lg border border-border bg-background px-3"
+                              data-testid={`${testIdPrefix}-repository-url-${index}`}
+                              disabled={!canManage || saving}
+                              placeholder="https://github.com/org/repository.git"
+                              value={repository.url}
+                              onChange={(event) =>
+                                updateRepository(repository.id, {
+                                  url: event.target.value,
+                                })
+                              }
+                            />
                           )}
-                        </span>
-                        <input
-                          className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                          data-testid={`${testIdPrefix}-repository-ref-${index}`}
-                          disabled={!canManage || saving}
-                          placeholder="main"
-                          value={repository.ref}
-                          onChange={(event) =>
-                            updateRepository(repository.id, {
-                              ref: event.target.value,
-                            })
-                          }
-                        />
-                      </label>
+                        </label>
+                        <label className="text-sm">
+                          <span className="mb-1 block">
+                            {translate(
+                              "todo.execution_environment_repository_ref",
+                              "分支或 Tag",
+                            )}
+                          </span>
+                          {matchedOption && !branchesFailed ? (
+                            <select
+                              className="h-9 w-full rounded-lg border border-border bg-background px-3"
+                              data-testid={`${testIdPrefix}-repository-ref-${index}`}
+                              disabled={!canManage || saving || !branchesReady}
+                              value={refSelectValue}
+                              onChange={(event) => {
+                                if (event.target.value !== CUSTOM_REF_VALUE) {
+                                  updateRepository(repository.id, {
+                                    ref: event.target.value,
+                                  });
+                                }
+                              }}
+                            >
+                              <option disabled value="">
+                                {branchesReady
+                                  ? translate(
+                                      "todo.repository_ref_placeholder",
+                                      "选择分支或 Tag",
+                                    )
+                                  : translate("common.loading", "加载中…")}
+                              </option>
+                              {repository.ref && !knownRef ? (
+                                <option value={CUSTOM_REF_VALUE}>
+                                  {repository.ref}
+                                </option>
+                              ) : null}
+                              {branchOptions.map((branch) => (
+                                <option key={branch.name} value={branch.name}>
+                                  {branch.name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              className="h-9 w-full rounded-lg border border-border bg-background px-3"
+                              data-testid={`${testIdPrefix}-repository-ref-${index}`}
+                              disabled={!canManage || saving}
+                              placeholder="main"
+                              value={repository.ref}
+                              onChange={(event) =>
+                                updateRepository(repository.id, {
+                                  ref: event.target.value,
+                                })
+                              }
+                            />
+                          )}
+                          {matchedOption && branchesFailed ? (
+                            <p
+                              className="mt-1 text-xs text-red-600"
+                              role="alert"
+                            >
+                              {translate(
+                                "todo.repository_branches_load_failed",
+                                "分支加载失败，可手动填写。",
+                              )}{" "}
+                              <button
+                                className="collaboration-link-button"
+                                data-testid={`${testIdPrefix}-repository-ref-retry-${index}`}
+                                type="button"
+                                onClick={() => void loadBranches(matchedOption)}
+                              >
+                                {translate("common.retry", "重试")}
+                              </button>
+                            </p>
+                          ) : null}
+                        </label>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -805,16 +1159,19 @@ export function ProjectExecutionEnvironments({
               ) : (
                 <div className="overflow-hidden rounded-lg border border-border">
                   {visibleAssignedItems.map((environment, index) => {
-                    const hasEnvironment =
-                      initializingDeviceId === environment.device_id ||
-                      (preparedDeviceId !== "" &&
-                        (preparedDeviceId === environment.device_key ||
-                          preparedDeviceId === String(environment.device_id)));
-                    const instanceStatus =
-                      initializingDeviceId === environment.device_id
-                        ? "preparing"
-                        : hasEnvironment
-                          ? environmentStatus
+                    const deviceKey =
+                      environment.device_key ??
+                      String(environment.device_id ?? "");
+                    const deviceState = deviceStates[deviceKey];
+                    const isPreparingDevice =
+                      initializingDeviceId === environment.device_id;
+                    const hasEnvironment = isPreparingDevice || deviceState != null;
+                    const instanceStatus = isPreparingDevice
+                      ? "preparing"
+                      : deviceState?.status === "ready"
+                        ? "ready"
+                        : deviceState?.status === "error"
+                          ? "error"
                           : "uninitialized";
                     return (
                       <div
@@ -998,8 +1355,13 @@ export function ProjectExecutionEnvironments({
 
           <div className="border-t border-border bg-muted px-5 py-4">
             {environmentError ? (
-              <p className="mb-3 text-sm text-red-600" role="alert">
-                {environmentError}
+              <p
+                className="mb-3 text-sm text-red-600"
+                data-testid={`${testIdPrefix}-environment-error`}
+                role="alert"
+                title={environmentError}
+              >
+                {executionEnvironmentErrorSummary(environmentError)}
               </p>
             ) : null}
             <div className="flex items-center justify-between gap-3">

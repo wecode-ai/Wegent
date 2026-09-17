@@ -14,6 +14,7 @@ import {
 import { collaborationTestIds } from "./testIds";
 import { CollaborationSettings } from "./CollaborationSettings";
 import { IssueCreate, IssueDetail } from "./IssueDetail";
+import { IssueDeleteDialog } from "./issue-delete";
 import { CollaborationProjectViewShell } from "./project-shell";
 import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapter";
 import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
@@ -35,6 +36,7 @@ import type {
   WorkspaceTaskBinding,
 } from "./ports/SharedWorkspaceApi";
 import { useCollaborationWorkspaceController } from "./workspace-controller";
+import { canEditCollaborationIssue } from "./permissions";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
 import { ProjectIssueTable, useIssueAssignmentsByIssueId } from "./platform";
 import {
@@ -56,6 +58,8 @@ export interface CollaborationIssueDetailRenderContext {
   onClose(): void;
   onChange(issue: CollaborationIssue): void;
   onCreateTask?(workflowStep?: string): void;
+  /** Present only when the host enabled Issue deletion. */
+  onDelete?(): void;
 }
 
 interface CollaborationAppProps {
@@ -66,6 +70,14 @@ interface CollaborationAppProps {
   createProjectRequestKey?: number;
   refreshProjectRequestKey?: number;
   showProjectBack?: boolean;
+  /** Enables the per-Issue delete action across board, table, and detail. */
+  issueDeleteEnabled?: boolean;
+  /**
+   * Host work that must succeed before the Issue is deleted, such as stopping
+   * an in-flight run on the device that owns it. A rejection aborts the delete
+   * and its message is shown in the confirmation dialog.
+   */
+  onPrepareIssueDelete?(issue: CollaborationIssue): Promise<void>;
   onCreateTask?(
     project: CollaborationProject,
     issue: CollaborationIssue,
@@ -106,7 +118,9 @@ export function CollaborationApp({
   createProjectRequestKey = 0,
   refreshProjectRequestKey = 0,
   showProjectBack = true,
+  issueDeleteEnabled = false,
   onCreateTask,
+  onPrepareIssueDelete,
   renderBoardIssueCard,
   renderIssueDetail,
 }: CollaborationAppProps) {
@@ -119,6 +133,10 @@ export function CollaborationApp({
   const [createIssueOpen, setCreateIssueOpen] = useState(false);
   const [boardSettingsOpen, setBoardSettingsOpen] = useState(false);
   const [settingsSectionId, setSettingsSectionId] = useState("project");
+  const [deleteIssueTarget, setDeleteIssueTarget] =
+    useState<CollaborationIssue | null>(null);
+  const [deleteIssueBusy, setDeleteIssueBusy] = useState(false);
+  const [deleteIssueError, setDeleteIssueError] = useState<string | null>(null);
   const { state, commands } = useCollaborationWorkspaceController({
     api,
     location: host.location,
@@ -166,6 +184,45 @@ export function CollaborationApp({
   const navigateView = (view: CollaborationView) => {
     host.navigate({ projectId: project?.id ?? null, issueId: null, view });
   };
+
+  const requestIssueDelete = (issue: CollaborationIssue) => {
+    setDeleteIssueError(null);
+    setDeleteIssueTarget(issue);
+  };
+  const closeIssueDelete = () => {
+    setDeleteIssueTarget(null);
+    setDeleteIssueError(null);
+  };
+  const confirmIssueDelete = async () => {
+    if (!deleteIssueTarget || deleteIssueBusy) return;
+    setDeleteIssueBusy(true);
+    setDeleteIssueError(null);
+    try {
+      // Stopping the run first keeps a deleted Issue from leaving an execution
+      // that no board or detail view can reach any more.
+      await onPrepareIssueDelete?.(deleteIssueTarget);
+      await commands.archiveIssue(deleteIssueTarget.id, {
+        throwOnError: true,
+      });
+      if (host.location.issueId === deleteIssueTarget.id) {
+        host.navigate({
+          projectId: project?.id ?? null,
+          issueId: null,
+          view: host.location.view,
+        });
+      }
+      setDeleteIssueTarget(null);
+    } catch (error) {
+      setDeleteIssueError(
+        error instanceof Error && error.message
+          ? error.message
+          : translate("todo.delete_issue_failed", "删除任务失败"),
+      );
+    } finally {
+      setDeleteIssueBusy(false);
+    }
+  };
+  const issueDeleteAvailable = issueDeleteEnabled;
 
   if (loading) {
     return (
@@ -471,6 +528,9 @@ export function CollaborationApp({
                     }}
                     onCreateIssue={() => setCreateIssueOpen(true)}
                     onOpenBoardSettings={() => setBoardSettingsOpen(true)}
+                    onDeleteIssue={
+                      issueDeleteAvailable ? requestIssueDelete : undefined
+                    }
                     onGroupByChange={(groupBy) =>
                       commands.changeProjectGroup({
                         project,
@@ -506,6 +566,11 @@ export function CollaborationApp({
                       "todo.manual_assignment",
                       locale === "zh-CN" ? "Issue 内分配" : "Assigned in Issue",
                     )}
+                    actionsLabel={translate("common.actions", "操作")}
+                    deleteLabel={translate("todo.delete_issue", "删除任务")}
+                    onDelete={
+                      issueDeleteAvailable ? requestIssueDelete : undefined
+                    }
                     statusName={(status) =>
                       projectStatuses(project, messages, translate).find(
                         (candidate) => candidate.id === status,
@@ -753,6 +818,10 @@ export function CollaborationApp({
                 ? (workflowStep) =>
                     onCreateTask(project, selectedIssue, workflowStep)
                 : undefined,
+              onDelete:
+                issueDeleteAvailable && canEditCollaborationIssue(selectedIssue)
+                  ? () => requestIssueDelete(selectedIssue)
+                  : undefined,
             })
           ) : (
             <IssueDetail
@@ -789,10 +858,28 @@ export function CollaborationApp({
                       onCreateTask(project, selectedIssue, workflowStep)
                   : undefined
               }
+              onDelete={
+                issueDeleteAvailable && canEditCollaborationIssue(selectedIssue)
+                  ? () => requestIssueDelete(selectedIssue)
+                  : undefined
+              }
               onConflict={commands.refreshSelectedIssue}
               onError={() => commands.reportError(messages.saveFailed)}
             />
           )
+        ) : null}
+        {deleteIssueTarget ? (
+          <IssueDeleteDialog
+            busy={deleteIssueBusy}
+            error={deleteIssueError}
+            hasChildren={issues.some(
+              (candidate) => candidate.parent_id === deleteIssueTarget.id,
+            )}
+            onCancel={closeIssueDelete}
+            onConfirm={() => void confirmIssueDelete()}
+            title={deleteIssueTarget.title}
+            translate={translate}
+          />
         ) : null}
       </section>
     </RuntimeConfigurationProvider>

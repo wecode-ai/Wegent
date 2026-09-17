@@ -83,13 +83,20 @@ def _execution_environment_config(
         for step in (selected_steps if isinstance(selected_steps, list) else [])
         if isinstance(step, dict) and str(step.get("command") or "").strip()
     ]
+    devices = selected_config.get("devices")
     return {
         "repositories": repositories,
         "setup_steps": setup_steps,
-        "status": selected_config.get("status"),
         "fingerprint": selected_config.get("fingerprint"),
-        "prepared_device_id": selected_config.get("prepared_device_id"),
-        "prepared_workspace_path": selected_config.get("prepared_workspace_path"),
+        "devices": (
+            {
+                str(key): value
+                for key, value in devices.items()
+                if isinstance(value, dict)
+            }
+            if isinstance(devices, dict)
+            else {}
+        ),
     }
 
 
@@ -640,18 +647,24 @@ class WeworkExecutionProfile:
 
         configured_execution = origin_context.get("execution")
         environment_config = _execution_environment_config(db, project)
-        environment_status = environment_config.get("status")
-        if environment_status in {"uninitialized", "preparing", "error"}:
-            raise WeworkExecutionProfileError(
-                "Project execution environment is not ready"
-            )
-        environment_workspace_path = (
-            str(environment_config.get("prepared_workspace_path") or "")
-            if str(environment_config.get("prepared_device_id") or "")
-            == execution_device_id
-            and environment_config.get("status") == "ready"
-            else ""
+        device_states = environment_config["devices"]
+        # A configured environment only runs on devices that finished preparing
+        # it; every other device stops at preflight so it never clones a fresh
+        # copy outside the prepared workspace.
+        environment_configured = bool(
+            environment_config["repositories"]
+            or environment_config["fingerprint"]
+            or device_states
         )
+        environment_workspace_path = ""
+        if environment_configured:
+            device_state = device_states.get(execution_device_id)
+            device_state = device_state if isinstance(device_state, dict) else {}
+            if str(device_state.get("status") or "") != "ready":
+                raise WeworkExecutionProfileError(
+                    "Project execution environment is not ready"
+                )
+            environment_workspace_path = str(device_state.get("workspace_path") or "")
         environment_uses_worktree = bool(
             environment_workspace_path and environment_config.get("repositories")
         )

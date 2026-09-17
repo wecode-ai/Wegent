@@ -386,6 +386,34 @@ describe("collaboration workspace controller", () => {
     expect(state.assignments).toEqual([loadedAssignment]);
   });
 
+  it("keeps a saved issue when an older detail load finishes afterward", async () => {
+    state = { ...state, project, issues: [issue] };
+    const assignmentsResponse = deferred<CollaborationAssignment[]>();
+    const api = createApi();
+    api.assignments = {
+      list: vi.fn().mockReturnValue(assignmentsResponse.promise),
+      create: vi.fn(),
+    };
+    const { commands } = createController(api);
+    const load = commands.loadSelectedIssue(issue.id);
+    await vi.waitFor(() => {
+      expect(api.assignments?.list).toHaveBeenCalledWith(issue.id);
+    });
+    const savedIssue = {
+      ...issue,
+      title: "Saved while loading",
+      version: issue.version + 1,
+    };
+
+    commands.replaceIssue(savedIssue);
+    assignmentsResponse.resolve([]);
+
+    expect(await load).toEqual(savedIssue);
+    expect(state.selectedIssue).toEqual(savedIssue);
+    expect(state.attachments).toEqual([attachment]);
+    expect(state.comments).toEqual([comment]);
+  });
+
   it("ignores a collection mutation that belongs to another issue", () => {
     const otherIssue = {
       ...issue,

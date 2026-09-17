@@ -482,15 +482,16 @@ impl CodexAppServerClient {
         drop(process);
     }
 
-    pub async fn restart_if_no_pending_requests(&self) -> Result<(), usize> {
+    pub async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
         let process = {
             let mut state = self.state.lock().await;
-            let Some(process) = state.process.as_ref() else {
-                return Ok(());
+            let active_turn_count = state.active_threads.values().sum::<usize>();
+            let pending_request_count = match state.process.as_ref() {
+                Some(process) => process.pending.lock().await.len(),
+                None => 0,
             };
-            let pending_request_count = process.pending.lock().await.len();
-            if pending_request_count > 0 {
-                return Err(pending_request_count);
+            if active_turn_count > 0 || pending_request_count > 0 {
+                return Err((active_turn_count, pending_request_count));
             }
             state.process_environment.clear();
             state.process.take()

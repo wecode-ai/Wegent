@@ -294,6 +294,7 @@ export function KnowledgeDocumentPageMobile({
           allow_document_download: data.allow_document_download,
           retrieval_config: data.retrieval_config,
           rag_config_mode: data.rag_config_mode,
+          dingtalk_auto_sync_enabled: data.dingtalk_auto_sync_enabled,
           summary_enabled: data.summary_enabled,
           summary_model_ref: data.summary_model_ref,
           kb_type: kbType,

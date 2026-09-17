@@ -572,6 +572,40 @@ export interface SharedCollaborationResourcesApi {
   list(): Promise<CollaborationPlatformResources>;
 }
 
+/**
+ * One repository the signed-in user can clone, as returned by the connected
+ * Git providers. This is the same catalog the conversation repository selector
+ * uses, so both surfaces offer identical choices.
+ */
+export interface WorkspaceGitRepository {
+  id: number;
+  /** Short repository name, for example "wegent". */
+  name: string;
+  /** Provider path, for example "wecode-ai/Wegent". */
+  fullName: string;
+  cloneUrl: string;
+  gitDomain: string;
+  provider: string;
+}
+
+export interface WorkspaceGitBranch {
+  name: string;
+  default: boolean;
+}
+
+/** Identity a provider needs to resolve branches for one repository. */
+export type WorkspaceGitRepositoryRef = Pick<
+  WorkspaceGitRepository,
+  "fullName" | "gitDomain" | "provider"
+>;
+
+export interface SharedWorkspaceGitRepositoriesApi {
+  list(): Promise<WorkspaceGitRepository[]>;
+  listBranches(
+    repository: WorkspaceGitRepositoryRef,
+  ): Promise<WorkspaceGitBranch[]>;
+}
+
 export interface SharedWorkspaceAttachmentsApi {
   list(issueId: string): Promise<CollaborationAttachment[]>;
   listProjectTaskAttachments(
@@ -804,6 +838,7 @@ export interface SharedWorkspaceAgentsApi {
 export interface SharedWorkspaceApi {
   workspaces?: SharedCollaborationWorkspacesApi;
   resources?: SharedCollaborationResourcesApi;
+  gitRepositories?: SharedWorkspaceGitRepositoriesApi;
   projects: SharedWorkspaceProjectsApi;
   myWork?: SharedWorkspaceMyWorkApi;
   issues: SharedWorkspaceIssuesApi;

@@ -856,7 +856,7 @@ async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
     wait_for_path(&request_marker, "pending app-server request should reach Codex").await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            if matches!(client.restart_if_no_pending_requests().await, Err(1)) {
+            if matches!(client.restart_if_idle().await, Err((0, 1))) {
                 break;
             }
             tokio::task::yield_now().await;
@@ -885,7 +885,7 @@ async fn codex_app_server_proxy_restart_settles_in_flight_requests() {
     wait_for_path(&request_marker, "pending app-server request should reach Codex").await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            if matches!(client.restart_if_no_pending_requests().await, Err(1)) {
+            if matches!(client.restart_if_idle().await, Err((0, 1))) {
                 break;
             }
             tokio::task::yield_now().await;
@@ -1135,7 +1135,12 @@ fn shared_test_runtime() -> &'static Runtime {
 
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().await
+    static EXECUTOR_HOME: OnceLock<PathBuf> = OnceLock::new();
+    let guard = LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    let executor_home = EXECUTOR_HOME.get_or_init(|| unique_dir("codex-app-server-home"));
+    std::env::set_var("WEGENT_EXECUTOR_HOME", executor_home);
+    std::env::set_var("WEGENT_CODEX_HOME", executor_home.join("codex"));
+    guard
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {

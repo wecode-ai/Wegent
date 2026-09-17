@@ -130,9 +130,26 @@ const mockListMyPublished = resourceLibraryApi.listMyPublished as jest.Mock
 
 jest.mock('@/features/settings/components/TeamEditDialog', () => ({
   __esModule: true,
-  default: ({ open, scope, groupName }: { open?: boolean; scope?: string; groupName?: string }) =>
+  default: ({
+    open,
+    scope,
+    groupName,
+    onSaved,
+  }: {
+    open?: boolean
+    scope?: string
+    groupName?: string
+    onSaved?: (team: Team) => Promise<void>
+  }) =>
     open ? (
-      <div data-testid="team-edit-dialog" data-scope={scope} data-group={groupName ?? ''} />
+      <div data-testid="team-edit-dialog" data-scope={scope} data-group={groupName ?? ''}>
+        <button
+          data-testid="save-team-edit"
+          onClick={() => onSaved?.(makeTeam(42, 'saved-agent', ['chat']))}
+        >
+          Save
+        </button>
+      </div>
     ) : null,
 }))
 jest.mock('@/features/settings/components/BotList', () => () => null)
@@ -251,6 +268,26 @@ const groups: Group[] = [
 ]
 
 describe('TeamList mode filter', () => {
+  it.each([true, false])('reports the saved agent with created=%s', async created => {
+    mockTeams.mockResolvedValue([makeTeam(42, 'saved-agent', ['chat'])])
+    const onSaved = jest.fn()
+    const onCreated = jest.fn()
+    render(
+      <TeamList
+        scope="personal"
+        onSaved={onSaved}
+        compact
+        onCreated={onCreated}
+        createRequest={created ? { id: 1, target: { scope: 'personal' } } : undefined}
+      />
+    )
+    if (!created) await userEvent.click(await screen.findByTestId('edit-team-button-42'))
+    await userEvent.click(await screen.findByTestId('save-team-edit'))
+    await waitFor(() =>
+      expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }), created)
+    )
+    expect(onCreated).toHaveBeenCalledTimes(created ? 1 : 0)
+  })
   it('requests server search and ignores stale results after the keyword changes', async () => {
     let resolveOld!: (teams: Team[]) => void
     ;(mockTeams as jest.Mock)

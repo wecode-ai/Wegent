@@ -31,8 +31,10 @@ from app.schemas.cloud_project import (
 )
 from app.services.cloud_project_visibility import accessible_cloud_projects
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.runtime_route import runtime_device_route_id
 from app.services.execution_environment_initialization import (
     initialize_execution_environment,
+    merge_execution_environment_device_state,
     preparing_execution_environment,
 )
 from app.services.loop_item_status_history import write_status_change
@@ -397,18 +399,31 @@ class CloudProjectService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Execution device is not available in this Project",
             )
-        metadata = dict(project.metadata_json or {})
-        definition = metadata.get("execution_environment")
+        definition = (project.metadata_json or {}).get("execution_environment")
         definition = definition if isinstance(definition, dict) else {}
+        # Preparation runs on the device for minutes, so the project row must not
+        # stay locked while it runs; otherwise every concurrent project write
+        # blocks for the whole preparation and then fails the version check.
+        db.commit()
         state = await initialize_execution_environment(
             db=db,
             device=device,
             environment_id=f"project-{cloud_project_id}",
             definition=definition,
         )
-        metadata["execution_environment"] = state
+        project = self._lock_project(db, cloud_project_id)
+        if project.version != version:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Project changed")
+        metadata = dict(project.metadata_json or {})
+        environment = metadata.get("execution_environment")
+        metadata["execution_environment"] = merge_execution_environment_device_state(
+            environment if isinstance(environment, dict) else {},
+            device_key=runtime_device_route_id(device),
+            device_state=state,
+        )
         project.metadata_json = metadata
-        project.version += 1
+        # Recording a preparation result is not a configuration change, so the
+        # client keeps a usable version token and can retry after a failure.
         db.commit()
         db.refresh(project)
         return project

@@ -17,6 +17,9 @@ use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex as AsyncMutex, OwnedMutexGuard};
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
 
+#[path = "support/runtime_task_project_move.rs"]
+mod runtime_task_project_move;
+
 struct EnvLockGuard {
     _guard: OwnedMutexGuard<()>,
 }

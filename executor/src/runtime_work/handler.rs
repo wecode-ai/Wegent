@@ -30,6 +30,7 @@ use crate::{
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
+    attachments::device_runtime_attachment_task_dir,
     config::device::ConnectionConfig,
     hooks::{
         codex::{post_tool_use_from_notification, CodexHookContext},
@@ -178,10 +179,11 @@ use super::{
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
-        item_type, normalize_device_id, normalize_runtime_goal_timestamps,
-        normalize_workspace_path, now_ms, prompt_text, raw_string_field, restore_cloud_project_id,
-        restore_origin, runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
-        timestamp_ms_field, workspace_group_path, workspace_path,
+        item_type, link_is_cloud_project_task, normalize_device_id,
+        normalize_runtime_goal_timestamps, normalize_workspace_path, now_ms, prompt_text,
+        raw_string_field, restore_cloud_project_id, restore_origin, runtime_task_id,
+        runtime_task_title, set_runtime_task_title, string_field, timestamp_ms_field,
+        workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -945,6 +947,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn apply_backend_connection(&self, request: &mut ExecutionRequest) {
+        self.rewrite_model_gateway_backend(request);
         let connection = match self.backend_connection_snapshot() {
             Ok(Some(connection)) => connection,
             Ok(None) => return,
@@ -966,7 +969,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or("")
             .is_empty()
         {
-            request.backend_url = Some(connection.backend_url);
+            request.backend_url = Some(connection.backend_url.clone());
         }
         if request
             .auth_token
@@ -987,6 +990,27 @@ impl RuntimeWorkRpcHandler {
         {
             request.runtime_auth_token = Some(connection.runtime_auth_token);
         }
+    }
+
+    /// Rewrite a loopback cloud-model gateway to the backend this device reaches.
+    ///
+    /// The connection snapshot is unavailable before the device finishes
+    /// connecting, so fall back to the request's own backend URL (environment,
+    /// payload, or task API domain) and leave the gateway untouched when
+    /// neither source yields a reachable address.
+    fn rewrite_model_gateway_backend(&self, request: &mut ExecutionRequest) {
+        let snapshot_backend_url = self
+            .backend_connection_snapshot()
+            .ok()
+            .flatten()
+            .map(|connection| connection.backend_url)
+            .unwrap_or_default();
+        let backend_url = if snapshot_backend_url.trim().is_empty() {
+            crate::agents::request_backend_url(request).unwrap_or_default()
+        } else {
+            snapshot_backend_url
+        };
+        crate::agents::rewrite_loopback_model_gateway(request, &backend_url);
     }
 
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {

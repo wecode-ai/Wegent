@@ -1028,6 +1028,18 @@ function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTu
     cancelPendingStreamingNotification(evictedKey)
     cancelTerminalConversationEviction(evictedKey)
   })
+  const queuedMessages = queuedMessagesByConversation.get(key)
+  if (queuedMessages) {
+    const remaining = queuedMessages.filter(
+      message =>
+        message.status !== 'sending' ||
+        message.deliveryMode !== 'message' ||
+        !turns.some(turn => turn.id !== null && turnContainsClientUserMessage(turn, message.id))
+    )
+    if (remaining.length !== queuedMessages.length) {
+      cacheRuntimeConversationQueuedMessagesByKey(key, remaining)
+    }
+  }
   scheduleTerminalConversationEviction(key)
 }
 

@@ -6671,10 +6671,9 @@ describe('DesktopWorkbenchLayout', () => {
   test('keeps projects and chats in the scrollable sidebar region above settings', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
+    expect(screen.getByTestId('sidebar-worklists-scroll-area')).toHaveClass('flex-1')
+    expect(screen.getByTestId('sidebar-worklists-scroll')).toHaveStyle({ overflowY: 'scroll' })
     expect(screen.getByTestId('sidebar-worklists-scroll')).toHaveClass(
-      'flex-1',
-      'overflow-y-auto',
-      'scrollbar-none',
       'border-t',
       'border-transparent',
       '[overflow-anchor:none]'
@@ -9335,7 +9334,10 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await user.click(await screen.findByTestId('sent-local-skill-token-gmail'))
+    const skillLink = await screen.findByTestId('sent-local-skill-token-gmail')
+    await user.hover(skillLink)
+    expect(screen.getByTestId('sent-local-skill-token-gmail')).toBe(skillLink)
+    await user.click(skillLink)
 
     expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('Gmail')
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')

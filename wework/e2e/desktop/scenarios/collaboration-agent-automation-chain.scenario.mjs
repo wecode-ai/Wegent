@@ -602,12 +602,27 @@ export async function createDesktopScenario({
         timeoutMs: Math.max(uiTimeoutMs, 60_000),
       }
     )
+    const appEnvironmentPool = await request(
+      `/api/v1/cloud-projects/${project.id}/execution-environments`
+    )
+    const appPoolEntry = appEnvironmentPool.items.find(entry => entry.device_id === appDevice.id)
+    assert.ok(
+      appPoolEntry?.device_key,
+      'The Wework app device was not added to the project device pool'
+    )
     const appInitializedProject = await request(`/api/v1/cloud-projects/${project.id}`)
-    assert.equal(appInitializedProject.execution_environment?.status, 'ready')
+    // Preparation state is per device and keyed by the device route, so the
+    // duplicate app installation sharing one logical device id cannot collide.
+    const appDeviceState =
+      appInitializedProject.execution_environment?.devices?.[appPoolEntry.device_key]
     assert.equal(
-      appInitializedProject.execution_environment?.prepared_device_id,
-      appDevice.device_id,
-      'The Wework app device environment did not preserve its logical device identity'
+      appDeviceState?.status,
+      'ready',
+      'The Wework app device environment did not become ready'
+    )
+    assert.ok(
+      appDeviceState?.workspace_path,
+      'The Wework app device environment did not persist its prepared workspace path'
     )
     await control.command(
       'clickWhenEnabled',
@@ -654,19 +669,20 @@ export async function createDesktopScenario({
     const environments = await request(
       `/api/v1/cloud-projects/${project.id}/execution-environments`
     )
-    assert.ok(
-      environments.items.some(environment => environment.device_id === cloudDevice.id),
-      'The project device pool did not persist the real cloud Executor'
+    const cloudPoolEntry = environments.items.find(
+      environment => environment.device_id === cloudDevice.id
     )
+    assert.ok(cloudPoolEntry, 'The project device pool did not persist the real cloud Executor')
     const configuredProject = await request(`/api/v1/cloud-projects/${project.id}`)
-    assert.equal(configuredProject.execution_environment?.status, 'ready')
+    const cloudDeviceState =
+      configuredProject.execution_environment?.devices?.[cloudPoolEntry.device_key]
     assert.equal(
-      configuredProject.execution_environment?.prepared_device_id,
-      CLOUD_DEVICE_ID,
-      'The initialized environment was prepared on the configured real cloud Executor'
+      cloudDeviceState?.status,
+      'ready',
+      'The initialized environment was not ready on the configured real cloud Executor'
     )
     assert.ok(
-      configuredProject.execution_environment?.prepared_workspace_path,
+      cloudDeviceState?.workspace_path,
       'The real environment initialization did not persist its workspace path'
     )
     await capture(control, 'collaboration-agent-chain-04-device-pool.png')
@@ -674,7 +690,7 @@ export async function createDesktopScenario({
 
   async function createProjectAgentThroughUi(
     control,
-    { name, nativeRuntime, shellRuntime, systemMarker }
+    { name, nativeRuntime, shellRuntime, systemMarker, verifyEditing = false }
   ) {
     const modelCatalog = await request(
       '/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
@@ -697,15 +713,12 @@ export async function createDesktopScenario({
     await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('waitFor', '[data-testid="project-agent-dialog"]', {
-      timeoutMs: uiTimeoutMs,
-    })
-    await control.command('click', '[data-testid="project-agent-mode-create"]')
     await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
       timeoutMs: uiTimeoutMs,
     })
+    const technicalName = `${nativeRuntime}-collaboration-${process.pid}`
     await control.command('fill', '[data-testid="wework-agent-resource-name"]', {
-      value: `${nativeRuntime}-collaboration-${process.pid}`,
+      value: technicalName,
     })
     await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: name })
     await control.command('select', '[data-testid="wework-agent-runtime"]', {
@@ -715,8 +728,9 @@ export async function createDesktopScenario({
       value: String(publicModelIndex),
     })
     await control.command('click', `[data-testid="wework-agent-skill-${skill.id}"]`)
+    const systemPrompt = `${systemMarker}。按 Skill 约束工作，并严格依次调用 get_current_context、get_board_item、add_board_item_comment。`
     await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
-      value: `${systemMarker}。按 Skill 约束工作，并严格依次调用 get_current_context、get_board_item、add_board_item_comment。`,
+      value: systemPrompt,
     })
     await control.command('fill', '[data-testid="wework-agent-mcp"]', {
       value: '{}',
@@ -750,7 +764,73 @@ export async function createDesktopScenario({
       text: name,
       timeoutMs: uiTimeoutMs,
     })
+    if (verifyEditing) {
+      await verifyProjectAgentResourceEditing(control, agent, {
+        botId: team.bots[0].bot.id,
+        name,
+        shellRuntime,
+        systemPrompt,
+        technicalName,
+      })
+    }
     return agent
+  }
+
+  /**
+   * The configured Agent row must reopen its resource-library definition and
+   * save it back without losing the bound runtime, model, or Skills.
+   */
+  async function verifyProjectAgentResourceEditing(
+    control,
+    agent,
+    { botId, name, shellRuntime, systemPrompt, technicalName }
+  ) {
+    await control.command(
+      'clickWhenEnabled',
+      scoped(`[data-testid="project-agent-edit-${agent.id}"]`),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await waitForValue(
+      () => control.command('getValue', '[data-testid="wework-agent-system-prompt"]'),
+      value => value === systemPrompt,
+      `Editing ${name} did not load its persisted system prompt`,
+      uiTimeoutMs
+    )
+    assert.equal(
+      await control.command('getValue', '[data-testid="wework-agent-display-name"]'),
+      name,
+      `Editing ${name} did not load its persisted display name`
+    )
+    assert.equal(
+      await control.command('getValue', '[data-testid="wework-agent-runtime"]'),
+      shellRuntime,
+      `Editing ${name} did not load its persisted runtime`
+    )
+    await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+      visible: false,
+      timeoutMs: uiTimeoutMs,
+    })
+    const editedBot = await request(`/api/bots/${botId}`)
+    assert.equal(editedBot.system_prompt, systemPrompt)
+    assert.equal(editedBot.shell_type, shellRuntime)
+    assert.equal(editedBot.agent_config?.bind_model, MODEL_NAME)
+    assert.ok(
+      editedBot.skills?.includes(SKILL_NAME),
+      `${name} lost ${SKILL_UI_REFERENCE} after saving its resource`
+    )
+    const editedTeam = await request(`/api/teams/${agent.wegentTeamId}`)
+    assert.equal(
+      editedTeam.name,
+      technicalName,
+      `${name} must keep its technical name after editing`
+    )
+    assert.equal(editedTeam.displayName, name)
   }
 
   async function configureAgents(control) {
@@ -767,6 +847,7 @@ export async function createDesktopScenario({
       nativeRuntime: 'codex',
       shellRuntime: 'Codex',
       systemMarker: CODEX_SYSTEM_MARKER,
+      verifyEditing: true,
     })
     await capture(control, 'collaboration-agent-chain-05-codex-configured.png')
     claudeAgent = await createProjectAgentThroughUi(control, {
@@ -905,9 +986,11 @@ export async function createDesktopScenario({
   }
 
   async function selectGroupTarget(control) {
+    // The form can open before its collaboration-group options finish loading.
     await control.command(
-      'click',
-      scoped('[data-testid="automatic-processing-target-kind-collaboration_group"]')
+      'clickWhenEnabled',
+      scoped('[data-testid="automatic-processing-target-kind-collaboration_group"]'),
+      { timeoutMs: uiTimeoutMs }
     )
     await control.command('click', scoped('[data-testid="automatic-processing-target"]'))
     await control.command(

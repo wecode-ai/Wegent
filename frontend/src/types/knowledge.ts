@@ -379,6 +379,7 @@ export interface KnowledgeBase {
   show_generation_task?: boolean
   /** Default generation strategy for this code wiki. */
   generation_strategy?: string | null
+  dingtalk_auto_sync_enabled?: boolean
   summary_enabled: boolean
   summary_model_ref?: SummaryModelRef | null
   /** Which model this knowledge base's own generation runs on. */
@@ -421,6 +422,7 @@ export interface KnowledgeBaseCreate {
   allow_document_download?: boolean
   retrieval_config?: RetrievalConfigDraft
   rag_config_mode?: RagConfigMode
+  dingtalk_auto_sync_enabled?: boolean
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
   /** Default opening view: 'notebook' or 'classic' (documents) */
@@ -477,6 +479,7 @@ export interface KnowledgeBaseUpdate {
   direct_access_requirement?: DirectAccessRequirement
   allow_document_download?: boolean
   retrieval_config?: RetrievalConfigUpdate
+  dingtalk_auto_sync_enabled?: boolean
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
   /** Editable: applies to the next run, not one already going. */

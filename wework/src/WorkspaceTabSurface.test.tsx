@@ -19,7 +19,6 @@ const appIframeMocks = vi.hoisted(() => ({
 const workbenchProviderMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
   loadTaskComposerCatalogs: vi.fn(),
-  prewarm: vi.fn(),
 }))
 const portalOwnershipMocks = vi.hoisted(() => ({
   setActiveOwner: vi.fn(),
@@ -95,14 +94,11 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   WorkbenchProvider: ({
     children,
     loadTaskComposerCatalogs,
-    prewarmComposerApps,
   }: {
     children: React.ReactNode
     loadTaskComposerCatalogs?: boolean
-    prewarmComposerApps?: boolean
   }) => {
     workbenchProviderMocks.loadTaskComposerCatalogs(loadTaskComposerCatalogs)
-    workbenchProviderMocks.prewarm(prewarmComposerApps)
     useEffect(() => workbenchProviderMocks.cleanup, [])
     return <>{children}</>
   },
@@ -133,7 +129,6 @@ describe('WorkspaceTabSurface', () => {
     appIframeMocks.props.mockClear()
     workbenchProviderMocks.cleanup.mockClear()
     workbenchProviderMocks.loadTaskComposerCatalogs.mockClear()
-    workbenchProviderMocks.prewarm.mockClear()
     portalOwnershipMocks.setActiveOwner.mockClear()
     harnessAppLauncherMocks.cleanup.mockClear()
     harnessAppLauncherMocks.requested.mockClear()

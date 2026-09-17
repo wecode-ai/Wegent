@@ -142,6 +142,7 @@ See [wework/README.md](wework/README.md) for desktop development, build, and rel
 | `executor/`                | Local and remote agent task execution environments |
 | `frontend/`                | Wegent platform web administration                 |
 | `backend/`                 | REST API and core business logic                   |
+| `backend-rs/`              | Incremental Rust API migration gateway and handlers |
 | `executor_manager/`        | Executor scheduling and orchestration              |
 | `chat_shell/`              | Chat runtime                                       |
 | `knowledge_runtime/`       | Knowledge retrieval services                       |

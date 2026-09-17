@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { runtimeProfileMessages } from './runtime-profile/messages'
-import { executionEnvironmentMessages } from './execution-environment/messages'
+import { runtimeProfileMessages } from "./runtime-profile/messages";
+import { executionEnvironmentMessages } from "./execution-environment/messages";
 
 export type CollaborationLocale = "zh-CN" | "en";
 
@@ -239,6 +239,7 @@ const sharedMessages: Record<
   Readonly<Record<string, string>>
 > = {
   "zh-CN": {
+    "common.actions": "操作",
     "common.add": "添加",
     "common.cancel": "取消",
     "common.close": "关闭",
@@ -247,8 +248,8 @@ const sharedMessages: Record<
     "common.remove": "移除",
     "common.retry": "重试",
     "common.save": "保存",
-    'todo.codex_environment_hint':
-      '任务会在所选执行环境的独立工作目录中运行，并关联当前协作项目。',
+    "todo.codex_environment_hint":
+      "任务会在所选执行环境的独立工作目录中运行，并关联当前协作项目。",
     "todo.status_inbox": "收集箱",
     "todo.status_pending": "待开始",
     "todo.status_in_progress": "进行中",
@@ -499,7 +500,8 @@ const sharedMessages: Record<
     "todo.execution_waiting_approval": "等待审批",
     "todo.execution_waiting_runtime": "等待设备或模型配置",
     "todo.execution_manager_run": "AI 调度",
-    "todo.execution_manager_completed": "调度已完成；步骤执行与整个 Issue 的完成状态请查看上方进度。",
+    "todo.execution_manager_completed":
+      "调度已完成；步骤执行与整个 Issue 的完成状态请查看上方进度。",
     "todo.workflow_children_waiting_runtime": "子任务等待设备或模型配置",
     "todo.workflow_children_pending": "已分派，等待子任务执行",
     "todo.workflow_children_review": "子任务执行已结束，等待验收",
@@ -545,6 +547,18 @@ const sharedMessages: Record<
     "todo.workflow_plan_pause": "暂停",
     "todo.workflow_plan_rerun": "再次执行",
     "todo.assignment_chain_trigger": "查看指派详情",
+    "todo.delete_issue": "删除任务",
+    "todo.delete_issue_action": "删除任务 {{title}}",
+    "todo.delete_issue_title": "删除任务？",
+    "todo.delete_issue_description": "“{{title}}”将从看板中隐藏。",
+    "todo.delete_issue_children_description":
+      "“{{title}}”及其子任务将从看板中隐藏。",
+    "todo.delete_issue_execution_hint": "该任务正在执行的 AI 运行会被停止。",
+    "todo.delete_issue_recycle_hint": "删除的数据会保留，不会立即永久删除。",
+    "todo.delete_issue_failed": "删除任务失败",
+    "todo.deleting": "删除中…",
+    "todo.confirm_delete": "确认删除",
+    "todo.issue_actions": "任务操作",
     "todo.current_running_task": "当前运行任务",
     "todo.execution_tasks": "执行任务",
     "todo.execution_duration": "执行时长",
@@ -622,6 +636,8 @@ const sharedMessages: Record<
     "todo.assignment_mode": "分配方式",
     "todo.shared_agent": "共享智能体",
     "todo.project_owned_agent": "项目智能体",
+    "todo.edit_project_agent": "编辑",
+    "todo.update_project_agent_failed": "更新项目智能体失败",
     "todo.codex_runtime_selection_hint":
       "运行环境在启动任务时选择，不与智能体绑定。",
     "todo.workflow_open_task": "打开任务",
@@ -630,6 +646,7 @@ const sharedMessages: Record<
     "workbench.quick_view_conversation": "查看对话",
   },
   en: {
+    "common.actions": "Actions",
     "common.add": "Add",
     "common.cancel": "Cancel",
     "common.close": "Close",
@@ -638,8 +655,8 @@ const sharedMessages: Record<
     "common.remove": "Remove",
     "common.retry": "Retry",
     "common.save": "Save",
-    'todo.codex_environment_hint':
-      'Tasks run in their own working directories on the selected execution environment and remain linked to this collaboration project.',
+    "todo.codex_environment_hint":
+      "Tasks run in their own working directories on the selected execution environment and remain linked to this collaboration project.",
     "todo.status_inbox": "Inbox",
     "todo.status_pending": "To do",
     "todo.status_in_progress": "In progress",
@@ -895,10 +912,13 @@ const sharedMessages: Record<
     "todo.execution_cancelled": "Cancelled",
     "todo.execution_unknown": "Status pending sync",
     "todo.execution_waiting_approval": "Waiting for approval",
-    "todo.execution_waiting_runtime": "Waiting for device or model configuration",
+    "todo.execution_waiting_runtime":
+      "Waiting for device or model configuration",
     "todo.execution_manager_run": "AI coordination",
-    "todo.execution_manager_completed": "Coordination finished. See the progress above for step execution and overall Issue completion.",
-    "todo.workflow_children_waiting_runtime": "Subtasks need device or model configuration",
+    "todo.execution_manager_completed":
+      "Coordination finished. See the progress above for step execution and overall Issue completion.",
+    "todo.workflow_children_waiting_runtime":
+      "Subtasks need device or model configuration",
     "todo.workflow_children_pending": "Assigned, waiting for subtasks to run",
     "todo.workflow_children_review": "Subtask execution ended, awaiting review",
     "todo.view_child_task": "View subtask",
@@ -946,6 +966,21 @@ const sharedMessages: Record<
     "todo.workflow_plan_pause": "Pause",
     "todo.workflow_plan_rerun": "Run again",
     "todo.assignment_chain_trigger": "View assignment details",
+    "todo.delete_issue": "Delete issue",
+    "todo.delete_issue_action": "Delete issue {{title}}",
+    "todo.delete_issue_title": "Delete this issue?",
+    "todo.delete_issue_description":
+      "“{{title}}” will be hidden from the board.",
+    "todo.delete_issue_children_description":
+      "“{{title}}” and its sub-issues will be hidden from the board.",
+    "todo.delete_issue_execution_hint":
+      "Any AI run in progress on this issue will be stopped.",
+    "todo.delete_issue_recycle_hint":
+      "Deleted data is kept and is not permanently removed right away.",
+    "todo.delete_issue_failed": "Failed to delete the issue",
+    "todo.deleting": "Deleting…",
+    "todo.confirm_delete": "Delete",
+    "todo.issue_actions": "Issue actions",
     "todo.current_running_task": "Current running task",
     "todo.execution_tasks": "Execution tasks",
     "todo.execution_duration": "Execution duration",
@@ -1025,6 +1060,8 @@ const sharedMessages: Record<
     "todo.assignment_mode": "Assignment mode",
     "todo.shared_agent": "Shared agent",
     "todo.project_owned_agent": "Project agent",
+    "todo.edit_project_agent": "Edit",
+    "todo.update_project_agent_failed": "Failed to update the project agent",
     "todo.codex_runtime_selection_hint":
       "Choose an execution environment when starting a run; it is not bound to the agent.",
     "todo.workflow_open_task": "Open task",
@@ -1040,7 +1077,11 @@ export function createCollaborationTranslator(
   const messages = sharedMessages[locale];
   return (key, fallback, options) => {
     let value =
-      runtimeProfileMessages[locale][key] ?? executionEnvironmentMessages[locale][key] ?? messages[key] ?? fallback ?? key
+      runtimeProfileMessages[locale][key] ??
+      executionEnvironmentMessages[locale][key] ??
+      messages[key] ??
+      fallback ??
+      key;
     for (const [name, replacement] of Object.entries(options ?? {})) {
       value = value.split(`{{${name}}}`).join(String(replacement));
     }

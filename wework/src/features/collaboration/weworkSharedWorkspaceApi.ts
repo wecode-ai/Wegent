@@ -908,6 +908,7 @@ export function createWeworkSharedWorkspaceApi<
     ...delivery,
     workspaces: sharedHttpApi.workspaces,
     resources: sharedHttpApi.resources,
+    gitRepositories: sharedHttpApi.gitRepositories,
     projects: {
       ...delivery.projects,
       ...sharedHttpApi.projects,
