@@ -361,6 +361,10 @@ export function createDesktopScenario({
         )
         await capture(control, 'collaboration-shared-core-06-issue-activity.png')
         await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('click', scoped(`[data-testid="collaboration-issue-${issue.id}"]`))
         await control.command('waitFor', activitySelector, { timeoutMs: uiTimeoutMs })
         await boardReplyModel.verify(control, issue, scoped, {
