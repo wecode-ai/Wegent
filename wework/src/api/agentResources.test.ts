@@ -97,6 +97,152 @@ describe('createAgentResourceApi', () => {
     })
   })
 
+  it('reads the editable Agent resource from its Team and leader Bot', async () => {
+    const client = {
+      get: vi.fn(async () => ({
+        id: 52,
+        name: 'review-agent',
+        displayName: 'Review Agent',
+        namespace: 'workspace-alpha',
+        bots: [
+          {
+            role: 'member',
+            bot: { id: 70, name: 'helper-bot' },
+          },
+          {
+            role: 'leader',
+            bot: {
+              id: 71,
+              name: 'review-agent-bot',
+              namespace: 'workspace-alpha',
+              shell_name: 'ClaudeCode',
+              agent_config: {
+                bind_model: 'claude-sonnet',
+                bind_model_type: 'public',
+                bind_model_namespace: 'workspace-alpha',
+              },
+              system_prompt: 'Review the implementation.',
+              mcp_servers: { browser: { command: 'node' } },
+              skills: ['code-review'],
+              skill_refs: {
+                'code-review': {
+                  skill_id: 7,
+                  namespace: 'workspace-alpha',
+                  is_public: false,
+                },
+              },
+            },
+          },
+        ],
+      })),
+    } as unknown as HttpClient
+    const api = createAgentResourceApi(client)
+
+    await expect(api.getAgent(52)).resolves.toEqual({
+      teamId: 52,
+      botId: 71,
+      name: 'review-agent',
+      displayName: 'Review Agent',
+      namespace: 'workspace-alpha',
+      runtime: 'ClaudeCode',
+      shellName: 'ClaudeCode',
+      model: {
+        name: 'claude-sonnet',
+        type: 'public',
+        namespace: 'workspace-alpha',
+      },
+      systemPrompt: 'Review the implementation.',
+      skills: [
+        {
+          skillId: 7,
+          name: 'code-review',
+          namespace: 'workspace-alpha',
+          isPublic: false,
+        },
+      ],
+      mcpServers: { browser: { command: 'node' } },
+    })
+    expect(client.get).toHaveBeenCalledWith('/teams/52')
+  })
+
+  it('reports an unrepresentable Shell instead of downgrading it to Codex', async () => {
+    const client = {
+      get: vi.fn(async () => ({
+        id: 53,
+        name: 'agno-agent',
+        displayName: 'Agno Agent',
+        namespace: 'default',
+        bots: [{ role: 'leader', bot: { id: 72, name: 'agno-bot', shell_name: 'Agno' } }],
+      })),
+    } as unknown as HttpClient
+    const api = createAgentResourceApi(client)
+
+    const detail = await api.getAgent(53)
+
+    expect(detail.runtime).toBeNull()
+    expect(detail.shellName).toBe('Agno')
+  })
+
+  it('updates capabilities in place and leaves the resource identity untouched', async () => {
+    const client = {
+      put: vi.fn().mockResolvedValueOnce({ id: 71 }).mockResolvedValueOnce({
+        id: 52,
+        name: 'review-agent',
+        displayName: 'Reviewer',
+        namespace: 'workspace-alpha',
+      }),
+    } as unknown as HttpClient
+    const api = createAgentResourceApi(client)
+
+    const saved = await api.updateAgent(
+      { teamId: 52, botId: 71 },
+      {
+        name: 'review-agent',
+        displayName: 'Reviewer',
+        namespace: 'workspace-alpha',
+        runtime: 'Codex',
+        model: { name: 'gpt-5.4', type: 'public', namespace: 'default' },
+        systemPrompt: 'Review and summarize.',
+        skills: [
+          {
+            skillId: 7,
+            name: 'code-review',
+            namespace: 'workspace-alpha',
+            isPublic: false,
+          },
+        ],
+        mcpServers: { browser: { command: 'node' } },
+      }
+    )
+
+    expect(client.put).toHaveBeenNthCalledWith(1, '/bots/71', {
+      shell_name: 'Codex',
+      agent_config: {
+        bind_model: 'gpt-5.4',
+        bind_model_type: 'public',
+      },
+      system_prompt: 'Review and summarize.',
+      mcp_servers: { browser: { command: 'node' } },
+      skills: ['code-review'],
+      skill_refs: {
+        'code-review': {
+          skill_id: 7,
+          namespace: 'workspace-alpha',
+          is_public: false,
+        },
+      },
+    })
+    expect(client.put).toHaveBeenNthCalledWith(2, '/teams/52', {
+      displayName: 'Reviewer',
+    })
+    expect(saved).toEqual({
+      id: 52,
+      name: 'review-agent',
+      displayName: 'Reviewer',
+      namespace: 'workspace-alpha',
+    })
+  })
+
   it('loads the unified accessible Skill catalog', async () => {
     const client = {
       get: vi.fn(async () => []),

@@ -673,6 +673,21 @@ export function SkillListWithScope({
       )
   )
   const installedSkillIds = new Set(installedSkills.map(skill => skill.id))
+  /** Whether the current user owns the Skill asset. */
+  const isOwnedSkill = (skill: UnifiedSkill) => Boolean(user && skill.user_id === user.id)
+  /**
+   * The automatic enablement dialog is only mounted in lists that manage automatic
+   * enablement. Other lists must not offer the action at all.
+   */
+  const canConfigureAutoEnabledSkill = (skill: UnifiedSkill) =>
+    showAutoEnabledSkills && Boolean(skill.availability?.inMyDefault)
+  /**
+   * An installed Skill card configures a Skill that was enabled from outside the user's
+   * own resources. It only replaces the regular card in lists that manage automatic
+   * enablement, and never for Skills the user created: those keep their edit action.
+   */
+  const showsInstalledSkillCard = (skill: UnifiedSkill) =>
+    canConfigureAutoEnabledSkill(skill) && installedSkillIds.has(skill.id) && !isOwnedSkill(skill)
   const managedSkills = showAutoEnabledSkills
     ? sortResourceLibraryItems(
         Array.from(
@@ -873,7 +888,7 @@ export function SkillListWithScope({
               ) : (
                 <div className={getResourceGridClassName(compact)} data-testid="skill-library-list">
                   {managedSkills.map(skill => {
-                    if (installedSkillIds.has(skill.id)) {
+                    if (showsInstalledSkillCard(skill)) {
                       return (
                         <InstalledSkillCard
                           key={skill.id}
@@ -1027,10 +1042,10 @@ export function SkillListWithScope({
                                           </DropdownMenuItem>
                                         )}
                                         {canEditSkillShareScope(skill) &&
-                                          skill.availability?.inMyDefault && (
+                                          canConfigureAutoEnabledSkill(skill) && (
                                             <DropdownMenuSeparator />
                                           )}
-                                        {skill.availability?.inMyDefault && (
+                                        {canConfigureAutoEnabledSkill(skill) && (
                                           <>
                                             <DropdownMenuItem
                                               onClick={() => setConfiguringSkill(skill)}

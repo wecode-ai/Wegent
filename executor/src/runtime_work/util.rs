@@ -233,6 +233,13 @@ pub(crate) fn cloud_project_id(request: &ExecutionRequest) -> Option<Value> {
         .cloned()
 }
 
+pub(crate) fn link_is_cloud_project_task(link: &super::response::RuntimeTaskLink) -> bool {
+    link.runtime_handle
+        .get("cloudProjectId")
+        .or_else(|| link.runtime_handle.get("cloud_project_id"))
+        .is_some_and(|value| value.is_string() || value.is_number())
+}
+
 pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_handle: &Value) {
     if cloud_project_id(request).is_some() {
         return;
@@ -856,6 +863,25 @@ mod tests {
         apply_runtime_payload_metadata(&mut request, &json!({"cloudProjectId": 9001}));
 
         assert_eq!(cloud_project_id(&request), Some(json!(9001)));
+    }
+
+    #[test]
+    fn cloud_project_task_link_detection_reads_both_key_spellings() {
+        let mut link = super::super::response::RuntimeTaskLink::new_pending(
+            "codex-queue-1".to_owned(),
+            "/tmp/work".to_owned(),
+            "title".to_owned(),
+        );
+        assert!(!link_is_cloud_project_task(&link));
+
+        link.runtime_handle = json!({"cloudProjectId": "3643745902448770561"});
+        assert!(link_is_cloud_project_task(&link));
+
+        link.runtime_handle = json!({"cloud_project_id": 9001});
+        assert!(link_is_cloud_project_task(&link));
+
+        link.runtime_handle = json!({"cloudProjectId": null});
+        assert!(!link_is_cloud_project_task(&link));
     }
 
     #[test]

@@ -3,7 +3,6 @@ import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   enqueueIssueWorkflowMutation,
   enqueueTaskTrackingMutation,
-  nextTaskTrackingStatus,
   type TaskExecutionStatus,
   type CloudLoopItemAttachment,
   type CloudLoopItem,
@@ -1299,14 +1298,9 @@ export function createLocalDeliveryApi(
             return updated
           })
         }
-        if (executionStatus === 'succeeded') {
-          const bindings = await api.listTaskBindings(item.id)
-          if (bindings.length > 1) return item
-        }
-        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus)
-        return nextStatus
-          ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
-          : item
+        // The executor projects native task status from its lifecycle. Delayed
+        // renderer observations must not overwrite a completed, already-read task.
+        return item
       })
     },
     async updateTaskTrackingTitle(task: RuntimeTaskAddress, title: string) {

@@ -268,8 +268,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         )
 
         await control.command(
-          'click',
-          scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`)
+          'waitFor',
+          scoped('[data-testid="collaboration-project-create-dialog"]'),
+          {
+            visible: false,
+            timeoutMs: uiTimeoutMs,
+          }
+        )
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
+          { timeoutMs: uiTimeoutMs }
         )
         await control.command('waitFor', scoped('[data-testid="collaboration-tab-manage"]'), {
           timeoutMs: uiTimeoutMs,
@@ -285,7 +294,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('click', '[data-testid="project-agent-mode-create"]')
         await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
           timeoutMs: uiTimeoutMs,
         })

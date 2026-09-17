@@ -31,7 +31,6 @@ describe('weworkProjectAgentConfigurationHost', () => {
               options: [
                 {
                   description: '使用已有智能体',
-                  disabled: true,
                   label: '已有智能体',
                   testId: 'mode-existing',
                   value: 'existing',
@@ -61,8 +60,6 @@ describe('weworkProjectAgentConfigurationHost', () => {
       'rounded-[20px]',
       'bg-popover'
     )
-    expect(screen.getByTestId('mode-existing')).toBeDisabled()
-    expect(screen.getByTestId('mode-existing-card')).toHaveClass('cursor-not-allowed', 'opacity-45')
     expect(screen.getByTestId('mode-create-card')).toHaveClass(
       'border-focus',
       'bg-focus/5',
@@ -71,10 +68,22 @@ describe('weworkProjectAgentConfigurationHost', () => {
     expect(screen.getByTestId('agent-submit')).toHaveClass('rounded-lg', 'bg-text-primary')
 
     fireEvent.click(screen.getByTestId('mode-existing'))
-    expect(onModeChange).not.toHaveBeenCalled()
+    expect(onModeChange).toHaveBeenCalledWith('existing')
 
     fireEvent.click(screen.getByTestId('agent-close'))
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('removes existing-Agent selection once the resource library is reachable', () => {
+    const api = {
+      listModels: vi.fn(async () => []),
+      listSkills: vi.fn(async () => []),
+    } as unknown as ReturnType<typeof createAgentResourceApi>
+    const host = createWeworkProjectAgentConfigurationHost(api)
+
+    expect(host.supportsExistingAgentSelection).toBe(false)
+    expect(host.renderAgentCreator).toBeTypeOf('function')
+    expect(host.renderAgentEditor).toBeTypeOf('function')
   })
 
   it('uses the real unified resource creator contract and returns the created Team reference', async () => {
@@ -254,5 +263,135 @@ describe('weworkProjectAgentConfigurationHost', () => {
         })
       )
     )
+  })
+
+  it('edits the Agent resource behind a configured project Agent', async () => {
+    const onSaved = vi.fn(async () => undefined)
+    const getAgent = vi.fn(async () => ({
+      teamId: 52,
+      botId: 71,
+      name: 'review-agent',
+      displayName: 'Review Agent',
+      namespace: 'workspace-alpha',
+      runtime: 'ClaudeCode' as const,
+      shellName: 'ClaudeCode',
+      model: {
+        name: 'desktop-e2e-public-model',
+        type: 'public' as const,
+        namespace: 'default',
+      },
+      systemPrompt: 'Review the implementation.',
+      skills: [
+        {
+          skillId: 8,
+          name: 'claude-review',
+          namespace: 'workspace-alpha',
+          isPublic: false,
+        },
+      ],
+      mcpServers: { browser: { command: 'node' } },
+    }))
+    const updateAgent = vi.fn(async () => ({
+      id: 52,
+      name: 'review-agent',
+      displayName: 'Reviewer',
+      namespace: 'workspace-alpha',
+    }))
+    const api = {
+      listModels: vi.fn(async () => [
+        {
+          name: 'desktop-e2e-public-model',
+          type: 'public',
+          displayName: 'Desktop E2E',
+          namespace: 'default',
+        },
+      ]),
+      listSkills: vi.fn(async () => [
+        {
+          id: 7,
+          name: 'codex-review',
+          namespace: 'workspace-alpha',
+          description: '',
+          displayName: 'Codex Review',
+          bindShells: ['Codex'],
+          visible: true,
+          is_active: true,
+          is_public: false,
+          user_id: 1,
+        },
+        {
+          id: 8,
+          name: 'claude-review',
+          namespace: 'workspace-alpha',
+          description: '',
+          displayName: 'Claude Review',
+          bindShells: ['ClaudeCode'],
+          visible: true,
+          is_active: true,
+          is_public: false,
+          user_id: 1,
+        },
+      ]),
+      createAgent: vi.fn(),
+      getAgent,
+      updateAgent,
+    } as unknown as ReturnType<typeof createAgentResourceApi>
+    const host = createWeworkProjectAgentConfigurationHost(api)
+
+    render(
+      host.renderAgentEditor!({
+        agent: { teamId: 52 },
+        namespace: 'workspace-alpha',
+        onClose: vi.fn(),
+        onSaved,
+        workspaceName: 'Alpha Space',
+      })
+    )
+
+    await waitFor(() => expect(getAgent).toHaveBeenCalledWith(52))
+    await waitFor(() =>
+      expect(screen.getByTestId('wework-agent-system-prompt')).toHaveValue(
+        'Review the implementation.'
+      )
+    )
+    expect(screen.getByTestId('wework-agent-resource-name')).toBeDisabled()
+    expect(screen.getByTestId('wework-agent-resource-name')).toHaveValue('review-agent')
+    expect(screen.getByTestId('wework-agent-runtime')).toHaveValue('ClaudeCode')
+    // The model and Skill catalogs load independently of the Agent detail, so
+    // their prefill lands in a later commit than the system prompt.
+    await waitFor(() => expect(screen.getByTestId('wework-agent-model')).toHaveValue('0'))
+    await waitFor(() => expect(screen.getByTestId('wework-agent-skill-8')).toBeChecked())
+    expect(screen.getByTestId('wework-agent-skill-7')).not.toBeChecked()
+
+    fireEvent.change(screen.getByTestId('wework-agent-display-name'), {
+      target: { value: 'Reviewer' },
+    })
+    fireEvent.change(screen.getByTestId('wework-agent-system-prompt'), {
+      target: { value: 'Review and summarize.' },
+    })
+    fireEvent.click(screen.getByTestId('wework-agent-resource-create'))
+
+    await waitFor(() =>
+      expect(updateAgent).toHaveBeenCalledWith(
+        { teamId: 52, botId: 71 },
+        expect.objectContaining({
+          name: 'review-agent',
+          displayName: 'Reviewer',
+          namespace: 'workspace-alpha',
+          runtime: 'ClaudeCode',
+          systemPrompt: 'Review and summarize.',
+          skills: [
+            {
+              skillId: 8,
+              name: 'claude-review',
+              namespace: 'workspace-alpha',
+              isPublic: false,
+            },
+          ],
+          mcpServers: { browser: { command: 'node' } },
+        })
+      )
+    )
+    expect(onSaved).toHaveBeenCalledWith({ name: 'Reviewer', teamId: 52 })
   })
 })

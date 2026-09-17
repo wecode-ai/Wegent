@@ -222,6 +222,30 @@ impl DeviceConfig {
             self.local_workspace_root = self.executor_home.join("workspace");
         }
     }
+
+    /// Heal configs whose backend URL points at the device's own loopback.
+    ///
+    /// Startup commands generated before the backend public URL was configured
+    /// bake in `http://localhost:8000`, which is unreachable from a remote
+    /// device. The Socket.IO URL provably works (the device is connected), so
+    /// reuse its origin for HTTP callbacks and cloud model proxy calls.
+    fn derive_backend_url_from_socket(&mut self) {
+        let backend_url = self.connection.backend_url.trim();
+        if backend_url.is_empty() || !crate::url_origin::host_is_loopback(backend_url) {
+            return;
+        }
+        let socket_url = self.connection.socket_url.trim();
+        if socket_url.is_empty() || crate::url_origin::host_is_loopback(socket_url) {
+            return;
+        }
+        if let Some(origin) = crate::url_origin::http_origin(socket_url) {
+            eprintln!(
+                "[device-config] backend_url {backend_url} is loopback; \
+                 deriving {origin} from socket_url"
+            );
+            self.connection.backend_url = origin;
+        }
+    }
 }
 
 pub(crate) fn worktree_persistent_storage_verified() -> bool {
@@ -283,6 +307,7 @@ pub fn load_device_config(config_path: Option<&str>) -> Result<DeviceConfig, Con
     }
 
     config.apply_env_overrides();
+    config.derive_backend_url_from_socket();
     remember_effective_device_type(&config.device_type);
     should_save |= ensure_stable_identity(&mut config);
 
@@ -464,7 +489,7 @@ fn default_log_backup_count() -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::worktree_persistent_storage_verified_for;
+    use super::{worktree_persistent_storage_verified_for, DeviceConfig};
 
     #[test]
     fn local_and_app_worktrees_default_to_verified_storage() {
@@ -500,5 +525,51 @@ mod tests {
             "future-device",
             Some("true")
         ));
+    }
+
+    fn config_with_urls(backend: &str, socket: &str) -> DeviceConfig {
+        let mut config = DeviceConfig::default();
+        config.connection.backend_url = backend.to_owned();
+        config.connection.socket_url = socket.to_owned();
+        config
+    }
+
+    #[test]
+    fn loopback_backend_url_is_derived_from_remote_socket_url() {
+        let mut config = config_with_urls("http://localhost:8000", "wss://backend.example.com/ws");
+        config.derive_backend_url_from_socket();
+        assert_eq!(config.connection.backend_url, "https://backend.example.com");
+    }
+
+    #[test]
+    fn loopback_backend_url_keeps_socket_port() {
+        let mut config =
+            config_with_urls("http://127.0.0.1:8000", "ws://lan-backend.internal:9000");
+        config.derive_backend_url_from_socket();
+        assert_eq!(
+            config.connection.backend_url,
+            "http://lan-backend.internal:9000"
+        );
+    }
+
+    #[test]
+    fn non_loopback_backend_url_is_never_rewritten() {
+        let mut config = config_with_urls("https://api.internal", "wss://socket.other.example");
+        config.derive_backend_url_from_socket();
+        assert_eq!(config.connection.backend_url, "https://api.internal");
+    }
+
+    #[test]
+    fn loopback_backend_url_stays_when_socket_is_also_loopback() {
+        let mut config = config_with_urls("http://localhost:8000", "ws://localhost:8000");
+        config.derive_backend_url_from_socket();
+        assert_eq!(config.connection.backend_url, "http://localhost:8000");
+    }
+
+    #[test]
+    fn empty_backend_url_is_not_invented() {
+        let mut config = config_with_urls("", "wss://backend.example.com");
+        config.derive_backend_url_from_socket();
+        assert_eq!(config.connection.backend_url, "");
     }
 }

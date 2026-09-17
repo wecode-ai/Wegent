@@ -60,6 +60,7 @@ interface PendingLayoutScrollPosition {
   conversationKey: string | null
   scrollHeightPx: number
   distanceFromBottomPx: number
+  distanceFromTopPx?: number
   previousOverflowAnchor: string
 }
 
@@ -420,6 +421,19 @@ function ScrollableMessagePaneContent({
     scroller.style.overflowAnchor = 'none'
   }, [bottomOrigin, clearScheduledScrolls, currentScrollKey, releasePendingLayoutScrollPosition])
 
+  const preserveUserMessagePosition = useCallback(() => {
+    preserveScrollPositionForNextLayout()
+    const scroller = activeScrollRefRef.current.current
+    const pending = pendingLayoutScrollPositionRef.current
+    if (!scroller || !pending) return
+
+    pending.distanceFromTopPx = getDistanceFromTop(scroller, bottomOrigin)
+    restoredScrollSnapshotRef.current = null
+    userScrollIntentRef.current = false
+    userScrollPausedAutoFollowRef.current = true
+    userViewportAnchorRef.current = null
+  }, [bottomOrigin, preserveScrollPositionForNextLayout])
+
   const handleTurnNavigationScrollTargetChange = useCallback(
     (messageId: string | null) => {
       const scrolling = messageId !== null
@@ -617,9 +631,14 @@ function ScrollableMessagePaneContent({
     }
 
     releasePendingLayoutScrollPosition()
-    setDistanceFromBottom(scroller, pending.distanceFromBottomPx, 'auto', bottomOrigin)
+    const preserveTop = pending.distanceFromTopPx !== undefined
+    const distanceFromBottomPx =
+      pending.distanceFromTopPx === undefined
+        ? pending.distanceFromBottomPx
+        : scroller.scrollHeight - scroller.clientHeight - pending.distanceFromTopPx
+    setDistanceFromBottom(scroller, distanceFromBottomPx, 'auto', bottomOrigin)
     lastScrollPositionRef.current = getDistanceFromTop(scroller, bottomOrigin)
-    updateScrollState({ skipSave: true })
+    updateScrollState({ skipSave: !preserveTop, forceSave: preserveTop })
     return true
   }, [bottomOrigin, currentScrollKey, releasePendingLayoutScrollPosition, updateScrollState])
 
@@ -1223,6 +1242,9 @@ function ScrollableMessagePaneContent({
 
   const markUserScrollIntent = useCallback(
     (event?: Event | { nativeEvent?: Event }) => {
+      if (pendingLayoutScrollPositionRef.current?.distanceFromTopPx !== undefined) {
+        releasePendingLayoutScrollPosition()
+      }
       userScrollIntentRef.current = true
       restoredScrollSnapshotRef.current = null
 
@@ -1233,10 +1255,11 @@ function ScrollableMessagePaneContent({
       captureUserViewportAnchor()
       userScrollPausedAutoFollowRef.current = true
     },
-    [captureUserViewportAnchor, clearScheduledScrolls]
+    [captureUserViewportAnchor, clearScheduledScrolls, releasePendingLayoutScrollPosition]
   )
 
   const handleScroll = useCallback(() => {
+    if (pendingLayoutScrollPositionRef.current?.distanceFromTopPx !== undefined) return
     if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
       return
     }
@@ -1413,6 +1436,7 @@ function ScrollableMessagePaneContent({
               <MessageList
                 key={currentScrollKey ?? 'keyless-conversation'}
                 messages={messages}
+                onBeforeUserMessageToggle={preserveUserMessagePosition}
                 scrollElementRef={scrollRef}
                 initialDistanceFromBottomPx={getInitialDistanceFromBottomPx(currentScrollKey)}
                 className={messageListClassName}

@@ -112,6 +112,12 @@ describe('local codex plugin readState cache', () => {
         }
         if (method === 'executor.plugins.links.link') return null
         if (method === 'executor.plugins.links.unlink') return null
+        if (method === 'runtime.codex.plugin.uninstall_local') {
+          return {
+            pluginKey: 'dev-tools@wework-personal',
+            localCommitted: true,
+          }
+        }
         if (method === 'executor.plugins.store.list') {
           return { storePath: '/tmp/store/plugins', plugins: [] }
         }
@@ -284,6 +290,13 @@ describe('local codex plugin readState cache', () => {
 
     await api.deletePersonalPlugin('dev-tools')
 
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'runtime.codex.plugin.uninstall_local',
+      {
+        marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
+        pluginName: 'dev-tools',
+      }
+    )
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.personal.delete', {
       marketplacePath: '/tmp/wework-personal',
       pluginName: 'dev-tools',
@@ -295,8 +308,19 @@ describe('local codex plugin readState cache', () => {
 
     await api.deletePersonalPlugin('quality-gate', '/Users/test/.agents/plugins/marketplace.json')
 
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'runtime.codex.plugin.uninstall_local',
+      {
+        marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
+        pluginName: 'quality-gate',
+      }
+    )
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.personal.delete', {
       marketplacePath: '/Users/test/.agents/plugins/marketplace.json',
+      pluginName: 'quality-gate',
+    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.personal.delete', {
+      marketplacePath: '/tmp/wework-personal',
       pluginName: 'quality-gate',
     })
   })

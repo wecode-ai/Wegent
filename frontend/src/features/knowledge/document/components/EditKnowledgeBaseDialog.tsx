@@ -19,6 +19,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
 import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 import { useVideoTimestampPromptGuard } from '@/features/knowledge/multimodal/hooks/useVideoTimestampPromptGuard'
@@ -72,6 +73,7 @@ export function EditKnowledgeBaseDialog({
     useState<DirectAccessRequirement>('read')
   const [allowDocumentDownload, setAllowDocumentDownload] = useState<boolean | undefined>()
   const [effectiveAllowDocumentDownload, setEffectiveAllowDocumentDownload] = useState(false)
+  const [dingtalkAutoSyncEnabled, setDingtalkAutoSyncEnabled] = useState(false)
   const [summaryEnabled, setSummaryEnabled] = useState(false)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   // Editable so a wiki created before the field existed can be given a model. Left
@@ -188,6 +190,7 @@ export function EditKnowledgeBaseDialog({
       setAllowDocumentDownload(
         typeof kb.allow_document_download === 'boolean' ? kb.allow_document_download : undefined
       )
+      setDingtalkAutoSyncEnabled(kb.dingtalk_auto_sync_enabled ?? false)
       setSummaryEnabled(kb.summary_enabled || false)
       setSummaryModelRef(kb.summary_model_ref || null)
       setExecutionModelRef(kb.execution_model_ref || null)
@@ -267,6 +270,7 @@ export function EditKnowledgeBaseDialog({
           description: description.trim(), // Allow empty string to clear description
           direct_access_requirement: directAccessRequirement,
           allow_document_download: allowDocumentDownload,
+          dingtalk_auto_sync_enabled: dingtalkAutoSyncEnabled,
           summary_enabled: summaryEnabled,
           summary_model_ref: summaryEnabled ? summaryModelRef : null,
           ...buildMultimodalSubmitFields(),
@@ -447,7 +451,12 @@ export function EditKnowledgeBaseDialog({
                           onChange={setShowGenerationTask}
                         />
                       </>
-                    ) : undefined
+                    ) : (
+                      <DingtalkAutoSyncSetting
+                        checked={dingtalkAutoSyncEnabled}
+                        onCheckedChange={setDingtalkAutoSyncEnabled}
+                      />
+                    )
                   }
                   name={name}
                   description={description}

@@ -702,12 +702,8 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       execution_environment: {
         repositories: [],
         setup_steps: [],
-        status: 'uninitialized',
         fingerprint: '',
-        prepared_device_id: '',
-        prepared_workspace_path: '',
-        prepared_at: null,
-        error: '',
+        devices: {},
       },
     }
     const client = {
@@ -966,6 +962,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'automationExecutionCatalog',
         'workspaces',
         'resources',
+        'gitRepositories',
         'projects',
         'myWork',
         'issues',

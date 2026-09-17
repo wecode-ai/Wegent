@@ -46,6 +46,7 @@ from app.schemas.knowledge import (
     BatchDocumentIds,
     BatchOperationResult,
     ContentOrigin,
+    DingtalkSyncQueuedResponse,
     DocumentContentUpdate,
     DocumentDetailResponse,
     DocumentMoveRequest,
@@ -80,6 +81,10 @@ from app.services.knowledge import (
     KnowledgeFolderService,
     KnowledgeService,
     knowledge_base_qa_service,
+)
+from app.services.knowledge.dingtalk_auto_sync import (
+    is_copy_sync_enabled,
+    queue_dingtalk_scan,
 )
 from app.services.knowledge.document_download_policy import (
     is_original_download_allowed,
@@ -192,6 +197,43 @@ def _validate_knowledge_base_access_or_raise(
 
 
 # ============== Knowledge Base Endpoints ==============
+
+
+@router.post(
+    "/{knowledge_base_id}/dingtalk-sync",
+    response_model=DingtalkSyncQueuedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+@trace_sync("trigger_dingtalk_copy_sync", "knowledge.api")
+def trigger_dingtalk_copy_sync(
+    knowledge_base_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> DingtalkSyncQueuedResponse:
+    """Queue the same daily scan for one managed KB without waiting for Beat."""
+    kb = _validate_knowledge_base_access_or_raise(
+        db, knowledge_base_id=knowledge_base_id, user=current_user
+    )
+    if not KnowledgeService.can_manage_knowledge_base(db, kb.id, current_user.id):
+        raise HTTPException(
+            status_code=403, detail="Knowledge base management required"
+        )
+    if not is_copy_sync_enabled(kb):
+        raise HTTPException(status_code=400, detail="Enable DingTalk auto sync first")
+    try:
+        task_id = queue_dingtalk_scan(kb.id)
+    except Exception as exc:
+        logger.exception("Failed to queue DingTalk sync for knowledge base %s", kb.id)
+        raise HTTPException(
+            status_code=503, detail="Could not queue DingTalk sync"
+        ) from exc
+    logger.info(
+        "[DingTalk Sync] scan queued kb_id=%s task_id=%s user_id=%s",
+        kb.id,
+        task_id,
+        current_user.id,
+    )
+    return DingtalkSyncQueuedResponse(task_id=task_id, status="queued")
 
 
 @router.get("", response_model=KnowledgeBaseListResponse)
@@ -484,6 +526,7 @@ def create_knowledge_base(
             direct_access_requirement=data.direct_access_requirement,
             allow_document_download=data.allow_document_download,
             kb_type=data.kb_type or "notebook",
+            dingtalk_auto_sync_enabled=data.dingtalk_auto_sync_enabled,
             summary_enabled=data.summary_enabled,
             rag_config_mode=data.rag_config_mode,
             retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),
@@ -602,6 +645,7 @@ def update_knowledge_base(
             direct_access_requirement=data.direct_access_requirement,
             allow_document_download=data.allow_document_download,
             retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),
+            dingtalk_auto_sync_enabled=data.dingtalk_auto_sync_enabled,
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
             execution_model_ref=data.execution_model_ref,

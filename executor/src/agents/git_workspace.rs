@@ -113,7 +113,19 @@ async fn prepare_single_git_workspace(
 
     match classify_project_path(&project_path) {
         ProjectPathState::GitRepository => {
-            validate_existing_git_repository(&project_path).await?;
+            if let Err(validation_error) = validate_existing_git_repository(&project_path).await {
+                // A `.git` directory without a valid HEAD commit is provably an
+                // interrupted clone (real user data never carries a `.git`), so
+                // heal the workspace by recloning instead of failing forever.
+                fields.push(("validation_error", validation_error));
+                log_executor_event("git workspace invalid repository", &fields);
+                cleanup_incomplete_clone(&project_path)?;
+                clone_repo(&request, &git_url, &project_path).await?;
+                setup_git_config(&request, &project_path).await;
+                fields.push(("status", "recloned".to_owned()));
+                log_executor_event("git workspace prepared", &fields);
+                return Ok(request);
+            }
             fields.push(("reason", "existing_git_repository".to_owned()));
             log_executor_event("git workspace clone skipped", &fields);
             setup_git_config(&request, &project_path).await;
@@ -1106,6 +1118,64 @@ mod tests {
         assert_eq!(
             fs::read_to_string(environment_root.join("dependencies/shared-sdk/sdk.txt")).unwrap(),
             "shared sdk"
+        );
+    }
+
+    #[tokio::test]
+    async fn reclones_a_workspace_left_behind_by_an_interrupted_clone() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = create_local_repository(
+            &directory.path().join("sources"),
+            "application",
+            "app.txt",
+            "application",
+        );
+        let environment_root = directory.path().join("environment");
+        let target = environment_root.join("application");
+        // Mimic a clone interrupted right after `git init`: `.git` exists but
+        // holds no commits, so HEAD^{commit} can never resolve.
+        fs::create_dir_all(&target).unwrap();
+        assert_test_git_success("git init", StdCommand::new("git").arg("init").arg(&target));
+        let mut request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "environment_root".to_owned(),
+            Value::String(environment_root.display().to_string()),
+        );
+        request.extra.insert(
+            "execution".to_owned(),
+            json!({
+                "workspace": {
+                    "repositories": [
+                        {
+                            "url": source.display().to_string(),
+                            "path": "application",
+                            "primary": true
+                        }
+                    ]
+                }
+            }),
+        );
+
+        let prepared = prepare_git_workspace(request).await.unwrap();
+
+        assert_eq!(
+            prepared.project_workspace_path.as_deref(),
+            Some(target.to_str().unwrap())
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("app.txt")).unwrap(),
+            "application"
+        );
+        assert_test_git_success(
+            "git rev-parse",
+            StdCommand::new("git").arg("-C").arg(&target).args([
+                "rev-parse",
+                "--verify",
+                "HEAD^{commit}",
+            ]),
         );
     }
 

@@ -20,7 +20,7 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     agents::{
-        backend_url::{is_local_mode, request_backend_url_or_default},
+        backend_url::{backend_http_client, is_local_mode, request_backend_url_or_default},
         claude_config_dir,
         claude_options::merge_claude_mcp_servers,
         claude_task_dir, extract_claude_options,
@@ -846,7 +846,19 @@ async fn download_attachments(
     subtask_id: &str,
 ) -> AttachmentDownloadOutcome {
     let _ = fs::create_dir_all(attachments_dir);
-    let client = reqwest::Client::new();
+    let client = match backend_http_client() {
+        Ok(client) => client,
+        Err(error) => {
+            log_executor_event(
+                "attachment download client unavailable",
+                &[("task_id", task_id.to_string()), ("error", error)],
+            );
+            return AttachmentDownloadOutcome {
+                success: Vec::new(),
+                failed: attachments.to_vec(),
+            };
+        }
+    };
     let mut success = Vec::new();
     let mut failed = Vec::new();
     let mut used_filenames = HashMap::new();
@@ -990,7 +1002,7 @@ async fn deploy_skills(
         )
     })?;
 
-    let client = reqwest::Client::new();
+    let client = backend_http_client()?;
     let results = stream::iter(plan.skills.iter().cloned())
         .map(|skill| {
             let client = &client;
@@ -2952,11 +2964,24 @@ mod tests {
             let address = listener.local_addr().unwrap();
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
-                let mut buffer = vec![0; 8192];
-                let read = stream.read(&mut buffer).await.unwrap();
-                let request = String::from_utf8_lossy(&buffer[..read]);
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let read = stream.read(&mut buffer).await.unwrap();
+                    assert!(
+                        read > 0,
+                        "connection closed before complete request headers"
+                    );
+                    request.extend_from_slice(&buffer[..read]);
+                }
+                let request = String::from_utf8_lossy(&request);
                 assert!(request.starts_with("GET /api/attachments/1/executor-download "));
-                assert!(request.contains("authorization: Bearer test-token\r\n"));
+                assert!(request.lines().any(|line| {
+                    line.split_once(':').is_some_and(|(name, value)| {
+                        name.eq_ignore_ascii_case("authorization")
+                            && value.trim() == "Bearer test-token"
+                    })
+                }));
                 let body = b"image-bytes";
                 let header = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",

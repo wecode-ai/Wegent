@@ -766,9 +766,15 @@ importers:
       prosemirror-model:
         specifier: ^1.25.10
         version: 1.25.10
+      prosemirror-schema-list:
+        specifier: ^1.5.1
+        version: 1.5.1
       prosemirror-state:
         specifier: ^1.4.4
         version: 1.4.4
+      prosemirror-tables:
+        specifier: ^1.8.5
+        version: 1.8.5
       prosemirror-view:
         specifier: ^1.42.0
         version: 1.42.0
@@ -790,6 +796,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      remark-parse:
+        specifier: ^11.0.0
+        version: 11.0.0
       semver:
         specifier: 7.8.5
         version: 7.8.5
@@ -799,6 +808,9 @@ importers:
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
+      unified:
+        specifier: ^11.0.5
+        version: 11.0.5
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -824,6 +836,9 @@ importers:
       '@types/hast':
         specifier: ^3.0.4
         version: 3.0.5
+      '@types/mdast':
+        specifier: ^4.0.4
+        version: 4.0.4
       '@types/node':
         specifier: ^24.12.4
         version: 24.13.2

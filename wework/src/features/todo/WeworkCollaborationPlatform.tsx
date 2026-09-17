@@ -35,6 +35,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
+import { cn } from '@/lib/utils'
 import {
   DesktopSidebarAccount,
   type DesktopSidebarAccountSettingsOptions,
@@ -44,7 +45,6 @@ import {
   createWeworkDeliverySharedWorkspaceApi,
 } from '@/features/collaboration'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import type {
@@ -140,6 +140,7 @@ export interface WeworkCollaborationPlatformProps {
   onArchiveRuntimeTasks?: (
     addresses: RuntimeTaskAddress[]
   ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
+  onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
   onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
   onLogout?: () => void
 }
@@ -915,6 +916,7 @@ export function WeworkSharedProject({
   location,
   onFocusedItemHandled,
   onOpenRuntimeTask,
+  onCancelRuntimeTask,
   project,
   runtimeTaskLifecycle,
   runtimeWork,
@@ -932,6 +934,7 @@ export function WeworkSharedProject({
   location: CollaborationPlatformLocation
   onFocusedItemHandled?: () => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
   project: CollaborationProject
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   runtimeWork?: RuntimeWorkListResponse | null
@@ -941,9 +944,7 @@ export function WeworkSharedProject({
   userId: string | number
   workspace: CollaborationProjectRendererWorkspaceContext
 }) {
-  const cloudConnection = useOptionalCloudConnection()
-  const existingCloudAgentsAvailable =
-    cloudConnection.isConnected && Boolean(services.sharedWorkspaceApi)
+  const { t } = useTranslation('common')
   const [taskComposer, setTaskComposer] = useState<{
     address?: RuntimeTaskAddress
     issue: CollaborationIssue
@@ -1031,25 +1032,14 @@ export function WeworkSharedProject({
         }))
         if (!next.issueId && focusedItemId) onFocusedItemHandled?.()
       },
-      projectAgentConfiguration: {
-        ...createWeworkProjectAgentConfigurationHost(services.agentResourceApi),
-        existingAgentSelection: existingCloudAgentsAvailable
-          ? undefined
-          : {
-              disabled: true,
-              description:
-                locale === 'zh-CN'
-                  ? '登录并连接云端后可选择已有智能体'
-                  : 'Sign in and connect to cloud to select an existing Agent',
-            },
-      },
+      projectAgentConfiguration: createWeworkProjectAgentConfigurationHost(
+        services.agentResourceApi
+      ),
     }),
     [
-      existingCloudAgentsAvailable,
       focusedItemId,
       location.issueId,
       location.projectView,
-      locale,
       onFocusedItemHandled,
       project.id,
       project.project_store,
@@ -1091,6 +1081,26 @@ export function WeworkSharedProject({
     }
     return running
   }, [runtimeTaskLifecycle, runtimeWork])
+  // Stop any in-flight run bound to the Issue before it leaves the board, so a
+  // deleted Issue never keeps an orphaned execution running on a device.
+  const prepareIssueDelete = useCallback(
+    async (issue: CollaborationIssue) => {
+      if (!onCancelRuntimeTask) return
+      const bindings = await scopedApi.taskBindings.list(issue.id)
+      const running = bindings.filter(
+        binding =>
+          runtimeRunningByAddress.get(
+            runtimeConversationKey({ deviceId: binding.deviceId, taskId: binding.taskId })
+          ) ?? false
+      )
+      await Promise.all(
+        running.map(binding =>
+          onCancelRuntimeTask({ deviceId: binding.deviceId, taskId: binding.taskId })
+        )
+      )
+    },
+    [onCancelRuntimeTask, runtimeRunningByAddress, scopedApi]
+  )
   const runtimeTaskStatusSignature =
     project.project_store === 'local'
       ? ''
@@ -1201,6 +1211,12 @@ export function WeworkSharedProject({
     }
   }, [detailServices?.projectChatClient, project.id])
 
+  // The task conversation panel is laid out as a flex sibling of the board, so
+  // it shares the board's stacking context and would sit under the fixed issue
+  // detail drawer. Collapse the drawer while the conversation is open, the same
+  // way `.todo-panel-stack.has-conversation` hides the issue detail shell.
+  const taskConversationOpen = Boolean(taskComposer && runtimePort)
+
   return (
     <div className="flex h-full min-h-0 min-w-0">
       <div className="min-w-0 flex-1">
@@ -1210,6 +1226,8 @@ export function WeworkSharedProject({
           locale={locale}
           showProjectBack={false}
           refreshProjectRequestKey={refreshProjectRequestKey}
+          issueDeleteEnabled
+          onPrepareIssueDelete={prepareIssueDelete}
           onCreateTask={
             runtimePort
               ? (_taskProject, issue, workflowStep) => {
@@ -1226,10 +1244,15 @@ export function WeworkSharedProject({
             onChange,
             onClose,
             onCreateTask,
+            onDelete,
           }) => (
             <div
-              className="collaboration-dialog-backdrop collaboration-issue-detail-backdrop"
+              className={cn(
+                'collaboration-dialog-backdrop collaboration-issue-detail-backdrop',
+                taskConversationOpen && 'has-conversation'
+              )}
               data-testid={collaborationTestIds.issueDetail}
+              data-conversation-open={taskConversationOpen ? 'true' : 'false'}
               onMouseDown={event => {
                 if (event.currentTarget === event.target) onClose()
               }}
@@ -1269,6 +1292,7 @@ export function WeworkSharedProject({
                     project.task_provider === 'dingtalk_aitable' ? services.aitableApi : undefined
                   }
                   onCreateTask={onCreateTask}
+                  onDelete={onDelete}
                   onOpenTaskConversation={
                     runtimePort
                       ? task =>
@@ -1302,6 +1326,7 @@ export function WeworkSharedProject({
             issue,
             nativeContainerProps,
             onOpen,
+            onDelete,
             taskBindings,
           }) => {
             const boardTaskBindings = taskBindings.map(
@@ -1337,7 +1362,8 @@ export function WeworkSharedProject({
                   }
                   taskBindings={boardTaskBindings}
                   onClick={onOpen}
-                  onArchive={() => undefined}
+                  onArchive={onDelete ?? (() => undefined)}
+                  archiveLabel={t('todo.delete_issue', '删除任务')}
                   previewPinned={pinnedProgressIssueId === issue.id}
                   onPreviewPinnedChange={pinned =>
                     setPinnedProgressIssueId(pinned ? issue.id : null)
@@ -1348,7 +1374,7 @@ export function WeworkSharedProject({
                   display={display}
                   processingStatus={issue.status === 'in_progress' || issue.status === 'in_review'}
                   dragDisabled
-                  archiveDisabled
+                  archiveDisabled={!onDelete}
                   progressDisplay={focused ? 'focused' : 'compact'}
                 />
               </div>
