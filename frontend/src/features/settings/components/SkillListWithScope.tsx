@@ -265,13 +265,15 @@ export function SkillListWithScope({
         groupName: selectedGroup || undefined,
       }
       const shouldReuseAllSkills = scope === 'all' && !selectedGroup
-      const [allSkillsData, bindingsData] = await Promise.all([
-        fetchUnifiedSkillsList({ scope: 'all' }),
-        fetchMyDefaultSkillBindings(),
-      ])
+      const bindingsDataPromise = fetchMyDefaultSkillBindings().catch(err => {
+        console.error('Failed to fetch default skill bindings:', err)
+        return []
+      })
+      const allSkillsData = await fetchUnifiedSkillsList({ scope: 'all' })
       const librarySkillsData = shouldReuseAllSkills
         ? allSkillsData
         : await fetchUnifiedSkillsList(libraryParams)
+      const bindingsData = await bindingsDataPromise
       setAutoEnabledBindings(bindingsData)
       setAllAvailableSkills(filterVisibleSkills(allSkillsData))
       setLibrarySkills(filterVisibleSkills(librarySkillsData))
@@ -280,7 +282,7 @@ export function SkillListWithScope({
     } finally {
       setLoading(false)
     }
-  }, [scope, selectedGroup, showAutoEnabledSkills])
+  }, [scope, selectedGroup])
 
   useEffect(() => {
     loadSkills()

@@ -397,6 +397,23 @@ describe('SkillListWithScope default enabled skills', () => {
     expect(within(librarySection).getByText('Default Enabled Skill')).toBeInTheDocument()
   })
 
+  it('keeps the skill list visible when default binding lookup fails', async () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    mockedFetchMyDefaultSkillBindings.mockRejectedValue(new Error('binding lookup failed'))
+
+    try {
+      render(<SkillListWithScope scope="personal" compact />)
+
+      const librarySection = await screen.findByTestId('skill-library-section')
+
+      expect(within(librarySection).getByText('Default Enabled Skill')).toBeInTheDocument()
+      expect(within(librarySection).getByText('Library Skill')).toBeInTheDocument()
+      expect(screen.queryByText('binding lookup failed')).not.toBeInTheDocument()
+    } finally {
+      consoleErrorSpy.mockRestore()
+    }
+  })
+
   it('marks marketplace-published skills in the compact card header', async () => {
     mockedFetchUnifiedSkillsList.mockResolvedValue([
       buildSkill({
