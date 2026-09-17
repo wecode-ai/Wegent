@@ -1,8 +1,22 @@
-import { render, screen } from '@testing-library/react'
+import { render as renderComponent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
+
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import type { ReactElement } from 'react'
+
+function render(element: ReactElement) {
+  return renderComponent(
+    <RuntimeTaskLifecycleProvider store={new RuntimeTaskLifecycleStore()}>
+      {element}
+    </RuntimeTaskLifecycleProvider>
+  )
+}
 
 const reloadRuntimeTranscript = vi.fn()
 

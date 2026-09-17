@@ -20,20 +20,20 @@ export default {
     '../packages/collaboration/node_modules/streamdown/dist/*.js',
   ],
   theme: {
-    fontSize: {
-      xs: ['var(--text-xs)', { lineHeight: '1.333333' }],
-      sm: ['var(--text-sm)', { lineHeight: '1.428571' }],
-      base: ['var(--text-base)', { lineHeight: '1.5' }],
-      lg: ['var(--text-lg)', { lineHeight: '1.555556' }],
-      xl: ['var(--text-xl)', { lineHeight: '1.4' }],
-      '2xl': ['var(--text-2xl)', { lineHeight: '1.333333' }],
-      '3xl': ['var(--text-3xl)', { lineHeight: '1.2' }],
-      '4xl': ['var(--text-4xl)', { lineHeight: '1.111111' }],
-      'heading-sm': ['var(--text-heading-sm)', { lineHeight: '1.33' }],
-      'heading-md': ['var(--text-heading-md)', { lineHeight: '1.33' }],
-      'heading-lg': ['var(--text-heading-lg)', { lineHeight: '1.2' }],
-    },
     extend: {
+      fontSize: {
+        xs: ['var(--text-xs)', { lineHeight: '1.333333' }],
+        sm: ['var(--text-sm)', { lineHeight: '1.428571' }],
+        base: ['var(--text-base)', { lineHeight: '1.5' }],
+        lg: ['var(--text-lg)', { lineHeight: '1.555556' }],
+        xl: ['var(--text-xl)', { lineHeight: '1.4' }],
+        '2xl': ['var(--text-2xl)', { lineHeight: '1.333333' }],
+        '3xl': ['var(--text-3xl)', { lineHeight: '1.2' }],
+        '4xl': ['var(--text-4xl)', { lineHeight: '1.111111' }],
+        'heading-sm': ['var(--text-heading-sm)', { lineHeight: '1.33' }],
+        'heading-md': ['var(--text-heading-md)', { lineHeight: '1.33' }],
+        'heading-lg': ['var(--text-heading-lg)', { lineHeight: '1.2' }],
+      },
       // Keep the surface alias out of text colors: text-base is a font size.
       backgroundColor: {
         base: withOpacity('--color-bg-base'),

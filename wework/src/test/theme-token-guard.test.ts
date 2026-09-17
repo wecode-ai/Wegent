@@ -150,11 +150,11 @@ describe('theme token guard', () => {
     )
     const source = readFileSync(tailwindConfigPath, 'utf8')
 
-    expect(source).toContain('chrome: "var(--z-chrome)"')
-    expect(source).toContain('popover: "var(--z-popover)"')
-    expect(source).toContain('modal: "var(--z-modal)"')
-    expect(source).toContain('critical: "var(--z-critical)"')
-    expect(source).toContain('system: "var(--z-system)"')
+    expect(source).toContain("chrome: 'var(--z-chrome)'")
+    expect(source).toContain("popover: 'var(--z-popover)'")
+    expect(source).toContain("modal: 'var(--z-modal)'")
+    expect(source).toContain("critical: 'var(--z-critical)'")
+    expect(source).toContain("system: 'var(--z-system)'")
   })
 
   test('soft scrollbar uses a visible light gray thumb before hover', () => {

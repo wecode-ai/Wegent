@@ -5017,12 +5017,7 @@ export function CloudTodoWorkspace({
                             display={boardCardDisplay}
                             agentNames={agentNameById}
                             dragDisabled={isAITableProject}
-                            previewDisabled={
-                              selectedItem !== null ||
-                              activeDragItemId !== null ||
-                              (pinnedBoardPreviewItemId !== null &&
-                                pinnedBoardPreviewItemId !== item.id)
-                            }
+                            previewDisabled={selectedItem !== null || activeDragItemId !== null}
                             archiveDisabled={isAITableProject}
                             progressDisplay={progressDisplay}
                             changeRequestMonitor={changeRequestMonitor}

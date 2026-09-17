@@ -107,7 +107,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
     'remove',
   ],
   collaborators: ['list', 'add', 'remove'],
-  taskBindings: ['list'],
+  taskBindings: ['list', 'bindTask', 'unbindTask'],
   workflowPlans: [
     'get',
     'approve',

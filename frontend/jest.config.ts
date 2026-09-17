@@ -17,6 +17,8 @@ const config: Config = {
     '^@wegent/chat-core$': '<rootDir>/../packages/chat-core/src/index.ts',
     '^@wegent/chat-core/(.*)$': '<rootDir>/../packages/chat-core/src/$1',
     '^@wegent/collaboration$': '<rootDir>/../packages/collaboration/src/index.ts',
+    '^@wegent/collaboration/tailwind-preset$':
+      '<rootDir>/../packages/collaboration/tailwind-preset.js',
     '^@wegent/collaboration/(.*)$': '<rootDir>/../packages/collaboration/src/$1',
     '^streamdown$': '<rootDir>/src/__mocks__/streamdown.tsx',
     '^@file-viewer/react$': '<rootDir>/src/__mocks__/file-viewer.tsx',
