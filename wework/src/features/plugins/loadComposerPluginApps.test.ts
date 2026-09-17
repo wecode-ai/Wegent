@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
 import { loadComposerPluginApps } from './loadComposerPluginApps'
+import { composerAppsFromRuntimeSnapshot } from '@wegent/chat-core/runtime-composer-plugin-source'
 
 const dingtalk: InstalledPlugin = {
   apiVersion: 'wegent.ai/v1',
@@ -35,6 +36,66 @@ const dingtalk: InstalledPlugin = {
 }
 
 describe('loadComposerPluginApps', () => {
+  test('matches the browser inventory and excludes cloud rows without release membership', async () => {
+    const incomplete = { ...dingtalk, spec: { ...dingtalk.spec, releaseId: null } }
+    for (const cloud of [[dingtalk], [incomplete], []]) {
+      const native = await loadComposerPluginApps({
+        deviceId: 'local-device',
+        listCodexApps: async () => [],
+        readLocalInstalledPlugins: async () => [],
+        listCloudInstalledPlugins: async () => cloud,
+      })
+      const browser = composerAppsFromRuntimeSnapshot(
+        {
+          taskId: 'task',
+          workspacePath: '/workspace',
+          projectPluginIds: [],
+          apps: [],
+          skills: [],
+          marketplaces: [],
+          store: { storePath: '/store', plugins: [] },
+          cloudInstalledPlugins: cloud,
+        },
+        'local-device',
+        key => key
+      )
+      expect(native).toEqual(browser)
+      expect(native).toHaveLength(cloud[0]?.spec.releaseId ? 1 : 0)
+    }
+  })
+
+  test('uses the selected device materialization instead of a different release template', async () => {
+    const cloud: InstalledPlugin = {
+      ...dingtalk,
+      spec: { ...dingtalk.spec, releaseId: 2, interface: { defaultPrompt: ['new template'] } },
+      status: {
+        ...dingtalk.status,
+        devices: [
+          {
+            deviceId: 'local-device',
+            desiredReleaseId: 2,
+            actualReleaseId: 1,
+            state: 'installed',
+            attemptCount: 1,
+            updatedAt: '',
+          },
+        ],
+      },
+    }
+    const local: InstalledPlugin = {
+      ...dingtalk,
+      spec: { ...dingtalk.spec, interface: { defaultPrompt: ['installed template'] } },
+    }
+    const apps = await loadComposerPluginApps({
+      deviceId: 'local-device',
+      listCodexApps: async () => [],
+      readLocalInstalledPlugins: async () => [local],
+      listCloudInstalledPlugins: async () => [cloud],
+    })
+    expect(apps).toHaveLength(1)
+    expect(apps[0].trialTemplates?.map(template => template.name)).toEqual(['installed template'])
+  })
+
   test('resolves a declared relative logo from the installed plugin root', async () => {
     const localPlugin: InstalledPlugin = {
       ...dingtalk,
@@ -68,6 +129,7 @@ describe('loadComposerPluginApps', () => {
 
     const apps = await loadComposerPluginApps(
       {
+        deviceId: 'local-device',
         listCodexApps: async () => [],
         readLocalInstalledPlugins: async () => [localPlugin],
         readLocalInstalledPluginDetail: readDetail,
@@ -84,24 +146,23 @@ describe('loadComposerPluginApps', () => {
     ])
   })
 
-  test('still lists cloud installs when local Codex state read fails', async () => {
-    const apps = await loadComposerPluginApps({
-      listCodexApps: vi.fn().mockResolvedValue([] as LocalDeviceApp[]),
-      readLocalInstalledPlugins: vi.fn().mockRejectedValue(new Error('codex unavailable')),
-      listCloudInstalledPlugins: vi.fn().mockResolvedValue([dingtalk]),
-    })
+  test.each(['listCodexApps', 'readLocalInstalledPlugins', 'listCloudInstalledPlugins'] as const)(
+    'rejects a failed %s instead of publishing a partial inventory',
+    async source => {
+      const sources = {
+        deviceId: 'local-device',
+        listCodexApps: vi.fn().mockResolvedValue([] as LocalDeviceApp[]),
+        readLocalInstalledPlugins: vi.fn().mockResolvedValue([]),
+        listCloudInstalledPlugins: vi.fn().mockResolvedValue([dingtalk]),
+      }
+      sources[source].mockRejectedValue(new Error('catalog unavailable'))
+      await expect(loadComposerPluginApps(sources)).rejects.toThrow('catalog unavailable')
+    }
+  )
 
-    expect(apps).toEqual([
-      expect.objectContaining({
-        id: 'plugin:dingtalk',
-        name: '钉钉',
-        skillPath: 'plugin://dingtalk@wegent',
-      }),
-    ])
-  })
-
-  test('maps cloud installs even when merge filters would drop incomplete local rows', async () => {
+  test('maps installed cloud rows with valid membership', async () => {
     const apps = await loadComposerPluginApps({
+      deviceId: 'local-device',
       listCodexApps: async () => [],
       readLocalInstalledPlugins: async () => [],
       listCloudInstalledPlugins: async () => [dingtalk],
@@ -133,6 +194,7 @@ describe('loadComposerPluginApps', () => {
     }
 
     const apps = await loadComposerPluginApps({
+      deviceId: 'local-device',
       listCodexApps: async () => [
         {
           id: 'connector_5f3c8c41a1e54ad7a76272c89e2554fa',
@@ -166,6 +228,7 @@ describe('loadComposerPluginApps', () => {
     }
 
     const hiddenApps = await loadComposerPluginApps({
+      deviceId: 'local-device',
       listCodexApps: async () => [],
       readLocalInstalledPlugins: async () => [projectPlugin],
       listCloudInstalledPlugins: async () => [],
@@ -174,6 +237,7 @@ describe('loadComposerPluginApps', () => {
 
     const projectApps = await loadComposerPluginApps(
       {
+        deviceId: 'local-device',
         listCodexApps: async () => [],
         readLocalInstalledPlugins: async () => [projectPlugin],
         listCloudInstalledPlugins: async () => [],
@@ -212,6 +276,7 @@ describe('loadComposerPluginApps', () => {
 
     const apps = await loadComposerPluginApps(
       {
+        deviceId: 'local-device',
         listCodexApps: async () => [],
         readLocalInstalledPlugins: async () => [],
         listCloudInstalledPlugins: async () => [wiki],

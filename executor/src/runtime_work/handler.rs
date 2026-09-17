@@ -1164,6 +1164,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.projects.upsert_local" => self.upsert_local_project(payload).await,
             "runtime.workspaces.rename" => self.rename_workspace(payload).await,
             "runtime.workspaces.remove" => self.remove_workspace(payload).await,
+            "runtime.composer.catalog.read" => self.read_composer_catalog(payload).await,
             "runtime.workspace.search" => self.search_workspace(payload).await,
             "runtime.sidebar.projects.reorder" => self.reorder_sidebar_projects(payload).await,
             "runtime.sidebar.projects.pin" => self.pin_sidebar_project(payload).await,
@@ -1194,6 +1195,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     !matches!(
         method,
         "runtime.tasks.running_count"
+            | "runtime.composer.catalog.read"
             | "runtime.worktrees.capabilities"
             | "runtime.worktrees.preflight"
             | "runtime.codex.runtime_config.update"
@@ -1207,6 +1209,7 @@ fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
 
 include!("handler/helpers.rs");
 
+mod composer_catalog;
 mod runtime_rpc;
 
 use runtime_rpc::{

@@ -11,11 +11,12 @@ interface MockMessageListProps {
 let resizeObserverCallback: ResizeObserverCallback | null = null
 let virtualLayoutCallback: (() => void) | undefined
 
-vi.mock('@/lib/runtime-environment', () => ({
+vi.mock('@/lib/runtime-environment', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/runtime-environment')>()),
   isDesktopRuntime: () => true,
 }))
 
-vi.mock('./MessageList', () => ({
+vi.mock('../../../../packages/collaboration/src/conversation/MessageList', () => ({
   MessageList: ({
     conversationKey,
     virtualAnchorToEnd,

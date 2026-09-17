@@ -1,3 +1,12 @@
+import {
+  Plus,
+  ChevronDown,
+  ChevronRight,
+  Search,
+  Maximize2,
+  Minimize2,
+} from "lucide-react";
+import { Tooltip } from "../issue-detail/Tooltip";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -101,7 +110,6 @@ export interface ProjectBoardBodyProps<TItem> {
   };
   onBreadcrumbSelect(id: string | null): void;
   onSaveGlobalGroupBy(): Promise<void> | void;
-  renderAddIcon(): ReactNode;
   renderColumnFooter?(
     column: ProjectBoardColumn,
     items: readonly TItem[],
@@ -113,10 +121,7 @@ export interface ProjectBoardBodyProps<TItem> {
     state: ProjectBoardStatePort,
   ): ReactNode;
   renderDragOverlay(): ReactNode;
-  renderChevronDown(className: string): ReactNode;
-  renderChevronRight(className: string): ReactNode;
   renderExternalGroupPicker(): ReactNode;
-  renderFocusIcon(focused: boolean): ReactNode;
   renderItem(
     item: TItem,
     column: ProjectBoardColumn,
@@ -127,10 +132,8 @@ export interface ProjectBoardBodyProps<TItem> {
     items: readonly TItem[],
   ): ReactNode;
   renderQuickStart?(state: ProjectBoardStatePort): ReactNode;
-  renderSearchIcon(): ReactNode;
   renderSkeleton(): ReactNode;
   renderStatus?(): ReactNode;
-  renderTooltip(label: string, child: ReactNode): ReactNode;
   renderGroupPicker(
     value: ProjectBoardGroupBy,
     onChange: (value: ProjectBoardGroupBy) => void,
@@ -172,23 +175,17 @@ export function ProjectBoardBody<TItem>({
   localProjectFilter,
   onBreadcrumbSelect,
   onSaveGlobalGroupBy,
-  renderAddIcon,
   renderColumnFooter,
   renderColumnHeaderActions,
   renderDragOverlay,
-  renderChevronDown,
-  renderChevronRight,
   renderExternalGroupPicker,
-  renderFocusIcon,
   renderGroupPicker,
   renderBoardSettingsAction,
   renderItem,
   renderItemsFooter,
   renderQuickStart,
-  renderSearchIcon,
   renderSkeleton,
   renderStatus,
-  renderTooltip,
   rootLabel,
   rootUnitLabel,
   searchPlaceholder,
@@ -199,13 +196,16 @@ export function ProjectBoardBody<TItem>({
   state,
 }: ProjectBoardBodyProps<TItem>) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col pb-6 pt-4">
+    <div
+      data-board-cursor-policy="arrow"
+      className="flex min-h-0 flex-1 flex-col pb-6 pt-4"
+    >
       {isExternalBoard ? (
         <div className="flex shrink-0 items-center gap-2 px-6 pb-3">
           {renderExternalGroupPicker()}
           <span className="relative inline-flex h-8 items-center rounded-lg border border-border bg-background px-3 text-xs text-text-secondary">
             {state.externalGroupFilter || `全部${externalGroupLabel}`}
-            {renderChevronDown("ml-2 h-3 w-3")}
+            <ChevronDown className={"ml-2 h-3 w-3"} />
             <select
               data-testid="dingtalk-board-assignee-filter"
               value={state.externalGroupFilter}
@@ -224,7 +224,7 @@ export function ProjectBoardBody<TItem>({
             </select>
           </span>
           <label className="flex h-8 min-w-52 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
-            {renderSearchIcon()}
+            <Search className="h-3.5 w-3.5" />
             <input
               data-testid="dingtalk-board-search"
               value={state.externalQuery}
@@ -253,9 +253,11 @@ export function ProjectBoardBody<TItem>({
                   localProjectFilter.selectedName,
                 )}
               </span>
-              {renderChevronDown(
-                "pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-text-muted",
-              )}
+              <ChevronDown
+                className={
+                  "pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-text-muted"
+                }
+              />
               <select
                 data-testid="cloud-local-project-filter"
                 aria-label={localProjectFilter.ariaLabel}
@@ -283,7 +285,7 @@ export function ProjectBoardBody<TItem>({
                     ?.label
                 : `全部${groupFields.find((field) => field.id === state.groupBy)?.name ?? "任务"}`}
             </span>
-            {renderChevronDown("ml-2 h-3 w-3")}
+            <ChevronDown className={"ml-2 h-3 w-3"} />
             <select
               data-testid="cloud-board-group-filter"
               value={state.groupFilter}
@@ -300,7 +302,7 @@ export function ProjectBoardBody<TItem>({
             </select>
           </label>
           <label className="flex h-8 min-w-52 shrink-0 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
-            {renderSearchIcon()}
+            <Search className="h-3.5 w-3.5" />
             <input
               data-testid="cloud-board-search"
               value={state.query}
@@ -313,33 +315,40 @@ export function ProjectBoardBody<TItem>({
             data-testid="cloud-board-view-actions"
             className="ml-auto flex shrink-0 items-center gap-2"
           >
-            {state.groupBy === "status"
-              ? renderTooltip(
+            {state.groupBy === "status" ? (
+              <Tooltip
+                label={
                   state.focusExecutionColumns
                     ? focusLabels.exit
-                    : focusLabels.enter,
-                  <button
-                    type="button"
-                    data-testid="cloud-board-focus-running"
-                    aria-pressed={state.focusExecutionColumns}
-                    aria-label={
-                      state.focusExecutionColumns
-                        ? focusLabels.exit
-                        : focusLabels.enter
-                    }
-                    onClick={state.toggleFocusExecutionColumns}
-                    className={classNames(
-                      "inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30",
-                      state.focusExecutionColumns
-                        ? "border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90"
-                        : "border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary",
-                    )}
-                  >
-                    {renderFocusIcon(state.focusExecutionColumns)}
-                    {focusLabels.title}
-                  </button>,
-                )
-              : null}
+                    : focusLabels.enter
+                }
+              >
+                <button
+                  type="button"
+                  data-testid="cloud-board-focus-running"
+                  aria-pressed={state.focusExecutionColumns}
+                  aria-label={
+                    state.focusExecutionColumns
+                      ? focusLabels.exit
+                      : focusLabels.enter
+                  }
+                  onClick={state.toggleFocusExecutionColumns}
+                  className={classNames(
+                    "inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30",
+                    state.focusExecutionColumns
+                      ? "border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90"
+                      : "border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary",
+                  )}
+                >
+                  {state.focusExecutionColumns ? (
+                    <Minimize2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <Maximize2 className="h-3.5 w-3.5" />
+                  )}
+                  {focusLabels.title}
+                </button>
+              </Tooltip>
+            ) : null}
             {showSaveGlobal ? (
               <button
                 type="button"
@@ -375,7 +384,9 @@ export function ProjectBoardBody<TItem>({
                   key={parent.id}
                   className="flex min-w-0 items-center gap-1"
                 >
-                  {renderChevronRight("h-3.5 w-3.5 shrink-0 text-text-muted")}
+                  <ChevronRight
+                    className={"h-3.5 w-3.5 shrink-0 text-text-muted"}
+                  />
                   <button
                     type="button"
                     data-testid={`cloud-todo-board-breadcrumb-${parent.id}`}
@@ -450,7 +461,7 @@ export function ProjectBoardBody<TItem>({
             renderItem={(item, column) => renderItem(item, column, state)}
             renderItemsFooter={renderItemsFooter}
             getColumnEmptyState={getColumnEmptyState}
-            renderAddIcon={renderAddIcon}
+            renderAddIcon={() => <Plus className="h-5 w-5" />}
             renderColumnFooter={(column, items) =>
               renderColumnFooter?.(column, items, state)
             }

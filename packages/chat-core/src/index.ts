@@ -71,3 +71,9 @@ export type {
   SocketClientStateListener,
   SocketReconnectCallback,
 } from './socket'
+
+export * from './project-chat'
+
+export * from './runtime-ipc'
+
+export * from './runtime-conversation-client'

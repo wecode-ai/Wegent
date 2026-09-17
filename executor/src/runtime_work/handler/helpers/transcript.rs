@@ -9,7 +9,12 @@ fn cached_transcript_response(
 ) -> Value {
     remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
     let turn_navigation = transcript_turn_navigation(&messages);
-    transcript_response(TranscriptResponseInput {
+    let history_unavailable = !running
+        && link.runtime == "claude_code"
+        && messages.is_empty()
+        && link.runtime_handle.get("userMessagePresentations")
+            .and_then(Value::as_array).is_some_and(|items| !items.is_empty());
+    let mut response = transcript_response(TranscriptResponseInput {
         local_task_id: link.local_task_id.clone(),
         workspace_path: link.workspace_path.clone(),
         runtime: link.runtime.clone(),
@@ -25,7 +30,17 @@ fn cached_transcript_response(
         full_content: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
         turn_navigation,
-    })
+    });
+    response["historyUnavailable"] = Value::Bool(history_unavailable);
+    if link.runtime == "claude_code" && link.status == "interrupted" && !running {
+        if let Some(turn) = response.get_mut("turns").and_then(Value::as_array_mut)
+            .and_then(|turns| turns.last_mut()) {
+            turn["status"] = json!("failed");
+            turn["runtimeStatus"] = json!("failed");
+            turn["error"] = json!("Execution was interrupted before its outcome was recorded");
+        }
+    }
+    response
 }
 
 pub(super) fn remove_superseded_transcript_turns(

@@ -104,6 +104,7 @@ const APP_IPC_CAPABILITIES: &[&str] = &[
     "runtime.archives",
     "runtime.automations",
     "runtime.codex",
+    "runtime.composer",
     "runtime.connectors",
     "runtime.harness",
     "runtime.hooks",

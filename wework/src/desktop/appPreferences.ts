@@ -1,3 +1,13 @@
+import {
+  defaultQuickPhrases,
+  type QuickPhrase,
+  type QuickPhraseMode,
+} from '@wegent/chat-core/composer-quick-phrases'
+export {
+  defaultQuickPhrases,
+  type QuickPhrase,
+  type QuickPhraseMode,
+} from '@wegent/chat-core/composer-quick-phrases'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type { ModelSelectionConfig } from '@/types/api'
 import {
@@ -6,7 +16,8 @@ import {
   type LocalHarnessPreference,
 } from '@/lib/local-harness'
 
-export const DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 85
+import { DEFAULT_CONTEXT_COMPACTION_THRESHOLD } from '@wegent/chat-core/runtime-context-usage'
+export { DEFAULT_CONTEXT_COMPACTION_THRESHOLD } from '@wegent/chat-core/runtime-context-usage'
 export const CONTEXT_COMPACTION_THRESHOLD_MIN = 1
 export const CONTEXT_COMPACTION_THRESHOLD_MAX = 100
 
@@ -63,17 +74,6 @@ export interface FriendlyTaskTitleModelConfig {
   executionModelId: string
   executionModelType: ModelSelectionConfig['modelType']
   options?: ModelSelectionConfig['options']
-}
-
-export type QuickPhraseMode = 'normal' | 'plan' | 'goal'
-
-export interface QuickPhrase {
-  id: string
-  title: string
-  content: string
-  mode: QuickPhraseMode
-  attachmentPaths?: string[]
-  createdAt?: number
 }
 
 export const QUICK_PHRASE_STASH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
@@ -145,27 +145,6 @@ export interface AppPreferencesPatch {
   localHarnesses?: LocalHarnessPreference[]
   cloudConnection?: Record<string, unknown> | null
 }
-
-export const defaultQuickPhrases: QuickPhrase[] = [
-  {
-    id: 'default-summary-progress',
-    title: '总结当前进展',
-    content: '总结目前完成的工作和下一步建议',
-    mode: 'normal',
-  },
-  {
-    id: 'default-create-plan',
-    title: '制定实施计划',
-    content: '分析需求并制定详细的实施计划',
-    mode: 'plan',
-  },
-  {
-    id: 'default-pursue-goal',
-    title: '持续完成这个目标',
-    content: '持续推进这个目标，直到真正完成',
-    mode: 'goal',
-  },
-]
 
 export const defaultAppPreferences: AppPreferences = {
   workbenchMode: 'developer',

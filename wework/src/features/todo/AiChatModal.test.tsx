@@ -216,6 +216,27 @@ const task = {
 }
 
 describe('AiChatModal', () => {
+  it('handles Escape inside an embedded conversation without a global keyboard listener', async () => {
+    const onClose = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'device', taskId: 'run-1' }}
+        embedded
+        open
+        onClose={onClose}
+      />
+    )
+    await user.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
+    screen.getByTestId('ai-chat-modal-close').focus()
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
   it('opens a blank embedded task composer in the right sidebar', () => {
     render(
       <AiChatModal

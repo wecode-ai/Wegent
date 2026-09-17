@@ -267,10 +267,11 @@ async function selectGroupBy(
       response.request().method() === 'PATCH' &&
       new URL(response.url()).pathname.endsWith(`/cloud-projects/${projectId}`)
   )
-  await page.getByTestId('cloud-board-group-by').selectOption(groupBy)
+  await page.getByTestId('cloud-board-group-by').click()
+  await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
   const response = await updateResponse
   expect(response.ok(), `Board grouping update failed: ${await response.text()}`).toBe(true)
-  await expect(page.getByTestId('cloud-board-group-by')).toHaveValue(groupBy)
+  await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', groupBy)
 }
 
 async function dragIssueTo(page: Page, issueId: string, columnKey: string): Promise<void> {
@@ -287,20 +288,22 @@ async function dragIssueTo(page: Page, issueId: string, columnKey: string): Prom
         pathname.endsWith('/loop-items/reorder'))
     )
   })
-  const dataTransfer = await page.evaluateHandle(() => new DataTransfer())
+  const handle = page.getByTestId(`cloud-todo-card-${issueId}`)
+  await handle.scrollIntoViewIfNeeded()
+  const sourceBox = await handle.boundingBox()
+  expect(sourceBox).not.toBeNull()
+  await page.mouse.move(sourceBox!.x + 20, sourceBox!.y + 20)
+  await page.mouse.down()
   try {
-    await source.dispatchEvent('dragstart', { dataTransfer })
-    const dragHint = page.getByTestId(`cloud-todo-column-drag-hint-${columnKey}`)
-    await expect
-      .poll(async () => {
-        await target.dispatchEvent('dragover', { dataTransfer })
-        return dragHint.isVisible().catch(() => false)
-      })
-      .toBe(true)
-    await target.dispatchEvent('drop', { dataTransfer })
+    await page.mouse.move(sourceBox!.x + 30, sourceBox!.y + 20)
+    await expect(page.getByTestId('project-board-drag-overlay')).toBeVisible()
+    await target.scrollIntoViewIfNeeded()
+    const targetBox = await target.boundingBox()
+    expect(targetBox).not.toBeNull()
+    await page.mouse.move(targetBox!.x + targetBox!.width / 2, targetBox!.y + 10, { steps: 10 })
+    await expect(page.getByTestId(`cloud-todo-column-drag-hint-${columnKey}`)).toBeVisible()
   } finally {
-    await source.dispatchEvent('dragend', { dataTransfer })
-    await dataTransfer.dispose()
+    await page.mouse.up()
   }
   const response = await mutationResponse
   expect(response.ok(), `Board mutation failed: ${await response.text()}`).toBe(true)
