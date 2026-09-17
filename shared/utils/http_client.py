@@ -31,6 +31,7 @@ Usage:
         response = client.post(url, json=data)
 """
 
+import ipaddress
 import logging
 import os
 from typing import Optional
@@ -41,6 +42,22 @@ import requests
 logger = logging.getLogger(__name__)
 
 _NO_PROXY_ENV_VARS = ("NO_PROXY", "no_proxy")
+_NO_PROXY_CIDR_PREFIX = "/"
+
+
+def _is_cidr_entry(entry: str) -> bool:
+    """Return True only for entries that are IP networks.
+
+    ``NO_PROXY`` also accepts URL forms such as ``http://localhost``, which
+    contain a slash and must be preserved.
+    """
+    if _NO_PROXY_CIDR_PREFIX not in entry:
+        return False
+    try:
+        ipaddress.ip_network(entry, strict=False)
+    except ValueError:
+        return False
+    return True
 
 
 def sanitize_no_proxy_env() -> list[str]:
@@ -51,11 +68,13 @@ def sanitize_no_proxy_env() -> list[str]:
     hostnames, so the generated pattern ``all://[fc00::/7]`` fails with
     ``httpx.InvalidURL: Invalid port: ':'`` and aborts client construction
     before any request is sent. IPv4 ranges were never effective either, since
-    ``all://192.168.0.0/16`` is parsed as the single host ``192.168.0.0``.
+    ``all://192.0.2.0/24`` is parsed as the single host ``192.0.2.0``.
 
     Host patterns cannot express CIDR ranges, so those entries are dropped and
     logged; destinations inside the removed ranges fall back to the configured
-    proxy instead of failing every client construction in the process.
+    proxy instead of failing every client construction in the process. Only
+    real IP networks are removed; URL-form entries such as
+    ``NO_PROXY=http://localhost`` keep working.
 
     Returns:
         The removed entries, for logging and assertions.
@@ -67,7 +86,7 @@ def sanitize_no_proxy_env() -> list[str]:
             continue
 
         entries = [entry.strip() for entry in raw_value.split(",")]
-        unsupported = [entry for entry in entries if entry and "/" in entry]
+        unsupported = [entry for entry in entries if entry and _is_cidr_entry(entry)]
         if not unsupported:
             continue
 

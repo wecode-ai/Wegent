@@ -48,6 +48,16 @@ def test_sanitize_no_proxy_env_keeps_supported_entries(
     assert os.environ["NO_PROXY"] == "localhost,.internal,*.example.com"
 
 
+def test_sanitize_no_proxy_env_keeps_url_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NO_PROXY", "http://localhost,192.168.0.0/16,example.com/path")
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    assert sanitize_no_proxy_env() == ["192.168.0.0/16"]
+    assert os.environ["NO_PROXY"] == "http://localhost,example.com/path"
+
+
 def test_traced_sync_client_ignores_cidr_no_proxy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -55,6 +65,19 @@ def test_traced_sync_client_ignores_cidr_no_proxy(
 
     with traced_sync_client(timeout=1.0) as client:
         assert client.timeout == httpx.Timeout(1.0)
+
+
+def test_traced_sync_client_keeps_url_no_proxy_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_no_proxy(monkeypatch, "http://localhost")
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example.com:8080")
+
+    with traced_sync_client(timeout=1.0) as client:
+        assert client.timeout == httpx.Timeout(1.0)
+
+    assert os.environ["NO_PROXY"] == "http://localhost"
+    assert os.environ["no_proxy"] == "http://localhost"
 
 
 async def test_traced_async_client_ignores_cidr_no_proxy(
