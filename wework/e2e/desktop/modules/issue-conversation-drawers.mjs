@@ -73,6 +73,7 @@ async function sampleDrawerMotion(control, scope, action, direction, timeoutMs) 
       'The shared track must not jump backwards'
     )
     const elapsed = frame.time - previous.time
+    assert.ok(elapsed >= 0, 'Drawer frame timestamps must be monotonic')
     assert.ok(
       Math.abs(movement) <= ((detail.width + 8) * 4 * elapsed) / 220 + 2,
       'The shared track jumped instead of sliding'
