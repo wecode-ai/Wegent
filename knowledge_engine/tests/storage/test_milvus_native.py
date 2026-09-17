@@ -163,15 +163,27 @@ def test_collection_schema_declares_required_fields_and_dimension():
     fields = {field.name: field for field in schema.fields}
 
     assert fields[DENSE_VECTOR_FIELD].params["dim"] == 4096
-    for name in (
-        "knowledge_id",
-        "doc_ref",
-        "chunk_index",
+    # The six fields retrieval needs: identity, both texts, the metadata column
+    # every condition is compiled against and the two vectors.
+    assert set(fields) == {
+        "id",
         "retrieval_text",
         "display_text",
+        "metadata",
+        DENSE_VECTOR_FIELD,
+        SPARSE_VECTOR_FIELD,
+    }
+    for removed in (
+        "generation",
+        "attempt_id",
+        "published",
+        "node_kind",
+        "knowledge_id",
+        "doc_ref",
+        "source_file",
+        "chunk_index",
+        "created_at",
     ):
-        assert name in fields
-    for removed in ("generation", "attempt_id", "published", "node_kind"):
         assert removed not in fields
     # The contract needs no column of its own: the collection carries it.
     assert schema.description == index_contract_description(binding)

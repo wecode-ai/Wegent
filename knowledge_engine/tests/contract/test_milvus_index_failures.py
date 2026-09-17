@@ -24,9 +24,22 @@ import pytest
 from llama_index.core.schema import TextNode
 from pymilvus import MilvusClient
 
+from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
+)
+from knowledge_engine.storage.milvus_native import (
+    ANALYZER_TYPE,
+    DENSE_VECTOR_FIELD,
+    INDEX_TYPE,
+    METRIC_TYPE,
+    SCHEMA_VERSION,
+    SPARSE_INDEX_TYPE,
+    SPARSE_METRIC_TYPE,
+    SPARSE_VECTOR_FIELD,
+    MilvusIndexBinding,
+    build_collection_schema,
 )
 from tests.contract.conftest import (
     CONTRACT_DIMENSION,
@@ -68,6 +81,52 @@ def _create_foreign_collection(uri: str, collection_name: str) -> None:
         client.create_collection(
             collection_name=collection_name,
             dimension=CONTRACT_DIMENSION,
+        )
+    finally:
+        client.close()
+
+
+def _create_collection_declaring_an_older_schema(
+    uri: str, collection_name: str
+) -> None:
+    """Create a collection whose contract declares the previous schema version.
+
+    Only the declared version is older: the row layout of that version is gone
+    from this code, and the version is the fact the reader compares before it
+    reads a row. Such a collection is what an operator meets after an upgrade
+    that did not rebuild every index.
+    """
+    binding = MilvusIndexBinding(
+        collection_name=collection_name,
+        connection=uri,
+        database="default",
+        schema_version=SCHEMA_VERSION - 1,
+        embedding_space="sha256:older-schema",
+        dimension=CONTRACT_DIMENSION,
+        metric_type=METRIC_TYPE,
+        index_type=INDEX_TYPE,
+        analyzer=ANALYZER_TYPE,
+    )
+    client = MilvusClient(uri=uri)
+    try:
+        if client.has_collection(collection_name):
+            client.drop_collection(collection_name)
+        index_params = client.prepare_index_params()
+        index_params.add_index(
+            field_name=DENSE_VECTOR_FIELD,
+            index_type=INDEX_TYPE,
+            metric_type=METRIC_TYPE,
+        )
+        index_params.add_index(
+            field_name=SPARSE_VECTOR_FIELD,
+            index_type=SPARSE_INDEX_TYPE,
+            metric_type=SPARSE_METRIC_TYPE,
+        )
+        client.create_collection(
+            collection_name=collection_name,
+            schema=build_collection_schema(binding),
+            index_params=index_params,
+            consistency_level="Strong",
         )
     finally:
         client.close()
@@ -170,6 +229,47 @@ def test_a_collection_without_a_contract_is_not_adopted(milvus_env) -> None:
     assert failure.value.retryable is False
 
     # The foreign collection is still there and still exactly as it was.
+    client = MilvusClient(uri=milvus_env.uri)
+    try:
+        assert client.has_collection(collection_name)
+    finally:
+        client.close()
+
+
+def test_a_collection_declaring_an_older_schema_is_refused(milvus_env) -> None:
+    """A row layout this code no longer writes is refused, not read.
+
+    The physical schema converged to the fields retrieval needs, so a
+    collection whose own contract declares the schema version before this one
+    is a collection this code cannot read rows out of and must not write rows
+    into. Every reading path and the write path report that version mismatch,
+    and the collection is left exactly as it was: nothing is upgraded, rebuilt
+    or adopted, because the operator rebuilds it.
+    """
+    backend = milvus_env.backend()
+    knowledge_id = milvus_env.new_knowledge_id()
+    collection_name = milvus_env.collection_name(knowledge_id)
+    _create_collection_declaring_an_older_schema(milvus_env.uri, collection_name)
+
+    for name, call in _read_paths(backend, knowledge_id).items():
+        with pytest.raises(IndexContractIncompatibleError) as failure:
+            call()
+        assert failure.value.code == "index_contract_incompatible", name
+        assert failure.value.details["bound_schema_version"] == SCHEMA_VERSION - 1
+        assert failure.value.details["schema_version"] == SCHEMA_VERSION
+
+    with pytest.raises(IndexContractIncompatibleError):
+        backend.index_with_metadata(
+            nodes=_nodes(1),
+            chunk_metadata=ChunkMetadata(
+                knowledge_id=knowledge_id,
+                doc_ref="1",
+                source_file="older-schema.txt",
+                created_at="2026-01-01T00:00:00Z",
+            ),
+            embed_model=DeterministicEmbedding(CONTRACT_DIMENSION),
+        )
+
     client = MilvusClient(uri=milvus_env.uri)
     try:
         assert client.has_collection(collection_name)

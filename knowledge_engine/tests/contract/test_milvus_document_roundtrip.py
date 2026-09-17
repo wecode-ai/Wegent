@@ -668,14 +668,14 @@ def test_concurrent_incompatible_creation_fails_explicitly(
     try:
         rows = client.query(
             collection_name=milvus_env.collection_name(knowledge_id),
-            filter=f'knowledge_id == "{knowledge_id}"',
-            output_fields=["doc_ref"],
+            filter=f'metadata["knowledge_id"] == "{knowledge_id}"',
+            output_fields=["metadata"],
             limit=10,
             consistency_level="Strong",
         )
     finally:
         client.close()
-    assert {row["doc_ref"] for row in rows} == {
+    assert {row["metadata"]["doc_ref"] for row in rows} == {
         str(document_id) for document_id in stored_document_ids
     }, "the writer that failed must not have stored any row"
 
@@ -795,11 +795,16 @@ def test_confirmed_binding_is_not_overwritten_by_an_incompatible_writer(
 def test_source_file_and_display_text_survive_the_round_trip(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """Stored rows keep document identity, display text and retrieval text."""
+    """Stored rows keep document identity, display text and retrieval text.
+
+    The document's own fields live in the row's metadata JSON column, so the
+    scope and the display fields are read back from there.
+    """
     from pymilvus import MilvusClient
 
     from knowledge_engine.storage.milvus_native import (
         DISPLAY_TEXT_FIELD,
+        METADATA_FIELD,
         RETRIEVAL_TEXT_FIELD,
     )
 
@@ -816,10 +821,9 @@ def test_source_file_and_display_text_survive_the_round_trip(
     try:
         rows = client.query(
             collection_name=backend.get_index_name(knowledge_id),
-            filter='knowledge_id == "{}"'.format(knowledge_id),
+            filter='metadata["knowledge_id"] == "{}"'.format(knowledge_id),
             output_fields=[
-                "doc_ref",
-                "source_file",
+                METADATA_FIELD,
                 DISPLAY_TEXT_FIELD,
                 RETRIEVAL_TEXT_FIELD,
             ],
@@ -830,8 +834,8 @@ def test_source_file_and_display_text_survive_the_round_trip(
 
     assert rows
     row = rows[0]
-    assert row["doc_ref"] == "1201"
-    assert row["source_file"] == "document-1201.txt"
+    assert row[METADATA_FIELD]["doc_ref"] == "1201"
+    assert row[METADATA_FIELD]["source_file"] == "document-1201.txt"
     assert "display and retrieval text" in row[DISPLAY_TEXT_FIELD]
     assert row[RETRIEVAL_TEXT_FIELD]
 
@@ -839,7 +843,13 @@ def test_source_file_and_display_text_survive_the_round_trip(
 def test_the_collection_keeps_no_publish_or_execution_columns(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """The physical schema holds the fields retrieval needs and nothing else."""
+    """The physical schema holds the six fields retrieval needs and nothing else.
+
+    Identity, both texts, the metadata JSON column every condition is compiled
+    against and the two vectors. The knowledge base, document, source file,
+    creation time and chunk position are stored inside that one column, so no
+    column duplicates them.
+    """
     from pymilvus import MilvusClient
 
     knowledge_id = milvus_env.new_knowledge_id()
@@ -858,6 +868,11 @@ def test_the_collection_keeps_no_publish_or_execution_columns(
         client.close()
 
     field_names = {field["name"] for field in description["fields"]}
-    assert {"published", "generation", "attempt_id", "node_kind"}.isdisjoint(
-        field_names
-    )
+    assert field_names == {
+        "id",
+        "retrieval_text",
+        "display_text",
+        "metadata",
+        "dense_vector",
+        "sparse_vector",
+    }

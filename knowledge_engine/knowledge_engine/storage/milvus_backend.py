@@ -411,22 +411,32 @@ class MilvusBackend(BaseStorageBackend):
         knowledge_id: str,
         doc_ref: str,
     ) -> Dict[str, Any]:
+        """Build one stored row: identity, both texts, vector and metadata.
+
+        The row's metadata column is the row's own record of the chunk: the
+        knowledge base, the document reference and the chunk position the write
+        path indexes it under, plus whatever the caller applied to the node.
+        The identity the write path owns is written from its own arguments -
+        the same values the row id is derived from - so the scope a read
+        filters on can never disagree with the row it filters. The scope keys
+        are text, the way the compiled conditions compare them.
+        """
         metadata = dict(node.metadata or {})
         chunk_index = int(metadata.get("chunk_index") or 0)
+        metadata[KNOWLEDGE_ID_FIELD] = str(knowledge_id)
+        metadata[DOC_REF_FIELD] = str(doc_ref)
+        metadata[CHUNK_INDEX_FIELD] = chunk_index
+        metadata[SOURCE_FILE_FIELD] = str(metadata.get(SOURCE_FILE_FIELD) or "")
+        metadata[CREATED_AT_FIELD] = str(metadata.get(CREATED_AT_FIELD) or "")
         return {
             ID_FIELD: node_row_id(
                 knowledge_id=knowledge_id,
                 doc_ref=doc_ref,
                 chunk_index=chunk_index,
             ),
-            KNOWLEDGE_ID_FIELD: knowledge_id,
-            DOC_REF_FIELD: doc_ref,
-            SOURCE_FILE_FIELD: str(metadata.get("source_file") or ""),
-            CHUNK_INDEX_FIELD: chunk_index,
             RETRIEVAL_TEXT_FIELD: self.get_node_embedding_text(node),
             DISPLAY_TEXT_FIELD: self.get_node_display_text(node),
             METADATA_FIELD: _json_metadata(metadata),
-            CREATED_AT_FIELD: str(metadata.get("created_at") or ""),
             DENSE_VECTOR_FIELD: [float(value) for value in vector],
         }
 
@@ -768,8 +778,7 @@ class MilvusBackend(BaseStorageBackend):
                     or metadata.get(DISPLAY_TEXT_METADATA_KEY)
                     or "",
                     "score": score,
-                    "title": hit.get(SOURCE_FILE_FIELD)
-                    or metadata.get("source_file", ""),
+                    "title": metadata.get(SOURCE_FILE_FIELD) or "",
                     "metadata": metadata,
                 }
             )

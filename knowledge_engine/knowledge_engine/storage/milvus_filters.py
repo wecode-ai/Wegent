@@ -6,10 +6,11 @@
 
 The adapter above this module owns retrieval modes; this module owns one
 concern: turning the flat Dify-style ``and``/``or`` condition tree shared with
-the other backends into a Milvus filter expression. Known chunk fields compile
-against their typed physical column; every other key compiles against the
-native JSON metadata column, so the server applies the condition before the
-``top_k`` cut instead of the adapter dropping candidates afterwards.
+the other backends into a Milvus filter expression. Every key compiles against
+the native JSON metadata column, so the server applies the condition before the
+``top_k`` cut instead of the adapter dropping candidates afterwards; a chunk
+field only differs in that its value is encoded as the type the row layout
+stored it with.
 
 Recorded semantics of the compiled contract:
 
@@ -43,7 +44,6 @@ from knowledge_engine.storage.milvus_native import (
     CHUNK_FIELDS_FOR_FILTERING,
     DOC_REF_FIELD,
     ID_FIELD,
-    METADATA_FIELD,
     NUMERIC_FILTER_FIELDS,
     metadata_path,
     sanitize_filter_value,
@@ -126,7 +126,13 @@ def _compile_condition(
 def _condition_target(
     key: str, *, allow_document_scope: bool = False
 ) -> Tuple[str, LiteralKind]:
-    """Resolve one condition key to its field expression and literal type."""
+    """Resolve one condition key to its field expression and literal type.
+
+    Every key is addressed through the metadata JSON column. The literal type
+    decides how a value is encoded: a condition on a chunk field is compared as
+    the type the row layout stored there, a condition on a user key by the type
+    of the value the caller passed.
+    """
     if key == DOC_REF_FIELD:
         if allow_document_scope:
             return metadata_path(DOC_REF_FIELD), "text"
@@ -140,8 +146,9 @@ def _condition_target(
         )
     if key in CHUNK_FIELDS_FOR_FILTERING:
         kind: LiteralKind = "numeric" if key in NUMERIC_FILTER_FIELDS else "text"
-        return key, kind
-    return f'{METADATA_FIELD}["{sanitize_filter_value(key)}"]', "json"
+    else:
+        kind = "json"
+    return metadata_path(key), kind
 
 
 def _literal(key: str, literal_kind: LiteralKind, value: Any) -> str:
@@ -158,12 +165,13 @@ def _compile_text_condition(
 ) -> str:
     """Compile a substring condition, including JSON array membership.
 
-    A JSON key keeps both ways the shared contract can match: the typed element
+    A user key keeps both ways the shared contract can match: the typed element
     match (``contains 2026`` matches the number ``2026`` even inside an array)
     and the string substring match (``contains 2026`` also matches the text
-    ``"release2026"``). Milvus only ever treats ``%`` and ``_`` as ``like``
-    wildcards and cannot escape them, so a value that contains one is rejected
-    instead of widening the condition.
+    ``"release2026"``). A chunk field keeps the substring match alone, exactly
+    as the typed column it used to be compared against was read. Milvus only
+    ever treats ``%`` and ``_`` as ``like`` wildcards and cannot escape them, so
+    a value that contains one is rejected instead of widening the condition.
     """
     scalar = _scalar_value(key, value)
     pattern = _literal_pattern(key, _json_text(key, scalar))

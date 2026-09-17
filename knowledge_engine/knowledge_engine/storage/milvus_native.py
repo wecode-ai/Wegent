@@ -35,7 +35,7 @@ from pymilvus import (
 from knowledge_engine.storage.errors import IndexContractIncompatibleError
 
 # Bump when the physical row layout changes in a way that requires rebuilding.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 METRIC_TYPE = "COSINE"
 INDEX_TYPE = "AUTOINDEX"
 SPARSE_METRIC_TYPE = "BM25"
@@ -52,7 +52,6 @@ BM25_FUNCTION_NAME = "retrieval_text_bm25"
 CONTRACT_DESCRIPTION_PREFIX = "wegent-index-contract:"
 
 MAX_ID_LENGTH = 128
-MAX_KEY_LENGTH = 512
 MAX_TEXT_LENGTH = 65535
 MAX_COUNT_ROWS = 16384
 
@@ -82,9 +81,9 @@ CREATED_AT_FIELD = "created_at"
 DENSE_VECTOR_FIELD = "dense_vector"
 SPARSE_VECTOR_FIELD = "sparse_vector"
 
-# Physical scalar columns that a metadata condition may be compiled against.
-# Row identity is deliberately absent: the write path owns it, so a query
-# condition can never pin or fake it.
+# Metadata keys the row layout writes with a fixed type, so a condition on one
+# is compared against the type the writer stored. Row identity is deliberately
+# absent: the write path owns it, so a query condition can never pin or fake it.
 CHUNK_FIELDS_FOR_FILTERING: List[str] = [
     KNOWLEDGE_ID_FIELD,
     DOC_REF_FIELD,
@@ -94,16 +93,13 @@ CHUNK_FIELDS_FOR_FILTERING: List[str] = [
 ]
 NUMERIC_FILTER_FIELDS = frozenset({CHUNK_INDEX_FIELD})
 
+# Columns one read asks for by default: the row's identity, the two texts the
+# retrieval paths answer with, and the metadata column that holds the rest.
 ROW_OUTPUT_FIELDS: List[str] = [
     ID_FIELD,
-    KNOWLEDGE_ID_FIELD,
-    DOC_REF_FIELD,
-    SOURCE_FILE_FIELD,
-    CHUNK_INDEX_FIELD,
     RETRIEVAL_TEXT_FIELD,
     DISPLAY_TEXT_FIELD,
     METADATA_FIELD,
-    CREATED_AT_FIELD,
 ]
 
 
@@ -299,9 +295,10 @@ def build_collection_schema(binding: MilvusIndexBinding) -> CollectionSchema:
 
     The collection carries both retrieval paths: a dense vector for semantic
     search and a server-maintained sparse vector whose terms come from the
-    BM25 function over the analyzed retrieval text. Filterable metadata is a
-    native JSON column so it is applied by the server before ``top_k``. Its
-    description carries the index contract of the collection it creates.
+    BM25 function over the analyzed retrieval text. Everything a condition can
+    name - the scope, a document's own fields and every user key - lives in one
+    native JSON column, so the server applies the condition before ``top_k``.
+    Its description carries the index contract of the collection it creates.
     """
     if binding.dimension <= 0:
         raise ValueError("dimension must be a positive integer")
@@ -335,7 +332,13 @@ def build_collection_schema(binding: MilvusIndexBinding) -> CollectionSchema:
 
 
 def _scalar_row_fields() -> List[FieldSchema]:
-    """Scalar columns shared by every knowledge index row."""
+    """Scalar columns shared by every knowledge index row.
+
+    The row's identity, the retrieval text the BM25 function reads, the display
+    text a caller is answered with, and the metadata JSON column that holds
+    everything else - the scope, a document's own fields and every user key.
+    Nothing is duplicated across them, so each value has one home per row.
+    """
     return [
         FieldSchema(
             name=ID_FIELD,
@@ -343,22 +346,6 @@ def _scalar_row_fields() -> List[FieldSchema]:
             is_primary=True,
             max_length=MAX_ID_LENGTH,
         ),
-        FieldSchema(
-            name=KNOWLEDGE_ID_FIELD,
-            dtype=DataType.VARCHAR,
-            max_length=MAX_KEY_LENGTH,
-        ),
-        FieldSchema(
-            name=DOC_REF_FIELD,
-            dtype=DataType.VARCHAR,
-            max_length=MAX_KEY_LENGTH,
-        ),
-        FieldSchema(
-            name=SOURCE_FILE_FIELD,
-            dtype=DataType.VARCHAR,
-            max_length=MAX_TEXT_LENGTH,
-        ),
-        FieldSchema(name=CHUNK_INDEX_FIELD, dtype=DataType.INT64),
         FieldSchema(
             name=RETRIEVAL_TEXT_FIELD,
             dtype=DataType.VARCHAR,
@@ -375,11 +362,6 @@ def _scalar_row_fields() -> List[FieldSchema]:
             max_length=MAX_TEXT_LENGTH,
         ),
         FieldSchema(name=METADATA_FIELD, dtype=DataType.JSON, nullable=True),
-        FieldSchema(
-            name=CREATED_AT_FIELD,
-            dtype=DataType.VARCHAR,
-            max_length=MAX_TEXT_LENGTH,
-        ),
     ]
 
 

@@ -23,15 +23,10 @@ from knowledge_engine.storage.errors import (
 from knowledge_engine.storage.milvus_backend import MilvusBackend
 from knowledge_engine.storage.milvus_native import (
     ANALYZER_TYPE,
-    CHUNK_INDEX_FIELD,
-    CREATED_AT_FIELD,
     DISPLAY_TEXT_FIELD,
-    DOC_REF_FIELD,
-    KNOWLEDGE_ID_FIELD,
     METADATA_FIELD,
     RETRIEVAL_TEXT_FIELD,
     SCHEMA_VERSION,
-    SOURCE_FILE_FIELD,
 )
 from knowledge_engine.storage.milvus_rows import MAX_READ_LIMIT
 from shared.models import RetrievalScope
@@ -46,9 +41,6 @@ _JSON_MEMBERSHIP_CLAUSE = re.compile(
 )
 _JSON_SUBSTRING_CLAUSE = re.compile(
     r'^metadata\["(?P<key>.+?)"\] like "%(?P<value>.*)%"$'
-)
-_COLUMN_CLAUSE = re.compile(
-    r"^(?P<key>\w+) (?P<operator>==|!=|in|not in|>=|<=|>|<) (?P<value>.+)$"
 )
 
 
@@ -212,7 +204,9 @@ class FakeStore:
     def ensure_index(self, client, collection_name, *, dimension, embedding_space):
         self.calls.append(("ensure_index", collection_name, dimension, embedding_space))
         self.collection_exists = True
-        self.binding = "bound"
+        # The real store answers with the contract the collection declares, so
+        # a read that follows this write sees a readable one.
+        self.binding = FakeBinding()
         return self.binding
 
     def confirm_contract(self, collection_name, binding, *, dimension, embedding_space):
@@ -365,19 +359,17 @@ class FakeStore:
             return substring.group("value") in str(
                 cls._metadata_value(row, substring.group("key")) or ""
             )
-        for pattern in (_JSON_CLAUSE, _COLUMN_CLAUSE):
-            match = pattern.match(clause)
-            if not match:
-                continue
-            key = match.group("key")
-            if pattern is _JSON_CLAUSE:
-                actual = cls._metadata_value(row, key)
-            else:
-                actual = row.get(key)
-            return _compare(
-                actual, match.group("operator"), _parse_literal(match.group("value"))
+        comparison = _JSON_CLAUSE.match(clause)
+        if not comparison:
+            raise AssertionError(
+                f"the fake store cannot evaluate the clause {clause!r}"
             )
-        raise AssertionError(f"the fake store cannot evaluate the clause {clause!r}")
+        # Every clause the compiler emits addresses the row's metadata column.
+        return _compare(
+            cls._metadata_value(row, comparison.group("key")),
+            comparison.group("operator"),
+            _parse_literal(comparison.group("value")),
+        )
 
     @staticmethod
     def _metadata_value(row: Dict[str, Any], key: str) -> Any:
@@ -435,9 +427,9 @@ def _stored_row(
 ) -> Dict[str, Any]:
     """One stored row, laid out the way the write path lays one out.
 
-    The chunk columns and the metadata JSON column carry the same scope keys,
-    so a reader and a compiled filter can both be exercised against the shape a
-    real row has.
+    The row's scope and document fields live in its metadata JSON column, so a
+    reader and a compiled filter are both exercised against the shape a real
+    row has.
     """
     stored_metadata = {
         "knowledge_id": "1",
@@ -449,11 +441,6 @@ def _stored_row(
     stored_metadata.update(metadata or {})
     row = {
         "id": f"{doc_ref}-{chunk_index}",
-        KNOWLEDGE_ID_FIELD: "1",
-        DOC_REF_FIELD: doc_ref,
-        SOURCE_FILE_FIELD: stored_metadata["source_file"],
-        CREATED_AT_FIELD: stored_metadata["created_at"],
-        CHUNK_INDEX_FIELD: chunk_index,
         RETRIEVAL_TEXT_FIELD: f"retrieval {chunk_index}",
         DISPLAY_TEXT_FIELD: (
             f"chunk {chunk_index}" if display_text is None else display_text
@@ -553,6 +540,80 @@ def test_index_writes_the_document_with_a_single_upsert():
     assert result["dimension"] == 2
     assert result["index_name"] == "test_kb_1"
     assert result["status"] == "success"
+
+
+def test_a_written_row_keeps_its_scope_in_the_metadata_column():
+    """The scope keys have one home: the row's own metadata JSON column."""
+    backend = _backend()
+    store = FakeStore()
+    backend._store = store
+
+    backend.index_with_metadata(
+        nodes=_nodes(1),
+        chunk_metadata=_chunk_metadata(),
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+    )
+
+    [row] = store.rows
+    assert row[METADATA_FIELD]["knowledge_id"] == "1"
+    assert row[METADATA_FIELD]["doc_ref"] == "42"
+    assert row[METADATA_FIELD]["chunk_index"] == 0
+    assert row[METADATA_FIELD]["source_file"] == "doc.txt"
+    assert row[METADATA_FIELD]["created_at"] == "2026-01-01T00:00:00Z"
+    for removed in (
+        "knowledge_id",
+        "doc_ref",
+        "source_file",
+        "chunk_index",
+        "created_at",
+    ):
+        assert removed not in row
+
+
+def test_a_written_row_carries_scope_keys_a_caller_did_not_apply():
+    """A node without them is still stored under the write path's identity.
+
+    The metadata column is the only home of the scope now, so a row that
+    reached storage without those keys could never be read or deleted through
+    the scope it belongs to. The write path writes the values it derives the
+    row id from.
+    """
+    backend = _backend()
+    store = FakeStore()
+    backend._store = store
+
+    backend.index_with_metadata(
+        nodes=[TextNode(text="chunk without metadata", metadata={})],
+        chunk_metadata=_chunk_metadata(),
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+    )
+
+    [row] = store.rows
+    assert row[METADATA_FIELD]["knowledge_id"] == "1"
+    assert row[METADATA_FIELD]["doc_ref"] == "42"
+    assert row[METADATA_FIELD]["chunk_index"] == 0
+
+
+def test_a_written_row_stores_its_scope_the_way_the_filter_compares_it():
+    """The scope keys are text, exactly as the compiled conditions compare them.
+
+    A caller that hands the write path a numeric reference must not leave a
+    number in the metadata column: the scope filter compares text, so the row
+    would drop out of the scope it belongs to.
+    """
+    backend = _backend()
+    store = FakeStore()
+    backend._store = store
+
+    backend.index_with_metadata(
+        nodes=[TextNode(text="chunk", metadata={})],
+        chunk_metadata=_chunk_metadata(doc_ref=42),
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+    )
+
+    [row] = store.rows
+    assert row[METADATA_FIELD]["doc_ref"] == "42"
+    assert backend.get_document("1", "42")["chunk_count"] == 1
 
 
 def test_index_returns_as_soon_as_the_rows_are_written():
@@ -1579,6 +1640,7 @@ def test_retrieve_rejects_doc_ref_metadata_condition():
 
 
 def test_retrieve_compiles_supported_metadata_conditions():
+    """A condition on a chunk field is a condition on its metadata path."""
     backend = _backend()
     store = FakeStore(rows=[])
     backend._store = store
@@ -1598,7 +1660,10 @@ def test_retrieve_compiles_supported_metadata_conditions():
     )
 
     expression = store.searches[0]["filter"]
-    assert '(source_file == "a.txt" or chunk_index >= 3)' in expression
+    assert (
+        '(metadata["source_file"] == "a.txt" or metadata["chunk_index"] >= 3)'
+        in expression
+    )
 
 
 def test_retrieve_filters_user_metadata_through_the_native_json_column():
@@ -1648,8 +1713,8 @@ def test_retrieve_accepts_numeric_lists_without_scalar_validation():
     )
 
     expression = store.searches[0]["filter"]
-    assert "chunk_index in [0, 1]" in expression
-    assert "chunk_index not in [7]" in expression
+    assert 'metadata["chunk_index"] in [0, 1]' in expression
+    assert 'metadata["chunk_index"] not in [7]' in expression
 
 
 def test_retrieve_escapes_quotes_and_backslashes_in_metadata_conditions():
@@ -1697,7 +1762,9 @@ def test_retrieve_compiles_text_conditions_against_json_and_arrays():
         '(json_contains(metadata["tags"], "alpha") '
         'or metadata["tags"] like "%alpha%")' in expression
     )
-    assert 'source_file like "%doc%"' in expression
+    # A chunk field keeps only the substring match it had as a typed column.
+    assert 'metadata["source_file"] like "%doc%"' in expression
+    assert 'json_contains(metadata["source_file"]' not in expression
 
 
 @pytest.mark.parametrize(

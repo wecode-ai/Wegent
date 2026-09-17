@@ -20,7 +20,6 @@ from pymilvus import MilvusClient
 from knowledge_engine.storage.errors import StorageBackendError
 from knowledge_engine.storage.milvus_filters import compile_metadata_conditions
 from knowledge_engine.storage.milvus_native import (
-    CHUNK_FIELDS_FOR_FILTERING,
     CHUNK_INDEX_FIELD,
     CREATED_AT_FIELD,
     DISPLAY_TEXT_FIELD,
@@ -41,7 +40,11 @@ DEFAULT_LIST_PAGE_SIZE = 20
 
 
 def row_metadata(hit: Dict[str, Any]) -> Dict[str, Any]:
-    """Combine a row's JSON metadata with its physical scalar columns."""
+    """The metadata one stored row carries, taken from its own JSON column.
+
+    The row layout keeps a chunk's scope and document fields inside that
+    column, so this is the single place a reader looks for them.
+    """
     raw = hit.get(METADATA_FIELD)
     if raw is None:
         metadata: Dict[str, Any] = {}
@@ -52,14 +55,16 @@ def row_metadata(hit: Dict[str, Any]) -> Dict[str, Any]:
             "Stored Milvus metadata is not a JSON object.",
             details={"row_id": hit.get(ID_FIELD)},
         )
-    for field in CHUNK_FIELDS_FOR_FILTERING:
-        if field in hit:
-            metadata.setdefault(field, hit[field])
     if RETRIEVAL_TEXT_FIELD in hit:
         metadata.setdefault(RETRIEVAL_TEXT_FIELD, hit[RETRIEVAL_TEXT_FIELD])
     if DISPLAY_TEXT_FIELD in hit:
         metadata.setdefault(DISPLAY_TEXT_FIELD, hit[DISPLAY_TEXT_FIELD])
     return metadata
+
+
+def row_chunk_index(hit: Dict[str, Any]) -> int:
+    """The chunk position a stored row declares in its metadata."""
+    return int(row_metadata(hit).get(CHUNK_INDEX_FIELD) or 0)
 
 
 class MilvusRowReader:
@@ -94,17 +99,18 @@ class MilvusRowReader:
             raise ValueError(f"Document {doc_ref} not found")
 
         # Chunk index first, then the row's own id, so a stored row set keeps
-        # one order however the server returns it.
+        # one order however the server returns it. Both the chunk index and the
+        # document's display fields live in the row's own metadata.
         ordered_rows = sorted(
             rows,
             key=lambda row: (
-                int(row.get(CHUNK_INDEX_FIELD) or 0),
+                row_chunk_index(row),
                 str(row.get(ID_FIELD) or ""),
             ),
         )
         chunks = [
             {
-                "chunk_index": int(row.get(CHUNK_INDEX_FIELD) or 0),
+                "chunk_index": row_chunk_index(row),
                 "content": row.get(DISPLAY_TEXT_FIELD) or "",
                 "metadata": row_metadata(row),
             }
@@ -113,7 +119,7 @@ class MilvusRowReader:
         return {
             "doc_ref": doc_ref,
             "knowledge_id": knowledge_id,
-            "source_file": ordered_rows[0].get(SOURCE_FILE_FIELD),
+            "source_file": row_metadata(ordered_rows[0]).get(SOURCE_FILE_FIELD),
             "chunk_count": len(chunks),
             "chunks": chunks,
         }
@@ -133,26 +139,22 @@ class MilvusRowReader:
         rows = self._read_all_rows(
             collection_name,
             filter_expr,
-            output_fields=[
-                DOC_REF_FIELD,
-                SOURCE_FILE_FIELD,
-                CREATED_AT_FIELD,
-                CHUNK_INDEX_FIELD,
-            ],
+            output_fields=[METADATA_FIELD],
         )
 
         documents: Dict[str, Dict[str, Any]] = {}
         for row in rows:
-            doc_ref = row.get(DOC_REF_FIELD)
+            metadata = row_metadata(row)
+            doc_ref = metadata.get(DOC_REF_FIELD)
             if not doc_ref:
                 continue
             document = documents.setdefault(
                 doc_ref,
                 {
                     "doc_ref": doc_ref,
-                    "source_file": row.get(SOURCE_FILE_FIELD),
+                    "source_file": metadata.get(SOURCE_FILE_FIELD),
                     "chunk_count": 0,
-                    "created_at": row.get(CREATED_AT_FIELD),
+                    "created_at": metadata.get(CREATED_AT_FIELD),
                 },
             )
             document["chunk_count"] += 1
@@ -200,16 +202,18 @@ class MilvusRowReader:
         )
         rows = self._read_rows(collection_name, filter_expr, limit=max_chunks)
 
-        chunks = [
-            {
-                "content": row.get(DISPLAY_TEXT_FIELD) or "",
-                "title": row.get(SOURCE_FILE_FIELD) or "",
-                "chunk_id": int(row.get(CHUNK_INDEX_FIELD) or 0),
-                "doc_ref": row.get(DOC_REF_FIELD) or "",
-                "metadata": row_metadata(row),
-            }
-            for row in rows
-        ]
+        chunks = []
+        for row in rows:
+            metadata = row_metadata(row)
+            chunks.append(
+                {
+                    "content": row.get(DISPLAY_TEXT_FIELD) or "",
+                    "title": metadata.get(SOURCE_FILE_FIELD) or "",
+                    "chunk_id": int(metadata.get(CHUNK_INDEX_FIELD) or 0),
+                    "doc_ref": metadata.get(DOC_REF_FIELD) or "",
+                    "metadata": metadata,
+                }
+            )
         chunks.sort(key=lambda chunk: (chunk["doc_ref"], chunk["chunk_id"]))
         return chunks
 
