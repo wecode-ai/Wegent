@@ -99,7 +99,7 @@ interface KnowledgeDocumentTreeGridProps {
   onMove?: (doc: KnowledgeDocument) => void
   refreshingDocId?: number | null
   reindexingDocId?: number | null
-  syncingDocId?: number | null
+  isSyncing?: (documentId: number) => boolean
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
   includedInFolderScope?: (doc: KnowledgeDocument) => boolean
@@ -204,7 +204,7 @@ export function KnowledgeDocumentTreeGrid({
   onMove,
   refreshingDocId,
   reindexingDocId,
-  syncingDocId,
+  isSyncing,
   canManage,
   canSelect,
   includedInFolderScope,
@@ -514,7 +514,7 @@ export function KnowledgeDocumentTreeGrid({
               if (!onSync || !(canManage?.(document) ?? true)) return null
               const label = t('document.document.resync')
               const syncBusy =
-                syncingDocId === document.id ||
+                isSyncing?.(document.id) ||
                 reindexingDocId === document.id ||
                 ['queued', 'indexing', 'converting', 'pending_conversion'].includes(
                   document.index_status
@@ -825,7 +825,7 @@ export function KnowledgeDocumentTreeGrid({
           const isConverting = document.index_status === 'converting'
           const showIndexingState =
             reindexingDocId === document.id ||
-            syncingDocId === document.id ||
+            isSyncing?.(document.id) ||
             document.index_status === 'queued' ||
             document.index_status === 'indexing' ||
             isConverting ||
@@ -1016,7 +1016,7 @@ export function KnowledgeDocumentTreeGrid({
       ragConfigured,
       refreshingDocId,
       reindexingDocId,
-      syncingDocId,
+      isSyncing,
       selectAllLabel,
       selectedDocumentIds,
       selectedFolderIds,

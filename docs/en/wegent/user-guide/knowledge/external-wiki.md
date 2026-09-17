@@ -105,7 +105,7 @@ When a wiki page is deleted, the system **does not delete the local document**; 
 
 - Documents with a successfully built index **keep the last successfully synced index**, so agents can still retrieve the pre-deletion content.
 - The state persists until the page is restored or you unbind manually.
-- If the source page (or permission) is restored, the next inspection detects it and resumes syncing automatically — no re-binding needed.
+- If the source page is restored, the next inspection detects it and resumes syncing automatically — no re-binding needed.
 
 To remove the content for good, use **Unbind** in the knowledge base document list; the local document and its index are deleted.
 

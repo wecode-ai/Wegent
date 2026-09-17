@@ -6,7 +6,7 @@
 
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -175,7 +175,7 @@ def test_task_skips_missing_document(
     _assert_fetch_not_started(provider)
 
 
-def test_task_leaves_owner_policy_to_provider(
+def test_task_does_not_fetch_external_content_for_inactive_owner(
     task_db: Session,
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
@@ -183,17 +183,19 @@ def test_task_leaves_owner_policy_to_provider(
     document = _create_placeholder(task_db, test_user.id)
     test_user.is_active = False
     task_db.commit()
-    run_import = MagicMock()
+    provider = _provider()
     monkeypatch.setattr(
-        "app.services.knowledge.external_document_import.run_external_document_import",
-        run_import,
+        "app.services.knowledge.external_document_import"
+        ".get_external_document_provider",
+        lambda provider_id: provider,
     )
 
     _run_task(document.id)
 
-    run_import.assert_called_once()
-    assert run_import.call_args.args[2].id == test_user.id
-    assert run_import.call_args.args[2].is_active is False
+    _assert_fetch_not_started(provider)
+    task_db.refresh(document)
+    assert document.index_status == DocumentIndexStatus.FAILED
+    assert document.processing_error_payload["code"] == "external_import_failed"
 
 
 def test_task_claims_generation_before_running(

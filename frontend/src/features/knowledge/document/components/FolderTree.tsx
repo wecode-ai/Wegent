@@ -56,7 +56,7 @@ interface FolderTreeProps {
   onMove?: (doc: KnowledgeDocument) => void
   refreshingDocId?: number | null
   reindexingDocId?: number | null
-  syncingDocId?: number | null
+  isSyncing?: (documentId: number) => boolean
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
   isSelectionDisabled?: (doc: KnowledgeDocument) => boolean
@@ -643,7 +643,7 @@ export function FolderTree({
   onMove,
   refreshingDocId,
   reindexingDocId,
-  syncingDocId,
+  isSyncing,
   canManage,
   canSelect,
   isSelectionDisabled,
@@ -782,7 +782,7 @@ export function FolderTree({
             onMove={onMove}
             isRefreshing={id => refreshingDocId === id}
             isReindexing={id => reindexingDocId === id}
-            isSyncing={id => syncingDocId === id}
+            isSyncing={isSyncing}
             canManage={canManage}
             canSelect={canSelect}
             isSelectionDisabled={isSelectionDisabled}
@@ -827,7 +827,7 @@ export function FolderTree({
       onMove={onMove}
       isRefreshing={id => refreshingDocId === id}
       isReindexing={id => reindexingDocId === id}
-      isSyncing={id => syncingDocId === id}
+      isSyncing={isSyncing}
       canManage={canManage}
       canSelect={canSelect}
       isSelectionDisabled={isSelectionDisabled}

@@ -742,7 +742,7 @@ class ExternalDocumentImportService:
 def run_external_document_import(
     db: Session,
     document: KnowledgeDocument,
-    user: User,
+    user: User | None,
     *,
     generation: int,
 ) -> None:
@@ -764,15 +764,17 @@ def run_external_document_import(
     provider_id = document.external_provider
     resource_id = document.external_resource_id
     owner_user_id = document.user_id
-    provider = get_external_document_provider(provider_id or "")
     try:
-        if provider is None:
-            raise ExternalDocumentFetchError(
-                f"Unsupported external provider: {provider_id}"
-            )
         if user is None:
             raise ExternalDocumentFetchError(
                 f"Owner user {owner_user_id} no longer exists"
+            )
+        if not user.is_active:
+            raise ExternalDocumentFetchError(f"Owner user {owner_user_id} is inactive")
+        provider = get_external_document_provider(provider_id or "")
+        if provider is None:
+            raise ExternalDocumentFetchError(
+                f"Unsupported external provider: {provider_id}"
             )
         if isinstance(provider, DetachedExternalDocumentProvider):
             prepared = provider.prepare_content_fetch(db, user, resource_id)

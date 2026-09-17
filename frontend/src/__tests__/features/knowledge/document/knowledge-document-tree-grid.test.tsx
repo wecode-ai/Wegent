@@ -587,7 +587,7 @@ describe('KnowledgeDocumentTreeGrid', () => {
         selectedFolderIds={new Set()}
         selectedDocumentIds={new Set()}
         onSync={onSync}
-        syncingDocId={27}
+        isSyncing={documentId => documentId === 27}
         canManage={() => true}
       />
     )

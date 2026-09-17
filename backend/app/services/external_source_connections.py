@@ -101,6 +101,7 @@ class ExternalSourceConnectionService:
                 provider_id=provider_id,
                 connection_id=connection_id,
                 include_inactive=True,
+                for_update=True,
             )
             if existing is None and not create_if_missing:
                 raise ValueError("External source connection not found")

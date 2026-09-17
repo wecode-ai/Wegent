@@ -110,9 +110,10 @@ async def test_unsaved_connection_values_can_be_tested_without_connection_id(
     monkeypatch,
 ):
     connector = SimpleNamespace(
+        connector_type="wikijs",
         test_connection=AsyncMock(
             return_value=WikiConnectionTest(ok=True, message="连接成功", version="2.5")
-        )
+        ),
     )
     monkeypatch.setattr(
         "app.api.endpoints.external_wiki.WIKI_CONNECTORS",
@@ -135,6 +136,70 @@ async def test_unsaved_connection_values_can_be_tested_without_connection_id(
         ok=True, message="连接成功", version="2.5"
     )
     db.commit.assert_called_once_with()
+    connector.test_connection.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_disabled_stored_connection_can_be_tested_without_resending_api_key(
+    monkeypatch,
+):
+    connector = SimpleNamespace(
+        connector_type="wikijs",
+        test_connection=AsyncMock(
+            return_value=WikiConnectionTest(ok=True, message="连接成功", version="2.5")
+        ),
+    )
+    stored = SimpleNamespace(
+        connection_id="conn-primary",
+        owner_user_id=7,
+        display_name="Primary",
+        adapter_type="wikijs",
+        enabled=False,
+        config={
+            "site_url": "https://wiki.example.com",
+            "default_locale": "zh",
+        },
+        credentials={"api_key": "stored-key"},
+        revision=3,
+    )
+    get_owned = MagicMock(return_value=stored)
+    monkeypatch.setattr(
+        "app.services.wiki.service.external_source_connection_service.get_owned",
+        get_owned,
+    )
+    monkeypatch.setattr(
+        "app.services.wiki.service.register_builtin_connectors",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "app.services.wiki.service.WIKI_CONNECTORS",
+        SimpleNamespace(get=lambda connector_type: connector),
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.external_wiki.WIKI_CONNECTORS",
+        SimpleNamespace(get=lambda connector_type: connector),
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.external_wiki.validate_wiki_site_url",
+        lambda site_url: site_url,
+    )
+    db = MagicMock()
+
+    result = await run_wiki_connection_test(
+        WikiConnectionTestRequest(connection_id="conn-primary"),
+        db=db,
+        current_user=_user(),
+    )
+
+    assert result == WikiConnectionTestResponse(
+        ok=True, message="连接成功", version="2.5"
+    )
+    get_owned.assert_called_once_with(
+        db,
+        owner_user_id=7,
+        provider_id="wiki",
+        connection_id="conn-primary",
+    )
     connector.test_connection.assert_awaited_once()
 
 

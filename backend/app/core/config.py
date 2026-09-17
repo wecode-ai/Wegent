@@ -340,7 +340,9 @@ class Settings(BaseSettings):
 
     # External Wiki synchronized import and page-picker configuration.
     WIKIJS_GRAPHQL_TIMEOUT_SECONDS: int = 30  # Wiki.js connector per-request timeout
-    WIKI_TREE_MAX_PAGES: int = 5000  # Tree browse page-list upper bound
+    WIKI_TREE_MAX_PAGES: int = Field(
+        default=5000, ge=1
+    )  # Tree browse page-list upper bound
     # Intranet wiki sites resolve to private addresses; opt in per deployment.
     WIKI_ALLOW_PRIVATE_NETWORK: bool = False
     EXTERNAL_DOC_SYNC_ENABLED: bool = True

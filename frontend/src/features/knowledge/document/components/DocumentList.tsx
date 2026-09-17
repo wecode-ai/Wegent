@@ -504,7 +504,11 @@ export function DocumentList({
   const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
   // Track which document is being reindexed
   const [reindexingDocId, setReindexingDocId] = useState<number | null>(null)
-  const [syncingDocId, setSyncingDocId] = useState<number | null>(null)
+  const [syncingDocIds, setSyncingDocIds] = useState<Set<number>>(() => new Set())
+  const isSyncingDocument = useCallback(
+    (documentId: number) => syncingDocIds.has(documentId),
+    [syncingDocIds]
+  )
   // Track selected upload folder
   const [selectedUploadFolderId, setSelectedUploadFolderId] = useState(0)
   // Track document being moved
@@ -981,7 +985,7 @@ export function DocumentList({
   }
 
   const handleSyncDocument = async (doc: KnowledgeDocument) => {
-    setSyncingDocId(doc.id)
+    setSyncingDocIds(current => new Set(current).add(doc.id))
     try {
       const { synchronizeExternalDocument } = await import('@/apis/knowledge')
       await synchronizeExternalDocument(doc.id)
@@ -995,7 +999,11 @@ export function DocumentList({
           err instanceof Error && err.message ? err.message : t('document.document.resyncFailed'),
       })
     } finally {
-      setSyncingDocId(null)
+      setSyncingDocIds(current => {
+        const next = new Set(current)
+        next.delete(doc.id)
+        return next
+      })
     }
   }
 
@@ -1592,7 +1600,7 @@ export function DocumentList({
                 onMove={handleMoveDocument}
                 refreshingDocId={refreshingDocId}
                 reindexingDocId={reindexingDocId}
-                syncingDocId={syncingDocId}
+                isSyncing={isSyncingDocument}
                 canManage={canManageDocument}
                 canSelect={canSelectDocument}
                 isSelectionDisabled={isDocumentSelectionDisabled}
@@ -1655,7 +1663,7 @@ export function DocumentList({
                 onMove={handleMoveDocument}
                 refreshingDocId={refreshingDocId}
                 reindexingDocId={reindexingDocId}
-                syncingDocId={syncingDocId}
+                isSyncing={isSyncingDocument}
                 canManage={canManageDocument}
                 canSelect={canSelectDocument}
                 selectedDocumentIds={selectedDocumentIds}

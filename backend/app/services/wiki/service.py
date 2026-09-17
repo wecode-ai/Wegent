@@ -59,10 +59,30 @@ class WikiConnectionService:
         return WikiConnectionService._resolve_stored_connection(stored, user)
 
     @staticmethod
-    def _resolve_stored_connection(
-        stored: ExternalSourceConnection | None, user: User
+    def get_user_wiki_connection_for_connection_test(
+        user: User,
+        db: Session,
+        connection_id: str,
     ) -> ResolvedWikiConnection | None:
-        if stored is None or not stored.enabled:
+        """Resolve saved credentials even when the connection is disabled."""
+        stored = external_source_connection_service.get_owned(
+            db,
+            owner_user_id=user.id,
+            provider_id=WIKI_PROVIDER_ID,
+            connection_id=connection_id,
+        )
+        return WikiConnectionService._resolve_stored_connection(
+            stored, user, require_enabled=False
+        )
+
+    @staticmethod
+    def _resolve_stored_connection(
+        stored: ExternalSourceConnection | None,
+        user: User,
+        *,
+        require_enabled: bool = True,
+    ) -> ResolvedWikiConnection | None:
+        if stored is None or (require_enabled and not stored.enabled):
             return None
         register_builtin_connectors()
         connector = WIKI_CONNECTORS.get(stored.adapter_type)

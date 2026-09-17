@@ -337,8 +337,10 @@ async def test_wiki_connection(
     register_builtin_connectors()
     stored_connection = None
     if body and body.connection_id:
-        stored_connection = WikiConnectionService.get_user_wiki_connection(
-            current_user, db=db, connection_id=body.connection_id
+        stored_connection = (
+            WikiConnectionService.get_user_wiki_connection_for_connection_test(
+                current_user, db=db, connection_id=body.connection_id
+            )
         )
     saved = {
         "connector_type": (
