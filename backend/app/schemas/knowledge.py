@@ -44,6 +44,7 @@ from app.schemas.knowledge_search import KnowledgeSearchRequest
 from app.schemas.rag import SplitterConfig
 from app.services.knowledge.retrieval_capabilities import derive_retrieval_capabilities
 from app.services.knowledge.splitter_config import normalize_splitter_config
+from shared.models import DEFAULT_SCORE_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +200,10 @@ class RetrievalConfigCreate(BaseModel):
     )
     top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
     score_threshold: float = Field(
-        0.5, ge=0.0, le=1.0, description="Minimum score threshold"
+        DEFAULT_SCORE_THRESHOLD,
+        ge=0.0,
+        le=1.0,
+        description="Minimum score threshold",
     )
     hybrid_weights: Optional[HybridWeights] = Field(
         None, description="Hybrid search weights"

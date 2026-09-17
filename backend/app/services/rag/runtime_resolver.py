@@ -30,7 +30,7 @@ from knowledge_engine.embedding.capabilities import (
     normalize_additional_input_modalities,
 )
 from shared.db.capability_reference import resolve_model_kind
-from shared.models import RetrievalScope, SearchHints
+from shared.models import DEFAULT_SCORE_THRESHOLD, RetrievalScope, SearchHints
 from shared.utils.crypto import decrypt_api_key
 from shared.utils.placeholder import process_custom_headers_placeholders
 
@@ -510,7 +510,9 @@ class RagRuntimeResolver:
                     ),
                     retrieval_config=RuntimeRetrievalConfig(
                         top_k=retrieval_config.get("top_k", 20),
-                        score_threshold=retrieval_config.get("score_threshold", 0.5),
+                        score_threshold=retrieval_config.get(
+                            "score_threshold", DEFAULT_SCORE_THRESHOLD
+                        ),
                         retrieval_mode=retrieval_mode,
                         vector_weight=(
                             hybrid_weights.get("vector_weight")

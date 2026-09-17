@@ -14,7 +14,12 @@ from knowledge_engine.retrieval.hierarchical import (
 )
 from knowledge_engine.retrieval.query_planning import build_qa_search_hint_plan
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
-from shared.models import RetrievalScope, RuntimeRetrievalConfig, SearchHints
+from shared.models import (
+    DEFAULT_SCORE_THRESHOLD,
+    RetrievalScope,
+    RuntimeRetrievalConfig,
+    SearchHints,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +99,7 @@ class QueryExecutor:
             "score_threshold": (
                 config.get("score_threshold")
                 if config.get("score_threshold") is not None
-                else 0.7
+                else DEFAULT_SCORE_THRESHOLD
             ),
             "retrieval_mode": config.get("retrieval_mode") or "vector",
         }

@@ -95,7 +95,7 @@ class TestParseKbRetrievalConfig:
         assert result["retriever_namespace"] == "default"
         assert result["embedding_model_namespace"] == "default"
         assert result["top_k"] == 20
-        assert result["score_threshold"] == 0.7
+        assert result["score_threshold"] == 0.0
         assert result["retrieval_mode"] == "vector"
         assert result["hybrid_weights"] is None
 

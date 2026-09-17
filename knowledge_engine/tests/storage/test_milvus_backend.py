@@ -793,6 +793,47 @@ def test_retrieve_returns_raw_cosine_scores_above_threshold():
     assert 'knowledge_id == "1"' in store.searches[0]["filter"]
 
 
+def test_retrieve_without_a_threshold_keeps_low_scoring_hits():
+    """An absent score_threshold means "do not cut" on the Milvus read path."""
+    backend = _backend()
+    store = FakeStore(
+        rows=[
+            {
+                "id": "a",
+                "content": "hi",
+                "doc_ref": "42",
+                "source_file": "doc.txt",
+                "chunk_index": 0,
+                DISPLAY_TEXT_FIELD: "display",
+                METADATA_FIELD: {"knowledge_id": "1", "doc_ref": "42"},
+                PUBLISHED_FIELD: True,
+                "__score__": 0.42,
+            },
+            {
+                "id": "b",
+                "content": "lo",
+                "doc_ref": "42",
+                "source_file": "doc.txt",
+                "chunk_index": 1,
+                DISPLAY_TEXT_FIELD: "display low",
+                METADATA_FIELD: {},
+                PUBLISHED_FIELD: True,
+                "__score__": 0.11,
+            },
+        ]
+    )
+    backend._store = store
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"top_k": 5},
+    )
+
+    assert [record["score"] for record in result["records"]] == [0.42, 0.11]
+
+
 def test_retrieve_missing_index_returns_empty_without_creating():
     backend = _backend()
     store = FakeStore(collection_exists=False)

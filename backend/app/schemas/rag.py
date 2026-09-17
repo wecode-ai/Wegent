@@ -8,7 +8,11 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.kind import EmbeddingModelRef, RetrieverRef
-from shared.models import MAX_SEARCH_QUERY_LENGTH, SearchHints
+from shared.models import (
+    DEFAULT_SCORE_THRESHOLD,
+    MAX_SEARCH_QUERY_LENGTH,
+    SearchHints,
+)
 from shared.models.splitter_config import (  # noqa: F401
     FlatChunkConfig,
     HierarchicalChunkConfig,
@@ -77,7 +81,7 @@ class RetrieveRequest(BaseModel):
     )
     top_k: int = Field(5, ge=1, le=100)
     score_threshold: float = Field(
-        0.7,
+        DEFAULT_SCORE_THRESHOLD,
         ge=0.0,
         le=1.0,
         description="Minimum similarity score (renamed from similarity_threshold)",
@@ -91,7 +95,21 @@ class RetrieveRequest(BaseModel):
         description="Weights for hybrid search (only used when retrieval_mode='hybrid')",
     )
     metadata_condition: Optional[Dict] = Field(
-        None, description="Optional metadata filtering conditions"
+        None,
+        description=(
+            "Optional metadata filtering conditions. Only keys that exist in "
+            "the physical index can be filtered; the filterable set is the "
+            "union of (a) the ingestion metadata whitelist: filename, "
+            "file_path, file_name, file_type, file_size, creation_date, "
+            "last_modified_date, page_label, page_number, sheet_name; "
+            "(b) the chunk columns every backend stores: knowledge_id, "
+            "doc_ref, source_file, created_at, chunk_index; and (c) the keys "
+            "written by parsing and splitting, such as heading_path, "
+            "chunk_strategy, format_enhancement, parser_subtype, node_role. "
+            "An arbitrary business key is dropped when the document is "
+            "ingested, so a condition on it always matches nothing. "
+            "Unsupported operators and keys are not silently widened."
+        ),
     )
 
     @field_validator("hybrid_weights")

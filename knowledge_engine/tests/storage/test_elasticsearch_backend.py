@@ -74,6 +74,70 @@ class TestHybridAlphaResolution:
 
 class TestRetrieveSearchHints:
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_unconfigured_threshold_keeps_every_candidate(self, mock_client_class):
+        """An absent score_threshold means "do not cut" on the ES read path."""
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client_class.return_value = MagicMock()
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        vector_store = MagicMock()
+        vector_store.query.return_value = MagicMock(
+            nodes=[TextNode(text="high"), TextNode(text="low")],
+            similarities=[0.62, 0.11],
+        )
+        backend.create_vector_store = MagicMock(return_value=vector_store)
+        embed_model = MagicMock()
+        embed_model.get_query_embedding.return_value = [0.1, 0.2]
+
+        result = backend.retrieve(
+            knowledge_id="kb_1",
+            query="release checklist",
+            embed_model=embed_model,
+            retrieval_setting={"top_k": 5, "retrieval_mode": "vector"},
+        )
+
+        assert [record["score"] for record in result["records"]] == [0.62, 0.11]
+
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_explicit_threshold_still_cuts_the_candidates(self, mock_client_class):
+        """An explicit threshold behaves exactly as it did before the default."""
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client_class.return_value = MagicMock()
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        vector_store = MagicMock()
+        vector_store.query.return_value = MagicMock(
+            nodes=[TextNode(text="high"), TextNode(text="low")],
+            similarities=[0.62, 0.11],
+        )
+        backend.create_vector_store = MagicMock(return_value=vector_store)
+        embed_model = MagicMock()
+        embed_model.get_query_embedding.return_value = [0.1, 0.2]
+
+        result = backend.retrieve(
+            knowledge_id="kb_1",
+            query="release checklist",
+            embed_model=embed_model,
+            retrieval_setting={
+                "top_k": 5,
+                "score_threshold": 0.5,
+                "retrieval_mode": "vector",
+            },
+        )
+
+        assert [record["score"] for record in result["records"]] == [0.62]
+
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
     def test_process_query_results_returns_display_text(self, mock_client_class):
         from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
 

@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from shared.db.capability_reference import resolve_model_kind
 from shared.models import (
+    DEFAULT_SCORE_THRESHOLD,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -146,7 +147,7 @@ class ConfigResolver:
         hybrid_weights = rc.get("hybrid_weights") or {}
         runtime_retrieval_config = RuntimeRetrievalConfig(
             top_k=rc.get("top_k", 20),
-            score_threshold=rc.get("score_threshold", 0.7),
+            score_threshold=rc.get("score_threshold", DEFAULT_SCORE_THRESHOLD),
             retrieval_mode=retrieval_mode,
             vector_weight=(
                 hybrid_weights.get("vector_weight")
@@ -237,7 +238,9 @@ class ConfigResolver:
             "embedding_model_name": embedding_model_name,
             "embedding_model_namespace": embedding_model_namespace,
             "top_k": retrieval_config.get("top_k", 20),
-            "score_threshold": retrieval_config.get("score_threshold", 0.7),
+            "score_threshold": retrieval_config.get(
+                "score_threshold", DEFAULT_SCORE_THRESHOLD
+            ),
             "retrieval_mode": retrieval_config.get("retrieval_mode", "vector"),
             "hybrid_weights": retrieval_config.get("hybrid_weights"),
         }

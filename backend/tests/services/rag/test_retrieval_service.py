@@ -10,7 +10,12 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from shared.models import RetrievalScope
+from shared.models import (
+    DEFAULT_SCORE_THRESHOLD,
+    RetrievalScope,
+    RuntimeEmbeddingModelConfig,
+    RuntimeRetrieverConfig,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -1198,3 +1203,67 @@ class TestRetrieveForChatShell:
         )
 
         assert result["records"][0]["document_id"] == 9
+
+
+def _kb_record(retrieval_config: dict) -> SimpleNamespace:
+    """A KnowledgeBase record whose spec drives the local retrieval path."""
+    return SimpleNamespace(
+        id=123,
+        user_id=7,
+        json={
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-a",
+                    "retriever_namespace": "default",
+                    "embedding_config": {"model_name": "embed-a"},
+                    "retrieval_mode": "vector",
+                    "top_k": 5,
+                    **retrieval_config,
+                }
+            }
+        },
+    )
+
+
+def _build_local_query_config(kb: SimpleNamespace):
+    from app.services.rag.retrieval_service import RetrievalService
+
+    service = RetrievalService()
+    with (
+        patch.object(
+            service.runtime_resolver,
+            "_get_knowledge_base_record",
+            return_value=kb,
+        ),
+        patch.object(
+            service.runtime_resolver,
+            "_build_resolved_retriever_config",
+            return_value=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant"},
+            ),
+        ),
+        patch.object(
+            service.runtime_resolver,
+            "_build_resolved_embedding_model_config",
+            return_value=RuntimeEmbeddingModelConfig(
+                model_name="embed-a",
+                model_namespace="default",
+                resolved_config={"protocol": "openai"},
+            ),
+        ),
+    ):
+        return service._build_runtime_query_config(kb=kb, db=MagicMock())
+
+
+def test_local_retrieval_path_defaults_an_absent_threshold() -> None:
+    config = _build_local_query_config(_kb_record({}))
+
+    assert config.retrieval_config.score_threshold == DEFAULT_SCORE_THRESHOLD
+
+
+def test_local_retrieval_path_keeps_an_explicit_threshold() -> None:
+    config = _build_local_query_config(_kb_record({"score_threshold": 0.7}))
+
+    assert config.retrieval_config.score_threshold == 0.7

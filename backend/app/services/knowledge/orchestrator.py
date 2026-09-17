@@ -62,7 +62,7 @@ from app.services.knowledge.retrieval_profile import (
     merge_profile_defaults,
 )
 from app.stores.tasks import task_store
-from shared.models import SearchHints
+from shared.models import DEFAULT_SCORE_THRESHOLD, SearchHints
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -396,7 +396,7 @@ class KnowledgeOrchestrator:
         if not resolved_config.get("retrieval_mode"):
             resolved_config["retrieval_mode"] = "vector"
         resolved_config.setdefault("top_k", 5)
-        resolved_config.setdefault("score_threshold", 0.5)
+        resolved_config.setdefault("score_threshold", DEFAULT_SCORE_THRESHOLD)
         return resolved_config
 
     def get_task_model_as_summary_model(

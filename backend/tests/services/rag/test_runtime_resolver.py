@@ -5,6 +5,7 @@ import pytest
 
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.models import (
+    DEFAULT_SCORE_THRESHOLD,
     RemoteKnowledgeBaseQueryConfig,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
@@ -707,3 +708,69 @@ def test_build_resolved_embedding_model_config_preserves_additional_modalities()
     assert config.resolved_config["dimensions"] == 3072
     assert config.resolved_config["encoding_format"] == "float"
     assert config.resolved_config["additional_input_modalities"] == ["image"]
+
+
+def _kb_record_with_retrieval_config(retrieval_config: dict) -> SimpleNamespace:
+    """A KnowledgeBase record shaped like the ones the resolver reads."""
+    return SimpleNamespace(
+        id=123,
+        user_id=7,
+        json={
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-a",
+                    "retriever_namespace": "default",
+                    "embedding_config": {"model_name": "embed-a"},
+                    "retrieval_mode": "vector",
+                    "top_k": 5,
+                    **retrieval_config,
+                }
+            }
+        },
+    )
+
+
+def _build_query_configs(resolver: RagRuntimeResolver, kb: SimpleNamespace):
+    with (
+        patch.object(
+            resolver,
+            "_build_resolved_retriever_config",
+            return_value=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant"},
+            ),
+        ),
+        patch.object(
+            resolver,
+            "_build_resolved_embedding_model_config",
+            return_value=RuntimeEmbeddingModelConfig(
+                model_name="embed-a",
+                model_namespace="default",
+                resolved_config={"protocol": "openai"},
+            ),
+        ),
+    ):
+        return resolver.build_query_knowledge_base_configs_from_records(
+            db=MagicMock(),
+            knowledge_base_records=[kb],
+            user_name="alice",
+        )
+
+
+def test_query_configs_default_an_absent_threshold_to_the_shared_constant() -> None:
+    resolver = RagRuntimeResolver()
+
+    configs = _build_query_configs(resolver, _kb_record_with_retrieval_config({}))
+
+    assert configs[0].retrieval_config.score_threshold == DEFAULT_SCORE_THRESHOLD
+
+
+def test_query_configs_keep_an_explicit_threshold() -> None:
+    resolver = RagRuntimeResolver()
+
+    configs = _build_query_configs(
+        resolver, _kb_record_with_retrieval_config({"score_threshold": 0.7})
+    )
+
+    assert configs[0].retrieval_config.score_threshold == 0.7

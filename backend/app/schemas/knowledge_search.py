@@ -9,6 +9,7 @@ from typing import Optional
 from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.scope_validation import validate_document_ids, validate_folder_ids
+from shared.models import DEFAULT_SCORE_THRESHOLD
 
 
 class KnowledgeSearchRequest(BaseModel):
@@ -24,7 +25,10 @@ class KnowledgeSearchRequest(BaseModel):
     )
     top_k: int = Field(5, ge=1, le=100, description="Number of results to return")
     score_threshold: float = Field(
-        0.7, ge=0.0, le=1.0, description="Minimum similarity score threshold"
+        DEFAULT_SCORE_THRESHOLD,
+        ge=0.0,
+        le=1.0,
+        description="Minimum similarity score threshold",
     )
     route_mode: str = Field(
         "auto",

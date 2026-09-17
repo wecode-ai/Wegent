@@ -109,6 +109,7 @@ from .responses_api_factory import (
     TransportType,
 )
 from .runtime_config import (
+    DEFAULT_SCORE_THRESHOLD,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -158,6 +159,7 @@ __all__ = [
     "RuntimeRetrieverConfig",
     "RuntimeEmbeddingModelConfig",
     "RuntimeRetrievalConfig",
+    "DEFAULT_SCORE_THRESHOLD",
     "SearchHints",
     "MAX_SEARCH_QUERY_LENGTH",
     "MAX_SEARCH_HINT_TERM_LENGTH",
