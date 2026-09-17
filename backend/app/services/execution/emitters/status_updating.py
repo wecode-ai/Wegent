@@ -372,6 +372,7 @@ class StatusUpdatingEmitter(ResultEmitter):
             ]
             if media_blocks:
                 await self._flush_stream_storage()
+                await self._cancel_pending_storage_flush_task()
                 for block in media_blocks:
                     await session_manager.add_block(self._subtask_id, block)
         elif event.type in STREAM_CONTENT_EVENT_TYPES:

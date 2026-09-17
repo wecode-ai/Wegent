@@ -71,3 +71,49 @@ async def test_generation_config_preserves_media_type(
         assert "video_config" not in stored
     else:
         assert "image_config" not in stored
+
+
+@pytest.mark.asyncio
+async def test_image_config_uses_generate_params_model_when_model_id_missing(
+    test_db: Session, test_user: User
+) -> None:
+    task = _build_existing_task(task_id=2504, user_id=test_user.id)
+    task.client_origin = CLIENT_ORIGIN_FRONTEND
+    test_db.add(task)
+    test_db.commit()
+    team = SimpleNamespace(
+        id=1257, user_id=test_user.id, name="generate", namespace="default"
+    )
+    params = TaskCreationParams(
+        message="generate image",
+        task_type="image",
+        model_id=None,
+        generate_params={"model": "image-generate-model", "size": "1512x648"},
+        pipeline_bot_ids=[1255],
+        client_origin=CLIENT_ORIGIN_FRONTEND,
+    )
+
+    with (
+        patch(
+            "app.services.chat.storage.task_manager.initialize_redis_chat_history",
+            new=AsyncMock(),
+        ),
+        patch("app.services.memory.is_memory_enabled_for_user", return_value=False),
+        patch(
+            "app.services.chat.trigger.group_chat.is_task_group_chat",
+            return_value=False,
+        ),
+    ):
+        result = await create_task_and_subtasks(
+            db=test_db,
+            user=test_user,
+            team=team,
+            message=params.message,
+            params=params,
+            task_id=task.id,
+        )
+
+    test_db.refresh(result.user_subtask)
+    stored = result.user_subtask.result
+    assert stored["image_config"]["model"] == "image-generate-model"
+    assert stored["image_config"]["size"] == "1512x648"

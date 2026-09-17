@@ -755,7 +755,7 @@ async def create_task_and_subtasks(
     image_config = None
     if params.task_type == "image" and params.generate_params:
         image_config = {
-            "model": params.model_id,
+            "model": params.model_id or params.generate_params.get("model"),
             "size": params.generate_params.get("size"),
         }
         logger.info(
