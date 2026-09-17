@@ -140,15 +140,15 @@ def test_node_row_id_is_stable_per_document_and_chunk():
 def test_scope_filter_scopes_the_knowledge_base_and_documents():
     expression = build_scope_filter(knowledge_id="1", doc_refs=[42, "doc_b"])
 
-    assert 'knowledge_id == "1"' in expression
-    assert 'doc_ref in ["42", "doc_b"]' in expression
+    assert 'metadata["knowledge_id"] == "1"' in expression
+    assert 'metadata["doc_ref"] in ["42", "doc_b"]' in expression
     assert "published" not in expression
 
 
 def test_scope_filter_escapes_quotes_and_backslashes():
     expression = build_scope_filter(knowledge_id='a"b\\c')
 
-    assert 'knowledge_id == "a\\"b\\\\c"' in expression
+    assert 'metadata["knowledge_id"] == "a\\"b\\\\c"' in expression
 
 
 def test_scope_filter_rejects_empty_document_scope():

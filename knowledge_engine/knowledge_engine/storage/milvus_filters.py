@@ -45,6 +45,7 @@ from knowledge_engine.storage.milvus_native import (
     ID_FIELD,
     METADATA_FIELD,
     NUMERIC_FILTER_FIELDS,
+    metadata_path,
     sanitize_filter_value,
 )
 
@@ -128,7 +129,7 @@ def _condition_target(
     """Resolve one condition key to its field expression and literal type."""
     if key == DOC_REF_FIELD:
         if allow_document_scope:
-            return DOC_REF_FIELD, "text"
+            return metadata_path(DOC_REF_FIELD), "text"
         raise ValueError(
             "Document scope must use document_ids or "
             "RetrievalScope.document_ids, not metadata_condition doc_ref."

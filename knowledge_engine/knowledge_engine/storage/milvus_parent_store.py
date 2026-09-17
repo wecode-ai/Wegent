@@ -18,10 +18,7 @@ from typing import Any, Callable, Dict, List
 
 from llama_index.core.schema import BaseNode
 
-from knowledge_engine.storage.milvus_native import (
-    build_scope_filter,
-    sanitize_filter_value,
-)
+from knowledge_engine.storage.milvus_native import sanitize_filter_value
 from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
 logger = logging.getLogger(__name__)
@@ -43,6 +40,22 @@ class MilvusParentStore:
         self._store = store
         self._collection_name_for = collection_name_for
         self._display_text_for = display_text_for
+
+    @staticmethod
+    def scope_filter(knowledge_id: str, doc_ref: str | None = None) -> str:
+        """Compile the scope of this sidecar in its own vocabulary.
+
+        The retrieval index names its knowledge base and document inside the
+        metadata JSON column; this sidecar keeps them as its own top-level
+        fields and never carries that column, so it compiles its scope from
+        those names instead. The deletion path of the backend shares this
+        filter, which is what keeps one knowledge base's sidecar rows from
+        being addressed with the index's scope shape.
+        """
+        conditions = [f'knowledge_id == "{sanitize_filter_value(knowledge_id)}"']
+        if doc_ref is not None:
+            conditions.append(f'doc_ref in ["{sanitize_filter_value(doc_ref)}"]')
+        return " and ".join(conditions)
 
     def save(
         self,
@@ -115,12 +128,10 @@ class MilvusParentStore:
             for parent_node_id in parent_node_ids:
                 results = client.query(
                     collection_name=collection_name,
-                    filter=build_scope_filter(
-                        knowledge_id=knowledge_id,
-                        extra_conditions=[
-                            f"{PARENT_NODE_ID_FIELD} == "
-                            f'"{sanitize_filter_value(parent_node_id)}"'
-                        ],
+                    filter=(
+                        f"{self.scope_filter(knowledge_id)} and "
+                        f"{PARENT_NODE_ID_FIELD} == "
+                        f'"{sanitize_filter_value(parent_node_id)}"'
                     ),
                     output_fields=[
                         PARENT_NODE_ID_FIELD,
@@ -162,10 +173,7 @@ class MilvusParentStore:
             return 0
         client.delete(
             collection_name=collection_name,
-            filter=build_scope_filter(
-                knowledge_id=knowledge_id,
-                doc_refs=[doc_ref],
-            ),
+            filter=MilvusParentStore.scope_filter(knowledge_id, doc_ref),
             timeout=store.rpc_timeout,
         )
         return 0

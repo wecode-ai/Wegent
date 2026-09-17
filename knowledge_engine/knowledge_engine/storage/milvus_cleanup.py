@@ -28,12 +28,14 @@ class MilvusCleanup:
         store_for: Callable[[], MilvusDocumentStore],
         collection_name_for: Callable[..., str],
         parent_collection_name_for: Callable[..., str],
+        parent_scope_filter: Callable[[str], str],
         parent_delete: Callable[..., Any],
         ensure_can_drop_physical_index: Callable[[], None],
     ) -> None:
         self._store_for = store_for
         self._collection_name_for = collection_name_for
         self._parent_collection_name_for = parent_collection_name_for
+        self._parent_scope_filter = parent_scope_filter
         self._parent_delete = parent_delete
         self._ensure_can_drop_physical_index = ensure_can_drop_physical_index
 
@@ -94,7 +96,12 @@ class MilvusCleanup:
         )
 
     def delete_knowledge(self, knowledge_id: str, **kwargs) -> Dict:
-        """Delete every chunk and parent node of one knowledge base."""
+        """Delete every chunk and parent node of one knowledge base.
+
+        The two collections carry the knowledge base in different places - the
+        index in its metadata JSON column, the sidecar in its own top-level
+        field - so each one is addressed with the scope shape it stores.
+        """
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
         parent_collection_name = self._parent_collection_name_for(
             knowledge_id, **kwargs
@@ -102,7 +109,9 @@ class MilvusCleanup:
         scope_filter = build_scope_filter(knowledge_id=knowledge_id)
         deleted_chunks = self._delete_verified(collection_name, scope_filter)
         deleted_parent_nodes = self._delete_verified(
-            parent_collection_name, scope_filter, require_bound=False
+            parent_collection_name,
+            self._parent_scope_filter(knowledge_id),
+            require_bound=False,
         )
         return {
             "knowledge_id": knowledge_id,

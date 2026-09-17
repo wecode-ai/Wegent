@@ -169,6 +169,17 @@ def sanitize_filter_value(value: Any) -> str:
     return str(value).replace("\\", "\\\\").replace('"', '\\"')
 
 
+def metadata_path(key: str) -> str:
+    """The JSON path every scope and metadata condition is compiled against.
+
+    One column carries all the metadata a row was written with, so a condition
+    on it is a condition on that JSON path. The server applies it before the
+    ``top_k`` cut, and the physical schema keeps no column whose only job is to
+    be filterable.
+    """
+    return f'{METADATA_FIELD}["{sanitize_filter_value(key)}"]'
+
+
 def node_row_id(
     *,
     knowledge_id: str,
@@ -196,13 +207,21 @@ def build_scope_filter(
     doc_refs: Sequence[Any] | None = None,
     extra_conditions: Iterable[str] | None = None,
 ) -> str:
-    """Compile the mandatory knowledge base and document scope."""
-    conditions = [f'knowledge_id == "{sanitize_filter_value(knowledge_id)}"']
+    """Compile the mandatory knowledge base and document scope.
+
+    The scope names the same metadata keys the write path stores, so it is
+    compiled like every other condition: it narrows the read inside the
+    database, before the ``top_k`` cut, and a row whose metadata does not
+    declare the scope cannot be returned.
+    """
+    conditions = [
+        f'{metadata_path(KNOWLEDGE_ID_FIELD)} == "{sanitize_filter_value(knowledge_id)}"'
+    ]
     if doc_refs is not None:
         if not doc_refs:
             raise ValueError("doc_refs must not be an empty scope")
         escaped = [f'"{sanitize_filter_value(doc_ref)}"' for doc_ref in doc_refs]
-        conditions.append(f"doc_ref in [{', '.join(escaped)}]")
+        conditions.append(f"{metadata_path(DOC_REF_FIELD)} in [{', '.join(escaped)}]")
     for condition in extra_conditions or ():
         normalized = condition.strip()
         if normalized:

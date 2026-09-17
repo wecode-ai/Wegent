@@ -23,7 +23,11 @@ from knowledge_engine.storage.errors import (
 from knowledge_engine.storage.milvus_backend import MilvusBackend
 from knowledge_engine.storage.milvus_native import (
     ANALYZER_TYPE,
+    CHUNK_INDEX_FIELD,
+    CREATED_AT_FIELD,
     DISPLAY_TEXT_FIELD,
+    DOC_REF_FIELD,
+    KNOWLEDGE_ID_FIELD,
     METADATA_FIELD,
     RETRIEVAL_TEXT_FIELD,
     SCHEMA_VERSION,
@@ -366,9 +370,6 @@ class FakeStore:
             if not match:
                 continue
             key = match.group("key")
-            if key == "knowledge_id":
-                # The double's rows already live inside the requested index.
-                return True
             if pattern is _JSON_CLAUSE:
                 actual = cls._metadata_value(row, key)
             else:
@@ -421,6 +422,46 @@ def _nodes(count=2):
         )
         for index in range(count)
     ]
+
+
+def _stored_row(
+    doc_ref: str,
+    chunk_index: int = 0,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+    display_text: Optional[str] = None,
+    created_at: str = "2026-01-01T00:00:00Z",
+    **overrides: Any,
+) -> Dict[str, Any]:
+    """One stored row, laid out the way the write path lays one out.
+
+    The chunk columns and the metadata JSON column carry the same scope keys,
+    so a reader and a compiled filter can both be exercised against the shape a
+    real row has.
+    """
+    stored_metadata = {
+        "knowledge_id": "1",
+        "doc_ref": doc_ref,
+        "source_file": f"{doc_ref}.txt",
+        "created_at": created_at,
+        "chunk_index": chunk_index,
+    }
+    stored_metadata.update(metadata or {})
+    row = {
+        "id": f"{doc_ref}-{chunk_index}",
+        KNOWLEDGE_ID_FIELD: "1",
+        DOC_REF_FIELD: doc_ref,
+        SOURCE_FILE_FIELD: stored_metadata["source_file"],
+        CREATED_AT_FIELD: stored_metadata["created_at"],
+        CHUNK_INDEX_FIELD: chunk_index,
+        RETRIEVAL_TEXT_FIELD: f"retrieval {chunk_index}",
+        DISPLAY_TEXT_FIELD: (
+            f"chunk {chunk_index}" if display_text is None else display_text
+        ),
+        METADATA_FIELD: stored_metadata,
+    }
+    row.update(overrides)
+    return row
 
 
 def test_init_has_no_default_dimension_and_supports_all_three_modes():
@@ -589,15 +630,7 @@ def test_index_resend_keeps_stable_primary_keys():
 
 def _stored_chunk_row(doc_ref: str, chunk_index: int):
     """A row as a previous index of ``doc_ref`` would have left it."""
-    return {
-        "id": f"{doc_ref}-{chunk_index}",
-        "knowledge_id": "1",
-        "doc_ref": doc_ref,
-        "chunk_index": chunk_index,
-        RETRIEVAL_TEXT_FIELD: "stale",
-        DISPLAY_TEXT_FIELD: "stale tail",
-        METADATA_FIELD: {},
-    }
+    return _stored_row(doc_ref, chunk_index, display_text="stale tail")
 
 
 def test_rewrite_drops_the_documents_previous_rows_before_writing():
@@ -624,8 +657,8 @@ def test_rewrite_drops_the_documents_previous_rows_before_writing():
     assert {"42-0", "42-2", "42-5"}.isdisjoint(remaining_ids)
     assert "43-0" in remaining_ids
     scope = store.deleted_filters[0]
-    assert 'knowledge_id == "1"' in scope
-    assert 'doc_ref in ["42"]' in scope
+    assert 'metadata["knowledge_id"] == "1"' in scope
+    assert 'metadata["doc_ref"] in ["42"]' in scope
     assert "published" not in scope
     # The document that owns the rows is dropped before the new rows land.
     deletions = [i for i, call in enumerate(store.calls) if call[0] == "delete_rows"]
@@ -707,8 +740,8 @@ def test_a_failed_write_removes_the_rows_it_left_behind():
     assert "simulated write failure" in str(failure.value)
     assert [row.get("id") for row in store.rows] == ["43-0"]
     cleanup_scope = store.deleted_filters[-1]
-    assert 'knowledge_id == "1"' in cleanup_scope
-    assert 'doc_ref in ["42"]' in cleanup_scope
+    assert 'metadata["knowledge_id"] == "1"' in cleanup_scope
+    assert 'metadata["doc_ref"] in ["42"]' in cleanup_scope
 
 
 def test_a_failed_write_reports_a_cleanup_that_cannot_remove_its_rows():
@@ -753,26 +786,10 @@ def test_retrieve_returns_raw_cosine_scores_above_threshold():
     backend = _backend()
     store = FakeStore(
         rows=[
-            {
-                "id": "a",
-                "content": "hi",
-                "doc_ref": "42",
-                "source_file": "doc.txt",
-                "chunk_index": 0,
-                DISPLAY_TEXT_FIELD: "display",
-                METADATA_FIELD: {"knowledge_id": "1", "doc_ref": "42"},
-                "__score__": 0.42,
-            },
-            {
-                "id": "b",
-                "content": "lo",
-                "doc_ref": "42",
-                "source_file": "doc.txt",
-                "chunk_index": 1,
-                DISPLAY_TEXT_FIELD: "display low",
-                METADATA_FIELD: {},
-                "__score__": 0.11,
-            },
+            _stored_row("42", 0, id="a", display_text="display", **{"__score__": 0.42}),
+            _stored_row(
+                "42", 1, id="b", display_text="display low", **{"__score__": 0.11}
+            ),
         ]
     )
     backend._store = store
@@ -787,7 +804,7 @@ def test_retrieve_returns_raw_cosine_scores_above_threshold():
     assert [record["score"] for record in result["records"]] == [0.42]
     assert result["records"][0]["content"] == "display"
     assert "published" not in store.searches[0]["filter"]
-    assert 'knowledge_id == "1"' in store.searches[0]["filter"]
+    assert 'metadata["knowledge_id"] == "1"' in store.searches[0]["filter"]
 
 
 def test_retrieve_without_a_threshold_keeps_low_scoring_hits():
@@ -795,26 +812,10 @@ def test_retrieve_without_a_threshold_keeps_low_scoring_hits():
     backend = _backend()
     store = FakeStore(
         rows=[
-            {
-                "id": "a",
-                "content": "hi",
-                "doc_ref": "42",
-                "source_file": "doc.txt",
-                "chunk_index": 0,
-                DISPLAY_TEXT_FIELD: "display",
-                METADATA_FIELD: {"knowledge_id": "1", "doc_ref": "42"},
-                "__score__": 0.42,
-            },
-            {
-                "id": "b",
-                "content": "lo",
-                "doc_ref": "42",
-                "source_file": "doc.txt",
-                "chunk_index": 1,
-                DISPLAY_TEXT_FIELD: "display low",
-                METADATA_FIELD: {},
-                "__score__": 0.11,
-            },
+            _stored_row("42", 0, id="a", display_text="display", **{"__score__": 0.42}),
+            _stored_row(
+                "42", 1, id="b", display_text="display low", **{"__score__": 0.11}
+            ),
         ]
     )
     backend._store = store
@@ -1038,14 +1039,13 @@ def test_retrieve_unsupported_mode_fails_loudly():
 
 
 def _hybrid_hit(row_id, doc_ref, *, display, score):
-    return {
-        "id": row_id,
-        "doc_ref": doc_ref,
-        SOURCE_FILE_FIELD: f"document-{doc_ref}.txt",
-        DISPLAY_TEXT_FIELD: display,
-        METADATA_FIELD: {"knowledge_id": "1", "doc_ref": doc_ref},
-        "__score__": score,
-    }
+    return _stored_row(
+        doc_ref,
+        id=row_id,
+        display_text=display,
+        metadata={"source_file": f"document-{doc_ref}.txt"},
+        **{"__score__": score},
+    )
 
 
 def _hybrid_store():
@@ -1073,14 +1073,7 @@ def test_keyword_retrieve_uses_planned_sparse_query_without_embedding():
     backend = _backend()
     store = FakeStore(
         sparse_hits=[
-            {
-                "id": "a",
-                "doc_ref": "42",
-                SOURCE_FILE_FIELD: "doc.txt",
-                DISPLAY_TEXT_FIELD: "展示正文",
-                METADATA_FIELD: {"knowledge_id": "1", "doc_ref": "42"},
-                "__score__": 3.0,
-            }
+            _stored_row("42", id="a", display_text="展示正文", **{"__score__": 3.0})
         ]
     )
     backend._store = store
@@ -1101,7 +1094,7 @@ def test_keyword_retrieve_uses_planned_sparse_query_without_embedding():
     )
 
     assert store.sparse_searches[0]["query_text"] == "get_user_by_id"
-    assert 'knowledge_id == "1"' in store.sparse_searches[0]["filter"]
+    assert 'metadata["knowledge_id"] == "1"' in store.sparse_searches[0]["filter"]
     assert [record["content"] for record in result["records"]] == ["展示正文"]
     assert result["records"][0]["score"] == pytest.approx(0.75)
 
@@ -1158,8 +1151,8 @@ def test_keyword_retrieve_keeps_scope_and_metadata_filters():
     )
 
     expression = store.sparse_searches[0]["filter"]
-    assert 'knowledge_id == "1"' in expression
-    assert 'doc_ref in ["7", "8"]' in expression
+    assert 'metadata["knowledge_id"] == "1"' in expression
+    assert 'metadata["doc_ref"] in ["7", "8"]' in expression
     assert 'metadata["category"] == "tech"' in expression
     assert "published" not in expression
 
@@ -1227,7 +1220,7 @@ def test_hybrid_retrieve_fuses_both_branches_with_the_default_weights():
     assert dense_request["limit"] == 5
     assert keyword_request["limit"] == 5
     assert dense_request["filter"] == keyword_request["filter"]
-    assert 'knowledge_id == "1"' in dense_request["filter"]
+    assert 'metadata["knowledge_id"] == "1"' in dense_request["filter"]
     assert "published" not in dense_request["filter"]
     assert [record["content"] for record in result["records"]] == [
         "dense 偏好",
@@ -1531,8 +1524,8 @@ def test_hybrid_retrieve_keeps_scope_and_metadata_filters():
 
     expression = store.searches[0]["filter"]
     assert store.searches[0]["filter"] == store.sparse_searches[0]["filter"]
-    assert 'knowledge_id == "1"' in expression
-    assert 'doc_ref in ["7", "8"]' in expression
+    assert 'metadata["knowledge_id"] == "1"' in expression
+    assert 'metadata["doc_ref"] in ["7", "8"]' in expression
     assert 'metadata["category"] == "tech"' in expression
     assert "published" not in expression
 
@@ -1565,7 +1558,7 @@ def test_retrieve_applies_document_scope_natively():
         scope=RetrievalScope(document_ids=[7, 8]),
     )
 
-    assert 'doc_ref in ["7", "8"]' in store.searches[0]["filter"]
+    assert 'metadata["doc_ref"] in ["7", "8"]' in store.searches[0]["filter"]
 
 
 def test_retrieve_rejects_doc_ref_metadata_condition():
@@ -1831,7 +1824,7 @@ def test_retrieve_skips_null_value_conditions_like_elasticsearch():
         },
     )
 
-    assert "metadata[" not in store.searches[0]["filter"]
+    assert 'metadata["category"]' not in store.searches[0]["filter"]
 
 
 def test_retrieve_rejects_the_internal_row_identity_as_a_metadata_condition():
@@ -1888,11 +1881,7 @@ def test_delete_missing_document_is_idempotent_and_creates_nothing():
 def test_delete_document_removes_rows_and_verifies_absence():
     backend = _backend()
     store = FakeStore(
-        rows=[
-            {"doc_ref": "42", "chunk_index": 0},
-            {"doc_ref": "42", "chunk_index": 1},
-            {"doc_ref": "43", "chunk_index": 0},
-        ]
+        rows=[_stored_row("42", 0), _stored_row("42", 1), _stored_row("43", 0)]
     )
     backend._store = store
     backend.delete_parent_nodes = lambda *args, **kwargs: 0
@@ -1900,7 +1889,7 @@ def test_delete_document_removes_rows_and_verifies_absence():
     result = backend.delete_document("1", "42")
 
     assert result["deleted_chunks"] == 2
-    assert store.rows == [{"doc_ref": "43", "chunk_index": 0}]
+    assert [row["id"] for row in store.rows] == ["43-0"]
     assert len(store.deleted_filters) >= 1
     # The delete entry point promises a durable removal, unlike a rewrite.
     assert ("flush", "test_kb_1") in store.calls
@@ -1936,8 +1925,12 @@ def test_delete_knowledge_clears_only_the_knowledge_base_scope():
     assert result["deleted_chunks"] == 2
     assert result["status"] == "deleted"
     assert store.rows == []
-    assert store.deleted_filters, "the chunks and the parent store are cleared"
-    assert all('knowledge_id == "1"' in expr for expr in store.deleted_filters)
+    # The index scope lives in its metadata JSON column and the sidecar keeps
+    # its own top-level field, so each collection is counted in its own shape.
+    assert {query["filter"] for query in store.queries if query.get("count")} == {
+        'metadata["knowledge_id"] == "1"',
+        'knowledge_id == "1"',
+    }
 
 
 def test_drop_knowledge_index_refuses_a_shared_collection():
@@ -1973,16 +1966,7 @@ def _chunk_rows(
     *,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    return [
-        {
-            "doc_ref": doc_ref,
-            "source_file": f"{doc_ref}.txt",
-            "chunk_index": index,
-            DISPLAY_TEXT_FIELD: f"chunk {index}",
-            METADATA_FIELD: dict(metadata or {}),
-        }
-        for index in chunk_indexes
-    ]
+    return [_stored_row(doc_ref, index, metadata=metadata) for index in chunk_indexes]
 
 
 def test_get_document_reads_every_chunk_across_pages():
@@ -2008,14 +1992,7 @@ def test_get_document_fails_when_the_document_exceeds_the_read_budget():
 def test_get_document_group_order_does_not_follow_the_arrival_order():
     """Equal chunk indexes keep one order across reads of the same rows."""
     rows = [
-        {
-            "id": row_id,
-            "doc_ref": "42",
-            "source_file": "42.txt",
-            "chunk_index": 0,
-            DISPLAY_TEXT_FIELD: f"chunk {row_id}",
-            METADATA_FIELD: {},
-        }
+        _stored_row("42", id=row_id, display_text=f"chunk {row_id}")
         for row_id in ("row-b", "row-a")
     ]
 
@@ -2043,20 +2020,8 @@ def test_get_all_chunks_returns_the_stored_rows_in_stable_order():
     backend = _backend()
     store = FakeStore(
         rows=[
-            {
-                "doc_ref": "42",
-                "chunk_index": 1,
-                DISPLAY_TEXT_FIELD: "second",
-                SOURCE_FILE_FIELD: "doc.txt",
-                METADATA_FIELD: {},
-            },
-            {
-                "doc_ref": "42",
-                "chunk_index": 0,
-                DISPLAY_TEXT_FIELD: "first",
-                SOURCE_FILE_FIELD: "doc.txt",
-                METADATA_FIELD: {},
-            },
+            _stored_row("42", 1, display_text="second"),
+            _stored_row("42", 0, display_text="first"),
         ]
     )
     backend._store = store
@@ -2128,31 +2093,31 @@ def test_get_all_chunks_allows_a_doc_ref_condition_inside_the_knowledge_base():
     )
 
     assert {chunk["doc_ref"] for chunk in chunks} == {"43"}
-    assert 'doc_ref == "43"' in store.queries[-1]["filter"]
+    assert 'metadata["doc_ref"] == "43"' in store.queries[-1]["filter"]
 
 
 def test_list_documents_aggregates_stored_rows():
     backend = _backend()
     store = FakeStore(
         rows=[
-            {
-                "doc_ref": "42",
-                "source_file": "a.txt",
-                "created_at": "2026-01-02T00:00:00Z",
-                "chunk_index": 0,
-            },
-            {
-                "doc_ref": "42",
-                "source_file": "a.txt",
-                "created_at": "2026-01-02T00:00:00Z",
-                "chunk_index": 1,
-            },
-            {
-                "doc_ref": "41",
-                "source_file": "b.txt",
-                "created_at": "2026-01-01T00:00:00Z",
-                "chunk_index": 0,
-            },
+            _stored_row(
+                "42",
+                0,
+                created_at="2026-01-02T00:00:00Z",
+                metadata={"source_file": "a.txt"},
+            ),
+            _stored_row(
+                "42",
+                1,
+                created_at="2026-01-02T00:00:00Z",
+                metadata={"source_file": "a.txt"},
+            ),
+            _stored_row(
+                "41",
+                0,
+                created_at="2026-01-01T00:00:00Z",
+                metadata={"source_file": "b.txt"},
+            ),
         ]
     )
     backend._store = store
@@ -2168,15 +2133,7 @@ def _document_rows(
     doc_refs, *, created_at: str = "2026-01-01T00:00:00Z"
 ) -> List[Dict[str, Any]]:
     """One stored chunk per document, so each doc_ref appears once."""
-    return [
-        {
-            "doc_ref": doc_ref,
-            "source_file": f"{doc_ref}.txt",
-            "created_at": created_at,
-            "chunk_index": 0,
-        }
-        for doc_ref in doc_refs
-    ]
+    return [_stored_row(doc_ref, created_at=created_at) for doc_ref in doc_refs]
 
 
 def test_list_documents_page_order_does_not_follow_the_arrival_order():

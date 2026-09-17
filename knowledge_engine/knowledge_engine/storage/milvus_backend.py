@@ -155,6 +155,7 @@ class MilvusBackend(BaseStorageBackend):
             store_for=lambda: self._store,
             collection_name_for=self.get_index_name,
             parent_collection_name_for=self.get_parent_store_name,
+            parent_scope_filter=self._parent_store.scope_filter,
             # Resolved per call so the storage interface stays the seam a
             # caller (or a test) can replace, not the sidecar behind it.
             parent_delete=lambda knowledge_id, doc_ref, **kwargs: (
