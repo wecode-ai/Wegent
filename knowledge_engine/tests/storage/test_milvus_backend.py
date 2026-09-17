@@ -24,7 +24,6 @@ from knowledge_engine.storage.milvus_native import (
     ANALYZER_TYPE,
     DISPLAY_TEXT_FIELD,
     METADATA_FIELD,
-    PUBLISHED_FIELD,
     RETRIEVAL_TEXT_FIELD,
     SCHEMA_VERSION,
     SOURCE_FILE_FIELD,
@@ -191,6 +190,7 @@ class FakeStore:
         self.searches: list[dict] = []
         self.sparse_searches: list[dict] = []
         self.sparse_hits: list[dict] = list(sparse_hits or [])
+        self.visible_reads: list[str] = []
         self.clients_created = 0
         self.clients_closed = 0
 
@@ -265,13 +265,11 @@ class FakeStore:
 
     def count_rows(self, client, collection_name, filter_expr):
         self.queries.append({"filter": filter_expr, "count": True})
-        if "published == true" in filter_expr:
-            return sum(
-                1
-                for row in self.rows
-                if row.get(PUBLISHED_FIELD) and self._filter_matches(row, filter_expr)
-            )
         return sum(1 for row in self.rows if self._filter_matches(row, filter_expr))
+
+    def advance_read_visibility(self, client, collection_name, filter_expr):
+        self.calls.append(("advance_read_visibility", collection_name, filter_expr))
+        self.visible_reads.append(filter_expr)
 
     def delete_rows(
         self, client, collection_name, filter_expr, *, flush: bool = True
@@ -507,7 +505,8 @@ def test_blank_chunks_are_dropped_when_real_content_exists():
     assert result["indexed_count"] == 1
 
 
-def test_index_writes_unpublished_then_publishes_after_verification():
+def test_index_writes_the_document_with_a_single_upsert():
+    """One write per document: no staged copy and no publish pass."""
     backend = _backend()
     store = FakeStore()
     backend._store = store
@@ -517,25 +516,25 @@ def test_index_writes_unpublished_then_publishes_after_verification():
         nodes=_nodes(),
         chunk_metadata=_chunk_metadata(),
         embed_model=model,
-        index_generation=1,
     )
 
     upserts = [call for call in store.calls if call[0] == "upsert_rows"]
-    assert len(upserts) == 2
-    unpublished, published = upserts[0][2], upserts[1][2]
-    assert all(row[PUBLISHED_FIELD] is False for row in unpublished)
-    assert all(row[PUBLISHED_FIELD] is True for row in published)
+    assert len(upserts) == 1
+    written = upserts[0][2]
+    assert len(written) == 2
+    for removed in ("published", "generation", "attempt_id"):
+        assert all(removed not in row for row in written)
     assert result["indexed_count"] == 2
     assert result["dimension"] == 2
     assert result["index_name"] == "test_kb_1"
     assert result["status"] == "success"
 
 
-def test_index_publishes_without_waiting_for_a_flush():
-    """Publication is proven by the verification read, not by a flush.
+def test_index_writes_without_waiting_for_a_flush():
+    """The write path does not seal the segment per document.
 
     The reasoning behind dropping the per-document flush is recorded on
-    ``MilvusBackend._publish_rows``.
+    ``MilvusBackend._drop_failed_write``.
     """
     backend = _backend()
     store = FakeStore()
@@ -548,10 +547,34 @@ def test_index_publishes_without_waiting_for_a_flush():
     )
 
     assert all(call[0] != "flush" for call in store.calls)
-    published = [
-        query for query in store.queries if "published == true" in query["filter"]
+
+
+def test_index_makes_the_written_document_readable():
+    """The write ends by serving its own scope at the write level.
+
+    Reads answer at ``Bounded`` and may be served from an older snapshot, so
+    the rows written here would be missing from the very next query without
+    this read. It asserts nothing: the write stays a single write with no
+    publication state.
+    """
+    backend = _backend()
+    store = FakeStore()
+    backend._store = store
+
+    backend.index_with_metadata(
+        nodes=_nodes(),
+        chunk_metadata=_chunk_metadata(),
+        embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+    )
+
+    [scope] = store.visible_reads
+    assert 'knowledge_id == "1"' in scope
+    assert 'doc_ref in ["42"]' in scope
+    written = [i for i, call in enumerate(store.calls) if call[0] == "upsert_rows"]
+    visible = [
+        i for i, call in enumerate(store.calls) if call[0] == "advance_read_visibility"
     ]
-    assert published, "the publish is still verified, just not by flushing"
+    assert visible[0] > written[0]
 
 
 def test_index_reuses_existing_node_embeddings_without_calling_the_model():
@@ -589,14 +612,12 @@ def test_index_resend_keeps_stable_primary_keys():
         nodes=_nodes(),
         chunk_metadata=_chunk_metadata(),
         embed_model=model,
-        index_generation=1,
     )
     first_pass = row_ids()
     backend.index_with_metadata(
         nodes=_nodes(),
         chunk_metadata=_chunk_metadata(),
         embed_model=model,
-        index_generation=1,
     )
     second_pass = row_ids()[len(first_pass) :]
 
@@ -604,7 +625,7 @@ def test_index_resend_keeps_stable_primary_keys():
     assert len(set(second_pass)) == 2
 
 
-def _stored_chunk_row(doc_ref: str, chunk_index: int, *, published: bool = True):
+def _stored_chunk_row(doc_ref: str, chunk_index: int):
     """A row as a previous index of ``doc_ref`` would have left it."""
     return {
         "id": f"{doc_ref}-{chunk_index}",
@@ -614,19 +635,18 @@ def _stored_chunk_row(doc_ref: str, chunk_index: int, *, published: bool = True)
         RETRIEVAL_TEXT_FIELD: "stale",
         DISPLAY_TEXT_FIELD: "stale tail",
         METADATA_FIELD: {},
-        PUBLISHED_FIELD: published,
     }
 
 
-def test_rewrite_drops_the_documents_previous_rows_before_staging():
+def test_rewrite_drops_the_documents_previous_rows_before_writing():
     """A rewrite replaces one document instead of layering versions."""
     backend = _backend()
     store = FakeStore(
         rows=[
             _stored_chunk_row("42", 0),
             _stored_chunk_row("42", 2),
-            # A previous attempt that never published its rows still has to go.
-            _stored_chunk_row("42", 5, published=False),
+            # Whatever a previous write of the same document left has to go.
+            _stored_chunk_row("42", 5),
             _stored_chunk_row("43", 0),
         ]
     )
@@ -644,10 +664,11 @@ def test_rewrite_drops_the_documents_previous_rows_before_staging():
     scope = store.deleted_filters[0]
     assert 'knowledge_id == "1"' in scope
     assert 'doc_ref in ["42"]' in scope
+    assert "published" not in scope
     # The document that owns the rows is dropped before the new rows land.
     deletions = [i for i, call in enumerate(store.calls) if call[0] == "delete_rows"]
-    staging = [i for i, call in enumerate(store.calls) if call[0] == "upsert_rows"]
-    assert deletions and deletions[0] < staging[0]
+    writes = [i for i, call in enumerate(store.calls) if call[0] == "upsert_rows"]
+    assert deletions and deletions[0] < writes[0]
     assert all(call[0] != "flush" for call in store.calls)
 
 
@@ -667,7 +688,7 @@ def test_rewrite_of_a_document_without_rows_issues_no_delete():
 
 
 def test_rewrite_fails_when_the_previous_rows_cannot_be_removed():
-    """An unverified cleanup fails loudly instead of publishing mixed content."""
+    """An unverified cleanup fails loudly instead of writing mixed content."""
 
     backend = _backend()
     store = FakeStore(rows=[_stored_chunk_row("42", 7)])
@@ -701,53 +722,63 @@ def test_index_rejects_configured_dimension_mismatch():
         )
 
 
-def test_index_fails_when_published_verification_misses_rows():
+def test_a_failed_write_removes_the_rows_it_left_behind():
+    """A write that fails at the storage boundary leaves nothing readable."""
     backend = _backend()
-    store = FakeStore()
+    store = FakeStore(rows=[_stored_chunk_row("43", 0)])
     backend._store = store
-    original_query = store.query_rows
 
-    def dropping_count_rows(client, collection_name, filter_expr):
-        if "published == true" in filter_expr:
-            return 0
-        return FakeStore.count_rows(store, client, collection_name, filter_expr)
+    def partially_written_then_failed(client, collection_name, rows):
+        # The server accepted part of the batch before the RPC failed.
+        store.rows.extend(dict(row) for row in rows[:1])
+        raise StorageBackendError("simulated write failure")
 
-    store.count_rows = dropping_count_rows
+    store.upsert_rows = partially_written_then_failed
 
-    with pytest.raises(StorageBackendError):
+    with pytest.raises(StorageBackendError) as failure:
         backend.index_with_metadata(
             nodes=_nodes(),
             chunk_metadata=_chunk_metadata(),
             embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
         )
 
-    assert original_query is not None
+    assert "simulated write failure" in str(failure.value)
+    assert [row.get("id") for row in store.rows] == ["43-0"]
+    cleanup_scope = store.deleted_filters[-1]
+    assert 'knowledge_id == "1"' in cleanup_scope
+    assert 'doc_ref in ["42"]' in cleanup_scope
 
 
-def test_publish_failure_rolls_back_visibility():
-    """A failure after the publish write must not leave readable content."""
+def test_a_failed_write_reports_a_cleanup_that_cannot_remove_its_rows():
+    """A cleanup that fails must not report the write as merely failed."""
     backend = _backend()
-    store = FakeStore()
+    store = FakeStore(rows=[_stored_chunk_row("43", 0)])
     backend._store = store
 
-    def fail_on_publish_stage(self, collection_name, filter_expr, *, expected, stage):
-        if stage == "publish":
-            raise RuntimeError("simulated publish verification failure")
-        return None
+    def partially_written_then_failed(client, collection_name, rows):
+        store.rows.extend(dict(row) for row in rows[:1])
+        raise StorageBackendError("simulated write failure")
 
-    backend._assert_visible_row_count = fail_on_publish_stage.__get__(
-        backend, type(backend)
-    )
+    def keep_rows(client, collection_name, filter_expr, *, flush=True):
+        store.calls.append(("delete_rows", collection_name, filter_expr))
+        store.deleted_filters.append(filter_expr)
+        raise StorageBackendError("simulated cleanup failure")
 
-    with pytest.raises(RuntimeError):
+    store.upsert_rows = partially_written_then_failed
+    store.delete_rows = keep_rows
+
+    with pytest.raises(StorageBackendError) as failure:
         backend.index_with_metadata(
             nodes=_nodes(),
             chunk_metadata=_chunk_metadata(),
             embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
         )
 
-    published = [row for row in store.rows if row.get(PUBLISHED_FIELD)]
-    assert published == []
+    details = failure.value.details
+    assert details["doc_ref"] == "42"
+    assert "simulated write failure" in details["write_error"]
+    assert "simulated cleanup failure" in details["cleanup_error"]
+    assert "may still be readable" in str(failure.value)
 
 
 def test_retrieve_returns_raw_cosine_scores_above_threshold():
@@ -762,7 +793,6 @@ def test_retrieve_returns_raw_cosine_scores_above_threshold():
                 "chunk_index": 0,
                 DISPLAY_TEXT_FIELD: "display",
                 METADATA_FIELD: {"knowledge_id": "1", "doc_ref": "42"},
-                PUBLISHED_FIELD: True,
                 "__score__": 0.42,
             },
             {
@@ -773,7 +803,6 @@ def test_retrieve_returns_raw_cosine_scores_above_threshold():
                 "chunk_index": 1,
                 DISPLAY_TEXT_FIELD: "display low",
                 METADATA_FIELD: {},
-                PUBLISHED_FIELD: True,
                 "__score__": 0.11,
             },
         ]
@@ -789,7 +818,7 @@ def test_retrieve_returns_raw_cosine_scores_above_threshold():
 
     assert [record["score"] for record in result["records"]] == [0.42]
     assert result["records"][0]["content"] == "display"
-    assert "published == true" in store.searches[0]["filter"]
+    assert "published" not in store.searches[0]["filter"]
     assert 'knowledge_id == "1"' in store.searches[0]["filter"]
 
 
@@ -806,7 +835,6 @@ def test_retrieve_without_a_threshold_keeps_low_scoring_hits():
                 "chunk_index": 0,
                 DISPLAY_TEXT_FIELD: "display",
                 METADATA_FIELD: {"knowledge_id": "1", "doc_ref": "42"},
-                PUBLISHED_FIELD: True,
                 "__score__": 0.42,
             },
             {
@@ -817,7 +845,6 @@ def test_retrieve_without_a_threshold_keeps_low_scoring_hits():
                 "chunk_index": 1,
                 DISPLAY_TEXT_FIELD: "display low",
                 METADATA_FIELD: {},
-                PUBLISHED_FIELD: True,
                 "__score__": 0.11,
             },
         ]
@@ -1153,7 +1180,7 @@ def test_keyword_retrieve_keeps_scope_and_metadata_filters():
     assert 'knowledge_id == "1"' in expression
     assert 'doc_ref in ["7", "8"]' in expression
     assert 'metadata["category"] == "tech"' in expression
-    assert "published == true" in expression
+    assert "published" not in expression
 
 
 def test_keyword_retrieve_of_a_missing_index_returns_empty_without_embedding():
@@ -1220,7 +1247,7 @@ def test_hybrid_retrieve_fuses_both_branches_with_the_default_weights():
     assert keyword_request["limit"] == 5
     assert dense_request["filter"] == keyword_request["filter"]
     assert 'knowledge_id == "1"' in dense_request["filter"]
-    assert "published == true" in dense_request["filter"]
+    assert "published" not in dense_request["filter"]
     assert [record["content"] for record in result["records"]] == [
         "dense 偏好",
         "keyword 偏好",
@@ -1526,7 +1553,7 @@ def test_hybrid_retrieve_keeps_scope_and_metadata_filters():
     assert 'knowledge_id == "1"' in expression
     assert 'doc_ref in ["7", "8"]' in expression
     assert 'metadata["category"] == "tech"' in expression
-    assert "published == true" in expression
+    assert "published" not in expression
 
 
 def test_reads_reject_a_contract_from_an_older_schema():
@@ -1640,14 +1667,14 @@ def test_retrieve_accepts_numeric_lists_without_scalar_validation():
         metadata_condition={
             "operator": "and",
             "conditions": [
-                {"key": "generation", "operator": "in", "value": [0, 1]},
+                {"key": "chunk_index", "operator": "in", "value": [0, 1]},
                 {"key": "chunk_index", "operator": "nin", "value": [7]},
             ],
         },
     )
 
     expression = store.searches[0]["filter"]
-    assert "generation in [0, 1]" in expression
+    assert "chunk_index in [0, 1]" in expression
     assert "chunk_index not in [7]" in expression
 
 
@@ -1826,8 +1853,8 @@ def test_retrieve_skips_null_value_conditions_like_elasticsearch():
     assert "metadata[" not in store.searches[0]["filter"]
 
 
-@pytest.mark.parametrize("key", ["published", "id"])
-def test_retrieve_rejects_internal_identity_metadata_conditions(key):
+def test_retrieve_rejects_the_internal_row_identity_as_a_metadata_condition():
+    """The primary key belongs to the write path, not to a query condition."""
     backend = _backend()
     backend._store = FakeStore(rows=[])
 
@@ -1839,9 +1866,29 @@ def test_retrieve_rejects_internal_identity_metadata_conditions(key):
             retrieval_setting={"score_threshold": 0.0},
             metadata_condition={
                 "operator": "and",
-                "conditions": [{"key": key, "operator": "eq", "value": "x"}],
+                "conditions": [{"key": "id", "operator": "eq", "value": "x"}],
             },
         )
+
+
+def test_retrieve_treats_published_as_an_ordinary_metadata_key():
+    """The publish flag is gone, so nothing reserves that key any more."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"score_threshold": 0.0},
+        metadata_condition={
+            "operator": "and",
+            "conditions": [{"key": "published", "operator": "eq", "value": True}],
+        },
+    )
+
+    assert 'metadata["published"] == true' in store.searches[0]["filter"]
 
 
 def test_delete_missing_document_is_idempotent_and_creates_nothing():
@@ -1861,9 +1908,9 @@ def test_delete_document_removes_rows_and_verifies_absence():
     backend = _backend()
     store = FakeStore(
         rows=[
-            {"doc_ref": "42", "attempt_id": "gen1", PUBLISHED_FIELD: True},
-            {"doc_ref": "42", "attempt_id": "gen1", PUBLISHED_FIELD: False},
-            {"doc_ref": "43", "attempt_id": "gen1", PUBLISHED_FIELD: True},
+            {"doc_ref": "42", "chunk_index": 0},
+            {"doc_ref": "42", "chunk_index": 1},
+            {"doc_ref": "43", "chunk_index": 0},
         ]
     )
     backend._store = store
@@ -1872,9 +1919,7 @@ def test_delete_document_removes_rows_and_verifies_absence():
     result = backend.delete_document("1", "42")
 
     assert result["deleted_chunks"] == 2
-    assert store.rows == [
-        {"doc_ref": "43", "attempt_id": "gen1", PUBLISHED_FIELD: True}
-    ]
+    assert store.rows == [{"doc_ref": "43", "chunk_index": 0}]
     assert len(store.deleted_filters) >= 1
     # The delete entry point promises a durable removal, unlike a rewrite.
     assert ("flush", "test_kb_1") in store.calls
@@ -1954,7 +1999,6 @@ def _chunk_rows(
             "chunk_index": index,
             DISPLAY_TEXT_FIELD: f"chunk {index}",
             METADATA_FIELD: dict(metadata or {}),
-            PUBLISHED_FIELD: True,
         }
         for index in chunk_indexes
     ]
@@ -1990,7 +2034,6 @@ def test_get_document_group_order_does_not_follow_the_arrival_order():
             "chunk_index": 0,
             DISPLAY_TEXT_FIELD: f"chunk {row_id}",
             METADATA_FIELD: {},
-            PUBLISHED_FIELD: True,
         }
         for row_id in ("row-b", "row-a")
     ]
@@ -2009,15 +2052,13 @@ def test_get_document_group_order_does_not_follow_the_arrival_order():
 def test_reads_reject_a_collection_without_a_contract():
     backend = _backend()
     backend._store = FakeStore(has_contract=False)
-    backend._store.rows = [
-        {"doc_ref": "42", PUBLISHED_FIELD: True, DISPLAY_TEXT_FIELD: "x"}
-    ]
+    backend._store.rows = [{"doc_ref": "42", DISPLAY_TEXT_FIELD: "x"}]
 
     with pytest.raises(IndexContractIncompatibleError):
         backend.get_all_chunks("1")
 
 
-def test_get_all_chunks_only_returns_published_rows():
+def test_get_all_chunks_returns_the_stored_rows_in_stable_order():
     backend = _backend()
     store = FakeStore(
         rows=[
@@ -2027,7 +2068,6 @@ def test_get_all_chunks_only_returns_published_rows():
                 DISPLAY_TEXT_FIELD: "second",
                 SOURCE_FILE_FIELD: "doc.txt",
                 METADATA_FIELD: {},
-                PUBLISHED_FIELD: True,
             },
             {
                 "doc_ref": "42",
@@ -2035,15 +2075,6 @@ def test_get_all_chunks_only_returns_published_rows():
                 DISPLAY_TEXT_FIELD: "first",
                 SOURCE_FILE_FIELD: "doc.txt",
                 METADATA_FIELD: {},
-                PUBLISHED_FIELD: True,
-            },
-            {
-                "doc_ref": "42",
-                "chunk_index": 2,
-                DISPLAY_TEXT_FIELD: "unpublished",
-                SOURCE_FILE_FIELD: "doc.txt",
-                METADATA_FIELD: {},
-                PUBLISHED_FIELD: False,
             },
         ]
     )
@@ -2119,7 +2150,7 @@ def test_get_all_chunks_allows_a_doc_ref_condition_inside_the_knowledge_base():
     assert 'doc_ref == "43"' in store.queries[-1]["filter"]
 
 
-def test_list_documents_aggregates_published_rows():
+def test_list_documents_aggregates_stored_rows():
     backend = _backend()
     store = FakeStore(
         rows=[
@@ -2128,21 +2159,18 @@ def test_list_documents_aggregates_published_rows():
                 "source_file": "a.txt",
                 "created_at": "2026-01-02T00:00:00Z",
                 "chunk_index": 0,
-                PUBLISHED_FIELD: True,
             },
             {
                 "doc_ref": "42",
                 "source_file": "a.txt",
                 "created_at": "2026-01-02T00:00:00Z",
                 "chunk_index": 1,
-                PUBLISHED_FIELD: True,
             },
             {
                 "doc_ref": "41",
                 "source_file": "b.txt",
                 "created_at": "2026-01-01T00:00:00Z",
                 "chunk_index": 0,
-                PUBLISHED_FIELD: True,
             },
         ]
     )
@@ -2158,14 +2186,13 @@ def test_list_documents_aggregates_published_rows():
 def _document_rows(
     doc_refs, *, created_at: str = "2026-01-01T00:00:00Z"
 ) -> List[Dict[str, Any]]:
-    """One published chunk per document, so each doc_ref appears once."""
+    """One stored chunk per document, so each doc_ref appears once."""
     return [
         {
             "doc_ref": doc_ref,
             "source_file": f"{doc_ref}.txt",
             "created_at": created_at,
             "chunk_index": 0,
-            PUBLISHED_FIELD: True,
         }
         for doc_ref in doc_refs
     ]

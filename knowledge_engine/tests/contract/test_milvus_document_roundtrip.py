@@ -27,7 +27,7 @@ from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
-    IndexRollbackError,
+    StorageBackendError,
 )
 from shared.models import RetrievalScope
 
@@ -255,47 +255,48 @@ def test_query_and_delete_of_missing_index_create_nothing(
 def test_partial_write_is_not_queryable(
     milvus_env: MilvusContractEnv, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A failed write never leaves retrievable content, at either stage."""
-    from knowledge_engine.storage.milvus_backend import MilvusBackend
+    """A failed write never leaves retrievable content behind."""
+    from knowledge_engine.storage.milvus_native import MilvusDocumentStore
 
-    for failing_stage in ("write", "publish"):
-        knowledge_id = milvus_env.new_knowledge_id()
-        backend = milvus_env.backend()
+    knowledge_id = milvus_env.new_knowledge_id()
+    backend = milvus_env.backend()
+    write_rows = MilvusDocumentStore.upsert_rows
 
-        def fail_on_stage(self, collection_name, filter_expr, *, expected, stage):
-            if stage == failing_stage:
-                raise RuntimeError(f"simulated {failing_stage} failure")
-            return None
+    def partial_write_then_fail(self, client, collection_name, rows):
+        # The server accepted part of the batch before its RPC failed.
+        write_rows(self, client, collection_name, list(rows)[:1])
+        raise StorageBackendError("simulated write failure")
 
-        monkeypatch.setattr(MilvusBackend, "_assert_visible_row_count", fail_on_stage)
+    monkeypatch.setattr(MilvusDocumentStore, "upsert_rows", partial_write_then_fail)
 
-        with pytest.raises((RuntimeError, IndexRollbackError)):
-            _index_document(
-                milvus_env,
-                knowledge_id=knowledge_id,
-                document_id=505,
-                text="half written content must never be visible",
-                dimension=1536,
-                backend=backend,
-            )
-
-        monkeypatch.undo()
-        hits = _query(
+    with pytest.raises(StorageBackendError):
+        _index_document(
             milvus_env,
             knowledge_id=knowledge_id,
-            query="half written content",
+            document_id=505,
+            text="half written content must never be visible",
             dimension=1536,
             backend=backend,
         )
-        assert (
-            hits["records"] == []
-        ), f"content stayed visible after {failing_stage} failure"
+
+    monkeypatch.undo()
+    hits = _query(
+        milvus_env,
+        knowledge_id=knowledge_id,
+        query="half written content",
+        dimension=1536,
+        backend=backend,
+    )
+    assert hits["records"] == [], "content stayed visible after a failed write"
+    assert backend.get_all_chunks(knowledge_id) == []
+    with pytest.raises(ValueError):
+        backend.get_document(knowledge_id, "505")
 
 
 def test_confirmed_index_loss_is_not_reported_as_an_empty_knowledge_base(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """A published index that disappears must fail, not return empty."""
+    """A confirmed index that disappears must fail, not return empty."""
     from pymilvus import MilvusClient
 
     knowledge_id = milvus_env.new_knowledge_id()
@@ -328,7 +329,7 @@ def test_confirmed_index_loss_is_not_reported_as_an_empty_knowledge_base(
     assert backend.delete_document(knowledge_id, "1101")["deleted_chunks"] == 0
 
 
-def test_invalid_vectors_never_publish(
+def test_invalid_vectors_never_create_an_index(
     milvus_env: MilvusContractEnv,
 ) -> None:
     """Empty batches and invalid vectors fail before creating an index."""
@@ -379,7 +380,7 @@ def test_invalid_vectors_never_publish(
 def test_retrieval_scope_limits_documents(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """A document scope returns only that document's published chunks."""
+    """A document scope returns only that document's stored chunks."""
     knowledge_id = milvus_env.new_knowledge_id()
     backend, model, _ = _index_document(
         milvus_env,
@@ -749,7 +750,6 @@ def test_source_file_and_display_text_survive_the_round_trip(
                 "source_file",
                 DISPLAY_TEXT_FIELD,
                 RETRIEVAL_TEXT_FIELD,
-                "published",
             ],
             limit=10,
         )
@@ -762,4 +762,28 @@ def test_source_file_and_display_text_survive_the_round_trip(
     assert row["source_file"] == "document-1201.txt"
     assert "display and retrieval text" in row[DISPLAY_TEXT_FIELD]
     assert row[RETRIEVAL_TEXT_FIELD]
-    assert row["published"] is True
+
+
+def test_the_collection_keeps_no_publish_or_execution_columns(
+    milvus_env: MilvusContractEnv,
+) -> None:
+    """The physical schema holds the fields retrieval needs and nothing else."""
+    from pymilvus import MilvusClient
+
+    knowledge_id = milvus_env.new_knowledge_id()
+    backend, _, _ = _index_document(
+        milvus_env,
+        knowledge_id=knowledge_id,
+        document_id=1301,
+        text="content whose stored columns are inspected",
+        dimension=1536,
+    )
+
+    client = MilvusClient(uri=milvus_env.uri)
+    try:
+        description = client.describe_collection(backend.get_index_name(knowledge_id))
+    finally:
+        client.close()
+
+    field_names = {field["name"] for field in description["fields"]}
+    assert {"published", "generation", "attempt_id"}.isdisjoint(field_names)

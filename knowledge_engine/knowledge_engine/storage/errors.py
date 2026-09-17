@@ -77,7 +77,7 @@ class StorageUnavailableError(StorageBackendError):
     This is the transient class: the server may be disconnected or too slow for
     the deadline. It says nothing about whether the remote side applied the
     request, so a caller may retry the whole operation but must not report the
-    attempt as cancelled, rolled back or unwritten.
+    attempt as cancelled or unwritten.
     """
 
     code = "storage_unavailable"
@@ -96,27 +96,5 @@ class StorageUnavailableError(StorageBackendError):
             f"within its bound: {classification}. The remote result is unknown; "
             "retry the whole operation and do not assume it was cancelled or "
             "rolled back.",
-            details=merged_details,
-        )
-
-
-class IndexRollbackError(StorageBackendError):
-    """Raised when a failed publication could not be rolled back."""
-
-    code = "index_rollback_failed"
-    retryable = True
-
-    def __init__(
-        self,
-        collection_name: str,
-        *,
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        merged_details = {"collection_name": collection_name}
-        merged_details.update(details or {})
-        super().__init__(
-            f"Milvus index '{collection_name}' could not be rolled back after a "
-            "failed publication; the index may be visible while the business "
-            "state says the write failed. Re-run the same execution.",
             details=merged_details,
         )

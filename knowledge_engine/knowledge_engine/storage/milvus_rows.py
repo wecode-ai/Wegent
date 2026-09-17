@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Reading and shaping published Milvus rows.
+"""Reading and shaping stored Milvus rows.
 
 This module owns one concern: turning stored rows back into the document,
 chunk and metadata shapes the callers of the storage backend expect. It never
@@ -63,7 +63,7 @@ def row_metadata(hit: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class MilvusRowReader:
-    """Reads published chunks and documents out of one Milvus collection."""
+    """Reads stored chunks and documents out of one Milvus collection."""
 
     def __init__(
         self,
@@ -77,7 +77,7 @@ class MilvusRowReader:
         self._missing_index_for = missing_index_for
 
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
-        """Read the published chunks of one document in stable order.
+        """Read the stored chunks of one document in stable order.
 
         The document is a complete answer, so it is read within the budget or
         the read fails: returning the rows that happened to fit would report a
@@ -93,8 +93,8 @@ class MilvusRowReader:
         if not rows:
             raise ValueError(f"Document {doc_ref} not found")
 
-        # Chunk index first, then the row's own id: two rows written for the
-        # same index (a replaced attempt, a stale tail) still keep one order.
+        # Chunk index first, then the row's own id, so a stored row set keeps
+        # one order however the server returns it.
         ordered_rows = sorted(
             rows,
             key=lambda row: (
@@ -121,7 +121,7 @@ class MilvusRowReader:
     def list_documents(
         self, knowledge_id: str, page: int = 1, page_size: int = 20, **kwargs
     ) -> Dict:
-        """Aggregate every published chunk into a page of documents.
+        """Aggregate every stored chunk into a page of documents.
 
         The page is cut from a complete view: documents inside the read budget
         are counted and ordered in full, and a knowledge base whose rows exceed
@@ -181,7 +181,7 @@ class MilvusRowReader:
         metadata_condition: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
-        """Read published chunks for direct injection in stable order.
+        """Read stored chunks for direct injection in stable order.
 
         ``max_chunks`` is a partial-result request: the caller asked for at most
         that many rows, so the read stops there. The metadata condition is
@@ -221,7 +221,7 @@ class MilvusRowReader:
         limit: int,
         output_fields: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Read at most ``limit`` published rows."""
+        """Read at most ``limit`` stored rows."""
         store = self._store_for()
         with store.client() as client:
             return self._query_page(

@@ -42,7 +42,7 @@ from knowledge_engine.storage.milvus_errors import rpc_failure
 logger = logging.getLogger(__name__)
 
 # Bump when the physical row layout changes in a way that requires rebuilding.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 METRIC_TYPE = "COSINE"
 INDEX_TYPE = "AUTOINDEX"
 SPARSE_METRIC_TYPE = "BM25"
@@ -58,9 +58,9 @@ MAX_KEY_LENGTH = 512
 MAX_TEXT_LENGTH = 65535
 MAX_COUNT_ROWS = 16384
 
-# Retrieval reads a snapshot the write path already published, so it pays no
+# Retrieval reads a snapshot the write path already wrote, so it pays no
 # linearizable-read wait (~400ms Strong versus ~1ms Bounded on the contract
-# fixture). Publication, deletion and creation do verify, so writing stays Strong.
+# fixture). Deletion and creation do verify, so writing stays Strong.
 READ_CONSISTENCY_LEVEL = "Bounded"
 WRITE_CONSISTENCY_LEVEL = "Strong"
 
@@ -74,49 +74,41 @@ ID_FIELD = "id"
 KNOWLEDGE_ID_FIELD = "knowledge_id"
 DOC_REF_FIELD = "doc_ref"
 SOURCE_FILE_FIELD = "source_file"
-GENERATION_FIELD = "generation"
-ATTEMPT_ID_FIELD = "attempt_id"
 NODE_KIND_FIELD = "node_kind"
 CHUNK_INDEX_FIELD = "chunk_index"
 RETRIEVAL_TEXT_FIELD = "retrieval_text"
 DISPLAY_TEXT_FIELD = "display_text"
 METADATA_FIELD = "metadata"
 CREATED_AT_FIELD = "created_at"
-PUBLISHED_FIELD = "published"
 DENSE_VECTOR_FIELD = "dense_vector"
 SPARSE_VECTOR_FIELD = "sparse_vector"
 
 NODE_KIND_CHUNK = "chunk"
 
 # Physical scalar columns that a metadata condition may be compiled against.
-# Row identity and publication state are deliberately absent: the write path
-# owns them, so a query condition can never pin or fake them.
+# Row identity is deliberately absent: the write path owns it, so a query
+# condition can never pin or fake it.
 CHUNK_FIELDS_FOR_FILTERING: List[str] = [
     KNOWLEDGE_ID_FIELD,
     DOC_REF_FIELD,
     SOURCE_FILE_FIELD,
-    GENERATION_FIELD,
-    ATTEMPT_ID_FIELD,
     NODE_KIND_FIELD,
     CHUNK_INDEX_FIELD,
     CREATED_AT_FIELD,
 ]
-NUMERIC_FILTER_FIELDS = frozenset({GENERATION_FIELD, CHUNK_INDEX_FIELD})
+NUMERIC_FILTER_FIELDS = frozenset({CHUNK_INDEX_FIELD})
 
 ROW_OUTPUT_FIELDS: List[str] = [
     ID_FIELD,
     KNOWLEDGE_ID_FIELD,
     DOC_REF_FIELD,
     SOURCE_FILE_FIELD,
-    GENERATION_FIELD,
-    ATTEMPT_ID_FIELD,
     NODE_KIND_FIELD,
     CHUNK_INDEX_FIELD,
     RETRIEVAL_TEXT_FIELD,
     DISPLAY_TEXT_FIELD,
     METADATA_FIELD,
     CREATED_AT_FIELD,
-    PUBLISHED_FIELD,
 ]
 
 INDEX_BINDING_COLLECTION = "wegent_index_bindings"
@@ -214,19 +206,17 @@ def node_row_id(
     *,
     knowledge_id: str,
     doc_ref: str,
-    generation: int,
-    attempt_id: str,
-    node_kind: str,
     chunk_index: int,
 ) -> str:
-    """Derive a stable primary key for one indexed node."""
+    """Derive a stable primary key for one indexed chunk.
+
+    The key is the document and the chunk position inside it, so re-indexing
+    the same document overwrites its rows instead of layering versions.
+    """
     identity = "|".join(
         [
             str(knowledge_id),
             str(doc_ref),
-            str(generation),
-            str(attempt_id),
-            str(node_kind),
             str(chunk_index),
         ]
     )
@@ -238,12 +228,9 @@ def build_scope_filter(
     knowledge_id: str,
     doc_refs: Sequence[Any] | None = None,
     extra_conditions: Iterable[str] | None = None,
-    published: bool = True,
 ) -> str:
-    """Compile the mandatory knowledge base and publication scope."""
+    """Compile the mandatory knowledge base and document scope."""
     conditions = [f'knowledge_id == "{sanitize_filter_value(knowledge_id)}"']
-    if published:
-        conditions.append(f"{PUBLISHED_FIELD} == true")
     if doc_refs is not None:
         if not doc_refs:
             raise ValueError("doc_refs must not be an empty scope")
@@ -339,12 +326,6 @@ def _scalar_row_fields() -> List[FieldSchema]:
             dtype=DataType.VARCHAR,
             max_length=MAX_TEXT_LENGTH,
         ),
-        FieldSchema(name=GENERATION_FIELD, dtype=DataType.INT64),
-        FieldSchema(
-            name=ATTEMPT_ID_FIELD,
-            dtype=DataType.VARCHAR,
-            max_length=MAX_ID_LENGTH,
-        ),
         FieldSchema(
             name=NODE_KIND_FIELD,
             dtype=DataType.VARCHAR,
@@ -372,7 +353,6 @@ def _scalar_row_fields() -> List[FieldSchema]:
             dtype=DataType.VARCHAR,
             max_length=MAX_TEXT_LENGTH,
         ),
-        FieldSchema(name=PUBLISHED_FIELD, dtype=DataType.BOOL),
     ]
 
 
@@ -874,26 +854,74 @@ class MilvusDocumentStore:
         if flush:
             client.flush(collection_name, timeout=self.rpc_timeout)
 
+    def _query_write_level(
+        self,
+        client: MilvusClient,
+        collection_name: str,
+        filter_expr: str,
+        *,
+        output_fields: Sequence[str],
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        """Read matching rows at the level that waits for the newest data.
+
+        The read level is an internal convention, not a caller knob: the guard
+        and the deadline are the same for every write-level read.
+        """
+        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
+            return []
+        return list(
+            client.query(
+                collection_name=collection_name,
+                filter=filter_expr,
+                output_fields=list(output_fields),
+                limit=limit,
+                consistency_level=WRITE_CONSISTENCY_LEVEL,
+                timeout=self.rpc_timeout,
+            )
+        )
+
     def count_rows(
         self, client: MilvusClient, collection_name: str, filter_expr: str
     ) -> int:
-        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
-            return 0
-        rows = client.query(
-            collection_name=collection_name,
-            filter=filter_expr,
+        rows = self._query_write_level(
+            client,
+            collection_name,
+            filter_expr,
             output_fields=[ID_FIELD],
             limit=MAX_COUNT_ROWS,
-            consistency_level=WRITE_CONSISTENCY_LEVEL,
-            timeout=self.rpc_timeout,
         )
         if len(rows) >= MAX_COUNT_ROWS:
             raise StorageBackendError(
                 "Milvus row count exceeded the verification budget; the count "
-                "cannot be trusted for publication or deletion.",
+                "cannot be trusted for deletion.",
                 details={"collection_name": collection_name, "budget": MAX_COUNT_ROWS},
             )
         return len(rows)
+
+    def advance_read_visibility(
+        self, client: MilvusClient, collection_name: str, filter_expr: str
+    ) -> None:
+        """Serve one read at the write level so later readers see a write.
+
+        Retrieval reads at ``Bounded`` (see ``READ_CONSISTENCY_LEVEL``) to skip
+        the linearizable wait that costs hundreds of milliseconds, so Milvus
+        may answer from a snapshot a few hundred milliseconds old - longer than
+        the gap between a write and the query that follows it, which makes a
+        document that was just written missing from the next query. Reading the
+        written scope once at the write level makes the server serve the newest
+        rows, so the write is readable by the readers that follow it.
+
+        This is not a publication check: it asserts nothing about the result,
+        returns nothing and introduces no state of its own.
+        """
+        self._query_write_level(
+            client,
+            collection_name,
+            filter_expr,
+            output_fields=[ID_FIELD],
+            limit=1,
+        )
 
     def query_rows(
         self,

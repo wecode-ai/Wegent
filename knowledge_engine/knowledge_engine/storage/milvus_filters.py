@@ -45,13 +45,12 @@ from knowledge_engine.storage.milvus_native import (
     ID_FIELD,
     METADATA_FIELD,
     NUMERIC_FILTER_FIELDS,
-    PUBLISHED_FIELD,
     sanitize_filter_value,
 )
 
-# Row identity and publication state are owned by the write path. They are
-# never readable as metadata conditions, so a caller cannot pin or fake them.
-INTERNAL_FILTER_FIELDS = frozenset({ID_FIELD, PUBLISHED_FIELD})
+# Row identity is owned by the write path. It is never readable as a metadata
+# condition, so a caller cannot pin or fake it.
+INTERNAL_FILTER_FIELDS = frozenset({ID_FIELD})
 
 LiteralKind = Literal["numeric", "text", "json"]
 
@@ -64,8 +63,8 @@ def compile_metadata_conditions(
     """Compile the supported flat metadata condition into Milvus filters.
 
     The result is composed with the mandatory scope filter by the caller, so a
-    metadata condition can only narrow the knowledge base, document and
-    publication scope - never widen it.
+    metadata condition can only narrow the knowledge base and document scope -
+    never widen it.
 
     ``allow_document_scope`` exists for the reading paths: they take no
     separate document scope, so a ``doc_ref`` condition narrows the same query

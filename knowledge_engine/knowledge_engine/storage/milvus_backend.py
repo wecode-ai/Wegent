@@ -47,7 +47,6 @@ from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
-    IndexRollbackError,
     StorageBackendError,
     UnsupportedStorageCapabilityError,
 )
@@ -59,19 +58,16 @@ from knowledge_engine.storage.milvus_hybrid import (
     resolve_hybrid_weights,
 )
 from knowledge_engine.storage.milvus_native import (
-    ATTEMPT_ID_FIELD,
     CHUNK_INDEX_FIELD,
     CREATED_AT_FIELD,
     DENSE_VECTOR_FIELD,
     DISPLAY_TEXT_FIELD,
     DOC_REF_FIELD,
-    GENERATION_FIELD,
     ID_FIELD,
     KNOWLEDGE_ID_FIELD,
     METADATA_FIELD,
     NODE_KIND_CHUNK,
     NODE_KIND_FIELD,
-    PUBLISHED_FIELD,
     RETRIEVAL_TEXT_FIELD,
     SCHEMA_VERSION,
     SOURCE_FILE_FIELD,
@@ -80,7 +76,6 @@ from knowledge_engine.storage.milvus_native import (
     build_scope_filter,
     contract_token_field,
     node_row_id,
-    sanitize_filter_value,
 )
 from knowledge_engine.storage.milvus_parent_store import MilvusParentStore
 from knowledge_engine.storage.milvus_rows import (
@@ -94,7 +89,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 20
 DEFAULT_TIMEOUT_SECONDS = 10.0
-DEFAULT_ATTEMPT_PREFIX = "gen"
 
 
 @dataclass(frozen=True)
@@ -214,11 +208,11 @@ class MilvusBackend(BaseStorageBackend):
         embed_model,
         **kwargs,
     ) -> Dict:
-        """Write and publish one document execution into Milvus.
+        """Write one document into Milvus with a single write.
 
-        Rows are written unpublished, verified through an independent client
-        and only then published. A failure anywhere leaves the document
-        invisible instead of exposing a half-written index.
+        The version stored before this write is removed first, and a failed
+        write removes whatever this write left behind, so a caller never reads
+        two versions of one document at once.
         """
         materialized = [node for node in nodes if self._node_has_content(node)]
         if not materialized:
@@ -226,8 +220,6 @@ class MilvusBackend(BaseStorageBackend):
 
         knowledge_id = chunk_metadata.knowledge_id
         doc_ref = chunk_metadata.doc_ref
-        generation = self._resolve_generation(kwargs)
-        attempt_id = self._resolve_attempt_id(kwargs, generation)
         collection_name = self.get_index_name(knowledge_id, **kwargs)
 
         vectors = self._resolve_node_vectors(materialized, embed_model)
@@ -240,42 +232,25 @@ class MilvusBackend(BaseStorageBackend):
                 vector,
                 knowledge_id=knowledge_id,
                 doc_ref=doc_ref,
-                generation=generation,
-                attempt_id=attempt_id,
                 embedding_space=embedding_space,
             )
             for node, vector in zip(materialized, vectors)
         ]
 
-        self._write_unpublished(
+        self._write_rows(
             collection_name,
             rows,
             knowledge_id=knowledge_id,
             doc_ref=doc_ref,
             dimension=dimension,
             embedding_space=embedding_space,
-            execution_filter=self._execution_filter(
-                knowledge_id, doc_ref, attempt_id, published=False
-            ),
-        )
-        self._publish_rows(
-            collection_name,
-            rows,
-            published_filter=self._execution_filter(
-                knowledge_id, doc_ref, attempt_id, published=True
-            ),
-            execution_filter=self._execution_filter(
-                knowledge_id, doc_ref, attempt_id, published=False
-            ),
         )
 
         logger.info(
-            "[Milvus] Published document: collection=%s, doc_ref=%s, generation=%s, "
-            "attempt=%s, chunks=%d, dimension=%d",
+            "[Milvus] Indexed document: collection=%s, doc_ref=%s, chunks=%d, "
+            "dimension=%d",
             collection_name,
             doc_ref,
-            generation,
-            attempt_id,
             len(rows),
             dimension,
         )
@@ -287,7 +262,7 @@ class MilvusBackend(BaseStorageBackend):
             "embedding_space": embedding_space,
         }
 
-    def _write_unpublished(
+    def _write_rows(
         self,
         collection_name: str,
         rows: List[Dict[str, Any]],
@@ -296,15 +271,28 @@ class MilvusBackend(BaseStorageBackend):
         doc_ref: str,
         dimension: int,
         embedding_space: str,
-        execution_filter: str,
     ) -> None:
-        """Create the index if needed and stage every row unpublished.
+        """Create the index if needed, then replace one document's rows.
 
         A rewrite drops whatever this document stored before it stages the new
         rows, so the version a caller reads is always one version of one
         document. ``MilvusCleanup.clear_document_rows`` owns why that is
         required, which scope it honours and why the index contract is
         confirmed by ``ensure_index`` first.
+
+        The rows are written once and never published in a second pass. The
+        write ends by making them readable, because the read path's ``Bounded``
+        consistency would otherwise answer the next query from an older
+        snapshot. A write that cannot be made readable is treated like a write
+        that did not happen - its rows are removed and the caller retries -
+        because replacing them keeps "the caller saw a failure" and "the index
+        holds nothing of this document" true together.
+
+        Milvus has no transaction spanning the write, so the failure path is
+        explicit: the document's rows are removed again at this write
+        boundary. The price of dropping the old row-count check is that a
+        server that accepts a write and stores nothing is no longer detected
+        here; the parity spec accepts that in exchange for one write.
         """
         with self._store.client() as client:
             self._store.ensure_index(
@@ -313,109 +301,77 @@ class MilvusBackend(BaseStorageBackend):
                 dimension=dimension,
                 embedding_space=embedding_space,
             )
-        self._cleanup.clear_document_rows(
+        self._remove_document_rows(collection_name, knowledge_id, doc_ref)
+        try:
+            with self._store.client() as client:
+                self._store.upsert_rows(client, collection_name, rows)
+                self._store.advance_read_visibility(
+                    client,
+                    collection_name,
+                    build_scope_filter(knowledge_id=knowledge_id, doc_refs=[doc_ref]),
+                )
+        except Exception as write_error:
+            self._drop_failed_write(collection_name, knowledge_id, doc_ref, write_error)
+
+    def _remove_document_rows(
+        self, collection_name: str, knowledge_id: str, doc_ref: str
+    ) -> int:
+        """Remove one document's rows at the write boundary.
+
+        ``require_bound`` is False because this write confirmed the index
+        contract of this collection just before. ``flush`` is False because
+        the removal is proven with a Strong consistency read and must not seal
+        the segment on every rewrite.
+        """
+        return self._cleanup.clear_document_rows(
             collection_name,
             knowledge_id,
             doc_ref,
             require_bound=False,
             flush=False,
         )
-        with self._store.client() as client:
-            self._store.upsert_rows(
-                client, collection_name, self._with_publication(rows, published=False)
-            )
-        self._assert_visible_row_count(
-            collection_name, execution_filter, expected=len(rows), stage="write"
-        )
 
-    def _publish_rows(
+    def _drop_failed_write(
         self,
         collection_name: str,
-        rows: List[Dict[str, Any]],
-        *,
-        published_filter: str,
-        execution_filter: str,
+        knowledge_id: str,
+        doc_ref: str,
+        write_error: Exception,
     ) -> None:
-        """Publish a fully written execution and verify its visibility.
+        """Remove the rows of a failed write, or fail with that cleanup.
 
-        The publication write is the last mutation of the write path, so a
-        failure afterwards is rolled back by removing this execution's rows:
-        the caller sees the failure and the index does not stay readable for a
-        document the business state never marked successful.
+        The write path never reports this failure as a success: either the
+        original write failure is re-raised, or - when the rows could not be
+        removed - a failure that names both is raised, because the document
+        may still be readable.
 
-        Neither this write nor the staged one waits for a server-side flush.
-        The check below proves what publication promises - a separate client
-        with Strong consistency sees the rows - but not that the segment is
-        sealed, its index built, or the rows durable: Milvus persists in the
-        background, so a crash before that flush can lose rows this write
-        already reported as published. The Elasticsearch backend issues no
-        per-document flush either, and the parity spec asks for nothing
-        stronger.
+        Neither this write nor the one it cleans up waits for a server-side
+        flush: Milvus persists in the background, so a crash before its own
+        flush can lose rows this write already reported as written. The
+        Elasticsearch backend issues no per-document flush either, and the
+        parity spec asks for nothing stronger.
         """
         try:
-            with self._store.client() as client:
-                self._store.upsert_rows(
-                    client,
-                    collection_name,
-                    self._with_publication(rows, published=True),
-                )
-            self._assert_visible_row_count(
-                collection_name, published_filter, expected=len(rows), stage="publish"
-            )
-        except Exception as publish_error:
-            self._rollback_failed_publication(
-                collection_name, execution_filter, publish_error
-            )
-
-    def _rollback_failed_publication(
-        self,
-        collection_name: str,
-        execution_filter: str,
-        publish_error: Exception,
-    ) -> None:
-        """Remove a failed execution and re-raise the original failure."""
-        try:
-            with self._store.client() as client:
-                self._store.delete_rows(client, collection_name, execution_filter)
-            with self._store.client() as reader:
-                remaining = self._store.count_rows(
-                    reader, collection_name, execution_filter
-                )
-            if remaining:
-                raise StorageBackendError(
-                    "Milvus publication rollback left rows behind.",
-                    details={
-                        "collection_name": collection_name,
-                        "remaining": remaining,
-                    },
-                )
-        except Exception as rollback_error:
-            raise IndexRollbackError(
-                collection_name,
-                details={"rollback_error": str(rollback_error)},
-            ) from publish_error
-        raise publish_error
-
-    def _resolve_generation(self, kwargs: Dict[str, Any]) -> int:
-        generation = kwargs.get("index_generation")
-        if generation is None:
-            return 0
-        return int(generation)
+            self._remove_document_rows(collection_name, knowledge_id, doc_ref)
+        except Exception as cleanup_error:
+            raise StorageBackendError(
+                f"Milvus write failed and the rows of document '{doc_ref}' in "
+                f"'{collection_name}' could not be removed afterwards; the "
+                "document may still be readable. Re-run the same write.",
+                details={
+                    "collection_name": collection_name,
+                    "doc_ref": doc_ref,
+                    "write_error": str(write_error),
+                    "cleanup_error": str(cleanup_error),
+                },
+            ) from write_error
+        raise write_error
 
     def _node_has_content(self, node: BaseNode) -> bool:
         """A chunk with neither retrieval nor display text is not indexable."""
         retrieval_text = self.get_node_embedding_text(node)
         display_text = self.get_node_display_text(node)
         return bool(retrieval_text.strip() or display_text.strip())
-
-    def _resolve_attempt_id(self, kwargs: Dict[str, Any], generation: int) -> str:
-        attempt_id = kwargs.get("attempt_id")
-        if attempt_id:
-            return str(attempt_id)
-        # Task 01 callers have no persisted attempt yet. A stable value keeps a
-        # re-sent batch on the same primary keys, so it overwrites instead of
-        # duplicating. Task 02 supplies the persisted execution identity.
-        return f"{DEFAULT_ATTEMPT_PREFIX}{generation}"
 
     def _resolve_node_vectors(
         self,
@@ -456,8 +412,6 @@ class MilvusBackend(BaseStorageBackend):
         *,
         knowledge_id: str,
         doc_ref: str,
-        generation: int,
-        attempt_id: str,
         embedding_space: str,
     ) -> Dict[str, Any]:
         metadata = dict(node.metadata or {})
@@ -466,75 +420,21 @@ class MilvusBackend(BaseStorageBackend):
             ID_FIELD: node_row_id(
                 knowledge_id=knowledge_id,
                 doc_ref=doc_ref,
-                generation=generation,
-                attempt_id=attempt_id,
-                node_kind=NODE_KIND_CHUNK,
                 chunk_index=chunk_index,
             ),
             KNOWLEDGE_ID_FIELD: knowledge_id,
             DOC_REF_FIELD: doc_ref,
             SOURCE_FILE_FIELD: str(metadata.get("source_file") or ""),
-            GENERATION_FIELD: generation,
-            ATTEMPT_ID_FIELD: attempt_id,
             NODE_KIND_FIELD: NODE_KIND_CHUNK,
             CHUNK_INDEX_FIELD: chunk_index,
             RETRIEVAL_TEXT_FIELD: self.get_node_embedding_text(node),
             DISPLAY_TEXT_FIELD: self.get_node_display_text(node),
             METADATA_FIELD: _json_metadata(metadata),
             CREATED_AT_FIELD: str(metadata.get("created_at") or ""),
-            PUBLISHED_FIELD: False,
             DENSE_VECTOR_FIELD: [float(value) for value in vector],
             # Constant value; the field name carries the contract identity.
             contract_token_field(embedding_space): "1",
         }
-
-    @staticmethod
-    def _with_publication(
-        rows: Sequence[Dict[str, Any]], *, published: bool
-    ) -> List[Dict[str, Any]]:
-        return [{**row, PUBLISHED_FIELD: published} for row in rows]
-
-    @staticmethod
-    def _attempt_condition(attempt_id: str) -> str:
-        return f'attempt_id == "{sanitize_filter_value(attempt_id)}"'
-
-    def _execution_filter(
-        self,
-        knowledge_id: str,
-        doc_ref: str,
-        attempt_id: str,
-        *,
-        published: bool,
-    ) -> str:
-        return build_scope_filter(
-            knowledge_id=knowledge_id,
-            doc_refs=[doc_ref],
-            extra_conditions=[self._attempt_condition(attempt_id)],
-            published=published,
-        )
-
-    def _assert_visible_row_count(
-        self,
-        collection_name: str,
-        filter_expr: str,
-        *,
-        expected: int,
-        stage: str,
-    ) -> None:
-        """Verify row count through a separate client before publishing."""
-        with self._store.client() as reader:
-            actual = self._store.count_rows(reader, collection_name, filter_expr)
-        if actual != expected:
-            raise StorageBackendError(
-                f"Milvus {stage} verification failed: expected {expected} rows "
-                f"but an independent client observed {actual}.",
-                details={
-                    "collection_name": collection_name,
-                    "stage": stage,
-                    "expected": expected,
-                    "actual": actual,
-                },
-            )
 
     def retrieve(
         self,
@@ -546,7 +446,7 @@ class MilvusBackend(BaseStorageBackend):
         metadata_condition: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Dict:
-        """Retrieve published chunks in scope for one retrieval mode.
+        """Retrieve stored chunks in scope for one retrieval mode.
 
         ``vector`` returns raw COSINE similarity: the score is the database
         similarity for this candidate with no candidate-set re-normalization.
@@ -754,9 +654,9 @@ class MilvusBackend(BaseStorageBackend):
         """Fuse the dense and keyword routes over one shared scope.
 
         Both routes are requested with the same knowledge base, document,
-        metadata and publication filter, so hybrid never widens what the
-        caller may read. ``milvus_hybrid`` owns the scoring contract and why
-        the fusion is computed here instead of by the server-side ranker.
+        metadata and scope filter, so hybrid never widens what the caller may
+        read. ``milvus_hybrid`` owns the scoring contract and why the fusion is
+        computed here instead of by the server-side ranker.
         """
         query_vector = prepare_query_vector(embed_model, dense_query)
         self._require_bound_index(
@@ -908,13 +808,13 @@ class MilvusBackend(BaseStorageBackend):
         return self._cleanup.drop_knowledge_index(knowledge_id, **kwargs)
 
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
-        """Read the published chunks of one document in stable order."""
+        """Read the stored chunks of one document in stable order."""
         return self._reader.get_document(knowledge_id, doc_ref, **kwargs)
 
     def list_documents(
         self, knowledge_id: str, page: int = 1, page_size: int = 20, **kwargs
     ) -> Dict:
-        """Aggregate published chunks into a page of documents."""
+        """Aggregate stored chunks into a page of documents."""
         return self._reader.list_documents(
             knowledge_id, page=page, page_size=page_size, **kwargs
         )
@@ -936,7 +836,7 @@ class MilvusBackend(BaseStorageBackend):
         metadata_condition: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
-        """Read published chunks for direct injection in stable order."""
+        """Read stored chunks for direct injection in stable order."""
         return self._reader.get_all_chunks(
             knowledge_id,
             max_chunks=max_chunks,
@@ -959,12 +859,12 @@ class MilvusBackend(BaseStorageBackend):
         explicit operator rebuild moves such a collection forward.
 
         The contract is read at the snapshot level, which leaves one window
-        open: a document published moments ago can be visible as a collection
-        before its contract row is. A collection that exists without a visible
-        contract is therefore re-read once at the write level, inside this same
-        request and on the same client, before it is called incompatible: a
-        fresh publication degrades into a slower answer rather than a failure.
-        A contract that is really missing still fails.
+        open: a collection created moments ago can be visible before its
+        contract row is. A collection that exists without a visible contract is
+        therefore re-read once at the write level, inside this same request and
+        on the same client, before it is called incompatible: a fresh write
+        degrades into a slower answer rather than a failure. A contract that is
+        really missing still fails.
         """
         binding = self._store.read_binding(client, collection_name)
         exists = self._store.has_collection(client, collection_name)

@@ -87,29 +87,22 @@ def test_binding_accepts_identical_contract():
     _binding().assert_compatible(_binding())
 
 
-def test_node_row_id_is_stable_and_execution_scoped():
-    """The same batch re-sent overwrites; a new execution is isolated."""
-    base = {
-        "knowledge_id": "1",
-        "doc_ref": "42",
-        "generation": 3,
-        "attempt_id": "attempt-a",
-        "node_kind": "chunk",
-        "chunk_index": 0,
-    }
+def test_node_row_id_is_stable_per_document_and_chunk():
+    """The same document and chunk keep one key, so a write replaces its row."""
+    base = {"knowledge_id": "1", "doc_ref": "42", "chunk_index": 0}
 
     assert node_row_id(**base) == node_row_id(**base)
-    assert node_row_id(**base) != node_row_id(**{**base, "attempt_id": "attempt-b"})
-    assert node_row_id(**base) != node_row_id(**{**base, "generation": 4})
     assert node_row_id(**base) != node_row_id(**{**base, "chunk_index": 1})
+    assert node_row_id(**base) != node_row_id(**{**base, "doc_ref": "43"})
+    assert node_row_id(**base) != node_row_id(**{**base, "knowledge_id": "2"})
 
 
-def test_scope_filter_requires_published_rows_in_scope():
+def test_scope_filter_scopes_the_knowledge_base_and_documents():
     expression = build_scope_filter(knowledge_id="1", doc_refs=[42, "doc_b"])
 
     assert 'knowledge_id == "1"' in expression
-    assert "published == true" in expression
     assert 'doc_ref in ["42", "doc_b"]' in expression
+    assert "published" not in expression
 
 
 def test_scope_filter_escapes_quotes_and_backslashes():
@@ -132,14 +125,13 @@ def test_collection_schema_declares_required_fields_and_dimension():
     for name in (
         "knowledge_id",
         "doc_ref",
-        "generation",
-        "attempt_id",
         "chunk_index",
         "retrieval_text",
         "display_text",
-        "published",
     ):
         assert name in fields
+    for removed in ("generation", "attempt_id", "published"):
+        assert removed not in fields
     assert contract_token_field("sha256:space") in fields
     assert fields["id"].is_primary
 

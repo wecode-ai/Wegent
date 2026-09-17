@@ -4,13 +4,12 @@
 
 """Read consistency contract for the native Milvus store (no server).
 
-Retrieval answers from published data whose visibility the write path already
-proved through its own independent Strong read, so the read RPCs run at
-``Bounded``. The publication row count and the collection creation stay
-``Strong``: they are the reads that decide whether the data and the schema are
-really there before the write path reports success. The one read that crosses
-over is the publication-window fallback, which re-reads a contract the
-snapshot read missed before calling the collection incompatible.
+Retrieval answers from data the write path wrote in a single write, so the read
+RPCs run at ``Bounded``. The delete verification and the collection creation
+stay ``Strong``: they are the reads that decide whether the data and the schema
+are really there before the write path reports success. The one read that
+crosses over is the contract fallback, which re-reads a contract the snapshot
+read missed before calling the collection incompatible.
 """
 
 import pytest
@@ -162,11 +161,20 @@ def test_sparse_search_uses_the_read_consistency_level():
     assert client.consistency_levels("search") == [READ_CONSISTENCY]
 
 
-def test_publication_row_count_stays_strong():
-    """Publication, deletion and rollback verify rows through a Strong read."""
+def test_delete_verification_row_count_stays_strong():
+    """Deleting proves the rows are gone through a Strong read."""
     client = _RecordingClient()
 
     _store(client).count_rows(client, "wegent_kb_1", 'knowledge_id == "1"')
+
+    assert client.consistency_levels("query") == [WRITE_CONSISTENCY]
+
+
+def test_write_visibility_read_stays_strong():
+    """Making a write readable is a write-path read, not a retrieval read."""
+    client = _RecordingClient()
+
+    _store(client).advance_read_visibility(client, "wegent_kb_1", 'knowledge_id == "1"')
 
     assert client.consistency_levels("query") == [WRITE_CONSISTENCY]
 

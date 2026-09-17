@@ -113,7 +113,7 @@ def is_milvus_lite(uri: str) -> bool:
 
 
 def drop_collection_with_contract(uri: str, collection_name: str) -> None:
-    """Drop one published collection, its parent sidecar and its contract."""
+    """Drop one stored collection, its parent sidecar and its contract."""
     client = MilvusClient(uri=uri)
     try:
         for name in (collection_name, f"{collection_name}__parents"):

@@ -413,7 +413,7 @@ def test_child_hit_without_its_parent_answers_with_the_child_body(
         )["chunks"]
     }
 
-    # The sidecar of that document is gone while its chunks stay published.
+    # The sidecar of that document is gone while its chunks stay stored.
     backend.delete_parent_nodes(knowledge_id, "914", user_id=CONTRACT_USER_ID)
 
     records = _mentioning(

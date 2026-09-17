@@ -7,7 +7,7 @@
 Parent nodes are a separate physical store from the retrieval index: they are
 never embedded or searched, so they live outside the index contract and are
 addressed by document reference only. Keeping them in their own module keeps
-the retrieval backend focused on the write/publish lifecycle.
+the retrieval backend focused on the write lifecycle.
 """
 
 from __future__ import annotations
@@ -121,7 +121,6 @@ class MilvusParentStore:
                             f"{PARENT_NODE_ID_FIELD} == "
                             f'"{sanitize_filter_value(parent_node_id)}"'
                         ],
-                        published=False,
                     ),
                     output_fields=[
                         PARENT_NODE_ID_FIELD,
@@ -166,7 +165,6 @@ class MilvusParentStore:
             filter=build_scope_filter(
                 knowledge_id=knowledge_id,
                 doc_refs=[doc_ref],
-                published=False,
             ),
             timeout=store.rpc_timeout,
         )

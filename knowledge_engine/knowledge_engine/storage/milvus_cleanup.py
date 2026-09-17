@@ -2,9 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Removing published Milvus data: documents, knowledge bases and indexes.
+"""Removing stored Milvus data: documents, knowledge bases and indexes.
 
-This module owns one concern: taking published data away again and proving it
+This module owns one concern: taking stored data away again and proving it
 is gone. It shares the index contract with the write path, so it never drops a
 collection whose contract it cannot confirm, and it keeps the parent sidecar
 out of the retrieval contract.
@@ -68,20 +68,19 @@ class MilvusCleanup:
     ) -> int:
         """Remove every stored row of one document and prove it is gone.
 
-        A rewrite calls this before staging the new version. The public
-        indexing flow deletes the old index first, but that delete is allowed
-        to fail and is only logged, and rows are keyed by knowledge base,
-        document, execution and chunk index: without this the previous version
-        of a document that got shorter stays readable next to the new one, or
-        the write's own visibility check reports rows the rewrite never wrote.
-        The scope is one knowledge base and one document, so a shared physical
-        collection keeps every other document.
+        A rewrite calls this before writing the new version, and a failed write
+        calls it to take its own rows back. The public indexing flow deletes the
+        old index first, but that delete is allowed to fail and is only logged,
+        and rows are keyed by knowledge base, document and chunk index: without
+        this the previous version of a document that got shorter stays readable
+        next to the new one. The scope is one knowledge base and one document,
+        so a shared physical collection keeps every other document.
 
-        Every execution of the document is removed, not only the one being
-        rewritten: two writers of the same document are not coordinated, so an
-        attempt that is still in flight when a rewrite starts loses the rows it
-        already staged and the last writer wins. The parity spec accepts that
-        window and promises the normal ordered flow only.
+        Every row of the document is removed, not only the ones this write
+        knows about: two writers of the same document are not coordinated, so a
+        writer still in flight when a rewrite starts loses the rows it already
+        wrote and the last writer wins. The parity spec accepts that window and
+        promises the normal ordered flow only.
 
         ``require_bound`` is False for the write path, which confirmed the
         index contract of this collection earlier in the same write.
@@ -92,7 +91,6 @@ class MilvusCleanup:
         filter_expr = build_scope_filter(
             knowledge_id=knowledge_id,
             doc_refs=[doc_ref],
-            published=False,
         )
         return self._delete_verified(
             collection_name,
@@ -107,7 +105,7 @@ class MilvusCleanup:
         parent_collection_name = self._parent_collection_name_for(
             knowledge_id, **kwargs
         )
-        scope_filter = build_scope_filter(knowledge_id=knowledge_id, published=False)
+        scope_filter = build_scope_filter(knowledge_id=knowledge_id)
         deleted_chunks = self._delete_verified(collection_name, scope_filter)
         deleted_parent_nodes = self._delete_verified(
             parent_collection_name, scope_filter, require_bound=False
