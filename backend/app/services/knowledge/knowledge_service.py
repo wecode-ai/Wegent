@@ -2043,6 +2043,7 @@ class KnowledgeService:
         attachment_id = doc.attachment_id
         # Capture converted attachment ID before deleting the document row
         converted_attachment_id = getattr(doc, "converted_attachment_id", None)
+        retry_orphan_cleanup = getattr(doc, "external_provider", None) == "wiki"
         # Use document owner's user_id for context deletion, since delete_context
         # enforces ownership filtering. A non-owner requester (e.g., admin/group
         # manager) would cause the deletion to silently fail and leave orphaned records.
@@ -2121,6 +2122,7 @@ class KnowledgeService:
                 db=db,
                 owner_user_id=context_owner_user_id,
                 attachment_id=attachment_id,
+                retry_orphan_cleanup=retry_orphan_cleanup,
             )
 
         # Delete converted attachment if exists
@@ -2129,6 +2131,7 @@ class KnowledgeService:
                 db=db,
                 owner_user_id=context_owner_user_id,
                 attachment_id=converted_attachment_id,
+                retry_orphan_cleanup=retry_orphan_cleanup,
             )
 
         return DocumentDeleteResult(success=True, kb_id=kind_id)

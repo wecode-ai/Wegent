@@ -3,10 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.api.endpoints.external_wiki import (
     delete_wiki_connection,
@@ -22,6 +23,7 @@ from app.api.endpoints.external_wiki import (
 )
 from app.models.knowledge import KnowledgeDocument
 from app.schemas.external_wiki import (
+    WikiBindingCreateRequest,
     WikiConnectionTestRequest,
     WikiConnectionTestResponse,
     WikiNamedConnectionUpdateRequest,
@@ -84,6 +86,11 @@ def _references():
     return documents, knowledge_bases
 
 
+def test_binding_requires_connection_id() -> None:
+    with pytest.raises(ValidationError):
+        WikiBindingCreateRequest(paths=["docs/runbook"])
+
+
 @pytest.mark.asyncio
 async def test_unsaved_connection_values_can_be_tested_without_connection_id(
     monkeypatch,
@@ -140,7 +147,13 @@ async def test_named_connection_can_be_tested_with_empty_request_body(monkeypatc
 async def test_delete_connection_is_blocked_by_synchronized_wiki_reference():
     documents, knowledge_bases = _references()
 
-    with pytest.raises(HTTPException) as exc_info:
+    with (
+        patch(
+            "app.api.endpoints.external_wiki.external_source_connection_service.get_owned",
+            return_value=SimpleNamespace(),
+        ),
+        pytest.raises(HTTPException) as exc_info,
+    ):
         await delete_wiki_connection(
             "conn-primary",
             db=_Session(documents, knowledge_bases),
@@ -158,6 +171,10 @@ async def test_delete_named_connection_when_unreferenced(monkeypatch):
     monkeypatch.setattr(
         "app.api.endpoints.external_wiki.external_source_connection_service.disable_owned",
         disable,
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.external_wiki.external_source_connection_service.get_owned",
+        lambda *args, **kwargs: SimpleNamespace(),
     )
 
     await delete_wiki_connection("conn-primary", db=_Session(), current_user=_user())

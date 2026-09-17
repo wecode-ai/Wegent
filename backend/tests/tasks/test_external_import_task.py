@@ -6,7 +6,7 @@
 
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -81,6 +81,24 @@ def _run_task(document_id: int, expected_generation: int = 0) -> None:
     )
 
 
+def _provider(
+    *,
+    content: ExternalDocumentContent | None = None,
+    fetch_side_effect=None,
+) -> SimpleNamespace:
+    """Build a provider fake matching the provider-neutral fetch contract."""
+    return SimpleNamespace(
+        fetch_content=AsyncMock(
+            return_value=content,
+            side_effect=fetch_side_effect,
+        ),
+    )
+
+
+def _assert_fetch_not_started(provider: SimpleNamespace) -> None:
+    provider.fetch_content.assert_not_awaited()
+
+
 def test_task_imports_document_content(
     task_db: Session,
     test_user: User,
@@ -93,7 +111,7 @@ def test_task_imports_document_content(
         content=b"# Task Doc",
         metadata={"provider": "dingtalk"},
     )
-    provider = SimpleNamespace(fetch_content=AsyncMock(return_value=content))
+    provider = _provider(content=content)
     attached: dict = {}
     monkeypatch.setattr(
         "app.services.knowledge.external_document_import"
@@ -126,7 +144,7 @@ def test_task_skips_document_without_external_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     document = _create_placeholder(task_db, test_user.id, with_identity=False)
-    provider = SimpleNamespace(fetch_content=AsyncMock())
+    provider = _provider()
     monkeypatch.setattr(
         "app.services.knowledge.external_document_import"
         ".get_external_document_provider",
@@ -135,7 +153,7 @@ def test_task_skips_document_without_external_identity(
 
     _run_task(document.id)
 
-    provider.fetch_content.assert_not_awaited()
+    _assert_fetch_not_started(provider)
     task_db.refresh(document)
     assert document.index_status == DocumentIndexStatus.QUEUED
 
@@ -145,7 +163,7 @@ def test_task_skips_missing_document(
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = SimpleNamespace(fetch_content=AsyncMock())
+    provider = _provider()
     monkeypatch.setattr(
         "app.services.knowledge.external_document_import"
         ".get_external_document_provider",
@@ -154,7 +172,28 @@ def test_task_skips_missing_document(
 
     _run_task(999999)
 
-    provider.fetch_content.assert_not_awaited()
+    _assert_fetch_not_started(provider)
+
+
+def test_task_leaves_owner_policy_to_provider(
+    task_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _create_placeholder(task_db, test_user.id)
+    test_user.is_active = False
+    task_db.commit()
+    run_import = MagicMock()
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_import.run_external_document_import",
+        run_import,
+    )
+
+    _run_task(document.id)
+
+    run_import.assert_called_once()
+    assert run_import.call_args.args[2].id == test_user.id
+    assert run_import.call_args.args[2].is_active is False
 
 
 def test_task_claims_generation_before_running(
@@ -163,13 +202,14 @@ def test_task_claims_generation_before_running(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     document = _create_placeholder(task_db, test_user.id)
+    document_id = document.id
     content = ExternalDocumentContent(
         name="Task Doc",
         file_extension="md",
         content=b"# Task Doc",
         metadata={"provider": "dingtalk"},
     )
-    provider = SimpleNamespace(fetch_content=AsyncMock(return_value=content))
+    provider = _provider(content=content)
     attached: dict = {}
     monkeypatch.setattr(
         "app.services.knowledge.external_document_import"
@@ -187,11 +227,15 @@ def test_task_claims_generation_before_running(
         fake_attach,
     )
 
-    _run_task(document.id)
+    _run_task(document_id)
 
-    task_db.refresh(document)
+    document = task_db.get(KnowledgeDocument, document_id)
+    assert document is not None
     assert document.index_generation == 1
     assert attached["generation"] == 1
+    provider.fetch_content.assert_awaited_once_with(
+        task_db, test_user, document.external_resource_id
+    )
 
 
 def test_task_skips_already_imported_document(
@@ -203,7 +247,7 @@ def test_task_skips_already_imported_document(
     document.index_status = DocumentIndexStatus.SUCCESS
     document.index_generation = 3
     task_db.commit()
-    provider = SimpleNamespace(fetch_content=AsyncMock())
+    provider = _provider()
     monkeypatch.setattr(
         "app.services.knowledge.external_document_import"
         ".get_external_document_provider",
@@ -212,7 +256,7 @@ def test_task_skips_already_imported_document(
 
     _run_task(document.id)
 
-    provider.fetch_content.assert_not_awaited()
+    _assert_fetch_not_started(provider)
     task_db.refresh(document)
     assert document.index_status == DocumentIndexStatus.SUCCESS
     assert document.index_generation == 3
@@ -229,9 +273,7 @@ def test_old_task_cannot_replace_a_newer_attempt(
     document.index_status = index_status
     document.index_generation = 2
     task_db.commit()
-    provider = SimpleNamespace(
-        fetch_content=AsyncMock(side_effect=RuntimeError("source unavailable"))
-    )
+    provider = _provider(fetch_side_effect=RuntimeError("source unavailable"))
     monkeypatch.setattr(
         "app.services.knowledge.external_document_import.get_external_document_provider",
         lambda provider_id: provider,
@@ -239,7 +281,7 @@ def test_old_task_cannot_replace_a_newer_attempt(
 
     _run_task(document.id)
 
-    provider.fetch_content.assert_not_awaited()
+    _assert_fetch_not_started(provider)
     task_db.refresh(document)
     assert document.index_status == index_status
     assert document.index_generation == 2
@@ -250,21 +292,23 @@ def test_redelivery_during_fetch_does_not_read_source_again(
     task_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     document = _create_placeholder(task_db, test_user.id)
+    document_id = document.id
 
     async def fetch(*args):
-        _run_task(document.id)
+        _run_task(document_id)
         raise RuntimeError("source unavailable")
 
-    provider = SimpleNamespace(fetch_content=AsyncMock(side_effect=fetch))
+    provider = _provider(fetch_side_effect=fetch)
     monkeypatch.setattr(
         "app.services.knowledge.external_document_import.get_external_document_provider",
         lambda provider_id: provider,
     )
 
-    _run_task(document.id)
+    _run_task(document_id)
 
     provider.fetch_content.assert_awaited_once()
-    task_db.refresh(document)
+    document = task_db.get(KnowledgeDocument, document_id)
+    assert document is not None
     assert document.index_generation == 1
     assert document.index_status == DocumentIndexStatus.FAILED
 
@@ -277,28 +321,28 @@ def test_retry_dispatches_a_new_generation_and_ignores_the_old_message(
     )
 
     document = _create_placeholder(task_db, test_user.id)
-    provider = SimpleNamespace(
-        fetch_content=AsyncMock(side_effect=RuntimeError("source unavailable"))
-    )
+    document_id = document.id
+    provider = _provider(fetch_side_effect=RuntimeError("source unavailable"))
     monkeypatch.setattr(
         "app.services.knowledge.external_document_import.get_external_document_provider",
         lambda provider_id: provider,
     )
-    _run_task(document.id)
+    _run_task(document_id)
     dispatched = []
     monkeypatch.setattr(
         "app.tasks.knowledge_tasks.import_external_document_task.delay",
         lambda **kwargs: dispatched.append(kwargs),
     )
     external_document_import_service.retry_document_import(
-        task_db, test_user, document.id
+        task_db, test_user, document_id
     )
 
-    _run_task(document.id)
+    _run_task(document_id)
     provider.fetch_content.assert_awaited_once()
-    assert dispatched == [{"document_id": document.id, "expected_generation": 2}]
+    assert dispatched == [{"document_id": document_id, "expected_generation": 2}]
     _run_task(**dispatched[0])
 
     assert provider.fetch_content.await_count == 2
-    task_db.refresh(document)
+    document = task_db.get(KnowledgeDocument, document_id)
+    assert document is not None
     assert document.index_generation == 3

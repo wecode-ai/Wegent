@@ -133,7 +133,7 @@ class TestListPages:
         connector = self._connector()
 
         async def fake_post(config, query, variables):
-            assert variables["limit"] == app_settings.WIKI_TREE_MAX_PAGES
+            assert variables["limit"] == app_settings.WIKI_TREE_MAX_PAGES + 1
             # Newest page is outside the requested subtree on purpose.
             return {
                 "pages": {
@@ -467,3 +467,109 @@ class TestInspectPageMetadataByIds:
 
         assert probes["11"].confirmed_missing is False
         assert probes["11"].error_code == "upstream_error"
+
+    @pytest.mark.asyncio
+    async def test_uses_structured_page_forbidden_code(self):
+        connector = WikijsConnector()
+        payload = {
+            "data": {"pages": {"p0": None}},
+            "errors": [
+                {
+                    "message": "Access denied",
+                    "path": ["pages", "p0"],
+                    "extensions": {"code": "PageViewForbidden"},
+                }
+            ],
+        }
+
+        with patch.object(connector, "_request_graphql", return_value=payload):
+            probes = await connector.inspect_page_metadata_by_ids(
+                _config(), ["11"], batch_size=500
+            )
+
+        assert probes["11"].error_code == "wiki_page_forbidden"
+        assert probes["11"].confirmed_missing is False
+
+
+class TestConnectionCompatibility:
+    @pytest.mark.asyncio
+    async def test_rejects_wikijs_older_than_supported_minimum(self):
+        connector = WikijsConnector()
+
+        with patch.object(connector, "_probe_version", return_value="2.5.274"):
+            result = await connector.test_connection(_config())
+
+        assert result.ok is False
+        assert "2.5.300" in result.message
+        assert result.version == "2.5.274"
+
+    @pytest.mark.asyncio
+    async def test_rejects_wikijs_other_major_versions(self):
+        connector = WikijsConnector()
+
+        with patch.object(connector, "_probe_version", return_value="3.0.0"):
+            result = await connector.test_connection(_config())
+
+        assert result.ok is False
+        assert "2.x" in result.message
+        assert result.version == "3.0.0"
+
+    @pytest.mark.asyncio
+    async def test_structured_forbidden_error_is_auth_failure(self):
+        connector = WikijsConnector()
+        payload = {
+            "errors": [
+                {
+                    "message": "Access denied",
+                    "extensions": {"code": "PageViewForbidden"},
+                }
+            ]
+        }
+
+        with patch.object(connector, "_request_graphql", return_value=payload):
+            with pytest.raises(WikiApiError) as exc_info:
+                await connector._post_graphql(_config(), "query { pages { list } }", {})
+
+        assert exc_info.value.error_code == "wiki_auth_failed"
+
+    @pytest.mark.asyncio
+    async def test_requires_version_evidence_for_empty_site(self):
+        connector = WikijsConnector()
+        with (
+            patch.object(connector, "_probe_version", return_value=None),
+            patch.object(
+                connector,
+                "_post_graphql",
+                return_value={"pages": {"list": []}},
+            ),
+        ):
+            result = await connector.test_connection(_config())
+
+        assert result.ok is False
+        assert "不能确认" in result.message
+
+    @pytest.mark.asyncio
+    async def test_probes_path_and_body_for_supported_site(self):
+        connector = WikijsConnector()
+        list_data = {
+            "pages": {
+                "list": [{"id": 7, "path": "docs/a", "locale": "zh", "title": "A"}]
+            }
+        }
+        metadata = WikiPageMeta(id="7", path="docs/a", title="A", locale="zh")
+
+        with (
+            patch.object(connector, "_probe_version", return_value="2.5.314"),
+            patch.object(connector, "_post_graphql", return_value=list_data),
+            patch.object(
+                connector, "get_page_metadata_by_path", return_value=metadata
+            ) as get_by_path,
+            patch.object(
+                connector, "get_page_by_id", return_value=metadata
+            ) as get_by_id,
+        ):
+            result = await connector.test_connection(_config())
+
+        assert result.ok is True
+        get_by_path.assert_awaited_once_with(_config(), "docs/a", "zh")
+        get_by_id.assert_awaited_once_with(_config(), "7")

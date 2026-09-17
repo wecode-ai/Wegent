@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -110,6 +111,8 @@ query { localization { locales { code isInstalled } } }
 """
 
 _MAX_ATTEMPTS = 3  # initial call + 2 retries, 5xx/network errors only
+WIKIJS_MIN_VERSION = (2, 5, 300)
+WIKIJS_MIN_VERSION_LABEL = ".".join(str(part) for part in WIKIJS_MIN_VERSION)
 
 _SITE_LOCALES_CACHE: dict[str, tuple[float, list[str]]] = {}
 _SITE_LOCALES_CACHE_TTL_SECONDS = 60
@@ -184,7 +187,67 @@ def _is_missing_page_message(message: str) -> bool:
 
 def _is_forbidden_message(message: str) -> bool:
     lowered = message.lower()
-    return "forbidden" in lowered or "not authenticated" in lowered
+    return any(
+        marker in lowered
+        for marker in (
+            "forbidden",
+            "not authenticated",
+            "not authorized",
+            "unauthorized",
+        )
+    )
+
+
+def _parse_version(value: str | None) -> tuple[int, int, int] | None:
+    """Parse the numeric Wiki.js release prefix without accepting other majors."""
+    match = re.search(r"(?:^|[^0-9])(\d+)\.(\d+)\.(\d+)", value or "")
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def _extension_strings(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        result: list[str] = []
+        for child in value.values():
+            result.extend(_extension_strings(child))
+        return result
+    if isinstance(value, (list, tuple)):
+        result = []
+        for child in value:
+            result.extend(_extension_strings(child))
+        return result
+    return [str(value)] if isinstance(value, (str, int)) else []
+
+
+def _classify_graphql_error(error: dict[str, Any]) -> str:
+    """Map Wiki.js GraphQL error metadata to the stable connector contract."""
+    message = str(error.get("message") or "")
+    tokens = " ".join(_extension_strings(error.get("extensions"))).lower()
+    combined = f"{tokens} {message.lower()}"
+    if any(
+        marker in combined
+        for marker in (
+            "pageviewforbidden",
+            "page_view_forbidden",
+            "not authorized to view this page",
+        )
+    ):
+        return "wiki_page_forbidden"
+    if any(
+        marker in combined
+        for marker in (
+            "unauthenticated",
+            "authenticationerror",
+            "forbidden",
+            "forbiddenerror",
+            "unauthorized",
+        )
+    ) or _is_forbidden_message(message):
+        return "wiki_auth_failed"
+    if any(
+        marker in combined for marker in ("pagenotfound", "page_not_found")
+    ) or _is_missing_page_message(message):
+        return "wiki_page_not_found"
+    return "upstream_error"
 
 
 class WikijsConnector(WikiConnector):
@@ -269,8 +332,6 @@ class WikijsConnector(WikiConnector):
                     "[WikijsConnector] Network error (attempt %s)", attempt + 1
                 )
                 await asyncio.sleep(0.5 * (attempt + 1))
-        _ = last_error  # every non-break path raises; keeps intent explicit
-
         if not isinstance(payload, dict):
             raise WikiApiError(
                 "upstream_error", "Wiki 站点返回了无法解析的响应", retryable=False
@@ -286,13 +347,14 @@ class WikijsConnector(WikiConnector):
         payload = await self._request_graphql(config, query, variables)
         errors = payload.get("errors")
         if errors:
-            first = str(errors[0].get("message", "unknown GraphQL error"))
-            lowered = first.lower()
-            if "forbidden" in lowered or "not authenticated" in lowered:
+            raw_error = errors[0] if isinstance(errors[0], dict) else {}
+            first = str(raw_error.get("message", "unknown GraphQL error"))
+            error_code = _classify_graphql_error(raw_error)
+            if error_code in {"wiki_auth_failed", "wiki_page_forbidden"}:
                 raise WikiApiError(
                     "wiki_auth_failed", f"Wiki 站点鉴权失败：{first}", retryable=False
                 )
-            raise WikiApiError("upstream_error", f"Wiki 站点返回错误：{first}")
+            raise WikiApiError(error_code, f"Wiki 站点返回错误：{first}")
         data = payload.get("data")
         if not isinstance(data, dict):
             raise WikiApiError(
@@ -301,6 +363,20 @@ class WikijsConnector(WikiConnector):
         return data
 
     async def test_connection(self, config: WikiSiteConfig) -> WikiConnectionTest:
+        version = await self._probe_version(config)
+        parsed_version = _parse_version(version)
+        if parsed_version and (
+            parsed_version[0] != WIKIJS_MIN_VERSION[0]
+            or parsed_version < WIKIJS_MIN_VERSION
+        ):
+            return WikiConnectionTest(
+                ok=False,
+                message=(
+                    f"不支持 Wiki.js {version}；当前仅支持 "
+                    f"Wiki.js {WIKIJS_MIN_VERSION_LABEL} 及以上的 2.x 版本"
+                ),
+                version=version,
+            )
         try:
             data = await self._post_graphql(
                 config, _LIST_QUERY, {"limit": 1, "locale": None}
@@ -311,18 +387,40 @@ class WikijsConnector(WikiConnector):
         if not isinstance(page_list, list):
             return WikiConnectionTest(ok=False, message="Wiki 站点响应格式不符合预期")
         if page_list:
+            first_page = page_list[0]
             try:
-                page = await self.get_page_metadata_by_id(
-                    config, str(page_list[0].get("id") or "")
+                metadata = await self.get_page_metadata_by_path(
+                    config,
+                    str(first_page.get("path") or ""),
+                    str(first_page.get("locale") or "") or config.default_locale,
+                )
+                page = await self.get_page_by_id(
+                    config, str(first_page.get("id") or "")
                 )
             except WikiApiError as exc:
-                return WikiConnectionTest(ok=False, message=exc.message)
-            if page is None:
                 return WikiConnectionTest(
-                    ok=False, message="Wiki API Key 无法按页面 ID 查询"
+                    ok=False,
+                    message=(
+                        "连接可用，但 API Key 无法完成页面路径解析与正文读取："
+                        f"{exc.message}。请确认 Wiki.js 版本和 API Key 权限"
+                    ),
+                    version=version,
                 )
-        version = await self._probe_version(config)
-        message = "连接成功" if page_list else "连接成功，但无法验证单页查询权限"
+            if metadata is None or page is None:
+                return WikiConnectionTest(
+                    ok=False,
+                    message="Wiki API Key 无法完成页面路径解析与正文读取",
+                    version=version,
+                )
+        elif version is None:
+            return WikiConnectionTest(
+                ok=False,
+                message=(
+                    "站点没有可测试页面且无法读取版本，不能确认是否满足 "
+                    f"Wiki.js {WIKIJS_MIN_VERSION_LABEL}+ 2.x 兼容要求"
+                ),
+            )
+        message = "连接成功" if page_list else "连接成功，但站点没有可测试的已发布页面"
         return WikiConnectionTest(ok=True, message=message, version=version)
 
     async def _probe_version(self, config: WikiSiteConfig) -> str | None:
@@ -350,11 +448,8 @@ class WikijsConnector(WikiConnector):
         # filtering happens client-side, so a subtree listing must fetch the
         # bounded full list first (fetching offset+limit pages would miss the
         # subtree entirely whenever recent updates live elsewhere).
-        fetch_limit = (
-            settings.WIKI_TREE_MAX_PAGES
-            if path
-            else min(offset + limit, settings.WIKI_TREE_MAX_PAGES)
-        )
+        page_cap = settings.WIKI_TREE_MAX_PAGES
+        fetch_limit = page_cap + 1 if path else min(offset + limit + 1, page_cap + 1)
         data = await self._post_graphql(
             config,
             _LIST_QUERY,
@@ -365,7 +460,8 @@ class WikijsConnector(WikiConnector):
             raise WikiApiError(
                 "upstream_error", "Wiki 站点响应格式不符合预期", retryable=False
             )
-        metas = [_meta_from_node(node) for node in nodes]
+        exceeded_page_cap = len(nodes) > page_cap
+        metas = [_meta_from_node(node) for node in nodes[:page_cap]]
         metas = [
             meta
             for meta in metas
@@ -380,6 +476,8 @@ class WikijsConnector(WikiConnector):
             ]
         batch = metas[offset : offset + limit]
         next_offset = offset + limit if len(metas) > offset + limit else None
+        if exceeded_page_cap and next_offset is None:
+            next_offset = page_cap
         return batch, next_offset
 
     @trace_async(
@@ -505,7 +603,7 @@ class WikijsConnector(WikiConnector):
             data = payload.get("data")
             pages = data.get("pages") if isinstance(data, dict) else None
             pages = pages if isinstance(pages, dict) else {}
-            errors_by_alias: dict[str, str] = {}
+            errors_by_alias: dict[str, tuple[str, str]] = {}
             global_error_code: str | None = None
             for raw_error in payload.get("errors") or []:
                 if not isinstance(raw_error, dict):
@@ -520,13 +618,16 @@ class WikijsConnector(WikiConnector):
                     None,
                 )
                 if alias:
-                    errors_by_alias[alias] = str(raw_error.get("message") or "")
+                    errors_by_alias[alias] = (
+                        _classify_graphql_error(raw_error),
+                        str(raw_error.get("message") or ""),
+                    )
                 else:
-                    message = str(raw_error.get("message") or "")
+                    classified = _classify_graphql_error(raw_error)
                     global_error_code = (
                         "wiki_auth_failed"
-                        if _is_forbidden_message(message)
-                        else "upstream_error"
+                        if classified == "wiki_page_forbidden"
+                        else classified
                     )
 
             for alias, resource_id in aliases.items():
@@ -534,13 +635,19 @@ class WikijsConnector(WikiConnector):
                 if isinstance(node, dict):
                     results[resource_id] = WikiPageProbe(page=_meta_from_node(node))
                     continue
-                message = errors_by_alias.get(alias)
-                if message and _is_missing_page_message(message):
+                error = errors_by_alias.get(alias)
+                error_code, message = error or (None, "")
+                if error_code == "wiki_page_not_found":
                     results[resource_id] = WikiPageProbe(confirmed_missing=True)
-                elif message and _is_forbidden_message(message):
+                elif error_code in {"wiki_auth_failed", "wiki_page_forbidden"}:
                     results[resource_id] = WikiPageProbe(
                         error_code="wiki_page_forbidden",
                         error_message="无权访问 Wiki 源文档",
+                    )
+                elif error_code:
+                    results[resource_id] = WikiPageProbe(
+                        error_code=error_code,
+                        error_message=message or None,
                     )
                 elif (
                     alias in pages

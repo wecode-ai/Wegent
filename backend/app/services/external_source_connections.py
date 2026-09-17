@@ -31,6 +31,7 @@ class ExternalSourceConnection:
     enabled: bool
     config: dict[str, Any]
     credentials: dict[str, str]
+    revision: int
     row: Kind
 
 
@@ -62,6 +63,7 @@ class ExternalSourceConnectionService:
         provider_id: str,
         connection_id: str,
         include_inactive: bool = False,
+        for_update: bool = False,
     ) -> ExternalSourceConnection | None:
         query = db.query(Kind).filter(
             Kind.kind == EXTERNAL_SOURCE_CONNECTION_KIND,
@@ -71,6 +73,8 @@ class ExternalSourceConnectionService:
         )
         if not include_inactive:
             query = query.filter(Kind.is_active.is_(True))
+        if for_update:
+            query = query.with_for_update()
         row = query.first()
         return ExternalSourceConnectionService._from_row(row) if row else None
 
@@ -121,6 +125,9 @@ class ExternalSourceConnectionService:
             old_spec = dict((existing.row.json or {}).get("spec") or {})
             old_credentials = dict(old_spec.get("credentialsEncrypted") or {})
             encrypted_credentials = {**old_credentials, **encrypted_credentials}
+            revision = int(old_spec.get("revision") or 0) + 1
+        else:
+            revision = 1
 
         payload = {
             "apiVersion": "agent.wecode.io/v1",
@@ -130,6 +137,7 @@ class ExternalSourceConnectionService:
                 "displayName": display_name.strip(),
                 "adapterType": adapter_type,
                 "enabled": enabled,
+                "revision": revision,
                 "config": dict(config),
                 "credentialsEncrypted": encrypted_credentials,
             },
@@ -193,6 +201,7 @@ class ExternalSourceConnectionService:
             enabled=bool(spec.get("enabled", True)),
             config=dict(spec.get("config") or {}),
             credentials=credentials,
+            revision=int(spec.get("revision") or 0),
             row=row,
         )
 

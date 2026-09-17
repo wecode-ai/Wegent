@@ -78,6 +78,9 @@ def test_blank_credential_update_preserves_stored_secret(
 
     assert updated.display_name == "engineering-v2"
     assert updated.credentials["api_key"] == "key-engineering"
+    assert existing.revision == 1
+    assert updated.revision == 2
+    assert updated.row.json["spec"]["revision"] == 2
 
 
 def test_disable_hides_connection_without_deleting_kind_row(

@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 import aiohttp
 from sqlalchemy.orm import Session
@@ -33,6 +33,9 @@ from app.services.plugin_upstream_fetch import UpstreamFetchError, validate_upst
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.services.knowledge.external_sync_providers import ResolvedExternalDocument
 
 EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS = 180
 _SPREADSHEET_MCP_SERVICES = {
@@ -173,6 +176,14 @@ class ExternalDocumentProvider(ABC):
 
     provider_id: str
 
+    def preflight_resolved_import(
+        self,
+        db: Session,
+        user: User,
+        resolved_documents: list[ResolvedExternalDocument],
+    ) -> None:
+        """Validate provider state immediately before resolved metadata is stored."""
+
     @abstractmethod
     def resolve_importable(
         self,
@@ -187,6 +198,24 @@ class ExternalDocumentProvider(ABC):
         """
 
     @abstractmethod
+    async def fetch_content(
+        self,
+        db: Session,
+        user: User,
+        external_resource_id: str,
+    ) -> ExternalDocumentContent:
+        """Fetch the document body as attachment-ready content.
+
+        Raises ExternalSourceUnavailableError when the provider can tell the
+        resource is gone or access was revoked, ExternalDocumentFetchError
+        for transient failures.
+        """
+
+
+class DetachedExternalDocumentProvider(ExternalDocumentProvider):
+    """Provider whose remote fetch can run after releasing the DB Session."""
+
+    @abstractmethod
     def prepare_content_fetch(
         self,
         db: Session,
@@ -199,12 +228,17 @@ class ExternalDocumentProvider(ABC):
     async def fetch_prepared_content(
         self, prepared: PreparedExternalDocumentFetch
     ) -> ExternalDocumentContent:
-        """Fetch a prepared document body without a database Session.
+        """Fetch a prepared document body without a database Session."""
 
-        Raises ExternalSourceUnavailableError when the provider can tell the
-        resource is gone or access was revoked, ExternalDocumentFetchError
-        for transient failures.
-        """
+    async def fetch_content(
+        self,
+        db: Session,
+        user: User,
+        external_resource_id: str,
+    ) -> ExternalDocumentContent:
+        """Fetch through the detached phases when called via the base contract."""
+        prepared = self.prepare_content_fetch(db, user, external_resource_id)
+        return await self.fetch_prepared_content(prepared)
 
 
 class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
@@ -264,12 +298,13 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             "url": node.doc_url,
         }
 
-    def prepare_content_fetch(
+    @trace_async(tracer_name="knowledge.external_import")
+    async def fetch_content(
         self,
         db: Session,
         user: User,
         external_resource_id: str,
-    ) -> PreparedExternalDocumentFetch:
+    ) -> ExternalDocumentContent:
         from app.services.dingtalk_doc_service import DingTalkDocService
 
         try:
@@ -285,31 +320,10 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             raise ExternalDocumentFetchError(
                 "DingTalk Docs MCP URL is not configured or not enabled"
             )
-        spreadsheet_urls = {
-            extension: DingTalkDocService.get_user_dingtalk_mcp_url(user, service)
-            for extension, (service, _label) in _SPREADSHEET_MCP_SERVICES.items()
-        }
-        return PreparedExternalDocumentFetch(
-            external_resource_id=external_resource_id,
-            payload={
-                "metadata": metadata,
-                "mcp_url": mcp_url,
-                "spreadsheet_urls": spreadsheet_urls,
-            },
-        )
-
-    @trace_async(tracer_name="knowledge.external_import")
-    async def fetch_prepared_content(
-        self, prepared: PreparedExternalDocumentFetch
-    ) -> ExternalDocumentContent:
-        payload = prepared.payload
-        metadata = payload["metadata"]
         try:
             async with asyncio.timeout(EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS):
                 extension, content = await self._fetch_document_content(
-                    payload["mcp_url"],
-                    prepared.external_resource_id,
-                    payload["spreadsheet_urls"],
+                    mcp_url, external_resource_id, user
                 )
         except TimeoutError:
             raise ExternalDocumentFetchError("DingTalk import timed out") from None
@@ -325,10 +339,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         )
 
     async def _fetch_document_content(
-        self,
-        mcp_url: str,
-        node_id: str,
-        spreadsheet_urls: dict[str, str | None],
+        self, mcp_url: str, node_id: str, user: User
     ) -> tuple[str, bytes]:
         """Verify live metadata before selecting the source reader."""
         from app.services.dingtalk_doc_service import DingTalkDocService
@@ -360,7 +371,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             if str(info.get("contentType")).strip().upper() == "ALIDOC":
                 source_extension = str(info.get("extension")).strip().lower()
                 service, label = _SPREADSHEET_MCP_SERVICES[source_extension]
-                export_url = spreadsheet_urls.get(source_extension)
+                export_url = DingTalkDocService.get_user_dingtalk_mcp_url(user, service)
                 if not export_url:
                     raise ExternalDocumentFetchError(
                         f"DingTalk {label} MCP is not configured or not enabled. Configure it in Settings > Integrations."

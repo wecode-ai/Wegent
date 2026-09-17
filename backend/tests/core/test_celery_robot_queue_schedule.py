@@ -10,3 +10,12 @@ def test_robot_queue_scan_expires_before_it_can_form_a_backlog() -> None:
         "expires": float(settings.ROBOT_QUEUE_SCAN_INTERVAL_SECONDS),
         "priority": 0,
     }
+
+
+def test_knowledge_attachment_orphan_cleanup_is_scheduled() -> None:
+    schedule = celery_app.conf.beat_schedule["cleanup-knowledge-attachment-orphans"]
+
+    assert schedule == {
+        "task": "app.tasks.knowledge_tasks.cleanup_knowledge_attachment_orphans",
+        "schedule": float(settings.KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS),
+    }

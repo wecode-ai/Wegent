@@ -21,6 +21,9 @@ from app.schemas.conversion_callback import (
 from app.schemas.knowledge import DocumentProcessingStage
 from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.context.context_service import context_service
+from app.services.knowledge.attachment_cleanup import (
+    EXTERNAL_WIKI_ATTACHMENT_LIFECYCLE_OWNER,
+)
 from app.services.knowledge.index_state_machine import (
     mark_document_conversion_started,
     mark_document_conversion_succeeded,
@@ -243,6 +246,11 @@ def conversion_completed_callback(
             filename=request.converted_name,
             binary_data=markdown_bytes,
             subtask_id=0,
+            lifecycle_owner=(
+                EXTERNAL_WIKI_ATTACHMENT_LIFECYCLE_OWNER
+                if getattr(doc, "external_provider", None) == "wiki"
+                else None
+            ),
         )
     except Exception:
         logger.exception(

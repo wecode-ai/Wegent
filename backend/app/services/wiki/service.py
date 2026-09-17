@@ -37,6 +37,7 @@ class ResolvedWikiConnection:
     owner_user_id: int
     owner_name: str
     connection_id: str
+    revision: int
     display_name: str = "Wiki"
 
 
@@ -80,8 +81,28 @@ class WikiConnectionService:
             owner_user_id=user.id,
             owner_name=user.user_name,
             connection_id=stored.connection_id,
+            revision=stored.revision,
             display_name=stored.display_name,
         )
+
+    @staticmethod
+    def lock_user_wiki_connection(
+        user: User,
+        db: Session,
+        connection_id: str,
+        *,
+        include_inactive: bool = False,
+    ) -> ResolvedWikiConnection | None:
+        """Lock and resolve one connection for a mutation transaction."""
+        stored = external_source_connection_service.get_owned(
+            db,
+            owner_user_id=user.id,
+            provider_id=WIKI_PROVIDER_ID,
+            connection_id=connection_id,
+            include_inactive=include_inactive,
+            for_update=True,
+        )
+        return WikiConnectionService._resolve_stored_connection(stored, user)
 
     @staticmethod
     def list_connections(db: Session, user: User) -> list[dict[str, Any]]:

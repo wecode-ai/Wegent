@@ -9,8 +9,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.services.knowledge.external_document_providers import (
+    ExternalDocumentFetchError,
+    ExternalDocumentImportError,
+)
 from app.services.knowledge.external_sync_providers import (
     ExternalSyncLocator,
+    ResolvedExternalDocument,
     SyncCandidate,
     decode_external_sync_resource_id,
     encode_external_sync_resource_id,
@@ -45,6 +50,7 @@ async def test_wiki_selection_is_resolved_with_server_metadata(
     )
     connection = SimpleNamespace(
         connection_id="conn-primary",
+        revision=3,
         config=WikiSiteConfig(
             site_url="https://wiki.example.com",
             api_key="secret",
@@ -77,7 +83,56 @@ async def test_wiki_selection_is_resolved_with_server_metadata(
         "path": "ops/runbook",
         "locale": "zh",
         "site_url": "https://wiki.example.com",
+        "connection_revision": 3,
     }
+
+
+def test_wiki_resolved_import_preflight_accepts_current_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolved = ResolvedExternalDocument(
+        locator=ExternalSyncLocator("wiki", "conn-primary", "42"),
+        title="Runbook",
+        source_url="https://wiki.example.com/ops/runbook",
+        remote_version="v1",
+        metadata={"connection_revision": 3},
+    )
+    lock_connection = MagicMock(return_value=SimpleNamespace(revision=3))
+    monkeypatch.setattr(
+        "app.services.knowledge.external_sync_providers."
+        "WikiConnectionService.lock_user_wiki_connection",
+        lock_connection,
+    )
+    user = SimpleNamespace(id=7)
+    db = MagicMock()
+
+    wiki_external_sync_provider.preflight_resolved_import(db, user, [resolved])
+
+    lock_connection.assert_called_once_with(user, db, "conn-primary")
+
+
+def test_wiki_resolved_import_preflight_rejects_stale_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolved = ResolvedExternalDocument(
+        locator=ExternalSyncLocator("wiki", "conn-primary", "42"),
+        title="Runbook",
+        source_url="https://wiki.example.com/ops/runbook",
+        remote_version="v1",
+        metadata={"connection_revision": 3},
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_sync_providers."
+        "WikiConnectionService.lock_user_wiki_connection",
+        lambda *_args, **_kwargs: SimpleNamespace(revision=4),
+    )
+
+    with pytest.raises(ExternalDocumentImportError) as exc_info:
+        wiki_external_sync_provider.preflight_resolved_import(
+            MagicMock(), SimpleNamespace(id=7), [resolved]
+        )
+
+    assert exc_info.value.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -295,6 +350,26 @@ async def test_wiki_fetch_content_resolves_current_path_by_id(
     connector.get_page_by_id.assert_awaited_once_with(connection.config, "42")
     assert content.content == b"# Renamed"
     assert content.metadata["sync"]["path"] == "ops/renamed-runbook"
+
+
+def test_wiki_fetch_rejects_inactive_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    get_connection = MagicMock()
+    monkeypatch.setattr(
+        "app.services.knowledge.external_sync_providers."
+        "WikiConnectionService.get_user_wiki_connection",
+        get_connection,
+    )
+
+    with pytest.raises(ExternalDocumentFetchError, match="owner is disabled"):
+        wiki_external_sync_provider.prepare_content_fetch(
+            MagicMock(),
+            SimpleNamespace(id=7, is_active=False),
+            "v1:conn-primary:42",
+        )
+
+    get_connection.assert_not_called()
 
 
 def test_wiki_remote_state_requires_updated_timestamp() -> None:

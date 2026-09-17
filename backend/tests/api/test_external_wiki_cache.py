@@ -49,7 +49,7 @@ async def test_cached_page_list_serves_second_call_from_cache(monkeypatch):
         "kb:1", None, False, fetch_all
     )
     assert second == [{"path": "docs/a"}]
-    assert warnings == []
+    assert warnings == ["warn"]
     assert len(calls) == 1
 
 
@@ -88,7 +88,7 @@ async def test_cached_page_list_caches_empty_results(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_locale_buckets_share_one_connection_key(monkeypatch):
+async def test_locales_use_independent_cache_keys(monkeypatch):
     fake = FakeCache()
     monkeypatch.setattr(external_wiki, "cache_manager", fake)
 
@@ -100,8 +100,10 @@ async def test_locale_buckets_share_one_connection_key(monkeypatch):
 
     await external_wiki._cached_page_list("kb:1", None, False, fetch_default)
     await external_wiki._cached_page_list("kb:1", "zh", False, fetch_zh)
-    bucket = fake.store["wiki:pages:kb:1"]
-    assert set(bucket.keys()) == {"", "zh"}
+    assert set(fake.store) == {
+        "wiki:pages:kb:1:locale:_default",
+        "wiki:pages:kb:1:locale:zh",
+    }
 
 
 def test_filter_and_slice_prefix_and_pagination():
@@ -137,6 +139,7 @@ async def test_list_pages_keeps_current_user_attached_across_remote_io(
 
     connection = SimpleNamespace(
         connection_id="conn-primary",
+        revision=1,
         connector=Connector(),
         config=SimpleNamespace(),
     )
@@ -145,7 +148,8 @@ async def test_list_pages_keeps_current_user_attached_across_remote_io(
         "get_user_wiki_connection",
         lambda *_args, **_kwargs: connection,
     )
-    monkeypatch.setattr(external_wiki, "cache_manager", FakeCache())
+    fake_cache = FakeCache()
+    monkeypatch.setattr(external_wiki, "cache_manager", fake_cache)
 
     try:
         response = await external_wiki.list_wiki_pages(
@@ -159,6 +163,9 @@ async def test_list_pages_keeps_current_user_attached_across_remote_io(
             current_user=current_user,
         )
         assert response.pages == []
+        assert set(fake_cache.store) == {
+            f"wiki:pages:user:{test_user.id}:conn-primary:revision:1:locale:_default"
+        }
         assert inspect(current_user).detached is False
     finally:
         production_session.close()

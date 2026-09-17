@@ -64,7 +64,7 @@ const bound: WikiBoundDocument = {
   locale: 'zh',
   page_updated_at: '',
   resource_url: 'https://wiki.example.com/tech-wiki/elasticsearch',
-  status: 'live',
+  status: 'success',
   connection_id: 'conn-primary',
 }
 
@@ -207,6 +207,19 @@ describe('WikiDocumentImport', () => {
       connection_id: 'conn-primary',
       refresh: true,
     })
+  })
+
+  it('shows a localized warning when the backend truncates a large wiki', async () => {
+    mockListPages.mockResolvedValue({
+      pages,
+      next_offset: null,
+      warnings: ['wiki_page_list_truncated'],
+    })
+    renderTab()
+
+    expect(await screen.findByTestId('wiki-import-page-warning')).toHaveTextContent(
+      '该站点页面数量超过浏览上限'
+    )
   })
 
   it('expands and collapses wiki path directories while search reveals matches', async () => {

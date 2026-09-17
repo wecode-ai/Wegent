@@ -244,6 +244,7 @@ async def update_named_wiki_connection(
             provider_id="wiki",
             connection_id=connection_id,
             include_inactive=True,
+            for_update=True,
         )
         if existing is None:
             raise HTTPException(status_code=404, detail="Wiki 连接不存在")
@@ -291,6 +292,16 @@ async def delete_wiki_connection(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
+    existing = external_source_connection_service.get_owned(
+        db,
+        owner_user_id=current_user.id,
+        provider_id="wiki",
+        connection_id=connection_id,
+        include_inactive=True,
+        for_update=True,
+    )
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Wiki 连接不存在")
     references = _connection_references(
         db,
         owner_user_id=current_user.id,
@@ -516,13 +527,14 @@ def _summary(config: WikiSiteConfig, meta: Any) -> WikiPageSummary:
     )
 
 
-# Page-list cache: one key per connection and one bucket per locale.
+# Page-list cache: one independent key per connection revision and locale.
 # Best-effort: Redis failures fall through to a remote picker refresh.
 _PAGES_CACHE_TTL_SECONDS = 300
+_PAGE_LIST_TRUNCATED_WARNING = "wiki_page_list_truncated"
 
 
-def _pages_cache_key(subject: str) -> str:
-    return f"wiki:pages:{subject}"
+def _pages_cache_key(subject: str, locale: Optional[str]) -> str:
+    return f"wiki:pages:{subject}:locale:{locale or '_default'}"
 
 
 async def _cached_page_list(
@@ -532,19 +544,19 @@ async def _cached_page_list(
     fetch_all,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Serve the full ordered page list from cache, fetching on miss."""
-    key = _pages_cache_key(subject)
-    buckets: dict[str, Any] = {}
+    key = _pages_cache_key(subject, locale)
     if not refresh:
         cached = await cache_manager.get(key)
-        if isinstance(cached, dict):
-            buckets = cached
-    locale_key = locale or ""
-    cached_list = buckets.get(locale_key)
-    if isinstance(cached_list, list):
-        return cached_list, []
+        if isinstance(cached, dict) and isinstance(cached.get("pages"), list):
+            warnings = cached.get("warnings")
+            return cached["pages"], warnings if isinstance(warnings, list) else []
     summaries, warnings = await fetch_all()
     ttl = _PAGES_CACHE_TTL_SECONDS if summaries else 60
-    await cache_manager.set(key, {**buckets, locale_key: summaries}, expire=ttl)
+    await cache_manager.set(
+        key,
+        {"pages": summaries, "warnings": warnings},
+        expire=ttl,
+    )
     return summaries, warnings
 
 
@@ -591,19 +603,25 @@ async def list_wiki_pages(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="请先在「设置 → 集成」配置外部 Wiki 连接",
         )
-    cache_scope = f"user:{current_user.id}:{connection.connection_id}"
+    cache_scope = (
+        f"user:{current_user.id}:{connection.connection_id}:"
+        f"revision:{connection.revision}"
+    )
     db.commit()
 
     async def fetch_all() -> tuple[list[dict[str, Any]], list[str]]:
-        pages, _ = await connection.connector.list_pages(
+        pages, upstream_next_offset = await connection.connector.list_pages(
             connection.config,
             path=None,
             locale=locale,
             limit=settings.WIKI_TREE_MAX_PAGES,
         )
+        warnings = (
+            [_PAGE_LIST_TRUNCATED_WARNING] if upstream_next_offset is not None else []
+        )
         return (
             [_summary(connection.config, meta).model_dump() for meta in pages],
-            [],
+            warnings,
         )
 
     summaries, warnings = await _cached_page_list(

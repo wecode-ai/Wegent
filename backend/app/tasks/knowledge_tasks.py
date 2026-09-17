@@ -184,11 +184,7 @@ def import_external_document_task(self, document_id: int, expected_generation: i
                 document_id,
             )
             return
-        user = (
-            db.query(User)
-            .filter(User.id == document.user_id, User.is_active.is_(True))
-            .first()
-        )
+        user = db.query(User).filter(User.id == document.user_id).first()
         run_external_document_import(db, document, user, generation=attempt.generation)
 
 
@@ -704,3 +700,33 @@ def scan_stale_index_tasks():
             f"[StaleScanner] Scan complete, marked {marked_count} documents as FAILED"
         )
         return {"marked_count": marked_count, "scanned_count": len(active_docs)}
+
+
+@celery_app.task(name="app.tasks.knowledge_tasks.cleanup_knowledge_attachment_orphans")
+@trace_sync(
+    span_name="knowledge.cleanup_attachment_orphans",
+    tracer_name="knowledge.tasks",
+)
+def cleanup_knowledge_attachment_orphans_task() -> dict[str, object]:
+    """Reap aged attachments explicitly owned by external Wiki sync."""
+    from app.services.knowledge.attachment_cleanup import (
+        cleanup_orphaned_knowledge_attachments,
+    )
+
+    with distributed_lock.acquire_context(
+        "knowledge-attachment-orphan-cleanup",
+        expire_seconds=max(
+            60,
+            settings.KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS,
+        ),
+    ) as acquired:
+        if not acquired:
+            return {"status": "locked"}
+        with SessionLocal() as db:
+            report = cleanup_orphaned_knowledge_attachments(
+                db,
+                retention_hours=(settings.KNOWLEDGE_ATTACHMENT_ORPHAN_RETENTION_HOURS),
+                batch_size=settings.KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_BATCH_SIZE,
+            )
+    logger.info("[Knowledge] Attachment orphan cleanup: %s", report.as_dict())
+    return {"status": "completed", **report.as_dict()}

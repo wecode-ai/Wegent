@@ -118,6 +118,12 @@ celery_app.conf.update(
             "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
             "schedule": 5 * 60,  # every 5 minutes
         },
+        "cleanup-knowledge-attachment-orphans": {
+            "task": "app.tasks.knowledge_tasks.cleanup_knowledge_attachment_orphans",
+            "schedule": float(
+                settings.KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS
+            ),
+        },
         "sync-external-documents": {
             "task": "app.tasks.external_document_sync_tasks.sync_external_documents",
             "schedule": crontab.from_string(settings.EXTERNAL_DOC_SYNC_CRON),

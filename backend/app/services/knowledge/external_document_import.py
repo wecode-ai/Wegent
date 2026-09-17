@@ -28,6 +28,7 @@ from app.models.knowledge import (
 from app.models.user import User
 from app.schemas.knowledge import ContentOrigin, DocumentProcessingStage
 from app.services.knowledge.external_document_providers import (
+    DetachedExternalDocumentProvider,
     ExternalDocumentContent,
     ExternalDocumentFetchError,
     ExternalDocumentImportError,
@@ -78,6 +79,16 @@ class ExternalDocumentBatchImportResult:
     processing: list[KnowledgeDocument]
     requested_count: int
     duplicates: list[KnowledgeDocument] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _ResolvedImportPlan:
+    """One mutation selected only after the entire resolved batch is validated."""
+
+    action: str
+    resource_id: str
+    metadata: dict
+    document: KnowledgeDocument | None = None
 
 
 class ExternalDocumentImportService:
@@ -195,10 +206,73 @@ class ExternalDocumentImportService:
             assert_document_can_be_placed_in_folder(
                 db, knowledge_base_id, folder_id, content_origin=ContentOrigin.USER
             )
+        provider.preflight_resolved_import(db, user, resolved_documents)
+        plans, duplicates, requested_count = self._plan_resolved_imports(
+            db,
+            knowledge_base_id,
+            provider,
+            resolved_documents,
+        )
 
         created: list[KnowledgeDocument] = []
         updated: list[KnowledgeDocument] = []
         processing: list[KnowledgeDocument] = []
+        for plan in plans:
+            if plan.action == "processing":
+                assert plan.document is not None
+                processing.append(plan.document)
+                continue
+            if plan.action == "refresh":
+                assert plan.document is not None
+                refresh = self._refresh_existing_document(
+                    db, plan.document, plan.metadata
+                )
+                (updated if refresh.started else processing).append(refresh.document)
+                continue
+            try:
+                document = KnowledgeService.create_external_document(
+                    db=db,
+                    knowledge_base_id=knowledge_base_id,
+                    user_id=user.id,
+                    name=_external_document_name(plan.metadata),
+                    external_provider=provider.provider_id,
+                    external_resource_id=plan.resource_id,
+                    folder_id=folder_id,
+                    external_meta=plan.metadata,
+                )
+            except IntegrityError:
+                db.rollback()
+                concurrent = self._find_existing_document(
+                    db,
+                    knowledge_base_id,
+                    provider.provider_id,
+                    plan.resource_id,
+                )
+                if concurrent is None:
+                    raise ExternalDocumentImportError(
+                        "This external document could not be imported; please retry"
+                    ) from None
+                processing.append(concurrent)
+                continue
+            self._dispatch_import_task(db, document)
+            created.append(document)
+        return ExternalDocumentBatchImportResult(
+            created=created,
+            updated=updated,
+            processing=processing,
+            requested_count=requested_count,
+            duplicates=duplicates,
+        )
+
+    def _plan_resolved_imports(
+        self,
+        db: Session,
+        knowledge_base_id: int,
+        provider: ExternalDocumentProvider,
+        resolved_documents: list[ResolvedExternalDocument],
+    ) -> tuple[list[_ResolvedImportPlan], list[KnowledgeDocument], int]:
+        """Classify every item and reject all conflicts before any mutation."""
+        plans: list[_ResolvedImportPlan] = []
         duplicates: list[KnowledgeDocument] = []
         canonical_wiki_documents: dict[tuple[str, str], KnowledgeDocument] = {}
         if provider.provider_id == "wiki":
@@ -251,44 +325,18 @@ class ExternalDocumentImportService:
                         status_code=409,
                     )
                 if self._is_processing(existing):
-                    processing.append(existing)
+                    plans.append(
+                        _ResolvedImportPlan(
+                            "processing", resource_id, metadata, existing
+                        )
+                    )
                     continue
-                refresh = self._refresh_existing_document(db, existing, metadata)
-                (updated if refresh.started else processing).append(refresh.document)
-                continue
-            try:
-                document = KnowledgeService.create_external_document(
-                    db=db,
-                    knowledge_base_id=knowledge_base_id,
-                    user_id=user.id,
-                    name=_external_document_name(metadata),
-                    external_provider=provider.provider_id,
-                    external_resource_id=resource_id,
-                    folder_id=folder_id,
-                    external_meta=metadata,
+                plans.append(
+                    _ResolvedImportPlan("refresh", resource_id, metadata, existing)
                 )
-            except IntegrityError:
-                db.rollback()
-                concurrent = self._find_existing_document(
-                    db, knowledge_base_id, provider.provider_id, resource_id
-                )
-                if concurrent is None:
-                    raise ExternalDocumentImportError(
-                        "This external document could not be imported; please retry"
-                    ) from None
-                processing.append(concurrent)
                 continue
-            self._dispatch_import_task(db, document)
-            created.append(document)
-            if canonical_key[0] and canonical_key[1]:
-                canonical_wiki_documents[canonical_key] = document
-        return ExternalDocumentBatchImportResult(
-            created=created,
-            updated=updated,
-            processing=processing,
-            requested_count=len(seen),
-            duplicates=duplicates,
-        )
+            plans.append(_ResolvedImportPlan("create", resource_id, metadata))
+        return plans, duplicates, len(seen)
 
     def request_source_refresh(
         self, db: Session, user: User, document_id: int
@@ -693,19 +741,22 @@ def run_external_document_import(
             raise ExternalDocumentFetchError(
                 f"Owner user {owner_user_id} no longer exists"
             )
-        prepared = provider.prepare_content_fetch(db, user, resource_id)
-        # Release the transaction and checked-out connection before any remote I/O.
-        db.commit()
-        db.close()
-        content: ExternalDocumentContent = asyncio.run(
-            provider.fetch_prepared_content(prepared)
-        )
-        document = db.get(KnowledgeDocument, document_id)
-        user = db.get(User, owner_user_id)
-        if document is None or user is None:
-            raise ExternalImportLostWriteError(
-                "External document or owner disappeared during content fetch"
+        if isinstance(provider, DetachedExternalDocumentProvider):
+            prepared = provider.prepare_content_fetch(db, user, resource_id)
+            # Wiki remote I/O must not hold a checked-out database connection.
+            db.commit()
+            db.close()
+            content: ExternalDocumentContent = asyncio.run(
+                provider.fetch_prepared_content(prepared)
             )
+            document = db.get(KnowledgeDocument, document_id)
+            user = db.get(User, owner_user_id)
+            if document is None or user is None:
+                raise ExternalImportLostWriteError(
+                    "External document or owner disappeared during content fetch"
+                )
+        else:
+            content = asyncio.run(provider.fetch_content(db, user, resource_id))
         knowledge_orchestrator.attach_external_document_content(
             db=db,
             document=document,
@@ -726,14 +777,7 @@ def run_external_document_import(
             document_id,
             provider_id,
             generation,
-            message=(
-                _external_fetch_error_message(
-                    exc,
-                    fallback="Wiki 源文档不存在",
-                )
-                if exc.error_code == "external_source_missing"
-                else ("外部源当前无法访问，请恢复访问后重试导入")
-            ),
+            message=_external_source_unavailable_message(provider_id, exc),
             error_code=exc.error_code,
         )
         logger.warning(
@@ -825,6 +869,24 @@ def _external_fetch_error_message(exc: Exception, *, fallback: str) -> str:
         return fallback
     message = str(exc).strip()
     return message[:1000] if message else fallback
+
+
+def _external_source_unavailable_message(
+    provider_id: str,
+    exc: ExternalSourceUnavailableError,
+) -> str:
+    """Keep Wiki sync copy provider-specific without changing other providers."""
+    if provider_id == "wiki":
+        if exc.error_code == "external_source_missing":
+            return _external_fetch_error_message(
+                exc,
+                fallback="外部源文档不存在",
+            )
+        return "外部源当前无法访问，请恢复访问后重试导入"
+    return (
+        "The external source is no longer accessible. Restore access "
+        "and retry the import."
+    )
 
 
 external_document_import_service = ExternalDocumentImportService()

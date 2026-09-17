@@ -40,7 +40,7 @@ from app.services.knowledge.external_document_providers import (
 from app.services.knowledge.knowledge_service import KnowledgeService
 
 from .conftest import create_external_import_kb as _create_kb
-from .conftest import patch_provider_fetch, prepared_provider
+from .conftest import patch_provider_fetch, provider_with_fetch
 
 
 class TestRunExternalDocumentImport:
@@ -185,7 +185,7 @@ class TestRunExternalDocumentImport:
             metadata={"provider": "dingtalk"},
         )
         fetch = AsyncMock(return_value=content)
-        provider = prepared_provider(fetch)
+        provider = provider_with_fetch(fetch)
         attached: dict = {}
 
         def fake_attach(**kwargs):
@@ -277,7 +277,7 @@ class TestRunExternalDocumentImport:
     ) -> None:
         document = self._create_placeholder(test_db, test_user)
         document_id = document.id
-        provider = prepared_provider(
+        provider = provider_with_fetch(
             AsyncMock(side_effect=ExternalDocumentFetchError("无法连接 Wiki 站点"))
         )
         monkeypatch.setattr(
@@ -328,7 +328,7 @@ class TestRunExternalDocumentImport:
         document.status = DocumentStatus.ENABLED
         test_db.commit()
         document_id = document.id
-        provider = prepared_provider(
+        provider = provider_with_fetch(
             AsyncMock(
                 side_effect=ExternalSourceUnavailableError(
                     "Wiki 源文档不存在",
@@ -353,6 +353,39 @@ class TestRunExternalDocumentImport:
         assert external["status"] == "inaccessible"
         assert external["last_error"] == "Wiki 源文档不存在"
         assert external["sync"]["last_error_code"] == "external_source_missing"
+
+    def test_missing_wiki_source_uses_safe_fallback(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_placeholder(test_db, test_user)
+        document.external_source.external_provider = "wiki"
+        document.external_source.external_resource_id = "v1:conn-primary:42"
+        test_db.commit()
+        document_id = document.id
+        provider = provider_with_fetch(
+            AsyncMock(
+                side_effect=ExternalSourceUnavailableError(
+                    "",
+                    error_code="external_source_missing",
+                )
+            )
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=0)
+
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
+        external = document.source_config["external"]
+        assert external["last_error"] == "外部源文档不存在"
+        assert document.processing_error_payload["code"] == "external_source_missing"
 
     def test_transient_wiki_failure_keeps_existing_successful_index(
         self,
@@ -380,7 +413,7 @@ class TestRunExternalDocumentImport:
         document.status = DocumentStatus.ENABLED
         test_db.commit()
         document_id = document.id
-        provider = prepared_provider(
+        provider = provider_with_fetch(
             AsyncMock(side_effect=ExternalDocumentFetchError("无法连接 Wiki 站点"))
         )
         monkeypatch.setattr(
@@ -486,7 +519,7 @@ class TestRunExternalDocumentImport:
         document.index_status = DocumentIndexStatus.INDEXING
         test_db.commit()
         document_id = document.id
-        provider = prepared_provider(
+        provider = provider_with_fetch(
             AsyncMock(side_effect=ExternalDocumentFetchError("boom"))
         )
         monkeypatch.setattr(
@@ -515,7 +548,7 @@ class TestRunExternalDocumentImport:
 
         document = self._create_placeholder(test_db, test_user)
         document_id = document.id
-        provider = prepared_provider(
+        provider = provider_with_fetch(
             AsyncMock(
                 return_value=ExternalDocumentContent(
                     name="Run Doc",
@@ -597,7 +630,7 @@ class TestRunExternalDocumentImport:
                 metadata={},
             )
 
-        provider = prepared_provider(AsyncMock(side_effect=fake_fetch))
+        provider = provider_with_fetch(AsyncMock(side_effect=fake_fetch))
         attached: list[int] = []
 
         def fake_attach(**kwargs):

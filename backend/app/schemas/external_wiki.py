@@ -62,7 +62,7 @@ class WikiBindingCreateRequest(BaseModel):
     paths: list[Annotated[str, Field(min_length=1, max_length=1024)]] = Field(
         ..., min_length=1, max_length=50
     )
-    connection_id: Optional[str] = Field(None, max_length=100)
+    connection_id: str = Field(..., min_length=1, max_length=100)
     folder_id: int = Field(0, ge=0)
 
 

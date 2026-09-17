@@ -1319,6 +1319,7 @@
     "unbind": "解除绑定",
     "tree_empty": "绑定范围内没有已发布页面",
     "load_tree_failed": "加载 Wiki 页面失败",
+    "page_list_truncated": "该站点页面数量超过浏览上限，目前仅显示最近更新的页面。如需浏览更早页面，请联系管理员提高 WIKI_TREE_MAX_PAGES。",
     "connection_failed_tooltip": "连接失败：{{message}}",
     "bind_scope_success": "已绑定「{{name}}」",
     "need_connection": "请先在「设置 → 集成」配置外部 Wiki 连接",

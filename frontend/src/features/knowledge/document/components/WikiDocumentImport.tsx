@@ -9,7 +9,14 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ExternalLink as BookExternalLink, Link2, Loader2, RefreshCw, X } from 'lucide-react'
+import {
+  AlertTriangle,
+  ExternalLink as BookExternalLink,
+  Link2,
+  Loader2,
+  RefreshCw,
+  X,
+} from 'lucide-react'
 
 import { getWikiDirectoryKeys, WikiPageTree } from './WikiPageTree'
 
@@ -96,6 +103,7 @@ export function WikiDocumentImport({
   const [bound, setBound] = useState<WikiBoundDocument[]>([])
   const [boundLoading, setBoundLoading] = useState(true)
   const [pages, setPages] = useState<WikiPageSummary[] | null>(null)
+  const [pageWarnings, setPageWarnings] = useState<string[]>([])
   const [pagesLoading, setPagesLoading] = useState(false)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [boundKeyword, setBoundKeyword] = useState('')
@@ -145,6 +153,7 @@ export function WikiDocumentImport({
       try {
         setPagesLoading(true)
         const loadedPages: WikiPageSummary[] = []
+        const loadedWarnings = new Set<string>()
         const visitedOffsets = new Set<number>()
         let offset = 0
         let firstRequest = true
@@ -157,6 +166,7 @@ export function WikiDocumentImport({
             ...(refresh && firstRequest ? { refresh: true } : {}),
           })
           loadedPages.push(...response.pages)
+          response.warnings.forEach(warning => loadedWarnings.add(warning))
           firstRequest = false
           if (response.next_offset === null) break
           offset = response.next_offset
@@ -164,6 +174,7 @@ export function WikiDocumentImport({
         if (requestId !== pagesRequestIdRef.current) return
         const uniquePages = [...new Map(loadedPages.map(page => [page.path, page])).values()]
         setPages(uniquePages)
+        setPageWarnings([...loadedWarnings])
         setExpandedDirectories(getWikiDirectoryKeys(uniquePages))
         setPickerPage(1)
         setConnectionError(null)
@@ -181,6 +192,7 @@ export function WikiDocumentImport({
           title: message,
         })
         setPages([])
+        setPageWarnings([])
       } finally {
         if (requestId === pagesRequestIdRef.current) setPagesLoading(false)
       }
@@ -197,6 +209,7 @@ export function WikiDocumentImport({
     setSiteUrl(connection?.site_url || '')
     setConnectionError(null)
     setPages(null)
+    setPageWarnings([])
     setSelected(new Set())
     setExpandedDirectories(new Set())
     setPickerPage(1)
@@ -555,6 +568,21 @@ export function WikiDocumentImport({
               {selectionToggleLabel}
             </Button>
           </div>
+          {pageWarnings.map(warning => (
+            <div
+              key={warning}
+              role="status"
+              className="mb-2 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-text-primary"
+              data-testid="wiki-import-page-warning"
+            >
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+              <span>
+                {warning === 'wiki_page_list_truncated'
+                  ? t('wikiSection.page_list_truncated')
+                  : warning}
+              </span>
+            </div>
+          ))}
           {pagesLoading || pages === null ? (
             <div className="flex items-center gap-2 py-3 text-xs text-text-muted">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />

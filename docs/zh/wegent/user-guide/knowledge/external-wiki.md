@@ -6,7 +6,7 @@ sidebar_position: 12
 
 将自建 Wiki.js 站点的页面绑定到知识库，作为同步文档参与 RAG 检索。绑定后系统每日自动检查远端页面版本，页面更新时自动重新拉取正文并重建索引，无需手动维护。
 
-> **连接器支持范围**：外部 Wiki 设计为支持多种 Wiki 系统（连接器架构可扩展，如 MediaWiki、Confluence 等），**目前仅支持 Wiki.js**。后续连接器发布后，可在"连接器类型"中直接选择。
+> **连接器支持范围**：目前仅支持 **Wiki.js 2.x，最低版本 2.5.300**。Wiki.js 3.x 及 2.5.300 之前的版本不在当前兼容矩阵内。
 
 ---
 
@@ -26,10 +26,11 @@ sidebar_position: 12
 
 ## 前置条件
 
-- 拥有一个可访问的 **Wiki.js** 站点。外部 Wiki 未来将支持多种 Wiki 系统，当前版本仅提供 Wiki.js 连接器。
+- 拥有一个可访问的 **Wiki.js 2.5.300 或更高 2.x** 站点。
 - 在 Wiki 管理后台 **Admin → API** 创建 API Key，权限组需包含：
   - `read:pages`（页面读取）
   - `read:source`（源码读取，缺少时无法读取页面正文）
+  - `manage:pages`（Wiki.js 2.x 的 `single` / `singleByPath` resolver 会校验该权限；也可使用包含 `delete:pages` 的权限组）
 - 环境开关 `EXTERNAL_DOC_SYNC_ENABLED` 已启用（默认启用）。关闭时绑定入口会提示"外部文档同步功能未启用"。
 
 ---
@@ -50,6 +51,7 @@ sidebar_position: 12
 
 - **启用连接**开关关闭后，所有由你添加的 Wiki 绑定将一并失效（无法读取页面）。
 - 删除连接前必须先解除所有引用该连接的同步文档，否则系统会拒绝删除并提示关联的知识库。
+- 连接测试会执行页面列表、按路径解析和正文读取，而不只是检查网络连通；没有已发布页面且版本不可读时，连接测试不会判定成功。
 
 ---
 
@@ -61,6 +63,7 @@ sidebar_position: 12
    - 按标题或路径搜索；
    - 全选 / 取消全选；
    - 整目录选择（绑定该目录下的页面，不是递归绑定子目录下所有页面）。
+   - 当站点页面数超过服务端浏览上限时，页面树会显示截断提示，仅展示最近更新的页面。
 4. 点击 **绑定选中**。
 
 绑定结果分三类提示：
@@ -132,7 +135,7 @@ Wiki 页面被删除后，系统**不会删除本地文档**，而是将其标�
 后台任务按队列执行，稍等片刻；超过 30 分钟未变化会被巡检任务标记为失败，可在详情中查看错误并重试。
 
 **Q：提示"Wiki 源文档不存在"但页面还在？**
-通常是 API Key 权限变更或页面被转为私有。检查 Wiki 站点的 API Key 权限组是否仍含 `read:pages` 和 `read:source`，修复后下轮巡检自动恢复。
+通常是 API Key 权限变更或页面被转为私有。检查 Wiki 站点的 API Key 权限组是否仍含 `read:pages`、`read:source` 和 `manage:pages`（或 `delete:pages`），修复后下轮巡检自动恢复。
 
 **Q：远端更新了，多久会同步到知识库？**
 最迟下一次每日巡检（默认北京时间凌晨 3:00）。需要立即生效时对该文档手动执行**同步**。
@@ -152,6 +155,10 @@ Wiki 页面被删除后，系统**不会删除本地文档**，而是将其标�
 | `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS` | `10000` | 单次运行最多处理文档数 |
 | `EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS` | `2700` | 单次运行时间预算（秒） |
 | `WIKI_SYNC_REMOTE_BATCH_SIZE` | `500` | 每次 GraphQL 请求探测的页面数 |
+| `WIKI_TREE_MAX_PAGES` | `5000` | 页面选择器最多加载的最近更新页面数，超出时显示截断提示 |
+| `KNOWLEDGE_ATTACHMENT_ORPHAN_RETENTION_HOURS` | `24` | 知识文档孤儿附件删除前的安全保留时间 |
+| `KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_BATCH_SIZE` | `200` | 每轮孤儿附件扫描上限 |
+| `KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS` | `3600` | 孤儿附件扫描间隔（秒） |
 
 ---
 

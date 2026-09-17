@@ -6,7 +6,7 @@ sidebar_position: 12
 
 Bind pages from a self-hosted Wiki.js site to a knowledge base as synchronized documents that participate in RAG retrieval. Once bound, the system checks remote page versions daily, automatically re-fetches updated content, and rebuilds the index — no manual maintenance required.
 
-> **Connector support**: External wiki is designed to support multiple wiki systems through an extensible connector architecture (e.g. MediaWiki, Confluence). **Currently only Wiki.js is supported.** Once additional connectors ship, they will be selectable directly under "Connector type".
+> **Connector support**: The current compatibility matrix supports **Wiki.js 2.x starting at 2.5.300**. Wiki.js 3.x and releases older than 2.5.300 are not currently supported.
 
 ---
 
@@ -26,10 +26,11 @@ Difference from web scraping: web scraping is a one-time import with manual refr
 
 ## Prerequisites
 
-- An accessible **Wiki.js** site. External wiki will support multiple wiki systems in the future; the current release ships only the Wiki.js connector.
+- An accessible **Wiki.js 2.x site at version 2.5.300 or later**.
 - An API key created in the wiki admin console (**Admin → API**) whose permission group includes:
   - `read:pages` (page reading)
   - `read:source` (source reading; page bodies cannot be fetched without it)
+  - `manage:pages` (the Wiki.js 2.x `single` / `singleByPath` resolvers require it; a group containing `delete:pages` also satisfies the upstream check)
 - The environment switch `EXTERNAL_DOC_SYNC_ENABLED` is on (default). When disabled, the binding entry reports "external document sync is not enabled".
 
 ---
@@ -50,6 +51,7 @@ Notes:
 
 - Turning off the **Enable connection** switch invalidates all wiki bindings you added (pages cannot be read).
 - A connection cannot be deleted while synchronized documents still reference it; remove those documents first. The rejection message lists the referencing knowledge bases.
+- The connection test exercises page listing, path resolution, and body reading rather than network reachability alone. A site with no published pages and no readable version does not pass the connection test.
 
 ---
 
@@ -61,6 +63,7 @@ Notes:
    - Search by title or path;
    - Select all / clear selection;
    - Select an entire directory (binds the pages directly under it, not recursively).
+   - If the site exceeds the server-side browsing limit, the picker shows a truncation warning and only the most recently updated pages.
 4. Click **Bind Selected**.
 
 The result falls into three categories:
@@ -132,7 +135,7 @@ To remove the content for good, use **Unbind** in the knowledge base document li
 Background tasks execute from a queue; wait a moment. If the state does not change after 30 minutes, the inspection task marks it failed — check the error in the detail view and retry.
 
 **Q: "Wiki source document missing" although the page still exists?**
-Usually the API key permissions changed or the page became private. Verify the wiki API key permission group still includes `read:pages` and `read:source`; the next inspection recovers automatically once fixed.
+Usually the API key permissions changed or the page became private. Verify that the API key group still includes `read:pages`, `read:source`, and `manage:pages` (or `delete:pages`); the next inspection recovers automatically once fixed.
 
 **Q: How long until a remote update reaches the knowledge base?**
 At most the next daily inspection (default 19:00 UTC). Use manual **Sync** on the document for immediate effect.
@@ -152,6 +155,10 @@ Yes. Each knowledge base binding is an independent synchronized document with it
 | `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS` | `10000` | Maximum documents per run |
 | `EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS` | `2700` | Per-run time budget (seconds) |
 | `WIKI_SYNC_REMOTE_BATCH_SIZE` | `500` | Pages probed per GraphQL request |
+| `WIKI_TREE_MAX_PAGES` | `5000` | Most recently updated pages loaded by the picker before it warns about truncation |
+| `KNOWLEDGE_ATTACHMENT_ORPHAN_RETENTION_HOURS` | `24` | Safety retention before an orphaned knowledge attachment may be deleted |
+| `KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_BATCH_SIZE` | `200` | Maximum orphan candidates per scan |
+| `KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS` | `3600` | Orphan scan interval in seconds |
 
 ---
 

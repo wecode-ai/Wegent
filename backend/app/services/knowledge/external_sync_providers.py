@@ -17,10 +17,10 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.user import User
 from app.services.knowledge.external_document_providers import (
+    DetachedExternalDocumentProvider,
     ExternalDocumentContent,
     ExternalDocumentFetchError,
     ExternalDocumentImportError,
-    ExternalDocumentProvider,
     ExternalSourceUnavailableError,
     PreparedExternalDocumentFetch,
 )
@@ -172,7 +172,10 @@ def is_synchronized_external_document(document: Any) -> bool:
     return bool(get_document_sync_config(document).get("enabled"))
 
 
-class WikiExternalSyncProvider(ExternalSyncProvider, ExternalDocumentProvider):
+class WikiExternalSyncProvider(
+    ExternalSyncProvider,
+    DetachedExternalDocumentProvider,
+):
     """Wiki.js adapter for initial import, daily inspection and body fetch."""
 
     provider_id = WIKI_SYNC_PROVIDER_ID
@@ -229,10 +232,42 @@ class WikiExternalSyncProvider(ExternalSyncProvider, ExternalDocumentProvider):
                     "path": page.path,
                     "locale": page.locale or "",
                     "site_url": connection.config.site_url.rstrip("/"),
+                    "connection_revision": connection.revision,
                 },
             )
 
         return list(await asyncio.gather(*(resolve_path(path) for path in paths)))
+
+    def preflight_resolved_import(
+        self,
+        db: Session,
+        user: User,
+        resolved_documents: list[ResolvedExternalDocument],
+    ) -> None:
+        """Lock the connection and reject metadata resolved from a stale revision."""
+        snapshots = {
+            (
+                resolved.locator.connection_id,
+                int(resolved.metadata.get("connection_revision", -1)),
+            )
+            for resolved in resolved_documents
+        }
+        if len(snapshots) != 1:
+            raise ExternalDocumentImportError(
+                "Wiki connection changed while pages were loading; please retry",
+                status_code=409,
+            )
+        connection_id, expected_revision = snapshots.pop()
+        connection = WikiConnectionService.lock_user_wiki_connection(
+            user,
+            db,
+            connection_id,
+        )
+        if connection is None or connection.revision != expected_revision:
+            raise ExternalDocumentImportError(
+                "Wiki connection changed while pages were loading; please retry",
+                status_code=409,
+            )
 
     def prepare_remote_inspection(
         self, db: Session, candidates: Sequence[SyncCandidate]
@@ -372,6 +407,8 @@ class WikiExternalSyncProvider(ExternalSyncProvider, ExternalDocumentProvider):
     def prepare_content_fetch(
         self, db: Session, user: User, external_resource_id: str
     ) -> PreparedExternalDocumentFetch:
+        if getattr(user, "is_active", True) is not True:
+            raise ExternalDocumentFetchError("Wiki document owner is disabled")
         locator = decode_external_sync_resource_id(
             self.provider_id, external_resource_id
         )

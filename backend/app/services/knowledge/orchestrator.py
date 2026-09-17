@@ -49,7 +49,9 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.services.knowledge.attachment_cleanup import (
+    EXTERNAL_WIKI_ATTACHMENT_LIFECYCLE_OWNER,
     delete_attachment_best_effort,
+    mark_attachments_for_orphan_cleanup,
 )
 from app.services.knowledge.code_wiki.source import SourceRepository
 from app.services.knowledge.document_read_service import (
@@ -1766,16 +1768,34 @@ class KnowledgeOrchestrator:
         owner_user_id = document.user_id
         previous_attachment_id = document.attachment_id
         previous_converted_id = document.converted_attachment_id
+        retry_orphan_cleanup = document.external_provider == "wiki"
         attachment, _ = context_service.upload_attachment(
             db=db,
             user_id=owner_user_id,
             filename=_build_filename(content.name, content.file_extension),
             binary_data=content.content,
             subtask_id=0,
+            lifecycle_owner=(
+                EXTERNAL_WIKI_ATTACHMENT_LIFECYCLE_OWNER
+                if retry_orphan_cleanup
+                else None
+            ),
         )
 
         attachment_id = attachment.id
         try:
+            if retry_orphan_cleanup:
+                mark_attachments_for_orphan_cleanup(
+                    db,
+                    {
+                        value
+                        for value in (
+                            previous_attachment_id,
+                            previous_converted_id,
+                        )
+                        if value
+                    },
+                )
             self._land_external_content(db, document, content, attachment, generation)
         except Exception as exc:
             # A failed commit can have an uncertain outcome; keep any linked body.
@@ -1786,7 +1806,12 @@ class KnowledgeOrchestrator:
                 .scalar()
             )
             if linked_attachment_id != attachment_id:
-                delete_attachment_best_effort(db, owner_user_id, attachment_id)
+                delete_attachment_best_effort(
+                    db,
+                    owner_user_id,
+                    attachment_id,
+                    retry_orphan_cleanup=retry_orphan_cleanup,
+                )
             if isinstance(exc, ObjectDeletedError):
                 raise ExternalImportLostWriteError(
                     f"Document {document_id} was deleted while importing"
@@ -1795,7 +1820,12 @@ class KnowledgeOrchestrator:
 
         for previous_id in {previous_attachment_id, previous_converted_id}:
             if previous_id and previous_id != attachment_id:
-                delete_attachment_best_effort(db, owner_user_id, previous_id)
+                delete_attachment_best_effort(
+                    db,
+                    owner_user_id,
+                    previous_id,
+                    retry_orphan_cleanup=retry_orphan_cleanup,
+                )
 
         db.refresh(document)
 

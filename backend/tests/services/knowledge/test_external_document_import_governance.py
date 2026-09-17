@@ -49,7 +49,7 @@ from app.services.share import knowledge_share_service
 
 from .conftest import create_external_import_kb as _create_kb
 from .conftest import create_synced_node as _create_synced_node
-from .conftest import patch_provider_fetch, prepared_provider
+from .conftest import patch_provider_fetch, provider_with_fetch
 
 
 def test_importing_copy_cannot_be_transferred(
@@ -342,7 +342,7 @@ class TestExternalSourceUnavailable:
         engine = create_engine("sqlite:///:memory:")
         KnowledgeDocument.__table__.create(engine)
         KnowledgeDocumentExternalSource.__table__.create(engine)
-        provider = prepared_provider(
+        provider = provider_with_fetch(
             AsyncMock(side_effect=ExternalSourceUnavailableError("gone"))
         )
         monkeypatch.setattr(
@@ -413,7 +413,7 @@ class TestExternalSourceUnavailable:
         finally:
             engine.dispose()
 
-    def _create_live_document(
+    def _create_external_document(
         self, test_db: Session, test_user: User
     ) -> KnowledgeDocument:
         kb_id = _create_kb(test_db, test_user.id, "source-unavailable-kb")
@@ -447,9 +447,9 @@ class TestExternalSourceUnavailable:
         test_user: User,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        document = self._create_live_document(test_db, test_user)
+        document = self._create_external_document(test_db, test_user)
         document_id = document.id
-        provider = prepared_provider(
+        provider = provider_with_fetch(
             AsyncMock(side_effect=ExternalSourceUnavailableError("node not found"))
         )
         monkeypatch.setattr(
@@ -468,7 +468,10 @@ class TestExternalSourceUnavailable:
         assert document.is_active is False
         external = document.source_config["external"]
         assert external["status"] == "inaccessible"
-        assert external["last_error"] == "外部源当前无法访问，请恢复访问后重试导入"
+        assert external["last_error"] == (
+            "The external source is no longer accessible. Restore access "
+            "and retry the import."
+        )
         error = document.processing_error_payload
         assert error is not None
         assert error["code"] == "external_source_unavailable"
@@ -479,9 +482,9 @@ class TestExternalSourceUnavailable:
         test_user: User,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        document = self._create_live_document(test_db, test_user)
+        document = self._create_external_document(test_db, test_user)
         document_id = document.id
-        provider = prepared_provider(
+        provider = provider_with_fetch(
             AsyncMock(side_effect=ExternalDocumentFetchError("boom"))
         )
         monkeypatch.setattr(
@@ -504,13 +507,13 @@ class TestExternalSourceUnavailable:
         test_user: User,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        document = self._create_live_document(test_db, test_user)
+        document = self._create_external_document(test_db, test_user)
         # A newer attempt already superseded this run's generation.
         document.index_generation = 2
         document.index_status = DocumentIndexStatus.INDEXING
         test_db.commit()
         document_id = document.id
-        provider = prepared_provider(
+        provider = provider_with_fetch(
             AsyncMock(side_effect=ExternalSourceUnavailableError("node not found"))
         )
         monkeypatch.setattr(

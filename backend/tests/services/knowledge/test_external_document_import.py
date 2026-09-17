@@ -43,7 +43,7 @@ from app.services.knowledge.external_sync_providers import (
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 
-from .conftest import prepared_provider
+from .conftest import provider_with_fetch
 
 
 def _create_kb(test_db: Session, user_id: int, name: str = "external-import-kb") -> int:
@@ -115,6 +115,18 @@ def dispatch_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     return calls
 
 
+@pytest.fixture
+def bypass_wiki_connection_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep identity-focused unit tests independent of connection persistence."""
+    provider = get_external_document_provider("wiki")
+    assert provider is not None
+    monkeypatch.setattr(
+        provider,
+        "preflight_resolved_import",
+        lambda *_args, **_kwargs: None,
+    )
+
+
 class TestProviderRegistry:
     def test_dingtalk_provider_is_registered(self) -> None:
         provider = get_external_document_provider("dingtalk")
@@ -165,6 +177,7 @@ class TestImportDocument:
         test_db: Session,
         test_user: User,
         dispatched: list[int],
+        bypass_wiki_connection_preflight: None,
     ) -> None:
         kb_id = _create_kb(test_db, test_user.id, "wiki-site-identity")
         resolved = [
@@ -205,6 +218,7 @@ class TestImportDocument:
         test_db: Session,
         test_user: User,
         dispatched: list[int],
+        bypass_wiki_connection_preflight: None,
     ) -> None:
         kb_id = _create_kb(test_db, test_user.id, "wiki-canonical-identity")
 
@@ -245,6 +259,7 @@ class TestImportDocument:
         test_db: Session,
         test_user: User,
         dispatched: list[int],
+        bypass_wiki_connection_preflight: None,
     ) -> None:
         kb_id = _create_kb(test_db, test_user.id, "wiki-name-authority")
         resolved = ResolvedExternalDocument(
@@ -272,6 +287,58 @@ class TestImportDocument:
                 test_user.id,
                 KnowledgeDocumentUpdate(name="Local title"),
             )
+
+    def test_resolved_batch_conflict_is_rejected_before_first_create(
+        self,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+        bypass_wiki_connection_preflight: None,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id, "wiki-resolved-preflight")
+        existing = KnowledgeService.create_external_document(
+            db=test_db,
+            knowledge_base_id=kb_id,
+            user_id=test_user.id,
+            name="Legacy binding",
+            external_provider="wiki",
+            external_resource_id="v1:conn-a:conflict",
+            folder_id=0,
+            external_meta={"provider": "wiki", "title": "Legacy binding"},
+        )
+        resolved = [
+            ResolvedExternalDocument(
+                locator=ExternalSyncLocator("wiki", "conn-a", "new"),
+                title="New page",
+                source_url="https://wiki.example.com/new",
+                remote_version="v1",
+                metadata={"site_url": "https://wiki.example.com", "path": "new"},
+            ),
+            ResolvedExternalDocument(
+                locator=ExternalSyncLocator("wiki", "conn-a", "conflict"),
+                title="Conflict",
+                source_url="https://wiki.example.com/conflict",
+                remote_version="v1",
+                metadata={
+                    "site_url": "https://wiki.example.com",
+                    "path": "conflict",
+                },
+            ),
+        ]
+
+        with pytest.raises(ExternalDocumentImportError) as exc_info:
+            external_document_import_service.import_resolved_documents(
+                db=test_db,
+                user=test_user,
+                knowledge_base_id=kb_id,
+                provider_id="wiki",
+                resolved_documents=resolved,
+            )
+
+        assert exc_info.value.status_code == 409
+        assert test_db.query(KnowledgeDocument).count() == 1
+        assert test_db.get(KnowledgeDocument, existing.id) is not None
+        assert dispatched == []
 
     def test_dispatch_failure_marks_placeholder_retryable(
         self,
@@ -999,20 +1066,28 @@ class TestAttachExternalDocumentContent:
         test_db.refresh(document)
         return document
 
+    @pytest.mark.parametrize(
+        ("provider_id", "lifecycle_owner"),
+        [("dingtalk", None), ("wiki", "external_wiki_sync")],
+    )
     def test_uploads_attachment_and_schedules_indexing(
         self,
         test_db: Session,
         test_user: User,
         monkeypatch: pytest.MonkeyPatch,
+        provider_id: str,
+        lifecycle_owner: str | None,
     ) -> None:
         from app.services.knowledge.orchestrator import knowledge_orchestrator
 
         document = self._create_placeholder(test_db, test_user)
+        document.external_source.external_provider = provider_id
+        test_db.commit()
         content = ExternalDocumentContent(
             name="Attach Doc",
             file_extension="md",
             content=b"# Attach Doc",
-            metadata={"provider": "dingtalk"},
+            metadata={"provider": provider_id},
         )
         attachment = SimpleNamespace(id=4321)
         upload_attachment = MagicMock(return_value=(attachment, None))
@@ -1041,6 +1116,7 @@ class TestAttachExternalDocumentContent:
             filename="Attach Doc.md",
             binary_data=b"# Attach Doc",
             subtask_id=0,
+            lifecycle_owner=lifecycle_owner,
         )
         assert document.attachment_id == 4321
         assert document.file_size == len(b"# Attach Doc")
@@ -1280,7 +1356,7 @@ class TestAttachExternalDocumentContent:
             metadata={},
         )
         fetch = AsyncMock(return_value=fresh_content)
-        provider = prepared_provider(fetch)
+        provider = provider_with_fetch(fetch)
         monkeypatch.setattr(
             "app.services.knowledge.external_document_import."
             "get_external_document_provider",
