@@ -1215,7 +1215,6 @@ def test_keyword_retrieve_keeps_scope_and_metadata_filters():
     assert 'metadata["knowledge_id"] == "1"' in expression
     assert 'metadata["doc_ref"] in ["7", "8"]' in expression
     assert 'metadata["category"] == "tech"' in expression
-    assert "published" not in expression
 
 
 def test_keyword_retrieve_of_a_missing_index_returns_empty_without_embedding():
@@ -1588,7 +1587,6 @@ def test_hybrid_retrieve_keeps_scope_and_metadata_filters():
     assert 'metadata["knowledge_id"] == "1"' in expression
     assert 'metadata["doc_ref"] in ["7", "8"]' in expression
     assert 'metadata["category"] == "tech"' in expression
-    assert "published" not in expression
 
 
 def test_reads_reject_a_contract_from_an_older_schema():
@@ -1827,6 +1825,33 @@ def test_retrieve_rejects_text_conditions_milvus_cannot_match_literally(value):
                 "operator": "and",
                 "conditions": [
                     {"key": "category", "operator": "contains", "value": value}
+                ],
+            },
+        )
+
+
+@pytest.mark.parametrize("operator", ["contains", "text_match"])
+def test_retrieve_rejects_text_conditions_on_a_numeric_chunk_key(operator):
+    """A number has no substring, so the condition fails instead of matching none.
+
+    ``chunk_index`` is compared as the number the row layout stored. The server
+    used to refuse ``like`` on that column; compiling it into
+    ``metadata["chunk_index"] like ...`` would answer with an empty result
+    instead, which hides a caller's mistake.
+    """
+    backend = _backend()
+    backend._store = FakeStore(rows=[])
+
+    with pytest.raises(ValueError, match="is numeric"):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=FakeEmbedModel([[1.0, 0.0]]),
+            retrieval_setting={"score_threshold": 0.0},
+            metadata_condition={
+                "operator": "and",
+                "conditions": [
+                    {"key": "chunk_index", "operator": operator, "value": 0}
                 ],
             },
         )

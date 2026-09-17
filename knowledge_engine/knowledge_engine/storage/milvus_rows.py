@@ -20,14 +20,14 @@ from pymilvus import MilvusClient
 from knowledge_engine.storage.errors import StorageBackendError
 from knowledge_engine.storage.milvus_filters import compile_metadata_conditions
 from knowledge_engine.storage.milvus_native import (
-    CHUNK_INDEX_FIELD,
-    CREATED_AT_FIELD,
+    CHUNK_INDEX_KEY,
+    CREATED_AT_KEY,
     DISPLAY_TEXT_FIELD,
-    DOC_REF_FIELD,
+    DOC_REF_KEY,
     ID_FIELD,
     METADATA_FIELD,
     RETRIEVAL_TEXT_FIELD,
-    SOURCE_FILE_FIELD,
+    SOURCE_FILE_KEY,
     build_scope_filter,
 )
 from knowledge_engine.storage.milvus_store import MilvusDocumentStore
@@ -64,7 +64,7 @@ def row_metadata(hit: Dict[str, Any]) -> Dict[str, Any]:
 
 def row_chunk_index(hit: Dict[str, Any]) -> int:
     """The chunk position a stored row declares in its metadata."""
-    return int(row_metadata(hit).get(CHUNK_INDEX_FIELD) or 0)
+    return int(row_metadata(hit).get(CHUNK_INDEX_KEY) or 0)
 
 
 class MilvusRowReader:
@@ -119,7 +119,7 @@ class MilvusRowReader:
         return {
             "doc_ref": doc_ref,
             "knowledge_id": knowledge_id,
-            "source_file": row_metadata(ordered_rows[0]).get(SOURCE_FILE_FIELD),
+            "source_file": row_metadata(ordered_rows[0]).get(SOURCE_FILE_KEY),
             "chunk_count": len(chunks),
             "chunks": chunks,
         }
@@ -145,16 +145,16 @@ class MilvusRowReader:
         documents: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             metadata = row_metadata(row)
-            doc_ref = metadata.get(DOC_REF_FIELD)
+            doc_ref = metadata.get(DOC_REF_KEY)
             if not doc_ref:
                 continue
             document = documents.setdefault(
                 doc_ref,
                 {
                     "doc_ref": doc_ref,
-                    "source_file": metadata.get(SOURCE_FILE_FIELD),
+                    "source_file": metadata.get(SOURCE_FILE_KEY),
                     "chunk_count": 0,
-                    "created_at": metadata.get(CREATED_AT_FIELD),
+                    "created_at": metadata.get(CREATED_AT_KEY),
                 },
             )
             document["chunk_count"] += 1
@@ -208,9 +208,9 @@ class MilvusRowReader:
             chunks.append(
                 {
                     "content": row.get(DISPLAY_TEXT_FIELD) or "",
-                    "title": metadata.get(SOURCE_FILE_FIELD) or "",
+                    "title": metadata.get(SOURCE_FILE_KEY) or "",
                     "chunk_id": row_chunk_index(row),
-                    "doc_ref": metadata.get(DOC_REF_FIELD) or "",
+                    "doc_ref": metadata.get(DOC_REF_KEY) or "",
                     "metadata": metadata,
                 }
             )

@@ -59,17 +59,17 @@ from knowledge_engine.storage.milvus_hybrid import (
     resolve_hybrid_weights,
 )
 from knowledge_engine.storage.milvus_native import (
-    CHUNK_INDEX_FIELD,
-    CREATED_AT_FIELD,
+    CHUNK_INDEX_KEY,
+    CREATED_AT_KEY,
     DENSE_VECTOR_FIELD,
     DISPLAY_TEXT_FIELD,
-    DOC_REF_FIELD,
+    DOC_REF_KEY,
     ID_FIELD,
-    KNOWLEDGE_ID_FIELD,
+    KNOWLEDGE_ID_KEY,
     METADATA_FIELD,
     RETRIEVAL_TEXT_FIELD,
     SCHEMA_VERSION,
-    SOURCE_FILE_FIELD,
+    SOURCE_FILE_KEY,
     MilvusIndexBinding,
     build_scope_filter,
     node_row_id,
@@ -423,11 +423,11 @@ class MilvusBackend(BaseStorageBackend):
         """
         metadata = dict(node.metadata or {})
         chunk_index = int(metadata.get("chunk_index") or 0)
-        metadata[KNOWLEDGE_ID_FIELD] = str(knowledge_id)
-        metadata[DOC_REF_FIELD] = str(doc_ref)
-        metadata[CHUNK_INDEX_FIELD] = chunk_index
-        metadata[SOURCE_FILE_FIELD] = str(metadata.get(SOURCE_FILE_FIELD) or "")
-        metadata[CREATED_AT_FIELD] = str(metadata.get(CREATED_AT_FIELD) or "")
+        metadata[KNOWLEDGE_ID_KEY] = str(knowledge_id)
+        metadata[DOC_REF_KEY] = str(doc_ref)
+        metadata[CHUNK_INDEX_KEY] = chunk_index
+        metadata[SOURCE_FILE_KEY] = str(metadata.get(SOURCE_FILE_KEY) or "")
+        metadata[CREATED_AT_KEY] = str(metadata.get(CREATED_AT_KEY) or "")
         return {
             ID_FIELD: node_row_id(
                 knowledge_id=knowledge_id,
@@ -778,7 +778,7 @@ class MilvusBackend(BaseStorageBackend):
                     or metadata.get(DISPLAY_TEXT_METADATA_KEY)
                     or "",
                     "score": score,
-                    "title": metadata.get(SOURCE_FILE_FIELD) or "",
+                    "title": metadata.get(SOURCE_FILE_KEY) or "",
                     "metadata": metadata,
                 }
             )

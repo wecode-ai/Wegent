@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 PARENT_STORE_VECTOR_DIM = 2
 PARENT_NODE_ID_FIELD = "parent_node_id"
+# The sidecar's own scope fields: it carries them as top-level fields of its
+# dynamic schema, not inside the retrieval index's metadata column.
+PARENT_KNOWLEDGE_ID_FIELD = "knowledge_id"
+PARENT_DOC_REF_FIELD = "doc_ref"
 
 
 class MilvusParentStore:
@@ -52,9 +56,13 @@ class MilvusParentStore:
         filter, which is what keeps one knowledge base's sidecar rows from
         being addressed with the index's scope shape.
         """
-        conditions = [f'knowledge_id == "{sanitize_filter_value(knowledge_id)}"']
+        conditions = [
+            f'{PARENT_KNOWLEDGE_ID_FIELD} == "{sanitize_filter_value(knowledge_id)}"'
+        ]
         if doc_ref is not None:
-            conditions.append(f'doc_ref in ["{sanitize_filter_value(doc_ref)}"]')
+            conditions.append(
+                f'{PARENT_DOC_REF_FIELD} in ["{sanitize_filter_value(doc_ref)}"]'
+            )
         return " and ".join(conditions)
 
     def save(
@@ -95,8 +103,8 @@ class MilvusParentStore:
                     {
                         "vector": [0.0] * PARENT_STORE_VECTOR_DIM,
                         PARENT_NODE_ID_FIELD: node.node_id,
-                        "knowledge_id": knowledge_id,
-                        "doc_ref": node.metadata.get("doc_ref"),
+                        PARENT_KNOWLEDGE_ID_FIELD: knowledge_id,
+                        PARENT_DOC_REF_FIELD: node.metadata.get("doc_ref"),
                         "source_file": node.metadata.get("source_file"),
                         "content": self._display_text_for(node),
                         "title": node.metadata.get("source_file", ""),

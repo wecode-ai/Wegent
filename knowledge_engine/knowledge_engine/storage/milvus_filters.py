@@ -42,7 +42,7 @@ from knowledge_engine.retrieval.filters import (
 )
 from knowledge_engine.storage.milvus_native import (
     CHUNK_METADATA_KEYS,
-    DOC_REF_FIELD,
+    DOC_REF_KEY,
     ID_FIELD,
     NUMERIC_CHUNK_KEYS,
     metadata_path,
@@ -133,9 +133,9 @@ def _condition_target(
     the type the row layout stored there, a condition on a user key by the type
     of the value the caller passed.
     """
-    if key == DOC_REF_FIELD:
+    if key == DOC_REF_KEY:
         if allow_document_scope:
-            return metadata_path(DOC_REF_FIELD), "text"
+            return metadata_path(DOC_REF_KEY), "text"
         raise ValueError(
             "Document scope must use document_ids or "
             "RetrievalScope.document_ids, not metadata_condition doc_ref."
@@ -172,7 +172,16 @@ def _compile_text_condition(
     as the typed column it used to be compared against was read. Milvus only
     ever treats ``%`` and ``_`` as ``like`` wildcards and cannot escape them, so
     a value that contains one is rejected instead of widening the condition.
+
+    A numeric chunk field has no substring to match at all: the condition is
+    refused here, as it was refused by the server when this key was a typed
+    column, instead of being compiled into one that silently matches nothing.
     """
+    if key in NUMERIC_CHUNK_KEYS:
+        raise ValueError(
+            f"metadata_condition '{key}' is numeric: 'contains' and "
+            "'text_match' cannot match a number."
+        )
     scalar = _scalar_value(key, value)
     pattern = _literal_pattern(key, _json_text(key, scalar))
     substring = f'{field} like "%{pattern}%"'

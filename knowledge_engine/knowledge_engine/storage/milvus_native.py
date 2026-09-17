@@ -69,29 +69,32 @@ DEFAULT_RPC_TIMEOUT_SECONDS = 10.0
 # so they get a wider - but still bounded - budget than a query or mutation.
 HEAVY_RPC_TIMEOUT_SECONDS = 30.0
 
+# The physical columns of a stored row. Everything else a row carries lives in
+# the metadata column, the one place a condition can name.
 ID_FIELD = "id"
-KNOWLEDGE_ID_FIELD = "knowledge_id"
-DOC_REF_FIELD = "doc_ref"
-SOURCE_FILE_FIELD = "source_file"
-CHUNK_INDEX_FIELD = "chunk_index"
 RETRIEVAL_TEXT_FIELD = "retrieval_text"
 DISPLAY_TEXT_FIELD = "display_text"
 METADATA_FIELD = "metadata"
-CREATED_AT_FIELD = "created_at"
 DENSE_VECTOR_FIELD = "dense_vector"
 SPARSE_VECTOR_FIELD = "sparse_vector"
 
-# Metadata keys every stored chunk carries, written with the fixed type a
+# The metadata keys every stored chunk carries, written with the fixed type a
 # condition on them is compared against. Row identity is deliberately absent:
 # the write path owns it, so a query condition can never pin or fake it.
+KNOWLEDGE_ID_KEY = "knowledge_id"
+DOC_REF_KEY = "doc_ref"
+SOURCE_FILE_KEY = "source_file"
+CHUNK_INDEX_KEY = "chunk_index"
+CREATED_AT_KEY = "created_at"
+
 CHUNK_METADATA_KEYS: List[str] = [
-    KNOWLEDGE_ID_FIELD,
-    DOC_REF_FIELD,
-    SOURCE_FILE_FIELD,
-    CHUNK_INDEX_FIELD,
-    CREATED_AT_FIELD,
+    KNOWLEDGE_ID_KEY,
+    DOC_REF_KEY,
+    SOURCE_FILE_KEY,
+    CHUNK_INDEX_KEY,
+    CREATED_AT_KEY,
 ]
-NUMERIC_CHUNK_KEYS = frozenset({CHUNK_INDEX_FIELD})
+NUMERIC_CHUNK_KEYS = frozenset({CHUNK_INDEX_KEY})
 
 # Columns one read asks for by default: the row's identity, the two texts the
 # retrieval paths answer with, and the metadata column that holds the rest.
@@ -210,14 +213,13 @@ def build_scope_filter(
     database, before the ``top_k`` cut, and a row whose metadata does not
     declare the scope cannot be returned.
     """
-    conditions = [
-        f'{metadata_path(KNOWLEDGE_ID_FIELD)} == "{sanitize_filter_value(knowledge_id)}"'
-    ]
+    knowledge_scope = metadata_path(KNOWLEDGE_ID_KEY)
+    conditions = [f'{knowledge_scope} == "{sanitize_filter_value(knowledge_id)}"']
     if doc_refs is not None:
         if not doc_refs:
             raise ValueError("doc_refs must not be an empty scope")
         escaped = [f'"{sanitize_filter_value(doc_ref)}"' for doc_ref in doc_refs]
-        conditions.append(f"{metadata_path(DOC_REF_FIELD)} in [{', '.join(escaped)}]")
+        conditions.append(f"{metadata_path(DOC_REF_KEY)} in [{', '.join(escaped)}]")
     for condition in extra_conditions or ():
         normalized = condition.strip()
         if normalized:
