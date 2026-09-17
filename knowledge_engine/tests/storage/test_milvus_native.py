@@ -377,7 +377,7 @@ class _CollectionClient:
 
 def _store_for_state(binding, *, collection_exists: bool):
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
-    store.read_binding = lambda client, name: binding
+    store.read_binding = lambda client, name, *, consistency_level: binding
     store._assert_collection_dimension = lambda client, requested: None
     written: list[str] = []
     store.write_binding = lambda client, requested: written.append(

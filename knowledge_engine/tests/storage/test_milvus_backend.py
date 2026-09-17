@@ -192,11 +192,15 @@ class FakeStore:
         self.sparse_searches: list[dict] = []
         self.sparse_hits: list[dict] = list(sparse_hits or [])
         self.clients_created = 0
+        self.clients_closed = 0
 
     @contextmanager
     def client(self):
         self.clients_created += 1
-        yield self
+        try:
+            yield self
+        finally:
+            self.clients_closed += 1
 
     def has_collection(self, client, collection_name):
         return self.collection_exists
@@ -840,6 +844,61 @@ def test_one_retrieve_reads_the_stored_contract_once(retrieval_mode):
 
     assert store.contract_reads == 1
     assert store.searches or store.sparse_searches
+
+
+@pytest.mark.parametrize("retrieval_mode", ["vector", "keyword", "hybrid"])
+def test_one_retrieve_owns_exactly_one_client(retrieval_mode):
+    """One request costs one client lifetime, not one per storage lookup.
+
+    The client is still created per request and closed in ``finally``, so
+    concurrent requests keep owning independent connections; the point is that
+    a single request no longer pays the teardown twice.
+    """
+    backend = _backend()
+    store = _hybrid_store()
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="深度学习模型训练 zebra_pipeline_99",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={
+            "retrieval_mode": retrieval_mode,
+            "top_k": 5,
+            "score_threshold": 0.0,
+        },
+    )
+
+    assert store.clients_created == 1
+
+
+@pytest.mark.parametrize("retrieval_mode", ["vector", "keyword", "hybrid"])
+def test_a_failing_retrieve_still_releases_its_client(retrieval_mode):
+    """A retrieval that raises on the storage call closes what it opened."""
+    backend = _backend()
+    store = _hybrid_store()
+    store.search = _exploding_search
+    store.sparse_search = _exploding_search
+    backend._store = store
+
+    with pytest.raises(StorageBackendError):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=FakeEmbedModel([[1.0, 0.0]]),
+            retrieval_setting={
+                "retrieval_mode": retrieval_mode,
+                "top_k": 5,
+                "score_threshold": 0.0,
+            },
+        )
+
+    assert store.clients_created == 1
+    assert store.clients_closed == 1
+
+
+def _exploding_search(*args, **kwargs):
+    raise StorageBackendError("the storage call failed")
 
 
 def test_retrieve_unsupported_mode_fails_loudly():

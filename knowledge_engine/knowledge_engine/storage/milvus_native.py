@@ -58,6 +58,12 @@ MAX_KEY_LENGTH = 512
 MAX_TEXT_LENGTH = 65535
 MAX_COUNT_ROWS = 16384
 
+# Retrieval reads a snapshot the write path already published, so it pays no
+# linearizable-read wait (~400ms Strong versus ~1ms Bounded on the contract
+# fixture). Publication, deletion and creation do verify, so writing stays Strong.
+READ_CONSISTENCY_LEVEL = "Bounded"
+WRITE_CONSISTENCY_LEVEL = "Strong"
+
 # Fallback deadline for one RPC when a store was constructed without one.
 DEFAULT_RPC_TIMEOUT_SECONDS = 10.0
 # Creating a collection and writing its contract are heavy server operations,
@@ -534,9 +540,16 @@ class MilvusDocumentStore:
         )
 
     def read_binding(
-        self, client: MilvusClient, collection_name: str
+        self,
+        client: MilvusClient,
+        collection_name: str,
+        *,
+        consistency_level: str = READ_CONSISTENCY_LEVEL,
     ) -> MilvusIndexBinding | None:
-        """Read the stored contract for a collection, creating nothing."""
+        """Read the stored contract for a collection, creating nothing.
+
+        The write path raises the level; see ``read_owned_binding``.
+        """
         if not client.has_collection(
             INDEX_BINDING_COLLECTION, timeout=self.rpc_timeout
         ):
@@ -546,12 +559,20 @@ class MilvusDocumentStore:
             filter=f'collection_name == "{sanitize_filter_value(collection_name)}"',
             output_fields=["binding_json"],
             limit=1,
-            consistency_level="Strong",
+            consistency_level=consistency_level,
             timeout=self.rpc_timeout,
         )
         if not rows:
             return None
         return MilvusIndexBinding.from_row(rows[0])
+
+    def read_owned_binding(
+        self, client: MilvusClient, collection_name: str
+    ) -> MilvusIndexBinding | None:
+        """Read a contract the write path owns, as soon as it lands."""
+        return self.read_binding(
+            client, collection_name, consistency_level=WRITE_CONSISTENCY_LEVEL
+        )
 
     def write_binding(
         self,
@@ -626,7 +647,7 @@ class MilvusDocumentStore:
             dimension=dimension,
             embedding_space=embedding_space,
         )
-        bound = self.read_binding(client, collection_name)
+        bound = self.read_owned_binding(client, collection_name)
         collection_exists = client.has_collection(
             collection_name, timeout=self.rpc_timeout
         )
@@ -659,7 +680,7 @@ class MilvusDocumentStore:
         """Re-read a concurrently created collection until its contract lands."""
         deadline = time.monotonic() + CONCURRENT_BINDING_TIMEOUT_SECONDS
         while True:
-            if self.read_binding(client, requested.collection_name) is not None:
+            if self.read_owned_binding(client, requested.collection_name) is not None:
                 return self._verify_existing(client, requested)
             if time.monotonic() >= deadline:
                 raise IndexContractIncompatibleError(
@@ -716,12 +737,12 @@ class MilvusDocumentStore:
     ) -> MilvusIndexBinding | None:
         """Return the bound contract of an existing collection, None if absent.
 
-        Reads and deletes use this so an unknown collection is never queried
-        or mutated through a contract it does not declare.
+        Deletes use this so a collection is never mutated through a contract
+        it does not declare, and they read at the write level to do it.
         """
         if not client.has_collection(collection_name, timeout=self.rpc_timeout):
             return None
-        bound = self.read_binding(client, collection_name)
+        bound = self.read_owned_binding(client, collection_name)
         if bound is None:
             raise IndexContractIncompatibleError(
                 collection_name,
@@ -750,7 +771,7 @@ class MilvusDocumentStore:
                     binding.dimension, binding.embedding_space
                 ),
                 index_params=index_params,
-                consistency_level="Strong",
+                consistency_level=WRITE_CONSISTENCY_LEVEL,
                 timeout=HEAVY_RPC_TIMEOUT_SECONDS,
             )
             return True
@@ -777,7 +798,7 @@ class MilvusDocumentStore:
     def _verify_existing(
         self, client: MilvusClient, requested: MilvusIndexBinding
     ) -> MilvusIndexBinding:
-        bound = self.read_binding(client, requested.collection_name)
+        bound = self.read_owned_binding(client, requested.collection_name)
         if bound is None:
             raise IndexContractIncompatibleError(
                 requested.collection_name,
@@ -863,7 +884,7 @@ class MilvusDocumentStore:
             filter=filter_expr,
             output_fields=[ID_FIELD],
             limit=MAX_COUNT_ROWS,
-            consistency_level="Strong",
+            consistency_level=WRITE_CONSISTENCY_LEVEL,
             timeout=self.rpc_timeout,
         )
         if len(rows) >= MAX_COUNT_ROWS:
@@ -899,7 +920,7 @@ class MilvusDocumentStore:
                 output_fields=list(output_fields or ROW_OUTPUT_FIELDS),
                 limit=limit,
                 offset=offset,
-                consistency_level="Strong",
+                consistency_level=READ_CONSISTENCY_LEVEL,
                 timeout=self.rpc_timeout,
             )
         )
@@ -925,7 +946,7 @@ class MilvusDocumentStore:
             limit=limit,
             output_fields=list(output_fields or ROW_OUTPUT_FIELDS),
             search_params={"metric_type": METRIC_TYPE, "params": {}},
-            consistency_level="Strong",
+            consistency_level=READ_CONSISTENCY_LEVEL,
             timeout=self.rpc_timeout,
         )
         return self._hits_from_results(results)
@@ -956,7 +977,7 @@ class MilvusDocumentStore:
             limit=limit,
             output_fields=list(output_fields or ROW_OUTPUT_FIELDS),
             search_params={"metric_type": SPARSE_METRIC_TYPE, "params": {}},
-            consistency_level="Strong",
+            consistency_level=READ_CONSISTENCY_LEVEL,
             timeout=self.rpc_timeout,
         )
         return self._hits_from_results(results)

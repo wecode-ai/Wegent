@@ -566,62 +566,73 @@ class MilvusBackend(BaseStorageBackend):
             else (None, None)
         )
 
+        # One request owns exactly one client: the contract read and the
+        # answering branch share it, and the context manager still closes it
+        # on every exit. Concurrent requests keep independent connections.
+        #
         # The contract is read once for the whole request and reused by the
         # mode that answers. An empty knowledge base answers empty without
         # calling the embedding provider: only a real index justifies a
         # provider request.
         with self._store.client() as client:
             binding = self._read_bound_index(client, collection_name)
-        if binding is None:
-            return {"records": []}
+            if binding is None:
+                return {"records": []}
 
-        # A zero-weight endpoint is not a hybrid request: it runs the surviving
-        # branch alone, so the keyword-only endpoint never builds a query
-        # vector and the vector-only endpoint never pays for BM25 analysis.
-        if retrieval_mode == "hybrid" and keyword_weight == 0.0:
-            retrieval_mode = "vector"
-        elif retrieval_mode == "hybrid" and vector_weight == 0.0:
-            retrieval_mode = "keyword"
+            # A zero-weight endpoint is not a hybrid request: it runs the
+            # surviving branch alone, so the keyword-only endpoint never
+            # builds a query vector and the vector-only endpoint never pays
+            # for BM25 analysis.
+            if retrieval_mode == "hybrid" and keyword_weight == 0.0:
+                retrieval_mode = "vector"
+            elif retrieval_mode == "hybrid" and vector_weight == 0.0:
+                retrieval_mode = "keyword"
 
-        if retrieval_mode == "keyword":
-            return self._keyword_retrieve(
-                binding=binding,
-                collection_name=collection_name,
-                sparse_query=resolved_queries.sparse_query,
-                filter_expr=filter_expr,
-                top_k=top_k,
-                score_threshold=score_threshold,
+            if retrieval_mode == "keyword":
+                return self._keyword_retrieve(
+                    client,
+                    binding=binding,
+                    collection_name=collection_name,
+                    sparse_query=resolved_queries.sparse_query,
+                    filter_expr=filter_expr,
+                    top_k=top_k,
+                    score_threshold=score_threshold,
+                )
+
+            if retrieval_mode == "hybrid":
+                return self._hybrid_retrieve(
+                    client,
+                    binding=binding,
+                    collection_name=collection_name,
+                    dense_query=resolved_queries.dense_query,
+                    sparse_query=resolved_queries.sparse_query,
+                    embed_model=embed_model,
+                    filter_expr=filter_expr,
+                    top_k=top_k,
+                    score_threshold=score_threshold,
+                    vector_weight=vector_weight,
+                    keyword_weight=keyword_weight,
+                )
+
+            query_vector = prepare_query_vector(
+                embed_model, resolved_queries.dense_query
             )
 
-        if retrieval_mode == "hybrid":
-            return self._hybrid_retrieve(
+            hits = self._dense_search(
+                client,
                 binding=binding,
                 collection_name=collection_name,
-                dense_query=resolved_queries.dense_query,
-                sparse_query=resolved_queries.sparse_query,
+                query_vector=query_vector,
                 embed_model=embed_model,
                 filter_expr=filter_expr,
                 top_k=top_k,
-                score_threshold=score_threshold,
-                vector_weight=vector_weight,
-                keyword_weight=keyword_weight,
             )
 
-        query_vector = prepare_query_vector(embed_model, resolved_queries.dense_query)
-
-        hits = self._dense_search(
-            binding=binding,
-            collection_name=collection_name,
-            query_vector=query_vector,
-            embed_model=embed_model,
-            filter_expr=filter_expr,
-            top_k=top_k,
-        )
-
-        return self._process_hits(hits, score_threshold)
+            return self._process_hits(hits, score_threshold)
 
     def _dense_search(
         self,
+        client: MilvusClient,
         *,
         binding: MilvusIndexBinding,
         collection_name: str,
@@ -630,22 +641,21 @@ class MilvusBackend(BaseStorageBackend):
         filter_expr: str,
         top_k: int,
     ) -> List[Dict[str, Any]]:
-        """Verify the request's contract and run one dense search inside it."""
-        with self._store.client() as client:
-            self._require_bound_index(
-                client,
-                collection_name,
-                binding=binding,
-                dimension=len(query_vector),
-                embedding_space=compute_embedding_space(embed_model),
-            )
-            return self._store.search(
-                client,
-                collection_name,
-                query_vector=query_vector,
-                filter_expr=filter_expr,
-                limit=top_k,
-            )
+        """Verify the request's contract and run one dense search on its client."""
+        self._require_bound_index(
+            client,
+            collection_name,
+            binding=binding,
+            dimension=len(query_vector),
+            embedding_space=compute_embedding_space(embed_model),
+        )
+        return self._store.search(
+            client,
+            collection_name,
+            query_vector=query_vector,
+            filter_expr=filter_expr,
+            limit=top_k,
+        )
 
     def _require_bound_index(
         self,
@@ -678,6 +688,7 @@ class MilvusBackend(BaseStorageBackend):
 
     def _hybrid_retrieve(
         self,
+        client: MilvusClient,
         *,
         binding: MilvusIndexBinding,
         collection_name: str,
@@ -698,28 +709,27 @@ class MilvusBackend(BaseStorageBackend):
         the fusion is computed here instead of by the server-side ranker.
         """
         query_vector = prepare_query_vector(embed_model, dense_query)
-        with self._store.client() as client:
-            self._require_bound_index(
-                client,
-                collection_name,
-                binding=binding,
-                dimension=len(query_vector),
-                embedding_space=compute_embedding_space(embed_model),
-            )
-            dense_hits = self._store.search(
-                client,
-                collection_name,
-                query_vector=query_vector,
-                filter_expr=filter_expr,
-                limit=top_k,
-            )
-            keyword_hits = self._store.sparse_search(
-                client,
-                collection_name,
-                query_text=sparse_query,
-                filter_expr=filter_expr,
-                limit=top_k,
-            )
+        self._require_bound_index(
+            client,
+            collection_name,
+            binding=binding,
+            dimension=len(query_vector),
+            embedding_space=compute_embedding_space(embed_model),
+        )
+        dense_hits = self._store.search(
+            client,
+            collection_name,
+            query_vector=query_vector,
+            filter_expr=filter_expr,
+            limit=top_k,
+        )
+        keyword_hits = self._store.sparse_search(
+            client,
+            collection_name,
+            query_text=sparse_query,
+            filter_expr=filter_expr,
+            limit=top_k,
+        )
 
         return self._fuse_hybrid_hits(
             dense_hits=dense_hits,
@@ -752,6 +762,7 @@ class MilvusBackend(BaseStorageBackend):
 
     def _keyword_retrieve(
         self,
+        client: MilvusClient,
         *,
         binding: MilvusIndexBinding,
         collection_name: str,
@@ -765,16 +776,15 @@ class MilvusBackend(BaseStorageBackend):
         The embedding provider is not consulted: the retrieval text was
         analyzed and indexed by the server when the document was written.
         """
-        with self._store.client() as client:
-            self._require_live_collection(client, collection_name)
-            self._store.verify_keyword_binding(collection_name, binding)
-            hits = self._store.sparse_search(
-                client,
-                collection_name,
-                query_text=sparse_query,
-                filter_expr=filter_expr,
-                limit=top_k,
-            )
+        self._require_live_collection(client, collection_name)
+        self._store.verify_keyword_binding(collection_name, binding)
+        hits = self._store.sparse_search(
+            client,
+            collection_name,
+            query_text=sparse_query,
+            filter_expr=filter_expr,
+            limit=top_k,
+        )
 
         return self._process_hits(
             hits, score_threshold, score_mapper=keyword_relevance_score
