@@ -88,6 +88,8 @@ async function sampleDrawerMotion(control, scope, action, direction, timeoutMs) 
 export async function verifyIssueConversationDrawers(control, scope, timeoutMs) {
   const detail = scope('[data-testid="cloud-todo-detail"]')
   const chat = scope('[data-testid="ai-chat-modal"]')
+  const detailSurface = scope('.issue-drawer-detail')
+  const conversationSurface = scope('.issue-drawer-conversation')
   const activity = JSON.parse(await control.command('snapshot', detail))
   const linkId = activity.testIds.find(id => id.startsWith('cloud-task-activity-open-task-'))
   assert.ok(linkId, 'The Issue has no execution conversation link')
@@ -97,12 +99,16 @@ export async function verifyIssueConversationDrawers(control, scope, timeoutMs) 
     scope('[data-testid="issue-drawer-workspace"]'),
     'Project workspace'
   )
-  const before = await getSingleElementMetrics(control, detail, 'Issue detail')
+  const before = await getSingleElementMetrics(control, detailSurface, 'Issue drawer surface')
+  await writeFile(
+    join(resultDir, 'issue-drawers-initial-layout.json'),
+    JSON.stringify({ workspace, detail: before }, null, 2)
+  )
   assert.ok(before.width <= 560, 'The Issue must open as a bounded sidebar, not a full page')
   assert.ok(before.left > workspace.left, 'The board must remain visible beside the first drawer')
   assert.ok(
     Math.abs(before.right - workspace.right) <= 1,
-    'The first drawer must hug the project right edge'
+    `The first drawer must hug the project right edge: ${before.right} vs ${workspace.right}`
   )
   assert.ok(before.top >= workspace.top, 'Drawers must stay inside the project workspace')
 
@@ -123,8 +129,16 @@ export async function verifyIssueConversationDrawers(control, scope, timeoutMs) 
     'none',
     'The shared conversation drawer must scroll without visible scrollbar chrome'
   )
-  const left = await getSingleElementMetrics(control, detail, 'Left Issue drawer')
-  const right = await getSingleElementMetrics(control, chat, 'Right conversation drawer')
+  const left = await getSingleElementMetrics(control, detailSurface, 'Left Issue drawer')
+  const right = await getSingleElementMetrics(
+    control,
+    conversationSurface,
+    'Right conversation drawer'
+  )
+  await writeFile(
+    join(resultDir, 'issue-drawers-open-layout.json'),
+    JSON.stringify({ workspace, left, right }, null, 2)
+  )
   assert.ok(left.width > 0 && right.width > 0, 'Both desktop drawers must remain visible')
   assert.ok(left.left < before.left, 'Opening a conversation must move the Issue to the left')
   assert.ok(left.right <= right.left, 'The conversation must not overlap the Issue')
@@ -160,7 +174,7 @@ export async function verifyIssueConversationDrawers(control, scope, timeoutMs) 
   )
   await control.command('waitFor', chat, { visible: false, timeoutMs })
   await control.command('waitFor', detail, { stableMs: 300, timeoutMs })
-  const restored = await getSingleElementMetrics(control, detail, 'Restored Issue drawer')
+  const restored = await getSingleElementMetrics(control, detailSurface, 'Restored Issue drawer')
   assert.ok(Math.abs(restored.left - before.left) <= 1, 'Returning must restore the Issue position')
   assert.ok(Math.abs(restored.width - before.width) <= 1, 'Returning must restore the Issue width')
 
