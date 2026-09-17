@@ -1519,6 +1519,8 @@ semantics for all three.
   `8px` gap. Both panes occupy one translating track: only the track animates,
   so their separation stays constant on every frame, including reversals. Keep both
   widths stable and leave the surrounding application navigation in place.
+  The track viewport clips overflow without becoming a scroll container, so
+  focus restoration and `scrollIntoView` cannot shift the panes horizontally.
   Both panes share the same surface, complete `1px` border, `16px` corners, shadow,
   `52px` header, and close-control styling. In narrower project workspaces,
   show the conversation alone while keeping the Issue mounted.

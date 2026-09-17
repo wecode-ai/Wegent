@@ -100,10 +100,16 @@ export async function verifyIssueConversationDrawers(control, scope, timeoutMs) 
     'Project workspace'
   )
   const before = await getSingleElementMetrics(control, detailSurface, 'Issue drawer surface')
+  const viewport = await getSingleElementMetrics(
+    control,
+    scope('.issue-drawer-viewport'),
+    'Drawer clipping viewport'
+  )
   await writeFile(
     join(resultDir, 'issue-drawers-initial-layout.json'),
-    JSON.stringify({ workspace, detail: before }, null, 2)
+    JSON.stringify({ workspace, viewport, detail: before }, null, 2)
   )
+  assert.equal(viewport.scrollLeft, 0, 'Comment controls must not scroll the drawer track sideways')
   assert.ok(before.width <= 560, 'The Issue must open as a bounded sidebar, not a full page')
   assert.ok(before.left > workspace.left, 'The board must remain visible beside the first drawer')
   assert.ok(
