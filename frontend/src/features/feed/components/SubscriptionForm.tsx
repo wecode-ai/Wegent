@@ -38,7 +38,6 @@ import type {
   SubscriptionBindingUpdatePayload,
   SubscriptionCreateRequest,
   SubscriptionExecutionTarget,
-  SubscriptionExecutionTargetType,
   SubscriptionGroupInfoPayload,
   SubscriptionKnowledgeBaseRef,
   SubscriptionSkillRef,
@@ -60,6 +59,11 @@ import {
   validateIntervalTrigger,
 } from './subscription-form'
 import { filterSubscriptionTeamsByExecutionTarget } from './subscription-form/team-selection'
+import {
+  getPreferredDevice,
+  isSubscriptionDevice,
+  sortDevicesForSelection,
+} from './subscription-form/device-selection'
 
 const resolveGitType = (gitDomain?: string): GitRepoInfo['type'] => {
   if (!gitDomain) return 'github'
@@ -259,29 +263,6 @@ const normalizeExecutionTarget = (
   type: target?.type || 'managed',
   ...(target?.device_id ? { device_id: target.device_id } : {}),
 })
-
-type SubscriptionDeviceType = Extract<DeviceInfo['device_type'], SubscriptionExecutionTargetType>
-type SubscriptionDeviceInfo = DeviceInfo & { device_type: SubscriptionDeviceType }
-
-function isSubscriptionDevice(device: DeviceInfo): device is SubscriptionDeviceInfo {
-  return device.device_type === 'local' || device.device_type === 'cloud'
-}
-
-const sortDevicesForSelection = (devices: DeviceInfo[]): SubscriptionDeviceInfo[] =>
-  devices.filter(isSubscriptionDevice).sort((left, right) => {
-    if (left.device_type !== right.device_type) {
-      return left.device_type === 'local' ? -1 : 1
-    }
-    if (left.is_default !== right.is_default) {
-      return left.is_default ? -1 : 1
-    }
-    return left.name.localeCompare(right.name)
-  })
-
-const getPreferredDevice = (devices: DeviceInfo[]): SubscriptionDeviceInfo | null => {
-  const sortedDevices = sortDevicesForSelection(devices)
-  return sortedDevices[0] || null
-}
 
 /**
  * Create or edit a subscription.

@@ -59,6 +59,7 @@ class SubscriptionExecutionTargetType(str, Enum):
     MANAGED = "managed"
     LOCAL = "local"
     CLOUD = "cloud"
+    REMOTE = "remote"
 
 
 class SubscriptionExecutionTarget(BaseModel):
@@ -66,11 +67,11 @@ class SubscriptionExecutionTarget(BaseModel):
 
     type: SubscriptionExecutionTargetType = Field(
         SubscriptionExecutionTargetType.MANAGED,
-        description="Execution target type: managed, local, or cloud",
+        description="Execution target type: managed, local, cloud, or remote",
     )
     device_id: Optional[str] = Field(
         None,
-        description="Device ID for local or cloud execution targets",
+        description="Device ID for local, cloud, or remote execution targets",
     )
 
 

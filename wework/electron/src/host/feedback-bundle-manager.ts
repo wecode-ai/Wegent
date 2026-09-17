@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, extname, join } from 'node:path'
+import { ensureDirectory } from './ensure-directory.js'
 
 const MAX_LOG_BYTES = 200 * 1024 * 1024
 const MAX_ENTRY_PREVIEW_CHARS = 20_000
@@ -117,7 +118,7 @@ export class FeedbackBundleManager {
   async confirm(stagingIdInput: string): Promise<{ reportId: string; path: string }> {
     const { stagingId, staged } = await this.resolveStaged(stagingIdInput)
     const downloadsDirectory = this.options.downloadsDirectory()
-    await mkdir(downloadsDirectory, { recursive: true })
+    await ensureDirectory(downloadsDirectory)
     const destination = join(downloadsDirectory, `wework-feedback-${staged.reportId}.zip`)
     try {
       await rename(staged.path, destination)
