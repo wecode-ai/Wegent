@@ -2,7 +2,6 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
-import { WORKBENCH_MODELS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { IssueExecutionConfigDialog } from './IssueExecutionConfigDialog'
 
 const localExecutorMocks = vi.hoisted(() => ({
@@ -47,6 +46,8 @@ describe('IssueExecutionConfigDialog', () => {
   })
 
   it('refreshes cloud models when the hybrid catalog finishes loading', async () => {
+    const unsubscribe = vi.fn()
+    const subscribe = vi.fn<(onChange: () => void) => () => void>().mockReturnValue(unsubscribe)
     const listModels = vi
       .fn()
       .mockResolvedValueOnce({
@@ -59,12 +60,12 @@ describe('IssueExecutionConfigDialog', () => {
         ],
       })
 
-    render(
+    const { unmount } = render(
       <IssueExecutionConfigDialog
         item={item}
         projectChatAgentApi={{ list: vi.fn().mockResolvedValue([]) } as never}
         runtimeProfileApi={{ list: vi.fn().mockResolvedValue([]) } as never}
-        modelApi={{ listModels } as never}
+        modelApi={{ listModels, subscribe } as never}
         deviceApi={{ listDevices: vi.fn().mockResolvedValue([]) } as never}
         localProjects={[]}
         onClose={vi.fn()}
@@ -76,10 +77,12 @@ describe('IssueExecutionConfigDialog', () => {
     expect(modelSelect).toHaveTextContent('Local Model')
     expect(modelSelect).not.toHaveTextContent('Cloud Model')
 
-    act(() => window.dispatchEvent(new Event(WORKBENCH_MODELS_CHANGED_EVENT)))
+    act(() => subscribe.mock.calls[0][0]())
 
     await waitFor(() => expect(modelSelect).toHaveTextContent('Cloud Model'))
     expect(listModels).toHaveBeenCalledTimes(2)
+    unmount()
+    expect(unsubscribe).toHaveBeenCalledOnce()
   })
 
   it('requires the AI manager runtime snapshot before confirming', async () => {

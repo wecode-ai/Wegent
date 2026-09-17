@@ -3,6 +3,7 @@ export const DESKTOP_CHECKPOINTS = [
   'workspace-tabs',
   'cloud-project-creation',
   'cloud-device-lifecycle',
+  'cloud-model-recovery',
   'cloud-space-mention',
   'collaboration-shared-core',
   'collaboration-agent-automation-chain',

@@ -2,7 +2,6 @@ import type { RuntimeWorkSearchRequest, RuntimeWorkSearchResponse } from '@/type
 
 export const WORKBENCH_CLOUD_SEARCH_RESULTS_EVENT = 'wework:cloud-search-results'
 export const WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT = 'wework:cloud-archives-changed'
-export const WORKBENCH_MODELS_CHANGED_EVENT = 'wework:workbench-models-changed'
 export const WORKBENCH_AUTOMATIONS_CHANGED_EVENT = 'wework:workbench-automations-changed'
 
 export interface WorkbenchCloudSearchResultsDetail {
@@ -22,11 +21,6 @@ export function notifyWorkbenchCloudSearchResults(detail: WorkbenchCloudSearchRe
 export function notifyWorkbenchCloudArchivesChanged(): void {
   if (typeof window === 'undefined') return
   window.dispatchEvent(new Event(WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT))
-}
-
-export function notifyWorkbenchModelsChanged(): void {
-  if (typeof window === 'undefined') return
-  window.dispatchEvent(new Event(WORKBENCH_MODELS_CHANGED_EVENT))
 }
 
 export function notifyWorkbenchAutomationsChanged(): void {
