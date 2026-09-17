@@ -39,6 +39,17 @@ export function getEffectiveLocalCodexProxyUrl(): string {
   return getLocalProxyUrl().trim() || resolvedSystemProxyUrl || ''
 }
 
+/**
+ * Whether the URL is the system proxy resolved for the Codex egress.
+ * A proxy configured in Wework is explicit user intent and never counts as system.
+ */
+export function isResolvedSystemProxyUrl(proxyUrl: string): boolean {
+  const normalized = proxyUrl.trim()
+  return (
+    normalized.length > 0 && !getLocalProxyUrl().trim() && normalized === resolvedSystemProxyUrl
+  )
+}
+
 export async function resolveLocalCodexProxyUrl(): Promise<string | null> {
   return (await resolveEffectiveLocalCodexProxy()).proxyUrl
 }

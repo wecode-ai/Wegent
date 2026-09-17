@@ -160,7 +160,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { builtinCodexCatalogModel } from '@/features/model-settings/codexCatalog'
 import { localModelSupportsImageInput } from '@/features/model-settings/localModelProviders'
-import { getEffectiveLocalCodexProxyUrl } from '@/desktop/systemProxy'
+import { getEffectiveLocalCodexProxyUrl, isResolvedSystemProxyUrl } from '@/desktop/systemProxy'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import {
@@ -1196,6 +1196,58 @@ function recordNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
 }
 
+// Model upstreams this machine reaches on its own behalf: loopback runtimes and the
+// Wework gateway. The system proxy is resolved for the Codex egress, so forcing it onto
+// these targets fails whenever the proxy cannot route them.
+const DIRECT_MODEL_UPSTREAM_HOSTNAMES = ['localhost', '127.0.0.1', '::1', 'host.docker.internal']
+
+function parseUpstreamUrl(value: unknown): URL | null {
+  const raw = recordString(value)
+  if (!raw) return null
+  try {
+    return new URL(raw)
+  } catch {
+    return null
+  }
+}
+
+function modelUpstreamUrl(modelConfig: Record<string, unknown>): URL | null {
+  return (
+    parseUpstreamUrl(modelConfig.responses_url) ??
+    parseUpstreamUrl(modelConfig.responsesUrl) ??
+    parseUpstreamUrl(modelConfig.base_url)
+  )
+}
+
+function requiresDirectModelUpstream(
+  modelConfig: Record<string, unknown>,
+  cloudModelGateway?: CloudModelGateway
+): boolean {
+  const upstream = modelUpstreamUrl(modelConfig)
+  if (!upstream) return false
+  const hostname = upstream.hostname.replace(/^\[|\]$/g, '')
+  if (DIRECT_MODEL_UPSTREAM_HOSTNAMES.includes(hostname)) return true
+  return parseUpstreamUrl(cloudModelGateway?.baseUrl)?.origin === upstream.origin
+}
+
+function modelUpstreamProxyUrl(
+  modelConfig: Record<string, unknown>,
+  runtimeProxyUrl: string | undefined,
+  cloudModelGateway?: CloudModelGateway
+): string | null {
+  const proxyUrl = runtimeProxyUrl?.trim()
+  if (!proxyUrl) return null
+  // A proxy configured in Wework is explicit user intent and keeps applying to every
+  // model upstream; the system proxy only describes the Codex egress.
+  if (
+    isResolvedSystemProxyUrl(proxyUrl) &&
+    requiresDirectModelUpstream(modelConfig, cloudModelGateway)
+  ) {
+    return null
+  }
+  return proxyUrl
+}
+
 function harnessProxyUpstream(
   runtime: string,
   option: LocalHarnessModelOption,
@@ -1231,16 +1283,22 @@ function harnessProxyUpstream(
           ([name, value]) => (typeof value === 'string' ? [[name, value]] : [])
         )
       : []
+  const requestUrl =
+    recordString(config.responses_url) ?? `${baseUrl.replace(/\/+$/, '')}/responses`
   return {
     base_url: baseUrl,
-    request_url: recordString(config.responses_url) ?? `${baseUrl.replace(/\/+$/, '')}/responses`,
+    request_url: requestUrl,
     api_format: apiFormat,
     convert_custom_tools: config.tool_profile === 'function',
     native_tool_search: nativeToolSearch,
     native_namespace_tools: nativeNamespaceTools,
     api_key: apiKey,
     default_headers: headers,
-    proxy_url: getEffectiveLocalCodexProxyUrl() || null,
+    proxy_url: modelUpstreamProxyUrl(
+      { ...config, base_url: baseUrl, responses_url: requestUrl },
+      getEffectiveLocalCodexProxyUrl(),
+      cloudModelGateway
+    ),
     model_id: recordString(config.model_id),
     routing_model_id: null,
     max_output_tokens: recordNumber(config.max_output_tokens),
@@ -1249,9 +1307,10 @@ function harnessProxyUpstream(
 
 function applyRuntimeProxyConfig(
   modelConfig: Record<string, unknown>,
-  runtimeProxyUrl?: string
+  runtimeProxyUrl?: string,
+  cloudModelGateway?: CloudModelGateway
 ): Record<string, unknown> {
-  const proxyUrl = runtimeProxyUrl?.trim()
+  const proxyUrl = modelUpstreamProxyUrl(modelConfig, runtimeProxyUrl, cloudModelGateway)
   if (!proxyUrl) return modelConfig
 
   const runtimeConfig = {
@@ -1278,9 +1337,10 @@ function applyRuntimeProxyConfig(
 function applyRuntimeModelOptions(
   modelConfig: Record<string, unknown>,
   modelOptions?: Record<string, string>,
-  runtimeProxyUrl?: string
+  runtimeProxyUrl?: string,
+  cloudModelGateway?: CloudModelGateway
 ): Record<string, unknown> {
-  modelConfig = applyRuntimeProxyConfig(modelConfig, runtimeProxyUrl)
+  modelConfig = applyRuntimeProxyConfig(modelConfig, runtimeProxyUrl, cloudModelGateway)
   const reasoning = runtimeReasoning(modelOptions)
   if (reasoning) modelConfig.reasoning = reasoning
   const serviceTier = runtimeServiceTier(modelOptions)
@@ -1474,7 +1534,8 @@ function buildLocalRuntimeExecutionRequest(
   const modelConfig = applyRuntimeModelOptions(
     { ...baseModelConfig },
     input.modelOptions,
-    input.runtimeProxyUrl
+    input.runtimeProxyUrl,
+    input.cloudModelGateway
   )
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
@@ -1799,7 +1860,8 @@ async function createLocalRuntimeTaskPayload(
           cloudModelGateway
         ),
         initialSupervisor.modelSelection.options,
-        runtimeProxyUrl
+        runtimeProxyUrl,
+        cloudModelGateway
       ),
     }
   }
@@ -2869,7 +2931,8 @@ export function createRuntimeWorkApiFromIpc(
           options.cloudModelGateway
         ),
         selection.options,
-        await getRuntimeProxyUrl()
+        await getRuntimeProxyUrl(),
+        options.cloudModelGateway
       )
       const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
         .address as RuntimeTaskAddress

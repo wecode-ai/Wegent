@@ -4122,6 +4122,172 @@ describe('createLocalAppServices', () => {
     })
   })
 
+  test('keeps the resolved system proxy off the Wework model gateway', async () => {
+    window.weworkElectronNetwork = {
+      resolveCodexProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
+    }
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const ensure = vi.fn().mockImplementation(async () => {
+      await resolveEffectiveLocalCodexProxy()
+      return { running: true, ready: true, deviceId: 'device-uuid' }
+    })
+    const services = createLocalAppServices({
+      ensure,
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'gateway-model',
+      modelType: 'user',
+      modelOptions: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+      },
+    })
+
+    const modelConfig = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1].executionRequest.model_config
+    expect(modelConfig.base_url).toBe(
+      'https://cloud.example.com/api/runtime-work/llm-responses-proxy'
+    )
+    expect(modelConfig).not.toHaveProperty('proxy')
+    expect(modelConfig.runtime_config.codex).toEqual({
+      use_user_config: false,
+      configured: true,
+    })
+  })
+
+  test('keeps the resolved system proxy off loopback model endpoints', async () => {
+    window.weworkElectronNetwork = {
+      resolveCodexProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
+    }
+    const config = saveLocalModelConfig({
+      id: 'system-proxy-ollama',
+      displayName: 'Ollama',
+      modelId: 'qwen3-coder',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      catalogReady: true,
+    })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const ensure = vi.fn().mockImplementation(async () => {
+      await resolveEffectiveLocalCodexProxy()
+      return { running: true, ready: true, deviceId: 'device-uuid' }
+    })
+    const services = createLocalAppServices({
+      ensure,
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: config.codexCatalogModelId,
+    })
+
+    const modelConfig = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1].executionRequest.model_config
+    expect(modelConfig.base_url).toBe('http://127.0.0.1:11434/v1')
+    expect(modelConfig).not.toHaveProperty('proxy')
+    expect(modelConfig.runtime_config.codex).not.toEqual(
+      expect.objectContaining({ use_proxy: true })
+    )
+  })
+
+  test('applies the resolved system proxy to remote model endpoints', async () => {
+    window.weworkElectronNetwork = {
+      resolveCodexProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
+    }
+    const config = saveLocalModelConfig({
+      id: 'system-proxy-remote',
+      displayName: 'Remote Model',
+      modelId: 'remote-model',
+      baseUrl: 'https://models.example.com/v1',
+      apiKey: 'remote-key',
+      catalogReady: true,
+    })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const ensure = vi.fn().mockImplementation(async () => {
+      await resolveEffectiveLocalCodexProxy()
+      return { running: true, ready: true, deviceId: 'device-uuid' }
+    })
+    const services = createLocalAppServices({
+      ensure,
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: config.codexCatalogModelId,
+    })
+
+    const modelConfig = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1].executionRequest.model_config
+    expect(modelConfig.base_url).toBe('https://models.example.com/v1')
+    expect(modelConfig.proxy).toEqual({ url: 'http://system-proxy.example.com:7890' })
+  })
+
+  test('keeps an explicitly configured proxy on the Wework model gateway', async () => {
+    saveLocalProxyUrl('http://127.0.0.1:7890')
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'gateway-model',
+      modelType: 'user',
+      modelOptions: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+      },
+    })
+
+    const modelConfig = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1].executionRequest.model_config
+    expect(modelConfig.base_url).toBe(
+      'https://cloud.example.com/api/runtime-work/llm-responses-proxy'
+    )
+    expect(modelConfig.proxy).toEqual({ url: 'http://127.0.0.1:7890' })
+  })
+
   test('rejects missing local model config instead of falling back to built-in Codex', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({

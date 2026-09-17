@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import {
   getEffectiveLocalCodexProxyUrl,
+  isResolvedSystemProxyUrl,
   resetSystemProxyStateForTests,
   resolveEffectiveLocalCodexProxy,
   resolveLocalCodexProxyUrl,
@@ -77,5 +78,23 @@ describe('resolveLocalCodexProxyUrl', () => {
     saveLocalProxyUrl('http://127.0.0.1:7890')
 
     expect(getEffectiveLocalCodexProxyUrl()).toBe('http://127.0.0.1:7890')
+  })
+
+  test('identifies only the resolved system proxy URL', async () => {
+    window.weworkElectronNetwork = {
+      resolveCodexProxy: vi.fn().mockResolvedValue('http://system-proxy:8080'),
+    }
+
+    expect(isResolvedSystemProxyUrl('http://system-proxy:8080')).toBe(false)
+
+    await resolveEffectiveLocalCodexProxy()
+
+    expect(isResolvedSystemProxyUrl('http://system-proxy:8080')).toBe(true)
+    expect(isResolvedSystemProxyUrl('http://other-proxy:8080')).toBe(false)
+    expect(isResolvedSystemProxyUrl('')).toBe(false)
+
+    saveLocalProxyUrl('http://127.0.0.1:7890')
+
+    expect(isResolvedSystemProxyUrl('http://system-proxy:8080')).toBe(false)
   })
 })
