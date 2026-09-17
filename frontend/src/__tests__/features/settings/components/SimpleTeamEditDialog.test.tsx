@@ -472,7 +472,7 @@ describe('Simple TeamEditDialog', () => {
 
     await waitFor(() => {
       expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
-        undefined,
+        'Chat',
         false,
         'personal',
         undefined,
@@ -481,7 +481,8 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
-  it('shows and preserves an existing model that is no longer visible', async () => {
+  it('shows an unavailable existing model but blocks saving its binding', async () => {
+    const toast = jest.fn()
     const team = makeTeam()
     const hiddenModelBot = makeBot({
       agent_config: {
@@ -500,7 +501,7 @@ describe('Simple TeamEditDialog', () => {
         editingTeamId={team.id}
         bots={[hiddenModelBot]}
         setBots={jest.fn()}
-        toast={jest.fn()}
+        toast={toast}
       />
     )
 
@@ -512,16 +513,131 @@ describe('Simple TeamEditDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => {
+      expect(toast).toHaveBeenCalledWith({
+        variant: 'destructive',
+        title: 'common:bot.errors.model_not_available_for_shell',
+      })
+    })
+    expect(mockedUpdateBot).not.toHaveBeenCalled()
+    expect(mockedUpdateTeam).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { name: 'model-a', retained: false },
+    { name: 'model-b', retained: true },
+  ])('switching to Claude Code retains $name only when compatible', async ({ name, retained }) => {
+    const team = makeTeam()
+    const bot = makeBot({
+      agent_config: { bind_model: name, bind_model_type: 'public' },
+    })
+    const gpt = { name: 'model-a', type: 'public', provider: 'openai', namespace: 'default' }
+    const claude = {
+      name: 'model-b',
+      type: 'public',
+      provider: 'claude',
+      namespace: 'default',
+    }
+    mockedGetUnifiedModels.mockImplementation(async (shellName: string) => ({
+      data: shellName === 'ClaudeCode' ? [claude] : [gpt, claude],
+    }))
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[bot]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
+        'Chat',
+        false,
+        'personal',
+        undefined,
+        'llm'
+      )
+      expect(screen.getByTestId('simple-model-select')).toBeEnabled()
+    })
+    expect(screen.getByTestId('simple-model-select')).toHaveTextContent(name)
+    fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
+
+    await waitFor(() => {
+      expect(mockedGetUnifiedModels).toHaveBeenLastCalledWith(
+        'ClaudeCode',
+        false,
+        'personal',
+        undefined,
+        'llm'
+      )
+      expect(screen.getByTestId('simple-model-select')).toBeEnabled()
+      expect(screen.getByTestId('simple-model-select')).toHaveTextContent(
+        retained ? name : 'Select model'
+      )
+    })
+
+    fireEvent.click(screen.getByTestId('simple-model-select'))
+    expect(await screen.findByTestId('model-option-model-b')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-option-model-a')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('model-option-model-b'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
       expect(mockedUpdateBot).toHaveBeenCalledWith(
-        hiddenModelBot.id,
+        bot.id,
         expect.objectContaining({
-          agent_config: {
-            bind_model: 'retired-model',
-            bind_model_type: 'public',
-          },
+          shell_name: 'ClaudeCode',
+          agent_config: { bind_model: 'model-b', bind_model_type: 'public' },
         })
       )
     })
+  })
+
+  it('blocks an existing OpenAI binding when Claude Code only returns Claude models', async () => {
+    const toast = jest.fn()
+    const team = makeTeam()
+    const bot = makeBot({
+      shell_name: 'ClaudeCode',
+      shell_type: 'ClaudeCode',
+      agent_config: { bind_model: 'model-a', bind_model_type: 'public' },
+    })
+    mockedGetUnifiedModels.mockResolvedValue({
+      data: [{ name: 'model-b', type: 'public', namespace: 'default' }],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[bot]}
+        setBots={jest.fn()}
+        toast={toast}
+      />
+    )
+    await waitFor(() => {
+      expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
+        'ClaudeCode',
+        false,
+        'personal',
+        undefined,
+        'llm'
+      )
+      expect(screen.getByTestId('simple-model-select')).toBeEnabled()
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(toast).toHaveBeenCalledWith({
+      variant: 'destructive',
+      title: 'common:bot.errors.model_not_available_for_shell',
+    })
+    expect(mockedUpdateBot).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -543,7 +659,7 @@ describe('Simple TeamEditDialog', () => {
 
     await waitFor(() => {
       expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
-        undefined,
+        'Chat',
         false,
         'personal',
         undefined,
@@ -557,7 +673,7 @@ describe('Simple TeamEditDialog', () => {
 
     await waitFor(() => {
       expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
-        undefined,
+        'Chat',
         false,
         'personal',
         undefined,
@@ -1263,10 +1379,10 @@ describe('Simple TeamEditDialog', () => {
     fireEvent.click(await screen.findByTestId('capability-scope-marketplace'))
     fireEvent.click(screen.getByTestId('team-marketplace-example-conversations-add'))
     fireEvent.change(screen.getByTestId('team-marketplace-example-conversations-title-0'), {
-      target: { value: 'Example task' },
+      target: { value: 'Item A' },
     })
     fireEvent.change(screen.getByTestId('team-marketplace-example-conversations-url-0'), {
-      target: { value: 'https://example.com/shared/task' },
+      target: { value: 'https://a.invalid/x/y' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
@@ -1277,8 +1393,8 @@ describe('Simple TeamEditDialog', () => {
           source_id: 1,
           example_conversations: [
             {
-              title: 'Example task',
-              url: 'https://example.com/shared/task',
+              title: 'Item A',
+              url: 'https://a.invalid/x/y',
             },
           ],
         })

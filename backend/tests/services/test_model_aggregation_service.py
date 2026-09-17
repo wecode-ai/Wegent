@@ -854,154 +854,106 @@ class TestModelAggregationService:
         assert support_model == []
         assert shell_type == "non-existent-shell"
 
-    def test_is_model_compatible_with_shell_claudecode(self, test_db: Session):
-        """Test model compatibility for ClaudeCode shell type."""
-        # ClaudeCode keeps Claude support and routes OpenAI Responses models to CodeX.
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "claude", "ClaudeCode", []
+    @pytest.mark.parametrize("shell_type", ["ClaudeCode", "Codex"])
+    @pytest.mark.parametrize(
+        ("support_model", "expected_models"),
+        [
+            (None, {"model-a", "model-b", "model-c"}),
+            ([], {"model-a", "model-b", "model-c"}),
+            (["claude"], {"model-a"}),
+            (["openai"], {"model-b"}),
+        ],
+    )
+    def test_shell_model_filter_uses_only_support_model(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        shell_type: str,
+        support_model: list[str] | None,
+        expected_models: set[str],
+    ) -> None:
+        """Apply the configured allowlist equally to public and personal models."""
+        shell = self._create_public_shell(
+            test_db, shell_type, shell_type, support_model=support_model
         )
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "openai", "ClaudeCode", [], {"apiFormat": "responses"}
-        )
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "openai", "ClaudeCode", [], {"protocol": "openai-responses"}
-        )
-        assert not model_aggregation_service._is_model_compatible_with_shell(
-            "openai", "ClaudeCode", [], {"apiFormat": "chat/completions"}
-        )
-        assert not model_aggregation_service._is_model_compatible_with_shell(
-            "openai", "ClaudeCode", ["openai"], {"apiFormat": "chat/completions"}
-        )
-        assert not model_aggregation_service._is_model_compatible_with_shell(
-            "gemini", "ClaudeCode", []
+        if support_model is None:
+            shell_json = {**shell.json, "spec": dict(shell.json["spec"])}
+            shell_json["spec"].pop("supportModel")
+            shell.json = shell_json
+
+        personal_models = []
+        for name, provider in zip(
+            ["model-a", "model-b", "model-c"], ["claude", "openai", "gemini"]
+        ):
+            for user_id, source in [(0, "public"), (test_user.id, "user")]:
+                model_name = f"{name}-{source}"
+                model = Kind(
+                    user_id=user_id,
+                    kind="Model",
+                    name=model_name,
+                    namespace="default",
+                    is_active=True,
+                    json={
+                        "kind": "Model",
+                        "metadata": {"name": model_name, "namespace": "default"},
+                        "spec": {
+                            "modelConfig": {
+                                "env": {"model": provider, "model_id": model_name}
+                            }
+                        },
+                    },
+                )
+                test_db.add(model)
+                if user_id == test_user.id:
+                    personal_models.append(model)
+        test_db.commit()
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.kind_service.list_resources",
+            lambda **kwargs: personal_models,
         )
 
-    def test_is_model_compatible_with_shell_codex(self, test_db: Session):
-        """Codex only exposes OpenAI models that support the Responses API."""
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "openai", "Codex", [], {"apiFormat": "responses"}
-        )
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "openai", "Codex", [], {"protocol": "openai-responses"}
-        )
-        assert not model_aggregation_service._is_model_compatible_with_shell(
-            "openai", "Codex", [], {"apiFormat": "chat/completions"}
-        )
-        assert not model_aggregation_service._is_model_compatible_with_shell(
-            "claude", "Codex", []
-        )
-        assert not model_aggregation_service._is_model_compatible_with_shell(
-            "gemini", "Codex", []
+        models = model_aggregation_service.list_available_models(
+            db=test_db,
+            current_user=test_user,
+            shell_type=shell_type,
+            scope="personal",
+            model_category_type="llm",
         )
 
-    def test_is_model_compatible_with_shell_agno(self, test_db: Session):
-        """Test model compatibility for Agno shell type."""
-        # Agno supports OpenAI, Claude, and Gemini models
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "claude", "Agno", []
-        )
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "openai", "Agno", []
-        )
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "gemini", "Agno", []
-        )
+        assert {(model["name"], model["type"]) for model in models} == {
+            (f"{name}-{source}", source)
+            for name in expected_models
+            for source in ["public", "user"]
+        }
 
-    def test_is_model_compatible_with_custom_support_model(self, test_db: Session):
-        """Test model compatibility with custom supportModel list."""
-        # When supportModel is specified, it overrides the default mapping
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "claude", "SomeShell", ["claude", "openai"]
-        )
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "openai", "SomeShell", ["claude", "openai"]
-        )
-        assert not model_aggregation_service._is_model_compatible_with_shell(
-            "gemini", "SomeShell", ["claude", "openai"]
-        )
-
-    def test_custom_shell_inherits_model_filter_from_base(
+    def test_custom_shell_uses_its_support_model(
         self, test_db: Session, test_user: User
-    ):
-        """
-        Test that custom shells correctly inherit model filtering from base shell type.
-
-        This is the main bug being fixed:
-        - Custom shell "my-custom-claude" is based on ClaudeCode
-        - It should only allow Claude models, not all models
-        """
-        # Create base public shell
-        self._create_public_shell(test_db, "ClaudeCode", "ClaudeCode", support_model=[])
-
-        # Create custom shell based on ClaudeCode
+    ) -> None:
+        """A custom Shell's configured allowlist overrides its runtime's identity."""
+        self._create_public_shell(
+            test_db, "ClaudeCode", "ClaudeCode", support_model=["claude"]
+        )
         self._create_custom_shell(
             test_db,
             test_user,
-            "my-custom-claude",
+            "shell-a",
             "ClaudeCode",
             "ClaudeCode",
-            support_model=[],
+            support_model=["openai", "gemini"],
+        )
+        allowed, _ = model_aggregation_service._get_shell_support_model(
+            test_db, "shell-a", test_user
         )
 
-        # Get support_model and shell_type for custom shell
-        support_model, shell_type = model_aggregation_service._get_shell_support_model(
-            test_db, "my-custom-claude", test_user
-        )
-
-        # Verify shell_type is inherited as ClaudeCode
-        assert shell_type == "ClaudeCode"
-
-        # Verify model compatibility uses the inherited shell type
-        # Claude should be allowed
         assert model_aggregation_service._is_model_compatible_with_shell(
-            "claude", shell_type, support_model
+            "openai", allowed
         )
-        # OpenAI should only be allowed when it uses the Responses API for CodeX.
+        assert model_aggregation_service._is_model_compatible_with_shell(
+            "gemini", allowed
+        )
         assert not model_aggregation_service._is_model_compatible_with_shell(
-            "openai", shell_type, support_model, {"apiFormat": "chat/completions"}
-        )
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "openai", shell_type, support_model, {"apiFormat": "responses"}
-        )
-        # Gemini should NOT be allowed for ClaudeCode type
-        assert not model_aggregation_service._is_model_compatible_with_shell(
-            "gemini", shell_type, support_model
-        )
-
-    def test_custom_shell_agno_allows_multiple_providers(
-        self, test_db: Session, test_user: User
-    ):
-        """Test that custom Agno shells correctly allow multiple model providers."""
-        # Create base public shell
-        self._create_public_shell(test_db, "Agno", "Agno", support_model=[])
-
-        # Create custom shell based on Agno
-        self._create_custom_shell(
-            test_db,
-            test_user,
-            "my-custom-agno",
-            "Agno",
-            "Agno",
-            support_model=[],
-        )
-
-        # Get support_model and shell_type for custom shell
-        support_model, shell_type = model_aggregation_service._get_shell_support_model(
-            test_db, "my-custom-agno", test_user
-        )
-
-        # Verify shell_type is inherited as Agno
-        assert shell_type == "Agno"
-
-        # Agno should allow all three providers
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "claude", shell_type, support_model
-        )
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "openai", shell_type, support_model
-        )
-        assert model_aggregation_service._is_model_compatible_with_shell(
-            "gemini", shell_type, support_model
+            "claude", allowed
         )
 
     def test_get_shell_support_model_with_group_shell(

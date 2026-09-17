@@ -292,8 +292,8 @@ status:
 
 **supportModel Explanation**:
 
-- Empty array `[]`: Supports all model types
-- Specified list: Only supports model types in the list, e.g., `["anthropic", "openai"]`
+- Omitted or empty array `[]`: Do not filter the model list by provider.
+- Specified list: Match the model’s `spec.modelConfig.env.model`, for example `["claude", "openai"]`; the runtime name does not add restrictions.
 
 #### status Section
 
@@ -358,7 +358,7 @@ metadata:
   namespace: default
 spec:
   runtime: ClaudeCode
-  supportModel: ["anthropic"] # Only supports Anthropic models
+  supportModel: ["claude"] # Only supports Anthropic models
 status:
   state: "Available"
 ```

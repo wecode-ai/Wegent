@@ -340,64 +340,12 @@ class ModelAggregationService:
                 "model_capabilities": None,
             }
 
-    def _is_model_compatible_with_shell(
-        self,
-        provider: Optional[str],
-        shell_type: str,
-        support_model: List[str],
-        config: Optional[Dict[str, Any]] = None,
-    ) -> bool:
-        """
-        Check if a model is compatible with the given shell type.
-
-        Args:
-            provider: Model provider (e.g., 'openai', 'claude')
-            shell_type: Shell type (e.g., 'Agno', 'Codex', 'ClaudeCode')
-            support_model: List of supported model providers from shell spec
-
-        Returns:
-            True if compatible, False otherwise
-        """
-        # Shell type to model provider mapping
-        # Agno supports OpenAI, Claude and Gemini models
-        shell_provider_map = {
-            "Agno": ["openai", "claude", "gemini"],
-            "Codex": ["openai"],
-            "ClaudeCode": ["claude", "openai"],
-        }
-
-        if support_model:
-            if provider not in support_model:
-                return False
-
-        if shell_type in {"Codex", "ClaudeCode"} and provider == "openai":
-            return self._is_codex_compatible_model_config(config or {})
-
-        if support_model:
-            return True
-
-        # Otherwise, filter by shell's supported providers
-        supported_providers = shell_provider_map.get(shell_type)
-        if supported_providers:
-            if isinstance(supported_providers, list):
-                return provider in supported_providers
-            else:
-                return provider == supported_providers
-
-        # No filter, allow all
-        return True
-
     @staticmethod
-    def _is_codex_compatible_model_config(config: Dict[str, Any]) -> bool:
-        """Return whether an OpenAI model config can run through CodeXAgent."""
-        api_format = str(config.get("apiFormat") or config.get("api_format") or "")
-        protocol = str(config.get("protocol") or "")
-        wire_api = str(config.get("wire_api") or "")
-        return (
-            api_format.lower() == "responses"
-            or protocol.lower() == "openai-responses"
-            or wire_api.lower() == "responses"
-        )
+    def _is_model_compatible_with_shell(
+        provider: Optional[str], support_model: List[str]
+    ) -> bool:
+        """Apply the Shell provider allowlist; an empty list allows all models."""
+        return not support_model or provider in support_model
 
     def _get_shell_support_model(
         self, db: Session, shell_name: str, current_user: Optional[User] = None
@@ -541,9 +489,8 @@ class ModelAggregationService:
         from app.services.group_permission import get_user_groups
 
         support_model: List[str] = []
-        actual_shell_type: str = shell_type or ""
         if shell_type:
-            support_model, actual_shell_type = self._get_shell_support_model(
+            support_model, _ = self._get_shell_support_model(
                 db, shell_type, current_user
             )
 
@@ -637,9 +584,7 @@ class ModelAggregationService:
 
                 if shell_type and not self._is_model_compatible_with_shell(
                     info["provider"],
-                    actual_shell_type,
                     support_model,
-                    info.get("config"),
                 ):
                     continue
 
@@ -705,9 +650,7 @@ class ModelAggregationService:
 
             if shell_type and not self._is_model_compatible_with_shell(
                 provider,
-                actual_shell_type,
                 support_model,
-                config,
             ):
                 continue
 

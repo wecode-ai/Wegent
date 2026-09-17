@@ -292,8 +292,8 @@ status:
 
 **supportModel 说明**:
 
-- 空数组 `[]`: 支持所有模型类型
-- 指定列表: 仅支持列表中的模型类型,例如 `["anthropic", "openai"]`
+- 未填写或为空数组 `[]`：不按 provider 限制模型列表。
+- 指定列表：与模型的 `spec.modelConfig.env.model` 匹配，例如 `["claude", "openai"]`；不按运行时名称追加限制。
 
 #### status 部分
 
@@ -358,7 +358,7 @@ metadata:
   namespace: default
 spec:
   runtime: ClaudeCode
-  supportModel: ["anthropic"] # 仅支持 Anthropic 模型
+  supportModel: ["claude"] # 仅支持 Anthropic 模型
 status:
   state: "Available"
 ```
