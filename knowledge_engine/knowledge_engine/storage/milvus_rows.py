@@ -209,7 +209,7 @@ class MilvusRowReader:
                 {
                     "content": row.get(DISPLAY_TEXT_FIELD) or "",
                     "title": metadata.get(SOURCE_FILE_FIELD) or "",
-                    "chunk_id": int(metadata.get(CHUNK_INDEX_FIELD) or 0),
+                    "chunk_id": row_chunk_index(row),
                     "doc_ref": metadata.get(DOC_REF_FIELD) or "",
                     "metadata": metadata,
                 }

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 from llama_index.core.schema import TextNode
-from pymilvus import MilvusClient
+from pymilvus import DataType, Function, FunctionType, MilvusClient
 
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import (
@@ -31,6 +31,7 @@ from knowledge_engine.storage.errors import (
 )
 from knowledge_engine.storage.milvus_native import (
     ANALYZER_TYPE,
+    BM25_FUNCTION_NAME,
     DENSE_VECTOR_FIELD,
     INDEX_TYPE,
     METRIC_TYPE,
@@ -39,7 +40,8 @@ from knowledge_engine.storage.milvus_native import (
     SPARSE_METRIC_TYPE,
     SPARSE_VECTOR_FIELD,
     MilvusIndexBinding,
-    build_collection_schema,
+    index_contract_description,
+    index_contract_from_description,
 )
 from tests.contract.conftest import (
     CONTRACT_DIMENSION,
@@ -86,15 +88,15 @@ def _create_foreign_collection(uri: str, collection_name: str) -> None:
         client.close()
 
 
-def _create_collection_declaring_an_older_schema(
+def _create_collection_written_by_the_previous_schema(
     uri: str, collection_name: str
 ) -> None:
-    """Create a collection whose contract declares the previous schema version.
+    """Create a collection with the row layout and contract this code replaced.
 
-    Only the declared version is older: the row layout of that version is gone
-    from this code, and the version is the fact the reader compares before it
-    reads a row. Such a collection is what an operator meets after an upgrade
-    that did not rebuild every index.
+    The layout is the one schema version ``SCHEMA_VERSION - 1`` wrote: the
+    chunk fields as their own columns next to the metadata JSON column. This is
+    what an operator meets after an upgrade that did not rebuild every index,
+    and the contract the collection declares is what refuses it.
     """
     binding = MilvusIndexBinding(
         collection_name=collection_name,
@@ -111,6 +113,37 @@ def _create_collection_declaring_an_older_schema(
     try:
         if client.has_collection(collection_name):
             client.drop_collection(collection_name)
+        schema = client.create_schema(
+            auto_id=False,
+            enable_dynamic_field=False,
+            description=index_contract_description(binding),
+        )
+        schema.add_field("id", DataType.VARCHAR, is_primary=True, max_length=128)
+        schema.add_field("knowledge_id", DataType.VARCHAR, max_length=512)
+        schema.add_field("doc_ref", DataType.VARCHAR, max_length=512)
+        schema.add_field("source_file", DataType.VARCHAR, max_length=65535)
+        schema.add_field("chunk_index", DataType.INT64)
+        schema.add_field(
+            "retrieval_text",
+            DataType.VARCHAR,
+            max_length=65535,
+            enable_analyzer=True,
+            analyzer_params={"type": ANALYZER_TYPE},
+        )
+        schema.add_field("display_text", DataType.VARCHAR, max_length=65535)
+        schema.add_field("metadata", DataType.JSON, nullable=True)
+        schema.add_field("created_at", DataType.VARCHAR, max_length=65535)
+        schema.add_field("dense_vector", DataType.FLOAT_VECTOR, dim=CONTRACT_DIMENSION)
+        schema.add_field("sparse_vector", DataType.SPARSE_FLOAT_VECTOR)
+        schema.add_function(
+            Function(
+                name=BM25_FUNCTION_NAME,
+                function_type=FunctionType.BM25,
+                input_field_names=["retrieval_text"],
+                output_field_names=["sparse_vector"],
+                params={},
+            )
+        )
         index_params = client.prepare_index_params()
         index_params.add_index(
             field_name=DENSE_VECTOR_FIELD,
@@ -124,7 +157,7 @@ def _create_collection_declaring_an_older_schema(
         )
         client.create_collection(
             collection_name=collection_name,
-            schema=build_collection_schema(binding),
+            schema=schema,
             index_params=index_params,
             consistency_level="Strong",
         )
@@ -236,20 +269,31 @@ def test_a_collection_without_a_contract_is_not_adopted(milvus_env) -> None:
         client.close()
 
 
-def test_a_collection_declaring_an_older_schema_is_refused(milvus_env) -> None:
+def test_a_collection_written_by_an_older_schema_is_refused(milvus_env) -> None:
     """A row layout this code no longer writes is refused, not read.
 
     The physical schema converged to the fields retrieval needs, so a
-    collection whose own contract declares the schema version before this one
-    is a collection this code cannot read rows out of and must not write rows
-    into. Every reading path and the write path report that version mismatch,
-    and the collection is left exactly as it was: nothing is upgraded, rebuilt
-    or adopted, because the operator rebuilds it.
+    collection that still carries the chunk columns and declares the schema
+    version before this one is a collection this code cannot read rows out of
+    and must not write rows into. Every reading path and the write path report
+    that version mismatch, and the collection is left exactly as it was:
+    nothing is upgraded, rebuilt or adopted, because the operator rebuilds it.
     """
     backend = milvus_env.backend()
     knowledge_id = milvus_env.new_knowledge_id()
     collection_name = milvus_env.collection_name(knowledge_id)
-    _create_collection_declaring_an_older_schema(milvus_env.uri, collection_name)
+    _create_collection_written_by_the_previous_schema(milvus_env.uri, collection_name)
+
+    client = MilvusClient(uri=milvus_env.uri)
+    try:
+        described = client.describe_collection(collection_name)
+    finally:
+        client.close()
+    field_names = {field["name"] for field in described["fields"]}
+    assert {"knowledge_id", "doc_ref", "chunk_index", "created_at"} <= field_names
+    assert index_contract_from_description(described["description"]).schema_version == (
+        SCHEMA_VERSION - 1
+    )
 
     for name, call in _read_paths(backend, knowledge_id).items():
         with pytest.raises(IndexContractIncompatibleError) as failure:

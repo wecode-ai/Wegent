@@ -41,10 +41,10 @@ from knowledge_engine.retrieval.filters import (
     validate_metadata_condition,
 )
 from knowledge_engine.storage.milvus_native import (
-    CHUNK_FIELDS_FOR_FILTERING,
+    CHUNK_METADATA_KEYS,
     DOC_REF_FIELD,
     ID_FIELD,
-    NUMERIC_FILTER_FIELDS,
+    NUMERIC_CHUNK_KEYS,
     metadata_path,
     sanitize_filter_value,
 )
@@ -144,8 +144,8 @@ def _condition_target(
         raise ValueError(
             f"metadata_condition must not filter the internal field '{key}'."
         )
-    if key in CHUNK_FIELDS_FOR_FILTERING:
-        kind: LiteralKind = "numeric" if key in NUMERIC_FILTER_FIELDS else "text"
+    if key in CHUNK_METADATA_KEYS:
+        kind: LiteralKind = "numeric" if key in NUMERIC_CHUNK_KEYS else "text"
     else:
         kind = "json"
     return metadata_path(key), kind

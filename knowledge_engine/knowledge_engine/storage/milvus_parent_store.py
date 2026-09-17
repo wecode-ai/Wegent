@@ -161,8 +161,8 @@ class MilvusParentStore:
                 store, client, collection_name, knowledge_id, doc_ref
             )
 
-    @staticmethod
     def _delete_with_client(
+        self,
         store: MilvusDocumentStore,
         client,
         collection_name: str,
@@ -173,7 +173,7 @@ class MilvusParentStore:
             return 0
         client.delete(
             collection_name=collection_name,
-            filter=MilvusParentStore.scope_filter(knowledge_id, doc_ref),
+            filter=self.scope_filter(knowledge_id, doc_ref),
             timeout=store.rpc_timeout,
         )
         return 0

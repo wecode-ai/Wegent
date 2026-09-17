@@ -81,17 +81,17 @@ CREATED_AT_FIELD = "created_at"
 DENSE_VECTOR_FIELD = "dense_vector"
 SPARSE_VECTOR_FIELD = "sparse_vector"
 
-# Metadata keys the row layout writes with a fixed type, so a condition on one
-# is compared against the type the writer stored. Row identity is deliberately
-# absent: the write path owns it, so a query condition can never pin or fake it.
-CHUNK_FIELDS_FOR_FILTERING: List[str] = [
+# Metadata keys every stored chunk carries, written with the fixed type a
+# condition on them is compared against. Row identity is deliberately absent:
+# the write path owns it, so a query condition can never pin or fake it.
+CHUNK_METADATA_KEYS: List[str] = [
     KNOWLEDGE_ID_FIELD,
     DOC_REF_FIELD,
     SOURCE_FILE_FIELD,
     CHUNK_INDEX_FIELD,
     CREATED_AT_FIELD,
 ]
-NUMERIC_FILTER_FIELDS = frozenset({CHUNK_INDEX_FIELD})
+NUMERIC_CHUNK_KEYS = frozenset({CHUNK_INDEX_FIELD})
 
 # Columns one read asks for by default: the row's identity, the two texts the
 # retrieval paths answer with, and the metadata column that holds the rest.
