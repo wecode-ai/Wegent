@@ -1008,10 +1008,11 @@ function UserMessage({
   )
   const hasImagePreviews = imagePreviewAttachments.length > 0
   const hasMultipleImagePreviews = imagePreviewAttachments.length > 1
+  const collapseText = displayContent.replace(CODEX_MENTION_LINK_PATTERN, '$2')
   const shouldCollapse =
     message.runtimeGuidance !== true &&
-    (displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
-      displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES)
+    (collapseText.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
+      collapseText.split('\n').length > USER_MESSAGE_COLLAPSE_LINES)
   const showSourceBadge = isIMSource(message.source)
   const showGoalRequestBadge = message.runtimeGoalRequest === true
   const codeCommentCount = message.codeComments?.length ?? 0

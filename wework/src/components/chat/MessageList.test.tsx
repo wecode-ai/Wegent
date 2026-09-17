@@ -6,6 +6,7 @@ import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import { AttachmentDownloadProvider } from './AttachmentDownloadProvider'
 import { clearImagePreviewCache } from './imagePreviewCache'
+import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
 import '@/i18n'
 
@@ -4938,6 +4939,41 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('toggle-user-message-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('user-message-content')).not.toHaveClass('max-h-44')
   })
+
+  test.each([false, true])(
+    'counts the visible conversation title when deciding to collapse (long body: %s)',
+    longBody => {
+      const title = '让助手生成两张表格，包含中文、粗体、代码和空单元格。'
+      const reference = createConversationMentionReference(title, {
+        deviceId: 'local-device',
+        taskId: 'runtime-42',
+        workspacePath: `/workspace/${'项目目录/'.repeat(20)}`,
+      })
+      const body = longBody ? '需要详细分析。'.repeat(100) : 'n'
+      expect(reference.length).toBeGreaterThan(600)
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'conversation-mention',
+              role: 'user',
+              content: `${reference} ${body}`,
+              status: 'done',
+              createdAt: '2026-09-17T02:16:00.000Z',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByTestId('user-message-content')).toHaveTextContent(`${title} ${body}`)
+      expect(screen.getByTestId(/^sent-conversation-token-/)).toHaveAttribute(
+        'href',
+        reference.slice(reference.indexOf('](') + 2, -1)
+      )
+      expect(screen.queryByTestId('toggle-user-message-button') !== null).toBe(longBody)
+    }
+  )
 
   test('does not collapse long runtime guidance messages', () => {
     const content = Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 行引导`).join('\n')
