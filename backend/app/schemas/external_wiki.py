@@ -6,7 +6,12 @@
 
 from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
+
+WikiPageId = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+]
 
 
 class WikiConnectorOption(BaseModel):
@@ -59,9 +64,7 @@ class WikiConnectionTestResponse(BaseModel):
 class WikiBindingCreateRequest(BaseModel):
     """Import selected Wiki pages as synchronized knowledge documents."""
 
-    page_ids: list[Annotated[str, Field(min_length=1, max_length=255)]] = Field(
-        ..., min_length=1, max_length=50
-    )
+    page_ids: list[WikiPageId] = Field(..., min_length=1, max_length=50)
     connection_id: str = Field(..., min_length=1, max_length=100)
     folder_id: int = Field(0, ge=0)
 

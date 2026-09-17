@@ -91,6 +91,20 @@ def test_binding_requires_connection_id() -> None:
         WikiBindingCreateRequest(page_ids=["42"])
 
 
+def test_binding_rejects_whitespace_only_page_id() -> None:
+    with pytest.raises(ValidationError):
+        WikiBindingCreateRequest(page_ids=[" \t"], connection_id="conn-primary")
+
+
+def test_binding_normalizes_page_ids() -> None:
+    request = WikiBindingCreateRequest(
+        page_ids=[" 42 ", "\tpage-id\n"],
+        connection_id="conn-primary",
+    )
+
+    assert request.page_ids == ["42", "page-id"]
+
+
 @pytest.mark.asyncio
 async def test_unsaved_connection_values_can_be_tested_without_connection_id(
     monkeypatch,
