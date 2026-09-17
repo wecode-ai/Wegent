@@ -2321,7 +2321,7 @@ export function createDesktopScenario({
         distanceFromBottom(scrollerBeforeAppend) > 8,
         'The simulated user scroll did not move the streaming conversation away from the bottom'
       )
-      const anchorBeforeAppend = await getSingleElementMetrics(
+      let anchorBeforeAppend = await getSingleElementMetrics(
         control,
         VIEWPORT_ANCHOR_SELECTOR,
         'The viewport anchor before later content'
@@ -2331,6 +2331,32 @@ export function createDesktopScenario({
           anchorBeforeAppend.bottom <= scrollerBeforeAppend.bottom,
         `The viewport anchor was not visible after the user scroll (top=${anchorBeforeAppend.top}px, bottom=${anchorBeforeAppend.bottom}px)`
       )
+      // Small consecutive wheel steps must move the same text by the requested pixels, including
+      // after virtual measurements settle. Return to the starting position before testing append.
+      const anchorStartTop = anchorBeforeAppend.top
+      for (const delta of [12, 24, 36, 0]) {
+        await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
+          value: String(distanceFromBottom(scrollerBeforeAppend) + delta),
+        })
+        await control.command('waitFor', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
+          text: VIEWPORT_ANCHOR_TEXT,
+          stableMs: 200,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('markElementWithText', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
+          text: VIEWPORT_ANCHOR_TEXT,
+          value: VIEWPORT_ANCHOR_E2E_ID,
+        })
+        anchorBeforeAppend = await getSingleElementMetrics(
+          control,
+          VIEWPORT_ANCHOR_SELECTOR,
+          `The viewport anchor after a ${delta}px reading offset`
+        )
+        assert.ok(
+          Math.abs(anchorBeforeAppend.top - anchorStartTop - delta) <= 8,
+          `The reading position bounced: expected ${anchorStartTop + delta}px, got ${anchorBeforeAppend.top}px`
+        )
+      }
       await capture(control, 'streaming-text-12-user-scrolled-up.png')
 
       const previousContentLength = (await control.command('getText', PROCESS_TEXT_SELECTOR)).length

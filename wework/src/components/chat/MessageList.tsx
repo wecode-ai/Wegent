@@ -283,13 +283,6 @@ export const MessageList = memo(function MessageList({
     () => visibleMessages.findLastIndex(message => message.status === 'streaming'),
     [visibleMessages]
   )
-  const streamingVirtualMessageKeys = useMemo(
-    () =>
-      new Set(
-        visibleMessages.filter(message => message.status === 'streaming').map(message => message.id)
-      ),
-    [visibleMessages]
-  )
   const initialMeasurementsCache = useMemo(
     () => getVirtualMeasurementSnapshot(virtualMeasurementKey, visibleMessages),
     [virtualMeasurementKey, visibleMessages]
@@ -309,8 +302,6 @@ export const MessageList = memo(function MessageList({
   }, [initialMeasurementsCache, messageIntrinsicHeights, visibleMessages])
   const messageVirtualizer = useBottomOriginVirtualizer({
     bottomOrigin,
-    bottomOriginAnchorItemKeys: streamingVirtualMessageKeys,
-    preserveBottomOriginItemResizeAnchor: !virtualAnchorToEnd,
     count: visibleMessages.length,
     enabled: virtualMessages,
     getItemKey: index => visibleMessages[index]?.id ?? index,

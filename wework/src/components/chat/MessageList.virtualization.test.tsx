@@ -207,26 +207,26 @@ describe('MessageList desktop virtualization', () => {
     expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(
       false
     )
-    expect(listElement).toHaveStyle({ height: '3940px' })
-    expect(scrollElement.scrollTop).toBe(-200)
+    expect(listElement).toHaveStyle({ height: '3900px' })
+    expect(scrollElement.scrollTop).toBe(-160)
 
     expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, -40, instance)).toBe(
       false
     )
-    expect(listElement).toHaveStyle({ height: '3940px' })
-    expect(scrollElement.scrollTop).toBe(-200)
+    expect(listElement).toHaveStyle({ height: '3900px' })
+    expect(scrollElement.scrollTop).toBe(-160)
 
     expect(shouldPreserveScrollPosition?.({ key: 'user-18', start: 8_000 }, 40, instance)).toBe(
       false
     )
-    expect(listElement).toHaveStyle({ height: '3940px' })
-    expect(scrollElement.scrollTop).toBe(-200)
+    expect(listElement).toHaveStyle({ height: '3900px' })
+    expect(scrollElement.scrollTop).toBe(-160)
 
     scrollElement.scrollTop = 0
     expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(
       false
     )
-    expect(listElement).toHaveStyle({ height: '3940px' })
+    expect(listElement).toHaveStyle({ height: '3900px' })
     expect(scrollElement.scrollTop).toBe(0)
 
     Object.defineProperty(scrollElement, 'scrollHeight', {
