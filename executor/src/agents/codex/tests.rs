@@ -1137,6 +1137,22 @@ fn parses_vision_sidecar_from_model_config() {
 }
 
 #[test]
+fn vision_sidecar_explicit_direct_does_not_inherit_primary_proxy() {
+    let sidecar = vision_sidecar_upstream(&json!({
+        "proxy": { "url": "http://external-proxy:3128" },
+        "vision_sidecar": {
+            "request_url": "https://internal.example/v1/responses",
+            "model_id": "vision-model",
+            "proxy": { "url": null }
+        }
+    }))
+    .expect("valid vision sidecar")
+    .expect("configured vision sidecar");
+
+    assert_eq!(sidecar.proxy_url, None);
+}
+
+#[test]
 fn vision_sidecar_allows_zero_descriptions_to_disable_calls_fail_closed() {
     let sidecar = vision_sidecar_upstream(&json!({
         "vision_sidecar": {

@@ -160,7 +160,13 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { builtinCodexCatalogModel } from '@/features/model-settings/codexCatalog'
 import { localModelSupportsImageInput } from '@/features/model-settings/localModelProviders'
-import { getEffectiveLocalCodexProxyUrl } from '@/desktop/systemProxy'
+import { resolveLocalCodexProxyUrl } from '@/desktop/systemProxy'
+import { codexProviderRequestUrl } from './codexProviderProxy'
+import {
+  resolveRuntimeModelProxy,
+  resolveExecutionRequestProxy,
+  type RuntimeProxyResolver,
+} from './runtimeModelProxy'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import {
@@ -526,7 +532,7 @@ interface RuntimeWorkIpcOptions {
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
   adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
   cloudModelGateway?: CloudModelGateway
-  getRuntimeProxyUrl?: () => string | Promise<string>
+  resolveProxy?: RuntimeProxyResolver
   user?: User
   transportLabel?: 'Local' | 'Cloud'
   syncConfiguredModelCatalog?: boolean
@@ -1196,11 +1202,11 @@ function recordNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
 }
 
-function harnessProxyUpstream(
+async function harnessProxyUpstream(
   runtime: string,
   option: LocalHarnessModelOption,
   cloudModelGateway?: CloudModelGateway
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   const execution = selectedModelExecutionFields(option.model, option.options)
   const config = localRuntimeModelConfig(
     runtime,
@@ -1231,56 +1237,30 @@ function harnessProxyUpstream(
           ([name, value]) => (typeof value === 'string' ? [[name, value]] : [])
         )
       : []
+  const requestUrl =
+    recordString(config.responses_url) ?? `${baseUrl.replace(/\/+$/, '')}/responses`
   return {
     base_url: baseUrl,
-    request_url: recordString(config.responses_url) ?? `${baseUrl.replace(/\/+$/, '')}/responses`,
+    request_url: requestUrl,
     api_format: apiFormat,
     convert_custom_tools: config.tool_profile === 'function',
     native_tool_search: nativeToolSearch,
     native_namespace_tools: nativeNamespaceTools,
     api_key: apiKey,
     default_headers: headers,
-    proxy_url: getEffectiveLocalCodexProxyUrl() || null,
+    proxy_url: await resolveLocalCodexProxyUrl(requestUrl),
     model_id: recordString(config.model_id),
     routing_model_id: null,
     max_output_tokens: recordNumber(config.max_output_tokens),
   }
 }
 
-function applyRuntimeProxyConfig(
-  modelConfig: Record<string, unknown>,
-  runtimeProxyUrl?: string
-): Record<string, unknown> {
-  const proxyUrl = runtimeProxyUrl?.trim()
-  if (!proxyUrl) return modelConfig
-
-  const runtimeConfig = {
-    ...((modelConfig.runtime_config as Record<string, unknown> | undefined) ?? {}),
-  }
-  const codexRuntimeConfig = {
-    ...((runtimeConfig.codex as Record<string, unknown> | undefined) ?? {}),
-    use_proxy: true,
-    proxy_configured: true,
-  }
-
-  return {
-    ...modelConfig,
-    proxy: {
-      url: proxyUrl,
-    },
-    runtime_config: {
-      ...runtimeConfig,
-      codex: codexRuntimeConfig,
-    },
-  }
-}
-
-function applyRuntimeModelOptions(
+async function applyRuntimeModelOptions(
   modelConfig: Record<string, unknown>,
   modelOptions?: Record<string, string>,
-  runtimeProxyUrl?: string
-): Record<string, unknown> {
-  modelConfig = applyRuntimeProxyConfig(modelConfig, runtimeProxyUrl)
+  resolveProxy?: RuntimeProxyResolver
+): Promise<Record<string, unknown>> {
+  modelConfig = await resolveRuntimeModelProxy(modelConfig, resolveProxy)
   const reasoning = runtimeReasoning(modelOptions)
   if (reasoning) modelConfig.reasoning = reasoning
   const serviceTier = runtimeServiceTier(modelOptions)
@@ -1392,7 +1372,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
   modelConfig?: Record<string, unknown>
   cloudModelGateway?: CloudModelGateway
-  runtimeProxyUrl?: string
+  resolveProxy?: RuntimeProxyResolver
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
   additionalContext?: RuntimeTaskCreateRequest['additionalContext']
   attachments?: RuntimeTaskCreateRequest['attachments']
@@ -1444,9 +1424,9 @@ function messageWithApplicationContext(
   return `<application_context>\n${contextText}\n</application_context>\n\n${message}`
 }
 
-function buildLocalRuntimeExecutionRequest(
+async function buildLocalRuntimeExecutionRequest(
   input: BuildLocalRuntimeExecutionRequestInput
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   const baseSeed = input.taskId || `${input.runtime}:${input.workspacePath ?? ''}:${input.message}`
   const [derivedTaskId, subtaskId] = createRuntimeExecutionIdsFromSeed(
     input.newSession ? baseSeed : `${baseSeed}:${input.turnSeed}`
@@ -1471,10 +1451,10 @@ function buildLocalRuntimeExecutionRequest(
           input.modelOptions,
           input.cloudModelGateway
         ))
-  const modelConfig = applyRuntimeModelOptions(
+  const modelConfig = await applyRuntimeModelOptions(
     { ...baseModelConfig },
     input.modelOptions,
-    input.runtimeProxyUrl
+    input.resolveProxy
   )
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
@@ -1761,7 +1741,7 @@ async function createLocalRuntimeTaskPayload(
   localDeviceId: string,
   requestWithLocalDevice: RequestWithLocalDevice,
   cloudModelGateway: CloudModelGateway | undefined,
-  runtimeProxyUrl: string | undefined,
+  resolveProxy: RuntimeProxyResolver | undefined,
   user: User,
   requireLocalCodexCatalog: boolean,
   materializeRuntimeTask?: RuntimeWorkIpcOptions['materializeRuntimeTask']
@@ -1789,7 +1769,7 @@ async function createLocalRuntimeTaskPayload(
   if (initialSupervisor?.modelSelection?.modelType === 'runtime') {
     payload.initialSupervisor = {
       ...initialSupervisor,
-      modelConfig: applyRuntimeModelOptions(
+      modelConfig: await applyRuntimeModelOptions(
         localRuntimeModelConfig(
           'codex',
           requireLocalCodexCatalog,
@@ -1799,12 +1779,12 @@ async function createLocalRuntimeTaskPayload(
           cloudModelGateway
         ),
         initialSupervisor.modelSelection.options,
-        runtimeProxyUrl
+        resolveProxy
       ),
     }
   }
   const friendlyTitleExecutionRequest = normalizedData.friendlyTitle
-    ? buildLocalRuntimeExecutionRequest({
+    ? await buildLocalRuntimeExecutionRequest({
         taskId: `friendly-title-${normalizedData.taskId ?? turnSeed}-${createRuntimeTurnSeed()}`,
         runtime: 'codex',
         title: 'Generate friendly task title',
@@ -1819,7 +1799,7 @@ async function createLocalRuntimeTaskPayload(
         modelType: normalizedData.friendlyTitle.modelType,
         modelOptions: normalizedData.friendlyTitle.modelOptions,
         cloudModelGateway,
-        runtimeProxyUrl,
+        resolveProxy,
         localDeviceId,
         workspacePath: runtimeWorkspace?.workspacePath,
         standaloneChatWorkspace: normalizedData.standaloneChatWorkspace,
@@ -1839,8 +1819,13 @@ async function createLocalRuntimeTaskPayload(
     ...(friendlyTitleExecutionRequest ? { friendlyTitleExecutionRequest } : {}),
     title: runtimeTaskTitle(normalizedData),
     executionRequest:
-      materialized?.payload.executionRequest ??
-      buildLocalRuntimeExecutionRequest({
+      (materialized?.payload.executionRequest
+        ? await resolveExecutionRequestProxy(
+            materialized.payload.executionRequest as Record<string, unknown>,
+            resolveProxy
+          )
+        : null) ??
+      (await buildLocalRuntimeExecutionRequest({
         taskId: normalizedData.taskId,
         runtime: normalizedData.runtime,
         runtimeExecutablePath: normalizedData.runtimeExecutablePath,
@@ -1854,7 +1839,7 @@ async function createLocalRuntimeTaskPayload(
         modelOptions: normalizedData.modelOptions,
         modelConfig: normalizedData.modelConfig,
         cloudModelGateway,
-        runtimeProxyUrl,
+        resolveProxy,
         additionalSkills: normalizedData.additionalSkills,
         additionalContext: normalizedData.additionalContext,
         attachments: normalizedData.attachments,
@@ -1875,7 +1860,7 @@ async function createLocalRuntimeTaskPayload(
         ephemeral: normalizedData.ephemeral,
         requireLocalCodexCatalog,
         user,
-      }),
+      })),
   } as unknown as Record<string, unknown>
 }
 
@@ -1896,7 +1881,7 @@ async function createLocalRuntimeSendPayload(
   data: RuntimeSendRequest,
   localDeviceId: string,
   cloudModelGateway: CloudModelGateway | undefined,
-  runtimeProxyUrl: string | undefined,
+  resolveProxy: RuntimeProxyResolver | undefined,
   user: User,
   requireLocalCodexCatalog: boolean,
   materializeRuntimeTask?: RuntimeWorkIpcOptions['materializeRuntimeTask']
@@ -1969,7 +1954,7 @@ async function createLocalRuntimeSendPayload(
       taskId,
       address: normalizedAddress,
       ...(collaborationMode ? { collaborationMode } : {}),
-      executionRequest: buildLocalRuntimeExecutionRequest({
+      executionRequest: await buildLocalRuntimeExecutionRequest({
         taskId,
         runtime,
         title: taskId,
@@ -1979,7 +1964,7 @@ async function createLocalRuntimeSendPayload(
         modelType: normalizedData.modelType,
         modelOptions: normalizedData.modelOptions,
         cloudModelGateway,
-        runtimeProxyUrl,
+        resolveProxy,
         attachments: normalizedData.attachments,
         additionalContext: normalizedData.additionalContext,
         cloudProjectId: normalizedData.cloudProjectId,
@@ -2014,8 +1999,13 @@ async function createLocalRuntimeSendPayload(
       : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
     executionRequest:
-      materializedExecutionRequest ??
-      buildLocalRuntimeExecutionRequest({
+      (materializedExecutionRequest
+        ? await resolveExecutionRequestProxy(
+            materializedExecutionRequest as Record<string, unknown>,
+            resolveProxy
+          )
+        : null) ??
+      (await buildLocalRuntimeExecutionRequest({
         taskId,
         runtime,
         title: taskId,
@@ -2025,7 +2015,7 @@ async function createLocalRuntimeSendPayload(
         modelType: normalizedData.modelType,
         modelOptions: normalizedData.modelOptions,
         cloudModelGateway,
-        runtimeProxyUrl,
+        resolveProxy,
         attachments: normalizedData.attachments,
         additionalContext: normalizedData.additionalContext,
         cloudProjectId: normalizedData.cloudProjectId,
@@ -2038,7 +2028,7 @@ async function createLocalRuntimeSendPayload(
         ephemeral: data.ephemeral,
         requireLocalCodexCatalog,
         user,
-      }),
+      })),
   } as unknown as Record<string, unknown>
 }
 
@@ -2416,7 +2406,7 @@ export function createRuntimeWorkApiFromIpc(
       throw error
     }
   }
-  const getRuntimeProxyUrl = async () => options.getRuntimeProxyUrl?.()
+  const resolveProxy = options.resolveProxy
 
   const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
     const selectedModel = findLocalModelConfigByModelName(data.modelId)
@@ -2717,7 +2707,7 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         options.cloudModelGateway,
-        await getRuntimeProxyUrl(),
+        resolveProxy,
         user,
         requireLocalCodexCatalog,
         options.materializeRuntimeTask
@@ -2747,7 +2737,7 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         options.cloudModelGateway,
-        await getRuntimeProxyUrl(),
+        resolveProxy,
         user,
         requireLocalCodexCatalog,
         options.materializeRuntimeTask
@@ -2811,7 +2801,7 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         options.cloudModelGateway,
-        await getRuntimeProxyUrl(),
+        resolveProxy,
         user,
         requireLocalCodexCatalog,
         options.materializeRuntimeTask
@@ -2859,7 +2849,7 @@ export function createRuntimeWorkApiFromIpc(
       ) {
         throw modelCatalogSyncCancelled()
       }
-      const modelConfig = applyRuntimeModelOptions(
+      const modelConfig = await applyRuntimeModelOptions(
         localRuntimeModelConfig(
           'codex',
           requireLocalCodexCatalog,
@@ -2869,7 +2859,7 @@ export function createRuntimeWorkApiFromIpc(
           options.cloudModelGateway
         ),
         selection.options,
-        await getRuntimeProxyUrl()
+        resolveProxy
       )
       const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
         .address as RuntimeTaskAddress
@@ -3097,7 +3087,7 @@ export function createRuntimeWorkApiFromIpc(
         localDeviceId,
         requestWithLocalDevice,
         options.cloudModelGateway,
-        await getRuntimeProxyUrl(),
+        resolveProxy,
         user,
         requireLocalCodexCatalog,
         options.materializeRuntimeTask
@@ -3309,13 +3299,13 @@ export function createAutomationApiFromIpc(
         throw modelCatalogSyncCancelled()
       }
     }
-    const runtimeProxyUrl = await options.getRuntimeProxyUrl?.()
+    const resolveProxy = options.resolveProxy
     const taskPayload = await createLocalRuntimeTaskPayload(
       resolvedTaskRequest,
       localDeviceId,
       requestWithLocalDevice,
       options.cloudModelGateway,
-      runtimeProxyUrl,
+      resolveProxy,
       user,
       requireLocalCodexCatalog
     )
@@ -3324,7 +3314,7 @@ export function createAutomationApiFromIpc(
           continuationRequest,
           localDeviceId,
           options.cloudModelGateway,
-          runtimeProxyUrl,
+          resolveProxy,
           user,
           requireLocalCodexCatalog,
           options.materializeRuntimeTask
@@ -3491,9 +3481,12 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     }
     return ensurePromise
   }
-  const getRuntimeProxyUrl = async () => {
+  const resolveProxy: RuntimeProxyResolver = async (targetUrl, codexProviderId) => {
     await ensureStatus()
-    return getEffectiveLocalCodexProxyUrl()
+    const requestUrl = codexProviderId
+      ? await codexProviderRequestUrl(codexProviderId, request)
+      : targetUrl
+    return resolveLocalCodexProxyUrl(requestUrl)
   }
 
   const bootstrapStatus = deps.available || !deps.ensure ? availableStatus : ensureStatus
@@ -3643,7 +3636,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     getLocalDeviceId,
     {
       cloudModelGateway: deps.cloudModelGateway,
-      getRuntimeProxyUrl,
+      resolveProxy,
       user: deps.user,
       materializeRuntimeTask: deps.materializeRuntimeTask,
     }
@@ -3653,7 +3646,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     (method, params) => request(method, params as Record<string, unknown>),
     {
       cloudModelGateway: deps.cloudModelGateway,
-      getRuntimeProxyUrl,
+      resolveProxy,
       user: deps.user,
       prepareRuntimeModel: data => runtimeWorkApi.prepareRuntimeModel(data),
     }
@@ -3706,7 +3699,6 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const branchNameApi: NonNullable<WorkbenchServices['branchNameApi']> = {
     async generateBranchName(data) {
       const deviceId = data.deviceId?.trim() || (await getLocalDeviceId())
-      const runtimeProxyUrl = await getRuntimeProxyUrl()
       if (!(await runtimeWorkApi.prepareRuntimeModel({ deviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }
@@ -3714,7 +3706,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       if (!sourceText) {
         throw new Error(i18n.t('workbench.environment_branch_generate_source_required'))
       }
-      const executionRequest = buildLocalRuntimeExecutionRequest({
+      const executionRequest = await buildLocalRuntimeExecutionRequest({
         taskId: `branch-name-${createRuntimeTurnSeed()}`,
         runtime: 'codex',
         title: 'Generate Git branch name',
@@ -3730,7 +3722,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         modelType: data.modelType,
         modelOptions: data.modelOptions,
         cloudModelGateway: deps.cloudModelGateway,
-        runtimeProxyUrl,
+        resolveProxy,
         localDeviceId: deviceId,
         workspaceSource: 'local_path',
         newSession: true,
@@ -3782,7 +3774,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           'runtime.harness_proxy.register',
           {
             scope: scope?.trim() || `harness:${harnessId}:${crypto.randomUUID()}`,
-            upstream: harnessProxyUpstream(harnessId, option, deps.cloudModelGateway),
+            upstream: await harnessProxyUpstream(harnessId, option, deps.cloudModelGateway),
           }
         )
         const launch = harnessLaunchThroughMessagesProxy(harnessId, option, registration)

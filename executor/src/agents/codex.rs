@@ -3635,9 +3635,13 @@ fn vision_sidecar_upstream(model_config: &Value) -> Result<Option<VisionSidecarU
         api_format,
         api_key,
         default_headers: parse_header_map(sidecar.get("default_headers")),
-        proxy_url: runtime_proxy_url(sidecar)
-            .or_else(|| runtime_proxy_url(model_config))
-            .map(str::to_owned),
+        proxy_url: if sidecar.get("proxy").is_some() {
+            // PAC can explicitly select DIRECT for a different vision endpoint.
+            runtime_proxy_url(sidecar)
+        } else {
+            runtime_proxy_url(model_config)
+        }
+        .map(str::to_owned),
         model_id,
         max_descriptions_per_turn,
         timeout: Duration::from_millis(timeout_ms),
