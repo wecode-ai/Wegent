@@ -10,13 +10,26 @@ from typing import Any
 
 
 class StorageBackendError(RuntimeError):
-    """Base class for storage failures that carry a stable error code."""
+    """Base class for storage failures that carry a stable error code.
+
+    ``retryable`` says whether the caller may run the same operation again.
+    Subclasses state their own default; a failure that needs retrying although
+    its class is deterministic says so at construction.
+    """
 
     code = "storage_backend_error"
     retryable = False
 
-    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+        retryable: bool | None = None,
+    ) -> None:
         self.details = details or {}
+        if retryable is not None:
+            self.retryable = retryable
         super().__init__(message)
 
 
@@ -95,6 +108,6 @@ class StorageUnavailableError(StorageBackendError):
             f"Storage backend '{backend}' could not complete this operation "
             f"within its bound: {classification}. The remote result is unknown; "
             "retry the whole operation and do not assume it was cancelled or "
-            "rolled back.",
+            "unwritten.",
             details=merged_details,
         )

@@ -346,7 +346,9 @@ class MilvusBackend(BaseStorageBackend):
         The write path never reports this failure as a success: either the
         original write failure is re-raised, or - when the rows could not be
         removed - a failure that names both is raised, because the document
-        may still be readable.
+        may still be readable. That cleanup failure is retryable: re-running
+        the write removes the document's rows before it writes them again, so
+        the retry converges instead of layering a second version.
 
         Neither this write nor the one it cleans up waits for a server-side
         flush: Milvus persists in the background, so a crash before its own
@@ -367,6 +369,7 @@ class MilvusBackend(BaseStorageBackend):
                     "write_error": str(write_error),
                     "cleanup_error": str(cleanup_error),
                 },
+                retryable=True,
             ) from write_error
         raise write_error
 

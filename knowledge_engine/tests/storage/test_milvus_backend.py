@@ -750,7 +750,12 @@ def test_a_failed_write_removes_the_rows_it_left_behind():
 
 
 def test_a_failed_write_reports_a_cleanup_that_cannot_remove_its_rows():
-    """A cleanup that fails must not report the write as merely failed."""
+    """A cleanup that fails must not report the write as merely failed.
+
+    The failure is also retryable: re-running the write removes the rows of
+    this document before writing them again, so a retry converges. The caller
+    reads that flag instead of parsing the message.
+    """
     backend = _backend()
     store = FakeStore(rows=[_stored_chunk_row("43", 0)])
     backend._store = store
@@ -779,6 +784,7 @@ def test_a_failed_write_reports_a_cleanup_that_cannot_remove_its_rows():
     assert "simulated write failure" in details["write_error"]
     assert "simulated cleanup failure" in details["cleanup_error"]
     assert "may still be readable" in str(failure.value)
+    assert failure.value.retryable is True
 
 
 def test_retrieve_returns_raw_cosine_scores_above_threshold():
