@@ -933,6 +933,10 @@ impl RuntimeWorkRpcHandler {
     ) {
         turn.request.extra.remove(RESTORED_TURN_MARKER);
         let restore_startup = restore_permit.map(RestoreStartupGate::new);
+        turn.request.extra.insert(
+            "runtimeLocalTaskId".to_owned(),
+            Value::String(turn.local_task_id.clone()),
+        );
         if is_claude_runtime(&turn.runtime) {
             self.start_claude_turn(turn.local_task_id, turn.request, restore_startup);
             return;
@@ -942,10 +946,6 @@ impl RuntimeWorkRpcHandler {
             &mut turn.request,
             &self.device_id,
             &turn.local_task_id,
-        );
-        turn.request.extra.insert(
-            "runtimeLocalTaskId".to_owned(),
-            Value::String(turn.local_task_id.clone()),
         );
         let SpawnTurnRequest {
             local_task_id,
