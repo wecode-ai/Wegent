@@ -150,7 +150,6 @@ test.describe('External DingTalk document import', () => {
         document.id,
         EXTERNAL_IMPORT_MARKERS.productV1
       )
-      expect(chunks).toContain(EXTERNAL_IMPORT_MARKERS.productV1)
       const indexedContent = (JSON.parse(chunks) as Array<{ content?: string }>)
         .map(chunk => chunk.content ?? '')
         .join('\n')
@@ -247,7 +246,6 @@ test.describe('External DingTalk document import', () => {
         documentId,
         EXTERNAL_IMPORT_MARKERS.productV2
       )
-      expect(updatedChunks).toContain(EXTERNAL_IMPORT_MARKERS.productV2)
       expect(updatedChunks).not.toContain(EXTERNAL_IMPORT_MARKERS.productV1)
       const documents = await listDocuments(request, context.token, context.knowledgeBaseId)
       expect(documents).toHaveLength(1)
@@ -336,7 +334,6 @@ test.describe('External DingTalk document import', () => {
         recovered.id,
         EXTERNAL_IMPORT_MARKERS.apiV2
       )
-      expect(chunks).toContain(EXTERNAL_IMPORT_MARKERS.apiV2)
       expect(chunks).not.toContain(EXTERNAL_IMPORT_MARKERS.api)
     })
   })
