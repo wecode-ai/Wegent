@@ -25,17 +25,18 @@ function getProcessingDurationMs(
   return Math.max(isRunning ? 1000 : 0, endTime - turnStartedAt)
 }
 
-function formatDuration(durationMs: number): string {
-  const seconds = Math.floor(durationMs / 1000)
-  if (seconds < 60) return `${seconds} 秒`
-
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  if (minutes < 60) {
-    return remainingSeconds > 0 ? `${minutes} 分 ${remainingSeconds} 秒` : `${minutes} 分钟`
-  }
-
-  const hours = Math.floor(minutes / 60)
-  const remainingMinutes = minutes % 60
-  return remainingMinutes === 0 ? `${hours} 小时` : `${hours} 小时 ${remainingMinutes} 分钟`
+export function formatDuration(durationMs: number, locale = 'zh-CN'): string {
+  const seconds = Math.floor(Math.max(durationMs, 0) / 1000)
+  const units: [number, string][] = [
+    [Math.floor(seconds / 86400), 'day'],
+    [Math.floor((seconds % 86400) / 3600), 'hour'],
+    [Math.floor((seconds % 3600) / 60), 'minute'],
+    [seconds % 60, 'second'],
+  ]
+  return units
+    .filter(([value, unit]) => value > 0 || (seconds === 0 && unit === 'second'))
+    .map(([value, unit]) =>
+      new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'narrow' }).format(value)
+    )
+    .join(' ')
 }
