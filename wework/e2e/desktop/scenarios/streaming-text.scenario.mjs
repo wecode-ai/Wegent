@@ -645,6 +645,12 @@ async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
   return duration
 }
 
+function processingDurationSeconds(text) {
+  const minutes = Number(text.match(/(\d+)\s*分钟/)?.[1] ?? 0)
+  const seconds = Number(text.match(/(\d+)\s*秒/)?.[1] ?? 0)
+  return minutes * 60 + seconds
+}
+
 async function expandCompletedProcessing(control, timeoutMs) {
   const finalToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
   await control.command('waitFor', finalToggle, { timeoutMs })
@@ -883,6 +889,7 @@ export function createDesktopScenario({
   let releaseSubagentCompletion
   let releaseToolCompletion
   let releaseToolFinalCompletion
+  let releaseTimerFinalCompletion
   let resolveAppendWritten
   let resolvePartialWritten
   let resolveRequest
@@ -929,6 +936,9 @@ export function createDesktopScenario({
   })
   const toolCompletionRelease = new Promise(resolve => {
     releaseToolCompletion = resolve
+  })
+  const timerFinalCompletionRelease = new Promise(resolve => {
+    releaseTimerFinalCompletion = resolve
   })
   const toolFollowUpReceived = new Promise(resolve => {
     resolveToolFollowUp = resolve
@@ -1097,6 +1107,14 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
     }
+    await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
+    const durationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-duration-label"]`
+    const completedDuration = await control.command('getText', durationSelector)
+    assert.match(completedDuration, /用时/)
+    assert.ok(
+      processingDurationSeconds(completedDuration) >= 2,
+      `The turn following a stopped turn lost its elapsed time: ${completedDuration}`
+    )
     for (let index = 0; index < PANE_EVICTION_BLANK_COUNT; index += 1) {
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -1114,6 +1132,12 @@ export function createDesktopScenario({
       Number(await control.command('getElementCount', '[data-testid="assistant-stopped-notice"]')),
       0,
       'The latest transcript position remained on the older stopped turn'
+    )
+    const restoredDuration = await control.command('getText', durationSelector)
+    assert.match(restoredDuration, /用时/)
+    assert.ok(
+      processingDurationSeconds(restoredDuration) >= 2,
+      `The resumed turn duration reset after transcript restoration: ${restoredDuration}`
     )
     await capture(control, 'streaming-text-17-stopped-turn-order-restored.png')
   }
@@ -1491,9 +1515,13 @@ export function createDesktopScenario({
       }
       if (followUpNumber !== null) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.write(sse([responseCreated(responseId)]))
+        if (followUpNumber === ORDER_FOLLOW_UP_COUNT) {
+          response.write(sse([assistantMessage('继续检查耗时。', 'commentary')]))
+          await new Promise(resolve => setTimeout(resolve, 2100))
+        }
         response.end(
           sse([
-            responseCreated(responseId),
             assistantMessage(`${ORDER_COMPLETION_PREFIX}_${followUpNumber}`),
             responseCompleted(responseId),
           ])
@@ -1511,15 +1539,13 @@ export function createDesktopScenario({
         return true
       }
       if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
-        timerStage = 'complete'
+        timerStage = 'awaiting-final-completion'
+        const stream = streamingEvents(responseId, TIMER_COMPLETION)
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.end(
-          sse([
-            responseCreated(responseId),
-            assistantMessage(TIMER_COMPLETION),
-            responseCompleted(responseId),
-          ])
-        )
+        response.write(sse([...stream.start, ...textDeltaEvents(stream.itemId, TIMER_COMPLETION)]))
+        await timerFinalCompletionRelease
+        timerStage = 'complete'
+        response.end(sse(stream.finish))
         return true
       }
       if (toolRegressionStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
@@ -2061,6 +2087,15 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       const toolDurationBeforeSwitch = await waitForToolDuration(control, 3, uiTimeoutMs)
+      const processingDurationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-duration-label"]`
+      const runningDurationBeforeSwitch = await control.command(
+        'getText',
+        processingDurationSelector
+      )
+      assert.match(runningDurationBeforeSwitch, /已处理/, 'The running turn duration was missing')
+      const elapsedBeforeSwitch = processingDurationSeconds(runningDurationBeforeSwitch)
+      // The turn label refreshes once per second; tool rows refresh every 100 ms.
+      assert.ok(elapsedBeforeSwitch >= 2, 'The turn timer did not advance with the running tool')
       const summaryBeforeSwitch = await control.command('getText', PROCESSING_SUMMARY_SELECTOR)
       assert.equal(
         toolDurationSeconds(summaryBeforeSwitch),
@@ -2074,6 +2109,15 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       const toolDurationAfterSwitch = await waitForToolDuration(control, 1, uiTimeoutMs)
+      const runningDurationAfterSwitch = await control.command(
+        'getText',
+        processingDurationSelector
+      )
+      assert.match(runningDurationAfterSwitch, /已处理/)
+      assert.ok(
+        processingDurationSeconds(runningDurationAfterSwitch) >= elapsedBeforeSwitch,
+        `The turn timer reset after switching tasks: ${runningDurationAfterSwitch}`
+      )
       assert.ok(
         toolDurationAfterSwitch >= toolDurationBeforeSwitch,
         `The running tool timer reset from ${toolDurationBeforeSwitch}s to ${toolDurationAfterSwitch}s after switching pages`
@@ -2085,11 +2129,36 @@ export function createDesktopScenario({
         `The restored tool summary exposed an aggregate duration: ${summaryAfterSwitch}`
       )
       await capture(control, 'streaming-text-07-running-tool-restored.png')
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: TIMER_COMPLETION,
-        timeoutMs: 25_000,
-      })
+      let elapsedDuringFinalText
+      try {
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: TIMER_COMPLETION,
+          timeoutMs: 25_000,
+        })
+        const finalTextDuration = await control.command('getText', processingDurationSelector)
+        assert.match(finalTextDuration, /已处理/, 'The timer stopped when final text arrived')
+        await new Promise(resolve => setTimeout(resolve, 2100))
+        const advancingDuration = await control.command('getText', processingDurationSelector)
+        assert.match(advancingDuration, /已处理/)
+        elapsedDuringFinalText = processingDurationSeconds(advancingDuration)
+        assert.ok(
+          elapsedDuringFinalText > processingDurationSeconds(finalTextDuration),
+          `The timer froze during final answer streaming: ${finalTextDuration} -> ${advancingDuration}`
+        )
+      } finally {
+        releaseTimerFinalCompletion()
+      }
+      await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
       const completedDurationBeforeSwitch = await completedToolDuration(control, uiTimeoutMs)
+      const completedProcessingDuration = await control.command(
+        'getText',
+        processingDurationSelector
+      )
+      assert.match(completedProcessingDuration, /用时/, 'The completed turn duration was missing')
+      assert.ok(
+        processingDurationSeconds(completedProcessingDuration) >= elapsedDuringFinalText,
+        `The turn duration reset on completion: ${completedProcessingDuration}`
+      )
       await capture(control, 'streaming-text-08-tool-completed.png')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -2102,6 +2171,11 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       const completedDurationAfterSwitch = await completedToolDuration(control, uiTimeoutMs)
+      assert.equal(
+        await control.command('getText', processingDurationSelector),
+        completedProcessingDuration,
+        'The completed turn duration changed after switching tasks'
+      )
       assert.equal(
         completedDurationAfterSwitch,
         completedDurationBeforeSwitch,

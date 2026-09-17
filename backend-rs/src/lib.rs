@@ -11,12 +11,15 @@
 //! use std::sync::Arc;
 //! use wegent_backend_rs::{Application, HybridConfig, build_app_state, init_env, run_hybrid};
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), wegent_backend_rs::BoxError> {
+//! fn main() -> Result<(), wegent_backend_rs::BoxError> {
+//!     // Must run before the process spawns any thread.
 //!     init_env();
-//!     let state = Arc::new(build_app_state().await?);
-//!     let application = Application::build(state).await?;
-//!     run_hybrid(HybridConfig::from_env()?, application).await
+//!     let runtime = tokio::runtime::Runtime::new()?;
+//!     runtime.block_on(async {
+//!         let state = Arc::new(build_app_state().await?);
+//!         let application = Application::build(state).await?;
+//!         run_hybrid(HybridConfig::from_env()?, application).await
+//!     })
 //! }
 //! ```
 //!
@@ -31,7 +34,7 @@ pub use brz_http_gateway::{
     RoutesConfig, bind, serve,
 };
 pub use brz_http_server as http_server;
-pub use config::init_env_file as init_env;
+pub use config::{init_env, init_env_file};
 pub use hybrid::{HybridConfig, run_hybrid, serve_hybrid, serve_hybrid_application};
 pub use startup::app::build as build_app_state;
 pub use startup::mysql::connect as connect_mysql;

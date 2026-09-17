@@ -345,8 +345,14 @@ function mergeRuntimeConversationTurn(
     itemMerge: undefined,
     items,
     status: preserveLocalTerminal || preserveLocalFailure ? local.status : snapshot.status,
+    // Transcript timestamps can have lower precision than the live turn.
+    startedAt: local.startedAt ?? runtimeConversationTurnTimestamp(local) ?? snapshot.startedAt,
     completedAt:
-      preserveLocalTerminal || preserveLocalFailure ? local.completedAt : snapshot.completedAt,
+      preserveLocalTerminal || preserveLocalFailure
+        ? local.completedAt
+        : isTerminalTurnStatus(local.status) && local.status === snapshot.status
+          ? (local.completedAt ?? snapshot.completedAt)
+          : snapshot.completedAt,
     error: preserveLocalTerminal || preserveLocalFailure ? local.error : snapshot.error,
     errorType: preserveLocalTerminal || preserveLocalFailure ? local.errorType : snapshot.errorType,
     stoppedNotice: preserveLocalTerminal ? local.stoppedNotice : snapshot.stoppedNotice,
@@ -1186,6 +1192,7 @@ function insertDelayedSubagentBlock(
 
 function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): WorkbenchMessage[] {
   const messages: WorkbenchMessage[] = []
+  const runtimeTurnStartedAt = turn.startedAt ?? runtimeConversationTurnTimestamp(turn)
   let assistantItems: RuntimeConversationItem[] = []
   let followsGuidance = false
 
@@ -1210,6 +1217,7 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
       runtimeStatus: isLast ? turn.status : 'done',
       subtaskId: turn.id ?? undefined,
       turnId: turn.id ?? undefined,
+      runtimeTurnStartedAt,
       runtimeMessageIndex: turn.runtimeMessageIndex,
       blocks: blocks.length > 0 ? blocks : undefined,
       runtimeDisplayItems: assistantItems.flatMap<RuntimeAssistantDisplayItem>(item =>

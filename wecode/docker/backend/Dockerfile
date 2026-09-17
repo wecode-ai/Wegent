@@ -133,7 +133,7 @@ RUN mkdir -p "$LOG_DIR" "$BREEZE_LOG_DIR" && \
     ! ldd /usr/local/bin/wegent-backend-rs | grep -q 'not found'
 
 ENV PORT=8000
-ENV WEGENT_ENV_FILE=/app/.env
+ENV WEGENT_BACKEND_RS_ENV_FILE=/app/.env
 ENV WEGENT_PYTHON_UPSTREAM_PORT=8004
 ENV WEGENT_RS_ROUTES_FILE=/app/backend-rs-intra/config/routes.toml
 ENV AIGC_VIDEO_AGENT_URL=http://i.aigc-intra.multimedia.api.weibo.com
