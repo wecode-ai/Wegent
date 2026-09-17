@@ -1352,6 +1352,11 @@ export function WeworkSharedProject({
                       .at(-1) ?? null
                   }
                   localProjects={localProjects}
+                  showAdditionalTaskAction={
+                    taskBindings.length > 0 &&
+                    issue.workflow?.advancement_policy !== 'ai' &&
+                    !issue.workflow?.nodes?.length
+                  }
                   initialTaskBindings={taskBindings.map(toWeworkIssueTaskBinding)}
                   aitableApi={
                     project.task_provider === 'dingtalk_aitable' ? services.aitableApi : undefined

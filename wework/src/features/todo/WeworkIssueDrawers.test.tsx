@@ -3,7 +3,11 @@ import { useState, type ComponentProps } from 'react'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CollaborationApp, CollaborationIssue } from '@wegent/collaboration'
+import type {
+  CollaborationApp,
+  CollaborationIssue,
+  WorkspaceTaskBinding,
+} from '@wegent/collaboration'
 import { WeworkSharedProject } from './WeworkCollaborationPlatform'
 import type { TodoEditor } from './TodoEditor'
 import type { AiChatModal } from './AiChatModal'
@@ -14,6 +18,7 @@ const chatCallbacks = vi.hoisted(
 )
 
 const issue = { id: 'TEST-1', title: 'Execute pwd', status: 'pending' } as CollaborationIssue
+let taskBindings: WorkspaceTaskBinding[] = []
 const getAnimations = vi.fn((): Partial<Animation>[] => [])
 const originalGetAnimations = Object.getOwnPropertyDescriptor(Element.prototype, 'getAnimations')
 
@@ -23,7 +28,10 @@ beforeAll(() => {
     value: getAnimations,
   })
 })
-beforeEach(() => getAnimations.mockReset().mockReturnValue([]))
+beforeEach(() => {
+  getAnimations.mockReset().mockReturnValue([])
+  taskBindings = []
+})
 afterAll(() => {
   if (originalGetAnimations) {
     Object.defineProperty(Element.prototype, 'getAnimations', originalGetAnimations)
@@ -78,8 +86,9 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
           issue,
           allIssues: [issue],
           assignments: [],
-          taskBindings: [],
+          taskBindings,
           onChange: vi.fn(),
+          onCreateTask: () => props.onCreateTask?.({ id: 'project' } as never, issue),
           onClose: () => props.host.navigate({ ...props.host.location, issueId: null }),
         })}
     </>
@@ -119,6 +128,9 @@ vi.mock('./TodoEditor', () => ({
           onChange={event => setDraft(event.target.value)}
         />
         <div data-testid="cloud-todo-detail-scroll" />
+        {props.showAdditionalTaskAction && (
+          <button onClick={() => props.onCreateTask?.()}>Add task</button>
+        )}
         {['run-1', 'run-2'].map(taskId => (
           <button
             key={taskId}
@@ -179,6 +191,33 @@ function Project() {
 }
 
 describe('Wework Issue conversation drawers', () => {
+  it('can start another task after returning from an existing execution', async () => {
+    taskBindings = [
+      {
+        id: 'binding-1',
+        projectId: 'project',
+        issueId: issue.id,
+        taskUserId: 1,
+        deviceId: 'device',
+        taskId: 'run-1',
+        taskTitle: 'Existing execution',
+        backendTaskId: null,
+        linkedAt: '2026-09-18T00:00:00Z',
+      },
+    ]
+    const user = userEvent.setup()
+    render(<Project />)
+    await user.click(screen.getByText('Open Issue'))
+    await user.click(screen.getByRole('button', { name: 'run-1' }))
+    await user.click(screen.getByTestId('ai-chat-modal-close'))
+    await user.click(screen.getByRole('button', { name: 'Add task' }))
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-address')
+    expect(screen.getByTestId('issue-conversation-drawers')).toHaveAttribute(
+      'data-has-conversation',
+      'true'
+    )
+  })
+
   it('dismisses board previews when entering details without resurrecting them on return', async () => {
     const user = userEvent.setup()
     render(<Project />)
