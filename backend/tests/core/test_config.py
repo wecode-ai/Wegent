@@ -69,6 +69,25 @@ class TestSettings:
         assert s.DB_ASYNC_MAX_OVERFLOW == 20
         assert s.DB_POOL_TIMEOUT == 30
         assert s.DB_POOL_RECYCLE == 3600
+        assert s.TERMINAL_BACKEND_DIAGNOSTICS_DEVICE_IDS == ""
+        assert s.TERMINAL_BACKEND_DIAGNOSTICS_SAMPLE_RATE == 0.01
+        assert s.TERMINAL_BACKEND_DIAGNOSTICS_SLOW_THRESHOLD_MS == 50
+        assert s.TERMINAL_BACKEND_DIAGNOSTICS_LOOP_LAG_INTERVAL_SECONDS == 1
+
+    @pytest.mark.parametrize(
+        ("setting_name", "invalid_value"),
+        [
+            ("TERMINAL_BACKEND_DIAGNOSTICS_SAMPLE_RATE", -0.1),
+            ("TERMINAL_BACKEND_DIAGNOSTICS_SAMPLE_RATE", 1.1),
+            ("TERMINAL_BACKEND_DIAGNOSTICS_SLOW_THRESHOLD_MS", -1),
+            ("TERMINAL_BACKEND_DIAGNOSTICS_LOOP_LAG_INTERVAL_SECONDS", 0.01),
+        ],
+    )
+    def test_terminal_diagnostic_settings_reject_invalid_values(
+        self, setting_name, invalid_value
+    ):
+        with pytest.raises(ValidationError):
+            build_settings(**{setting_name: invalid_value})
 
     @pytest.mark.parametrize(
         ("setting_name", "invalid_value"),
