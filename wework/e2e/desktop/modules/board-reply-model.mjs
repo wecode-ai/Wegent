@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
-import { CLOUD_PUBLIC_MODEL_LABEL, CLOUD_PUBLIC_MODEL_NAME, selectE2EModel } from './shared.mjs'
+import { CLOUD_PUBLIC_MODEL_NAME, selectE2EModel } from './shared.mjs'
 import {
   assistantMessage,
   createSse,
@@ -14,6 +14,7 @@ import {
 
 const INITIAL = 'BOARD_REPLY_CLOUD_MODEL_INITIAL'
 const REPLY = 'BOARD_REPLY_CLOUD_MODEL_CONTINUE'
+const PUBLIC_MODEL_ID = 'desktop-e2e-public-upstream-model'
 
 async function verifyPersistedExecutions({ backendUrl, authToken, projectId }, taskId, timeoutMs) {
   const { io } = createRequire(
@@ -128,7 +129,7 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
         await selectE2EModel(
           control,
           CLOUD_PUBLIC_MODEL_NAME,
-          CLOUD_PUBLIC_MODEL_LABEL,
+          PUBLIC_MODEL_ID,
           `${activity} footer`
         )
         await control.command('fill', composer, { value: INITIAL })
@@ -180,8 +181,8 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
         assert.ok(continued, 'The original board runtime task disappeared after replying')
         assert.equal(continued.thread_id, original.thread_id)
         assert.deepEqual(continued.runtime_handle.modelSelection, selection)
-        assert.equal(upstreamModels.get(INITIAL), 'desktop-e2e-public-upstream-model')
-        assert.equal(upstreamModels.get(REPLY), 'desktop-e2e-public-upstream-model')
+        assert.equal(upstreamModels.get(INITIAL), PUBLIC_MODEL_ID)
+        assert.equal(upstreamModels.get(REPLY), PUBLIC_MODEL_ID)
         await verifyPersistedExecutions(cloud, issue.id, uiTimeoutMs)
       } finally {
         active = false
