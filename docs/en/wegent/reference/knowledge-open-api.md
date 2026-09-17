@@ -362,7 +362,7 @@ Request body fields:
 | `knowledge_base_id` | integer | Yes | Knowledge base ID |
 | `query` | string | Yes | Search query. Maximum 2000 characters |
 | `top_k` | integer | No | Number of results. Default: `5`, range: `1` to `100` |
-| `score_threshold` | number | No | Minimum similarity score. Default: `0.7` |
+| `score_threshold` | number | No | Minimum similarity score. Default: `0` (no cut) |
 | `route_mode` | string | No | `auto`, `direct_injection`, or `rag_retrieval`. Default: `auto` |
 | `folder_ids` | integer[] | No | Folder scope. `[0]` means documents directly under root |
 | `document_ids` | integer[] | No | Specific document scope |

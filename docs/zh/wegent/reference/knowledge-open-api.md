@@ -362,7 +362,7 @@ POST /api/knowledge/search
 | `knowledge_base_id` | integer | 是 | 知识库 ID |
 | `query` | string | 是 | 检索问题，最大 2000 字符 |
 | `top_k` | integer | 否 | 返回结果数量，默认 `5`，范围 `1` 到 `100` |
-| `score_threshold` | number | 否 | 最低相似度分数，默认 `0.7` |
+| `score_threshold` | number | 否 | 最低相似度分数，默认 `0`（不裁剪） |
 | `route_mode` | string | 否 | `auto`、`direct_injection` 或 `rag_retrieval`，默认 `auto` |
 | `folder_ids` | integer[] | 否 | 限定目录范围。`[0]` 表示根目录直接文档 |
 | `document_ids` | integer[] | 否 | 限定指定文档 |
