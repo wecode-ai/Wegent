@@ -1752,7 +1752,7 @@ describe('ConnectionsSettingsPage', () => {
       disconnect: vi.fn(),
     }
     window.weworkElectronNetwork = {
-      resolveCodexProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
+      resolveProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
     }
     api.getAllDevices.mockResolvedValue([localDevice()])
 
