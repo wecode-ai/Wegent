@@ -10,7 +10,6 @@ it works with are tested in ``test_milvus_native.py``.
 """
 
 import pytest
-from pymilvus import DataType, FunctionType
 
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,

@@ -440,8 +440,9 @@ class MilvusDocumentStore:
     ) -> int:
         """Write rows without waiting for a server-side flush.
 
-        Callers own their durability stance: the write path relies on the
-        server's background flush and a Strong consistency read, while the
+        Callers own their durability stance: neither this write nor its caller
+        waits for the segment to be sealed or for a later read to see it (the
+        accepted visibility window, see ``READ_CONSISTENCY_LEVEL``), while the
         delete path flushes the collection explicitly.
         """
         if not rows:
@@ -516,7 +517,7 @@ class MilvusDocumentStore:
 
         ``consistency_level`` is an internal convention rather than a caller
         knob: retrieval pages with the read level, and a count that decides a
-        write uses the write level, which waits for the newest data.
+        deletion uses the write level, which waits for the newest data.
         """
         if not client.has_collection(collection_name, timeout=self.rpc_timeout):
             return []

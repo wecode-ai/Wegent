@@ -47,9 +47,11 @@ MAX_KEY_LENGTH = 512
 MAX_TEXT_LENGTH = 65535
 MAX_COUNT_ROWS = 16384
 
-# Retrieval reads a snapshot the write path already wrote, so it pays no
-# linearizable-read wait (~400ms Strong versus ~1ms Bounded on the contract
-# fixture). Deletion and creation do verify, so writing stays Strong.
+# Retrieval reads at the level that skips the linearizable wait (~400ms Strong
+# versus ~1ms Bounded on the contract fixture), which also means the first reads
+# after a write can be answered from a snapshot that predates it. The write path
+# accepts that window and does not wait for it (ticket 11); deletion and
+# creation still verify, so those reads stay Strong.
 READ_CONSISTENCY_LEVEL = "Bounded"
 WRITE_CONSISTENCY_LEVEL = "Strong"
 

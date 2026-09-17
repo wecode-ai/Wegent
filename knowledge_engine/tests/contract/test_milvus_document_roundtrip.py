@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 
 import pytest
 
@@ -32,6 +33,7 @@ from knowledge_engine.storage.errors import (
 from shared.models import RetrievalScope
 
 from .conftest import (
+    VISIBILITY_WINDOW_SECONDS,
     DeterministicEmbedding,
     MilvusContractEnv,
     await_document_visibility,
@@ -291,6 +293,10 @@ def test_partial_write_is_not_queryable(
         )
 
     monkeypatch.undo()
+    # Wait out the visibility window before asserting emptiness: rows that the
+    # failed cleanup left behind would still be hidden if this ran earlier, so
+    # the negative assertion would pass without proving the cleanup worked.
+    time.sleep(VISIBILITY_WINDOW_SECONDS)
     hits = _query(
         milvus_env,
         knowledge_id=knowledge_id,
@@ -797,4 +803,6 @@ def test_the_collection_keeps_no_publish_or_execution_columns(
         client.close()
 
     field_names = {field["name"] for field in description["fields"]}
-    assert {"published", "generation", "attempt_id"}.isdisjoint(field_names)
+    assert {"published", "generation", "attempt_id", "node_kind"}.isdisjoint(
+        field_names
+    )

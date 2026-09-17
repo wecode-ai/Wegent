@@ -291,15 +291,6 @@ export async function deleteDocument(
   await expectOk(response)
 }
 
-/** Read the indexed chunks of a document (retrieval data plane evidence). */
-export async function getDocumentChunks(
-  request: APIRequestContext,
-  token: string,
-  documentId: number
-): Promise<string> {
-  return readDocumentChunks(request, token, documentId)
-}
-
 /**
  * Read the chunks of a document that was just indexed, retrying while the
  * vector store catches up.
@@ -315,8 +306,7 @@ export async function readDocumentChunksAfterIndexing(
   request: APIRequestContext,
   token: string,
   documentId: number,
-  marker: string,
-  options: { timeout?: number } = {}
+  marker: string
 ): Promise<string> {
   let latest = ''
   await expect
@@ -326,7 +316,7 @@ export async function readDocumentChunksAfterIndexing(
         return latest.includes(marker)
       },
       {
-        timeout: options.timeout ?? 10_000,
+        timeout: 10_000,
         message: `chunks of document ${documentId} should become readable`,
       }
     )

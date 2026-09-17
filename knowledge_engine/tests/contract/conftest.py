@@ -34,13 +34,12 @@ CONTRACT_URI_ENV = "MILVUS_CONTRACT_URI"
 CONTRACT_DIMENSION = 1536
 CONTRACT_CREATED_AT = "2026-01-01T00:00:00Z"
 # Retrieval reads at Bounded, so the first reads after a write may be answered
-# from a snapshot that predates it. Measured on the pinned 2.5.4 fixture, one
-# fresh collection per round and five chunks per document: dense search ~0.42s,
-# keyword search ~0.63s, document read up to ~0.87s (0.3-0.5s when the
-# collection is already warmed). The write path returns without waiting for that
-# window (ticket 11), so a contract test that asserts on a document it just
-# wrote waits it out instead of asserting inside it.
-VISIBILITY_WINDOW_SECONDS = 0.9
+# from a snapshot that predates it. Measured on the pinned 2.5.4 fixture with one
+# fresh collection per round, the document read, the dense search and the
+# keyword search all become visible in the same 0.2-0.5s window. The write path
+# returns without waiting for it (ticket 11), so a contract test that asserts on
+# a document it just wrote waits it out instead of asserting inside it.
+VISIBILITY_WINDOW_SECONDS = 0.5
 VISIBILITY_TIMEOUT_SECONDS = 2.0
 VISIBILITY_POLL_SECONDS = 0.05
 
@@ -151,7 +150,10 @@ def await_document_visibility(
     while True:
         try:
             document = backend.get_document(knowledge_id, doc_ref, **read_kwargs)
-        except ValueError:
+        except ValueError as exc:
+            # "not found" is the window; anything else is a real read failure.
+            if "not found" not in str(exc):
+                raise
             document = None
         if document is not None:
             visible_chunks = int(document.get("chunk_count") or 0)

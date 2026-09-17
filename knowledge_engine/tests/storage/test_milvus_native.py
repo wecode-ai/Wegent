@@ -9,10 +9,7 @@ import json
 import pytest
 from pymilvus import DataType, FunctionType
 
-from knowledge_engine.storage.errors import (
-    IndexContractIncompatibleError,
-    IndexMissingError,
-)
+from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus_native import (
     ANALYZER_TYPE,
     BM25_FUNCTION_NAME,
@@ -129,7 +126,7 @@ def test_collection_schema_declares_required_fields_and_dimension():
         "display_text",
     ):
         assert name in fields
-    for removed in ("generation", "attempt_id", "published"):
+    for removed in ("generation", "attempt_id", "published", "node_kind"):
         assert removed not in fields
     assert contract_token_field("sha256:space") in fields
     assert fields["id"].is_primary
