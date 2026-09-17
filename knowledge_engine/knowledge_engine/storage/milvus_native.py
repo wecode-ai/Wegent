@@ -548,7 +548,7 @@ class MilvusDocumentStore:
     ) -> MilvusIndexBinding | None:
         """Read the stored contract for a collection, creating nothing.
 
-        The write path raises the level; see ``read_owned_binding``.
+        ``consistency_level`` is an internal convention, not a caller knob.
         """
         if not client.has_collection(
             INDEX_BINDING_COLLECTION, timeout=self.rpc_timeout
@@ -566,7 +566,7 @@ class MilvusDocumentStore:
             return None
         return MilvusIndexBinding.from_row(rows[0])
 
-    def read_owned_binding(
+    def read_binding_strong(
         self, client: MilvusClient, collection_name: str
     ) -> MilvusIndexBinding | None:
         """Read a contract the write path owns, as soon as it lands."""
@@ -647,7 +647,7 @@ class MilvusDocumentStore:
             dimension=dimension,
             embedding_space=embedding_space,
         )
-        bound = self.read_owned_binding(client, collection_name)
+        bound = self.read_binding_strong(client, collection_name)
         collection_exists = client.has_collection(
             collection_name, timeout=self.rpc_timeout
         )
@@ -680,7 +680,7 @@ class MilvusDocumentStore:
         """Re-read a concurrently created collection until its contract lands."""
         deadline = time.monotonic() + CONCURRENT_BINDING_TIMEOUT_SECONDS
         while True:
-            if self.read_owned_binding(client, requested.collection_name) is not None:
+            if self.read_binding_strong(client, requested.collection_name) is not None:
                 return self._verify_existing(client, requested)
             if time.monotonic() >= deadline:
                 raise IndexContractIncompatibleError(
@@ -742,7 +742,7 @@ class MilvusDocumentStore:
         """
         if not client.has_collection(collection_name, timeout=self.rpc_timeout):
             return None
-        bound = self.read_owned_binding(client, collection_name)
+        bound = self.read_binding_strong(client, collection_name)
         if bound is None:
             raise IndexContractIncompatibleError(
                 collection_name,
@@ -798,7 +798,7 @@ class MilvusDocumentStore:
     def _verify_existing(
         self, client: MilvusClient, requested: MilvusIndexBinding
     ) -> MilvusIndexBinding:
-        bound = self.read_owned_binding(client, requested.collection_name)
+        bound = self.read_binding_strong(client, requested.collection_name)
         if bound is None:
             raise IndexContractIncompatibleError(
                 requested.collection_name,

@@ -21,6 +21,7 @@ swap an explicit failure rather than a silent quality regression.
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Dict, List, Optional, Sequence
 
 from llama_index.core.schema import BaseNode
@@ -34,7 +35,10 @@ from knowledge_engine.embedding.vectors import (
     read_model_name,
     validate_vectors,
 )
-from knowledge_engine.retrieval.search_hints import resolve_search_queries
+from knowledge_engine.retrieval.search_hints import (
+    ResolvedSearchQueries,
+    resolve_search_queries,
+)
 from knowledge_engine.storage.base import (
     DISPLAY_TEXT_METADATA_KEY,
     BaseStorageBackend,
@@ -92,6 +96,21 @@ DEFAULT_TOP_K = 20
 DEFAULT_SCORE_THRESHOLD = 0.7
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_ATTEMPT_PREFIX = "gen"
+
+
+@dataclass(frozen=True)
+class _RetrievalRequest:
+    """One ``retrieve()`` call resolved into everything a branch needs."""
+
+    collection_name: str
+    retrieval_mode: str
+    embed_model: Any
+    resolved_queries: ResolvedSearchQueries
+    filter_expr: str
+    top_k: int
+    score_threshold: float
+    vector_weight: Optional[float]
+    keyword_weight: Optional[float]
 
 
 class MilvusBackend(BaseStorageBackend):
@@ -542,22 +561,42 @@ class MilvusBackend(BaseStorageBackend):
         threshold compares, so a caller can reason about a returned record
         from its score alone.
         """
+        request = self._resolve_request(
+            knowledge_id,
+            query,
+            embed_model,
+            retrieval_setting,
+            scope=scope,
+            metadata_condition=metadata_condition,
+            index_kwargs=kwargs,
+        )
+
+        # One request owns exactly one client: the contract read and the
+        # answering branch share it, and the context manager still closes it
+        # on every exit. Concurrent requests keep independent connections.
+        with self._store.client() as client:
+            binding = self._read_bound_index(client, request.collection_name)
+            if binding is None:
+                return {"records": []}
+            return self._dispatch(client, binding, request)
+
+    def _resolve_request(
+        self,
+        knowledge_id: str,
+        query: str,
+        embed_model,
+        retrieval_setting: Dict[str, Any],
+        *,
+        scope: Optional[RetrievalScope],
+        metadata_condition: Optional[Dict[str, Any]],
+        index_kwargs: Dict[str, Any],
+    ) -> _RetrievalRequest:
+        """Validate one request and resolve it before anything is stored."""
         retrieval_mode = str(retrieval_setting.get("retrieval_mode") or "vector")
         if retrieval_mode not in self.SUPPORTED_RETRIEVAL_METHODS:
             raise UnsupportedStorageCapabilityError(
                 f"{retrieval_mode} retrieval mode", backend="milvus"
             )
-
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
-        top_k = int(retrieval_setting.get("top_k") or DEFAULT_TOP_K)
-        score_threshold = self._resolve_score_threshold(retrieval_setting)
-        filter_expr = build_scope_filter(
-            knowledge_id=knowledge_id,
-            doc_refs=self._scope_doc_refs(scope),
-            extra_conditions=compile_metadata_conditions(metadata_condition),
-        )
-        resolved_queries = resolve_search_queries(query, retrieval_setting)
-
         # Resolve the weights before any storage call so an invalid request
         # fails without touching the index or the embedding provider.
         vector_weight, keyword_weight = (
@@ -565,70 +604,82 @@ class MilvusBackend(BaseStorageBackend):
             if retrieval_mode == "hybrid"
             else (None, None)
         )
+        return _RetrievalRequest(
+            collection_name=self.get_index_name(knowledge_id, **index_kwargs),
+            retrieval_mode=retrieval_mode,
+            embed_model=embed_model,
+            resolved_queries=resolve_search_queries(query, retrieval_setting),
+            filter_expr=build_scope_filter(
+                knowledge_id=knowledge_id,
+                doc_refs=self._scope_doc_refs(scope),
+                extra_conditions=compile_metadata_conditions(metadata_condition),
+            ),
+            top_k=int(retrieval_setting.get("top_k") or DEFAULT_TOP_K),
+            score_threshold=self._resolve_score_threshold(retrieval_setting),
+            vector_weight=vector_weight,
+            keyword_weight=keyword_weight,
+        )
 
-        # One request owns exactly one client: the contract read and the
-        # answering branch share it, and the context manager still closes it
-        # on every exit. Concurrent requests keep independent connections.
-        #
-        # The contract is read once for the whole request and reused by the
-        # mode that answers. An empty knowledge base answers empty without
-        # calling the embedding provider: only a real index justifies a
-        # provider request.
-        with self._store.client() as client:
-            binding = self._read_bound_index(client, collection_name)
-            if binding is None:
-                return {"records": []}
+    def _dispatch(
+        self,
+        client: MilvusClient,
+        binding: MilvusIndexBinding,
+        request: _RetrievalRequest,
+    ) -> Dict:
+        """Answer one resolved request on the client that read its contract.
 
-            # A zero-weight endpoint is not a hybrid request: it runs the
-            # surviving branch alone, so the keyword-only endpoint never
-            # builds a query vector and the vector-only endpoint never pays
-            # for BM25 analysis.
-            if retrieval_mode == "hybrid" and keyword_weight == 0.0:
-                retrieval_mode = "vector"
-            elif retrieval_mode == "hybrid" and vector_weight == 0.0:
-                retrieval_mode = "keyword"
+        The contract is read once per request and reused by the mode that
+        answers, so an empty knowledge base answers empty without calling the
+        embedding provider: only a real index justifies a provider request.
+        """
+        retrieval_mode = request.retrieval_mode
+        # A zero-weight endpoint is not a hybrid request: it runs the surviving
+        # branch alone, so the keyword-only endpoint never builds a query vector
+        # and the vector-only endpoint never pays for BM25 analysis.
+        if retrieval_mode == "hybrid" and request.keyword_weight == 0.0:
+            retrieval_mode = "vector"
+        elif retrieval_mode == "hybrid" and request.vector_weight == 0.0:
+            retrieval_mode = "keyword"
 
-            if retrieval_mode == "keyword":
-                return self._keyword_retrieve(
-                    client,
-                    binding=binding,
-                    collection_name=collection_name,
-                    sparse_query=resolved_queries.sparse_query,
-                    filter_expr=filter_expr,
-                    top_k=top_k,
-                    score_threshold=score_threshold,
-                )
-
-            if retrieval_mode == "hybrid":
-                return self._hybrid_retrieve(
-                    client,
-                    binding=binding,
-                    collection_name=collection_name,
-                    dense_query=resolved_queries.dense_query,
-                    sparse_query=resolved_queries.sparse_query,
-                    embed_model=embed_model,
-                    filter_expr=filter_expr,
-                    top_k=top_k,
-                    score_threshold=score_threshold,
-                    vector_weight=vector_weight,
-                    keyword_weight=keyword_weight,
-                )
-
-            query_vector = prepare_query_vector(
-                embed_model, resolved_queries.dense_query
-            )
-
-            hits = self._dense_search(
+        if retrieval_mode == "keyword":
+            return self._keyword_retrieve(
                 client,
                 binding=binding,
-                collection_name=collection_name,
-                query_vector=query_vector,
-                embed_model=embed_model,
-                filter_expr=filter_expr,
-                top_k=top_k,
+                collection_name=request.collection_name,
+                sparse_query=request.resolved_queries.sparse_query,
+                filter_expr=request.filter_expr,
+                top_k=request.top_k,
+                score_threshold=request.score_threshold,
             )
 
-            return self._process_hits(hits, score_threshold)
+        if retrieval_mode == "hybrid":
+            return self._hybrid_retrieve(
+                client,
+                binding=binding,
+                collection_name=request.collection_name,
+                dense_query=request.resolved_queries.dense_query,
+                sparse_query=request.resolved_queries.sparse_query,
+                embed_model=request.embed_model,
+                filter_expr=request.filter_expr,
+                top_k=request.top_k,
+                score_threshold=request.score_threshold,
+                vector_weight=request.vector_weight,
+                keyword_weight=request.keyword_weight,
+            )
+
+        query_vector = prepare_query_vector(
+            request.embed_model, request.resolved_queries.dense_query
+        )
+        hits = self._dense_search(
+            client,
+            binding=binding,
+            collection_name=request.collection_name,
+            query_vector=query_vector,
+            embed_model=request.embed_model,
+            filter_expr=request.filter_expr,
+            top_k=request.top_k,
+        )
+        return self._process_hits(hits, request.score_threshold)
 
     def _dense_search(
         self,
@@ -907,9 +958,19 @@ class MilvusBackend(BaseStorageBackend):
         neither read its columns nor serve its capabilities, and answering with
         whatever the old layout happens to contain would hide that. Only an
         explicit operator rebuild moves such a collection forward.
+
+        The contract is read at the snapshot level, which leaves one window
+        open: a document published moments ago can be visible as a collection
+        before its contract row is. A collection that exists without a visible
+        contract is therefore re-read once at the write level, inside this same
+        request and on the same client, before it is called incompatible: a
+        fresh publication degrades into a slower answer rather than a failure.
+        A contract that is really missing still fails.
         """
         binding = self._store.read_binding(client, collection_name)
         exists = self._store.has_collection(client, collection_name)
+        if binding is None and exists:
+            binding = self._store.read_binding_strong(client, collection_name)
         if binding is None:
             if exists:
                 raise IndexContractIncompatibleError(

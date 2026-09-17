@@ -223,6 +223,11 @@ class FakeStore:
         self.contract_reads += 1
         return self.binding if self.collection_exists else None
 
+    def read_binding_strong(self, client, collection_name):
+        self.calls.append(("read_binding_strong", collection_name))
+        self.contract_reads += 1
+        return self.binding if self.collection_exists else None
+
     def require_bound(self, client, collection_name):
         self.calls.append(("require_bound", collection_name))
         self.contract_reads += 1
@@ -825,7 +830,8 @@ def test_one_retrieve_reads_the_stored_contract_once(retrieval_mode):
 
     The stored contract cannot change while a single request is in flight, so
     asking the registry again inside the same request only adds a Strong
-    consistency round trip.
+    consistency round trip. A contract the read level sees is therefore never
+    re-read: the write-level fallback only answers one it missed.
     """
     backend = _backend()
     store = _hybrid_store()
@@ -843,7 +849,80 @@ def test_one_retrieve_reads_the_stored_contract_once(retrieval_mode):
     )
 
     assert store.contract_reads == 1
+    assert [name for name, *_ in store.calls].count("read_binding_strong") == 0
     assert store.searches or store.sparse_searches
+
+
+class _ContractInvisibleToTheReadLevel(FakeStore):
+    """The publication window: the collection is visible, the contract is not."""
+
+    def read_binding(self, client, collection_name):
+        super().read_binding(client, collection_name)
+        return None
+
+
+class _ContractInvisibleAtEveryLevel(_ContractInvisibleToTheReadLevel):
+    """A collection whose contract the request can never observe."""
+
+    def read_binding_strong(self, client, collection_name):
+        super().read_binding_strong(client, collection_name)
+        return None
+
+
+def _exploding_search(*args, **kwargs):
+    raise StorageBackendError("the storage call failed")
+
+
+def test_a_contract_invisible_to_the_read_level_is_re_read_once():
+    """A contract committed moments ago answers instead of failing.
+
+    The collection is already visible while its contract row is not, so the
+    request re-reads the contract at the write level on the client it holds.
+    """
+    backend = _backend()
+    store = _ContractInvisibleToTheReadLevel(
+        rows=[_hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75)]
+    )
+    backend._store = store
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="深度学习模型训练 zebra_pipeline_99",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={
+            "retrieval_mode": "vector",
+            "top_k": 5,
+            "score_threshold": 0.0,
+        },
+    )
+
+    assert [name for name, *_ in store.calls].count("read_binding_strong") == 1
+    assert store.contract_reads == 2
+    assert store.clients_created == 1
+    assert store.clients_closed == 1
+    assert result["records"]
+
+
+def test_a_contract_invisible_at_every_level_still_fails():
+    """A collection that really lost its contract must not degrade to empty."""
+    backend = _backend()
+    store = _ContractInvisibleAtEveryLevel()
+    backend._store = store
+
+    with pytest.raises(IndexContractIncompatibleError):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=ExplodingEmbedModel(),
+            retrieval_setting={
+                "retrieval_mode": "vector",
+                "top_k": 5,
+                "score_threshold": 0.0,
+            },
+        )
+
+    assert store.contract_reads == 2
+    assert not store.searches
 
 
 @pytest.mark.parametrize("retrieval_mode", ["vector", "keyword", "hybrid"])
@@ -852,7 +931,8 @@ def test_one_retrieve_owns_exactly_one_client(retrieval_mode):
 
     The client is still created per request and closed in ``finally``, so
     concurrent requests keep owning independent connections; the point is that
-    a single request no longer pays the teardown twice.
+    a single request no longer pays the teardown twice - including a request
+    that falls back to the write-level contract read.
     """
     backend = _backend()
     store = _hybrid_store()
@@ -870,6 +950,7 @@ def test_one_retrieve_owns_exactly_one_client(retrieval_mode):
     )
 
     assert store.clients_created == 1
+    assert store.clients_closed == 1
 
 
 @pytest.mark.parametrize("retrieval_mode", ["vector", "keyword", "hybrid"])
@@ -895,10 +976,6 @@ def test_a_failing_retrieve_still_releases_its_client(retrieval_mode):
 
     assert store.clients_created == 1
     assert store.clients_closed == 1
-
-
-def _exploding_search(*args, **kwargs):
-    raise StorageBackendError("the storage call failed")
 
 
 def test_retrieve_unsupported_mode_fails_loudly():

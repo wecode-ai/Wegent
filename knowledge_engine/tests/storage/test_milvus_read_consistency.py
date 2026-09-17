@@ -8,7 +8,9 @@ Retrieval answers from published data whose visibility the write path already
 proved through its own independent Strong read, so the read RPCs run at
 ``Bounded``. The publication row count and the collection creation stay
 ``Strong``: they are the reads that decide whether the data and the schema are
-really there before the write path reports success.
+really there before the write path reports success. The one read that crosses
+over is the publication-window fallback, which re-reads a contract the
+snapshot read missed before calling the collection incompatible.
 """
 
 import pytest
@@ -21,6 +23,8 @@ from knowledge_engine.storage.milvus_native import (
 )
 
 CONTRACT_DIMENSION = 4
+# Literals on purpose: these tests pin the level each RPC must send, so reading
+# them from the module would let a wrong production constant pass unnoticed.
 READ_CONSISTENCY = "Bounded"
 WRITE_CONSISTENCY = "Strong"
 
@@ -107,6 +111,19 @@ def test_registry_read_uses_the_read_consistency_level():
     _store(client).read_binding(client, "wegent_kb_1")
 
     assert client.consistency_levels("query") == [READ_CONSISTENCY]
+
+
+def test_write_level_contract_re_read_uses_the_write_consistency_level():
+    """The publication-window fallback reads the contract as the writer does.
+
+    It exists to see a contract the snapshot read missed, so it must not be
+    answered from that same snapshot.
+    """
+    client = _RecordingClient()
+
+    _store(client).read_binding_strong(client, "wegent_kb_1")
+
+    assert client.consistency_levels("query") == [WRITE_CONSISTENCY]
 
 
 def test_paged_read_uses_the_read_consistency_level():
