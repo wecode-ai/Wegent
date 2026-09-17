@@ -365,7 +365,7 @@ test('branches from the available cloud head when the cached causal base is newe
   assert.equal(source.calls.at(-1).options.snapshot, true)
 })
 
-test('discards an orphaned session and continues uploading healthy sessions', async () => {
+test('skips every unavailable orphaned turn and continues uploading healthy sessions', async () => {
   const source = await segmentSource()
   const summarize = source.summarize.bind(source)
   source.summarize = async locator => {
@@ -435,11 +435,11 @@ test('discards an orphaned session and continues uploading healthy sessions', as
   assert.ok(requests.some(request => request.path.includes('/healthy/')))
 })
 
-test('isolates a missing turn while other sessions continue uploading', async () => {
+test('permanently skips a missing turn and continues the same session', async () => {
   const source = await segmentSource()
   const summarize = source.summarize.bind(source)
   source.summarize = async locator => {
-    if (locator.sessionId === 'blocked-session') {
+    if (locator.turnId === 'missing-turn') {
       throw Object.assign(new Error('executor turn is unavailable'), {
         code: 'transcript_turn_missing',
       })
@@ -447,13 +447,21 @@ test('isolates a missing turn while other sessions continue uploading', async ()
     return summarize(locator)
   }
   const blocked = turn({
-    transcriptId: 'blocked',
-    taskId: 'blocked',
-    turnId: 'blocked-turn',
-    sessionId: 'blocked-session',
+    transcriptId: 'shared',
+    taskId: 'shared',
+    turnId: 'missing-turn',
+    sessionId: 'shared-session',
   })
   const outbox = new MemorySyncOutbox([
     blocked,
+    turn({
+      transcriptId: 'shared',
+      taskId: 'shared',
+      sequence: 2,
+      turnId: 'later-turn',
+      sessionId: 'shared-session',
+      baseSequence: 1,
+    }),
     turn({
       transcriptId: 'healthy',
       taskId: 'healthy',
@@ -461,6 +469,7 @@ test('isolates a missing turn while other sessions continue uploading', async ()
       sessionId: 'healthy-session',
     }),
   ])
+  const uploadedTurns = []
   const sync = new WeworkSync({
     apiBaseUrl: 'https://cloud.example.com/api',
     clientId: 'client-1',
@@ -480,16 +489,40 @@ test('isolates a missing turn while other sessions continue uploading', async ()
               body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
             }
           }
+          if (request.path.endsWith('/segments')) {
+            uploadedTurns.push(request.body.turnId)
+          }
           return { status: 200, body: {} }
         },
       },
     },
   })
 
-  await assert.rejects(sync.flushPending(), error => error.code === 'transcript_turn_missing')
+  await sync.flushPending()
 
+  assert.equal(outbox.count(), 0)
+  assert.deepEqual(uploadedTurns, ['later-turn', 'healthy-turn'])
+  await sync.enqueue(
+    turn({
+      transcriptId: 'shared',
+      taskId: 'shared',
+      turnId: 'missing-turn',
+      sessionId: 'shared-session',
+    })
+  )
+  assert.equal(outbox.count(), 0)
+  await sync.enqueue(
+    turn({
+      transcriptId: 'shared',
+      taskId: 'shared',
+      sequence: 3,
+      turnId: 'future-turn',
+      sessionId: 'shared-session',
+    })
+  )
   assert.equal(outbox.count(), 1)
-  assert.equal(outbox.first().turnId, blocked.turnId)
+  await sync.flushPending()
+  assert.deepEqual(uploadedTurns, ['later-turn', 'healthy-turn', 'future-turn'])
 })
 
 test('continues download and preference phases after an upload phase failure', async () => {
