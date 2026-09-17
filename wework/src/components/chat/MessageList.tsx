@@ -2142,7 +2142,7 @@ export function AssistantMessage({
         )
       })
     : null
-  const lastProcessingBlock = displayBlocks.at(-1)
+  const lastProcessingBlock = displayBlocks.at(-1) ?? message.blocks?.at(-1)
   const processingStartedAt =
     message.runtimeTurnStartedAt ??
     getProcessingSummaryStartMs(message, message.blocks ?? [], false)

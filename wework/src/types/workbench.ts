@@ -163,6 +163,7 @@ export interface RuntimeConversationTurn {
   itemMerge?: 'prepend'
   items: RuntimeConversationItem[]
   status: RuntimeWorkbenchMessageStatus
+  startedAt?: number
   completedAt?: string | number | null
   error?: string
   errorType?: string

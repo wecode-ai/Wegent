@@ -1,6 +1,7 @@
 import { act, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
+  mergeRuntimeConversationTurns,
   projectRuntimeConversationTurns,
   reduceRuntimeConversationTurns,
 } from '@/features/workbench/runtimeConversationTurns'
@@ -13,6 +14,104 @@ import '@/i18n'
 afterEach(() => vi.useRealTimers())
 
 describe('MessageList processing duration', () => {
+  test('uses the completion timestamp of a hidden thinking block', () => {
+    vi.useFakeTimers()
+    const start = Date.parse('2026-09-17T00:00:00Z')
+    const message: WorkbenchMessage = {
+      id: 'thinking-only',
+      role: 'assistant',
+      content: 'Done',
+      status: 'done',
+      createdAt: new Date(start).toISOString(),
+      blocks: [
+        {
+          id: 'thinking',
+          type: 'thinking',
+          content: 'Thinking',
+          status: 'done',
+          createdAt: start,
+          completedAt: start + 5000,
+        },
+      ],
+    }
+    render(<MessageList messages={[message]} />)
+    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
+    act(() => vi.advanceTimersByTime(10000))
+    expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
+  })
+
+  test.each(['done', 'failed', 'cancelled'] as const)(
+    'preserves a %s turn duration when transcript timestamps lose millisecond precision',
+    status => {
+      vi.useFakeTimers()
+      const start = Date.parse('2026-09-17T02:18:14.982Z')
+      const end = Date.parse('2026-09-17T02:18:32.300Z')
+      vi.setSystemTime(end)
+      const turn: RuntimeConversationTurn = {
+        id: 'rounded-transcript',
+        status,
+        completedAt: new Date(end).toISOString(),
+        items: [
+          {
+            id: 'user',
+            type: 'user_message',
+            message: {
+              id: 'user',
+              role: 'user',
+              content: 'Check',
+              createdAt: new Date(start).toISOString(),
+            },
+          },
+          {
+            id: 'tool',
+            type: 'block',
+            block: {
+              id: 'tool',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              createdAt: start + 200,
+              completedAt: end - 2000,
+            },
+          },
+        ],
+      }
+      const first = render(<MessageList messages={projectRuntimeConversationTurns([turn])} />)
+      const selector =
+        status === 'cancelled' ? 'assistant-stopped-notice' : 'processing-duration-label'
+      const frozen = screen.getByTestId(selector).textContent
+      expect(frozen).toContain(status === 'cancelled' ? '17s' : '17秒')
+      first.unmount()
+      const snapshot: RuntimeConversationTurn = {
+        ...turn,
+        completedAt: Math.floor(end / 1000) * 1000,
+        items: turn.items.map(item =>
+          item.type === 'user_message'
+            ? {
+                ...item,
+                message: {
+                  ...item.message,
+                  createdAt: new Date(Math.floor(start / 1000) * 1000).toISOString(),
+                },
+              }
+            : item
+        ),
+      }
+      const merged = mergeRuntimeConversationTurns([turn], [snapshot])
+      const restored = render(<MessageList messages={projectRuntimeConversationTurns(merged)} />)
+      expect(screen.getByTestId(selector).textContent).toBe(frozen)
+      act(() => vi.advanceTimersByTime(10000))
+      restored.rerender(
+        <MessageList
+          messages={projectRuntimeConversationTurns(
+            mergeRuntimeConversationTurns(merged, [snapshot])
+          )}
+        />
+      )
+      expect(screen.getByTestId(selector).textContent).toBe(frozen)
+    }
+  )
+
   test.each(['failed', 'done', 'cancelled'] as const)(
     'freezes a %s turn despite a tool retaining its streaming status',
     status => {
