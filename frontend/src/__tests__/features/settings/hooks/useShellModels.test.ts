@@ -69,6 +69,40 @@ describe('useShellModels', () => {
     expect(onError).not.toHaveBeenCalled()
   })
 
+  it('preserves a pending shell change when filters replace its request', async () => {
+    let resolvePrevious!: (response: UnifiedModelListResponse) => void
+    getModels
+      .mockResolvedValueOnce(claudeModels)
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolvePrevious = resolve
+          })
+      )
+      .mockResolvedValue(claudeModels)
+    const onError = jest.fn()
+    const { result, rerender } = renderHook(
+      ({ shellName, groupName }) =>
+        useShellModels({ enabled: true, shellName, groupName, category: 'llm', onError }),
+      { initialProps: { shellName: 'shell-a', groupName: 'group-a' } }
+    )
+    await waitFor(() => expect(result.current.hasLoaded).toBe(true))
+
+    rerender({ shellName: 'shell-b', groupName: 'group-a' })
+    expect(result.current.isLoading).toBe(true)
+    rerender({ shellName: 'shell-b', groupName: 'group-b' })
+    await waitFor(() => expect(result.current.hasLoaded).toBe(true))
+    expect(result.current.shellChanged).toBe(true)
+
+    await act(async () => resolvePrevious({ data: [] }))
+    expect(result.current.models).toEqual(claudeModels.data)
+    expect(result.current.shellChanged).toBe(true)
+
+    rerender({ shellName: 'shell-b', groupName: 'group-c' })
+    await waitFor(() => expect(result.current.hasLoaded).toBe(true))
+    expect(result.current.shellChanged).toBe(false)
+  })
+
   it('does not accept a failed model lookup as a validated empty list', async () => {
     const onError = jest.fn()
     getModels.mockRejectedValue(new Error('Unavailable'))

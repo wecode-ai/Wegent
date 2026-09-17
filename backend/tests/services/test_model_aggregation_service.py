@@ -9,6 +9,7 @@ Focuses on testing model compatibility filtering for custom shells.
 """
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -844,15 +845,28 @@ class TestModelAggregationService:
         # Custom shell should return the inherited shellType
         assert shell_type == "ClaudeCode"
 
-    def test_get_shell_support_model_not_found(self, test_db: Session, test_user: User):
-        """Test _get_shell_support_model returns shell_name when not found."""
-        support_model, shell_type = model_aggregation_service._get_shell_support_model(
-            test_db, "non-existent-shell", test_user
-        )
+    @pytest.mark.parametrize("invalid_config", [False, True])
+    def test_model_list_rejects_missing_or_invalid_shell(
+        self, test_db: Session, test_user: User, invalid_config: bool
+    ) -> None:
+        """Lookup failures must not be interpreted as an unrestricted allowlist."""
+        if invalid_config:
+            shell = self._create_public_shell(test_db, "shell-a", "ClaudeCode")
+            shell.json = {
+                **shell.json,
+                "spec": {**shell.json["spec"], "supportModel": "claude"},
+            }
+            test_db.commit()
 
-        # When shell not found, should return empty list and the shell_name as type
-        assert support_model == []
-        assert shell_type == "non-existent-shell"
+        with pytest.raises(HTTPException) as error:
+            model_aggregation_service.list_available_models(
+                db=test_db, current_user=test_user, shell_type="shell-a"
+            )
+
+        assert error.value.status_code == 400
+        assert error.value.detail == (
+            "Invalid shell configuration" if invalid_config else "Shell not found"
+        )
 
     @pytest.mark.parametrize("shell_type", ["ClaudeCode", "Codex"])
     @pytest.mark.parametrize(
@@ -884,7 +898,9 @@ class TestModelAggregationService:
 
         personal_models = []
         for name, provider in zip(
-            ["model-a", "model-b", "model-c"], ["claude", "openai", "gemini"]
+            ["model-a", "model-b", "model-c"],
+            ["claude", "openai", "gemini"],
+            strict=True,
         ):
             for user_id, source in [(0, "public"), (test_user.id, "user")]:
                 model_name = f"{name}-{source}"

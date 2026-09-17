@@ -16,6 +16,7 @@ import logging
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK
@@ -360,11 +361,14 @@ class ModelAggregationService:
 
         Returns:
             Tuple of (supported model list, shell type)
+
+        Raises:
+            HTTPException: If the shell is missing or its configuration is invalid.
         """
         user_id = current_user.id if current_user else None
         shell_json = find_shell_json(db, shell_name, user_id)
         if not shell_json:
-            return ([], shell_name)
+            raise HTTPException(status_code=400, detail="Shell not found")
 
         try:
             shell_crd = Shell.model_validate(shell_json)
@@ -374,8 +378,9 @@ class ModelAggregationService:
                 shell_crd.spec.shellType,
             )
         except (ValueError, KeyError, AttributeError) as e:
-            logger.warning("Failed to parse shell config: %s", e)
-            return ([], shell_name)
+            raise HTTPException(
+                status_code=400, detail="Invalid shell configuration"
+            ) from e
 
     def _is_custom_model(self, model_data: Dict[str, Any]) -> bool:
         """

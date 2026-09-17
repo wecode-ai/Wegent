@@ -37,21 +37,29 @@ export function useShellModels({
   )
   const [result, setResult] = useState<ModelResult | null>(null)
   const previousShell = useRef<string | null>(null)
+  const shellChangePending = useRef(false)
 
   useEffect(() => {
     if (!query) {
       previousShell.current = null
+      shellChangePending.current = false
       return
     }
 
     let cancelled = false
-    const shellChanged = previousShell.current !== null && previousShell.current !== query.shellName
+    if (previousShell.current !== null && previousShell.current !== query.shellName) {
+      shellChangePending.current = true
+    }
+    const shellChanged = shellChangePending.current
     previousShell.current = query.shellName
 
     modelApis
       .getUnifiedModels(query.shellName, false, query.scope, query.groupName, query.category)
       .then(response => {
-        if (!cancelled) setResult({ query, models: response.data, shellChanged })
+        if (!cancelled) {
+          setResult({ query, models: response.data, shellChanged })
+          shellChangePending.current = false
+        }
       })
       .catch(() => {
         if (!cancelled) {
