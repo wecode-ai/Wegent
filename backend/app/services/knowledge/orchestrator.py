@@ -1067,6 +1067,7 @@ class KnowledgeOrchestrator:
         max_calls_per_conversation: Optional[int] = None,
         exempt_calls_before_check: Optional[int] = None,
         multimodal_update_fields: Optional[Dict[str, Any]] = None,
+        dingtalk_auto_sync_enabled: Optional[bool] = None,
     ) -> KnowledgeBaseResponse:
         """
         Update a knowledge base.
@@ -1112,6 +1113,8 @@ class KnowledgeOrchestrator:
             update_fields["allow_document_download"] = allow_document_download
         if retrieval_config is not None:
             update_fields["retrieval_config"] = retrieval_config
+        if dingtalk_auto_sync_enabled is not None:
+            update_fields["dingtalk_auto_sync_enabled"] = dingtalk_auto_sync_enabled
         if summary_enabled is not None:
             update_fields["summary_enabled"] = summary_enabled
         if summary_model_ref is not None:
@@ -1168,6 +1171,7 @@ class KnowledgeOrchestrator:
         namespace: str = "default",
         direct_access_requirement: Literal["read", "edit"] = "read",
         allow_document_download: Optional[bool] = None,
+        dingtalk_auto_sync_enabled: bool = False,
         summary_enabled: bool = False,
         rag_config_mode: Literal["auto", "disabled"] = "auto",
         # REST API scenario: pass complete config
@@ -1277,6 +1281,7 @@ class KnowledgeOrchestrator:
             show_generation_task=show_generation_task,
             generation_strategy=generation_strategy,
             retrieval_config=resolved_retrieval_config,
+            dingtalk_auto_sync_enabled=dingtalk_auto_sync_enabled,
             summary_enabled=summary_enabled,
             summary_model_ref=resolved_summary_model_ref,
             execution_model_ref=execution_model_ref,
@@ -1335,6 +1340,7 @@ class KnowledgeOrchestrator:
         multimodal_analysis_model_ref: Optional[Dict[str, str]] = None,
         multimodal_analysis_video_prompt: Optional[str] = None,
         multimodal_analysis_image_prompt: Optional[str] = None,
+        dingtalk_auto_sync_enabled: bool = False,
     ) -> KnowledgeBaseResponse:
         """
         Create a knowledge base with auto-configuration support.
@@ -1397,6 +1403,7 @@ class KnowledgeOrchestrator:
             namespace=namespace,
             direct_access_requirement=direct_access_requirement,
             allow_document_download=allow_document_download,
+            dingtalk_auto_sync_enabled=dingtalk_auto_sync_enabled,
             summary_enabled=summary_enabled,
             rag_config_mode=rag_config_mode,
             retrieval_config=retrieval_config,

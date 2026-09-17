@@ -294,8 +294,11 @@ def test_redelivery_during_fetch_does_not_read_source_again(
     document = _create_placeholder(task_db, test_user.id)
     document_id = document.id
 
+    redelivered = []
+
     async def fetch(*args):
         _run_task(document_id)
+        redelivered.append(document_id)
         raise RuntimeError("source unavailable")
 
     provider = _provider(fetch_side_effect=fetch)
@@ -306,6 +309,7 @@ def test_redelivery_during_fetch_does_not_read_source_again(
 
     _run_task(document_id)
 
+    assert redelivered == [document_id]
     provider.fetch_content.assert_awaited_once()
     document = task_db.get(KnowledgeDocument, document_id)
     assert document is not None

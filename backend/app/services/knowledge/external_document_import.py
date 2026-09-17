@@ -68,6 +68,7 @@ class ExternalDocumentRefreshResult:
 
     document: KnowledgeDocument
     started: bool
+    reason: str = ""
 
 
 @dataclass
@@ -144,22 +145,34 @@ class ExternalDocumentImportService:
         )
         return (result.created or result.updated or result.processing)[0]
 
-    def _refresh_existing_document(
+    def refresh_existing_document(
         self,
         db: Session,
         document: KnowledgeDocument,
-        external_meta: dict,
+        external_meta: dict | None = None,
+        *,
+        expected_generation: int | None = None,
     ) -> ExternalDocumentRefreshResult:
-        """Queue a single-version refresh while preserving local organization."""
+        """Queue a single-version refresh while preserving local organization.
+
+        Every caller — a manual reimport and an automatic refresh alike —
+        goes through the same dispatched task, so there is one way to start
+        an import attempt. ``external_meta`` refreshes the provider-owned
+        metadata a manual import just resolved; a caller that has none (an
+        automatic refresh holds only a resource id) passes nothing.
+        """
         decision = prepare_document_index_enqueue(
             db=db,
             document_id=document.id,
             allow_if_success=True,
+            expected_generation=expected_generation,
         )
         if not decision.should_enqueue:
-            if decision.reason == "already_in_progress":
+            if decision.reason in {"already_in_progress", "stale_generation"}:
                 db.refresh(document)
-                return ExternalDocumentRefreshResult(document, started=False)
+                return ExternalDocumentRefreshResult(
+                    document, started=False, reason=decision.reason
+                )
             status_code = 404 if decision.reason == "document_not_found" else 409
             raise ExternalDocumentImportError(
                 f"External document refresh was not started: {decision.reason}",
@@ -173,10 +186,21 @@ class ExternalDocumentImportService:
 
         if not is_synchronized_external_document(document):
             document.is_active = False
-        document.update_external_source_config(**external_meta)
+        # Invalidate until the fetched body lands with its corresponding timestamp.
+        refreshed_metadata = dict(external_meta or {})
+        refreshed_metadata["source_update_time"] = None
+        document.update_external_source_config(**refreshed_metadata)
         db.commit()
         db.refresh(document)
         self._dispatch_import_task(db, document)
+        logger.info(
+            "[External Import] Refresh queued document_id=%s kb_id=%s generation=%s "
+            "previous_attachment_id=%s",
+            document.id,
+            document.kind_id,
+            document.index_generation,
+            document.attachment_id,
+        )
         return ExternalDocumentRefreshResult(document, started=True)
 
     def import_resolved_documents(
@@ -224,7 +248,7 @@ class ExternalDocumentImportService:
                 continue
             if plan.action == "refresh":
                 assert plan.document is not None
-                refresh = self._refresh_existing_document(
+                refresh = self.refresh_existing_document(
                     db, plan.document, plan.metadata
                 )
                 (updated if refresh.started else processing).append(refresh.document)
@@ -378,7 +402,7 @@ class ExternalDocumentImportService:
         self, db: Session, document: KnowledgeDocument
     ) -> ExternalDocumentRefreshResult:
         """Queue a refresh after the caller has established authorization."""
-        return self._refresh_existing_document(
+        return self.refresh_existing_document(
             db, document, document.external_source_config
         )
 
@@ -419,7 +443,7 @@ class ExternalDocumentImportService:
         )
         updated: list[KnowledgeDocument] = []
         for document, external_meta in refreshable:
-            refresh = self._refresh_existing_document(db, document, external_meta)
+            refresh = self.refresh_existing_document(db, document, external_meta)
             (updated if refresh.started else processing).append(refresh.document)
 
         created = self._create_batch_documents(
@@ -681,7 +705,7 @@ class ExternalDocumentImportService:
 
         generation = document.index_generation
         try:
-            import_external_document_task.delay(
+            queued = import_external_document_task.delay(
                 document_id=document.id, expected_generation=generation
             )
         except Exception as exc:
@@ -704,6 +728,15 @@ class ExternalDocumentImportService:
                 document.id,
                 exc,
             )
+            return
+        logger.info(
+            "[External Import] Body fetch queued document_id=%s kb_id=%s "
+            "generation=%s task_id=%s",
+            document.id,
+            document.kind_id,
+            generation,
+            getattr(queued, "id", None) or "unavailable",
+        )
 
 
 def run_external_document_import(
@@ -763,6 +796,16 @@ def run_external_document_import(
             user=user,
             content=content,
             generation=generation,
+        )
+        logger.info(
+            "[External Import] Body landed document_id=%s kb_id=%s generation=%s "
+            "attachment_id=%s content_bytes=%s provider_update_time=%s",
+            document_id,
+            document.kind_id,
+            generation,
+            document.attachment_id,
+            len(content.content),
+            (content.metadata or {}).get("source_update_time"),
         )
     except (ExternalImportLostWriteError, ObjectDeletedError):
         logger.info(

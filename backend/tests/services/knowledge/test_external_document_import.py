@@ -288,6 +288,51 @@ class TestImportDocument:
                 KnowledgeDocumentUpdate(name="Local title"),
             )
 
+    def test_wiki_refresh_preserves_active_copy_and_clears_legacy_timestamp(
+        self,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+        bypass_wiki_connection_preflight: None,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id, "wiki-refresh-compatibility")
+        resolved = ResolvedExternalDocument(
+            locator=ExternalSyncLocator("wiki", "conn-a", "42"),
+            title="Remote title",
+            source_url="http://wiki.example.com/docs/runbook",
+            remote_version="v1",
+            metadata={
+                "site_url": "http://wiki.example.com",
+                "path": "docs/runbook",
+            },
+        )
+        result = external_document_import_service.import_resolved_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="wiki",
+            resolved_documents=[resolved],
+        )
+        document = result.created[0]
+        document.index_status = DocumentIndexStatus.SUCCESS
+        document.is_active = True
+        document.attachment_id = 1234
+        document.update_external_source_config(source_update_time=1789562644000)
+        test_db.commit()
+        dispatched.clear()
+
+        refresh = external_document_import_service.queue_source_refresh(
+            test_db, document
+        )
+
+        assert refresh.started is True
+        test_db.refresh(document)
+        assert document.is_active is True
+        assert document.index_status == DocumentIndexStatus.QUEUED
+        assert "source_update_time" not in document.external_source_config
+        assert document.external_source_config["url"].startswith("http://")
+        assert dispatched == [document.id]
+
     def test_resolved_batch_conflict_is_rejected_before_first_create(
         self,
         test_db: Session,
