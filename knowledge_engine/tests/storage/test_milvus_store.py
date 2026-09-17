@@ -11,6 +11,7 @@ layout and the filter vocabulary it works with are tested in
 ``test_milvus_native.py``.
 """
 
+import logging
 from typing import Any
 
 import pytest
@@ -190,32 +191,42 @@ class _IndexParams:
 
 
 class _CollectionClient:
-    """A collection that declares a contract, or none at all.
+    """A Milvus client stub for one knowledge base's collection lifecycle.
 
-    ``create_raises`` models the losing side of a create race: the server
-    rejects the duplicate name, and the collection that answers the read-back is
-    the one the winner created.
+    ``exists`` says whether a collection answers under that name and
+    ``contract`` what it declares (``None``: it exists without a readable
+    contract). ``create_raises`` with ``winner_contract`` models the losing side
+    of a create race: this writer's create is rejected because another writer
+    took the name first, and the read-back then finds what that writer declared.
     """
 
     def __init__(
         self,
         *,
+        exists: bool = False,
         contract: MilvusIndexBinding | None = None,
         create_raises: bool = False,
+        winner_contract: MilvusIndexBinding | None = None,
     ) -> None:
+        self.exists = exists
         self.contract = contract
         self.create_raises = create_raises
+        self.winner_contract = winner_contract
         self.schemas: list[Any] = []
         self.descriptions = 0
         self.queries: list[dict] = []
 
     def has_collection(self, collection_name: str, **kwargs) -> bool:
-        return self.contract is not None or bool(self.schemas)
+        return self.exists or bool(self.schemas)
 
     def create_collection(self, **kwargs) -> None:
         self.schemas.append(kwargs["schema"])
         if self.create_raises:
+            # Another writer took the name first; this collection is theirs.
+            self.exists = True
+            self.contract = self.winner_contract
             raise RuntimeError("collection already exists")
+        self.exists = True
         self.contract = index_contract_from_description(kwargs["schema"].description)
 
     def prepare_index_params(self):
@@ -293,7 +304,7 @@ def test_ensure_index_creates_a_collection_that_declares_the_contract():
 def test_ensure_index_adopts_a_collection_that_declares_this_contract():
     """A compatible collection is used as it is; nothing is created."""
     binding = _binding()
-    client = _CollectionClient(contract=binding)
+    client = _CollectionClient(exists=True, contract=binding)
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
     declared = store.ensure_index(
@@ -311,7 +322,7 @@ def test_ensure_index_adopts_a_collection_that_declares_this_contract():
 def test_ensure_index_still_rejects_an_unknown_collection():
     """A collection that exists without a contract is never adopted."""
     binding = _binding()
-    client = _CollectionClient(contract=None, create_raises=True)
+    client = _CollectionClient(exists=True)
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
     with pytest.raises(IndexContractIncompatibleError):
@@ -322,6 +333,8 @@ def test_ensure_index_still_rejects_an_unknown_collection():
             embedding_space=binding.embedding_space,
         )
 
+    assert client.schemas == [], "a foreign collection is never re-created"
+
 
 def test_ensure_index_confirms_the_contract_of_a_collection_it_did_not_create():
     """The loser of a create race uses the winner's contract, if it matches.
@@ -331,7 +344,7 @@ def test_ensure_index_confirms_the_contract_of_a_collection_it_did_not_create():
     contract fails it. Nothing waits for the winner.
     """
     binding = _binding()
-    client = _CollectionClient(contract=binding, create_raises=True)
+    client = _CollectionClient(create_raises=True, winner_contract=binding)
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
     declared = store.ensure_index(
@@ -342,6 +355,7 @@ def test_ensure_index_confirms_the_contract_of_a_collection_it_did_not_create():
     )
 
     assert declared == binding
+    assert len(client.schemas) == 1, "the create really was attempted"
     assert client.descriptions == 1
 
 
@@ -354,7 +368,7 @@ def test_ensure_index_rejects_a_collection_created_by_another_contract():
     """
     binding = _binding()
     other = _binding(embedding_space="sha256:late-writer")
-    client = _CollectionClient(contract=binding, create_raises=True)
+    client = _CollectionClient(create_raises=True, winner_contract=binding)
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
     with pytest.raises(IndexContractIncompatibleError):
@@ -365,7 +379,40 @@ def test_ensure_index_rejects_a_collection_created_by_another_contract():
             embedding_space=other.embedding_space,
         )
 
-    assert client.schemas == []
+    assert len(client.schemas) == 1
+
+
+def test_a_lost_create_race_is_logged_apart_from_a_contract_mismatch(caplog):
+    """On-call can tell "lost the create race" from "contract is incompatible"."""
+    binding = _binding()
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    with caplog.at_level(logging.INFO, logger="knowledge_engine.storage.milvus_store"):
+        store.ensure_index(
+            _CollectionClient(create_raises=True, winner_contract=binding),
+            binding.collection_name,
+            dimension=binding.dimension,
+            embedding_space=binding.embedding_space,
+        )
+        races = [record.getMessage() for record in caplog.records]
+
+    assert any("lost the create race" in message for message in races), races
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="knowledge_engine.storage.milvus_store"):
+        with pytest.raises(IndexContractIncompatibleError):
+            store.ensure_index(
+                _CollectionClient(
+                    exists=True,
+                    contract=_binding(embedding_space="sha256:the-winner"),
+                ),
+                binding.collection_name,
+                dimension=binding.dimension,
+                embedding_space=binding.embedding_space,
+            )
+        mismatches = [record.getMessage() for record in caplog.records]
+
+    assert not any("lost the create race" in message for message in mismatches)
 
 
 def test_ensure_index_reports_a_collection_that_cannot_be_read_back():

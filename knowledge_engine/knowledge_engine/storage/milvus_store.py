@@ -276,6 +276,11 @@ class MilvusDocumentStore:
             # nothing to read back is raised as it is.
             if not self.has_collection(client, binding.collection_name):
                 raise
+            logger.info(
+                "[Milvus] Collection %s lost the create race; confirming the "
+                "contract it declares",
+                binding.collection_name,
+            )
 
     def _read_created_collection(
         self, client: MilvusClient, requested: MilvusIndexBinding
