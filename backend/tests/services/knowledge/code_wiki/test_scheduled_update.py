@@ -601,6 +601,71 @@ def test_deleting_a_scheduled_update_stops_an_already_queued_worker(
     assert execution.result_summary == "Skipped because scheduled update was deleted"
 
 
+def test_worker_rechecks_the_plan_after_marking_its_execution_running(
+    test_db: Session, test_user: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The RUNNING status commit must not admit a generation against stale locks."""
+    from app.models.subscription import BackgroundExecution
+    from app.schemas.subscription import BackgroundExecutionStatus
+    from app.services.knowledge.code_wiki import scheduled_update
+
+    wiki = Kind(
+        user_id=test_user.id,
+        kind="KnowledgeBase",
+        name="wiki",
+        namespace="default",
+        is_active=True,
+        json={"spec": {"kbType": "code_wiki"}},
+    )
+    test_db.add(wiki)
+    test_db.flush()
+    monkeypatch.setattr(
+        scheduled_update,
+        "validate_runner",
+        lambda db, knowledge_base, user_id: test_user,
+    )
+    plan = configure_scheduled_update(test_db, knowledge_base=wiki, data=schedule())
+    execution = BackgroundExecution(
+        user_id=test_user.id,
+        subscription_id=plan.id,
+        task_id=0,
+        trigger_type="interval",
+        trigger_reason="Scheduled execution",
+        prompt="Check and update Code Wiki",
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    update_execution_status = (
+        scheduled_update.subscription_service.execution_manager.update_execution_status
+    )
+
+    def delete_plan_after_running(db: Session, **kwargs: Any) -> bool:
+        updated = update_execution_status(db, **kwargs)
+        if kwargs["status"] == BackgroundExecutionStatus.RUNNING:
+            delete_scheduled_update(db, knowledge_base=wiki)
+        return updated
+
+    monkeypatch.setattr(
+        scheduled_update.subscription_service.execution_manager,
+        "update_execution_status",
+        delete_plan_after_running,
+    )
+    monkeypatch.setattr(
+        scheduled_update,
+        "start_run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError()),
+    )
+
+    execute_scheduled_update(
+        test_db, subscription_id=plan.id, execution_id=execution.id
+    )
+    test_db.refresh(execution)
+
+    assert execution.status == BackgroundExecutionStatus.COMPLETED_SILENT.value
+    assert execution.result_summary == "Skipped because scheduled update was deleted"
+
+
 def test_disabling_a_scheduled_update_stops_an_already_queued_worker(
     test_db: Session, test_user: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

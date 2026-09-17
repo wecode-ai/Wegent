@@ -94,4 +94,71 @@ describe('subscription summary refresh', () => {
     await waitFor(() => expect(subscriptionApis.getSubscriptions).toHaveBeenCalledTimes(2))
     expect(await screen.findByText('1')).toBeInTheDocument()
   })
+
+  it('keeps the newest subscription response when terminal events overlap', async () => {
+    let resolveInitial!: (value: {
+      items: Subscription[]
+      total: number
+      invalid_schedule_count: number
+    }) => void
+    let resolveOlder!: (value: {
+      items: Subscription[]
+      total: number
+      invalid_schedule_count: number
+    }) => void
+    let resolveNewest!: (value: {
+      items: Subscription[]
+      total: number
+      invalid_schedule_count: number
+    }) => void
+    const getSubscriptions = jest.mocked(subscriptionApis.getSubscriptions)
+    getSubscriptions
+      .mockReset()
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveInitial = resolve
+          }) as never
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveOlder = resolve
+          }) as never
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveNewest = resolve
+          }) as never
+      )
+    render(
+      <SubscriptionProvider>
+        <ExecutionCount />
+      </SubscriptionProvider>
+    )
+    await waitFor(() => expect(getSubscriptions).toHaveBeenCalledTimes(1))
+    await act(async () =>
+      resolveInitial({ items: [SUBSCRIPTION], total: 1, invalid_schedule_count: 0 })
+    )
+    expect(mockExecutionUpdate).toBeDefined()
+    act(() => mockExecutionUpdate?.(executionUpdate('COMPLETED')))
+    act(() => mockExecutionUpdate?.(executionUpdate('FAILED')))
+    await waitFor(() => expect(getSubscriptions).toHaveBeenCalledTimes(3))
+    await act(async () =>
+      resolveNewest({
+        items: [{ ...SUBSCRIPTION, execution_count: 2 }],
+        total: 1,
+        invalid_schedule_count: 0,
+      })
+    )
+    await act(async () =>
+      resolveOlder({
+        items: [{ ...SUBSCRIPTION, execution_count: 1 }],
+        total: 1,
+        invalid_schedule_count: 0,
+      })
+    )
+    expect(await screen.findByText('2')).toBeInTheDocument()
+  })
 })

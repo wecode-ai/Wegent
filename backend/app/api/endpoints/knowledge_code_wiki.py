@@ -560,7 +560,14 @@ def delete_code_wiki_scheduled_update(
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
     _assert_code_wiki_schedule_target(knowledge_base)
     _assert_caller_owns_schedule(current_user, knowledge_base)
-    delete_scheduled_update(db, knowledge_base=knowledge_base)
+    try:
+        delete_scheduled_update(db, knowledge_base=knowledge_base)
+    except CodeWikiRunError as exc:
+        if str(exc) != "Code Wiki no longer exists":
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Code wiki not found"
+        ) from exc
 
 
 @router.get("/{knowledge_base_id}/code-wiki/status", response_model=CodeWikiRunStatus)

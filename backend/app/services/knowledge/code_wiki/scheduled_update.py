@@ -462,8 +462,19 @@ def execute_scheduled_update(
     knowledge_base_id = code_wiki_id(snapshot) if snapshot is not None else None
     if knowledge_base_id is None:
         return
-    # Lifecycle writers lock the Code Wiki and then its plan. Use the same order so
-    # delete/configure and a queued worker have one deterministic linearization point.
+    execution = db.get(BackgroundExecution, execution_id)
+    if execution is None or not is_code_wiki_scheduled_update(snapshot):
+        return
+    manager = subscription_service.execution_manager
+    manager.update_execution_status(
+        db,
+        execution_id=execution_id,
+        status=BackgroundExecutionStatus.RUNNING,
+        skip_notifications=True,
+    )
+    # update_execution_status commits. Re-acquire lifecycle locks after it, in the
+    # same KB -> plan order used by configuration and deletion, before admitting a
+    # generation.
     knowledge_base = (
         db.query(Kind)
         .filter(Kind.id == knowledge_base_id)
@@ -478,20 +489,8 @@ def execute_scheduled_update(
         .with_for_update()
         .first()
     )
-    execution = db.get(BackgroundExecution, execution_id)
-    if (
-        subscription is None
-        or execution is None
-        or not is_code_wiki_scheduled_update(subscription)
-    ):
+    if subscription is None or not is_code_wiki_scheduled_update(subscription):
         return
-    manager = subscription_service.execution_manager
-    manager.update_execution_status(
-        db,
-        execution_id=execution_id,
-        status=BackgroundExecutionStatus.RUNNING,
-        skip_notifications=True,
-    )
     # A worker may have been enqueued just before its plan was deleted. Preserve the
     # execution record but make that queued attempt terminal instead of starting a
     # run after the user explicitly removed future updates.

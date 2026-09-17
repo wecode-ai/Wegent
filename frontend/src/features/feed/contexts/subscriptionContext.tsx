@@ -7,7 +7,15 @@
 /**
  * Subscription context for managing Subscription state.
  */
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { subscriptionApis } from '@/apis/subscription'
 import type {
   Subscription,
@@ -106,15 +114,18 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
 
   // Invalid schedule count
   const [invalidScheduleCount, setInvalidScheduleCount] = useState(0)
+  const subscriptionRequestGeneration = useRef(0)
 
   // Fetch subscriptions
   const refreshSubscriptions = useCallback(async () => {
+    const requestGeneration = ++subscriptionRequestGeneration.current
     setSubscriptionsLoading(true)
     try {
       const response = await subscriptionApis.getSubscriptions({
         page: 1,
         limit: SUBSCRIPTIONS_PER_PAGE,
       })
+      if (requestGeneration !== subscriptionRequestGeneration.current) return
       setSubscriptions(response.items)
       setSubscriptionsTotal(response.total)
       setSubscriptionsPage(1)
@@ -122,7 +133,9 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     } catch (error) {
       console.error('Failed to fetch subscriptions:', error)
     } finally {
-      setSubscriptionsLoading(false)
+      if (requestGeneration === subscriptionRequestGeneration.current) {
+        setSubscriptionsLoading(false)
+      }
     }
   }, [])
 
