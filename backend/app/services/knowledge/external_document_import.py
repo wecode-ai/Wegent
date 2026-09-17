@@ -27,6 +27,7 @@ from app.models.knowledge import (
 )
 from app.models.user import User
 from app.schemas.knowledge import ContentOrigin, DocumentProcessingStage
+from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.knowledge.external_document_providers import (
     DetachedExternalDocumentProvider,
     ExternalDocumentContent,
@@ -299,7 +300,7 @@ class ExternalDocumentImportService:
         plans: list[_ResolvedImportPlan] = []
         duplicates: list[KnowledgeDocument] = []
         canonical_wiki_documents: dict[tuple[str, str], KnowledgeDocument] = {}
-        if provider.provider_id == "wiki":
+        if provider.provider_id == WIKI_PROVIDER_ID:
             from app.services.knowledge.external_sync_providers import (
                 get_document_sync_config,
             )
@@ -309,7 +310,8 @@ class ExternalDocumentImportService:
                 .join(KnowledgeDocument.external_source)
                 .filter(
                     KnowledgeDocumentExternalSource.kind_id == knowledge_base_id,
-                    KnowledgeDocumentExternalSource.external_provider == "wiki",
+                    KnowledgeDocumentExternalSource.external_provider
+                    == WIKI_PROVIDER_ID,
                 )
                 .all()
             )
@@ -921,7 +923,7 @@ def _external_source_unavailable_message(
     exc: ExternalSourceUnavailableError,
 ) -> str:
     """Keep Wiki sync copy provider-specific without changing other providers."""
-    if provider_id == "wiki":
+    if provider_id == WIKI_PROVIDER_ID:
         if exc.error_code == "external_source_missing":
             return _external_fetch_error_message(
                 exc,

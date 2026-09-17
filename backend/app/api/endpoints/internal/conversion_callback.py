@@ -24,6 +24,7 @@ from app.services.context.context_service import context_service
 from app.services.knowledge.attachment_cleanup import (
     EXTERNAL_WIKI_ATTACHMENT_LIFECYCLE_OWNER,
 )
+from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.knowledge.index_state_machine import (
     mark_document_conversion_started,
     mark_document_conversion_succeeded,
@@ -248,7 +249,7 @@ def conversion_completed_callback(
             subtask_id=0,
             lifecycle_owner=(
                 EXTERNAL_WIKI_ATTACHMENT_LIFECYCLE_OWNER
-                if getattr(doc, "external_provider", None) == "wiki"
+                if getattr(doc, "external_provider", None) == WIKI_PROVIDER_ID
                 else None
             ),
         )

@@ -179,7 +179,9 @@ function TreeNode({
               <Folder className="h-3.5 w-3.5 shrink-0 text-text-muted" />
             )}
             <span className="min-w-0 flex-1 truncate">{page?.title || node.name}</span>
-            <span className="shrink-0 text-xs text-text-muted">（{directoryPageIds.length}）</span>
+            <span className="shrink-0 text-xs text-text-muted">
+              {t('wikiSection.item_count', { count: directoryPageIds.length })}
+            </span>
             {page && (
               <span
                 className="max-w-[45%] shrink truncate text-xs text-text-muted"

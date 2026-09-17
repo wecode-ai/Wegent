@@ -68,6 +68,7 @@ from app.services.knowledge.content_scope import (
     assert_user_content_is_mutable,
     wiki_pages,
 )
+from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.knowledge.folder_policy import assert_document_can_be_placed_in_folder
 from app.services.knowledge.knowledge_access_policy import (
     can_directly_access_knowledge_base as evaluate_direct_knowledge_base_access,
@@ -2008,7 +2009,7 @@ class KnowledgeService:
             )
 
             if (
-                doc.external_provider == "wiki"
+                doc.external_provider == WIKI_PROVIDER_ID
                 and is_synchronized_external_document(doc)
                 and data.name != doc.name
             ):
@@ -2096,7 +2097,9 @@ class KnowledgeService:
         attachment_id = doc.attachment_id
         # Capture converted attachment ID before deleting the document row
         converted_attachment_id = getattr(doc, "converted_attachment_id", None)
-        retry_orphan_cleanup = getattr(doc, "external_provider", None) == "wiki"
+        retry_orphan_cleanup = (
+            getattr(doc, "external_provider", None) == WIKI_PROVIDER_ID
+        )
         # Use document owner's user_id for context deletion, since delete_context
         # enforces ownership filtering. A non-owner requester (e.g., admin/group
         # manager) would cause the deletion to silently fail and leave orphaned records.

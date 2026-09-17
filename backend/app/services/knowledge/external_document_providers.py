@@ -29,6 +29,7 @@ from app.core.async_utils import AsyncSessionManager
 from app.core.config import settings
 from app.models.user import User
 from app.services.dingtalk_document_types import get_import_extension
+from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.plugin_upstream_fetch import UpstreamFetchError, validate_upstream_url
 from shared.telemetry.decorators import trace_async
 
@@ -576,7 +577,10 @@ def get_external_document_provider(
 ) -> ExternalDocumentProvider | None:
     """Return the registered adapter for a provider ID, or None."""
     normalized = (provider_id or "").strip().lower()
-    if normalized == "wiki" and normalized not in _EXTERNAL_DOCUMENT_PROVIDERS:
+    if (
+        normalized == WIKI_PROVIDER_ID
+        and normalized not in _EXTERNAL_DOCUMENT_PROVIDERS
+    ):
         # Import lazily so the provider-neutral base contract remains usable on
         # its own while the Wiki adapter can implement both provider seams.
         from app.services.knowledge.external_sync_providers import (  # noqa: PLC0415

@@ -16,6 +16,17 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.user import User
+from app.services.knowledge.external_document_identity import (
+    WIKI_PROVIDER_ID,
+    ExternalDocumentIdentityError,
+    ExternalSyncLocator,
+)
+from app.services.knowledge.external_document_identity import (
+    decode_external_sync_resource_id as _decode_external_sync_resource_id,
+)
+from app.services.knowledge.external_document_identity import (
+    encode_external_sync_resource_id as _encode_external_sync_resource_id,
+)
 from app.services.knowledge.external_document_providers import (
     DetachedExternalDocumentProvider,
     ExternalDocumentContent,
@@ -28,7 +39,6 @@ from app.services.wiki.connector import WikiApiError, WikiPageMeta, build_page_u
 from app.services.wiki.service import WikiConnectionService
 
 SYNC_CONFIG_KEY = "sync"
-WIKI_SYNC_PROVIDER_ID = "wiki"
 logger = logging.getLogger(__name__)
 
 _WIKI_SYNC_ERROR_MESSAGES = {
@@ -47,13 +57,6 @@ _WIKI_SYNC_ERROR_MESSAGES = {
 
 def _wiki_sync_error_message(error_code: str | None) -> str:
     return _WIKI_SYNC_ERROR_MESSAGES.get(error_code or "", "Wiki 文档同步检查失败")
-
-
-@dataclass(frozen=True)
-class ExternalSyncLocator:
-    provider_id: str
-    connection_id: str
-    resource_id: str
 
 
 @dataclass(frozen=True)
@@ -139,22 +142,19 @@ class ExternalSyncProvider(ABC):
 
 
 def encode_external_sync_resource_id(locator: ExternalSyncLocator) -> str:
-    value = f"v1:{locator.connection_id}:{locator.resource_id}"
-    if len(value) > 255:
-        raise ExternalDocumentImportError("External document identity is too long")
-    return value
+    try:
+        return _encode_external_sync_resource_id(locator)
+    except ExternalDocumentIdentityError as exc:
+        raise ExternalDocumentImportError(str(exc)) from exc
 
 
 def decode_external_sync_resource_id(
     provider_id: str, value: str
 ) -> ExternalSyncLocator:
-    prefix, separator, remainder = value.partition(":")
-    connection_id, second_separator, resource_id = remainder.partition(":")
-    if prefix != "v1" or not separator or not second_separator:
-        raise ExternalDocumentFetchError("Invalid synchronized document identity")
-    if not connection_id or not resource_id:
-        raise ExternalDocumentFetchError("Invalid synchronized document identity")
-    return ExternalSyncLocator(provider_id, connection_id, resource_id)
+    try:
+        return _decode_external_sync_resource_id(provider_id, value)
+    except ExternalDocumentIdentityError as exc:
+        raise ExternalDocumentFetchError(str(exc)) from exc
 
 
 def get_document_sync_config(document: Any) -> dict[str, Any]:
@@ -178,7 +178,7 @@ class WikiExternalSyncProvider(
 ):
     """Wiki.js adapter for initial import, daily inspection and body fetch."""
 
-    provider_id = WIKI_SYNC_PROVIDER_ID
+    provider_id = WIKI_PROVIDER_ID
 
     def resolve_importable(
         self, db: Session, user: User, external_resource_id: str

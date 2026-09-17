@@ -33,6 +33,26 @@ def test_external_sync_identity_round_trip() -> None:
     assert decode_external_sync_resource_id("wiki", encoded) == locator
 
 
+def test_external_sync_identity_preserves_colons_in_resource_id() -> None:
+    locator = ExternalSyncLocator("wiki", "conn-primary", "space:42")
+
+    encoded = encode_external_sync_resource_id(locator)
+
+    assert decode_external_sync_resource_id("wiki", encoded) == locator
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    ["", "v2:conn-primary:42", "v1::42", "v1:conn-primary:"],
+)
+def test_external_sync_identity_rejects_malformed_values(encoded: str) -> None:
+    with pytest.raises(
+        ExternalDocumentFetchError,
+        match="Invalid synchronized document identity",
+    ):
+        decode_external_sync_resource_id("wiki", encoded)
+
+
 @pytest.mark.asyncio
 async def test_wiki_selection_is_resolved_by_stable_page_id(
     monkeypatch: pytest.MonkeyPatch,

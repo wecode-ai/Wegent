@@ -58,6 +58,7 @@ from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_NOT_FOUND,
     document_read_service,
 )
+from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.knowledge.external_document_providers import (
     ExternalDocumentContent,
     ExternalImportLostWriteError,
@@ -1809,7 +1810,7 @@ class KnowledgeOrchestrator:
         owner_user_id = document.user_id
         previous_attachment_id = document.attachment_id
         previous_converted_id = document.converted_attachment_id
-        retry_orphan_cleanup = document.external_provider == "wiki"
+        retry_orphan_cleanup = document.external_provider == WIKI_PROVIDER_ID
         attachment, _ = context_service.upload_attachment(
             db=db,
             user_id=owner_user_id,

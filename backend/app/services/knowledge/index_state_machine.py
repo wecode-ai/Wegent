@@ -448,25 +448,6 @@ def _finalize_external_source_on_success(
     document.update_external_source_config(**updates)
 
 
-def _synchronized_wiki_updated_at(document: KnowledgeDocument) -> datetime | None:
-    """Return the Wiki source timestamp used by the document management UI."""
-    if document.external_provider != "wiki":
-        return None
-    sync = document.external_source_config.get("sync")
-    if not isinstance(sync, dict):
-        return None
-    raw = str(sync.get("content_version") or "").strip()
-    if not raw:
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed
-
-
 @trace_sync(
     span_name="knowledge.mark_document_index_succeeded",
     tracer_name="knowledge.state_machine",
@@ -525,7 +506,7 @@ def mark_document_index_succeeded(
     if chunk_storage_enabled:
         document.chunks = chunks
     _finalize_external_source_on_success(document)
-    document.updated_at = _synchronized_wiki_updated_at(document) or _utcnow()
+    document.updated_at = _utcnow()
 
     db.commit()
     _record_transition(

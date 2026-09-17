@@ -46,8 +46,8 @@ import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import { getProcessingErrorMessage } from '../utils/processing-error'
 import {
   getDocumentDisplayUpdatedAt,
-  getExternalSourceInfo,
   isSyncedWikiDocument,
+  isWikiSourceMissing,
 } from '../utils/documentUtils'
 import type { SortField, SortOrder } from './FolderTree'
 import type {
@@ -381,10 +381,7 @@ export function KnowledgeDocumentTreeGrid({
                 ? document.source_config.url
                 : null
             const displayName = getDocumentDisplayName(document)
-            const externalSource = getExternalSourceInfo(document)
-            const wikiSourceMissing =
-              isSyncedWikiDocument(document) &&
-              externalSource?.sync?.last_error_code === 'external_source_missing'
+            const wikiSourceMissing = isWikiSourceMissing(document)
             return (
               <div
                 className="flex items-center gap-2 overflow-hidden min-w-0"

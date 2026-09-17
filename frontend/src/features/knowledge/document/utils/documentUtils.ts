@@ -167,6 +167,15 @@ export function isSyncedWikiDocument(
   )
 }
 
+export function isWikiSourceMissing(
+  document: Pick<KnowledgeDocument, 'source_type' | 'source_config'>
+): boolean {
+  const source = getExternalSourceInfo(document)
+  return (
+    isSyncedWikiDocument(document) && source?.sync?.last_error_code === 'external_source_missing'
+  )
+}
+
 /** True when the value parses as a valid timestamp. */
 function isValidTimestamp(value: string): boolean {
   return !Number.isNaN(Date.parse(value))
@@ -175,7 +184,7 @@ function isValidTimestamp(value: string): boolean {
 /**
  * The update timestamp a document list should display.
  *
- * Synchronized Wiki documents prefer the successfully synchronized content time.
+ * Synchronized Wiki documents prefer the latest observed source update time.
  * Regular documents keep the existing rule: unmodified rows display '-'.
  */
 export function getDocumentDisplayUpdatedAt(
@@ -183,8 +192,8 @@ export function getDocumentDisplayUpdatedAt(
 ): string | null {
   if (isSyncedWikiDocument(document)) {
     const sync = getExternalSourceInfo(document)?.sync
-    for (const version of [sync?.content_version, sync?.indexed_version]) {
-      if (version && isValidTimestamp(version)) return version
+    if (sync?.observed_version && isValidTimestamp(sync.observed_version)) {
+      return sync.observed_version
     }
   }
   if (document.updated_at === document.created_at) return null

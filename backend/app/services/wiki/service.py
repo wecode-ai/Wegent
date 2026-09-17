@@ -16,6 +16,11 @@ from app.services.external_source_connections import (
     ExternalSourceConnection,
     external_source_connection_service,
 )
+from app.services.knowledge.external_document_identity import (
+    WIKI_PROVIDER_ID,
+    ExternalDocumentIdentityError,
+    decode_external_sync_resource_id,
+)
 from app.services.wiki.connector import (
     WIKI_CONNECTORS,
     WikiApiError,
@@ -24,8 +29,6 @@ from app.services.wiki.connector import (
     register_builtin_connectors,
 )
 from shared.models.db import User
-
-WIKI_PROVIDER_ID = "wiki"
 
 
 @dataclass(frozen=True)
@@ -245,15 +248,13 @@ def wiki_document_uses_connection(
         or document.external_provider != WIKI_PROVIDER_ID
     ):
         return False
-    encoded = str(document.external_resource_id or "")
-    prefix, separator, remainder = encoded.partition(":")
-    encoded_connection, second_separator, _resource_id = remainder.partition(":")
-    return bool(
-        prefix == "v1"
-        and separator
-        and second_separator
-        and encoded_connection == connection_id
-    )
+    try:
+        locator = decode_external_sync_resource_id(
+            WIKI_PROVIDER_ID, str(document.external_resource_id or "")
+        )
+    except ExternalDocumentIdentityError:
+        return False
+    return locator.connection_id == connection_id
 
 
 def unbind_kb_wiki_document(

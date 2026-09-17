@@ -673,6 +673,7 @@ def test_mark_document_index_succeeded_promotes_synced_external_version(
         external_resource_id="v1:conn-primary:42",
     )
     test_db.commit()
+    previous_updated_at = document.updated_at
 
     finalized = mark_document_index_succeeded(test_db, document.id, 2)
 
@@ -682,3 +683,5 @@ def test_mark_document_index_succeeded_promotes_synced_external_version(
     assert sync["indexed_version"] == "2026-09-06T02:00:00Z"
     assert sync["last_synced_at"]
     assert "last_error_code" not in sync
+    assert document.updated_at > previous_updated_at
+    assert document.updated_at != datetime(2026, 9, 6, 2)

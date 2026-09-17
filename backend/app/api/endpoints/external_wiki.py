@@ -38,6 +38,7 @@ from app.schemas.external_wiki import (
     WikiPageSummary,
 )
 from app.services.external_source_connections import external_source_connection_service
+from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.knowledge.external_document_import import (
     ExternalDocumentImportError,
     external_document_import_service,
@@ -241,7 +242,7 @@ async def update_named_wiki_connection(
         existing = external_source_connection_service.get_owned(
             db,
             owner_user_id=current_user.id,
-            provider_id="wiki",
+            provider_id=WIKI_PROVIDER_ID,
             connection_id=connection_id,
             include_inactive=True,
             for_update=True,
@@ -295,7 +296,7 @@ async def delete_wiki_connection(
     existing = external_source_connection_service.get_owned(
         db,
         owner_user_id=current_user.id,
-        provider_id="wiki",
+        provider_id=WIKI_PROVIDER_ID,
         connection_id=connection_id,
         include_inactive=True,
         for_update=True,
@@ -320,7 +321,7 @@ async def delete_wiki_connection(
     deleted = external_source_connection_service.disable_owned(
         db,
         owner_user_id=current_user.id,
-        provider_id="wiki",
+        provider_id=WIKI_PROVIDER_ID,
         connection_id=connection_id,
     )
     if not deleted:
@@ -458,7 +459,7 @@ async def create_kb_binding(
     try:
         if not settings.EXTERNAL_DOC_SYNC_ENABLED:
             raise WikiApiError("bad_request", "外部文档同步功能未启用")
-        provider = get_external_sync_provider("wiki")
+        provider = get_external_sync_provider(WIKI_PROVIDER_ID)
         if provider is None:
             raise WikiApiError("bad_request", "Wiki 同步服务不可用")
         resolved = await provider.resolve_selections(
@@ -471,7 +472,7 @@ async def create_kb_binding(
             db=db,
             user=current_user,
             knowledge_base_id=knowledge_base_id,
-            provider_id="wiki",
+            provider_id=WIKI_PROVIDER_ID,
             resolved_documents=resolved,
             folder_id=body.folder_id,
         )

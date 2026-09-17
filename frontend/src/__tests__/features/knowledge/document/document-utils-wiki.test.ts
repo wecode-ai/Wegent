@@ -5,6 +5,7 @@
 import {
   getDocumentDisplayUpdatedAt,
   isSyncedWikiDocument,
+  isWikiSourceMissing,
 } from '@/features/knowledge/document/utils/documentUtils'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
@@ -65,11 +66,11 @@ describe('synchronized Wiki document metadata', () => {
     ).toBe(false)
   })
 
-  it('uses the synchronized content version instead of the observed version', () => {
-    expect(getDocumentDisplayUpdatedAt(document())).toBe('2026-09-02T12:34:56Z')
+  it('uses the latest observed source version', () => {
+    expect(getDocumentDisplayUpdatedAt(document())).toBe('2026-09-03T12:34:56Z')
   })
 
-  it('falls back to the indexed version and then the normal document time', () => {
+  it('falls back to the normal document time when the observed version is invalid', () => {
     const value = document({
       updated_at: '2026-09-05T00:00:00Z',
       source_config: {
@@ -78,13 +79,32 @@ describe('synchronized Wiki document metadata', () => {
           title: 'Wiki page',
           sync: {
             enabled: true,
-            observed_version: '2026-09-06T00:00:00Z',
+            observed_version: 'invalid',
             content_version: 'invalid',
             indexed_version: '2026-09-04T00:00:00Z',
           },
         },
       },
     })
-    expect(getDocumentDisplayUpdatedAt(value)).toBe('2026-09-04T00:00:00Z')
+    expect(getDocumentDisplayUpdatedAt(value)).toBe('2026-09-05T00:00:00Z')
+  })
+
+  it('recognizes a synchronized Wiki page confirmed missing upstream', () => {
+    expect(
+      isWikiSourceMissing(
+        document({
+          source_config: {
+            external: {
+              provider: 'wiki',
+              title: 'Wiki page',
+              sync: {
+                enabled: true,
+                last_error_code: 'external_source_missing',
+              },
+            },
+          },
+        })
+      )
+    ).toBe(true)
   })
 })

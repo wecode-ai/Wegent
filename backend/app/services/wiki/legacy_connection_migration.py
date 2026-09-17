@@ -15,8 +15,11 @@ from app.services.external_source_connections import (
     MAX_EXTERNAL_SOURCE_CONNECTIONS,
     external_source_connection_service,
 )
-from app.services.knowledge.external_sync_providers import (
+from app.services.knowledge.external_document_identity import (
+    WIKI_PROVIDER_ID,
+    ExternalDocumentIdentityError,
     ExternalSyncLocator,
+    decode_external_sync_resource_id,
     encode_external_sync_resource_id,
 )
 from app.services.user_mcp_service import UserMCPService
@@ -24,7 +27,6 @@ from app.services.wiki.connector import WIKI_CONNECTORS, register_builtin_connec
 from shared.models.db import User
 
 LEGACY_CONNECTION_ID = "legacy-default"
-WIKI_PROVIDER_ID = "wiki"
 WIKI_SERVICE_ID = "site"
 
 
@@ -77,19 +79,16 @@ def _legacy_documents(db: Session, user_id: int) -> list[KnowledgeDocument]:
 
 
 def _target_resource_id(connection_id: str, document: KnowledgeDocument) -> str:
-    encoded = str(document.external_resource_id or "")
-    prefix, separator, remainder = encoded.partition(":")
-    old_connection_id, second_separator, resource_id = remainder.partition(":")
-    if (
-        prefix != "v1"
-        or not separator
-        or not second_separator
-        or old_connection_id != LEGACY_CONNECTION_ID
-        or not resource_id
-    ):
+    try:
+        locator = decode_external_sync_resource_id(
+            WIKI_PROVIDER_ID, str(document.external_resource_id or "")
+        )
+    except ExternalDocumentIdentityError as exc:
+        raise ValueError(f"invalid legacy identity on document {document.id}") from exc
+    if locator.connection_id != LEGACY_CONNECTION_ID:
         raise ValueError(f"invalid legacy identity on document {document.id}")
     return encode_external_sync_resource_id(
-        ExternalSyncLocator(WIKI_PROVIDER_ID, connection_id, resource_id)
+        ExternalSyncLocator(WIKI_PROVIDER_ID, connection_id, locator.resource_id)
     )
 
 

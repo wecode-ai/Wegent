@@ -640,7 +640,7 @@ describe('KnowledgeDocumentTreeGrid', () => {
         external: {
           provider: 'wiki',
           title: 'Synced Wiki',
-          sync: { enabled: true, content_version: '2026-09-03T12:34:56Z' },
+          sync: { enabled: true, observed_version: '2026-09-03T12:34:56Z' },
         },
       },
     })

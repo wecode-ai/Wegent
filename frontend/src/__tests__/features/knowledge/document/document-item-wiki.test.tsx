@@ -44,7 +44,7 @@ const syncedWikiDocument: KnowledgeDocument = {
       url: 'https://wiki.example.com/operations/handbook',
       sync: {
         enabled: true,
-        content_version: '2026-09-03T12:34:56Z',
+        observed_version: '2026-09-03T12:34:56Z',
       },
     },
   },
@@ -204,13 +204,13 @@ describe('DocumentItem external wiki metadata display', () => {
     expect(type.querySelector('svg')).toHaveClass('lucide-book-open')
   })
 
-  it('shows the synchronized content time in compact mode', () => {
+  it('shows the observed source update time in compact mode', () => {
     render(<DocumentItem document={syncedWikiDocument} compact />)
     const expectedDate = formatLocal('2026-09-03T12:34:56Z').split(' ')[0]
     expect(screen.getByText(expectedDate)).toBeInTheDocument()
   })
 
-  it('shows the synchronized content time in table mode', () => {
+  it('shows the observed source update time in table mode', () => {
     render(<DocumentItem document={syncedWikiDocument} />)
     expect(screen.getByTestId('updated-at-cell')).toHaveTextContent(
       formatLocal('2026-09-03T12:34:56Z')

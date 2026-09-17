@@ -269,18 +269,7 @@ export function WikiDocumentImport({
   const selectionToggleKey = allFilteredSelected
     ? 'wikiSection.clear_selection'
     : 'wikiSection.select_all'
-  const selectionToggleTranslation = t(selectionToggleKey)
-  // The i18n singleton can briefly retain the previous resource bundle during hot updates.
-  const selectionToggleTranslationMissing =
-    selectionToggleTranslation === selectionToggleKey ||
-    selectionToggleTranslation === `knowledge:${selectionToggleKey}`
-  const selectionToggleLabel = selectionToggleTranslationMissing
-    ? t(
-        allFilteredSelected
-          ? 'document.upload.dingtalk.clearSelection'
-          : 'document.upload.dingtalk.selectAll'
-      )
-    : selectionToggleTranslation
+  const selectionToggleLabel = t(selectionToggleKey)
 
   const toggleAllFiltered = () => {
     setSelected(current => {
@@ -465,7 +454,7 @@ export function WikiDocumentImport({
             <h4 className="mr-auto text-xs font-medium text-text-primary">
               {t('wikiSection.bound_title')}
               <span className="ml-1 text-text-muted" data-testid="wiki-import-bound-count">
-                （{filteredBound.length}）
+                {t('wikiSection.item_count', { count: filteredBound.length })}
               </span>
             </h4>
             <Input
@@ -536,7 +525,7 @@ export function WikiDocumentImport({
             <h4 className="mr-auto text-xs font-medium text-text-primary">
               {t('wikiSection.picker_title')}
               <span className="ml-1 text-text-muted" data-testid="wiki-import-page-count">
-                （{filteredPages.length}）
+                {t('wikiSection.item_count', { count: filteredPages.length })}
               </span>
             </h4>
             <Button

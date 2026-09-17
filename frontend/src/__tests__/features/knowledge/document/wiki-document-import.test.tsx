@@ -11,7 +11,6 @@ const mockListConnections = jest.fn()
 const mockListKbWikiDocuments = jest.fn()
 const mockListPages = jest.fn()
 const mockUnbind = jest.fn()
-const mockMissingTranslationKeys = new Set<string>()
 const mockTranslations = {
   common: jest.requireActual('@/i18n/locales/zh-CN/common.json'),
   knowledge: jest.requireActual('@/i18n/locales/zh-CN/knowledge.json'),
@@ -20,7 +19,6 @@ const mockTranslate = (key: string, params?: Record<string, string | number>) =>
   const separatorIndex = key.indexOf(':')
   const namespace = separatorIndex >= 0 ? key.slice(0, separatorIndex) : 'knowledge'
   const resourceKey = separatorIndex >= 0 ? key.slice(separatorIndex + 1) : key
-  if (mockMissingTranslationKeys.has(resourceKey)) return resourceKey
   const translations = mockTranslations[namespace as keyof typeof mockTranslations]
   const translation = resourceKey
     .split('.')
@@ -119,7 +117,6 @@ function renderTab(
 describe('WikiDocumentImport', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockMissingTranslationKeys.clear()
     mockListConnections.mockResolvedValue({
       connections: [
         {
@@ -146,25 +143,6 @@ describe('WikiDocumentImport', () => {
     )
     expect(await screen.findByTestId('wiki-import-bound-31')).toBeInTheDocument()
     expect(await screen.findByTestId('wiki-import-connection-status')).toHaveClass('text-success')
-  })
-
-  it('never exposes the select-all translation key while a refreshed bundle is pending', async () => {
-    mockMissingTranslationKeys.add('wikiSection.select_all')
-    mockMissingTranslationKeys.add('wikiSection.clear_selection')
-    renderTab()
-
-    await screen.findByTestId('wiki-import-page-list')
-
-    expect(screen.getByTestId('wiki-import-select-all')).toHaveTextContent('选择全部')
-    expect(screen.getByTestId('wiki-import-select-all')).not.toHaveTextContent(
-      'wikiSection.select_all'
-    )
-
-    fireEvent.click(screen.getByTestId('wiki-import-select-all'))
-    expect(screen.getByTestId('wiki-import-select-all')).toHaveTextContent('取消全部选择')
-    expect(screen.getByTestId('wiki-import-select-all')).not.toHaveTextContent(
-      'wikiSection.clear_selection'
-    )
   })
 
   it('shows a red connection status with the failure reason on hover', async () => {

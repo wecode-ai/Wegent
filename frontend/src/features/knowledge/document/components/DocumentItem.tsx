@@ -34,6 +34,7 @@ import {
   getDocumentDisplayUpdatedAt,
   getExternalSourceInfo,
   isSyncedWikiDocument,
+  isWikiSourceMissing,
 } from '../utils/documentUtils'
 import { toast } from '@/hooks/use-toast'
 import { useMultimodalDocActions } from '@/features/knowledge/multimodal/hooks/useMultimodalDocActions'
@@ -269,17 +270,16 @@ export function DocumentItem({
   // may keep serving its last successful index after the remote page disappears.
   const hasExternalSourceWarning =
     isExternal && ['inaccessible', 'sync_error'].includes(externalSource?.status || '')
-  const isWikiSourceMissing =
-    isSyncedWiki && externalSource?.sync?.last_error_code === 'external_source_missing'
+  const wikiSourceMissing = isWikiSourceMissing(document)
   const isSourceSyncError = externalSource?.status === 'sync_error'
-  const sourceInaccessibleLabel = isWikiSourceMissing
+  const sourceInaccessibleLabel = wikiSourceMissing
     ? t('knowledge:document.document.wikiSourceMissing')
     : isSourceSyncError
       ? t('knowledge:document.document.sourceSyncFailed')
       : t('knowledge:document.document.sourceInaccessible')
   const sourceInaccessibleHint =
     externalSource?.last_error ||
-    (isWikiSourceMissing
+    (wikiSourceMissing
       ? t('knowledge:document.document.wikiSourceMissingHint')
       : isSourceSyncError
         ? t('knowledge:document.document.sourceSyncFailedHint')
