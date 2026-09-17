@@ -47,6 +47,9 @@ use crate::{
     process_environment,
     protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
     runner::BackgroundTaskRunner,
+    workspace_paths::{
+        display_workspace_path, resolve_logical_path, task_workspace_dir, workspace_root,
+    },
 };
 
 pub use config::{ServerConfig, ServerConfigError};
@@ -406,7 +409,7 @@ async fn connect_stat_path(
         ],
     );
     Ok(Json(ConnectStatResponse {
-        entry: envd_filesystem_entry(&path, &path)?,
+        entry: envd_filesystem_entry(&path)?,
     }))
 }
 
@@ -445,7 +448,7 @@ async fn connect_make_dir(
         detail: format!("Failed to create directory: {error}"),
     })?;
     Ok(Json(ConnectMakeDirResponse {
-        entry: envd_filesystem_entry(&path, &path)?,
+        entry: envd_filesystem_entry(&path)?,
     }))
 }
 
@@ -840,7 +843,7 @@ async fn archive_workspace(
     let archive = create_runtime_archive(ArchiveOptions {
         mode,
         task_id: request.task_id.to_string(),
-        workspace_path: task_workspace_path(request.task_id),
+        workspace_path: task_workspace_dir(&request.task_id.to_string()),
         home_path: runtime_home_path(mode),
         max_size_bytes: u64::from(request.max_size_mb) * 1024 * 1024,
     })
@@ -902,7 +905,7 @@ async fn restore_workspace(
         &bytes,
         mode,
         &request.task_id.to_string(),
-        &task_workspace_path(request.task_id),
+        &task_workspace_dir(&request.task_id.to_string()),
         &runtime_home_path(mode),
     )
     .map_err(archive_error_to_http)?;
@@ -1264,7 +1267,7 @@ fn collect_envd_filesystem_entries(
             detail: format!("Error reading directory entry: {error}"),
         })?;
         let child_path = child.path();
-        entries.push(envd_filesystem_entry(root, &child_path)?);
+        entries.push(envd_filesystem_entry(&child_path)?);
         if child_path.is_dir() {
             collect_envd_filesystem_entries(
                 root,
@@ -1278,7 +1281,7 @@ fn collect_envd_filesystem_entries(
     Ok(())
 }
 
-fn envd_filesystem_entry(_root: &Path, path: &Path) -> Result<FsEntryInfo, HttpError> {
+fn envd_filesystem_entry(path: &Path) -> Result<FsEntryInfo, HttpError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| HttpError {
         status: if error.kind() == std::io::ErrorKind::NotFound {
             StatusCode::NOT_FOUND
@@ -1300,7 +1303,7 @@ fn envd_filesystem_entry(_root: &Path, path: &Path) -> Result<FsEntryInfo, HttpE
         } else {
             "FILE_TYPE_FILE".to_owned()
         },
-        path: path.to_string_lossy().to_string(),
+        path: display_workspace_path(path).unwrap_or_else(|| path.to_string_lossy().to_string()),
         size: metadata.len(),
         mode,
         permissions: file_permissions(mode, metadata.is_dir()),
@@ -1344,17 +1347,11 @@ fn resolve_workspace_path(raw_path: &str) -> Result<PathBuf, HttpError> {
         return Ok(workspace_root);
     }
 
-    let candidate = if path == "/workspace" {
-        workspace_root.clone()
-    } else if let Some(rest) = path.strip_prefix("/workspace/") {
-        workspace_root.join(rest)
+    let resolved = resolve_logical_path(path);
+    let candidate = if resolved.is_absolute() {
+        resolved
     } else {
-        let path = PathBuf::from(path);
-        if path.is_absolute() {
-            path
-        } else {
-            workspace_root.join(path)
-        }
+        workspace_root.join(resolved)
     };
 
     let root = fs::canonicalize(&workspace_root).map_err(|_| HttpError {
@@ -1427,7 +1424,7 @@ fn resolve_envd_filesystem_path(raw_path: &str) -> Result<PathBuf, HttpError> {
     } else if let Some(rest) = raw_path.strip_prefix("~/") {
         home_path().join(rest)
     } else {
-        PathBuf::from(raw_path)
+        resolve_logical_path(raw_path)
     };
     if path.is_absolute() {
         return Ok(path);
@@ -1438,27 +1435,6 @@ fn resolve_envd_filesystem_path(raw_path: &str) -> Result<PathBuf, HttpError> {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("failed to resolve current directory: {error}"),
         })
-}
-
-fn display_workspace_path(path: &Path) -> Option<String> {
-    let root = fs::canonicalize(workspace_root()).ok()?;
-    let relative = path.strip_prefix(root).ok()?;
-    let suffix = relative
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/");
-    if suffix.is_empty() {
-        Some("/workspace".to_owned())
-    } else {
-        Some(format!("/workspace/{suffix}"))
-    }
-}
-
-fn workspace_root() -> PathBuf {
-    env::var_os("WORKSPACE_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/workspace"))
 }
 
 async fn run_envd_process(request: &ProcessStartRequest) -> ProcessOutput {
@@ -1609,10 +1585,6 @@ fn base64_encode(bytes: &[u8]) -> String {
 const CONNECT_ENVELOPE_HEADER_LEN: usize = 5;
 const CONNECT_FLAG_COMPRESSED: u8 = 0b0000_0001;
 const CONNECT_FLAG_END_STREAM: u8 = 0b0000_0010;
-
-fn task_workspace_path(task_id: i64) -> PathBuf {
-    workspace_root().join(task_id.to_string())
-}
 
 fn runtime_home_path(mode: ArchiveMode) -> PathBuf {
     match mode {
