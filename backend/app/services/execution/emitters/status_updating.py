@@ -361,6 +361,20 @@ class StatusUpdatingEmitter(ResultEmitter):
                             **updates,
                         },
                     )
+        elif (
+            event.type in {EventType.CHUNK.value, EventType.DONE.value} and event.result
+        ):
+            # Keep media snapshots current for both refresh and terminal result collection.
+            media_blocks = [
+                block
+                for block in event.result.get("blocks") or []
+                if block.get("type") in {"image", "video"}
+            ]
+            if media_blocks:
+                await self._flush_stream_storage()
+                await self._cancel_pending_storage_flush_task()
+                for block in media_blocks:
+                    await session_manager.add_block(self._subtask_id, block)
         elif event.type in STREAM_CONTENT_EVENT_TYPES:
             # Content is persisted by the 1s stream storage buffer.
             pass
