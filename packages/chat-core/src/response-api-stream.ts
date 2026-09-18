@@ -357,6 +357,12 @@ export function emitResponseApiEvent(
       type: stringField(payload, "type") ?? eventName,
       shellType:
         stringField(payload, "runtime") ?? stringField(data, "runtime"),
+      startedAt:
+        optionalNumberField(data, "startedAt") ??
+        optionalNumberField(data, "started_at"),
+      durationMs:
+        optionalNumberField(data, "durationMs") ??
+        optionalNumberField(data, "duration_ms"),
     });
   }
 }

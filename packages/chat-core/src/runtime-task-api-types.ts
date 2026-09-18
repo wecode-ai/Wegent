@@ -32,6 +32,7 @@ export interface RuntimeTaskSummary {
   runtime: RuntimeName
   createdAt?: string | number | null
   updatedAt?: string | number | null
+  recencyAt?: string | number | null
   completedAt?: string | number | null
   running?: boolean
   continuable?: boolean

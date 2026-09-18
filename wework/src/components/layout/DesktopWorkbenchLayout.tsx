@@ -75,6 +75,10 @@ import { openProjectSpaceRuntimeTaskInTab } from './projectSpaceRuntimeTaskNavig
 import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
 import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
 import { loadDshConversationTranscript } from '@/features/dsh-runtime/dshConversationTranscript'
+import {
+  readSettingsReturnPath,
+  writeSettingsReturnPath,
+} from '@/features/workspace-tabs/settingsReturnPath'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -110,24 +114,6 @@ interface DesktopWorkbenchLayoutProps {
 function routePathname(route: string): string {
   const searchIndex = route.indexOf('?')
   return searchIndex >= 0 ? route.slice(0, searchIndex) : route
-}
-
-const SETTINGS_RETURN_PATH_KEY = 'wework.settingsReturnPath'
-
-function readSettingsReturnPath(): string | null {
-  try {
-    return window.sessionStorage.getItem(SETTINGS_RETURN_PATH_KEY)
-  } catch {
-    return null
-  }
-}
-
-function writeSettingsReturnPath(path: string): void {
-  try {
-    window.sessionStorage.setItem(SETTINGS_RETURN_PATH_KEY, path)
-  } catch {
-    // The in-memory ref remains the fallback when session storage is unavailable.
-  }
 }
 
 export function DesktopWorkbenchLayout({

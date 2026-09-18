@@ -146,6 +146,10 @@ fn shared_index_reload_preserves_process_local_execution_state() {
     assert!(!persisted_owner.contains_key("turn_status"));
     assert!(!persisted_owner.contains_key("completed_at"));
     assert_eq!(persisted_owner.get("archived"), Some(&Value::Bool(false)));
+    assert_eq!(
+        persisted_owner.get("recency_at"),
+        Some(&Value::from(owner_task.recency_at))
+    );
 }
 
 #[test]

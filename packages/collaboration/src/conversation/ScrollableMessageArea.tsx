@@ -40,6 +40,7 @@ function ScrollableMessagePaneContent({
   onVirtualMeasurement,
   renderVisualization,
   messages,
+  turns,
   loading = false,
   isWaitingForAssistant = false,
   hasMoreBefore = false,
@@ -859,6 +860,7 @@ function ScrollableMessagePaneContent({
                 renderVisualization={renderVisualization}
                 key={currentScrollKey ?? 'keyless-conversation'}
                 messages={messages}
+                turns={turns}
                 onBeforeUserMessageToggle={preserveUserMessagePosition}
                 onVirtualLayoutChange={handleContentLayoutChange}
                 scrollElementRef={scrollRef}

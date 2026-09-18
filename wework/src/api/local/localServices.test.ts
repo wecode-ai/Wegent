@@ -1183,6 +1183,7 @@ describe('createLocalAppServices', () => {
               runtime: 'codex',
               createdAt: 1780000100000,
               updatedAt: 1780000120000,
+              recencyAt: 1780000110000,
             },
             {
               taskId: 'older-task',
@@ -1191,6 +1192,7 @@ describe('createLocalAppServices', () => {
               runtime: 'codex',
               created_at: 1780000000000,
               updated_at: 1780000060000,
+              recency_at: 1780000050000,
             },
           ],
         },
@@ -1209,10 +1211,12 @@ describe('createLocalAppServices', () => {
     expect(tasks?.[0]).toMatchObject({
       createdAt: 1780000100000,
       updatedAt: 1780000120000,
+      recencyAt: 1780000110000,
     })
     expect(tasks?.[1]).toMatchObject({
       createdAt: 1780000000000,
       updatedAt: 1780000060000,
+      recencyAt: 1780000050000,
     })
   })
 

@@ -2041,6 +2041,7 @@ function buildOptimisticRuntimeTask({
     ...(workspaceKind ? { workspaceKind } : {}),
     createdAt: now,
     updatedAt: now,
+    recencyAt: now,
     running: status === 'creating' || status === 'running',
     status,
     optimistic: true,

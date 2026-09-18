@@ -3193,6 +3193,7 @@ mod tests {
             git_info: None,
             created_at: 0,
             updated_at: 0,
+            recency_at: 0,
             completed_at: None,
             runtime_handle: Value::Null,
             parent: None,
