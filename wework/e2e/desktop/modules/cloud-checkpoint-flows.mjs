@@ -796,6 +796,14 @@ async function verifyCloudCheckpoint({
         appIdentifier,
         composerSelector,
         control,
+        runtimeAttachmentRoot: join(
+          resultDir,
+          'cloud-executor-home',
+          'workspace',
+          'attachments',
+          'runtime'
+        ),
+        workspacePath,
       })
       setPhase('cloud-pasted-zip')
       await verifyPastedZipAttachment({ composerSelector, control })

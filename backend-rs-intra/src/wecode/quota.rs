@@ -4,10 +4,13 @@
 //! `GET /api/quota/{path:path}` handler. Only this one path is served, so the
 //! route is registered exactly rather than as a `{path:path}` capture.
 
+pub(crate) mod auth;
+pub(crate) mod users;
+
 use brz_http::Endpoint;
+use brz_http_server::StatusCode;
 use brz_mysql::Mysql;
 use serde::Serialize;
-use wegent_backend_rs::auth::get_current_user;
 use wegent_backend_rs::config::AuthConfig;
 use wegent_backend_rs::http_compat::FastApiError;
 
@@ -53,9 +56,26 @@ async fn quota_response<M>(
 where
     M: Mysql,
 {
-    let user = get_current_user(auth, mysql, authorization)
+    let token = auth::extract_bearer_token(authorization).map_err(|error| match error {
+        auth::AuthError::NotAuthenticated => FastApiError::unauthorized("Not authenticated"),
+        auth::AuthError::InvalidCredentials => {
+            FastApiError::unauthorized("Could not validate credentials")
+        }
+    })?;
+    let session = auth::verify_session_token(token, auth)
+        .map_err(|_| FastApiError::unauthorized("Could not validate credentials"))?;
+    let user = users::find_user_by_name(mysql, &session.username)
         .await
-        .map_err(|error| error.fastapi())?;
+        .map_err(|error| match error {
+            users::UserLookupError::Mysql(error) => {
+                tracing::error!(%error, "quota user lookup failed");
+                FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+            }
+        })?
+        .ok_or_else(|| FastApiError::unauthorized("Could not validate credentials"))?;
+    if user.users_is_active == 0 {
+        return Err(FastApiError::unauthorized("User not activated"));
+    }
     tracing::info!(email = ?user.users_email, path = QUOTA_PATH, "get quota for user");
 
     Ok(

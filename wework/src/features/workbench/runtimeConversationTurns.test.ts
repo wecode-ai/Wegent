@@ -35,6 +35,71 @@ function requestBlock(id: string, turnId: string): ProcessingBlock {
 }
 
 describe('runtimeConversationTurns', () => {
+  test('projects stable turn start and completion timestamps through streaming and transcript restore', () => {
+    vi.useFakeTimers()
+    try {
+      const startedAt = Date.parse('2026-09-16T10:00:00Z')
+      vi.setSystemTime(startedAt + 3000)
+      const user = {
+        ...userMessage('user-timer', 'Check the code'),
+        createdAt: new Date(startedAt).toISOString(),
+      }
+      let turns: RuntimeConversationTurn[] = [
+        {
+          id: 'turn-timer',
+          status: 'streaming',
+          items: [
+            { id: user.id, type: 'user_message', message: user },
+            {
+              id: 'tool-timer',
+              type: 'block',
+              block: {
+                id: 'tool-timer',
+                type: 'tool',
+                toolName: 'exec_command',
+                status: 'done',
+                createdAt: startedAt + 1000,
+                completedAt: startedAt + 2000,
+              },
+            },
+          ],
+        },
+      ]
+      const running = projectRuntimeConversationTurns(turns).find(
+        message => message.role === 'assistant'
+      )!
+      expect(running.runtimeTurnStartedAt).toBe(startedAt)
+      expect(running.completedAt).toBeUndefined()
+
+      turns = reduceRuntimeConversationTurns(turns, {
+        type: 'assistant_chunk',
+        subtaskId: 'turn-timer',
+        itemId: 'final-timer',
+        content: 'Done',
+      })
+      vi.setSystemTime(startedAt + 10000)
+      turns = reduceRuntimeConversationTurns(turns, {
+        type: 'assistant_chunk',
+        subtaskId: 'turn-timer',
+        itemId: 'final-timer',
+        content: '.',
+      })
+      turns = reduceRuntimeConversationTurns(turns, {
+        type: 'assistant_done',
+        subtaskId: 'turn-timer',
+      })
+      const snapshot = JSON.parse(JSON.stringify(turns)) as RuntimeConversationTurn[]
+      const restored = projectRuntimeConversationTurns(snapshot).find(
+        message => message.role === 'assistant'
+      )!
+      expect(restored.runtimeTurnStartedAt).toBe(startedAt)
+      expect(restored.completedAt).toBe(new Date(startedAt + 10000).toISOString())
+      expect(restored.status).toBe('done')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('bounds processing blocks retained by a continuously streaming turn', () => {
     let turns: RuntimeConversationTurn[] = [
       {

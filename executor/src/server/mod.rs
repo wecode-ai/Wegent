@@ -1236,7 +1236,7 @@ fn list_envd_filesystem_entries(path: &Path, depth: usize) -> Result<Vec<FsEntry
 
     let max_depth = depth.max(1);
     let mut entries = Vec::new();
-    collect_envd_filesystem_entries(path, path, max_depth, 0, &mut entries)?;
+    collect_envd_filesystem_entries(path, max_depth, 0, &mut entries)?;
     entries.sort_by(|left, right| {
         let left_is_dir = left.entry_type == "FILE_TYPE_DIRECTORY";
         let right_is_dir = right.entry_type == "FILE_TYPE_DIRECTORY";
@@ -1248,7 +1248,6 @@ fn list_envd_filesystem_entries(path: &Path, depth: usize) -> Result<Vec<FsEntry
 }
 
 fn collect_envd_filesystem_entries(
-    root: &Path,
     current: &Path,
     max_depth: usize,
     current_depth: usize,
@@ -1269,13 +1268,7 @@ fn collect_envd_filesystem_entries(
         let child_path = child.path();
         entries.push(envd_filesystem_entry(&child_path)?);
         if child_path.is_dir() {
-            collect_envd_filesystem_entries(
-                root,
-                &child_path,
-                max_depth,
-                current_depth + 1,
-                entries,
-            )?;
+            collect_envd_filesystem_entries(&child_path, max_depth, current_depth + 1, entries)?;
         }
     }
     Ok(())

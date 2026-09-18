@@ -230,10 +230,15 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByTestId('cloud-todo-attachment-input')).toBeInTheDocument()
 
     await user.clear(screen.getByTestId('cloud-todo-detail-title'))
-    await user.type(screen.getByTestId('cloud-todo-detail-title'), 'Local editable Issue')
+    await user.paste('Local editable Issue')
     await user.click(screen.getByTestId('cloud-todo-save'))
 
-    await vi.waitFor(() => expect(updateLoopItem).toHaveBeenCalled())
+    await vi.waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledWith(
+        localItem.id,
+        expect.objectContaining({ title: 'Local editable Issue' })
+      )
+    )
   })
 
   it('renders local task bindings without waiting for independent remote directories', async () => {

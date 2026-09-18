@@ -4,6 +4,11 @@
 
 'use client'
 
+import { createBrowserRuntimeDeviceAccess } from './runtimeDeviceAccess'
+import type { InstalledPlugin } from '@wegent/chat-core/installed-plugin-types'
+
+import { deviceApis } from '@/apis/devices'
+
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
@@ -15,8 +20,25 @@ import {
   type CollaborationWorkspaceView,
 } from '@wegent/collaboration'
 import { toast } from 'sonner'
+import { CollaborationTheme, useDocumentTheme } from '@wegent/collaboration/theme'
 
-import { apiClient } from '@/apis/client'
+import {
+  createProjectChatClient,
+  createCloudRuntimeIpcClient,
+  createRuntimeConversationClient,
+} from '@wegent/chat-core'
+import { getToken } from '@/apis/user'
+import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config'
+
+import { ApiError, apiClient } from '@/apis/client'
+import { toAttachmentResponse } from '@wegent/chat-core/attachment-response'
+import { listRuntimeModels } from './runtimeModels'
+import { createRuntimeComposerApi } from '@wegent/chat-core/runtime-composer-api'
+import { createWebComposerQuickPhrases } from './composerQuickPhrases'
+import { paths } from '@/config/paths'
+import { uploadAttachment, deleteAttachment, fetchAttachmentFile } from '@/apis/attachments'
+import { readRuntimeWorkspaceFile } from './runtimeWorkspaceFiles'
+import { createRuntimeConversationApi } from '@wegent/chat-core/runtime-conversation-api'
 import { listGroups } from '@/apis/groups'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -51,7 +73,7 @@ function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: Re
   }, [pathname])
 
   return (
-    <div className="flex smart-h-screen bg-base text-text-primary box-border [--collaboration-primary-background:rgb(var(--color-primary))] [--collaboration-primary-foreground:rgb(var(--color-primary-contrast))]">
+    <div className="flex smart-h-screen bg-base text-text-primary box-border">
       <ResizableSidebar
         minWidth={220}
         maxWidth={360}
@@ -97,11 +119,66 @@ function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: Re
 }
 
 export function CollaborationPage() {
+  const theme = useDocumentTheme()
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const { getCurrentLanguage } = useTranslation()
-  const api = useMemo(() => createWebSharedWorkspaceApi(apiClient), [])
+  const api = useMemo(() => {
+    const socketOptions = {
+      socketBaseUrl: async () => {
+        const config = await fetchRuntimeConfig()
+        return config.socketDirectUrl || getSocketUrl()
+      },
+      socketPath: '/socket.io',
+      getToken,
+      clientOrigin: 'web' as const,
+    }
+    const ipc = createCloudRuntimeIpcClient(socketOptions)
+    return {
+      ...createWebSharedWorkspaceApi(apiClient),
+      activity: createProjectChatClient(socketOptions),
+      runtime: {
+        checkDeviceAccess: createBrowserRuntimeDeviceAccess(
+          async () => (await deviceApis.getAllDevices()).items
+        ),
+        quickPhrases: createWebComposerQuickPhrases(apiClient),
+        composer: createRuntimeComposerApi(
+          ipc,
+          async deviceId =>
+            (
+              await apiClient.get<{ items: InstalledPlugin[] }>(
+                `/plugins/installed?device_id=${encodeURIComponent(deviceId)}`
+              )
+            ).items
+        ),
+        work: createRuntimeConversationApi(apiClient),
+        executeCommand: deviceApis.executeCommand,
+        fileChangesFromError: (cause: unknown) => {
+          if (!(cause instanceof ApiError) || typeof cause.detail !== 'object' || !cause.detail)
+            return undefined
+          return (cause.detail as Record<string, unknown>).file_changes
+        },
+        ...createRuntimeConversationClient(ipc),
+        listDevices: async () => (await deviceApis.getAllDevices()).items,
+        listModels: (deviceId: string) => listRuntimeModels(ipc, deviceId),
+        uploadAttachment: async (file: File, onProgress?: (progress: number) => void) =>
+          toAttachmentResponse(await uploadAttachment(file, onProgress), file),
+        deleteAttachment,
+        openModelSettings: () =>
+          window.open(paths.settings.models.getHref(), '_blank', 'noopener,noreferrer'),
+        readAttachment: fetchAttachmentFile,
+        readWorkspaceFile: readRuntimeWorkspaceFile,
+      },
+    }
+  }, [])
+  useEffect(
+    () => () => {
+      api.activity.dispose()
+      api.runtime.dispose()
+    },
+    [api]
+  )
   const locale: CollaborationLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
   const personalOwnerLabel = locale === 'zh-CN' ? '个人' : 'Personal'
   const [workspaceOwnerOptions, setWorkspaceOwnerOptions] = useState([
@@ -296,11 +373,13 @@ export function CollaborationPage() {
   }
 
   return (
-    <CollaborationPlatformApp
-      api={api}
-      host={platformHost}
-      locale={locale}
-      renderShell={({ main, sidebar }) => <CollaborationWebShell main={main} sidebar={sidebar} />}
-    />
+    <CollaborationTheme mode={theme}>
+      <CollaborationPlatformApp
+        api={api}
+        host={platformHost}
+        locale={locale}
+        renderShell={({ main, sidebar }) => <CollaborationWebShell main={main} sidebar={sidebar} />}
+      />
+    </CollaborationTheme>
   )
 }

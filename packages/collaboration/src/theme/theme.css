@@ -1,0 +1,11 @@
+/* Keep utility and component declarations more specific than this baseline. */
+:where(.collaboration-theme) {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-ui);
+  line-height: 1.5;
+  color: rgb(var(--color-text-primary));
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+  text-rendering: auto;
+}

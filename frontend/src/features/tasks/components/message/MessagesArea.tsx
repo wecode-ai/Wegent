@@ -1041,6 +1041,7 @@ function MessagesArea({
             <Button
               variant="outline"
               size="sm"
+              data-testid="message-export-menu"
               className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
             >
               <Download className="h-3.5 w-3.5" />

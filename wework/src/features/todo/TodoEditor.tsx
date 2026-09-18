@@ -84,6 +84,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   localProjects?: ProjectWithTasks[]
   allItems: CloudLoopItem[]
   onClose: () => void
+  onEscape?: () => void
   presentation?: 'modal' | 'workspace-panel'
   workspacePanelFill?: boolean
   readFirst?: boolean
@@ -230,6 +231,7 @@ export function TodoEditor(props: TodoEditorProps) {
     loadTeams,
     allItems: props.allItems as SharedEditorIssue[],
     onClose: props.onClose,
+    onEscape: props.onEscape,
     presentation: props.presentation,
     workspacePanelFill: props.workspacePanelFill,
     readFirst: props.readFirst,

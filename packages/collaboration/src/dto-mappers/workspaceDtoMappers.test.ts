@@ -230,6 +230,12 @@ describe("workspace DTO mappers", () => {
       loopItemId: "issue-1",
       cloudProjectId: "project-1",
       taskTitle: "Issue",
+      backendTaskId: "81",
+      executionEnvironment: "local",
+      executionDeviceId: "requested-device",
+      runtimeInstanceId: "runtime-1",
+      runtimeDeviceId: "actual-device",
+      runtimeTaskId: "conversation-1",
       status: "waiting_runtime",
       displayState: "waiting_runtime",
       canSelectRuntime: true,
@@ -240,6 +246,12 @@ describe("workspace DTO mappers", () => {
       loop_item_id: "issue-1",
       cloud_project_id: "project-1",
       task_title: "Issue",
+      backend_task_id: "81",
+      execution_environment: "local",
+      execution_device_id: "requested-device",
+      runtime_instance_id: "runtime-1",
+      runtime_device_id: "actual-device",
+      runtime_task_id: "conversation-1",
       status: "waiting_runtime",
       display_state: "waiting_runtime",
       can_select_runtime: true,
@@ -249,11 +261,25 @@ describe("workspace DTO mappers", () => {
     expect(camel).toEqual(snake);
     expect(camel).toMatchObject({
       id: 7,
+      backend_task_id: 81,
+      execution_environment: "local",
+      execution_device_id: "requested-device",
+      runtime_instance_id: "runtime-1",
+      runtime_device_id: "actual-device",
+      runtime_task_id: "conversation-1",
       executor_type: "project_robot",
       observed_state: "unconfirmed",
       sync_state: "pending",
       can_select_runtime: true,
       version: 2,
+    });
+  });
+  it("does not substitute execution identity for an unbound runtime conversation", () => {
+    expect(mapCollaborationExecutionDto({ id: 7 })).toMatchObject({
+      id: 7,
+      backend_task_id: null,
+      runtime_device_id: null,
+      runtime_task_id: null,
     });
   });
 });

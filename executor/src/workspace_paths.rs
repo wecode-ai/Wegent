@@ -29,6 +29,12 @@ pub(crate) fn workspace_root() -> PathBuf {
     {
         return root;
     }
+    // Local and device runs keep the layout the desktop app, the session store
+    // and the device config already share, so defer to the resolver that owns
+    // that layout rather than answering the same question a second way.
+    if crate::agents::backend_url::is_local_mode() {
+        return crate::agents::runtime_capabilities::workspace_root();
+    }
     if let Some(executor_home) = env_path("WEGENT_EXECUTOR_HOME") {
         return executor_home.join("workspace").join("projects");
     }
@@ -128,9 +134,12 @@ mod tests {
         let lock = crate::test_env::lock();
         let guards = [
             "WORKSPACE_ROOT",
+            "WEGENT_WORKSPACE_ROOT",
             "WEGENT_EXECUTOR_PROJECTS_DIR",
             "WEGENT_EXECUTOR_HOME",
             "WECODE_HOME",
+            "LOCAL_WORKSPACE_ROOT",
+            "EXECUTOR_MODE",
         ]
         .into_iter()
         .map(EnvGuard::remove)
@@ -139,6 +148,40 @@ mod tests {
             _lock: lock,
             _guards: guards,
         }
+    }
+
+    #[test]
+    fn workspace_root_keeps_the_local_device_layout() {
+        let _env = clear_workspace_env();
+        env::set_var("EXECUTOR_MODE", "local");
+        env::set_var("WEGENT_EXECUTOR_HOME", "/home/wegent/.wegent-executor");
+
+        assert_eq!(
+            workspace_root(),
+            PathBuf::from("/home/wegent/.wegent-executor/workspace")
+        );
+        assert_eq!(
+            task_workspace_dir("42"),
+            PathBuf::from("/home/wegent/.wegent-executor/workspace/42")
+        );
+    }
+
+    #[test]
+    fn workspace_root_honours_local_workspace_root_override() {
+        let _env = clear_workspace_env();
+        env::set_var("EXECUTOR_MODE", "local");
+        env::set_var("LOCAL_WORKSPACE_ROOT", "/srv/local-workspace");
+
+        assert_eq!(workspace_root(), PathBuf::from("/srv/local-workspace"));
+    }
+
+    #[test]
+    fn mounted_container_root_wins_over_local_mode() {
+        let _env = clear_workspace_env();
+        env::set_var("EXECUTOR_MODE", "local");
+        env::set_var("WORKSPACE_ROOT", "/workspace");
+
+        assert_eq!(workspace_root(), PathBuf::from("/workspace"));
     }
 
     #[test]

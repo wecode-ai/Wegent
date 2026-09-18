@@ -5002,6 +5002,20 @@ wheels = [
 ]
 
 [[package]]
+name = "python-socks"
+version = "2.8.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/db/ad/5bbfab3d3a266963cca0c09e23a725bbf5f0535d21c8bd1d5272e4430771/python_socks-2.8.2.tar.gz", hash = "sha256:ffc493951854fa3fc0551e0434a09a7b9f9047f9ad666dce42cb94a52e8a34b6", size = 39656, upload-time = "2026-06-23T05:22:01.994Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3d/18/23b981b1cf58c1e7b7e36fa1392daf12878b6a3c26c5e4248601647a6d09/python_socks-2.8.2-py3-none-any.whl", hash = "sha256:7cf785d0631e0659384a773b3c402bc22cccdc23894ba1d65f8524748ace1193", size = 55501, upload-time = "2026-06-23T05:22:00.658Z" },
+]
+
+[package.optional-dependencies]
+asyncio = [
+    { name = "async-timeout", marker = "python_full_version < '3.11'" },
+]
+
+[[package]]
 name = "python-telegram-bot"
 version = "22.6"
 source = { registry = "https://pypi.org/simple" }
@@ -6453,6 +6467,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "python-pptx" },
     { name = "python-socketio" },
+    { name = "python-socks", extra = ["asyncio"] },
     { name = "python-telegram-bot" },
     { name = "pyyaml" },
     { name = "qdrant-client" },
@@ -6466,6 +6481,7 @@ dependencies = [
     { name = "structlog" },
     { name = "tenacity" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
     { name = "wegent-chat-shell" },
     { name = "wegent-knowledge-engine" },
     { name = "wegent-shared" },
@@ -6570,6 +6586,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "python-pptx", specifier = ">=0.6.23" },
     { name = "python-socketio", specifier = ">=5.10.0" },
+    { name = "python-socks", extras = ["asyncio"], specifier = ">=2.7,<3" },
     { name = "python-telegram-bot", specifier = ">=21.0" },
     { name = "pyyaml", specifier = ">=6.0.1" },
     { name = "qdrant-client", specifier = "<1.19.0" },
@@ -6583,6 +6600,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=23.1.0" },
     { name = "tenacity", specifier = ">=8.2.3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
+    { name = "websockets", specifier = ">=15.0,<16" },
     { name = "wegent-chat-shell", editable = "../chat_shell" },
     { name = "wegent-knowledge-engine", editable = "../knowledge_engine" },
     { name = "wegent-shared", editable = "../shared" },

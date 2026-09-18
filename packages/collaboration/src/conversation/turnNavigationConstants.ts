@@ -1,0 +1,17 @@
+export const USER_PREVIEW_LENGTH = 56;
+export const RESPONSE_PREVIEW_LENGTH = 72;
+export const SCROLL_OFFSET_PX = 96;
+export const COLLAPSED_MARKER_WIDTH_PX = 8;
+export const SECONDARY_MARKER_WIDTH_PX = 12;
+export const NEARBY_MARKER_WIDTH_PX = 16;
+export const EXPANDED_MARKER_WIDTH_PX = 24;
+export const MARKER_HIT_AREA_WIDTH_PX = 28;
+export const MARKER_ROW_HEIGHT_PX = 8;
+export const MARKER_ROW_GAP_PX = 20 / 9;
+export const MARKER_HOVER_ROW_HEIGHT_PX =
+  MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX;
+export const NAVIGATION_VIEWPORT_PADDING_PX = 48;
+export const NAVIGATION_SCROLL_SETTLE_DELAYS_MS = [
+  80, 160, 320, 640, 1000, 1600,
+];
+export const MESSAGE_ANCHOR_SELECTOR = "[data-message-id]";
