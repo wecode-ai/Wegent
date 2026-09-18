@@ -2915,7 +2915,6 @@ export function useWorkbenchPaneSession({
     continuation: goalContinuation,
     taskRunning: paneStatus.taskExecution.running,
     messages,
-    turns,
     activeAssistantMessage,
   })
 
@@ -3111,6 +3110,7 @@ export function useWorkbenchPaneSession({
     handleFileSelect,
     removeAttachment,
     messages,
+    turns,
     queuedMessages,
     queuedMessagesPaused,
     guidanceMessages,
