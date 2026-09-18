@@ -29,6 +29,13 @@ export function isRuntimeTaskBusyError(error: string | null): boolean {
   return isRuntimeQueueBusyError(error, i18n.t('workbench.runtime_task_running_message'))
 }
 
+export function resolveRuntimePaneLifecycleAddress(
+  currentRuntimeTask: RuntimeTaskAddress | null,
+  retainedTranscriptTask: RuntimeTaskAddress | null | undefined
+): RuntimeTaskAddress | null {
+  return currentRuntimeTask ?? retainedTranscriptTask ?? null
+}
+
 export function deriveRuntimePaneStatus({
   messages,
   currentRuntimeTask,

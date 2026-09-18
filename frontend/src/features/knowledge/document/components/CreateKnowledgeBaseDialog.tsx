@@ -425,7 +425,7 @@ export function CreateKnowledgeBaseDialog({
       setName('')
       setDescription('')
       setDirectAccessRequirement('read')
-      setAllowDocumentDownload(true)
+      setAllowDocumentDownload(undefined)
       // Reset selectedKbType and keep summaryEnabled as true
       setSelectedKbType(initialKbType)
       setKind('document')

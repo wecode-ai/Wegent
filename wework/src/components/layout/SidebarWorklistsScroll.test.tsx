@@ -77,6 +77,8 @@ describe('SidebarWorklistsScroll', () => {
     const viewport = screen.getByTestId('sidebar-worklists-scroll')
     expect(viewportRef.current).toBe(viewport)
     expect(viewport.contains(scrollbar)).toBe(false)
+    expect(scrollbar).toHaveClass('w-2', '-translate-x-[3px]')
+    expect(scrollbar).not.toHaveClass('p-px', 'p-0.5')
     for (const scrollTop of [0, 100, 200, 0]) {
       fireEvent.scroll(viewport, { target: { scrollTop } })
       expect(screen.getByTestId('sidebar-worklists-scrollbar')).toBe(scrollbar)

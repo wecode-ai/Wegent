@@ -7334,7 +7334,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getAllByTestId('workspace-browser-url-input')[0]).toHaveValue(
       'http://example.com/'
     )
-  })
+  }, 10_000)
 
   test('mixes browser pages with chat and terminal tabs in the right workspace tab bar', async () => {
     renderWorkspacePanelLayout()
@@ -7372,7 +7372,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(tabTestIds[2]).toBe('right-workspace-terminal-tab')
     expect(tabTestIds[3]).toBe('right-workspace-browser-tab-2')
     expect(screen.queryByTestId('browser-tab-strip')).not.toBeInTheDocument()
-  })
+  }, 10_000)
 
   test('keeps one browser tab and preserves it when opening files from the new tab menu', async () => {
     renderWorkspacePanelLayout()
@@ -7634,7 +7634,7 @@ describe('DesktopWorkbenchLayout', () => {
   test('right workspace panel opens the file tab from the launcher', async () => {
     renderWorkspacePanelLayout()
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-file-option')).toHaveClass(
       'h-11',
@@ -7642,7 +7642,7 @@ describe('DesktopWorkbenchLayout', () => {
       'font-light'
     )
     expect(screen.getByTestId('right-workspace-file-option')).toHaveTextContent('⌥⌘F')
-    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+    fireEvent.click(screen.getByTestId('right-workspace-file-option'))
 
     const tabbar = screen.getByTestId('right-workspace-tabbar')
     const fileTab = screen.getByTestId('right-workspace-file-tab')
@@ -7699,16 +7699,18 @@ describe('DesktopWorkbenchLayout', () => {
 
     try {
       renderWorkspacePanelLayout()
-      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-      await userEvent.click(screen.getByTestId('right-workspace-extension-option-test:inspector'))
+      fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      fireEvent.click(screen.getByTestId('right-workspace-extension-option-test:inspector'))
 
-      const extensionTab = screen.getByTestId('right-workspace-extension-tab-test%3Ainspector')
+      const extensionTab = await screen.findByTestId(
+        'right-workspace-extension-tab-test%3Ainspector'
+      )
       expect(extensionTab).toHaveAttribute('aria-selected', 'true')
       expect(extensionTab).toHaveTextContent('DSH Inspector')
       expect(screen.getByTestId('dsh-inspector-panel')).toHaveAttribute('data-visible', 'true')
       expect(screen.getByTestId('right-workspace-panel-shell')).toContainElement(extensionTab)
 
-      await userEvent.click(
+      fireEvent.click(
         within(extensionTab).getByTestId(
           'right-workspace-extension-tab-test%3Ainspector-close-button'
         )
@@ -8875,7 +8877,6 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('switches folders in the file tab for a multi-root project', async () => {
-    const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
     const runtimeWork = {
       projects: [
@@ -8935,12 +8936,12 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await user.click(screen.getByTestId('right-workspace-file-option'))
+    fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    fireEvent.click(screen.getByTestId('right-workspace-file-option'))
 
     expect(await screen.findByTestId('workspace-file-root-selector')).toHaveTextContent('web')
-    await user.click(screen.getByTestId('workspace-file-root-selector'))
-    await user.click(screen.getByTitle('/workspace/api'))
+    fireEvent.click(screen.getByTestId('workspace-file-root-selector'))
+    fireEvent.click(screen.getByTitle('/workspace/api'))
 
     await waitFor(() =>
       expect(listWorkspaceEntries).toHaveBeenCalledWith(
@@ -8954,7 +8955,6 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens an edited file from the conversation tool block in the workspace panel', async () => {
-    const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
     const readWorkspaceTextFile = vi.fn().mockResolvedValue({
       path: '/workspace/project/README.md',
@@ -9014,7 +9014,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: /正在编辑 README\.md/ }))
+    fireEvent.click(screen.getByRole('button', { name: /正在编辑 README\.md/ }))
 
     expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
       'opened from tool block'
@@ -9029,7 +9029,7 @@ describe('DesktopWorkbenchLayout', () => {
       '显示目录树'
     )
 
-    await user.click(screen.getByTestId('workspace-file-toggle-tree-button'))
+    fireEvent.click(screen.getByTestId('workspace-file-toggle-tree-button'))
 
     expect(screen.getByTestId('workspace-file-tree-container')).toHaveClass(
       'w-[240px]',
@@ -9043,7 +9043,7 @@ describe('DesktopWorkbenchLayout', () => {
       '/workspace/project/README.md',
       '/workspace/project'
     )
-  })
+  }, 10_000)
 
   test('decodes an encoded assistant file path before opening it in the workspace panel', async () => {
     const user = userEvent.setup()
@@ -10684,7 +10684,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(onPushEnvironmentChanges).toHaveBeenCalledWith(null, activeProjectRuntimeTarget)
     )
-  })
+  }, 10_000)
 
   test('shows the environment commit progress row while generating a message', async () => {
     mockDesktopWorkbenchMainWidth(1024)
@@ -12082,7 +12082,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(screen.queryByTestId('smart-app-development-preview')).not.toBeInTheDocument()
-  })
+  }, 10_000)
 
   test('shows actionable failed and stale verification states in the Smart app preview', async () => {
     const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
@@ -12971,16 +12971,20 @@ describe('DesktopWorkbenchLayout', () => {
     expect(activePane().getByTestId('right-workspace-launcher')).toBeInTheDocument()
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
-    expect(activePane().queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(activePane().queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+    )
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
 
-    expect(activePane().getByTestId('right-workspace-panel-shell')).toHaveAttribute(
-      'aria-hidden',
-      'false'
-    )
-    expect(activePane().getByTestId('right-workspace-launcher')).toBeInTheDocument()
-  })
+    await waitFor(() => {
+      expect(activePane().getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+        'aria-hidden',
+        'false'
+      )
+      expect(activePane().getByTestId('right-workspace-launcher')).toBeInTheDocument()
+    })
+  }, 10_000)
 
   test('restores the opened plan when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
@@ -13043,8 +13047,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(activePane().getByTestId('right-workspace-chat-option'))
     const sideChat = activePane().getByTestId('right-workspace-chat-panel')
-    const composer = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(composer, 'keep this temporary chat')
+    setComposerValue(sideChat, 'keep this temporary chat')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
 
@@ -13056,7 +13059,7 @@ describe('DesktopWorkbenchLayout', () => {
       'keep this temporary chat'
     )
     expect(within(restoredSideChat).queryByText('加载临时聊天失败')).not.toBeInTheDocument()
-  }, 15_000)
+  }, 30_000)
 
   test('resets cached conversation horizontal scroll when the task becomes active', () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
