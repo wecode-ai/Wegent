@@ -372,10 +372,18 @@ fn environment_change_diagnostics_report_keys_without_values() {
 #[test]
 fn shared_notification_lag_is_recoverable() {
     let notification =
-        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None)
+        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None, false)
             .expect("lagged notifications should keep the turn alive");
 
     assert!(matches!(notification, SharedNotification::Lagged(37)));
+}
+
+#[test]
+fn closed_notification_stream_reports_executor_shutdown() {
+    assert!(matches!(
+        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true),
+        Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+    ));
 }
 
 #[tokio::test]

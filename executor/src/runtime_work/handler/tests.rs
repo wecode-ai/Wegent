@@ -5,6 +5,7 @@
 use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_selection_changed};
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
+use crate::agents::CODEX_APP_SERVER_EXECUTOR_SHUTDOWN;
 use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
 #[path = "local_history_tests.rs"]
@@ -2441,6 +2442,62 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
     assert!(!handler.is_active_local_task("task-1"));
 
     let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn executor_shutdown_preserves_interrupted_worktree_execution() {
+    let root =
+        temp_runtime_work_index_path("shutdown-interrupted-worktree").with_extension("directory");
+    let source = root.join("source");
+    let managed_root = root.join("workspace/worktrees");
+    let state_path = root.join("runtime-work/worktrees.json");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(state_path.clone());
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let record = handler
+        .worktrees
+        .prepare(&source, "task-1", None, false)
+        .unwrap();
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        record.path.clone(),
+        "Task".to_owned(),
+    ));
+    let execution_id = start_test_execution(&handler, "task-1");
+
+    handler.handle_turn_result(
+        "task-1",
+        execution_id,
+        &ExecutionRequest::default(),
+        None,
+        Err(CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned()),
+    );
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("interrupted task should remain stored");
+    assert_eq!(task.status, "running");
+    assert!(task.running);
+    assert!(handler.is_current_local_task_execution("task-1", execution_id));
+    let state = serde_json::from_slice::<Value>(&fs::read(state_path).unwrap()).unwrap();
+    assert_eq!(
+        state["records"][normalize_workspace_path(&record.path)]["executionLease"]["taskId"],
+        "task-1"
+    );
+    assert_eq!(
+        state["records"][normalize_workspace_path(&record.path)]["executionLease"]["executionId"],
+        execution_id
+    );
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

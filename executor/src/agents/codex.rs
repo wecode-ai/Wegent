@@ -47,6 +47,8 @@ use super::{model_id, prompt_text};
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
 const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
+pub const CODEX_APP_SERVER_EXECUTOR_SHUTDOWN: &str =
+    "codex app-server stopped because the executor is shutting down";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const NON_OFFICIAL_MODEL_IMAGE_SHORT_EDGE: u32 = 720;
@@ -1185,6 +1187,7 @@ pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
     let mut terminated = 0;
     for state in states {
         let mut state = state.lock().await;
+        state.executor_shutdown_requested = true;
         if state.process.take().is_some() {
             terminated += 1;
         }
@@ -1208,6 +1211,7 @@ fn codex_app_server_request_is_retryable(method: &str) -> bool {
 
 struct CodexAppServerSharedState {
     process: Option<CodexAppServerProcess>,
+    executor_shutdown_requested: bool,
     next_id: u64,
     active_threads: HashMap<String, usize>,
     thread_generations: HashMap<String, u64>,
@@ -1222,6 +1226,7 @@ impl Default for CodexAppServerSharedState {
     fn default() -> Self {
         Self {
             process: None,
+            executor_shutdown_requested: false,
             next_id: 1,
             active_threads: HashMap::new(),
             thread_generations: HashMap::new(),
@@ -2397,7 +2402,14 @@ async fn read_shared_turn_notifications(
             }
             continue;
         };
-        let notification = shared_notification_result(received, last_outcome.clone())?;
+        let executor_shutdown_requested =
+            matches!(received, Err(broadcast::error::RecvError::Closed))
+                && client.state.lock().await.executor_shutdown_requested;
+        let notification = shared_notification_result(
+            received,
+            last_outcome.clone(),
+            executor_shutdown_requested,
+        )?;
         let message = match notification {
             SharedNotification::Message(message) => message,
             SharedNotification::Lagged(skipped) => {
@@ -2738,6 +2750,7 @@ enum SharedNotification {
 fn shared_notification_result(
     result: Result<Value, broadcast::error::RecvError>,
     last_outcome: Option<ExecutionOutcome>,
+    executor_shutdown_requested: bool,
 ) -> Result<SharedNotification, String> {
     match result {
         Ok(message) => Ok(SharedNotification::Message(message)),
@@ -2747,7 +2760,12 @@ fn shared_notification_result(
         Err(broadcast::error::RecvError::Closed) => last_outcome
             .map(SharedNotification::Completed)
             .ok_or_else(|| {
-                "codex app-server notification stream closed before completing the turn".to_owned()
+                if executor_shutdown_requested {
+                    CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned()
+                } else {
+                    "codex app-server notification stream closed before completing the turn"
+                        .to_owned()
+                }
             }),
     }
 }
