@@ -85,6 +85,8 @@ def readiness_check(response: Response, db: Session = Depends(get_db)):
 
 
 # MIGRATION-CANDIDATE(api="GET /api/startup"): remove after final confirmation.
+# Served by backend-rs; see `backend-rs/src/startup/entry_routes.rs` and
+# the active `GET /api/startup` entry in `backend-rs/config/routes.toml`.
 # @router.get("/startup")
 # def startup_check(db: Session = Depends(get_db)):
 #     return {"status": "started"}

@@ -1394,8 +1394,9 @@ def _cleanup_stale_running_executions(db: Session) -> int:
     3. The execution is now stuck in RUNNING forever
 
     Uses FLOW_STALE_RUNNING_HOURS as the candidate scan window, then applies
-    each subscription's own timeoutSeconds before marking it failed. Timed-out
-    Code Wiki scheduled updates also cancel their downstream Task.
+    each subscription's own timeoutSeconds before marking it failed. Code Wiki scheduled
+    updates use their subscription timeout so the launcher and downstream Task share
+    one logical execution deadline.
 
     Args:
         db: Database session
@@ -1437,12 +1438,13 @@ def _cleanup_stale_running_executions(db: Session) -> int:
         for execution in stale_executions:
             try:
                 running_duration = now_utc - execution.started_at
-                running_seconds = int(running_duration.total_seconds())
-                timeout_seconds = _get_subscription_execution_timeout_seconds(
-                    db, execution
-                )
                 running_hours = running_duration.total_seconds() / 3600
-                timeout_hours = timeout_seconds / 3600
+                # The scan window above only selects candidates; each subscription
+                # owns its deadline. Code Wiki scheduled updates additionally cancel
+                # their downstream Task once that deadline passes.
+                timeout_hours = (
+                    _get_subscription_execution_timeout_seconds(db, execution) / 3600
+                )
                 policy = execution_timeout_policy(
                     db,
                     execution,
@@ -1454,7 +1456,8 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                     logger.info(
                         f"[subscription_tasks] RUNNING execution {execution.id} "
                         f"has not exceeded subscription timeout: "
-                        f"running_seconds={running_seconds}, timeout_seconds={timeout_seconds}"
+                        f"running_hours={running_hours:.2f}, "
+                        f"threshold_hours={threshold_hours}"
                     )
                     continue
                 if policy.task_to_cancel:
@@ -1463,7 +1466,8 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                 execution.status = BackgroundExecutionStatus.FAILED.value
                 execution.error_message = (
                     f"Execution timed out after {running_hours:.1f} hour(s) "
-                    f"(stuck in RUNNING state, threshold: {threshold_hours}h)"
+                    f"(stuck in RUNNING state, exceeded subscription timeout "
+                    f"{threshold_hours:.1f}h)"
                 )
                 execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 execution.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1473,7 +1477,7 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                     f"[subscription_tasks] Cleaned stale RUNNING execution {execution.id}: "
                     f"subscription_id={execution.subscription_id}, task_id={execution.task_id}, "
                     f"started_at={execution.started_at}, running_hours={running_hours:.1f}h, "
-                    f"reason=exceeded {threshold_hours}h threshold"
+                    f"reason=exceeded subscription timeout {threshold_hours:.1f}h"
                 )
 
             except Exception as e:
