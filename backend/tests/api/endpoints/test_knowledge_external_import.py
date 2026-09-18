@@ -946,6 +946,89 @@ class TestRetryExternalDocumentImport:
         assert response.status_code == 403
 
 
+class TestSynchronizeExternalDocument:
+    def test_refreshes_a_dingtalk_copy(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(
+            test_db, test_user.id, kb_id, index_status="success"
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-sync"
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["index_status"] == "queued"
+        assert dispatched == [document.id]
+
+    def test_rejects_unsynchronized_external_document(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(
+            test_db, test_user.id, kb_id, index_status="failed", external=False
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-sync"
+        )
+
+        assert response.status_code == 400
+        assert dispatched == []
+
+    def test_returns_conflict_while_sync_is_running(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(
+            test_db, test_user.id, kb_id, index_status="queued"
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-sync"
+        )
+
+        assert response.status_code == 409
+        assert dispatched == []
+
+    def test_requires_manage_permission(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(
+            test_db, test_user.id, kb_id, index_status="success"
+        )
+        monkeypatch.setattr(
+            KnowledgeService,
+            "can_manage_knowledge_base_documents",
+            staticmethod(lambda db, kb_id, user_id: False),
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-sync"
+        )
+
+        assert response.status_code == 403
+
+
 class TestExternalImportFailureVisibility:
     def test_list_exposes_structured_failure_reason(
         self,

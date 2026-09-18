@@ -182,6 +182,46 @@ class ExternalDocumentImportService:
         )
         return ExternalDocumentRefreshResult(document, started=True)
 
+    def request_source_refresh(
+        self, db: Session, user: User, document_id: int
+    ) -> KnowledgeDocument:
+        """Force an imported external document to fetch its source again."""
+        document = db.get(KnowledgeDocument, document_id)
+        if document is None:
+            raise ExternalDocumentImportError("Document not found", status_code=404)
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db=db, knowledge_base_id=document.kind_id, user_id=user.id
+        )
+        if not kb or not has_access:
+            raise ExternalDocumentImportError("Document not found", status_code=404)
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, document.kind_id, user.id
+        ):
+            raise ExternalDocumentImportError(
+                "You do not have permission to manage documents in this knowledge base",
+                status_code=403,
+            )
+        # Any imported external document can re-fetch its source: DingTalk
+        # copies follow the same refresh path as the scheduled copy update.
+        if not document.has_external_identity:
+            raise ExternalDocumentImportError(
+                "Only imported external documents can be synchronized"
+            )
+        refresh = self.queue_source_refresh(db, document)
+        if not refresh.started:
+            raise ExternalDocumentImportError(
+                "This document is still being processed; retry later", status_code=409
+            )
+        return refresh.document
+
+    def queue_source_refresh(
+        self, db: Session, document: KnowledgeDocument
+    ) -> ExternalDocumentRefreshResult:
+        """Queue a refresh after the caller has established authorization."""
+        return self.refresh_existing_document(
+            db, document, document.external_source_config
+        )
+
     def import_documents(
         self,
         db: Session,

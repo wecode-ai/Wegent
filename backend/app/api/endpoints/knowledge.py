@@ -1174,6 +1174,30 @@ def retry_external_document_import(
     return KnowledgeDocumentResponse.model_validate(result)
 
 
+@document_router.post(
+    "/{document_id}/external-sync",
+    response_model=KnowledgeDocumentResponse,
+)
+@trace_sync("synchronize_external_document", "knowledge.api")
+def synchronize_external_document(
+    document_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeDocumentResponse:
+    """Fetch and re-index the latest body of an imported external document."""
+    try:
+        result = external_document_import_service.request_source_refresh(
+            db=db, user=current_user, document_id=document_id
+        )
+    except ExternalDocumentImportError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    add_span_event(
+        "knowledge.document.external_sync_requested",
+        {"document_id": str(document_id), "user_id": str(current_user.id)},
+    )
+    return KnowledgeDocumentResponse.model_validate(result)
+
+
 @document_router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 @trace_sync("delete_document", "knowledge.api")
 def delete_document(

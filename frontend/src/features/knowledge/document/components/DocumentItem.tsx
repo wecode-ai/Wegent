@@ -12,6 +12,7 @@ import {
   ExternalLink,
   MoreVertical,
   CloudDownload,
+  RefreshCw,
   RotateCcw,
   Download,
   FolderInput,
@@ -30,10 +31,15 @@ import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDate } from '@/utils/dateTime'
 import { getProcessingErrorMessage } from '../utils/processing-error'
-import { getExternalSourceInfo } from '../utils/documentUtils'
+import {
+  getExternalSourceInfo,
+  isDocumentIndexInFlight,
+  isDingtalkCopyDocument,
+} from '../utils/documentUtils'
 import { toast } from '@/hooks/use-toast'
 import { useMultimodalDocActions } from '@/features/knowledge/multimodal/hooks/useMultimodalDocActions'
 import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
+import { useDingtalkSyncLabel } from '../hooks/useDingtalkSyncLabel'
 import {
   ReanalyzeDropdownItem,
   ReanalyzeIconButton,
@@ -45,6 +51,7 @@ interface DocumentItemProps {
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
   onReindex?: (doc: KnowledgeDocument) => void
+  onSync?: (doc: KnowledgeDocument) => void
   onViewDetail?: (doc: KnowledgeDocument) => void
   onMove?: (doc: KnowledgeDocument) => void
   /** Open the "modify prompt & re-analyze" dialog (video/image docs only) */
@@ -65,6 +72,7 @@ interface DocumentItemProps {
   isRefreshing?: boolean
   /** Whether the document is currently being reindexed */
   isReindexing?: boolean
+  isSyncing?: boolean
   /** Whether the knowledge base has RAG configured (retriever + embedding model) */
   ragConfigured?: boolean
   /** Width of the name column in pixels (for table mode column resize) */
@@ -94,6 +102,7 @@ export function DocumentItem({
   onDelete,
   onRefresh,
   onReindex,
+  onSync,
   onViewDetail,
   onMove,
   canManage = true,
@@ -107,6 +116,7 @@ export function DocumentItem({
   compact = false,
   isRefreshing = false,
   isReindexing = false,
+  isSyncing = false,
   ragConfigured = true,
   nameColumnWidth,
   showActionsColumn: showActionsColumnProp,
@@ -116,6 +126,7 @@ export function DocumentItem({
 }: DocumentItemProps) {
   const { t } = useTranslation()
   const downloadDocument = useKnowledgeDocumentDownload()
+  const getDingtalkSyncLabel = useDingtalkSyncLabel()
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`
@@ -175,6 +186,11 @@ export function DocumentItem({
     onReindex?.(document)
   }
 
+  const handleSync = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onSync?.(document)
+  }
+
   const handleOpenLink = (e: React.MouseEvent) => {
     e.stopPropagation()
     const url = sourceUrl
@@ -203,12 +219,8 @@ export function DocumentItem({
   const isIndexFailed = document.index_status === 'failed'
   const isPendingConversion = document.index_status === 'pending_conversion'
   const isConverting = document.index_status === 'converting'
-  const isBackendIndexing =
-    document.index_status === 'queued' ||
-    document.index_status === 'indexing' ||
-    isConverting ||
-    isPendingConversion
-  const showIndexingState = isReindexing || isBackendIndexing
+  const isBackendIndexing = isDocumentIndexInFlight(document)
+  const showIndexingState = isReindexing || isSyncing || isBackendIndexing
   const isExternal = document.source_type === 'external'
   // External documents retry through the dedicated import-retry entry, which
   // fetches the provider's latest body before replacing the attachment and
@@ -254,12 +266,17 @@ export function DocumentItem({
     onViewDetail?.(document)
   }
 
+  // DingTalk copies sync through the shared source-refresh entry; the entry
+  // stays visible while busy so the row can report "syncing".
+  const canSyncDingtalkCopy = isDingtalkCopyDocument(document) && !!onSync
+  const dingtalkSyncLabel = getDingtalkSyncLabel(document, showIndexingState)
+
   const showSelectionColumn = Boolean(onSelect)
   const showActionsColumn =
     showActionsColumnProp ??
-    Boolean(onMove || onEdit || onDelete || onRefresh || onReindex || showDownload)
+    Boolean(onMove || onEdit || onDelete || onRefresh || onReindex || onSync || showDownload)
   const hasManageActions = Boolean(
-    onMove || onEdit || onDelete || onRefresh || onReindex || showDownload
+    onMove || onEdit || onDelete || onRefresh || onReindex || onSync || showDownload
   )
   const tableGridTemplate = getDocumentTableGridTemplate({
     showSelectionColumn,
@@ -484,6 +501,19 @@ export function DocumentItem({
                       {isRefreshing
                         ? t('knowledge:document.upload.web.refetching')
                         : t('knowledge:document.upload.web.refetch')}
+                    </DropdownMenuItem>
+                  )}
+                  {canSyncDingtalkCopy && (
+                    <DropdownMenuItem
+                      onClick={handleSync}
+                      disabled={showIndexingState}
+                      className="max-md:min-h-[44px]"
+                      data-testid={`sync-dingtalk-document-${document.id}`}
+                    >
+                      <RefreshCw
+                        className={`mr-2 h-3.5 w-3.5 ${showIndexingState ? 'animate-spin' : ''}`}
+                      />
+                      {dingtalkSyncLabel}
                     </DropdownMenuItem>
                   )}
                   {canReindex && (
@@ -781,6 +811,22 @@ export function DocumentItem({
                   data-testid={`refresh-document-${document.id}`}
                 >
                   <CloudDownload className={`w-4 h-4 ${isRefreshing ? 'animate-pulse' : ''}`} />
+                </button>
+              )}
+              {canSyncDingtalkCopy && (
+                <button
+                  className={`p-1.5 rounded-md transition-colors max-md:min-h-[44px] max-md:min-w-[44px] ${
+                    showIndexingState
+                      ? 'text-primary cursor-not-allowed'
+                      : 'text-text-muted hover:text-primary hover:bg-primary/10'
+                  }`}
+                  onClick={handleSync}
+                  disabled={showIndexingState}
+                  title={dingtalkSyncLabel}
+                  aria-label={dingtalkSyncLabel}
+                  data-testid={`sync-dingtalk-document-${document.id}`}
+                >
+                  <RefreshCw className={`h-4 w-4 ${showIndexingState ? 'animate-spin' : ''}`} />
                 </button>
               )}
               {/* Reindex button - only when RAG configured and document not indexed */}

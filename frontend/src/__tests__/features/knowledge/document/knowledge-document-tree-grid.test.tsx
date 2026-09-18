@@ -417,3 +417,113 @@ describe('KnowledgeDocumentTreeGrid', () => {
     expect(onViewDetail).toHaveBeenCalledWith(documents[0])
   })
 })
+
+function createDingtalkCopy(overrides?: Partial<KnowledgeDocument>): KnowledgeDocument {
+  return createDocument({
+    id: 30,
+    name: '钉钉文档',
+    file_extension: 'md',
+    attachment_id: 300,
+    source_type: 'external',
+    source_config: {
+      external: {
+        provider: 'dingtalk',
+        resource_id: 'node-30',
+        title: '钉钉文档',
+        status: 'accessible',
+      },
+    },
+    ...overrides,
+  })
+}
+
+function renderDocumentRow(document: KnowledgeDocument, props?: Record<string, unknown>) {
+  const { nodes, index } = buildKnowledgeResourceTree([], [document])
+  return render(
+    <KnowledgeDocumentTreeGrid
+      nodes={nodes}
+      treeIndex={index}
+      folders={[]}
+      documents={[document]}
+      {...requiredTreeGridProps}
+      showSelectionColumn={false}
+      showActionsColumn
+      selectedFolderIds={new Set()}
+      selectedDocumentIds={new Set()}
+      canManage={() => true}
+      onSync={jest.fn()}
+      {...props}
+    />
+  )
+}
+
+describe('KnowledgeDocumentTreeGrid DingTalk manual sync', () => {
+  it('offers no manual sync for documents that are not DingTalk copies', () => {
+    renderDocumentRow(createDocument({ id: 30, attachment_id: 300 }))
+
+    expect(screen.queryByTestId('sync-dingtalk-document-30')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('quick-sync-dingtalk-document-30')).not.toBeInTheDocument()
+  })
+
+  it('offers "sync now" and "retry sync" depending on the source health', () => {
+    const { unmount } = renderDocumentRow(createDingtalkCopy())
+    expect(screen.getByTestId('sync-dingtalk-document-30')).toHaveAttribute(
+      'aria-label',
+      'document.document.syncNow'
+    )
+    unmount()
+
+    renderDocumentRow(
+      createDingtalkCopy({
+        source_config: {
+          external: {
+            provider: 'dingtalk',
+            resource_id: 'node-30',
+            title: '钉钉文档',
+            status: 'sync_error',
+            last_error: '无法连接钉钉',
+          },
+        },
+      })
+    )
+    expect(screen.getByTestId('sync-dingtalk-document-30')).toHaveAttribute(
+      'aria-label',
+      'document.document.syncRetry'
+    )
+  })
+
+  it('keeps the rename quick action for DingTalk copies', () => {
+    renderDocumentRow(createDingtalkCopy(), { onEdit: jest.fn() })
+
+    expect(screen.getByTestId('edit-document-30')).toHaveAttribute(
+      'aria-label',
+      'common:actions.edit'
+    )
+    expect(screen.queryByTestId('quick-sync-dingtalk-document-30')).not.toBeInTheDocument()
+  })
+
+  it('synchronizes the DingTalk copy without opening the document preview', () => {
+    const onSync = jest.fn()
+    const onViewDetail = jest.fn()
+
+    renderDocumentRow(createDingtalkCopy(), { onSync, onViewDetail })
+
+    fireEvent.click(screen.getByTestId('sync-dingtalk-document-30'))
+
+    expect(onSync).toHaveBeenCalledWith(expect.objectContaining({ id: 30 }))
+    expect(onViewDetail).not.toHaveBeenCalled()
+  })
+
+  it('disables the DingTalk entry and reports progress while processing', () => {
+    const onSync = jest.fn()
+
+    renderDocumentRow(createDingtalkCopy(), { onSync, isSyncing: () => true })
+
+    const syncButton = screen.getByTestId('sync-dingtalk-document-30')
+    expect(syncButton).toBeDisabled()
+    expect(syncButton).toHaveAttribute('aria-label', 'document.document.syncing')
+
+    fireEvent.click(syncButton)
+    expect(onSync).not.toHaveBeenCalled()
+  })
+})

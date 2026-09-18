@@ -136,3 +136,47 @@ export function getExternalSourceInfo(
     last_error: source.last_error as string | undefined,
   }
 }
+
+/**
+ * Read the provider of an imported document without requiring the full source
+ * metadata, so placeholders and failed imports are still recognized.
+ */
+export function getExternalDocumentProvider(
+  document: Pick<KnowledgeDocument, 'source_type' | 'source_config'>
+): string | null {
+  if (document.source_type !== 'external') return null
+  const external = document.source_config?.external
+  if (!external || typeof external !== 'object') return null
+  const provider = (external as Record<string, unknown>).provider
+  return typeof provider === 'string' ? provider : null
+}
+
+/**
+ * Whether this document is a DingTalk copy, refreshed through the same
+ * manual source-sync entry the knowledge base list exposes.
+ */
+export function isDingtalkCopyDocument(
+  document: Pick<KnowledgeDocument, 'source_type' | 'source_config'>
+): boolean {
+  return getExternalDocumentProvider(document) === 'dingtalk'
+}
+
+/**
+ * Whether the imported source itself is currently unreachable.
+ *
+ * Source health is independent from index health: a copy may keep serving its
+ * last successful index after the remote document disappears.
+ */
+export function isExternalSourceUnavailable(
+  document: Pick<KnowledgeDocument, 'source_type' | 'source_config'>
+): boolean {
+  const source = getExternalSourceInfo(document)
+  return !!source && ['inaccessible', 'sync_error'].includes(source.status || '')
+}
+
+/** Whether the document's index is being rebuilt right now. */
+export function isDocumentIndexInFlight(
+  document: Pick<KnowledgeDocument, 'index_status'>
+): boolean {
+  return ['queued', 'indexing', 'converting', 'pending_conversion'].includes(document.index_status)
+}
