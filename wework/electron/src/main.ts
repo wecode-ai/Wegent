@@ -1466,6 +1466,7 @@ async function configureDesktopRuntime(): Promise<void> {
           cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,
+          quitApplication: () => requestApplicationShutdown(() => app.quit()),
           openRuntimeTask: taskAddressId =>
             dispatchTrayAction({
               type: 'open-task',
