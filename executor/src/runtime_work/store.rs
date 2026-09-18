@@ -95,6 +95,7 @@ struct PersistedRuntimeTask {
     supervisor: Option<super::response::RuntimeSupervisorState>,
     created_at: i64,
     updated_at: i64,
+    recency_at: i64,
     runtime_handle: Value,
     parent: Option<Value>,
     ephemeral: bool,
@@ -121,6 +122,7 @@ struct PersistedRuntimeTaskInput {
     supervisor: Option<super::response::RuntimeSupervisorState>,
     created_at: i64,
     updated_at: i64,
+    recency_at: i64,
     runtime_handle: Value,
     parent: Option<Value>,
     ephemeral: bool,
@@ -150,6 +152,7 @@ impl From<PersistedRuntimeTaskInput> for PersistedRuntimeTask {
             supervisor: input.supervisor,
             created_at: input.created_at,
             updated_at: input.updated_at,
+            recency_at: input.recency_at,
             runtime_handle: input.runtime_handle,
             parent: input.parent,
             ephemeral: input.ephemeral,
@@ -177,6 +180,7 @@ impl PersistedRuntimeTask {
             supervisor: link.supervisor.clone(),
             created_at: link.created_at,
             updated_at: link.updated_at,
+            recency_at: link.recency_at,
             runtime_handle: persisted_runtime_handle(&link.runtime_handle, &link.runtime),
             parent: link.parent.clone(),
             ephemeral: link.ephemeral,
@@ -189,6 +193,11 @@ impl PersistedRuntimeTask {
 
     fn into_runtime(self) -> RuntimeTaskLink {
         let execution = self.local_execution.clone();
+        let recency_at = if self.recency_at > 0 {
+            self.recency_at
+        } else {
+            self.updated_at.max(self.created_at)
+        };
         let mut task = RuntimeTaskLink {
             local_task_id: self.local_task_id,
             thread_id: self.thread_id,
@@ -210,6 +219,7 @@ impl PersistedRuntimeTask {
             git_info: None,
             created_at: self.created_at,
             updated_at: self.updated_at,
+            recency_at,
             completed_at: None,
             runtime_handle: persisted_runtime_handle(&self.runtime_handle, &self.runtime),
             parent: self.parent,
@@ -243,6 +253,11 @@ impl PersistedRuntimeTask {
         task.supervisor = self.supervisor;
         task.created_at = self.created_at;
         task.updated_at = self.updated_at;
+        task.recency_at = if self.recency_at > 0 {
+            self.recency_at
+        } else {
+            self.updated_at.max(self.created_at)
+        };
         task.runtime_handle = merge_persisted_runtime_handle(
             &task.runtime_handle,
             self.runtime_handle,
