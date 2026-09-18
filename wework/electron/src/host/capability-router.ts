@@ -2,6 +2,7 @@ export const HOST_PROTOCOL_VERSION = 1
 
 export const HOST_CAPABILITIES = [
   'app.getVersion',
+  'app.quit',
   'appUpdate.check',
   'appUpdate.download',
   'appUpdate.downloadProgress',

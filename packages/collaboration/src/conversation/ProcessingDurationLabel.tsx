@@ -5,12 +5,14 @@ import { formatDuration } from "./blocks/processingDuration";
 interface ProcessingDurationLabelProps {
   startedAt: number | undefined;
   completedAt: number | undefined;
+  durationMs?: number;
   isRunning: boolean;
 }
 
 export function ProcessingDurationLabel({
   startedAt,
   completedAt,
+  durationMs,
   isRunning,
 }: ProcessingDurationLabelProps) {
   const { t, translate } = useConversationTranslation();
@@ -26,9 +28,11 @@ export function ProcessingDurationLabel({
 
   const end = completedAt ?? (isRunning ? now : undefined);
   const elapsed =
-    startedAt === undefined || end === undefined
-      ? 0
-      : Math.max(0, end - startedAt);
+    durationMs !== undefined
+      ? Math.max(0, durationMs)
+      : startedAt === undefined || end === undefined
+        ? 0
+        : Math.max(0, end - startedAt);
   const duration = formatDuration(elapsed, translate.locale ?? "zh-CN");
   const label = isRunning
     ? elapsed < 1000

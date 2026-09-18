@@ -95,6 +95,8 @@ export function runtimeTranscriptTurnsToConversationTurns(
         itemMerge: turn.itemMerge,
         items,
         status,
+        startedAt: normalizeRuntimeTurnTimestamp(turn.startedAt),
+        durationMs: normalizeRuntimeTurnDuration(turn.durationMs),
         completedAt: turn.completedAt,
         error: turn.error ?? undefined,
         errorType: turn.errorType ?? undefined,
@@ -105,6 +107,21 @@ export function runtimeTranscriptTurnsToConversationTurns(
       },
     ];
   });
+}
+
+function normalizeRuntimeTurnTimestamp(
+  value: string | number | null | undefined,
+): number | undefined {
+  const timestamp = typeof value === "number" ? value : Date.parse(value ?? "");
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function normalizeRuntimeTurnDuration(
+  value: number | null | undefined,
+): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, value)
+    : undefined;
 }
 
 export function runtimeMessageToWorkbenchMessage(
