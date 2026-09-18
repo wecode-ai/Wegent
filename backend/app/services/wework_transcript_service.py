@@ -260,6 +260,7 @@ def upload_segment(
         _store_segment(source, object_key, request)
         return transcript, False
     _validate_segment_write(transcript, request)
+    _require_restorable_base(db, transcript, request)
     _store_segment(source, object_key, request)
     db.add(
         WeworkTranscriptArchive(
@@ -463,6 +464,46 @@ def _segment_object_key(
         f"users/{user_id}/transcripts/{transcript_key}/"
         f"{request.sequence}-{kind}-{request.sha256}.tgz.aes256gcm"
     )
+
+
+def _require_restorable_base(
+    db: Session,
+    transcript: WeworkTranscript,
+    request: TranscriptSegmentCommitRequest,
+) -> None:
+    if "snapshot" in request.format or transcript.current_sequence == 0:
+        return
+    archives = list_archives(db, transcript_db_id=transcript.id)
+    snapshots = [
+        archive
+        for archive in archives
+        if archive.from_sequence == 0
+        and archive.to_sequence <= transcript.current_sequence
+    ]
+    if not snapshots:
+        raise WeworkTranscriptError(
+            "snapshot_required",
+            "The cloud transcript recovery chain is incomplete; upload a full snapshot",
+        )
+    snapshot = max(snapshots, key=lambda archive: archive.to_sequence)
+    chain = [
+        archive
+        for archive in archives
+        if snapshot.to_sequence <= archive.to_sequence <= transcript.current_sequence
+    ]
+    chain.sort(key=lambda archive: archive.to_sequence)
+    expected_sequence = snapshot.to_sequence
+    for archive in chain:
+        if archive.to_sequence != expected_sequence:
+            break
+        if not wework_transcript_storage.exists(archive.storage_key):
+            break
+        expected_sequence += 1
+    if expected_sequence <= transcript.current_sequence:
+        raise WeworkTranscriptError(
+            "snapshot_required",
+            "The cloud transcript recovery chain is incomplete; upload a full snapshot",
+        )
 
 
 def _stage_segment(

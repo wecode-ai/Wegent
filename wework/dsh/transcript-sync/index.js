@@ -264,7 +264,23 @@ export class WeworkSync {
         encryptionKey: encryption.key,
         summary: summarized.payload,
       })
-      await this.uploadPendingSegment(turn, segment, lease)
+      try {
+        await this.uploadPendingSegment(turn, segment, lease)
+      } catch (error) {
+        if (!snapshot && isSnapshotRequired(error)) {
+          await removeSegmentFile(segment)
+          segment = await this.source.read(turn, {
+            baseSequence: turn.cloudSequence - 1,
+            sequence: turn.cloudSequence,
+            snapshot: true,
+            encryptionKey: encryption.key,
+            summary: summarized.payload,
+          })
+          await this.uploadPendingSegment(turn, segment, lease)
+        } else {
+          throw error
+        }
+      }
     } catch (error) {
       await this.releaseLease(turn, lease)
       released = true
@@ -682,6 +698,10 @@ function isSequenceConflict(error) {
     error instanceof SyncRequestError &&
     ['sequence_conflict', 'segment_conflict', 'turn_conflict'].includes(error.code)
   )
+}
+
+function isSnapshotRequired(error) {
+  return error instanceof SyncRequestError && error.code === 'snapshot_required'
 }
 
 async function removeSegmentFile(segment) {

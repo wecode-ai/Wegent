@@ -324,6 +324,19 @@ export function createDesktopScenario({
         const existingTurn = transcript.turns.find(turn => turn.sequence === body.sequence)
         if (!existing) assert.equal(body.baseSequence, transcript.currentSequence)
         if (
+          !existing &&
+          body.format.includes('delta') &&
+          transcript.archives.some(archive => !objects.has(archive.objectId))
+        ) {
+          json(response, 409, {
+            detail: {
+              code: 'snapshot_required',
+              message: 'The cloud transcript recovery chain is incomplete',
+            },
+          })
+          return true
+        }
+        if (
           existing &&
           (existing.sha256 !== body.sha256 ||
             existing.sizeBytes !== body.sizeBytes ||
@@ -500,6 +513,7 @@ export function createDesktopScenario({
       assert.equal(segmentUploadCounts.get(repairedSnapshotObjectId), 2)
       assert.ok(objects.get(repairedSnapshotObjectId)?.byteLength > 0)
       await captureScreenshot(control, 'transcript-sync-01-device-a-snapshot-uploaded.png', 'body')
+      objects.delete(repairedSnapshotObjectId)
 
       await writeFile(
         join(workspacePath, 'transcript-sync-restore-marker.txt'),
@@ -516,18 +530,20 @@ export function createDesktopScenario({
           sqliteOutboxCount(deviceAOutboxPath) === 0 &&
           leases.size === 0,
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
-        'Second turn did not upload a native rollout delta'
+        'Second turn did not replace the broken recovery chain with a native snapshot'
       )
-      assert.equal(activeTranscript().archives[1].format, 'codex-delta.v1.tgz.aes256gcm')
+      assert.equal(activeTranscript().archives[1].format, 'codex-snapshot.v1.tgz.aes256gcm')
       assert.equal(activeTranscript().turns[1].payload.assistantMessage, SECOND_COMPLETION)
-      await captureScreenshot(control, 'transcript-sync-02-device-a-delta-uploaded.png', 'body')
-      const snapshotObject = objects.get(activeTranscript().archives[0].objectId)
-      const deltaObject = objects.get(activeTranscript().archives[1].objectId)
-      assert.ok(snapshotObject.byteLength > 0)
-      assert.ok(deltaObject.byteLength > 0)
-      assert.equal(snapshotObject.subarray(0, 4).toString('ascii'), 'WTRN')
-      assert.equal(deltaObject.subarray(0, 4).toString('ascii'), 'WTRN')
-      assert.notDeepEqual([...snapshotObject.subarray(0, 2)], [0x1f, 0x8b])
+      await captureScreenshot(
+        control,
+        'transcript-sync-02-device-a-repaired-snapshot-uploaded.png',
+        'body'
+      )
+      assert.equal(objects.has(activeTranscript().archives[0].objectId), false)
+      const repairedSnapshotObject = objects.get(activeTranscript().archives[1].objectId)
+      assert.ok(repairedSnapshotObject.byteLength > 0)
+      assert.equal(repairedSnapshotObject.subarray(0, 4).toString('ascii'), 'WTRN')
+      assert.notDeepEqual([...repairedSnapshotObject.subarray(0, 2)], [0x1f, 0x8b])
 
       const secondRequest = modelRequests.find(request =>
         JSON.stringify(request).includes(SECOND_PROMPT)

@@ -231,6 +231,68 @@ test('reuploads the same native segment when its commit was already recorded', a
   )
 })
 
+test('retries a pending delta as a snapshot when the cloud recovery chain is missing', async () => {
+  const source = await segmentSource()
+  const pending = turn({
+    sequence: 2,
+    turnId: 'turn-2',
+    baseSequence: 1,
+    cloudSequence: 2,
+  })
+  const outbox = new MemorySyncOutbox([pending])
+  const uploads = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox,
+    source,
+    state: state(),
+    target: { async acknowledge() {} },
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          if (request.path.endsWith('/lease')) {
+            return { status: 200, body: { fencingToken: 3, currentSequence: 1 } }
+          }
+          if (request.path.endsWith('/encryption-key')) {
+            return {
+              status: 200,
+              body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          if (request.path.endsWith('/segments')) {
+            uploads.push(structuredClone(request.body))
+            if (uploads.length === 1) {
+              return {
+                status: 409,
+                body: {
+                  detail: {
+                    code: 'snapshot_required',
+                    message: 'The cloud transcript recovery chain is incomplete',
+                  },
+                },
+              }
+            }
+            return { status: 200, body: { currentSequence: 2, appended: 1 } }
+          }
+          return { status: 200, body: { released: true } }
+        },
+      },
+    },
+  })
+
+  await sync.flushPending()
+
+  assert.equal(outbox.count(), 0)
+  assert.equal(uploads.length, 2)
+  assert.equal(uploads[0].format, 'codex-delta.v1.tgz.aes256gcm')
+  assert.equal(uploads[1].format, 'codex-snapshot.v1.tgz.aes256gcm')
+  assert.deepEqual(
+    source.calls.map(call => call.options.snapshot),
+    [false, true]
+  )
+})
+
 test('restores the latest snapshot and contiguous native deltas', async () => {
   const restored = []
   const downloadPaths = []
