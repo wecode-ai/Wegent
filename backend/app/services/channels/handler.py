@@ -589,8 +589,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         """
         from app.services.channels.team_selection import team_selection_manager
 
-        # Check if user has a manually selected team
-        selection = await team_selection_manager.get_selection(user_id)
+        # Check if user has a manually selected team for this channel
+        selection = await team_selection_manager.get_selection(
+            user_id, self._channel_id
+        )
         if selection:
             team = (
                 db.query(Kind)
@@ -612,7 +614,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     f"[{self._channel_type.value}Handler] User-selected team not found "
                     f"or inactive: id={selection.team_id}, clearing selection"
                 )
-                await team_selection_manager.clear_selection(user_id)
+                await team_selection_manager.clear_selection(
+                    user_id, self._channel_id
+                )
 
         # Fall back to default team
         return self._get_default_team(db, user_id)
@@ -2162,10 +2166,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             mode = "☁️ 云端执行模式"
             device_info = ""
 
-        # Get team - prioritize user selection over default
+        # Get team - prioritize user selection for this channel over default
         from app.services.channels.team_selection import team_selection_manager
 
-        team_selection = await team_selection_manager.get_selection(user.id)
+        team_selection = await team_selection_manager.get_selection(
+            user.id, self._channel_id
+        )
         if team_selection:
             team = (
                 db.query(Kind)
@@ -2183,7 +2189,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 team_name = f"{display} (用户选择)"
             else:
                 # Selected team no longer exists, clear it
-                await team_selection_manager.clear_selection(user.id)
+                await team_selection_manager.clear_selection(
+                    user.id, self._channel_id
+                )
                 team = self._get_default_team(db, user.id)
                 if team:
                     team_json = team.json or {}
@@ -2509,7 +2517,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
             # Support "default" to revert to system default
             if argument == "default":
-                await team_selection_manager.clear_selection(user.id)
+                await team_selection_manager.clear_selection(
+                    user.id, self._channel_id
+                )
                 await self._delete_conversation_task_id(
                     message_context.conversation_id, user.id
                 )
@@ -2571,6 +2581,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
             await team_selection_manager.set_selection(
                 user.id,
+                self._channel_id,
                 TeamSelection(
                     team_id=matched_team_id,
                     team_name=matched_team_name,
@@ -2593,7 +2604,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
 
         # No argument - list teams
-        current_selection = await team_selection_manager.get_selection(user.id)
+        current_selection = await team_selection_manager.get_selection(
+            user.id, self._channel_id
+        )
         current_team_id = current_selection.team_id if current_selection else None
 
         message = AGENTS_HEADER + "\n"
