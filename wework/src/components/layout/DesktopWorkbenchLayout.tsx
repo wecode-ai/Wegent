@@ -1114,6 +1114,7 @@ export function DesktopWorkbenchLayout({
                   embeddedTitle="project"
                   startupActive={routeActive && routeWorkItemsOpen}
                   onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                  onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
                   onArchiveRuntimeTasks={onArchiveChatConversations}
                   onOpenSettings={options => openSettings(options)}
                   onLogout={onLogout}

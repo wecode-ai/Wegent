@@ -1154,43 +1154,6 @@ describe('CloudTodoWorkspace', () => {
     expect(workbenchServices.deliveryApi!.listCloudProjectMembers).not.toHaveBeenCalled()
   })
 
-  it.each(['cloud', 'local'] as const)(
-    'marks an unread %s Issue as read when its detail opens',
-    async location => {
-      const workbenchServices = services()
-      workbenchServices.projectSpaceApis = {
-        [location]: workbenchServices.deliveryApi!,
-        defaultLocation: location,
-      }
-      const unreadItem = { ...item, is_unread: true, content_revision: 2 }
-      vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
-        items: [unreadItem],
-      })
-      vi.mocked(workbenchServices.deliveryApi!.markLoopItemRead).mockResolvedValue({
-        ...unreadItem,
-        is_unread: false,
-      })
-
-      render(
-        <CloudTodoWorkspace
-          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-          localProjects={[]}
-          services={workbenchServices}
-        />
-      )
-
-      await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-      expect(await screen.findByTestId('cloud-todo-card-unread-WEG-1')).toBeInTheDocument()
-
-      await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
-
-      await waitFor(() => {
-        expect(workbenchServices.deliveryApi!.markLoopItemRead).toHaveBeenCalledWith('WEG-1')
-      })
-      expect(screen.queryByTestId('cloud-todo-card-unread-WEG-1')).not.toBeInTheDocument()
-    }
-  )
-
   it('shows only the current runtime task and hides child-task lists and actions', async () => {
     const child = {
       ...item,
@@ -5485,7 +5448,53 @@ describe('CloudTodoWorkspace', () => {
       cloud_project_id: defaultProject.id,
       title: 'Issue-bound Runtime Task',
       status: 'completed' as const,
+      is_unread: true,
     }
+    const firstAddress = {
+      deviceId: 'local-device',
+      taskId: 'bound-runtime-task',
+    }
+    const secondAddress = {
+      deviceId: 'local-device',
+      taskId: 'second-bound-runtime-task',
+    }
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: 91, key: 'project-a', name: 'Project A' },
+          deviceWorkspaces: [
+            {
+              deviceId: firstAddress.deviceId,
+              workspacePath: '/tmp/project-a',
+              available: true,
+              tasks: [
+                {
+                  taskId: firstAddress.taskId,
+                  workspacePath: '/tmp/project-a',
+                  title: persistedIssue.title,
+                  runtime: 'codex' as const,
+                  completedAt: 1_700_000_000,
+                },
+                {
+                  taskId: secondAddress.taskId,
+                  workspacePath: '/tmp/project-a',
+                  title: 'Second bound Runtime Task',
+                  runtime: 'codex' as const,
+                  completedAt: 1_700_000_001,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const lifecycleStore = new RuntimeTaskLifecycleStore(1)
+    lifecycleStore.syncRuntimeWork(runtimeWork)
+    lifecycleStore.markRead(firstAddress)
+    lifecycleStore.markRead(secondAddress)
+    expect(lifecycleStore.getSnapshot().unreadTaskKeys).toEqual(new Set())
     const workbenchServices = services()
     vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
       items: [defaultProject],
@@ -5497,63 +5506,118 @@ describe('CloudTodoWorkspace', () => {
           id: 1,
           loop_item_id: persistedIssue.id,
           task_user_id: 1,
-          device_id: 'local-device',
-          task_id: 'bound-runtime-task',
+          device_id: firstAddress.deviceId,
+          task_id: firstAddress.taskId,
           task_title: persistedIssue.title,
           backend_task_id: null,
           linked_at: '2026-09-12T00:00:00Z',
+        },
+        {
+          id: 2,
+          loop_item_id: persistedIssue.id,
+          task_user_id: 1,
+          device_id: secondAddress.deviceId,
+          task_id: secondAddress.taskId,
+          task_title: 'Second bound Runtime Task',
+          backend_task_id: null,
+          linked_at: '2026-09-12T00:01:00Z',
         },
       ],
       members: [],
       agents: [],
     }))
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [persistedIssue],
+    }))
     workbenchServices.projectSpaceApis = {
       local: workbenchServices.deliveryApi!,
       defaultLocation: 'local',
     }
-
-    render(
+    const onMarkRuntimeTaskRead = vi.fn((runtimeAddress: typeof firstAddress) =>
+      lifecycleStore.markRead(runtimeAddress)
+    )
+    const workspace = (
+      lifecycleSnapshot: ReturnType<RuntimeTaskLifecycleStore['getSnapshot']>,
+      focusedItemId?: string
+    ) => (
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[{ id: 91, name: 'Project A', tasks: [] }]}
-        runtimeWork={{
-          projects: [
-            {
-              project: { id: 91, key: 'project-a', name: 'Project A' },
-              deviceWorkspaces: [
-                {
-                  deviceId: 'local-device',
-                  workspacePath: '/tmp/project-a',
-                  available: true,
-                  tasks: [
-                    {
-                      taskId: 'bound-runtime-task',
-                      workspacePath: '/tmp/project-a',
-                      title: persistedIssue.title,
-                      runtime: 'codex',
-                      completedAt: 1_700_000_000,
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-          chats: [],
-          totalTasks: 1,
-        }}
+        runtimeWork={runtimeWork}
+        runtimeTaskLifecycle={lifecycleSnapshot}
         services={workbenchServices}
         embedded
         activeProjectRef={{
           projectStore: 'local',
           projectId: defaultProject.id,
         }}
+        focusedItemId={focusedItemId}
+        onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
       />
     )
+
+    const rendered = render(workspace(lifecycleStore.getSnapshot()))
 
     expect(await screen.findByTestId(`cloud-todo-card-${persistedIssue.id}`)).toBeInTheDocument()
     expect(
       screen.queryByTestId('cloud-todo-card-runtime:local-device:bound-runtime-task')
     ).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId(`cloud-todo-card-unread-${persistedIssue.id}`)
+    ).not.toBeInTheDocument()
+
+    act(() => {
+      lifecycleStore.executorStarted(firstAddress)
+      lifecycleStore.executorSettled(firstAddress)
+      lifecycleStore.executorStarted(secondAddress)
+      lifecycleStore.executorSettled(secondAddress)
+    })
+    rendered.rerender(workspace(lifecycleStore.getSnapshot()))
+
+    expect(
+      await screen.findByTestId(`cloud-todo-card-unread-${persistedIssue.id}`)
+    ).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId(`cloud-todo-card-${persistedIssue.id}`))
+
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledTimes(2)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(firstAddress)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(secondAddress)
+    expect(workbenchServices.deliveryApi!.markLoopItemRead).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-close'))
+    onMarkRuntimeTaskRead.mockClear()
+    act(() => {
+      lifecycleStore.executorStarted(firstAddress)
+      lifecycleStore.executorSettled(firstAddress)
+      lifecycleStore.executorStarted(secondAddress)
+      lifecycleStore.executorSettled(secondAddress)
+    })
+    rendered.rerender(workspace(lifecycleStore.getSnapshot(), persistedIssue.id))
+
+    await waitFor(() => expect(onMarkRuntimeTaskRead).toHaveBeenCalledTimes(2))
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(firstAddress)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(secondAddress)
+
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-close'))
+    rendered.rerender(workspace(lifecycleStore.getSnapshot()))
+    onMarkRuntimeTaskRead.mockClear()
+    act(() => {
+      lifecycleStore.executorStarted(firstAddress)
+      lifecycleStore.executorSettled(firstAddress)
+      lifecycleStore.executorStarted(secondAddress)
+      lifecycleStore.executorSettled(secondAddress)
+    })
+    rendered.rerender(workspace(lifecycleStore.getSnapshot()))
+    await userEvent.keyboard('{Meta>}k{/Meta}')
+    await userEvent.type(screen.getByTestId('cloud-global-search-input'), persistedIssue.id)
+    await userEvent.click(
+      await screen.findByTestId(`cloud-global-search-result-${persistedIssue.id}`)
+    )
+
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledTimes(2)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(firstAddress)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(secondAddress)
   })
 
   it('shows only current system Issues in My Tasks and batch archives completed tasks', async () => {
