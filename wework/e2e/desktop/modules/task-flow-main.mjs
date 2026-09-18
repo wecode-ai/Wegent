@@ -1286,6 +1286,11 @@ async function main() {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
+    if (DESKTOP_SEGMENT === 'running-conversation-history') {
+      appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS = '1500'
+    } else {
+      delete appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS
+    }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: desktopScenario?.electronLaunchArguments ?? [],
