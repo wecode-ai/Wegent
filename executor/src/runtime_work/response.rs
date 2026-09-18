@@ -71,6 +71,7 @@ pub(crate) struct RuntimeTaskLink {
     pub git_info: Option<Value>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub recency_at: i64,
     pub completed_at: Option<i64>,
     pub runtime_handle: Value,
     pub parent: Option<Value>,
@@ -107,6 +108,7 @@ impl RuntimeTaskLink {
         runtime: impl Into<String>,
     ) -> Self {
         let runtime = runtime.into();
+        let now = now_ms();
         Self {
             local_task_id,
             thread_id: None,
@@ -122,8 +124,9 @@ impl RuntimeTaskLink {
             goal_execution_status: None,
             supervisor: None,
             git_info: None,
-            created_at: now_ms(),
-            updated_at: now_ms(),
+            created_at: now,
+            updated_at: now,
+            recency_at: now,
             completed_at: None,
             runtime_handle: json!({ "runtime": runtime }),
             parent: None,
@@ -150,6 +153,7 @@ impl RuntimeTaskLink {
         runtime_handle: Value,
         parent: Value,
     ) -> Self {
+        let now = now_ms();
         Self {
             local_task_id,
             thread_id: None,
@@ -165,8 +169,9 @@ impl RuntimeTaskLink {
             goal_execution_status: None,
             supervisor: None,
             git_info: None,
-            created_at: now_ms(),
-            updated_at: now_ms(),
+            created_at: now,
+            updated_at: now,
+            recency_at: now,
             completed_at: None,
             runtime_handle,
             parent: Some(parent),
@@ -206,6 +211,11 @@ impl RuntimeTaskLink {
             .cloned()
             .or_else(|| local_link.as_ref().and_then(|link| link.git_info.clone()));
         let local_completed_at = local_link.as_ref().and_then(|link| link.completed_at);
+        let created_at = timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms);
+        let recency_at = timestamp_ms_field(thread, "recencyAt")
+            .or_else(|| timestamp_ms_field(thread, "recency_at"))
+            .or_else(|| local_link.as_ref().map(|link| link.recency_at))
+            .unwrap_or(created_at);
         let local_settled_status = local_link.as_ref().and_then(local_settled_status);
         let provider_turn_running =
             codex_thread_has_in_progress_turn_after(thread, local_completed_at);
@@ -267,7 +277,7 @@ impl RuntimeTaskLink {
                 .and_then(|link| link.goal_execution_status.clone()),
             supervisor,
             git_info,
-            created_at: timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms),
+            created_at,
             updated_at: if running {
                 timestamp_ms_field(thread, "updatedAt")
                     .unwrap_or_else(now_ms)
@@ -277,6 +287,7 @@ impl RuntimeTaskLink {
                     .or_else(|| timestamp_ms_field(thread, "updatedAt"))
                     .unwrap_or_else(now_ms)
             },
+            recency_at,
             completed_at: if running || local_settled_status.is_some() {
                 local_completed_at
             } else {
@@ -331,6 +342,7 @@ impl RuntimeTaskLink {
             git_info: self.git_info.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
+            recency_at: self.recency_at,
             completed_at: self.completed_at,
             runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
             parent: self.parent.clone(),
@@ -437,6 +449,7 @@ fn git_origin_url(config: &str) -> Option<String> {
 
 impl Default for RuntimeTaskLink {
     fn default() -> Self {
+        let now = now_ms();
         Self {
             local_task_id: String::new(),
             thread_id: None,
@@ -452,8 +465,9 @@ impl Default for RuntimeTaskLink {
             goal_execution_status: None,
             supervisor: None,
             git_info: None,
-            created_at: now_ms(),
-            updated_at: now_ms(),
+            created_at: now,
+            updated_at: now,
+            recency_at: now,
             completed_at: None,
             runtime_handle: json!({}),
             parent: None,
@@ -678,7 +692,7 @@ fn compare_runtime_task_links(
 }
 
 fn runtime_task_sort_time(link: &RuntimeTaskLink) -> i64 {
-    link.completed_at.unwrap_or(link.created_at)
+    link.recency_at
 }
 
 pub(crate) fn archived_conversations_response(
@@ -820,6 +834,10 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
     task.insert(
         "updatedAt".to_owned(),
         Value::Number(link.updated_at.into()),
+    );
+    task.insert(
+        "recencyAt".to_owned(),
+        Value::Number(link.recency_at.into()),
     );
     if let Some(completed_at) = link.completed_at {
         task.insert("completedAt".to_owned(), Value::Number(completed_at.into()));
@@ -1304,12 +1322,14 @@ mod tests {
     }
 
     #[test]
-    fn completed_thread_uses_its_final_update_time_for_sorting() {
+    fn completed_thread_preserves_provider_recency_for_sorting() {
         let link = RuntimeTaskLink::from_thread_metadata(
             &json!({
                 "id": "thread-1",
                 "status": "idle",
+                "createdAt": 1_780_000_000_000_i64,
                 "updatedAt": 1_780_000_100_000_i64,
+                "recencyAt": 1_780_000_050_000_i64,
             }),
             None,
             "/workspace/project".to_owned(),
@@ -1317,6 +1337,32 @@ mod tests {
         );
 
         assert_eq!(link.completed_at, Some(1_780_000_100_000));
+        assert_eq!(link.recency_at, 1_780_000_050_000);
+    }
+
+    #[test]
+    fn workspace_response_sorts_by_recency_instead_of_updated_at() {
+        let older_recency = RuntimeTaskLink {
+            local_task_id: "older-recency".to_owned(),
+            workspace_path: "/workspace/project".to_owned(),
+            updated_at: 1_780_000_300_000,
+            recency_at: 1_780_000_100_000,
+            ..RuntimeTaskLink::default()
+        };
+        let newer_recency = RuntimeTaskLink {
+            local_task_id: "newer-recency".to_owned(),
+            workspace_path: "/workspace/project".to_owned(),
+            updated_at: 1_780_000_200_000,
+            recency_at: 1_780_000_150_000,
+            ..RuntimeTaskLink::default()
+        };
+
+        let workspaces = workspace_response(vec![older_recency, newer_recency], Vec::new());
+        let tasks = workspaces[0]["tasks"].as_array().expect("workspace tasks");
+
+        assert_eq!(tasks[0]["taskId"], "newer-recency");
+        assert_eq!(tasks[1]["taskId"], "older-recency");
+        assert_eq!(tasks[0]["recencyAt"], 1_780_000_150_000_i64);
     }
 
     #[test]

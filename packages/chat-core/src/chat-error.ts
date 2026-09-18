@@ -3,6 +3,7 @@ export type ChatErrorType =
   | "quota_exceeded"
   | "rate_limit"
   | "payload_too_large"
+  | "model_service_connection_error"
   | "network_error"
   | "timeout_error"
   | "llm_error"
@@ -23,6 +24,7 @@ export interface ParsedChatError {
   type: ChatErrorType;
   titleKey: string;
   descriptionKey: string;
+  endpoint?: string;
 }
 
 const BACKEND_TYPE_MAP: Record<string, ChatErrorType> = {
@@ -33,6 +35,7 @@ const BACKEND_TYPE_MAP: Record<string, ChatErrorType> = {
   model_unavailable: "llm_error",
   container_oom: "container_oom",
   container_error: "container_error",
+  model_service_connection_error: "model_service_connection_error",
   network_error: "network_error",
   timeout_error: "timeout_error",
   llm_unsupported: "llm_unsupported",
@@ -161,14 +164,12 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
   ["invalid_parameter", ["invalid parameter", "invalid_parameter"]],
   ["payload_too_large", ["413", "payload too large"]],
   [
-    "timeout_error",
-    ["timeout", "timed out", "504 gateway", "502 bad gateway", "超时"],
-  ],
-  [
     "network_error",
     [
       "network",
       "fetch",
+      "error sending request",
+      "failed to send request",
       "connection refused",
       "connection reset",
       "connection error",
@@ -177,6 +178,10 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
       "peer closed connection",
       "upstream connection interrupted",
     ],
+  ],
+  [
+    "timeout_error",
+    ["timeout", "timed out", "504 gateway", "502 bad gateway", "超时"],
   ],
 ];
 
@@ -193,6 +198,10 @@ export function parseChatError(
     type,
     titleKey: `assistant_error.types.${type}.title`,
     descriptionKey: `assistant_error.types.${type}.description`,
+    endpoint:
+      type === "model_service_connection_error"
+        ? extractFailedRequestUrl(error)
+        : undefined,
   };
 }
 
@@ -205,6 +214,14 @@ function normalizeBackendType(type?: string | null): ChatErrorType | undefined {
 
 function classifyByMessage(message: string): ChatErrorType {
   const lowerMessage = message.toLowerCase();
+  if (
+    lowerMessage.includes("local model proxy request failed") &&
+    (lowerMessage.includes("error sending request for url") ||
+      lowerMessage.includes("failed to send request"))
+  ) {
+    return "model_service_connection_error";
+  }
+
   for (const [type, patterns] of CLASSIFICATION_RULES) {
     if (
       patterns.some((pattern) =>
@@ -218,6 +235,12 @@ function classifyByMessage(message: string): ChatErrorType {
   }
 
   return "generic_error";
+}
+
+function extractFailedRequestUrl(message: string): string | undefined {
+  return message.match(
+    /(?:error sending request for url|failed to send request(?: to)?)\s*\((https?:\/\/[^)\s]+)\)/i,
+  )?.[1];
 }
 
 function extractStructuredErrorType(message: string): string | undefined {

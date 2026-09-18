@@ -129,6 +129,7 @@ export function appendOptimisticUser(
         },
       ],
       status: "pending",
+      startedAt: runtimeMessageTimestamp(message),
     },
   ];
 }
@@ -144,6 +145,9 @@ export function updateStartedTurn(
     return replaceAt(turns, existingIndex, {
       ...turns[existingIndex],
       status: "streaming",
+      startedAt:
+        turns[existingIndex].startedAt ?? action.startedAt ?? Date.now(),
+      durationMs: undefined,
       completedAt: undefined,
       error: undefined,
       errorType: undefined,
@@ -174,6 +178,12 @@ export function updateStartedTurn(
       ...optimistic,
       id: action.subtaskId,
       status: optimistic.status === "cancelled" ? "cancelled" : "streaming",
+      startedAt:
+        action.startedAt ??
+        optimistic.startedAt ??
+        runtimeMessageTimestampFromTurn(optimistic),
+      durationMs:
+        optimistic.status === "cancelled" ? optimistic.durationMs : undefined,
       completedAt:
         optimistic.status === "cancelled" ? optimistic.completedAt : undefined,
       error: optimistic.status === "cancelled" ? optimistic.error : undefined,
@@ -204,8 +214,25 @@ export function updateStartedTurn(
       clientUserMessageId: action.clientUserMessageId,
       items: [],
       status: "streaming",
+      startedAt: action.startedAt ?? Date.now(),
     },
   ];
+}
+
+function runtimeMessageTimestamp(
+  message: WorkbenchMessage,
+): number | undefined {
+  const timestamp = Date.parse(message.createdAt ?? "");
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function runtimeMessageTimestampFromTurn(
+  turn: RuntimeConversationTurn,
+): number | undefined {
+  const user = turn.items.find((item) => item.type === "user_message");
+  return user?.type === "user_message"
+    ? runtimeMessageTimestamp(user.message)
+    : undefined;
 }
 
 export function updateTurn(

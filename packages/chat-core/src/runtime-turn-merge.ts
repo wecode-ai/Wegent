@@ -61,10 +61,13 @@ export function mergeRuntimeConversationTurn(
         ? local.status
         : snapshot.status,
     // Preserve higher-precision live timestamps when reading native history.
-    startedAt:
-      local.startedAt ??
-      runtimeConversationTurnTimestamp(local) ??
-      snapshot.startedAt,
+    startedAt: local.startedAt ?? snapshot.startedAt,
+    durationMs:
+      preserveLocalTerminal || preserveLocalFailure
+        ? local.durationMs
+        : isTerminalTurnStatus(local.status) && local.status === snapshot.status
+          ? (local.durationMs ?? snapshot.durationMs)
+          : snapshot.durationMs,
     completedAt:
       preserveLocalTerminal || preserveLocalFailure
         ? local.completedAt

@@ -6,7 +6,8 @@
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.orm import Session
@@ -15,6 +16,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.models.user import User
+from app.models.wiki import WikiGeneration, WikiGenerationStatus, WikiGenerationType
 from app.schemas.subscription import (
     BackgroundExecutionStatus,
     SubscriptionCreate,
@@ -26,9 +28,243 @@ from app.tasks.subscription_tasks import (
     _cleanup_stale_running_executions,
     _disable_expired_subscription_if_needed,
     _dispatch_due_subscription,
+    _recover_stale_pending_executions,
     check_due_subscriptions,
     check_due_subscriptions_sync,
 )
+
+
+def test_sync_code_wiki_dispatch_captures_trace_context() -> None:
+    from app.tasks import subscription_tasks
+
+    with (
+        patch("threading.Thread") as thread,
+        patch.object(
+            subscription_tasks,
+            "capture_trace_context",
+            return_value={"traceparent": "context"},
+        ),
+        patch(
+            "app.services.knowledge.code_wiki.scheduled_update.is_code_wiki_scheduled_update",
+            return_value=True,
+        ),
+    ):
+        subscription_tasks._dispatch_scheduled_execution(
+            SimpleNamespace(id=12), SimpleNamespace(id=34), MagicMock(), use_sync=True
+        )
+
+    thread.assert_called_once_with(
+        target=subscription_tasks._run_code_wiki_scheduled_update,
+        args=(12, 34),
+        kwargs={"trace_context": {"traceparent": "context"}},
+        daemon=True,
+    )
+    thread.return_value.start.assert_called_once()
+
+
+def test_code_wiki_execution_uses_subscription_timeout(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.subscription.execution import background_execution_manager
+
+    cancel_task = AsyncMock(return_value=True)
+    monkeypatch.setattr(background_execution_manager, "cancel_task_by_id", cancel_task)
+    plan = Kind(
+        user_id=test_user.id,
+        kind="Subscription",
+        name="wiki-plan",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Subscription",
+            "metadata": {"name": "wiki-plan", "namespace": "default"},
+            "spec": {
+                "displayName": "Wiki plan",
+                "taskType": "execution",
+                "visibility": "private",
+                "trigger": {
+                    "type": "interval",
+                    "interval": {"value": 1, "unit": "days"},
+                },
+                "teamRef": {"name": "code-wiki-team", "namespace": "default"},
+                "promptTemplate": "update",
+                "retryCount": 0,
+                "timeoutSeconds": 21600,
+                "enabled": True,
+                "executionTarget": {"type": "managed"},
+                "codeWikiRef": {
+                    "id": 99,
+                    "name": "wiki",
+                    "namespace": "default",
+                    "userId": test_user.id,
+                },
+            },
+            "status": {},
+            "_internal": {},
+        },
+    )
+    test_db.add(plan)
+    test_db.flush()
+    runner = User(
+        user_name="scheduled-wiki-runner",
+        email="scheduled-wiki-runner@example.com",
+        password_hash="x",
+        is_active=True,
+    )
+    test_db.add(runner)
+    test_db.flush()
+    execution = BackgroundExecution(
+        user_id=test_user.id,
+        subscription_id=plan.id,
+        task_id=123,
+        trigger_type="interval",
+        trigger_reason="scheduled",
+        prompt="check wiki",
+        status="RUNNING",
+        started_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=4),
+    )
+    test_db.add(execution)
+    test_db.add(
+        WikiGeneration(
+            project_id=0,
+            kind_id=99,
+            user_id=runner.id,
+            task_id=execution.task_id,
+            team_id=0,
+            generation_type=WikiGenerationType.FULL,
+            source_snapshot={},
+            status=WikiGenerationStatus.RUNNING,
+            completed_at=datetime(1970, 1, 1),
+        )
+    )
+    test_db.commit()
+
+    assert _cleanup_stale_running_executions(test_db) == 0
+    assert execution.status == "RUNNING"
+    cancel_task.assert_not_awaited()
+
+    execution.started_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        hours=7
+    )
+    test_db.commit()
+
+    async def cancel_after_commit(*args, **kwargs):
+        commit.assert_called_once()
+        assert execution.status == "FAILED"
+        return True
+
+    cancel_task.side_effect = cancel_after_commit
+    with patch.object(test_db, "commit", wraps=test_db.commit) as commit:
+        assert _cleanup_stale_running_executions(test_db) == 1
+    assert execution.status == "FAILED"
+    cancel_task.assert_awaited_once_with(test_db, task_id=123, user_id=runner.id)
+
+
+def test_timeout_policy_preserves_ordinary_subscription_deadline() -> None:
+    from app.services.knowledge.code_wiki.subscription_integration import (
+        execution_timeout_policy,
+    )
+
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(kind="Subscription", json={"spec": {}})
+    policy = execution_timeout_policy(
+        db,
+        SimpleNamespace(subscription_id=12, task_id=123),
+        default_hours=3,
+        running_hours=7,
+    )
+    assert policy.threshold_hours == 3
+    assert policy.task_to_cancel is None
+    db.query.assert_not_called()
+
+
+def test_timed_out_task_cancellation_continues_after_a_failure() -> None:
+    from app.services.subscription.execution import background_execution_manager
+    from app.tasks.subscription_tasks import _cancel_timed_out_code_wiki_tasks
+
+    db = MagicMock()
+    with patch.object(
+        background_execution_manager,
+        "cancel_task_by_id",
+        new=AsyncMock(side_effect=[RuntimeError("unavailable"), True]),
+    ) as cancel:
+        _cancel_timed_out_code_wiki_tasks(db, [(123, 1), (124, 2)])
+    assert cancel.await_count == 2
+    db.commit.assert_not_called()
+
+
+def test_recovery_uses_the_code_wiki_dispatcher(
+    test_db: Session, test_user: User
+) -> None:
+    from app.core.config import settings
+    from app.services.subscription import subscription_service
+
+    plan = Kind(
+        user_id=test_user.id,
+        kind="Subscription",
+        name="wiki-plan-recovery",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Subscription",
+            "metadata": {"name": "wiki-plan-recovery", "namespace": "default"},
+            "spec": {
+                "displayName": "Wiki plan",
+                "taskType": "execution",
+                "visibility": "private",
+                "trigger": {
+                    "type": "interval",
+                    "interval": {"value": 1, "unit": "days"},
+                },
+                "teamRef": {"name": "code-wiki-team", "namespace": "default"},
+                "promptTemplate": "update",
+                "retryCount": 0,
+                "timeoutSeconds": 21600,
+                "enabled": True,
+                "executionTarget": {"type": "managed"},
+                "codeWikiRef": {
+                    "id": 99,
+                    "name": "wiki",
+                    "namespace": "default",
+                    "userId": test_user.id,
+                },
+            },
+            "status": {},
+            "_internal": {},
+        },
+    )
+    test_db.add(plan)
+    test_db.flush()
+    execution = BackgroundExecution(
+        user_id=test_user.id,
+        subscription_id=plan.id,
+        task_id=0,
+        trigger_type="interval",
+        trigger_reason="scheduled",
+        prompt="check wiki",
+        status="PENDING",
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None)
+        - timedelta(hours=settings.FLOW_STALE_PENDING_HOURS + 1),
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    with (
+        patch(
+            "app.tasks.subscription_tasks.execute_code_wiki_scheduled_update.delay"
+        ) as dispatch,
+        patch.object(
+            subscription_service, "dispatch_background_execution"
+        ) as generic_dispatch,
+    ):
+        assert _recover_stale_pending_executions(test_db) == 1
+
+    test_db.refresh(execution)
+    assert execution.status == "RUNNING"
+    dispatch.assert_called_once_with(plan.id, execution.id)
+    generic_dispatch.assert_not_called()
 
 
 @pytest.fixture(autouse=True)
@@ -261,6 +497,60 @@ def test_dispatch_due_subscription_updates_schedule_before_dispatch():
 
     assert dispatched is True
     assert calls == ["update", "dispatch"]
+
+
+def test_dispatch_due_code_wiki_plan_uses_its_dedicated_executor():
+    db = MagicMock()
+    subscription = Kind(
+        id=10,
+        kind="Subscription",
+        name="wiki-plan",
+        namespace="default",
+        user_id=20,
+        is_active=True,
+        json={
+            "_internal": {
+                "trigger_type": "interval",
+                "next_execution_time": "2026-08-31T01:00:00",
+                "schedule": {"interval_days": 7},
+            },
+            "spec": {
+                "codeWikiRef": {
+                    "id": 99,
+                    "name": "wiki",
+                    "namespace": "default",
+                    "userId": 20,
+                }
+            },
+        },
+    )
+    execution = MagicMock(id=30)
+    service = MagicMock()
+    service.create_execution.return_value = execution
+
+    with (
+        patch(
+            "app.tasks.subscription_tasks.validate_subscription_for_read",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "app.tasks.subscription_tasks._get_trigger_reason", return_value="reason"
+        ),
+        patch(
+            "app.tasks.subscription_tasks.execute_code_wiki_scheduled_update.delay"
+        ) as dispatch,
+    ):
+        result = _dispatch_due_subscription(
+            db=db,
+            subscription=subscription,
+            trigger_type="interval",
+            subscription_service=service,
+            use_sync=False,
+        )
+
+    assert result is True
+    dispatch.assert_called_once_with(10, 30)
+    service.dispatch_background_execution.assert_not_called()
 
 
 def test_dispatch_due_subscription_marks_execution_failed_when_schedule_update_fails():

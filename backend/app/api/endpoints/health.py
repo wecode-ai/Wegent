@@ -84,9 +84,10 @@ def readiness_check(response: Response, db: Session = Depends(get_db)):
         }
 
 
-@router.get("/startup")
-async def startup_check():
-    return {"status": "started"}
+# MIGRATION-CANDIDATE(api="GET /api/startup"): remove after final confirmation.
+# @router.get("/startup")
+# def startup_check(db: Session = Depends(get_db)):
+#     return {"status": "started"}
 
 
 @router.post("/shutdown/initiate")

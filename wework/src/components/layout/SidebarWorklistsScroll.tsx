@@ -21,7 +21,7 @@ export function SidebarWorklistsScroll({
     <ScrollArea.Root
       type="auto"
       data-testid="sidebar-worklists-scroll-area"
-      className="relative mb-2 mt-0.5 min-h-0 flex-1"
+      className="relative -mr-1.5 mb-2 mt-0.5 min-h-0 flex-1 pr-1.5"
     >
       <ScrollArea.Viewport
         ref={viewportRef}
@@ -40,7 +40,7 @@ export function SidebarWorklistsScroll({
       <ScrollArea.Scrollbar
         orientation="vertical"
         data-testid="sidebar-worklists-scrollbar"
-        className="sidebar-worklists-scrollbar z-10 flex w-2 touch-none select-none bg-transparent p-0.5"
+        className="sidebar-worklists-scrollbar z-10 flex w-2 -translate-x-[3px] touch-none select-none bg-transparent"
       >
         <ScrollArea.Thumb
           data-testid="sidebar-worklists-scrollbar-thumb"

@@ -189,11 +189,16 @@ pub(super) fn push_accumulated_assistant(
         format!("{}-{}", context.turn_id, *segment_index)
     };
     let runtime_items = assistant.runtime_items();
+    let message_created_at = assistant
+        .assistant_parts
+        .first()
+        .map(|part| part.created_at)
+        .unwrap_or(context.created_at);
     messages.push(synthetic_assistant_message(AssistantMessageDraft {
         message_id: &message_id,
         turn_id: context.turn_id,
         subtask_id: context.subtask_id,
-        created_at: context.created_at,
+        created_at: message_created_at,
         completed_at: context.completed_at,
         status: context.status,
         error: context.error,

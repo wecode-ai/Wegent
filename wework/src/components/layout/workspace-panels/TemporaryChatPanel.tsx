@@ -45,6 +45,7 @@ import {
   beginRuntimeConversationHydration,
   completeRuntimeConversationHydration,
   getRuntimeConversationMessages,
+  getRuntimeConversationTurns,
   getRuntimeConversationTurnIds,
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
@@ -75,7 +76,11 @@ import type {
   RuntimeTaskAddress,
   UnifiedModel,
 } from '@/types/api'
-import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
+import type {
+  RuntimeConversationTurn,
+  RuntimePaneQueuedMessage,
+  WorkbenchMessage,
+} from '@/types/workbench'
 
 export interface RuntimeTaskComposerCreateOptions {
   attachments: Attachment[]
@@ -251,6 +256,9 @@ export function TemporaryChatPanel({
   const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
     initialAddress ? getRuntimeConversationMessages(initialAddress) : []
   )
+  const [turns, setTurns] = useState<RuntimeConversationTurn[]>(() =>
+    initialAddress ? getRuntimeConversationTurns(initialAddress) : []
+  )
   const [input, setInput] = useState(initialInput)
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
@@ -314,6 +322,7 @@ export function TemporaryChatPanel({
     if (!address) return
     const syncMessages = () => {
       const nextMessages = getRuntimeConversationMessages(address)
+      setTurns(getRuntimeConversationTurns(address))
       if (nextMessages.length > 0) {
         setMessages(nextMessages)
         setError(null)
@@ -825,6 +834,7 @@ export function TemporaryChatPanel({
     >
       <ScrollableMessageArea
         messages={messages}
+        turns={turns}
         isWaitingForAssistant={busy}
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}

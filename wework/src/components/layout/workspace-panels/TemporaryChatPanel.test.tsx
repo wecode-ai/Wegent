@@ -378,6 +378,7 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
   beginRuntimeConversationHydration: vi.fn(),
   completeRuntimeConversationHydration: vi.fn(),
   getRuntimeConversationMessages: () => mocks.conversationMessages,
+  getRuntimeConversationTurns: () => [],
   removeRuntimeConversationTurn: () => [],
   subscribeRuntimeConversation: () => () => undefined,
   updateRuntimeConversationBlocks: () => mocks.conversationMessages,

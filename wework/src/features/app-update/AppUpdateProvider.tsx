@@ -150,6 +150,13 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     []
   )
 
+  const markUpdateReadyToInstall = useCallback((version: string) => {
+    setDownloadedUpdateVersion(version)
+    setDownloadProgress(null)
+    setStatus('available')
+    setRestartConfirmationOpen(true)
+  }, [])
+
   const startBackgroundDownload = useCallback(
     (update: WeworkUpdateInfo, channel: WeworkUpdateChannel) => {
       setError(null)
@@ -158,9 +165,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       void downloadUpdate(update, setDownloadProgress)
         .then(() => {
           if (updateChannelRef.current === channel) {
-            setDownloadedUpdateVersion(update.version)
-            setStatus('available')
-            setDownloadProgress(null)
+            markUpdateReadyToInstall(update.version)
           }
         })
         .catch(caughtError => {
@@ -170,7 +175,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           }
         })
     },
-    [downloadUpdate]
+    [downloadUpdate, markUpdateReadyToInstall]
   )
 
   const isUpdateBusy = status === 'downloading' || status === 'installing'
@@ -285,13 +290,10 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
       if (downloadedBytes === SIMULATED_DOWNLOAD_TOTAL_BYTES) {
         clearSimulationTimer()
-        setDownloadedUpdateVersion(SIMULATED_UPDATE_VERSION)
-        setDownloadProgress(null)
-        setStatus('available')
-        setRestartConfirmationOpen(true)
+        markUpdateReadyToInstall(SIMULATED_UPDATE_VERSION)
       }
     }, SIMULATED_DOWNLOAD_INTERVAL_MS)
-  }, [clearSimulationTimer])
+  }, [clearSimulationTimer, markUpdateReadyToInstall])
 
   const confirmInstallUpdate = useCallback(async () => {
     if (!availableUpdate || status === 'installing') return
@@ -362,16 +364,20 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
     try {
       await downloadUpdate(availableUpdate, setDownloadProgress)
-      setDownloadedUpdateVersion(availableUpdate.version)
-      setDownloadProgress(null)
-      setStatus('available')
-      setRestartConfirmationOpen(true)
+      markUpdateReadyToInstall(availableUpdate.version)
     } catch (caughtError) {
       setDownloadProgress(null)
       setStatus('error')
       setError(createAppUpdateError(caughtError, 'download'))
     }
-  }, [availableUpdate, downloadedUpdateVersion, downloadUpdate, startSimulatedDownload, status])
+  }, [
+    availableUpdate,
+    downloadedUpdateVersion,
+    downloadUpdate,
+    markUpdateReadyToInstall,
+    startSimulatedDownload,
+    status,
+  ])
 
   const dismissInstalledReleaseNotes = useCallback(() => {
     if (installedReleaseNotes) {
