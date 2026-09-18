@@ -4050,6 +4050,58 @@ fn completed_goal_does_not_require_authoritative_reconciliation() {
 }
 
 #[test]
+fn codex_run_state_finishes_failed_turn_timing_without_turn_completed() {
+    let mut state = CodexRunState::default();
+    assert!(state
+        .handle_message(&json!({
+            "method": "turn/started",
+            "params": {
+                "turn": {
+                    "startedAt": 1_000
+                }
+            }
+        }))
+        .is_none());
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "error",
+            "params": {
+                "message": "upstream failed",
+                "willRetry": false
+            }
+        }))
+        .expect("terminal error should fail the turn");
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Failed {
+            message: "upstream failed".to_owned()
+        }
+    );
+
+    state.finish_turn_timing(3_500);
+
+    assert_eq!(state.turn_timing(), (Some(1_000), Some(3_500), Some(2_500)));
+
+    assert!(state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "failed",
+                    "startedAt": 1_000,
+                    "completedAt": 4_000,
+                    "durationMs": 3_000
+                }
+            }
+        }))
+        .is_some());
+    state.finish_turn_timing(9_000);
+
+    assert_eq!(state.turn_timing(), (Some(1_000), Some(4_000), Some(3_000)));
+}
+
+#[test]
 fn root_turn_notification_uses_protocol_turn_id_and_ignores_child_turns() {
     let mut state = CodexRunState::default();
     state.set_root_thread_id("thread-root");

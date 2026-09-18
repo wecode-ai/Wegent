@@ -10,7 +10,7 @@ use std::{
     pin::Pin,
     process::Stdio,
     sync::{Arc, Mutex as StdMutex, OnceLock, Weak},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use futures_util::future::BoxFuture;
@@ -1907,6 +1907,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 ),
             }
         }
+        state.finish_turn_timing(current_epoch_millis());
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
             turn_fields.push(("error", message.clone()));
@@ -2184,6 +2185,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             )
             .await?
         };
+        state.finish_turn_timing(current_epoch_millis());
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
             turn_fields.push(("error", message.clone()));
@@ -6340,6 +6342,13 @@ fn mcp_elicitation_enum_value(property: &Value, label: &str) -> String {
 
 fn mcp_server_elicitation_decline_result() -> Value {
     json!({"action": "decline", "content": Value::Null, "_meta": Value::Null})
+}
+
+fn current_epoch_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or_default()
 }
 
 fn mcp_server_elicitation_cancel_result() -> Value {

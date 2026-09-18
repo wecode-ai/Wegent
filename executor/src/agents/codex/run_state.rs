@@ -67,6 +67,17 @@ impl CodexRunState {
         )
     }
 
+    pub(super) fn finish_turn_timing(&mut self, completed_at_ms: i64) {
+        let completed_at_ms = *self
+            .turn_completed_at_ms
+            .get_or_insert(completed_at_ms.max(0));
+        if self.turn_duration_ms.is_none() {
+            self.turn_duration_ms = self
+                .turn_started_at_ms
+                .map(|started_at_ms| completed_at_ms.saturating_sub(started_at_ms).max(0));
+        }
+    }
+
     pub(super) fn response_item_id(&self) -> Option<&str> {
         if self.final_text.is_empty() {
             self.pending_message_id.as_deref()
