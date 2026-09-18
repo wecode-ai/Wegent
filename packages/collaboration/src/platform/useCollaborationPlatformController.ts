@@ -209,9 +209,7 @@ export function useCollaborationPlatformController({
     }
     setState((current) => ({
       ...current,
-      loading:
-        current.workspace?.id !== location.workspaceId ||
-        Boolean(location.projectId),
+      loading: current.workspace?.id !== location.workspaceId,
       error: null,
     }));
     if (!location.workspaceId) {

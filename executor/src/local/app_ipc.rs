@@ -1918,7 +1918,9 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             Ok(json!({}))
         }
         "projects.list" => {
-            runtime.sync_local_code_projects().map_err(task_runtime_error)?;
+            runtime
+                .sync_local_code_projects()
+                .map_err(task_runtime_error)?;
             serialize_task_value(runtime.list_projects().map_err(task_runtime_error)?)
         }
         "projects.create" => {

@@ -409,6 +409,7 @@ async fn clone_repo(
     }
 
     let mut command = Command::new("git");
+    crate::local::native_git::clear_local_git_env(command.as_std_mut());
     crate::process::hide_windows_console(&mut command);
     command.arg("clone");
     let branch = branch_name(request);
@@ -500,6 +501,7 @@ async fn clone_repo(
 
 async fn validate_existing_git_repository(project_path: &Path) -> Result<(), String> {
     let mut command = Command::new("git");
+    crate::local::native_git::clear_local_git_env(command.as_std_mut());
     crate::process::hide_windows_console(&mut command);
     command
         .arg("-C")
@@ -735,6 +737,7 @@ async fn setup_git_config(request: &ExecutionRequest, project_path: &Path) {
     };
     for (key, value) in [("user.name", git_login), ("user.email", git_email)] {
         let mut command = Command::new("git");
+        crate::local::native_git::clear_local_git_env(command.as_std_mut());
         crate::process::hide_windows_console(&mut command);
         let _ = command
             .arg("-C")

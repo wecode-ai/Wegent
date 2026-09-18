@@ -583,11 +583,29 @@ impl LocalTaskStore {
             metadata["collaboration_group"] = if let Some(group_id) = group_id {
                 let project = get_item_from(&transaction, project_id, "project")?
                     .ok_or(TaskRuntimeError::ProjectNotFound)?;
-                project.metadata.get("collaboration_groups").and_then(Value::as_array)
-                    .and_then(|groups| groups.iter().find(|group| group.get("id").and_then(Value::as_str) == Some(group_id)))
-                    .cloned().ok_or_else(|| TaskRuntimeError::Invalid("Team is not in this project".to_owned()))?
-            } else { Value::Null };
-        } else if input.assignee_user_id.flatten().is_some() || input.assignee_agent_id.as_ref().and_then(|id| id.as_ref()).is_some() {
+                project
+                    .metadata
+                    .get("collaboration_groups")
+                    .and_then(Value::as_array)
+                    .and_then(|groups| {
+                        groups
+                            .iter()
+                            .find(|group| group.get("id").and_then(Value::as_str) == Some(group_id))
+                    })
+                    .cloned()
+                    .ok_or_else(|| {
+                        TaskRuntimeError::Invalid("Team is not in this project".to_owned())
+                    })?
+            } else {
+                Value::Null
+            };
+        } else if input.assignee_user_id.flatten().is_some()
+            || input
+                .assignee_agent_id
+                .as_ref()
+                .and_then(|id| id.as_ref())
+                .is_some()
+        {
             metadata["collaboration_group"] = Value::Null;
         }
         if let Some(tags) = input.tags {
@@ -599,10 +617,24 @@ impl LocalTaskStore {
         let assignee_agent_id = match input.assignee_agent_id.as_ref() {
             Some(Some(agent_id)) => Some(agent_id.as_str()),
             Some(None) => None,
-            None if input.assignee_user_id.flatten().is_some() || input.assignee_group_id.as_ref().and_then(|id| id.as_ref()).is_some() => None,
+            None if input.assignee_user_id.flatten().is_some()
+                || input
+                    .assignee_group_id
+                    .as_ref()
+                    .and_then(|id| id.as_ref())
+                    .is_some() =>
+            {
+                None
+            }
             None => current.assignee_agent_id.as_deref(),
         };
-        let assignee_user_id = if assignee_agent_id.is_some() || input.assignee_group_id.as_ref().and_then(|id| id.as_ref()).is_some() {
+        let assignee_user_id = if assignee_agent_id.is_some()
+            || input
+                .assignee_group_id
+                .as_ref()
+                .and_then(|id| id.as_ref())
+                .is_some()
+        {
             None
         } else {
             input.assignee_user_id.unwrap_or(current.assignee_user_id)

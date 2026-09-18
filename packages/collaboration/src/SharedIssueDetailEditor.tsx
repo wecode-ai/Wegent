@@ -1253,11 +1253,13 @@ export function TodoEditor(props: TodoEditorProps) {
     assigneeAgent?.name ||
     assignee?.user_name ||
     (item && assigneeTarget && assigneeTarget === issueAssigneeTarget(item)
-      ? assigneeTarget.startsWith("team:")
-        ? item.assignee_team_name
-        : assigneeTarget.startsWith("agent:")
-          ? item.assignee_agent_name
-          : item.assignee_name
+      ? assigneeTarget.startsWith("group:")
+        ? item.assignee_group_name
+        : assigneeTarget.startsWith("team:")
+          ? item.assignee_team_name
+          : assigneeTarget.startsWith("agent:")
+            ? item.assignee_agent_name
+            : item.assignee_name
       : null) ||
     (assigneeTarget
       ? assigneeTarget.slice(assigneeTarget.indexOf(":") + 1)
@@ -1396,7 +1398,14 @@ export function TodoEditor(props: TodoEditorProps) {
         assignee_user_id: null,
         assignee_agent_id: null,
         assignee_team_id: null,
+        ...(source.assignee_group_id ? { assignee_group_id: null } : {}),
       });
+    if (target.startsWith("group:")) {
+      return editorPort.issues.update(source.id, {
+        version: source.version,
+        assignee_group_id: target.slice(6),
+      });
+    }
     if (project) {
       return editorPort.issues.assign(project.id, source.id, {
         version: source.version,
@@ -1937,6 +1946,16 @@ export function TodoEditor(props: TodoEditorProps) {
             label: team.displayName || team.name,
             group: t("todo.agent_teams", "Wegent 智能体"),
           })),
+          ...(item?.assignee_group_id
+            ? [
+                {
+                  value:
+                    `group:${item.assignee_group_id}` as IssueAssigneeTarget,
+                  label: item.assignee_group_name || item.assignee_group_id,
+                  group: t("issue_creation.group", "小队"),
+                },
+              ]
+            : []),
         ]}
       />
     </>

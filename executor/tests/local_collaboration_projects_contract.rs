@@ -90,22 +90,45 @@ async fn task_projects_join_local_space_once_without_resurrecting_archived_proje
         .unwrap();
     assert!(cleared["assignee_user_id"].is_null());
     let catalog = server.dispatch("projects.list", json!({})).await.unwrap();
-    let project_version = catalog.as_array().unwrap().iter().find(|project| project["id"] == first["id"]).unwrap()["version"].clone();
+    let project_version = catalog
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|project| project["id"] == first["id"])
+        .unwrap()["version"]
+        .clone();
     server.dispatch("projects.update", json!({"project_id": first["id"], "project": {
         "version": project_version, "collaboration_groups": [{"id":"squad-1", "name":"Delivery team"}]
     }})).await.unwrap();
-    let grouped = server.dispatch("todos.update", json!({"project_id":first["id"], "task_id":issue["id"], "todo":{
-        "version":cleared["version"], "assignee_group_id":"squad-1"
-    }})).await.unwrap();
+    let grouped = server
+        .dispatch(
+            "todos.update",
+            json!({"project_id":first["id"], "task_id":issue["id"], "todo":{
+                "version":cleared["version"], "assignee_group_id":"squad-1"
+            }}),
+        )
+        .await
+        .unwrap();
     assert_eq!(grouped["metadata"]["collaboration_group"]["id"], "squad-1");
     assert!(grouped["assignee_user_id"].is_null());
-    let invalid = server.dispatch("todos.update", json!({"project_id":first["id"], "task_id":issue["id"], "todo":{
-        "version":grouped["version"], "assignee_group_id":"other-project-group"
-    }})).await;
+    let invalid = server
+        .dispatch(
+            "todos.update",
+            json!({"project_id":first["id"], "task_id":issue["id"], "todo":{
+                "version":grouped["version"], "assignee_group_id":"other-project-group"
+            }}),
+        )
+        .await;
     assert!(invalid.is_err());
-    let restored = server.dispatch("todos.update", json!({"project_id":first["id"], "task_id":issue["id"], "todo":{
-        "version":grouped["version"], "assignee_user_id":7
-    }})).await.unwrap();
+    let restored = server
+        .dispatch(
+            "todos.update",
+            json!({"project_id":first["id"], "task_id":issue["id"], "todo":{
+                "version":grouped["version"], "assignee_user_id":7
+            }}),
+        )
+        .await
+        .unwrap();
     assert!(restored["metadata"]["collaboration_group"].is_null());
     assert_eq!(restored["assignee_user_id"], 7);
     server.dispatch("projects.list", json!({})).await.unwrap();
