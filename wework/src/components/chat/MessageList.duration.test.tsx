@@ -50,6 +50,8 @@ describe('MessageList processing duration', () => {
       const turn: RuntimeConversationTurn = {
         id: 'rounded-transcript',
         status,
+        startedAt: start,
+        durationMs: end - start,
         completedAt: new Date(end).toISOString(),
         items: [
           {
@@ -76,7 +78,9 @@ describe('MessageList processing duration', () => {
           },
         ],
       }
-      const first = render(<MessageList messages={projectRuntimeConversationTurns([turn])} />)
+      const first = render(
+        <MessageList messages={projectRuntimeConversationTurns([turn])} turns={[turn]} />
+      )
       const selector =
         status === 'cancelled' ? 'assistant-stopped-notice' : 'processing-duration-label'
       const frozen = screen.getByTestId(selector).textContent
@@ -99,6 +103,9 @@ describe('MessageList processing duration', () => {
       }
       const merged = mergeRuntimeConversationTurns([turn], [snapshot])
       const restored = render(<MessageList messages={projectRuntimeConversationTurns(merged)} />)
+      restored.rerender(
+        <MessageList messages={projectRuntimeConversationTurns(merged)} turns={merged} />
+      )
       expect(screen.getByTestId(selector).textContent).toBe(frozen)
       act(() => vi.advanceTimersByTime(10000))
       restored.rerender(
@@ -106,6 +113,7 @@ describe('MessageList processing duration', () => {
           messages={projectRuntimeConversationTurns(
             mergeRuntimeConversationTurns(merged, [snapshot])
           )}
+          turns={mergeRuntimeConversationTurns(merged, [snapshot])}
         />
       )
       expect(screen.getByTestId(selector).textContent).toBe(frozen)
@@ -119,7 +127,7 @@ describe('MessageList processing duration', () => {
       const start = Date.parse('2026-09-17T00:00:00Z')
       vi.setSystemTime(start)
       let turns: RuntimeConversationTurn[] = [
-        { id: 'terminal-timer', status: 'streaming', items: [] },
+        { id: 'terminal-timer', status: 'streaming', startedAt: start, items: [] },
       ]
       turns = reduceRuntimeConversationTurns(turns, {
         type: 'block_created',
@@ -133,11 +141,20 @@ describe('MessageList processing duration', () => {
           createdAt: start,
         },
       })
-      const first = render(<MessageList messages={projectRuntimeConversationTurns(turns)} />)
+      const first = render(
+        <MessageList messages={projectRuntimeConversationTurns(turns)} turns={turns} />
+      )
       act(() => vi.advanceTimersByTime(5000))
       expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 5秒')
       if (status === 'done') {
-        turns = [{ ...turns[0], status, completedAt: new Date().toISOString() }]
+        turns = [
+          {
+            ...turns[0],
+            status,
+            durationMs: 5_000,
+            completedAt: new Date().toISOString(),
+          },
+        ]
       } else {
         turns = reduceRuntimeConversationTurns(
           turns,
@@ -146,8 +163,13 @@ describe('MessageList processing duration', () => {
                 type: 'assistant_error',
                 subtaskId: 'terminal-timer',
                 error: 'upstream unavailable',
+                durationMs: 5_000,
               }
-            : { type: 'assistant_cancelled', subtaskId: 'terminal-timer' }
+            : {
+                type: 'assistant_cancelled',
+                subtaskId: 'terminal-timer',
+                durationMs: 5_000,
+              }
         )
       }
       expect(turns[0].completedAt).toBe(new Date(start + 5000).toISOString())
@@ -161,12 +183,12 @@ describe('MessageList processing duration', () => {
           expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
         }
       }
-      first.rerender(<MessageList messages={messages} />)
+      first.rerender(<MessageList messages={messages} turns={turns} />)
       expectFrozenDuration()
       act(() => vi.advanceTimersByTime(10000))
       expectFrozenDuration()
       first.unmount()
-      render(<MessageList messages={messages} />)
+      render(<MessageList messages={messages} turns={turns} />)
       expectFrozenDuration()
     }
   )
@@ -181,6 +203,8 @@ describe('MessageList processing duration', () => {
       const createdAt = index === 0 ? start : resumedStart
       return {
         ...turn,
+        startedAt: createdAt,
+        durationMs: turn.completedAt - createdAt,
         items: [
           {
             id: `user-${turn.id}`,
@@ -215,14 +239,13 @@ describe('MessageList processing duration', () => {
         ],
       }
     })
-    const messages = projectRuntimeConversationTurns(
-      runtimeTranscriptTurnsToConversationTurns(transcript)
-    )
-    const first = render(<MessageList messages={messages} />)
+    const turns = runtimeTranscriptTurnsToConversationTurns(transcript)
+    const messages = projectRuntimeConversationTurns(turns)
+    const first = render(<MessageList messages={messages} turns={turns} />)
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('13s')
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 1分钟 12秒')
     first.unmount()
-    render(<MessageList messages={messages} />)
+    render(<MessageList messages={messages} turns={turns} />)
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 1分钟 12秒')
   })
 
@@ -236,7 +259,7 @@ describe('MessageList processing duration', () => {
       content: '继续检查。',
       status: 'streaming',
       createdAt: new Date(start + 1000).toISOString(),
-      runtimeTurnStartedAt: start,
+      turnId: 'running-tool-turn',
       blocks: [
         {
           id: 'tool',
@@ -247,7 +270,19 @@ describe('MessageList processing duration', () => {
         },
       ],
     }
-    render(<MessageList messages={[message]} />)
+    render(
+      <MessageList
+        messages={[message]}
+        turns={[
+          {
+            id: 'running-tool-turn',
+            status: 'streaming',
+            startedAt: start,
+            items: [],
+          },
+        ]}
+      />
+    )
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 3秒')
     act(() => vi.advanceTimersByTime(2000))
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 5秒')
@@ -260,6 +295,7 @@ describe('MessageList processing duration', () => {
     const turn: RuntimeConversationTurn = {
       id: 'interleaved-duration',
       status: 'streaming',
+      startedAt: start,
       items: [
         {
           id: 'user',
@@ -292,7 +328,7 @@ describe('MessageList processing duration', () => {
       ],
     }
     const pendingMessages = projectRuntimeConversationTurns([turn])
-    const { rerender } = render(<MessageList messages={pendingMessages} />)
+    const { rerender } = render(<MessageList messages={pendingMessages} turns={[turn]} />)
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 5秒')
     act(() => vi.advanceTimersByTime(3000))
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 8秒')
@@ -310,7 +346,7 @@ describe('MessageList processing duration', () => {
       ],
     }
     const finalMessages = projectRuntimeConversationTurns([finalTurn])
-    rerender(<MessageList messages={finalMessages} />)
+    rerender(<MessageList messages={finalMessages} turns={[finalTurn]} />)
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 8秒')
     act(() => vi.advanceTimersByTime(1000))
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 9秒')
@@ -319,8 +355,9 @@ describe('MessageList processing duration', () => {
     rerender(
       <MessageList
         messages={projectRuntimeConversationTurns([
-          { ...finalTurn, status: 'done', completedAt: start + 10_000 },
+          { ...finalTurn, status: 'done', durationMs: 10_000 },
         ])}
+        turns={[{ ...finalTurn, status: 'done', durationMs: 10_000 }]}
       />
     )
     expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 10秒')

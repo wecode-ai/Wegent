@@ -22,6 +22,7 @@ import type {
   TurnFileChangesSummary,
 } from "@wegent/chat-core/runtime";
 import type {
+  RuntimeConversationTurn,
   SubagentBlock,
   WorkbenchMessage,
 } from "@wegent/chat-core/runtime-conversation";
@@ -49,6 +50,7 @@ export interface MessageListProps {
     message: WorkbenchMessage,
   ) => ReactNode;
   messages: WorkbenchMessage[];
+  turns?: RuntimeConversationTurn[];
   scrollElementRef?: RefObject<HTMLDivElement | null>;
   initialDistanceFromBottomPx?: number;
   onBeforeUserMessageToggle?: () => void;
@@ -134,6 +136,7 @@ export const MessageList = memo(function MessageList({
   onVirtualMeasurement,
   renderVisualization,
   messages,
+  turns = [],
   scrollElementRef,
   initialDistanceFromBottomPx = 0,
   onBeforeUserMessageToggle,
@@ -184,6 +187,22 @@ export const MessageList = memo(function MessageList({
     () => messages.filter(shouldRenderMessage),
     [messages],
   );
+  const runtimeTurnsById = useMemo(
+    () =>
+      new Map(
+        turns.flatMap((turn) => (turn.id ? [[turn.id, turn] as const] : [])),
+      ),
+    [turns],
+  );
+  const lastAssistantMessageIdByTurn = useMemo(() => {
+    const result = new Map<string, string>();
+    visibleMessages.forEach((message) => {
+      if (message.role === "assistant" && message.turnId) {
+        result.set(message.turnId, message.id);
+      }
+    });
+    return result;
+  }, [visibleMessages]);
   const editableLastUserMessageId = useMemo(
     () =>
       editableLastUserMessage(
@@ -637,6 +656,13 @@ export const MessageList = memo(function MessageList({
                     : undefined
                 }
                 message={message}
+                runtimeTurn={
+                  message.turnId &&
+                  lastAssistantMessageIdByTurn.get(message.turnId) ===
+                    message.id
+                    ? runtimeTurnsById.get(message.turnId)
+                    : undefined
+                }
                 conversationKey={conversationKey}
                 isActiveTurn={
                   isWaitingForAssistant && index === visibleMessages.length - 1

@@ -37,6 +37,8 @@ interface RunHistoryProps {
   status: CodeWikiRunStatus | null
   /** Reload reader data after a past version becomes live again. */
   onRepublished?: () => void | Promise<void>
+  /** Whether this caller may restore versions and inspect management-only schedule state. */
+  canManage?: boolean
 }
 
 /** What the chip says before anyone opens it. */
@@ -111,10 +113,14 @@ function RunRow({
   run,
   knowledgeBaseId,
   onRepublished,
+  scheduledUpdateEnabled,
+  canManage,
 }: {
   run: CodeWikiRunRecord
   knowledgeBaseId: number
   onRepublished: () => void | Promise<void>
+  scheduledUpdateEnabled: boolean | null
+  canManage: boolean
 }) {
   const { t } = useTranslation('knowledge')
   const when = formatRelativeTime(run.started_at, t)
@@ -185,7 +191,7 @@ function RunRow({
               <span>{t('codeWiki.history.commitUnreported')}</span>
             )}
           </span>
-          {canRepublish(run) && (
+          {canManage && canRepublish(run) && (
             <button
               type="button"
               onClick={() => setConfirming(true)}
@@ -236,6 +242,15 @@ function RunRow({
                   working
                     ? 'codeWiki.history.republishSyncingBody'
                     : 'codeWiki.history.republishConfirmBody'
+                )}
+                {scheduledUpdateEnabled !== false && (
+                  <span className="mt-2 block text-amber-500">
+                    {t(
+                      scheduledUpdateEnabled === null
+                        ? 'codeWiki.history.republishScheduleUnknownWarning'
+                        : 'codeWiki.history.republishScheduledWarning'
+                    )}
+                  </span>
                 )}
               </AlertDialogDescription>
               {!working && (
@@ -324,23 +339,37 @@ function RunRow({
  * Fetched when opened, not polled. The status chip beside it is already live, and
  * repeating a list of finished runs every few seconds would tell nobody anything.
  */
-export function RunHistory({ knowledgeBaseId, status, onRepublished }: RunHistoryProps) {
+export function RunHistory({
+  knowledgeBaseId,
+  status,
+  onRepublished,
+  canManage = false,
+}: RunHistoryProps) {
   const { t } = useTranslation('knowledge')
   const [runs, setRuns] = useState<CodeWikiRunRecord[] | null>(null)
   const [loading, setLoading] = useState(false)
+  const [scheduledUpdateEnabled, setScheduledUpdateEnabled] = useState<boolean | null>(null)
   const chip = summarise(status, t)
 
   const load = useCallback(async () => {
     setLoading(true)
+    setScheduledUpdateEnabled(null)
     try {
-      setRuns((await codeWikiApi.history(knowledgeBaseId)).runs)
+      const [history, scheduledUpdate] = await Promise.all([
+        codeWikiApi.history(knowledgeBaseId),
+        canManage
+          ? codeWikiApi.scheduledUpdate(knowledgeBaseId).catch(() => null)
+          : Promise.resolve(null),
+      ])
+      setRuns(history.runs)
+      setScheduledUpdateEnabled(scheduledUpdate ? Boolean(scheduledUpdate.enabled) : null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
       setRuns([])
     } finally {
       setLoading(false)
     }
-  }, [knowledgeBaseId])
+  }, [canManage, knowledgeBaseId])
 
   const handleRepublished = useCallback(async () => {
     await load()
@@ -384,6 +413,8 @@ export function RunHistory({ knowledgeBaseId, status, onRepublished }: RunHistor
                 run={run}
                 knowledgeBaseId={knowledgeBaseId}
                 onRepublished={handleRepublished}
+                scheduledUpdateEnabled={scheduledUpdateEnabled}
+                canManage={canManage}
               />
             ))}
           </ul>

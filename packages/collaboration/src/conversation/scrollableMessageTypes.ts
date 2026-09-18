@@ -6,7 +6,11 @@ import type {
   RuntimeTurnNavigationItem,
   TurnFileChangesSummary,
 } from '@wegent/chat-core/runtime'
-import type { SubagentBlock, WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import type {
+  RuntimeConversationTurn,
+  SubagentBlock,
+  WorkbenchMessage,
+} from '@wegent/chat-core/runtime-conversation'
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
 import { type MessageListProps } from './MessageList'
 
@@ -53,6 +57,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   | 'renderVisualization'
 > {
   messages: WorkbenchMessage[]
+  turns?: RuntimeConversationTurn[]
   loading?: boolean
   isWaitingForAssistant?: boolean
   hasMoreBefore?: boolean
@@ -126,6 +131,7 @@ export function areScrollableMessageAreaPropsEqual(
     previous.onVirtualMeasurement !== next.onVirtualMeasurement ? 'onVirtualMeasurement' : null,
     previous.renderVisualization !== next.renderVisualization ? 'renderVisualization' : null,
     previous.messages !== next.messages ? 'messages' : null,
+    previous.turns !== next.turns ? 'turns' : null,
     previous.loading !== next.loading ? 'loading' : null,
     previous.isWaitingForAssistant !== next.isWaitingForAssistant ? 'isWaitingForAssistant' : null,
     previous.hasMoreBefore !== next.hasMoreBefore ? 'hasMoreBefore' : null,

@@ -68,6 +68,8 @@ export interface ChatErrorPayload {
   type?: string;
   deviceId?: string;
   shellType?: string;
+  startedAt?: number;
+  durationMs?: number;
 }
 
 export interface ChatStartPayload {
@@ -201,6 +203,8 @@ export interface RuntimeSupervisorSuggestion {
 }
 
 export type ChatResultPayload = Record<string, unknown> & {
+  startedAt?: number;
+  started_at?: number;
   value?: string;
   itemId?: string;
   item_id?: string;

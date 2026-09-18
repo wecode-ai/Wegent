@@ -25,6 +25,8 @@ interface UserSearchSelectProps<T extends SearchUser = SearchUser> {
   multiple?: boolean
   /** Custom class name for the container */
   className?: string
+  /** Stable test id for the search input when the caller owns the interaction. */
+  inputTestId?: string
   /** Auto focus on input (default: false) */
   autoFocus?: boolean
   /** Custom render for no results state - receives searchQuery and clearSearch function */
@@ -49,6 +51,7 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
   placeholder,
   multiple = true,
   className = '',
+  inputTestId,
   autoFocus = false,
   renderNoResults,
   renderSelectedUsers,
@@ -161,6 +164,7 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
             disabled={disabled}
             className="pl-9"
             autoFocus={autoFocus}
+            data-testid={inputTestId}
           />
         </div>
 

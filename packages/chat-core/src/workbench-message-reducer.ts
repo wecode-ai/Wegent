@@ -164,6 +164,7 @@ export type WorkbenchMessageAction<
       subtaskId?: string
       clientUserMessageId?: string
       shellType?: string
+      startedAt?: number
     }
   | {
       type: 'assistant_chunk'
@@ -185,12 +186,16 @@ export type WorkbenchMessageAction<
       content?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
       fileChanges?: TFileChanges
+      startedAt?: number
+      durationMs?: number
     }
   | {
       type: 'assistant_cancelled'
       messageId?: string
       subtaskId?: string
       content?: string
+      startedAt?: number
+      durationMs?: number
     }
   | {
       type: 'file_changes_updated'
@@ -204,6 +209,8 @@ export type WorkbenchMessageAction<
       subtaskId?: string
       error: string
       errorType?: string
+      startedAt?: number
+      durationMs?: number
     }
   | {
       type: 'block_created'

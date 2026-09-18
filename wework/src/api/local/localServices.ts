@@ -676,6 +676,7 @@ function normalizeRuntimeTaskSummary(
   const worktreeId = stringValue(taskRecord.worktreeId) ?? stringValue(taskRecord.worktree_id)
   const createdAt = timestampValue(taskRecord.createdAt) ?? timestampValue(taskRecord.created_at)
   const updatedAt = timestampValue(taskRecord.updatedAt) ?? timestampValue(taskRecord.updated_at)
+  const recencyAt = timestampValue(taskRecord.recencyAt) ?? timestampValue(taskRecord.recency_at)
   const gitInfo = taskRecord.gitInfo ?? taskRecord.git_info
   const runtimeHandle = recordValue(taskRecord.runtimeHandle ?? taskRecord.runtime_handle)
   const modelSelection =
@@ -713,6 +714,7 @@ function normalizeRuntimeTaskSummary(
     ...(worktreeId ? { worktreeId } : {}),
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {}),
+    ...(recencyAt ? { recencyAt } : {}),
     ...(gitInfo !== undefined ? { gitInfo } : {}),
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
     ...(modelSelection ? { modelSelection } : {}),

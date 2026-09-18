@@ -995,7 +995,7 @@ impl Drop for ProcessTreeGuard {
 }
 
 #[cfg(windows)]
-fn kill_windows_process_tree(pid: u32) {
+pub(crate) fn kill_windows_process_tree(pid: u32) {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;

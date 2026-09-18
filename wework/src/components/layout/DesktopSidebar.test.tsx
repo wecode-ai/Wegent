@@ -2810,10 +2810,10 @@ describe('DesktopSidebar', () => {
     })
 
     const firstSortable = document.querySelector(
-      '[data-sidebar-sortable-id="local-device:thread-1"]'
+      '[data-sidebar-sortable-id="local-device:chat-1"]'
     ) as HTMLElement
     const secondSortable = document.querySelector(
-      '[data-sidebar-sortable-id="local-device:thread-2"]'
+      '[data-sidebar-sortable-id="local-device:chat-2"]'
     ) as HTMLElement
     expect(screen.getByTestId('runtime-chat-task-sortable-list')).toContainElement(firstSortable)
     expect(firstSortable).toHaveAttribute('tabindex', '0')
@@ -3611,7 +3611,14 @@ describe('DesktopSidebar', () => {
     expect(spinnerLayer).toBeInstanceOf(HTMLSpanElement)
     expect(spinnerLayer).toHaveClass('will-change-transform')
     expect(spinnerLayer?.querySelector('svg')).not.toHaveClass('animate-spin')
-    expect(screen.getByTestId('runtime-local-task-goal-dot-codex-running')).toBeInTheDocument()
+    const goalIndicator = screen.getByTestId('runtime-local-task-goal-dot-codex-running')
+    expect(goalIndicator).toHaveClass('text-primary')
+    const goalTarget = goalIndicator.querySelector('.lucide-target')
+    expect(goalTarget).toBeInTheDocument()
+    expect(goalTarget).not.toHaveClass('animate-spin')
+    expect(spinnerLayer).not.toContainElement(goalTarget)
+    expect(goalIndicator.querySelector('.animate-spin')).toBe(spinnerLayer)
+    expect(goalIndicator.querySelector('.lucide-loader-circle')).toBeInTheDocument()
     expect(
       screen.queryByTestId('runtime-local-task-goal-dot-codex-running-without-goal')
     ).not.toBeInTheDocument()
@@ -4002,7 +4009,7 @@ describe('DesktopSidebar', () => {
     })
 
     try {
-      renderSidebar({
+      const sidebarProps = {
         runtimeWork: {
           projects: [
             {
@@ -4033,10 +4040,11 @@ describe('DesktopSidebar', () => {
           totalTasks: 1,
         },
         onArchiveRuntimeTask,
-      })
+      }
+      const rendered = renderSidebar(sidebarProps)
 
       await user.click(screen.getByTestId('project-item-button'))
-      const taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
+      let taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
       const rowChildren = Array.from(taskRow.children)
 
       expect(screen.getByTestId('runtime-local-task-mark-codex-1')).toBeInTheDocument()
@@ -4082,6 +4090,14 @@ describe('DesktopSidebar', () => {
         'pointer-events-auto'
       )
 
+      rendered.unmount()
+      renderSidebar(sidebarProps)
+      await user.click(screen.getByTestId('project-item-button'))
+      taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
+      expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveTextContent(
+        '撤销'
+      )
+
       await user.click(screen.getByTestId('runtime-local-task-archive-undo-codex-1'))
 
       expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
@@ -4106,6 +4122,78 @@ describe('DesktopSidebar', () => {
       setTimeoutSpy.mockRestore()
       clearTimeoutSpy.mockRestore()
     }
+  })
+
+  test('preserves pending archive undo when a runtime task gains its thread id', async () => {
+    const user = userEvent.setup()
+    const onArchiveRuntimeTask = vi.fn().mockResolvedValue(undefined)
+    const initialTask = {
+      taskId: 'codex-1',
+      workspacePath: '/repo/Wegent',
+      title: 'Fix reconnect',
+      runtime: 'codex' as const,
+      updatedAt: '2026-06-20T02:00:00Z',
+    }
+    const runtimeWork = (threadId?: string) => ({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          totalTasks: 1,
+          deviceWorkspaces: [
+            {
+              id: 91,
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/repo/Wegent',
+              tasks: [{ ...initialTask, ...(threadId ? { threadId } : {}) }],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    })
+    const initialProps = createSidebarProps({
+      runtimeWork: runtimeWork(),
+      onArchiveRuntimeTask,
+    })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-archive-identity-test')
+    lifecycleStore.syncRuntimeWork(initialProps.runtimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await user.click(screen.getByTestId('project-item-button'))
+    await user.click(screen.getByTestId('runtime-local-task-archive-codex-1'))
+
+    expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toBeInTheDocument()
+
+    const nextProps = {
+      ...initialProps,
+      runtimeWork: runtimeWork('thread-1'),
+    }
+    act(() => {
+      lifecycleStore.syncRuntimeWork(nextProps.runtimeWork)
+      view.rerender(
+        <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+          <DesktopSidebar {...nextProps} />
+        </RuntimeTaskLifecycleProvider>
+      )
+    })
+
+    expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('runtime-local-task-row-codex-1').closest('[data-sidebar-sortable-id]')
+    ).toHaveAttribute('data-sidebar-sortable-id', 'local-device:codex-1')
+
+    await user.click(screen.getByTestId('runtime-local-task-archive-undo-codex-1'))
+
+    expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
+    expect(screen.getByTestId('runtime-local-task-row-codex-1')).not.toHaveClass('hidden')
   })
 
   test('offers force archive when a worktree task has uncommitted changes', async () => {
