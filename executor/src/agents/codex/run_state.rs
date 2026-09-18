@@ -122,7 +122,8 @@ impl CodexRunState {
                     let params = message_params(message);
                     let turn = params.get("turn").unwrap_or(params);
                     self.turn_started_at_ms = integer_field(turn, "startedAt")
-                        .or_else(|| integer_field(turn, "started_at"));
+                        .or_else(|| integer_field(turn, "started_at"))
+                        .map(protocol_timestamp_millis);
                     self.turn_completed_at_ms = None;
                     self.turn_duration_ms = None;
                 }
@@ -174,9 +175,11 @@ impl CodexRunState {
                 let turn = params.get("turn").unwrap_or(params);
                 self.turn_started_at_ms = integer_field(turn, "startedAt")
                     .or_else(|| integer_field(turn, "started_at"))
+                    .map(protocol_timestamp_millis)
                     .or(self.turn_started_at_ms);
                 self.turn_completed_at_ms = integer_field(turn, "completedAt")
-                    .or_else(|| integer_field(turn, "completed_at"));
+                    .or_else(|| integer_field(turn, "completed_at"))
+                    .map(protocol_timestamp_millis);
                 self.turn_duration_ms = integer_field(turn, "durationMs")
                     .or_else(|| integer_field(turn, "duration_ms"));
                 Some(self.completed(message_params(message)))
@@ -388,6 +391,10 @@ impl CodexRunState {
             },
         }
     }
+}
+
+fn protocol_timestamp_millis(timestamp_seconds: i64) -> i64 {
+    timestamp_seconds.saturating_mul(1_000)
 }
 
 fn integer_field(value: &Value, key: &str) -> Option<i64> {

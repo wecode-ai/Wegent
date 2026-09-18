@@ -186,6 +186,7 @@ export type WorkbenchMessageAction<
       content?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
       fileChanges?: TFileChanges
+      startedAt?: number
       durationMs?: number
     }
   | {
@@ -193,6 +194,7 @@ export type WorkbenchMessageAction<
       messageId?: string
       subtaskId?: string
       content?: string
+      startedAt?: number
       durationMs?: number
     }
   | {
@@ -207,6 +209,7 @@ export type WorkbenchMessageAction<
       subtaskId?: string
       error: string
       errorType?: string
+      startedAt?: number
       durationMs?: number
     }
   | {

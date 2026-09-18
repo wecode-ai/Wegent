@@ -48,7 +48,7 @@ describe('runtimeConversationTurns', () => {
         {
           id: 'turn-timer',
           status: 'streaming',
-          startedAt,
+          startedAt: startedAt - 1000,
           items: [
             { id: user.id, type: 'user_message', message: user },
             {
@@ -87,6 +87,7 @@ describe('runtimeConversationTurns', () => {
       turns = reduceRuntimeConversationTurns(turns, {
         type: 'assistant_done',
         subtaskId: 'turn-timer',
+        startedAt,
         durationMs: 10_000,
       })
       const snapshot = JSON.parse(JSON.stringify(turns)) as RuntimeConversationTurn[]
@@ -96,6 +97,7 @@ describe('runtimeConversationTurns', () => {
       expect(snapshot[0].startedAt).toBe(startedAt)
       expect(snapshot[0].durationMs).toBe(10_000)
       expect(snapshot[0].completedAt).toBe(new Date(startedAt + 10000).toISOString())
+      expect(restored.createdAt).toBe(new Date(startedAt + 3000).toISOString())
       expect(restored.completedAt).toBeUndefined()
       expect(restored.status).toBe('done')
     } finally {

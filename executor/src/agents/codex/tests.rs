@@ -4057,7 +4057,7 @@ fn codex_run_state_finishes_failed_turn_timing_without_turn_completed() {
             "method": "turn/started",
             "params": {
                 "turn": {
-                    "startedAt": 1_000
+                    "startedAt": 1
                 }
             }
         }))
@@ -4089,8 +4089,8 @@ fn codex_run_state_finishes_failed_turn_timing_without_turn_completed() {
             "params": {
                 "turn": {
                     "status": "failed",
-                    "startedAt": 1_000,
-                    "completedAt": 4_000,
+                    "startedAt": 1,
+                    "completedAt": 4,
                     "durationMs": 3_000
                 }
             }

@@ -3338,6 +3338,7 @@ fn failed_responses_emit_runtime_turn_duration() {
         .expect("failed response should be emitted");
     assert_eq!(event["event"], "response.failed");
     assert_eq!(event["payload"]["subtaskId"], "turn-failed-duration");
+    assert_eq!(event["payload"]["data"]["startedAt"], 1_780_000_000_000_i64);
     assert_eq!(event["payload"]["data"]["durationMs"], 2_500);
 
     let _ = fs::remove_file(index_path);

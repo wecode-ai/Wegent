@@ -8,6 +8,7 @@ import logging
 from typing import BinaryIO, Iterator
 
 from minio import Minio
+from minio.error import S3Error
 from urllib3 import PoolManager, Timeout
 
 from app.core.config import settings
@@ -135,6 +136,26 @@ class WeworkTranscriptStorage:
         except Exception as exc:
             raise _failure(
                 "Failed to store transcript segment",
+                exc,
+                bucket=self.bucket,
+            ) from exc
+
+    def exists(self, object_key: str) -> bool:
+        client = self.client
+        try:
+            client.stat_object(self.bucket, object_key)
+            return True
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NoSuchObject", "NotFound"}:
+                return False
+            raise _failure(
+                "Failed to inspect transcript segment",
+                exc,
+                bucket=self.bucket,
+            ) from exc
+        except Exception as exc:
+            raise _failure(
+                "Failed to inspect transcript segment",
                 exc,
                 bucket=self.bucket,
             ) from exc
