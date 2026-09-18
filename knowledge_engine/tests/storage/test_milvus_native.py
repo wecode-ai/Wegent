@@ -104,6 +104,7 @@ def test_describe_collection_reads_the_contract_and_the_dimension_once():
 @pytest.mark.parametrize(
     "overrides",
     [
+        {"collection_name": "wegent_kb_other"},
         {"dimension": 4096},
         {"embedding_space": "sha256:other"},
         {"metric_type": "L2"},

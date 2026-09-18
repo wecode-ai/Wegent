@@ -132,6 +132,7 @@ class MilvusIndexBinding:
     def assert_compatible(self, other: "MilvusIndexBinding") -> None:
         """Raise when the requested contract differs from the bound one."""
         for field in (
+            "collection_name",
             "connection",
             "database",
             "schema_version",
