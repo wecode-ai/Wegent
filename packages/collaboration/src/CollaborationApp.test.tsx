@@ -169,6 +169,7 @@ function controllerWithProject(project: CollaborationProject) {
     commands: {
       reportError: vi.fn(),
       replaceProject: vi.fn(),
+      markIssueRead: vi.fn().mockResolvedValue(null),
     },
   };
 }
@@ -507,7 +508,14 @@ describe("CollaborationApp API boundary", () => {
     const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
 
     expect(board?.props.taskBindings).toEqual([binding]);
-    expect(board?.props.renderIssueCard).toBe(renderBoardIssueCard);
+    board?.props.renderIssueCard({ issue, taskBindings: [binding] });
+    expect(renderBoardIssueCard).toHaveBeenCalledWith({
+      issue,
+      taskBindings: [binding],
+      onMarkRead: expect.any(Function),
+    });
+    renderBoardIssueCard.mock.calls[0][0].onMarkRead();
+    expect(controller.commands.markIssueRead).toHaveBeenCalledWith(issue);
     expect(board?.props.onOpenBoardSettings).toEqual(expect.any(Function));
   });
 

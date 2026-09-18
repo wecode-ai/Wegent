@@ -13,6 +13,7 @@ export interface QuickAccessConfig {
 }
 
 export interface UserPreferences {
+  composer_quick_phrases?: import('@wegent/chat-core/composer-quick-phrases').QuickPhrase[] | null
   send_key: 'enter' | 'cmd_enter'
   follow_up_behavior?: 'queue' | 'guide'
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'

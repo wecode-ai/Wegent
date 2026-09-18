@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { publishSelectedTextSelection, SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
 import { WORKSPACE_PATH_DRAG_TYPE, writeWorkspacePathDragData } from '@/lib/workspace-path-transfer'
+import '@/i18n'
 import { SystemDragBridge } from './SystemDragBridge'
 
 const mocks = vi.hoisted(() => ({

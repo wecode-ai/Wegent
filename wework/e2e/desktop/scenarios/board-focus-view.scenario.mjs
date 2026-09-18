@@ -236,7 +236,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       assert.ok(itemTestId, 'The board focus fixture did not create an Issue card')
       const itemId = itemTestId.slice('collaboration-issue-'.length)
       const cardSelector = `${ACTIVE_BOARD} [data-testid="${itemTestId}"]`
-      const progressTrigger = `${ACTIVE_BOARD} [data-testid="cloud-todo-card-tasks-${itemId}"]`
+      const progressTrigger = `${ACTIVE_BOARD} [data-testid="cloud-todo-card-progress-trigger-${itemId}"]`
 
       await control.command('click', cardSelector)
       await control.command('waitFor', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail"]`, {
@@ -379,6 +379,36 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
 
       await control.command('scrollIntoView', cardSelector, { visible: true })
+      await control.command('click', processSelector, { visible: true })
+      await control.command('waitFor', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail"]`, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail-close"]`)
+      await control.command(
+        'waitFor',
+        `${ACTIVE_BOARD} [data-testid="collaboration-issue-detail"]`,
+        {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      for (const selector of [
+        `${ACTIVE_BOARD} [data-testid="cloud-todo-card-drop-${itemId}"]`,
+        `${ACTIVE_BOARD} [data-testid="cloud-todo-card-${itemId}"]`,
+        processSelector,
+        toolSelector,
+        progressTrigger,
+        `${ACTIVE_BOARD} [data-testid="cloud-board-focus-running"]`,
+        `${ACTIVE_BOARD} [data-testid="collaboration-board-settings"]`,
+      ]) {
+        await control.command('hover', selector)
+        assert.equal(
+          await control.command('getComputedStyleValue', selector, { value: 'cursor' }),
+          'default',
+          `The board page showed a hand cursor at ${selector}`
+        )
+      }
       await control.command('hover', '[data-testid="cloud-board-focus-running"]')
       await new Promise(resolve => setTimeout(resolve, 300))
       const [cardBeforeHover] = JSON.parse(await control.command('getElementMetrics', cardSelector))
@@ -387,6 +417,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         `[data-testid="cloud-todo-card-drop-${itemId}"]`,
         { value: 'transform' }
       )
+      await control.command('hover', cardSelector)
+      await new Promise(resolve => setTimeout(resolve, 800))
+      await control.command('waitFor', progressPopup, { visible: false, timeoutMs: uiTimeoutMs })
       await control.command('click', progressTrigger, {
         visible: true,
       })
@@ -510,13 +543,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       assert.ok(focusedProcessClass.includes('line-clamp-[8]'))
       await captureScreenshot(control, '04-running-card-focus-view.png', ACTIVE_BOARD)
 
-      await control.command(
-        'select',
-        `${ACTIVE_BOARD} select[data-testid="cloud-board-group-by"]`,
-        {
-          value: 'priority',
-        }
-      )
+      await control.command('click', `${ACTIVE_BOARD} [data-testid="cloud-board-group-by"]`)
+      await control.command('click', '[data-testid="cloud-board-group-option-priority"]')
       await control.command('waitFor', '[data-testid="cloud-board-focus-running"]', {
         visible: false,
         timeoutMs: uiTimeoutMs,
@@ -533,13 +561,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       await captureScreenshot(control, '05-focus-view-hidden-for-priority-group.png', ACTIVE_BOARD)
 
-      await control.command(
-        'select',
-        `${ACTIVE_BOARD} select[data-testid="cloud-board-group-by"]`,
-        {
-          value: 'status',
-        }
-      )
+      await control.command('click', `${ACTIVE_BOARD} [data-testid="cloud-board-group-by"]`)
+      await control.command('click', '[data-testid="cloud-board-group-option-status"]')
       await control.command('waitFor', '[data-testid="cloud-board-focus-running"]', {
         timeoutMs: uiTimeoutMs,
       })

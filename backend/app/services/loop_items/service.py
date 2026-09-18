@@ -1035,12 +1035,12 @@ class LoopItemService:
 
         requested_context_ids = set(context_payloads)
         db.query(LoopItem).filter(LoopItem.id == item.id).with_for_update().one()
-        existing_context_ids = self._attachment_source_context_ids(
+        existing_attachments = self._attachments_by_source_context(
             db, item.id, requested_context_ids
         )
-        pending_context_ids = requested_context_ids - existing_context_ids
+        pending_context_ids = requested_context_ids - existing_attachments.keys()
         if not pending_context_ids:
-            return []
+            return [existing_attachments[context_id] for context_id in context_payloads]
 
         prepared: list[tuple[LoopItemAttachment, bytes]] = []
         for context_id in context_payloads:
@@ -1095,30 +1095,37 @@ class LoopItemService:
 
         for attachment in imported:
             db.refresh(attachment)
-        return imported
+        existing_attachments.update(
+            {
+                attachment.metadata_json["source_context_id"]: attachment
+                for attachment in imported
+            }
+        )
+        return [existing_attachments[context_id] for context_id in context_payloads]
 
     @staticmethod
-    def _attachment_source_context_ids(
+    def _attachments_by_source_context(
         db: Session,
         item_id: str,
         context_ids: set[int],
-    ) -> set[int]:
+    ) -> dict[int, LoopItemAttachment]:
         if not context_ids:
-            return set()
+            return {}
         rows = (
-            db.query(LoopItemAttachment.metadata_json)
+            db.query(LoopItemAttachment)
             .filter(LoopItemAttachment.loop_item_id == item_id)
             .all()
         )
-        existing: set[int] = set()
-        for (metadata,) in rows:
+        existing: dict[int, LoopItemAttachment] = {}
+        for attachment in rows:
+            metadata = attachment.metadata_json
             value = (
                 metadata.get("source_context_id")
                 if isinstance(metadata, dict)
                 else None
             )
             if value is not None and int(value) in context_ids:
-                existing.add(int(value))
+                existing[int(value)] = attachment
         return existing
 
     @staticmethod

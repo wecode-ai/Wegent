@@ -253,7 +253,7 @@ def test_import_context_attachments_copies_once(
     )
 
     assert [entry.display_name for entry in imported] == ["conversation.png"]
-    assert imported_again == []
+    assert [entry.id for entry in imported_again] == [imported[0].id]
     assert imported[0].metadata_json == {"source_context_id": context.id}
     assert attachment_storage.get_bytes(imported[0].object_key) == b"context"
     assert commit_calls == 1

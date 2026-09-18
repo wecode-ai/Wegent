@@ -7,6 +7,12 @@ description = "Incremental Rust migration gateway for the Wegent backend"
 license = "Apache-2.0"
 
 [dependencies]
+aes-gcm = "0.10"
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.23.1"
+bcrypt = "0.19"
+brz-http = { version = "=0.0.5", features = ["json", "gzip", "metrics"] }
 brz-http-gateway = "=0.1.0"
 brz-http-server = { version = "=0.0.13", features = ["macros", "metrics"] }
 brz-logs = { version = "=0.0.6", features = ["metrics"] }
@@ -16,7 +22,12 @@ brz-logs = { version = "=0.0.6", features = ["metrics"] }
 # dependency here that gates metrics behind a feature has that feature enabled.
 brz-metrics = "=0.0.5"
 brz-mysql = "=0.0.10"
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
+brz-redis = { version = "=0.0.8", features = ["metrics"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+erased-serde = "0.4"
+flate2 = { version = "1", default-features = false, features = ["zlib"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+hmac = "0.12"
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 jsonwebtoken = { version = "9.3", default-features = false }
@@ -25,18 +36,24 @@ serde = { version = "1", features = ["derive"] }
 # echoed from an upstream response keeps the source's dict order.
 # `raw_value` carries those values through without materializing them.
 serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+sha1 = "0.10"
+sha2 = "0.10"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+toml = "0.8"
 tracing = "0.1"
+url = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [lints.rust]
-unsafe_code = "forbid"
+# `deny` rather than `forbid` so `config::init_env` can relax it for the single
+# `env::set_var` call that ports the reference dotenv export. Everything else
+# stays unsafe-free.
+unsafe_code = "deny"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
 
 [lib]
 name = "wegent_backend_rs"

@@ -1,3 +1,4 @@
+import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-api'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -794,6 +795,7 @@ export function createWebSharedWorkspaceApi(
       },
     },
     taskBindings: {
+      ...createIssueTaskBindingApi(client),
       async list(issueId, projectId) {
         const response = await client.get<Array<Record<string, unknown>>>(
           `/v1/loop-items/${encoded(issueId)}/tasks`

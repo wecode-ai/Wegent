@@ -11,6 +11,8 @@ import {
   CollaborationApp,
   CollaborationPlatformApp,
   collaborationTestIds,
+  createCollaborationTranslator,
+  IssueConversationDrawers,
   mapAutomationExecutionCatalog,
   toSharedIssueDetailTaskBinding,
   type CollaborationMember,
@@ -35,7 +37,6 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
-import { cn } from '@/lib/utils'
 import {
   DesktopSidebarAccount,
   type DesktopSidebarAccountSettingsOptions,
@@ -949,8 +950,10 @@ export function WeworkSharedProject({
     address?: RuntimeTaskAddress
     issue: CollaborationIssue
     workflowStep?: string
+    conversationKey: string
   } | null>(null)
   const [pinnedProgressIssueId, setPinnedProgressIssueId] = useState<string | null>(null)
+  if (location.issueId && pinnedProgressIssueId !== null) setPinnedProgressIssueId(null)
   const [refreshProjectRequestKey, setRefreshProjectRequestKey] = useState(0)
   const [, setTaskBindingRevision] = useState(0)
   const runtimeTaskLifecycleRef = useRef(runtimeTaskLifecycle)
@@ -1022,6 +1025,7 @@ export function WeworkSharedProject({
         rootView: 'home',
       },
       navigate: next => {
+        setTaskComposer(current => (current?.issue.id === next.issueId ? current : null))
         setLocation(current => ({
           ...current,
           workspaceId: workspace.id,
@@ -1211,14 +1215,75 @@ export function WeworkSharedProject({
     }
   }, [detailServices?.projectChatClient, project.id])
 
-  // The task conversation panel is laid out as a flex sibling of the board, so
-  // it shares the board's stacking context and would sit under the fixed issue
-  // detail drawer. Collapse the drawer while the conversation is open, the same
-  // way `.todo-panel-stack.has-conversation` hides the issue detail shell.
-  const taskConversationOpen = Boolean(taskComposer && runtimePort)
+  const conversationPanel =
+    taskComposer && runtimePort ? (
+      <AiChatModal
+        key={taskComposer.conversationKey}
+        project={project as unknown as CloudProject}
+        localProjects={localProjects}
+        task={taskComposer.issue as unknown as CloudLoopItem}
+        open
+        embedded
+        initialTaskInput={taskComposer.issue.description || taskComposer.issue.title}
+        initialAddress={taskComposer.address}
+        workflowNodeId={taskComposer.workflowStep}
+        onClose={() => setTaskComposer(null)}
+        onAddressChange={address => {
+          setTaskComposer(current =>
+            current?.conversationKey === taskComposer.conversationKey
+              ? { ...current, address }
+              : current
+          )
+        }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+        prepareTask={async address => {
+          await runtimePort.bindTask(
+            taskComposer.issue.id,
+            address,
+            taskComposer.issue.title,
+            taskComposer.workflowStep
+          )
+          const projectRef = {
+            projectStore: project.project_store,
+            projectId: String(project.id),
+          }
+          publishProjectSpaceTaskBindingChanged({
+            task: address,
+            project: projectRef,
+            type: 'bound',
+          })
+          return async () => {
+            await runtimePort.unbindTask(taskComposer.issue.id, address)
+            publishProjectSpaceTaskBindingChanged({
+              task: address,
+              project: projectRef,
+              type: 'unbound',
+            })
+          }
+        }}
+        onTaskCreated={async address => {
+          setTaskComposer(current =>
+            current?.conversationKey === taskComposer.conversationKey
+              ? { ...current, address }
+              : current
+          )
+          const latest = await api.issues.get(taskComposer.issue.id)
+          if (latest.status === 'inbox') {
+            await api.issues.update(latest.id, {
+              version: latest.version,
+              status: 'pending',
+            })
+          }
+          setRefreshProjectRequestKey(value => value + 1)
+        }}
+      />
+    ) : null
 
   return (
-    <div className="flex h-full min-h-0 min-w-0">
+    <div
+      className="issue-drawer-workspace flex h-full min-h-0 min-w-0"
+      data-testid="issue-drawer-workspace"
+    >
       <div className="min-w-0 flex-1">
         <CollaborationApp
           api={scopedApi}
@@ -1231,7 +1296,8 @@ export function WeworkSharedProject({
           onCreateTask={
             runtimePort
               ? (_taskProject, issue, workflowStep) => {
-                  setTaskComposer({ issue, workflowStep })
+                  setTaskComposer({ issue, workflowStep, conversationKey: `${issue.id}:new` })
+                  projectHost.navigate({ ...projectHost.location, issueId: issue.id })
                 }
               : undefined
           }
@@ -1246,18 +1312,17 @@ export function WeworkSharedProject({
             onCreateTask,
             onDelete,
           }) => (
-            <div
-              className={cn(
-                'collaboration-dialog-backdrop collaboration-issue-detail-backdrop',
-                taskConversationOpen && 'has-conversation'
-              )}
-              data-testid={collaborationTestIds.issueDetail}
-              data-conversation-open={taskConversationOpen ? 'true' : 'false'}
-              onMouseDown={event => {
-                if (event.currentTarget === event.target) onClose()
+            <IssueConversationDrawers
+              label={createCollaborationTranslator(locale)('todo.issue_details')}
+              conversation={taskComposer?.issue.id === issue.id ? conversationPanel : null}
+              conversationKey={taskComposer?.conversationKey}
+              onClose={() => {
+                setTaskComposer(null)
+                onClose()
               }}
+              onCloseConversation={() => setTaskComposer(null)}
             >
-              <div className="collaboration-issue-detail-shared-host collaboration-issue-detail-github-host">
+              {closeDrawers => (
                 <TodoEditor
                   key={issue.id}
                   mode="edit"
@@ -1287,6 +1352,11 @@ export function WeworkSharedProject({
                       .at(-1) ?? null
                   }
                   localProjects={localProjects}
+                  showAdditionalTaskAction={
+                    taskBindings.length > 0 &&
+                    issue.workflow?.advancement_policy !== 'ai' &&
+                    !issue.workflow?.nodes?.length
+                  }
                   initialTaskBindings={taskBindings.map(toWeworkIssueTaskBinding)}
                   aitableApi={
                     project.task_provider === 'dingtalk_aitable' ? services.aitableApi : undefined
@@ -1298,6 +1368,7 @@ export function WeworkSharedProject({
                       ? task =>
                           setTaskComposer({
                             issue,
+                            conversationKey: `${issue.id}:${task.device_id}:${task.task_id}`,
                             address: {
                               deviceId: task.device_id,
                               taskId: task.task_id,
@@ -1311,22 +1382,22 @@ export function WeworkSharedProject({
                             })
                         : undefined
                   }
+                  onEscape={
+                    taskComposer?.issue.id === issue.id ? () => setTaskComposer(null) : closeDrawers
+                  }
                   onUpdated={updated => onChange(updated as unknown as CollaborationIssue)}
-                  onClose={() => {
-                    setTaskComposer(null)
-                    onClose()
-                  }}
+                  onClose={closeDrawers}
                 />
-              </div>
-            </div>
+              )}
+            </IssueConversationDrawers>
           )}
           renderBoardIssueCard={({
             display,
             focused,
             issue,
-            nativeContainerProps,
             onOpen,
             onDelete,
+            onMarkRead,
             taskBindings,
           }) => {
             const boardTaskBindings = taskBindings.map(
@@ -1348,11 +1419,7 @@ export function WeworkSharedProject({
                 }) as CloudTodoBoardTaskBinding
             )
             return (
-              <div
-                {...nativeContainerProps}
-                className="w-full"
-                data-testid={collaborationTestIds.issue(issue.id)}
-              >
+              <div className="w-full" data-testid={collaborationTestIds.issue(issue.id)}>
                 <CloudTodoBoardCard
                   item={
                     {
@@ -1364,16 +1431,26 @@ export function WeworkSharedProject({
                   onClick={onOpen}
                   onArchive={onDelete ?? (() => undefined)}
                   archiveLabel={t('todo.delete_issue', '删除任务')}
+                  onMarkRead={onMarkRead}
                   previewPinned={pinnedProgressIssueId === issue.id}
+                  previewDisabled={Boolean(location.issueId)}
                   onPreviewPinnedChange={pinned =>
                     setPinnedProgressIssueId(pinned ? issue.id : null)
                   }
                   onOpenRuntimeTask={
-                    runtimePort ? address => setTaskComposer({ issue, address }) : onOpenRuntimeTask
+                    runtimePort
+                      ? address => {
+                          setTaskComposer({
+                            issue,
+                            address,
+                            conversationKey: `${issue.id}:${address.deviceId}:${address.taskId}`,
+                          })
+                          projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+                        }
+                      : onOpenRuntimeTask
                   }
                   display={display}
                   processingStatus={issue.status === 'in_progress' || issue.status === 'in_review'}
-                  dragDisabled
                   archiveDisabled={!onDelete}
                   progressDisplay={focused ? 'focused' : 'compact'}
                 />
@@ -1382,59 +1459,6 @@ export function WeworkSharedProject({
           }}
         />
       </div>
-      {taskComposer && runtimePort ? (
-        <AiChatModal
-          project={project as unknown as CloudProject}
-          localProjects={localProjects}
-          task={taskComposer.issue as unknown as CloudLoopItem}
-          open
-          embedded
-          initialTaskInput={taskComposer.issue.description || taskComposer.issue.title}
-          initialAddress={taskComposer.address}
-          workflowNodeId={taskComposer.workflowStep}
-          onClose={() => setTaskComposer(null)}
-          onAddressChange={address => {
-            setTaskComposer(current => (current ? { ...current, address } : current))
-          }}
-          onOpenRuntimeTask={onOpenRuntimeTask}
-          prepareTask={async address => {
-            await runtimePort.bindTask(
-              taskComposer.issue.id,
-              address,
-              taskComposer.issue.title,
-              taskComposer.workflowStep
-            )
-            const projectRef = {
-              projectStore: project.project_store,
-              projectId: String(project.id),
-            }
-            publishProjectSpaceTaskBindingChanged({
-              task: address,
-              project: projectRef,
-              type: 'bound',
-            })
-            return async () => {
-              await runtimePort.unbindTask(taskComposer.issue.id, address)
-              publishProjectSpaceTaskBindingChanged({
-                task: address,
-                project: projectRef,
-                type: 'unbound',
-              })
-            }
-          }}
-          onTaskCreated={async address => {
-            setTaskComposer(current => (current ? { ...current, address } : current))
-            const latest = await api.issues.get(taskComposer.issue.id)
-            if (latest.status === 'inbox') {
-              await api.issues.update(latest.id, {
-                version: latest.version,
-                status: 'pending',
-              })
-            }
-            setRefreshProjectRequestKey(value => value + 1)
-          }}
-        />
-      ) : null}
     </div>
   )
 }

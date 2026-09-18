@@ -80,17 +80,11 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
     layerCount: 0,
     onBreadcrumbSelect: vi.fn(),
     onSaveGlobalGroupBy: vi.fn(),
-    renderAddIcon: () => null,
-    renderChevronDown: () => null,
-    renderChevronRight: () => null,
     renderDragOverlay: () => null,
     renderExternalGroupPicker: () => null,
-    renderFocusIcon: () => null,
     renderGroupPicker: () => null,
     renderItem: () => null,
-    renderSearchIcon: () => null,
     renderSkeleton: () => null,
-    renderTooltip: (_label, child) => child,
     rootLabel: "Issue",
     rootUnitLabel: "个 Issue",
     saveGlobalDisabled: false,
@@ -105,6 +99,7 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
 describe("ProjectBoardBody", () => {
   it("owns the original toolbar, breadcrumb, scroll viewport and Kanban composition", () => {
     const tree = ProjectBoardBody(props());
+    expect(tree.props["data-board-cursor-policy"]).toBe("arrow");
     const nodes = descendants(tree);
 
     expect(

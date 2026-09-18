@@ -8,6 +8,8 @@ describe('Wework development instance information', () => {
   })
 
   test('reads plugin development identity from the runtime URL', async () => {
+    vi.stubEnv('VITE_WEWORK_DEV_TITLE', '')
+    vi.stubEnv('VITE_WEWORK_DEV_WORKTREE', '')
     window.history.replaceState(
       {},
       '',

@@ -7,6 +7,9 @@ use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
+#[path = "local_history_tests.rs"]
+mod local_history_tests;
+
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
@@ -6061,6 +6064,10 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
         .collect::<Vec<_>>();
 
     assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
+    assert!(target_paths.iter().any(|path| {
+        path.ends_with("/workspace/attachments/runtime/task-1")
+            || path.ends_with("\\workspace\\attachments\\runtime\\task-1")
+    }));
     assert!(target_paths.contains(&"/Users/me/project/.wegent/attachments/task-1".to_owned()));
     assert!(target_paths.contains(&"/Users/me/project/task-1:executor:attachments".to_owned()));
     let _ = fs::remove_dir_all(root);
