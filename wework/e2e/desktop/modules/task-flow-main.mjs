@@ -1224,6 +1224,9 @@ async function main() {
       ...(DESKTOP_SEGMENT === 'local-file-preview'
         ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
         : {}),
+      ...(DESKTOP_SEGMENT === 'running-conversation-history'
+        ? { WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS: '1500' }
+        : {}),
       WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
       WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
       WEWORK_E2E_CLOUD_TOKEN:
