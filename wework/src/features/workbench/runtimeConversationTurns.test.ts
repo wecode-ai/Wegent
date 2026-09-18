@@ -93,6 +93,7 @@ describe('runtimeConversationTurns', () => {
         message => message.role === 'assistant'
       )!
       expect(restored.runtimeTurnStartedAt).toBe(startedAt)
+      expect(restored.createdAt).toBe(new Date(startedAt + 3000).toISOString())
       expect(restored.completedAt).toBe(new Date(startedAt + 10000).toISOString())
       expect(restored.status).toBe('done')
     } finally {
