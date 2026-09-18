@@ -16,7 +16,6 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Iterator
 
 import pytest
 from llama_index.core.schema import TextNode
@@ -24,19 +23,11 @@ from pymilvus import MilvusClient
 
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.milvus_backend import MilvusBackend
-from tests.contract.milvus_fault_injection import (
-    SilentTcpTarget,
-    SlowRpcMilvusPeer,
-)
 
 CONTRACT_URI_ENV = "MILVUS_CONTRACT_URI"
 CONTRACT_DIMENSION = 1536
 CONTRACT_CREATED_AT = "2026-01-01T00:00:00Z"
 CONTRACT_USER_ID = 1
-# The registry collection the previous index-contract mechanism created. This
-# code neither creates nor reads it, and the contract tests assert it is absent
-# from the service they run against.
-LEGACY_INDEX_REGISTRY_COLLECTION = "wegent_index_bindings"
 # Retrieval reads at Bounded, so the first reads after a write may be answered
 # from a snapshot that predates it. Measured on the pinned 2.5.4 fixture with one
 # fresh collection per round, the document read, the dense search and the
@@ -46,26 +37,6 @@ LEGACY_INDEX_REGISTRY_COLLECTION = "wegent_index_bindings"
 VISIBILITY_WINDOW_SECONDS = 0.5
 VISIBILITY_TIMEOUT_SECONDS = 2.0
 VISIBILITY_POLL_SECONDS = 0.05
-
-
-@pytest.fixture
-def silent_tcp_target() -> Iterator[SilentTcpTarget]:
-    """A local endpoint that accepts a connection and then goes silent."""
-    target = SilentTcpTarget()
-    try:
-        yield target
-    finally:
-        target.close()
-
-
-@pytest.fixture
-def slow_rpc_milvus_peer() -> Iterator[SlowRpcMilvusPeer]:
-    """A local gRPC peer that answers the handshake and delays other RPCs."""
-    peer = SlowRpcMilvusPeer()
-    try:
-        yield peer
-    finally:
-        peer.close()
 
 
 class DeterministicEmbedding:
@@ -179,11 +150,6 @@ def await_document_visibility(
         time.sleep(VISIBILITY_POLL_SECONDS)
 
 
-def is_milvus_lite(uri: str) -> bool:
-    """A local ``*.db`` path means the embedded Milvus Lite server."""
-    return not uri.startswith(("http://", "https://", "tcp://", "unix:"))
-
-
 def drop_collection_with_contract(uri: str, collection_name: str) -> None:
     """Drop one stored collection, its parent sidecar and its contract.
 
@@ -247,12 +213,10 @@ def milvus_uri() -> str:
             "(for example http://localhost:19530); contract tests never skip.",
             pytrace=False,
         )
-    # Fail here, not deep inside a test, when the service cannot answer - and
-    # report a service that still holds the deleted mechanism's registry
-    # instead of failing an unrelated assertion later. Nothing is removed.
+    # Fail here, not deep inside a test, when the service cannot answer.
     client = MilvusClient(uri=uri)
     try:
-        collections = client.list_collections()
+        client.list_collections()
     except Exception as exc:  # pragma: no cover - depends on the environment
         pytest.fail(
             f"Milvus contract service at {uri} is unreachable: {exc}",
@@ -260,15 +224,6 @@ def milvus_uri() -> str:
         )
     finally:
         client.close()
-    if LEGACY_INDEX_REGISTRY_COLLECTION in collections:
-        pytest.fail(
-            f"Milvus contract service at {uri} still holds "
-            f"'{LEGACY_INDEX_REGISTRY_COLLECTION}', the registry the previous "
-            "index-contract mechanism created. The current code never creates "
-            "or reads it; drop that collection on a disposable contract "
-            "service and re-run.",
-            pytrace=False,
-        )
     return uri
 
 
@@ -279,28 +234,3 @@ def milvus_env(milvus_uri) -> MilvusContractEnv:
         yield env
     finally:
         env.cleanup()
-
-
-@pytest.fixture
-def milvus_server_env(
-    milvus_env: MilvusContractEnv, milvus_uri: str
-) -> MilvusContractEnv:
-    """Fixture for contracts that need an atomic server-side collection create.
-
-    Milvus Lite creates collections through the local filesystem, so two
-    concurrent creates can both fail and leave a half-created directory. That
-    is a limitation of the embedded engine, not of the storage contract, so
-    these tests require a real server - and in CI they must never be skipped.
-    """
-    if is_milvus_lite(milvus_uri):
-        if os.environ.get("CI"):
-            pytest.fail(
-                "concurrency contracts require a real Milvus server in CI, "
-                f"but {CONTRACT_URI_ENV}={milvus_uri} looks like Milvus Lite",
-                pytrace=False,
-            )
-        pytest.skip(
-            "concurrency contracts require an atomic server-side create; "
-            "Milvus Lite creates collection directories non-atomically"
-        )
-    return milvus_env

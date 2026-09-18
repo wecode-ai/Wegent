@@ -432,9 +432,13 @@ class _CollectionClient:
         return []
 
 
-def test_confirming_a_read_contract_is_one_describe_and_no_registry_read():
-    """One request reads the contract from the collection and reuses it."""
-    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+def test_confirming_a_read_contract_compares_in_memory_without_an_rpc():
+    """The contract was read from the collection, so confirming it costs no RPC."""
+    client = _CollectionClient(exists=True, contract=_binding())
+    store = MilvusDocumentStore(
+        uri="http://milvus.test:19530",
+        client_factory=lambda **kwargs: client,
+    )
 
     store.confirm_contract(
         "wegent_kb_1",
@@ -442,6 +446,9 @@ def test_confirming_a_read_contract_is_one_describe_and_no_registry_read():
         dimension=1536,
         embedding_space="sha256:abc",
     )
+
+    assert client.descriptions == 0
+    assert client.queries == []
 
 
 def test_confirming_a_read_contract_rejects_another_embedding_space():

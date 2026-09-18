@@ -2535,19 +2535,6 @@ wheels = [
 ]
 
 [[package]]
-name = "llama-index-vector-stores-milvus"
-version = "0.9.6"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "llama-index-core" },
-    { name = "pymilvus" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ef/79/72bf70fac3b77770a5c2b1b7d441aa1998bb522d50fe88b0f9c4071854e5/llama_index_vector_stores_milvus-0.9.6.tar.gz", hash = "sha256:6d38ac5939a570e0240687f54fbee4e1ff6c5faa2d28d25377a3f38d2ca07e2b", size = 15584, upload-time = "2026-01-13T11:46:41.394Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/04/98359849c095b5a3eb06f0649865a30b5a733b9fdbfeac3c6951253f804c/llama_index_vector_stores_milvus-0.9.6-py3-none-any.whl", hash = "sha256:916cbd9b07035ec137905970ef6a49dd77d3ece6e0a79271db35705cca5f5f84", size = 15792, upload-time = "2026-01-13T11:46:39.708Z" },
-]
-
-[[package]]
 name = "llama-index-vector-stores-qdrant"
 version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -5931,7 +5918,6 @@ dependencies = [
     { name = "llama-index-embeddings-openai" },
     { name = "llama-index-readers-file" },
     { name = "llama-index-vector-stores-elasticsearch" },
-    { name = "llama-index-vector-stores-milvus" },
     { name = "llama-index-vector-stores-qdrant" },
     { name = "lxml" },
     { name = "markdown" },
@@ -6042,7 +6028,6 @@ requires-dist = [
     { name = "llama-index-embeddings-openai", specifier = ">=0.3.0" },
     { name = "llama-index-readers-file", specifier = ">=0.4.0" },
     { name = "llama-index-vector-stores-elasticsearch", specifier = ">=0.4.0" },
-    { name = "llama-index-vector-stores-milvus", specifier = ">=0.4.0" },
     { name = "llama-index-vector-stores-qdrant", specifier = ">=0.9.0" },
     { name = "lxml", specifier = ">=4.9.0" },
     { name = "markdown", specifier = ">=3.5.0" },
@@ -6069,7 +6054,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.5.3" },
     { name = "pydantic-settings", specifier = ">=2.1.0" },
     { name = "pyjwt", specifier = ">=2.8.0" },
-    { name = "pymilvus", specifier = ">=2.4.0,<2.6.4" },
+    { name = "pymilvus", specifier = ">=2.6.3,<2.6.4" },
     { name = "pymysql", specifier = ">=1.1.0" },
     { name = "pypdf2", specifier = ">=3.0.0" },
     { name = "pytesseract", specifier = ">=0.3.10" },
@@ -6258,7 +6243,6 @@ dependencies = [
     { name = "llama-index-embeddings-openai" },
     { name = "llama-index-readers-file" },
     { name = "llama-index-vector-stores-elasticsearch" },
-    { name = "llama-index-vector-stores-milvus" },
     { name = "llama-index-vector-stores-qdrant" },
     { name = "markdown" },
     { name = "openpyxl" },
@@ -6293,7 +6277,6 @@ requires-dist = [
     { name = "llama-index-embeddings-openai", specifier = ">=0.3.0" },
     { name = "llama-index-readers-file", specifier = ">=0.4.0" },
     { name = "llama-index-vector-stores-elasticsearch", specifier = ">=0.4.0" },
-    { name = "llama-index-vector-stores-milvus", specifier = ">=0.4.0" },
     { name = "llama-index-vector-stores-qdrant", specifier = ">=0.9.0" },
     { name = "markdown", specifier = ">=3.5.0" },
     { name = "openpyxl", specifier = ">=3.1.2" },
@@ -6301,7 +6284,7 @@ requires-dist = [
     { name = "pdf2image", specifier = ">=1.16.0" },
     { name = "pillow", specifier = ">=12.0.0" },
     { name = "pydantic", specifier = ">=2.5.3" },
-    { name = "pymilvus", specifier = ">=2.4.0,<2.6.4" },
+    { name = "pymilvus", specifier = ">=2.6.3,<2.6.4" },
     { name = "pypdf2", specifier = ">=3.0.0" },
     { name = "pytesseract", specifier = ">=0.3.10" },
     { name = "python-docx", specifier = ">=1.1.0" },

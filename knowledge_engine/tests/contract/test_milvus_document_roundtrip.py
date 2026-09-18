@@ -330,11 +330,10 @@ def test_a_dropped_index_reads_as_unindexed_and_rebuilds_on_the_next_write(
 ) -> None:
     """A dropped collection takes its contract with it and nothing else lingers.
 
-    The contract lives in the collection (ticket 12), so an index dropped
-    outside the product leaves no record behind: the knowledge base reads as
-    unindexed - the observation limitation the parity spec retains - and the
-    next write rebuilds a collection that declares the current contract again.
-    A knowledge base whose index was lost does not stay broken.
+    The contract lives in the collection, so an index dropped outside the
+    product leaves no record behind: the knowledge base reads as unindexed, and
+    the next write rebuilds a collection that declares the current contract
+    again. A knowledge base whose index was lost does not stay broken.
     """
     from pymilvus import MilvusClient
 
@@ -561,7 +560,7 @@ def test_legacy_collection_without_contract_is_rejected(
 
 
 def test_concurrent_index_creation_keeps_one_valid_collection(
-    milvus_server_env: MilvusContractEnv,
+    milvus_env: MilvusContractEnv,
 ) -> None:
     """Same-contract writers race behind a barrier: one collection stays valid.
 
@@ -571,7 +570,6 @@ def test_concurrent_index_creation_keeps_one_valid_collection(
     """
     from pymilvus import MilvusClient
 
-    milvus_env = milvus_server_env
     knowledge_id = milvus_env.new_knowledge_id()
     backend = milvus_env.backend()
     errors: list[BaseException] = []
@@ -628,7 +626,7 @@ def test_concurrent_index_creation_keeps_one_valid_collection(
 
 
 def test_concurrent_incompatible_creation_fails_explicitly(
-    milvus_server_env: MilvusContractEnv,
+    milvus_env: MilvusContractEnv,
 ) -> None:
     """Same dimension, different model space: one wins, the other writes nothing.
 
@@ -638,7 +636,6 @@ def test_concurrent_incompatible_creation_fails_explicitly(
     """
     from pymilvus import MilvusClient
 
-    milvus_env = milvus_server_env
     knowledge_id = milvus_env.new_knowledge_id()
     outcomes: list[tuple[str, int]] = []
     stored_document_ids: list[int] = []
@@ -697,19 +694,18 @@ def test_concurrent_incompatible_creation_fails_explicitly(
 
 
 def test_a_creation_declares_its_contract_in_the_same_request(
-    milvus_server_env: MilvusContractEnv,
+    milvus_env: MilvusContractEnv,
 ) -> None:
     """A collection and its contract are never written apart.
 
-    The registry this ticket deletes could describe a collection that was never
-    created, or a collection whose creator died before writing its row. The
-    description travels with the collection, so the creator has already
-    declared exactly what it created by the time the create returns, and a name
-    that was never created declares nothing at all.
+    A separate registry could describe a collection that was never created, or
+    a collection whose creator died before writing its row. The description
+    travels with the collection, so the creator has already declared exactly
+    what it created by the time the create returns, and a name that was never
+    created declares nothing at all.
     """
     from knowledge_engine.embedding.space import compute_embedding_space
 
-    milvus_env = milvus_server_env
     knowledge_id = milvus_env.new_knowledge_id()
     backend = milvus_env.backend()
     model = DeterministicEmbedding(1536)
@@ -768,10 +764,9 @@ def test_a_creation_declares_its_contract_in_the_same_request(
 
 
 def test_confirmed_binding_is_not_overwritten_by_an_incompatible_writer(
-    milvus_server_env: MilvusContractEnv,
+    milvus_env: MilvusContractEnv,
 ) -> None:
     """A different contract never replaces an existing, confirmed one."""
-    milvus_env = milvus_server_env
     knowledge_id = milvus_env.new_knowledge_id()
     backend, model, _ = _index_document(
         milvus_env,
@@ -856,7 +851,7 @@ def test_source_file_and_display_text_survive_the_round_trip(
     assert row[RETRIEVAL_TEXT_FIELD]
 
 
-def test_the_collection_keeps_no_publish_or_execution_columns(
+def test_the_collection_keeps_the_minimal_row_layout(
     milvus_env: MilvusContractEnv,
 ) -> None:
     """The physical schema holds the six fields retrieval needs and nothing else.

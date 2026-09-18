@@ -26,7 +26,6 @@ from knowledge_engine.storage.milvus_backend import MilvusBackend
 from shared.models import RetrievalScope
 
 from .conftest import (
-    DeterministicEmbedding,
     MilvusContractEnv,
     await_document_visibility,
 )

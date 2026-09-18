@@ -296,8 +296,8 @@ class MilvusBackend(BaseStorageBackend):
         The rows are written once and never published in a second pass, and the
         write returns as soon as the server accepted them. Retrieval reads at
         ``Bounded``, so a read issued in the first ~0.5s after this write can
-        miss the document; the parity spec accepts that window instead of
-        buying it back with a write-side wait.
+        miss the document; the accepted visibility window is not bought back
+        with a write-side wait.
 
         Milvus has no transaction spanning the write, so the failure path is
         explicit too: the removal is issued before the rows go in and a write
@@ -787,7 +787,7 @@ class MilvusBackend(BaseStorageBackend):
         request needs about it. No collection means the knowledge base was never
         indexed, which is a valid empty result: a collection dropped outside the
         product leaves nothing behind either, so it reads the same way - the
-        observation limitation the parity spec retains instead of recording the
+        observation limitation this design retains instead of recording the
         index anywhere else.
 
         A collection that exists without a readable contract, or whose contract

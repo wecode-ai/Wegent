@@ -71,8 +71,8 @@ class MilvusCleanup:
         Every row of the document is removed, not only the ones this code knows
         about: two writers of the same document are not coordinated, so a
         writer still in flight when a delete starts loses the rows it already
-        wrote and the last writer wins. The parity spec accepts that window and
-        promises the normal ordered flow only.
+        wrote and the last writer wins. That window is accepted here, and only
+        the normal ordered flow is promised.
 
         A removal whose RPC fails raises, and the count reported is the one the
         delete RPC returned: nothing counts the rows first and nothing reads

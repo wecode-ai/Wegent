@@ -8,14 +8,13 @@ These run against the pinned standalone service: the physical index state is
 changed underneath the knowledge base and the adapter must report a stable code
 instead of answering with no matches.
 
-The index contract lives in the description of the collection it describes
-(ticket 12), so the failures worth reporting here are the ones that are still
-observable: a collection whose contract this code cannot read, and a contract
-that does not match the collection it is stored with. A collection dropped
-outside the product leaves nothing behind, which is the observation limitation
-the parity spec retains - no second record of the index exists to detect it,
-and this file asserts that reading such a knowledge base answers as unindexed
-instead of inventing a failure.
+The index contract lives in the description of the collection it describes, so
+the failures worth reporting here are the ones that are still observable: a
+collection whose contract this code cannot read, and a contract that does not
+match the collection it is stored with. A collection dropped outside the
+product leaves nothing behind - no second record of the index exists to detect
+it - and this file asserts that reading such a knowledge base answers as
+unindexed instead of inventing a failure.
 """
 
 from __future__ import annotations
@@ -45,14 +44,11 @@ from knowledge_engine.storage.milvus_native import (
 )
 from tests.contract.conftest import (
     CONTRACT_DIMENSION,
-    LEGACY_INDEX_REGISTRY_COLLECTION,
     DeterministicEmbedding,
     index_nodes,
 )
 
 pytestmark = pytest.mark.milvus
-
-INDEX_REGISTRY_COLLECTION = LEGACY_INDEX_REGISTRY_COLLECTION
 
 
 def _nodes(count: int = 2) -> list[TextNode]:
@@ -188,7 +184,7 @@ def test_a_dropped_index_reads_as_a_never_indexed_knowledge_base(milvus_env) -> 
 
     The contract travels with the collection, so an external drop takes it with
     it and the knowledge base reads exactly like one that was never indexed.
-    That is the observation limitation the parity spec retains; nothing in the
+    That is the observation limitation this design retains; nothing in the
     product records a second copy of the index that could tell them apart.
     """
     backend = milvus_env.backend()
@@ -333,43 +329,6 @@ def test_a_stable_failure_does_not_expose_the_connection(milvus_env) -> None:
 
     assert milvus_env.uri not in str(failure.value)
     assert milvus_env.uri not in repr(failure.value.details)
-
-
-def test_the_index_contract_needs_no_registry_collection(milvus_env) -> None:
-    """The contract is stored in the collection, so no registry collection is made.
-
-    A knowledge base written and read through the product keeps its contract in
-    its own collection, and the product creates no registry collection next to
-    it. The session fixture already refused a service that still holds the
-    registry the previous mechanism created, so absence is asserted outright
-    here and the fixture, not this test, reports that environment.
-    """
-    client = MilvusClient(uri=milvus_env.uri)
-    try:
-        before = set(client.list_collections())
-    finally:
-        client.close()
-
-    backend = milvus_env.backend()
-    knowledge_id = milvus_env.new_knowledge_id()
-    collection_name = milvus_env.collection_name(knowledge_id)
-    index_nodes(
-        backend,
-        knowledge_id=knowledge_id,
-        doc_ref="1",
-        nodes=_nodes(),
-    )
-    assert backend.get_all_chunks(knowledge_id, max_chunks=5)
-
-    client = MilvusClient(uri=milvus_env.uri)
-    try:
-        after = set(client.list_collections())
-    finally:
-        client.close()
-    created = after - before
-    assert INDEX_REGISTRY_COLLECTION not in created, "this code never creates it"
-    assert INDEX_REGISTRY_COLLECTION not in after
-    assert collection_name in created
 
 
 def test_a_physical_drop_needs_the_contract_the_index_declares(milvus_env) -> None:

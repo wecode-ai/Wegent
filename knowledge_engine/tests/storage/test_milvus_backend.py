@@ -606,7 +606,7 @@ def test_blank_chunks_are_dropped_when_real_content_exists():
 
 
 def test_index_writes_the_document_with_a_single_upsert():
-    """One write per document: no staged copy and no publish pass."""
+    """One write per document: no staged copy and no second pass."""
     backend = _backend()
     store = FakeStore()
     backend._store = store
@@ -622,8 +622,6 @@ def test_index_writes_the_document_with_a_single_upsert():
     assert len(upserts) == 1
     written = upserts[0][2]
     assert len(written) == 2
-    for removed in ("published", "generation", "attempt_id"):
-        assert all(removed not in row for row in written)
     assert result["indexed_count"] == 2
     assert result["dimension"] == 2
     assert result["index_name"] == "test_kb_1"
@@ -708,8 +706,8 @@ def test_index_returns_as_soon_as_the_rows_are_written():
     """One write, no per-document flush and no write-side visibility wait.
 
     Retrieval reads at ``Bounded``, so the write returns as soon as the server
-    accepted the rows and the next ~0.5s of reads may miss them; the parity
-    spec accepts that window instead of paying for it on every write.
+    accepted the rows and the next ~0.5s of reads may miss them; that window is
+    accepted instead of paying for it on every write.
     """
     backend = _backend()
     store = FakeStore()
@@ -814,7 +812,6 @@ def test_rewrite_drops_the_documents_previous_rows_before_writing():
     scope = store.deleted_filters[0]
     assert 'metadata["knowledge_id"] == "1"' in scope
     assert 'metadata["doc_ref"] in ["42"]' in scope
-    assert "published" not in scope
     # The document that owns the rows is dropped before the new rows land.
     deletions = [i for i, call in enumerate(store.calls) if call[0] == "delete_rows"]
     writes = [i for i, call in enumerate(store.calls) if call[0] == "upsert_rows"]
@@ -1159,7 +1156,6 @@ def test_retrieve_returns_raw_cosine_scores_above_threshold():
 
     assert [record["score"] for record in result["records"]] == [0.42]
     assert result["records"][0]["content"] == "display"
-    assert "published" not in store.searches[0]["filter"]
     assert 'metadata["knowledge_id"] == "1"' in store.searches[0]["filter"]
 
 
@@ -1573,7 +1569,6 @@ def test_hybrid_retrieve_runs_one_native_search_with_the_default_weights():
     assert request["dense_vector"] == [1.0, 0.0]
     assert (request["vector_weight"], request["keyword_weight"]) == (0.7, 0.3)
     assert 'metadata["knowledge_id"] == "1"' in request["filter"]
-    assert "published" not in request["filter"]
     # The branches are the server's business now, so neither is run here.
     assert store.searches == []
     assert store.sparse_searches == []

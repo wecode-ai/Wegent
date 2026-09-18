@@ -40,7 +40,6 @@ MAX_READ_LIMIT = 10000
 # key cursor in batches of this size instead of re-applying an offset to an
 # unordered result.
 ITERATOR_BATCH_SIZE = 1000
-DEFAULT_LIST_PAGE_SIZE = 20
 
 
 def row_metadata(hit: Dict[str, Any]) -> Dict[str, Any]:

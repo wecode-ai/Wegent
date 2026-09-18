@@ -142,7 +142,6 @@ def test_scope_filter_scopes_the_knowledge_base_and_documents():
 
     assert 'metadata["knowledge_id"] == "1"' in expression
     assert 'metadata["doc_ref"] in ["42", "doc_b"]' in expression
-    assert "published" not in expression
 
 
 def test_scope_filter_escapes_quotes_and_backslashes():
@@ -173,18 +172,6 @@ def test_collection_schema_declares_required_fields_and_dimension():
         DENSE_VECTOR_FIELD,
         SPARSE_VECTOR_FIELD,
     }
-    for removed in (
-        "generation",
-        "attempt_id",
-        "published",
-        "node_kind",
-        "knowledge_id",
-        "doc_ref",
-        "source_file",
-        "chunk_index",
-        "created_at",
-    ):
-        assert removed not in fields
     # The contract needs no column of its own: the collection carries it.
     assert schema.description == index_contract_description(binding)
     assert [name for name in fields if name.startswith("contract")] == []

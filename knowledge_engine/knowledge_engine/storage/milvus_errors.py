@@ -16,7 +16,6 @@ from pymilvus.client.types import Status as MilvusStatus
 from pymilvus.exceptions import (
     ConnectError,
     ConnectionNotExistException,
-    MilvusException,
     MilvusUnavailableException,
 )
 
