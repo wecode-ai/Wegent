@@ -5,6 +5,7 @@ import {
   closeMainWindowToTray,
   hasRunningRuntimeTasks,
   installRuntimeTaskCloseGuard,
+  quitApplication,
   shouldPreventRuntimeTaskClose,
 } from './runtimeTaskCloseGuard'
 
@@ -112,5 +113,13 @@ describe('runtime task close guard', () => {
     await closeMainWindowToTray()
 
     expect(desktopHostMocks.invoke).toHaveBeenCalledWith('window.closeToTray')
+  })
+
+  test('quits the application through the Electron host', async () => {
+    desktopHostMocks.invoke.mockResolvedValue(undefined)
+
+    await quitApplication()
+
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('app.quit')
   })
 })

@@ -831,14 +831,16 @@ impl RuntimeWorkRpcHandler {
             (active_turn.as_ref(), codex_notification_turn_id(&message))
         {
             if notification_turn_id != active_turn.turn_id {
-                log_executor_event(
-                    "runtime work execution mapper dropped non-active turn notification",
-                    &[
-                        ("local_task_id", local_task_id.to_owned()),
-                        ("active_turn_id", active_turn.turn_id.clone()),
-                        ("notification_turn_id", notification_turn_id),
-                    ],
-                );
+                if codex_stream_debug_enabled() {
+                    log_executor_event(
+                        "runtime work execution mapper dropped non-active turn notification",
+                        &[
+                            ("local_task_id", local_task_id.to_owned()),
+                            ("active_turn_id", active_turn.turn_id.clone()),
+                            ("notification_turn_id", notification_turn_id),
+                        ],
+                    );
+                }
                 return;
             }
         }

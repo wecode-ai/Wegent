@@ -4009,7 +4009,7 @@ describe('DesktopSidebar', () => {
     })
 
     try {
-      renderSidebar({
+      const sidebarProps = {
         runtimeWork: {
           projects: [
             {
@@ -4040,10 +4040,11 @@ describe('DesktopSidebar', () => {
           totalTasks: 1,
         },
         onArchiveRuntimeTask,
-      })
+      }
+      const rendered = renderSidebar(sidebarProps)
 
       await user.click(screen.getByTestId('project-item-button'))
-      const taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
+      let taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
       const rowChildren = Array.from(taskRow.children)
 
       expect(screen.getByTestId('runtime-local-task-mark-codex-1')).toBeInTheDocument()
@@ -4087,6 +4088,14 @@ describe('DesktopSidebar', () => {
       expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveClass(
         'electron-titlebar-interactive-region',
         'pointer-events-auto'
+      )
+
+      rendered.unmount()
+      renderSidebar(sidebarProps)
+      await user.click(screen.getByTestId('project-item-button'))
+      taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
+      expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveTextContent(
+        '撤销'
       )
 
       await user.click(screen.getByTestId('runtime-local-task-archive-undo-codex-1'))
