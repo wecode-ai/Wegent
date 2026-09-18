@@ -435,9 +435,15 @@ class _CollectionClient:
 def test_confirming_a_read_contract_compares_in_memory_without_an_rpc():
     """The contract was read from the collection, so confirming it costs no RPC."""
     client = _CollectionClient(exists=True, contract=_binding())
+
+    def factory(**kwargs: Any) -> _CollectionClient:
+        # The store is handed the one stub this test watches: confirming a
+        # contract must not open a client at all, so no other is ever built.
+        return client
+
     store = MilvusDocumentStore(
         uri="http://milvus.test:19530",
-        client_factory=lambda **kwargs: client,
+        client_factory=factory,
     )
 
     store.confirm_contract(

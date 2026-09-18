@@ -341,9 +341,9 @@ def test_a_missing_status_code_never_becomes_retryable():
 def test_a_connection_failure_is_classified_as_retryable():
     """An unreachable service is transient.
 
-    The elapsed-time budget is proven against a real unroutable target in
-    ``tests/contract/test_milvus_network_timeout.py``; a fake client cannot
-    show it.
+    A refused connection is the failure the SDK raises before any RPC could be
+    answered, so the classification is asserted on the error the SDK really
+    throws rather than on the timeout that ends a slower request.
     """
     from pymilvus.exceptions import ConnectError
 
