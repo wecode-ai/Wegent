@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 
 import { synchronizeExternalDocument } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
@@ -14,24 +14,61 @@ import type { KnowledgeDocument } from '@/types/knowledge'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 
 /**
+ * Copies with a synchronization request in flight, shared by every surface.
+ *
+ * The list and the document preview each hold their own hook instance, so the
+ * guard lives outside React: without it both surfaces could queue the same
+ * refresh, and the backend rejects the second one as still processing.
+ */
+const inFlightDocumentIds = new Set<number>()
+const listeners = new Set<() => void>()
+let snapshot: number[] = []
+
+function emitChange() {
+  listeners.forEach(listener => listener())
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+function getSnapshot() {
+  return snapshot
+}
+
+function markSyncing(documentId: number, syncing: boolean): void {
+  if (inFlightDocumentIds.has(documentId) === syncing) return
+  if (syncing) inFlightDocumentIds.add(documentId)
+  else inFlightDocumentIds.delete(documentId)
+  snapshot = Array.from(inFlightDocumentIds)
+  emitChange()
+}
+
+/**
  * Queue a manual refresh of one imported external document.
  *
  * The knowledge base list and the document detail preview share this entry so
- * both surfaces queue the same request, track their own in-flight state, and
+ * both surfaces queue the same request, share one in-flight state per copy, and
  * report the same failure reason.
  */
 export function useExternalDocumentSync() {
   const { t } = useTranslation('knowledge')
-  const [syncingDocumentIds, setSyncingDocumentIds] = useState<Set<number>>(() => new Set())
+  const syncingDocumentIds = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
   const isSyncing = useCallback(
-    (documentId: number) => syncingDocumentIds.has(documentId),
+    (documentId: number) => syncingDocumentIds.includes(documentId),
     [syncingDocumentIds]
   )
 
   const syncDocument = useCallback(
     async (document: KnowledgeDocument): Promise<boolean> => {
-      setSyncingDocumentIds(current => new Set(current).add(document.id))
+      // A copy another surface is already synchronizing queues no second
+      // request; the caller only skips the reload that request would trigger.
+      if (inFlightDocumentIds.has(document.id)) return false
+      markSyncing(document.id, true)
       try {
         await synchronizeExternalDocument(document.id)
         toast({ description: t('document.document.syncSuccess') })
@@ -43,11 +80,7 @@ export function useExternalDocumentSync() {
         })
         return false
       } finally {
-        setSyncingDocumentIds(current => {
-          const next = new Set(current)
-          next.delete(document.id)
-          return next
-        })
+        markSyncing(document.id, false)
       }
     },
     [t]
