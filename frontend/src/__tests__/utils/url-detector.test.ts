@@ -109,6 +109,16 @@ describe('url-detector', () => {
       expect(urls[0].isImage).toBe(true)
     })
 
+    it('should stop plain URLs before adjacent CJK text and full-width parentheses', () => {
+      const text = '见 https://example.com/path（说明） 和 https://example.com/next说明'
+      const urls = detectUrls(text)
+      expect(urls).toHaveLength(2)
+      expect(urls[0].url).toBe('https://example.com/path')
+      expect(urls[0].endIndex).toBe(text.indexOf('（说明）'))
+      expect(urls[1].url).toBe('https://example.com/next')
+      expect(urls[1].endIndex).toBe(text.lastIndexOf('说明'))
+    })
+
     it('should detect image URLs with extension in query parameter', () => {
       const text =
         '📌 生成图片\nhttps://api.example.com/image_url?ikey=path%2F2026%2F01%2F05%2Fab6b8a6cd3334873926f94bf64b432e1.png'

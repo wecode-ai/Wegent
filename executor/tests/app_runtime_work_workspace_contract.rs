@@ -17,6 +17,9 @@ use serde_json::{json, Value};
 use tokio::sync::{Mutex, MutexGuard};
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
 
+#[path = "support/runtime_project_removal.rs"]
+mod runtime_project_removal;
+
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     let guard = LOCK.get_or_init(|| Mutex::new(())).lock().await;

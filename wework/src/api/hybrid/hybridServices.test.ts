@@ -66,6 +66,7 @@ const mocks = vi.hoisted(() => {
   }
 
   const localServices = {
+    composerCatalogApi: { readCatalog: vi.fn() },
     teamApi: {
       listTeams: vi.fn().mockResolvedValue([]),
     },
@@ -88,6 +89,7 @@ const mocks = vi.hoisted(() => {
       readWorkspaceTextFile: vi.fn(),
     },
     runtimeWorkApi: {
+      getRuntimeTranscript: vi.fn(),
       materializeRuntimeTask: vi.fn(),
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: localListRuntimeWork,
@@ -126,6 +128,8 @@ const mocks = vi.hoisted(() => {
     createDockerRemoteDeviceCommand: cloudCreateDockerRemoteDeviceCommand,
   }
   const cloudServices = {
+    projectChatClient: { reconcileExecutionSnapshot: vi.fn().mockResolvedValue([]) },
+    composerCatalogApi: { readCatalog: vi.fn() },
     teamApi: {
       listTeams: cloudListTeams,
     },
@@ -408,7 +412,83 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+describe('execution status write-back on history reads', () => {
+  const address = { deviceId: 'local-device', taskId: 'runtime-1' }
+  const response = {
+    taskId: 'runtime-1',
+    workspacePath: '/workspace',
+    runtime: 'claude_code',
+    running: false,
+    messages: [],
+    rangeStart: 0,
+    turns: [{ id: 'turn-1', status: 'done', items: [], completedAt: 1789572084984 }],
+  }
+
+  it('reports a completed local turn to durable cloud storage after reading history', async () => {
+    mocks.localServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue(response)
+    mocks.cloudServices.projectChatClient.reconcileExecutionSnapshot.mockResolvedValue([])
+    const services = createServices()
+    expect(await services.runtimeWorkApi!.getRuntimeTranscript(address)).toEqual(response)
+    expect(mocks.cloudServices.projectChatClient.reconcileExecutionSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...address,
+        completeHistory: true,
+        turns: [expect.objectContaining({ id: 'turn-1', status: 'done' })],
+      })
+    )
+  })
+
+  it('keeps local history readable when cloud write-back fails, and retries on the next read', async () => {
+    mocks.localServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue(response)
+    const sync = mocks.cloudServices.projectChatClient.reconcileExecutionSnapshot
+    sync.mockClear()
+    sync.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([])
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const services = createServices()
+      expect(await services.runtimeWorkApi!.getRuntimeTranscript(address)).toEqual(response)
+      expect(log).toHaveBeenCalledWith(
+        '[Wework] Failed to persist runtime execution status',
+        expect.anything()
+      )
+      expect(await services.runtimeWorkApi!.getRuntimeTranscript(address)).toEqual(response)
+      expect(sync).toHaveBeenCalledTimes(2)
+    } finally {
+      log.mockRestore()
+    }
+  })
+})
+
 describe('createHybridWorkbenchServices', () => {
+  test('routes side composer catalogs to their device and rejects another APP registration', async () => {
+    const services = createServices()
+    mocks.localServices.composerCatalogApi.readCatalog.mockResolvedValue({ taskId: 'local-side' })
+    mocks.cloudServices.composerCatalogApi.readCatalog.mockResolvedValue({ taskId: 'cloud-side' })
+    const local = { deviceId: 'local-device', taskId: 'local-side' }
+    const remote = { deviceId: 'cloud-device', taskId: 'cloud-side' }
+    await expect(services.composerCatalogApi!.readCatalog(local, true)).resolves.toEqual({
+      taskId: 'local-side',
+    })
+    await expect(services.composerCatalogApi!.readCatalog(remote, true)).resolves.toEqual({
+      taskId: 'cloud-side',
+    })
+    expect(mocks.localServices.composerCatalogApi.readCatalog).toHaveBeenCalledWith(local, true)
+    expect(mocks.cloudServices.composerCatalogApi.readCatalog).toHaveBeenCalledWith(remote, true)
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 9,
+        device_id: 'other-app',
+        name: 'Other PC',
+        status: 'online',
+        device_type: 'app',
+        bind_shell: 'claudecode',
+      },
+    ])
+    await expect(
+      services.composerCatalogApi!.readCatalog({ deviceId: 'other-app', taskId: 'other-side' })
+    ).rejects.toThrow('executor-not-found:other-app')
+    expect(mocks.cloudServices.composerCatalogApi.readCatalog).toHaveBeenCalledTimes(1)
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.localListRuntimeWork.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })

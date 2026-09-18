@@ -1,0 +1,498 @@
+[
+  {
+    "id": "1712605396200092385",
+    "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
+    "project_key": "WEWORKBU0CEBB1",
+    "name": "WeWork Bug Feedback",
+    "description": "Description",
+    "project_store": "backend",
+    "task_provider": "local",
+    "provider_config": {
+      "credential_configured": false
+    },
+    "card_display": {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    "board_config": {
+      "group_by": "status",
+      "statuses": [
+        {
+          "id": "inbox",
+          "name": "收集箱",
+          "color": "gray"
+        },
+        {
+          "id": "pending",
+          "name": "待开始",
+          "color": "blue"
+        },
+        {
+          "id": "in_progress",
+          "name": "进行中",
+          "color": "orange"
+        },
+        {
+          "id": "in_review",
+          "name": "待确认",
+          "color": "purple"
+        },
+        {
+          "id": "completed",
+          "name": "已完成",
+          "color": "green"
+        }
+      ],
+      "processing_start_status_id": "pending"
+    },
+    "ai_automation": {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    "pull_request_automation": {
+      "enabled": false,
+      "statuses": [
+        "checks_failed",
+        "merge_conflict",
+        "merge_queue_failed",
+        "merge_queue_timed_out",
+        "merge_queue_conflicting"
+      ],
+      "prompt": ""
+    },
+    "workflow_definition": {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    },
+    "workflow_automation_id": null,
+    "visibility": "private",
+    "created_by_user_id": 86,
+    "current_user_id": 1,
+    "current_user_name": "user",
+    "access_role": "Owner",
+    "status": "active",
+    "tags": [],
+    "version": 4,
+    "created_at": "2026-07-28T15:44:57",
+    "updated_at": "2026-07-28T17:30:01"
+  },
+  {
+    "id": "1712605396200092385",
+    "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
+    "project_key": "WEWORKBU0CEBB1",
+    "name": "WeWork Bug Feedback",
+    "description": "Description",
+    "project_store": "backend",
+    "task_provider": "local",
+    "provider_config": {
+      "credential_configured": false
+    },
+    "card_display": {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    "board_config": {
+      "group_by": "status",
+      "statuses": [
+        {
+          "id": "inbox",
+          "name": "收集箱",
+          "color": "gray"
+        },
+        {
+          "id": "pending",
+          "name": "待开始",
+          "color": "blue"
+        },
+        {
+          "id": "in_progress",
+          "name": "进行中",
+          "color": "orange"
+        },
+        {
+          "id": "in_review",
+          "name": "待确认",
+          "color": "purple"
+        },
+        {
+          "id": "completed",
+          "name": "已完成",
+          "color": "green"
+        }
+      ],
+      "processing_start_status_id": "pending"
+    },
+    "ai_automation": {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    "pull_request_automation": {
+      "enabled": false,
+      "statuses": [
+        "checks_failed",
+        "merge_conflict",
+        "merge_queue_failed",
+        "merge_queue_timed_out",
+        "merge_queue_conflicting"
+      ],
+      "prompt": ""
+    },
+    "workflow_definition": {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    },
+    "workflow_automation_id": null,
+    "visibility": "private",
+    "created_by_user_id": 86,
+    "current_user_id": 1,
+    "current_user_name": "user",
+    "access_role": "Owner",
+    "status": "active",
+    "tags": [],
+    "version": 4,
+    "created_at": "2026-07-28T15:44:57",
+    "updated_at": "2026-07-28T17:30:01"
+  },
+  {
+    "id": "1712605396200092385",
+    "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
+    "project_key": "WEWORKBU0CEBB1",
+    "name": "WeWork Bug Feedback",
+    "description": "Description",
+    "project_store": "backend",
+    "task_provider": "local",
+    "provider_config": {
+      "credential_configured": false
+    },
+    "card_display": {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    "board_config": {
+      "group_by": "status",
+      "statuses": [
+        {
+          "id": "inbox",
+          "name": "收集箱",
+          "color": "gray"
+        },
+        {
+          "id": "pending",
+          "name": "待开始",
+          "color": "blue"
+        },
+        {
+          "id": "in_progress",
+          "name": "进行中",
+          "color": "orange"
+        },
+        {
+          "id": "in_review",
+          "name": "待确认",
+          "color": "purple"
+        },
+        {
+          "id": "completed",
+          "name": "已完成",
+          "color": "green"
+        }
+      ],
+      "processing_start_status_id": "pending"
+    },
+    "ai_automation": {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    "pull_request_automation": {
+      "enabled": false,
+      "statuses": [
+        "checks_failed",
+        "merge_conflict",
+        "merge_queue_failed",
+        "merge_queue_timed_out",
+        "merge_queue_conflicting"
+      ],
+      "prompt": ""
+    },
+    "workflow_definition": {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    },
+    "workflow_automation_id": null,
+    "visibility": "private",
+    "created_by_user_id": 86,
+    "current_user_id": 1,
+    "current_user_name": "user",
+    "access_role": "Owner",
+    "status": "active",
+    "tags": [],
+    "version": 4,
+    "created_at": "2026-07-28T15:44:57",
+    "updated_at": "2026-07-28T17:30:01"
+  },
+  {
+    "id": "1712605396200092385",
+    "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
+    "project_key": "WEWORKBU0CEBB1",
+    "name": "WeWork Bug Feedback",
+    "description": "Description",
+    "project_store": "backend",
+    "task_provider": "local",
+    "provider_config": {
+      "other": null,
+      "credential_configured": true
+    },
+    "card_display": {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    "board_config": {
+      "group_by": "status",
+      "statuses": [
+        {
+          "id": "inbox",
+          "name": "收集箱",
+          "color": "gray"
+        },
+        {
+          "id": "pending",
+          "name": "待开始",
+          "color": "blue"
+        },
+        {
+          "id": "in_progress",
+          "name": "进行中",
+          "color": "orange"
+        },
+        {
+          "id": "in_review",
+          "name": "待确认",
+          "color": "purple"
+        },
+        {
+          "id": "completed",
+          "name": "已完成",
+          "color": "green"
+        }
+      ],
+      "processing_start_status_id": "pending"
+    },
+    "ai_automation": {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    "pull_request_automation": {
+      "enabled": false,
+      "statuses": [
+        "checks_failed",
+        "merge_conflict",
+        "merge_queue_failed",
+        "merge_queue_timed_out",
+        "merge_queue_conflicting"
+      ],
+      "prompt": ""
+    },
+    "workflow_definition": {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    },
+    "workflow_automation_id": null,
+    "visibility": "private",
+    "created_by_user_id": 86,
+    "current_user_id": 1,
+    "current_user_name": "user",
+    "access_role": "Owner",
+    "status": "active",
+    "tags": [
+      "a"
+    ],
+    "version": 4,
+    "created_at": "2026-07-28T15:44:57",
+    "updated_at": "2026-07-28T17:30:01"
+  },
+  {
+    "id": "1712605396200092385",
+    "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
+    "project_key": "WEWORKBU0CEBB1",
+    "name": "WeWork Bug Feedback",
+    "description": "Description",
+    "project_store": "backend",
+    "task_provider": "local",
+    "provider_config": {
+      "credential_configured": false
+    },
+    "card_display": {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    "board_config": {
+      "group_by": "status",
+      "statuses": [
+        {
+          "id": "custom",
+          "extra": null
+        }
+      ],
+      "processing_start_status_id": "custom"
+    },
+    "ai_automation": {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    "pull_request_automation": {
+      "enabled": false,
+      "statuses": [
+        "checks_failed",
+        "merge_conflict",
+        "merge_queue_failed",
+        "merge_queue_timed_out",
+        "merge_queue_conflicting"
+      ],
+      "prompt": ""
+    },
+    "workflow_definition": {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    },
+    "workflow_automation_id": null,
+    "visibility": "private",
+    "created_by_user_id": 86,
+    "current_user_id": 1,
+    "current_user_name": "user",
+    "access_role": "Owner",
+    "status": "active",
+    "tags": [],
+    "version": 4,
+    "created_at": "2026-07-28T15:44:57",
+    "updated_at": "2026-07-28T17:30:01"
+  },
+  {
+    "id": "1712605396200092385",
+    "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
+    "project_key": "WEWORKBU0CEBB1",
+    "name": "WeWork Bug Feedback",
+    "description": "Description",
+    "project_store": "backend",
+    "task_provider": "local",
+    "provider_config": {
+      "credential_configured": false
+    },
+    "card_display": {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    "board_config": {
+      "group_by": "status",
+      "statuses": [
+        {
+          "id": "inbox",
+          "name": "收集箱",
+          "color": "gray"
+        },
+        {
+          "id": "pending",
+          "name": "待开始",
+          "color": "blue"
+        },
+        {
+          "id": "in_progress",
+          "name": "进行中",
+          "color": "orange"
+        },
+        {
+          "id": "in_review",
+          "name": "待确认",
+          "color": "purple"
+        },
+        {
+          "id": "completed",
+          "name": "已完成",
+          "color": "green"
+        }
+      ],
+      "processing_start_status_id": "pending"
+    },
+    "ai_automation": {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    "pull_request_automation": {
+      "enabled": false,
+      "statuses": [
+        "checks_failed",
+        "merge_conflict",
+        "merge_queue_failed",
+        "merge_queue_timed_out",
+        "merge_queue_conflicting"
+      ],
+      "prompt": ""
+    },
+    "workflow_definition": {
+      "version": 2,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": [
+        {
+          "x": null
+        }
+      ]
+    },
+    "workflow_automation_id": null,
+    "visibility": "private",
+    "created_by_user_id": 86,
+    "current_user_id": 1,
+    "current_user_name": "user",
+    "access_role": "Owner",
+    "status": "active",
+    "tags": [],
+    "version": 4,
+    "created_at": "2026-07-28T15:44:57",
+    "updated_at": "2026-07-28T17:30:01"
+  }
+]

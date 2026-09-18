@@ -257,6 +257,7 @@
       "mcp_server_name_invalid": "MCP 服务器名称只能包含英文字母、数字、下划线和连字符",
       "fetch_agents_failed": "获取 Agent 列表失败",
       "fetch_models_failed": "获取模型列表失败",
+      "model_not_available_for_shell": "当前模型不在此执行器的可用列表中，请选择可用模型或取消模型绑定。",
       "save_failed": "保存失败",
       "dify_validation_failed": "API 密钥验证失败",
       "fetch_dify_apps_failed": "加载 Dify 应用失败",

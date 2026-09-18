@@ -10,7 +10,7 @@ use std::{
     pin::Pin,
     process::Stdio,
     sync::{Arc, Mutex as StdMutex, OnceLock, Weak},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use futures_util::future::BoxFuture;
@@ -47,6 +47,8 @@ use super::{model_id, prompt_text};
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
 const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
+pub const CODEX_APP_SERVER_EXECUTOR_SHUTDOWN: &str =
+    "codex app-server stopped because the executor is shutting down";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const NON_OFFICIAL_MODEL_IMAGE_SHORT_EDGE: u32 = 720;
@@ -254,6 +256,9 @@ pub struct CodexAppServerTurn {
     pub response_value_origin: CodexResponseValueOrigin,
     pub goal_status: Option<String>,
     pub goal_status_observed: bool,
+    pub started_at_ms: Option<i64>,
+    pub completed_at_ms: Option<i64>,
+    pub duration_ms: Option<i64>,
 }
 
 #[path = "codex/interaction.rs"]
@@ -410,7 +415,15 @@ impl CodexAppServerClient {
                 return Ok(false);
             }
             if !allow_active_turns && !state.active_threads.is_empty() {
-                return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
+                log_codex_environment_change(
+                    "codex runtime proxy update deferred",
+                    "runtime_proxy_update",
+                    &state.runtime_proxy_env,
+                    &runtime_proxy_env,
+                    &state.active_threads,
+                );
+                replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
+                return Ok(true);
             }
             replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
             state.process_environment.clear();
@@ -674,12 +687,14 @@ impl CodexAppServerClient {
             .unwrap_or(&empty_launch_environment);
         let process_environment =
             codex_process_environment(&state.runtime_proxy_env, launch_environment);
-        if state.process.is_some() && state.process_environment != process_environment {
-            if !state.active_threads.is_empty() {
-                return Err(
-                    "cannot change Codex app-server environment while a turn is active".to_owned(),
-                );
-            }
+        if state.process.is_some()
+            && codex_process_environment_requires_restart(
+                "rpc_request",
+                &state.process_environment,
+                &process_environment,
+                &state.active_threads,
+            )
+        {
             state.process = None;
             state.process_environment.clear();
         }
@@ -991,12 +1006,14 @@ impl CodexAppServerClient {
         let mut initialize_elapsed = None;
         let process_environment =
             codex_process_environment(&state.runtime_proxy_env, &BTreeMap::new());
-        if state.process.is_some() && state.process_environment != process_environment {
-            if !state.active_threads.is_empty() {
-                return Err(
-                    "cannot change Codex app-server environment while a turn is active".to_owned(),
-                );
-            }
+        if state.process.is_some()
+            && codex_process_environment_requires_restart(
+                "startup",
+                &state.process_environment,
+                &process_environment,
+                &state.active_threads,
+            )
+        {
             state.process = None;
             state.process_environment.clear();
         }
@@ -1039,10 +1056,14 @@ impl CodexAppServerClient {
         }
         let process_environment =
             codex_process_environment(&state.runtime_proxy_env, &launch_config.env);
-        if state.process.is_some() && state.process_environment != process_environment {
-            if !state.active_threads.is_empty() {
-                return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
-            }
+        if state.process.is_some()
+            && codex_process_environment_requires_restart(
+                "turn_start",
+                &state.process_environment,
+                &process_environment,
+                &state.active_threads,
+            )
+        {
             state.process = None;
             state.process_environment.clear();
         }
@@ -1132,10 +1153,15 @@ impl Drop for CodexThreadUnsubscribeObservation {
     }
 }
 
-fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerSharedState>> {
+fn shared_codex_app_server_states(
+) -> &'static StdMutex<HashMap<String, Arc<Mutex<CodexAppServerSharedState>>>> {
     static STATES: OnceLock<StdMutex<HashMap<String, Arc<Mutex<CodexAppServerSharedState>>>>> =
         OnceLock::new();
-    let states = STATES.get_or_init(|| StdMutex::new(HashMap::new()));
+    STATES.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerSharedState>> {
+    let states = shared_codex_app_server_states();
     let mut states = states
         .lock()
         .expect("Codex app-server shared state registry should not be poisoned");
@@ -1143,6 +1169,36 @@ fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerShared
         .entry(binary.to_owned())
         .or_insert_with(|| Arc::new(Mutex::new(CodexAppServerSharedState::default())))
         .clone()
+}
+
+/// Terminates every shared Codex app-server owned by this executor.
+///
+/// The desktop app owns this executor process: once its sidecar stops, the
+/// agents it was driving must stop with it. Leaving them alive also strands a
+/// parked stdio read on the blocking pool, and Tokio's runtime shutdown waits
+/// for blocking tasks without a timeout.
+pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
+    let states = {
+        let states = shared_codex_app_server_states()
+            .lock()
+            .expect("Codex app-server shared state registry should not be poisoned");
+        states.values().cloned().collect::<Vec<_>>()
+    };
+    let mut terminated = 0;
+    for state in states {
+        let mut state = state.lock().await;
+        state.executor_shutdown_requested = true;
+        if state.process.take().is_some() {
+            terminated += 1;
+        }
+    }
+    if terminated > 0 {
+        log_executor_event(
+            "codex app-server processes terminated",
+            &[("count", terminated.to_string())],
+        );
+    }
+    terminated
 }
 
 #[allow(dead_code)]
@@ -1155,6 +1211,7 @@ fn codex_app_server_request_is_retryable(method: &str) -> bool {
 
 struct CodexAppServerSharedState {
     process: Option<CodexAppServerProcess>,
+    executor_shutdown_requested: bool,
     next_id: u64,
     active_threads: HashMap<String, usize>,
     thread_generations: HashMap<String, u64>,
@@ -1169,6 +1226,7 @@ impl Default for CodexAppServerSharedState {
     fn default() -> Self {
         Self {
             process: None,
+            executor_shutdown_requested: false,
             next_id: 1,
             active_threads: HashMap::new(),
             thread_generations: HashMap::new(),
@@ -1904,6 +1962,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 ),
             }
         }
+        state.finish_turn_timing(current_epoch_millis());
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
             turn_fields.push(("error", message.clone()));
@@ -1913,6 +1972,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         let response_item_id = state.response_item_id().map(str::to_owned);
         let response_value_origin = state.response_value_origin();
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+        let (started_at_ms, completed_at_ms, duration_ms) = state.turn_timing();
         Ok(CodexAppServerTurn {
             thread_id,
             outcome,
@@ -1920,6 +1980,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             response_value_origin,
             goal_status,
             goal_status_observed,
+            started_at_ms,
+            completed_at_ms,
+            duration_ms,
         })
     }
     .await;
@@ -2177,6 +2240,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             )
             .await?
         };
+        state.finish_turn_timing(current_epoch_millis());
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
             turn_fields.push(("error", message.clone()));
@@ -2186,6 +2250,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         let response_item_id = state.response_item_id().map(str::to_owned);
         let response_value_origin = state.response_value_origin();
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+        let (started_at_ms, completed_at_ms, duration_ms) = state.turn_timing();
         Ok(CodexAppServerTurn {
             thread_id,
             outcome,
@@ -2193,6 +2258,9 @@ pub async fn run_codex_app_server_turn_with_cancel(
             response_value_origin,
             goal_status,
             goal_status_observed,
+            started_at_ms,
+            completed_at_ms,
+            duration_ms,
         })
     }
     .await;
@@ -2334,7 +2402,14 @@ async fn read_shared_turn_notifications(
             }
             continue;
         };
-        let notification = shared_notification_result(received, last_outcome.clone())?;
+        let executor_shutdown_requested =
+            matches!(received, Err(broadcast::error::RecvError::Closed))
+                && client.state.lock().await.executor_shutdown_requested;
+        let notification = shared_notification_result(
+            received,
+            last_outcome.clone(),
+            executor_shutdown_requested,
+        )?;
         let message = match notification {
             SharedNotification::Message(message) => message,
             SharedNotification::Lagged(skipped) => {
@@ -2406,22 +2481,24 @@ async fn read_shared_turn_notifications(
             notification_turn_id.as_deref(),
         ) {
             if notification_turn_id != active_turn_id {
-                log_executor_event(
-                    "codex stale turn notification dropped",
-                    &[
-                        ("thread_id", thread_id.to_owned()),
-                        ("active_turn_id", active_turn_id.to_owned()),
-                        ("notification_turn_id", notification_turn_id.to_owned()),
-                        (
-                            "method",
-                            message
-                                .get("method")
-                                .and_then(Value::as_str)
-                                .unwrap_or("<none>")
-                                .to_owned(),
-                        ),
-                    ],
-                );
+                if crate::runtime_work::codex_stream_debug_enabled() {
+                    log_executor_event(
+                        "codex stale turn notification dropped",
+                        &[
+                            ("thread_id", thread_id.to_owned()),
+                            ("active_turn_id", active_turn_id.to_owned()),
+                            ("notification_turn_id", notification_turn_id.to_owned()),
+                            (
+                                "method",
+                                message
+                                    .get("method")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("<none>")
+                                    .to_owned(),
+                            ),
+                        ],
+                    );
+                }
                 continue;
             }
         }
@@ -2673,6 +2750,7 @@ enum SharedNotification {
 fn shared_notification_result(
     result: Result<Value, broadcast::error::RecvError>,
     last_outcome: Option<ExecutionOutcome>,
+    executor_shutdown_requested: bool,
 ) -> Result<SharedNotification, String> {
     match result {
         Ok(message) => Ok(SharedNotification::Message(message)),
@@ -2682,7 +2760,12 @@ fn shared_notification_result(
         Err(broadcast::error::RecvError::Closed) => last_outcome
             .map(SharedNotification::Completed)
             .ok_or_else(|| {
-                "codex app-server notification stream closed before completing the turn".to_owned()
+                if executor_shutdown_requested {
+                    CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned()
+                } else {
+                    "codex app-server notification stream closed before completing the turn"
+                        .to_owned()
+                }
             }),
     }
 }
@@ -3202,6 +3285,14 @@ fn signal_codex_app_server_child(child: &mut Child) {
         return;
     }
 
+    // Windows has no graceful signal for a windowless console child, so take the
+    // whole tree down: the app-server owns tool subprocesses of its own.
+    #[cfg(windows)]
+    if let Some(process_id) = child.id() {
+        crate::process::kill_windows_process_tree(process_id);
+        return;
+    }
+
     let _ = child.start_kill();
 }
 
@@ -3635,9 +3726,13 @@ fn vision_sidecar_upstream(model_config: &Value) -> Result<Option<VisionSidecarU
         api_format,
         api_key,
         default_headers: parse_header_map(sidecar.get("default_headers")),
-        proxy_url: runtime_proxy_url(sidecar)
-            .or_else(|| runtime_proxy_url(model_config))
-            .map(str::to_owned),
+        proxy_url: if sidecar.get("proxy").is_some() {
+            // PAC can explicitly select DIRECT for a different vision endpoint.
+            runtime_proxy_url(sidecar)
+        } else {
+            runtime_proxy_url(model_config)
+        }
+        .map(str::to_owned),
         model_id,
         max_descriptions_per_turn,
         timeout: Duration::from_millis(timeout_ms),
@@ -4003,6 +4098,73 @@ fn codex_process_environment(
     environment.extend(launch_env.clone());
     replace_proxy_environment(&mut environment, runtime_proxy_env.clone());
     environment
+}
+
+fn codex_process_environment_requires_restart(
+    source: &str,
+    current: &BTreeMap<String, String>,
+    requested: &BTreeMap<String, String>,
+    active_threads: &HashMap<String, usize>,
+) -> bool {
+    if current == requested {
+        return false;
+    }
+    let (event, restart) = if active_threads.is_empty() {
+        (
+            "codex shared app-server environment restart scheduled",
+            true,
+        )
+    } else {
+        ("codex shared app-server environment change deferred", false)
+    };
+    log_codex_environment_change(event, source, current, requested, active_threads);
+    restart
+}
+
+fn log_codex_environment_change(
+    event: &str,
+    source: &str,
+    current: &BTreeMap<String, String>,
+    requested: &BTreeMap<String, String>,
+    active_threads: &HashMap<String, usize>,
+) {
+    let fields = codex_environment_change_fields(source, current, requested, active_threads);
+    log_executor_event(event, &fields);
+}
+
+fn codex_environment_change_fields(
+    source: &str,
+    current: &BTreeMap<String, String>,
+    requested: &BTreeMap<String, String>,
+    active_threads: &HashMap<String, usize>,
+) -> Vec<(&'static str, String)> {
+    let current_keys = current.keys().cloned().collect::<BTreeSet<_>>();
+    let requested_keys = requested.keys().cloned().collect::<BTreeSet<_>>();
+    let added_keys = requested_keys
+        .difference(&current_keys)
+        .cloned()
+        .collect::<Vec<_>>();
+    let removed_keys = current_keys
+        .difference(&requested_keys)
+        .cloned()
+        .collect::<Vec<_>>();
+    let changed_keys = current_keys
+        .intersection(&requested_keys)
+        .filter(|key| current.get(*key) != requested.get(*key))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut active_thread_ids = active_threads.keys().cloned().collect::<Vec<_>>();
+    active_thread_ids.sort();
+    let active_turn_count = active_threads.values().sum::<usize>();
+    vec![
+        ("source", source.to_owned()),
+        ("added_env_keys", added_keys.join(",")),
+        ("removed_env_keys", removed_keys.join(",")),
+        ("changed_env_keys", changed_keys.join(",")),
+        ("active_thread_ids", active_thread_ids.join(",")),
+        ("active_thread_count", active_threads.len().to_string()),
+        ("active_turn_count", active_turn_count.to_string()),
+    ]
 }
 
 fn replace_proxy_environment(
@@ -6325,6 +6487,13 @@ fn mcp_elicitation_enum_value(property: &Value, label: &str) -> String {
 
 fn mcp_server_elicitation_decline_result() -> Value {
     json!({"action": "decline", "content": Value::Null, "_meta": Value::Null})
+}
+
+fn current_epoch_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or_default()
 }
 
 fn mcp_server_elicitation_cancel_result() -> Value {

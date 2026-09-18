@@ -4,6 +4,7 @@
 
 import { Bot, CalendarDays, Flag } from "lucide-react";
 import {
+  useRef,
   type ButtonHTMLAttributes,
   type CSSProperties,
   type HTMLAttributes,
@@ -185,7 +186,7 @@ export interface CollaborationIssueCardProps extends CollaborationIssueCardConte
   childrenAction?: ReactNode;
   detailButtonProps?: Omit<
     ButtonHTMLAttributes<HTMLButtonElement>,
-    "children" | "className" | "type"
+    "children" | "className" | "type" | "onClick"
   >;
   detailButtonClassName?: string;
   detailButtonTestId?: string;
@@ -193,6 +194,7 @@ export interface CollaborationIssueCardProps extends CollaborationIssueCardConte
   dragging?: boolean;
   dropTarget?: boolean;
   menu?: ReactNode;
+  onOpen?: () => void;
 }
 
 export function CollaborationIssueCard({
@@ -210,16 +212,37 @@ export function CollaborationIssueCard({
   dragging,
   dropTarget,
   menu,
+  onOpen,
   ...contentProps
 }: CollaborationIssueCardProps) {
+  const detailButtonRef = useRef<HTMLButtonElement>(null);
+  const canOpenDetails = Boolean(onOpen) && !detailButtonProps?.disabled;
+
   return (
     <article
       {...articleProps}
+      onClick={(event) => {
+        const target = event.target;
+        // Portal events bubble through React even when their DOM is outside the card.
+        if (
+          !(target instanceof Element) ||
+          !event.currentTarget.contains(target)
+        )
+          return;
+        articleProps?.onClick?.(event);
+        if (event.defaultPrevented || !canOpenDetails || dragging) return;
+        const control = target.closest(
+          'button, a[href], input, select, textarea, summary, [role="button"], [role="link"], [role="menuitem"], [contenteditable]:not([contenteditable="false"])',
+        );
+        if (control && event.currentTarget.contains(control)) return;
+        detailButtonRef.current?.focus({ preventScroll: true });
+        onOpen?.();
+      }}
       ref={cardRef}
       data-testid={articleTestId}
       style={cardStyle}
       className={collaborationIssueCardClassName({
-        className: cardClassName,
+        className: classNames("cursor-default", cardClassName),
         dragging,
         dropTarget,
         unread: Boolean(contentProps.item.is_unread),
@@ -228,10 +251,12 @@ export function CollaborationIssueCard({
       {menu}
       <button
         {...detailButtonProps}
+        onClick={onOpen}
+        ref={detailButtonRef}
         type="button"
         data-testid={detailButtonTestId}
         className={classNames(
-          "w-full px-3.5 pt-3.5 text-left disabled:cursor-default",
+          "w-full cursor-default px-3.5 pt-3.5 text-left",
           detailFlushBottom ? "pb-0" : "pb-3.5",
           detailButtonClassName,
         )}

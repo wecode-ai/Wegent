@@ -71,7 +71,6 @@ import type {
 } from "./types";
 import { markdownAttachmentRows } from "./issue-detail/attachmentMarkdown";
 import { TagEditor } from "./issue-detail/TagEditor";
-import "./issue-detail/task-detail-layout.css";
 import { localizeStandardStatuses } from "./i18n";
 import { ExecutionConfigurationNotice } from "./runtime-profile/ExecutionConfigurationNotice";
 
@@ -573,6 +572,7 @@ export type TodoEditorProps = {
   currentAssignment?: CollaborationAssignment | null;
   allItems: CloudLoopItem[];
   onClose: () => void;
+  onEscape?: () => void;
   presentation?: "modal" | "workspace-panel";
   workspacePanelFill?: boolean;
   readFirst?: boolean;
@@ -581,6 +581,7 @@ export type TodoEditorProps = {
   showChildren?: boolean;
   showCurrentTaskOnly?: boolean;
   showAssignee?: boolean;
+  canAssign?: boolean;
   /**
    * Starting work is independent from editing the Issue. A visible Issue may
    * start a host execution even when its content is read-only.
@@ -634,15 +635,6 @@ export function TodoEditor(props: TodoEditorProps) {
   const showPanelControls = props.showPanelControls !== false;
   const showFullscreenControl = props.showFullscreenControl !== false;
   const item = editProps?.item ?? null;
-  const currentAssignee = item
-    ? item.assignee_agent_name
-      ? { kind: "agent", name: item.assignee_agent_name }
-      : item.assignee_team_name
-        ? { kind: "team", name: item.assignee_team_name }
-        : item.assignee_name
-          ? { kind: "member", name: item.assignee_name }
-          : null
-    : null;
   const isAITableEdit =
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";
   const project = createProps?.project ?? editProps?.project;
@@ -1197,10 +1189,6 @@ export function TodoEditor(props: TodoEditorProps) {
         node.required_assignee_type === "agent" ||
         Boolean(node.automation_rule_id),
     );
-  const visibleFollowupOwner =
-    hasAutomationWorkflow === false
-      ? (props.currentAssignment?.target_name ?? currentAssignee?.name ?? null)
-      : null;
   const workflowPlanStatus =
     workflowPlan?.status ?? item?.workflow?.orchestration_status ?? "idle";
   const registerWorkflowManagerExecution = useCallback(
@@ -1259,9 +1247,29 @@ export function TodoEditor(props: TodoEditorProps) {
   const assigneeTeam = wegentTeams.find(
     (team) => assigneeTarget === `team:${team.id}`,
   );
-  const canAssign = project
-    ? project.access_role === "Owner" || project.access_role === "Maintainer"
-    : false;
+  const assigneeName =
+    assigneeTeam?.displayName ||
+    assigneeTeam?.name ||
+    assigneeAgent?.name ||
+    assignee?.user_name ||
+    (item && assigneeTarget && assigneeTarget === issueAssigneeTarget(item)
+      ? assigneeTarget.startsWith("team:")
+        ? item.assignee_team_name
+        : assigneeTarget.startsWith("agent:")
+          ? item.assignee_agent_name
+          : item.assignee_name
+      : null) ||
+    (assigneeTarget
+      ? assigneeTarget.slice(assigneeTarget.indexOf(":") + 1)
+      : null);
+  const canAssign =
+    props.canAssign ??
+    (editable &&
+      Boolean(
+        project &&
+        (project.access_role === "Owner" ||
+          project.access_role === "Maintainer"),
+      ));
   const creator =
     item?.created_by_user_name ||
     (item && item.created_by_user_id === editProps?.project?.current_user_id
@@ -1377,13 +1385,61 @@ export function TodoEditor(props: TodoEditorProps) {
     }
   }
 
+  async function persistAssignee(
+    source: CloudLoopItem,
+    target: IssueAssigneeTarget,
+    shouldNotify: boolean,
+  ): Promise<CloudLoopItem> {
+    if (!target)
+      return editorPort.issues.update(source.id, {
+        version: source.version,
+        assignee_user_id: null,
+        assignee_agent_id: null,
+        assignee_team_id: null,
+      });
+    if (project) {
+      return editorPort.issues.assign(project.id, source.id, {
+        version: source.version,
+        assigneeType: target.slice(0, target.indexOf(":")) as
+          | "user"
+          | "agent"
+          | "team",
+        assigneeId: target.slice(target.indexOf(":") + 1),
+        ...(target.startsWith("user:") ? { notifyAssignee: shouldNotify } : {}),
+      });
+    }
+    const assignment = parseIssueAssigneeTarget(target);
+    return editorPort.issues.update(source.id, {
+      version: source.version,
+      assignee_user_id: assignment.assigneeUserId,
+      assignee_agent_id: assignment.assigneeAgentId,
+      assignee_team_id: assignment.assigneeTeamId,
+    });
+  }
+
   async function saveDetails() {
-    if (props.mode !== "edit" || !editable || !dirty || !title.trim() || saving)
+    if (
+      props.mode !== "edit" ||
+      (!editable && !canAssign) ||
+      !dirty ||
+      !title.trim() ||
+      saving
+    )
       return;
     const current = props.item;
+    if (!editable && assigneeTarget === issueAssigneeTarget(current)) return;
     setSaving(true);
     setSaveError(null);
     try {
+      if (!editable) {
+        const updated = await persistAssignee(
+          current,
+          assigneeTarget,
+          notifyAssignee,
+        );
+        props.onUpdated(updated);
+        return;
+      }
       const sourceDueDate = (
         extensions?.dueDateFromSource ?? todoDueDateFromSource
       )(current.due_at);
@@ -1425,28 +1481,7 @@ export function TodoEditor(props: TodoEditorProps) {
               assignee_agent_id: null,
               assignee_team_id: null,
             }),
-          assign: (source, target, shouldNotify) => {
-            if (project) {
-              return editorPort.issues.assign(project.id, source.id, {
-                version: source.version,
-                assigneeType: target.slice(0, target.indexOf(":")) as
-                  | "user"
-                  | "agent"
-                  | "team",
-                assigneeId: target.slice(target.indexOf(":") + 1),
-                ...(target.startsWith("user:")
-                  ? { notifyAssignee: shouldNotify }
-                  : {}),
-              });
-            }
-            const assignment = parseIssueAssigneeTarget(target);
-            return editorPort.issues.update(source.id, {
-              version: source.version,
-              assignee_user_id: assignment.assigneeUserId,
-              assignee_agent_id: assignment.assigneeAgentId,
-              assignee_team_id: assignment.assigneeTeamId,
-            });
-          },
+          assign: persistAssignee,
         },
       );
       props.onUpdated(updated);
@@ -1674,9 +1709,10 @@ export function TodoEditor(props: TodoEditorProps) {
   }
 
   function handleKeyDown(event: ReactKeyboardEvent) {
+    if (event.defaultPrevented) return;
     if (event.key === "Escape") {
       event.stopPropagation();
-      onClose();
+      (props.onEscape ?? onClose)();
       return;
     }
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -1877,7 +1913,7 @@ export function TodoEditor(props: TodoEditorProps) {
             setNotificationChoiceOpen(true);
           }
         }}
-        disabled={!editable || !canAssign}
+        disabled={!canAssign || saving}
         className={overlayControlClass}
         members={projectMembers}
         agents={projectAgents}
@@ -2453,7 +2489,7 @@ export function TodoEditor(props: TodoEditorProps) {
           ) : null}
           {twoColumn && !isCreate ? (
             <>
-              {editable && (dirty || saving) ? (
+              {(editable || canAssign) && (dirty || saving) ? (
                 <button
                   type="button"
                   data-testid="cloud-todo-save"
@@ -2679,7 +2715,13 @@ export function TodoEditor(props: TodoEditorProps) {
                 </div>
               ) : null}
 
-              {!isAITableEdit ? (
+              {!isAITableEdit &&
+              !(
+                workspacePanel &&
+                readFirst &&
+                !editingContent &&
+                !description.trim()
+              ) ? (
                 <div
                   className={cn(
                     twoColumn ? "mt-0" : "mt-3 min-h-[240px]",
@@ -2803,19 +2845,26 @@ export function TodoEditor(props: TodoEditorProps) {
                         ) : null}
                         {statusSelect}
                       </span>
-                      {visibleFollowupOwner ? (
+                      {showAssignee ? (
                         <span
-                          className="task-detail-state-followup"
-                          title={t("todo.follow_up_owner", "跟进人")}
+                          className="task-detail-state-assignee"
+                          data-testid="cloud-todo-state-assignee"
+                          title={t("todo.assignee", "负责人")}
                         >
-                          {props.currentAssignment?.target_type === "agent" ? (
+                          {assigneeTarget.startsWith("agent:") ||
+                          assigneeTarget.startsWith("team:") ? (
                             <Bot aria-hidden="true" size={15} />
                           ) : (
                             <CircleUserRound aria-hidden="true" size={15} />
                           )}
-                          <strong title={visibleFollowupOwner}>
-                            {visibleFollowupOwner}
+                          <strong title={assigneeName ?? undefined}>
+                            {assigneeName ??
+                              t("todo.add_assignee", "添加负责人")}
                           </strong>
+                          {canAssign ? (
+                            <ChevronDown aria-hidden="true" size={13} />
+                          ) : null}
+                          {assigneeSelect}
                         </span>
                       ) : null}
                     </span>
@@ -3959,7 +4008,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 </>
               ) : (
                 <>
-                  {editable && dirty && (
+                  {(editable || canAssign) && dirty && (
                     <button
                       type="button"
                       data-testid="cloud-todo-save"

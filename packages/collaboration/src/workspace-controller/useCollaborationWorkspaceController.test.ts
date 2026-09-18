@@ -114,6 +114,7 @@ function createApi() {
         taskBindings: [],
       }),
       get: vi.fn().mockResolvedValue(issue),
+      markRead: vi.fn().mockResolvedValue({ ...issue, is_unread: false }),
       create: vi.fn().mockResolvedValue(issue),
       update: vi
         .fn()
@@ -315,6 +316,90 @@ describe("collaboration workspace controller", () => {
     expect(state.selectedIssue).toEqual(issue);
     expect(state.attachments).toEqual([attachment]);
     expect(state.comments).toEqual([comment]);
+  });
+
+  it("persists read state on detail open and updates every board snapshot", async () => {
+    const unread = { ...issue, is_unread: true, content_revision: 2 };
+    const read = { ...unread, is_unread: false };
+    const { api, commands } = createController();
+    vi.mocked(api.issues.getBoardSnapshot).mockResolvedValue({
+      items: [unread],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+    vi.mocked(api.issues.get).mockResolvedValue(unread);
+    vi.mocked(api.issues.markRead).mockResolvedValue(read);
+
+    await commands.loadProject(project.id);
+    expect(api.issues.markRead).not.toHaveBeenCalled();
+    await commands.loadSelectedIssue(issue.id);
+
+    expect(api.issues.markRead).toHaveBeenCalledExactlyOnceWith(issue.id);
+    expect(state.selectedIssue).toEqual(read);
+    expect(state.issues).toEqual([read]);
+    expect(state.projectItems[project.id]).toEqual([read]);
+    commands.clearSelectedIssue();
+    expect(state.issues[0].is_unread).toBe(false);
+    await commands.markIssueRead(read);
+    expect(api.issues.markRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves unread state on failure and allows retry without reopening detail", async () => {
+    const unread = { ...issue, is_unread: true };
+    const { api, commands, notify } = createController();
+    vi.mocked(api.issues.get).mockResolvedValue(unread);
+    vi.mocked(api.issues.markRead).mockRejectedValueOnce(new Error("offline"));
+
+    await commands.loadSelectedIssue(issue.id);
+
+    expect(state.selectedIssue?.is_unread).toBe(true);
+    expect(state.error).toBe("save failed");
+    expect(notify).toHaveBeenCalledWith("save failed", "error");
+    await commands.markIssueRead(unread);
+    expect(state.selectedIssue?.is_unread).toBe(false);
+  });
+
+  it.each([1, 2])(
+    "deduplicates read requests and preserves newer content at version %s",
+    async (version) => {
+      const unread = { ...issue, is_unread: true, content_revision: 2 };
+      const newer = {
+        ...unread,
+        title: "New update",
+        version,
+        content_revision: 3,
+      };
+      const response = deferred<CollaborationIssue>();
+      const { api, commands } = createController();
+      vi.mocked(api.issues.markRead).mockReturnValue(response.promise);
+      state = {
+        ...state,
+        issues: [unread],
+        projectItems: { [project.id]: [unread] },
+      };
+
+      const previewRead = commands.markIssueRead(unread);
+      const detailRead = commands.markIssueRead(unread);
+      commands.replaceIssue(newer);
+      response.resolve({ ...unread, is_unread: false });
+      await Promise.all([previewRead, detailRead]);
+
+      expect(api.issues.markRead).toHaveBeenCalledExactlyOnceWith(issue.id);
+      expect(state.issues).toEqual([newer]);
+      expect(state.selectedIssue).toBeNull();
+    },
+  );
+
+  it("does not mark an issue read if navigation closes it before detail loads", async () => {
+    const { api, commands } = createController();
+    const response = deferred<CollaborationIssue>();
+    vi.mocked(api.issues.get).mockReturnValue(response.promise);
+    const load = commands.loadSelectedIssue(issue.id);
+    commands.clearSelectedIssue();
+    response.resolve({ ...issue, is_unread: true });
+    await load;
+    expect(api.issues.markRead).not.toHaveBeenCalled();
   });
 
   it("selects a cached board issue before its detail snapshot finishes loading", async () => {

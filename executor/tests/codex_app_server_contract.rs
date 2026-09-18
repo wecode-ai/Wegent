@@ -1135,7 +1135,12 @@ fn shared_test_runtime() -> &'static Runtime {
 
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().await
+    static EXECUTOR_HOME: OnceLock<PathBuf> = OnceLock::new();
+    let guard = LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    let executor_home = EXECUTOR_HOME.get_or_init(|| unique_dir("codex-app-server-home"));
+    std::env::set_var("WEGENT_EXECUTOR_HOME", executor_home);
+    std::env::set_var("WEGENT_CODEX_HOME", executor_home.join("codex"));
+    guard
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {

@@ -1,7 +1,18 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/styles/globals.css'
-import { MarkdownCodeBlock } from './MarkdownCodeBlock'
+import type { ComponentProps } from 'react'
+import { MarkdownCodeBlock as SharedMarkdownCodeBlock } from '@wegent/collaboration/markdown/MarkdownCodeBlock'
+import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
+import { useDesktopMarkdownServices } from './useDesktopMarkdownServices'
+
+function MarkdownCodeBlock(props: ComponentProps<typeof SharedMarkdownCodeBlock>) {
+  return (
+    <MarkdownServicesProvider value={useDesktopMarkdownServices()}>
+      <SharedMarkdownCodeBlock {...props} />
+    </MarkdownServicesProvider>
+  )
+}
 
 const trackMock = vi.fn()
 
