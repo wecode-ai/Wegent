@@ -393,6 +393,32 @@ def test_pruning_hides_metadata_when_database_delete_commit_fails(
     assert test_db.query(WeworkTranscriptArchive).filter_by(id=obsolete.id).count() == 0
 
 
+def test_reports_object_storage_failure_with_a_stable_code(
+    test_client, test_token, monkeypatch
+):
+    from app.services import wework_transcript_service
+    from app.services.wework_transcript_storage import WeworkTranscriptStorageError
+
+    lease = _lease(test_client, test_token)
+    monkeypatch.setattr(
+        wework_transcript_service.wework_transcript_storage,
+        "put_stream",
+        lambda *_args: (_ for _ in ()).throw(
+            WeworkTranscriptStorageError(
+                "Failed to store transcript segment (AccessDenied)"
+            )
+        ),
+    )
+
+    response = _upload(test_client, test_token, _segment(lease))
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "transcript_storage_unavailable",
+        "message": "Failed to store transcript segment (AccessDenied)",
+    }
+
+
 def test_rejects_conflicting_segment_before_object_storage(
     test_client, test_token, monkeypatch
 ):
