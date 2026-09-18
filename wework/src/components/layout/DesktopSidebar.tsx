@@ -3615,33 +3615,39 @@ export function DesktopSidebar({
         priorityItems: livePriorityTaskItems,
         recentGroups: [],
       }
-  const togglePriorityFilter = useCallback(() => {
-    if (priorityFilterActive) {
-      setPriorityFilterActive(false)
-      setPrioritySession(null)
-      return
-    }
-    setPrioritySession(createDesktopSidebarPrioritySession(priorityViewSources, priorityShowPinned))
-    setPriorityFilterActive(true)
-  }, [
-    priorityFilterActive,
-    priorityShowPinned,
-    priorityViewSources,
-    setPriorityFilterActive,
-    setPrioritySession,
-  ])
+  const setPriorityFilterEnabled = useCallback(
+    (enabled: boolean) => {
+      if (!enabled) {
+        setPriorityFilterActive(false)
+        setPrioritySession(null)
+        return
+      }
+      setPrioritySession(
+        createDesktopSidebarPrioritySession(priorityViewSources, priorityShowPinned)
+      )
+      setPriorityFilterActive(true)
+    },
+    [priorityShowPinned, priorityViewSources, setPriorityFilterActive, setPrioritySession]
+  )
   const selectedTaskViewAction = taskViewAction === 'board' && onToggleMyWork ? 'board' : 'priority'
   const selectTaskViewAction = useCallback(
     (action: TaskViewAction) => {
       setTaskViewAction(action)
       if (action === 'board') {
-        onToggleMyWork?.()
+        setPriorityFilterEnabled(false)
+        if (taskView !== 'default-work-items') onToggleMyWork?.()
         return
       }
-      togglePriorityFilter()
+      if (taskView === 'default-work-items') onToggleMyWork?.()
+      setPriorityFilterEnabled(true)
     },
-    [onToggleMyWork, setTaskViewAction, togglePriorityFilter]
+    [onToggleMyWork, setPriorityFilterEnabled, setTaskViewAction, taskView]
   )
+  const togglePriorityTaskView = useCallback(() => {
+    setTaskViewAction('priority')
+    if (taskView === 'default-work-items') onToggleMyWork?.()
+    setPriorityFilterEnabled(taskView === 'default-work-items' || !priorityFilterActive)
+  }, [onToggleMyWork, priorityFilterActive, setPriorityFilterEnabled, setTaskViewAction, taskView])
 
   const unreadPriorityTaskItems = useMemo(
     () =>
@@ -4081,12 +4087,12 @@ export function DesktopSidebar({
         return
       event.preventDefault()
       event.stopPropagation()
-      togglePriorityFilter()
+      togglePriorityTaskView()
     }
 
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [priorityFilterShortcut, togglePriorityFilter])
+  }, [priorityFilterShortcut, togglePriorityTaskView])
 
   useEffect(() => {
     if (!currentRuntimeTaskKey || !currentRuntimeTaskRowVisible) return
@@ -4198,7 +4204,7 @@ export function DesktopSidebar({
                       type="button"
                       data-testid="runtime-priority-filter-button"
                       onClick={
-                        selectedTaskViewAction === 'board' ? onToggleMyWork : togglePriorityFilter
+                        selectedTaskViewAction === 'board' ? onToggleMyWork : togglePriorityTaskView
                       }
                       aria-pressed={
                         selectedTaskViewAction === 'board'

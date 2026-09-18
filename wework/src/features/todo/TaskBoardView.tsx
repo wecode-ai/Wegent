@@ -27,13 +27,6 @@ interface TaskBoardViewProps {
   onOpenRuntimeTask: (address: RuntimeTaskAddress) => void
 }
 
-const groupFields: Array<{ id: ProjectBoardGroupBy; name: string }> = [
-  { id: 'status', name: '状态' },
-  { id: 'priority', name: '优先级' },
-  { id: 'assignee', name: '负责人' },
-  { id: 'tag', name: '标签' },
-]
-
 const boardCardDisplay: BoardCardDisplaySettings = {
   showAssignee: true,
   showPriority: true,
@@ -41,11 +34,6 @@ const boardCardDisplay: BoardCardDisplaySettings = {
   showTags: true,
   showDate: true,
 }
-
-const boardStatuses = columns.map(column => ({
-  id: column.status,
-  name: column.label,
-}))
 
 function taskBinding(item: RuntimeMyWorkItem): CloudTodoBoardTaskBinding {
   return {
@@ -65,6 +53,23 @@ export function TaskBoardView({
 }: TaskBoardViewProps) {
   const { t } = useTranslation('common')
   const [activeLocalProjectFilter, setActiveLocalProjectFilter] = useState('all')
+  const groupFields = useMemo<Array<{ id: ProjectBoardGroupBy; name: string }>>(
+    () => [
+      { id: 'status', name: t('todo.task_board_group_status', '状态') },
+      { id: 'priority', name: t('todo.task_board_group_priority', '优先级') },
+      { id: 'assignee', name: t('todo.task_board_group_assignee', '负责人') },
+      { id: 'tag', name: t('todo.task_board_group_tag', '标签') },
+    ],
+    [t]
+  )
+  const boardStatuses = useMemo(
+    () =>
+      columns.map(column => ({
+        id: column.status,
+        name: t(`todo.task_board_status_${column.status}`, column.label),
+      })),
+    [t]
+  )
   const allItems = useMemo(
     () =>
       runtimeMyWorkItems(
@@ -107,19 +112,19 @@ export function TaskBoardView({
         groupBy,
         items,
         labels: {
-          noPriority: '普通',
-          noTag: '无标签',
+          noPriority: t('todo.task_board_no_priority', '普通'),
+          noTag: t('todo.task_board_no_tag', '无标签'),
           priority: {
-            low: 'low',
-            medium: 'medium',
-            high: 'high',
-            urgent: 'urgent',
+            low: t('todo.task_board_priority_low', '低'),
+            medium: t('todo.task_board_priority_medium', '中'),
+            high: t('todo.task_board_priority_high', '高'),
+            urgent: t('todo.task_board_priority_urgent', '紧急'),
           },
-          unassigned: '未指定',
+          unassigned: t('todo.task_board_unassigned', '未指定'),
         },
         statuses: boardStatuses,
       }),
-    [items]
+    [boardStatuses, items, t]
   )
   const board = useStandardCloudBoardController({
     createColumns,
@@ -227,7 +232,7 @@ export function TaskBoardView({
             fields={groupFields}
             value={value}
             testIdPrefix="cloud-board-group"
-            searchPlaceholder="搜索分组字段"
+            searchPlaceholder={t('todo.task_board_search_group_fields', '搜索分组字段')}
             onChange={id => onChange(id as ProjectBoardGroupBy)}
           />
         )}
@@ -252,8 +257,8 @@ export function TaskBoardView({
           />
         )}
         renderSkeleton={() => null}
-        rootLabel="任务"
-        rootUnitLabel="个任务"
+        rootLabel={t('todo.task_board_root_label', '任务')}
+        rootUnitLabel={t('todo.task_board_root_unit', '个任务')}
         searchPlaceholder={t('todo.search_tasks', '搜索任务')}
         saveGlobalDisabled
         saveGlobalLabel="应用到全局"
