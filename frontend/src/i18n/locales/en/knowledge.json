@@ -377,6 +377,8 @@
       },
       "sourceInaccessible": "Source unavailable",
       "sourceInaccessibleHint": "The external source was deleted or access was revoked; restore access, then retry the import",
+      "sourceSyncFailed": "Synchronization failed",
+      "sourceSyncFailedHint": "The latest synchronization failed; existing local content remains available and will be retried",
       "externalSource": {
         "lastImportedAt": "Last imported {{time}}",
         "accessible": "Source available"

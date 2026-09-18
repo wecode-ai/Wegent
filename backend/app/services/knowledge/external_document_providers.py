@@ -65,6 +65,15 @@ class ExternalSourceUnavailableError(ExternalDocumentFetchError):
     failure and the failed initial import may be retried.
     """
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "external_source_unavailable",
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
 
 class ExternalImportLostWriteError(RuntimeError):
     """The import attempt lost its write right before attaching content.
@@ -213,6 +222,72 @@ def _read_update_time(info: dict[str, Any], node_id: str) -> int | None:
     return update_time
 
 
+# DingTalk answers a gone node or a revoked permission as an unsuccessful
+# ``get_document_info`` envelope. These markers are the only evidence that may
+# turn a failed read into a recorded deletion; anything else stays transient.
+_SOURCE_MISSING_MARKERS = (
+    "not found",
+    "notfound",
+    "not exist",
+    "does not exist",
+    "no such",
+    "deleted",
+    "removed",
+    "不存在",
+    "已删除",
+    "已被删除",
+)
+_SOURCE_FORBIDDEN_MARKERS = (
+    "permission",
+    "forbidden",
+    "denied",
+    "unauthorized",
+    "no access",
+    "无权",
+    "没有权限",
+)
+
+
+def _mcp_result_text(result: Any) -> str:
+    """Join the text parts of one MCP tool result, ignoring other fields."""
+    parts: list[str] = []
+    for item in getattr(result, "content", None) or []:
+        text = getattr(item, "text", "")
+        if isinstance(text, str):
+            parts.append(text)
+    return "\n".join(parts)
+
+
+def _source_unavailable_error(result: Any) -> ExternalSourceUnavailableError | None:
+    """Read a ``get_document_info`` result that positively reports a gone node.
+
+    Only a node named as missing/deleted, or an explicit access denial, counts.
+    A tool error, a timeout or an unreadable payload keeps its transient
+    classification, so a hiccup is never recorded as a deleted source.
+    """
+    text = _mcp_result_text(result)
+    if not getattr(result, "isError", False):
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError):
+            payload = None
+        if isinstance(payload, dict) and payload.get("success") is True:
+            # A node we could read is neither missing nor revoked.
+            return None
+    lowered = text.lower()
+    if any(marker in lowered for marker in _SOURCE_MISSING_MARKERS):
+        return ExternalSourceUnavailableError(
+            "钉钉源文档不存在或已被删除",
+            error_code="external_source_missing",
+        )
+    if any(marker in lowered for marker in _SOURCE_FORBIDDEN_MARKERS):
+        return ExternalSourceUnavailableError(
+            "无权访问钉钉源文档",
+            error_code="external_source_unavailable",
+        )
+    return None
+
+
 class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
     """DingTalk adapter backed by the user's DingTalk Docs MCP server."""
 
@@ -229,11 +304,10 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         try:
             async with asyncio.timeout(EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS):
                 async with open_dingtalk_session(url) as session:
-                    info = self._parse_mcp_response(
+                    info = self._read_document_info(
                         await session.call_tool(
                             "get_document_info", {"nodeId": node_id}
-                        ),
-                        "get_document_info",
+                        )
                     )
         except TimeoutError:
             raise ExternalDocumentFetchError(
@@ -354,9 +428,8 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         from app.services.dingtalk_doc_service import DingTalkDocService
 
         async with open_dingtalk_session(mcp_url) as session:
-            info = self._parse_mcp_response(
-                await session.call_tool("get_document_info", {"nodeId": node_id}),
-                "get_document_info",
+            info = self._read_document_info(
+                await session.call_tool("get_document_info", {"nodeId": node_id})
             )
             update_time = _read_update_time(info, node_id)
             extension = get_import_extension(info)
@@ -474,6 +547,13 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                 arguments = {"baseId": node_id, "taskId": task_id, "timeoutMs": 30000}
                 await asyncio.sleep(0.2)
         raise ExternalDocumentFetchError("DingTalk AI Table export timed out")
+
+    def _read_document_info(self, result: Any) -> dict[str, Any]:
+        """Decode node metadata, keeping a gone source distinguishable."""
+        unavailable = _source_unavailable_error(result)
+        if unavailable is not None:
+            raise unavailable
+        return self._parse_mcp_response(result, "get_document_info")
 
     @staticmethod
     def _parse_mcp_response(result: Any, tool_name: str) -> dict[str, Any]:

@@ -299,6 +299,97 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         with pytest.raises(ExternalSourceUnavailableError):
             await provider.fetch_content(test_db, test_user, "not-in-cache")
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "message,error_code",
+        [
+            ("The node does not exist", "external_source_missing"),
+            ("node 已被删除", "external_source_missing"),
+            ("No permission to access this node", "external_source_unavailable"),
+            ("当前账号无权访问该文档", "external_source_unavailable"),
+        ],
+    )
+    async def test_node_metadata_naming_a_gone_source_signals_unavailable(
+        self, test_user, monkeypatch, message, error_code
+    ):
+        """A positively gone node keeps its reason distinct from a fetch failure."""
+        self.configure_user(monkeypatch, test_user)
+        self.answer_document_info(monkeypatch, {"success": False, "message": message})
+
+        with pytest.raises(ExternalSourceUnavailableError) as excinfo:
+            await self.make_provider().get_update_time(test_user, "probe-node")
+
+        assert excinfo.value.error_code == error_code
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "result",
+        [
+            SimpleNamespace(
+                isError=True,
+                content=[SimpleNamespace(type="text", text="internal server error")],
+            ),
+            {"success": False, "message": "rate limited, please retry"},
+            {"success": False},
+        ],
+    )
+    async def test_metadata_failure_without_source_evidence_stays_transient(
+        self, test_user, monkeypatch, result
+    ):
+        """Only explicit evidence may turn a probe failure into a gone source."""
+        from app.services.knowledge.external_document_providers import (
+            ExternalDocumentFetchError,
+        )
+
+        self.configure_user(monkeypatch, test_user)
+        self.answer_document_info(monkeypatch, result)
+
+        with pytest.raises(ExternalDocumentFetchError) as excinfo:
+            await self.make_provider().get_update_time(test_user, "probe-node")
+
+        assert not isinstance(excinfo.value, ExternalSourceUnavailableError)
+
+    @pytest.mark.asyncio
+    async def test_fetch_turns_a_deleted_node_into_a_missing_source(
+        self, test_db, test_user, monkeypatch
+    ):
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.create_resource(test_db, test_user, "deleted-copy", "Deleted Doc")
+        self.answer_document_info(
+            monkeypatch,
+            {"success": False, "message": "The node does not exist"},
+        )
+
+        with pytest.raises(ExternalSourceUnavailableError) as excinfo:
+            await provider.fetch_content(test_db, test_user, "deleted-copy")
+
+        assert excinfo.value.error_code == "external_source_missing"
+
+    @staticmethod
+    def answer_document_info(monkeypatch: pytest.MonkeyPatch, result: Any) -> None:
+        """Answer every MCP call with one canned ``get_document_info`` result."""
+        if not isinstance(result, SimpleNamespace):
+            result = SimpleNamespace(
+                isError=False,
+                # The provider sends raw UTF-8, so markers arrive verbatim.
+                content=[
+                    SimpleNamespace(
+                        type="text", text=json.dumps(result, ensure_ascii=False)
+                    )
+                ],
+            )
+        session = SimpleNamespace(call_tool=AsyncMock(return_value=result))
+
+        @asynccontextmanager
+        async def connected(url):
+            yield session
+
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_providers.open_dingtalk_session",
+            connected,
+        )
+
     def make_provider(self):
         from app.services.knowledge.external_document_providers import (
             DingTalkExternalDocumentProvider,

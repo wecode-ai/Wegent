@@ -377,6 +377,8 @@
       },
       "sourceInaccessible": "来源不可访问",
       "sourceInaccessibleHint": "外部来源已被删除或失去访问权限；恢复访问后可重试导入",
+      "sourceSyncFailed": "同步失败",
+      "sourceSyncFailedHint": "最近一次同步失败；已有本地内容仍可使用，系统将在后续重试",
       "externalSource": {
         "lastImportedAt": "最近导入 {{time}}",
         "accessible": "来源正常"

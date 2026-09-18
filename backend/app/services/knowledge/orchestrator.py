@@ -1899,6 +1899,11 @@ class KnowledgeOrchestrator:
         }
         # Reading the source succeeded even if later conversion/indexing fails.
         merged_external.pop("last_error", None)
+        merged_sync = merged_external.get("sync")
+        if isinstance(merged_sync, dict):
+            merged_sync = dict(merged_sync)
+            merged_sync.pop("last_error_code", None)
+            merged_external["sync"] = merged_sync
         merged_source_config = dict(document.source_config or {})
         merged_source_config["external"] = merged_external
         # A conversion belongs to the previous body, never to its replacement.

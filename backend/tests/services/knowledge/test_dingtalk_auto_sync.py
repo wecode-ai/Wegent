@@ -482,6 +482,224 @@ def test_failed_source_keeps_copy_and_can_update_next_cycle(
     assert fetch.await_count == 1
 
 
+def _serve_existing_content(
+    test_db: Session, document: KnowledgeDocument, text: str
+) -> int:
+    """Leave the copy exactly as a successful import does: active with a body."""
+    from app.models.subtask_context import SubtaskContext
+    from shared.models.db import ContextStatus, ContextType
+
+    attachment = SubtaskContext(
+        subtask_id=0,
+        user_id=document.user_id,
+        context_type=ContextType.ATTACHMENT.value,
+        name="copy.md",
+        status=ContextStatus.READY.value,
+        extracted_text=text,
+    )
+    test_db.add(attachment)
+    test_db.commit()
+    test_db.refresh(attachment)
+    document.is_active = True
+    document.attachment_id = attachment.id
+    document.index_status = DocumentIndexStatus.SUCCESS
+    document.update_external_source_config(source_update_time=1789562644000)
+    test_db.commit()
+    return attachment.id
+
+
+def test_deleted_source_marks_the_copy_inaccessible_and_keeps_its_content(
+    test_db: Session,
+    test_user: User,
+    imported_copy: KnowledgeDocument,
+    live_update_time: AsyncMock,
+    import_dispatches: list[dict],
+) -> None:
+    from app.models.subtask_context import SubtaskContext
+    from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
+    from app.services.knowledge.external_document_providers import (
+        ExternalSourceUnavailableError,
+    )
+
+    attachment_id = _serve_existing_content(test_db, imported_copy, "导入时的正文")
+    live_update_time.side_effect = ExternalSourceUnavailableError(
+        "钉钉源文档不存在或已被删除", error_code="external_source_missing"
+    )
+
+    assert (
+        refresh_dingtalk_copy(test_db, imported_copy.id, imported_copy.index_generation)
+        is False
+    )
+
+    current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
+    external = current.external_source_config
+    assert external["status"] == "inaccessible"
+    assert external["last_error"] == "钉钉源文档不存在或已被删除"
+    assert external["sync"]["last_error_code"] == "external_source_missing"
+    assert external["sync"]["last_checked_at"]
+    # The copy keeps serving its last successful body and index.
+    assert current.index_status == DocumentIndexStatus.SUCCESS
+    assert current.is_active is True
+    assert current.attachment_id == attachment_id
+    assert test_db.get(SubtaskContext, attachment_id).extracted_text == "导入时的正文"
+    assert import_dispatches == []
+
+
+def test_transient_probe_failure_keeps_the_copy_usable(
+    test_db: Session,
+    test_user: User,
+    imported_copy: KnowledgeDocument,
+    live_update_time: AsyncMock,
+    import_dispatches: list[dict],
+) -> None:
+    from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
+    from app.services.knowledge.external_document_providers import (
+        ExternalDocumentFetchError,
+    )
+
+    attachment_id = _serve_existing_content(test_db, imported_copy, "导入时的正文")
+    live_update_time.side_effect = ExternalDocumentFetchError(
+        "DingTalk metadata read timed out"
+    )
+
+    assert (
+        refresh_dingtalk_copy(test_db, imported_copy.id, imported_copy.index_generation)
+        is False
+    )
+
+    current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
+    external = current.external_source_config
+    # A check that proves nothing about the source must not claim it is gone.
+    assert external["status"] != "inaccessible"
+    assert external["sync"]["last_error_code"] == "external_sync_check_failed"
+    assert current.index_status == DocumentIndexStatus.SUCCESS
+    assert current.is_active is True
+    assert current.attachment_id == attachment_id
+    assert import_dispatches == []
+
+
+def test_repeated_probe_failure_keeps_the_recorded_reason(
+    test_db: Session,
+    test_user: User,
+    imported_copy: KnowledgeDocument,
+    live_update_time: AsyncMock,
+    import_dispatches: list[dict],
+) -> None:
+    from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
+    from app.services.knowledge.external_document_providers import (
+        ExternalDocumentFetchError,
+        ExternalSourceUnavailableError,
+    )
+
+    _serve_existing_content(test_db, imported_copy, "导入时的正文")
+    live_update_time.side_effect = ExternalSourceUnavailableError(
+        "钉钉源文档不存在或已被删除", error_code="external_source_missing"
+    )
+    assert not refresh_dingtalk_copy(
+        test_db, imported_copy.id, imported_copy.index_generation
+    )
+
+    live_update_time.side_effect = ExternalDocumentFetchError(
+        "DingTalk metadata read failed: ClientError"
+    )
+    assert not refresh_dingtalk_copy(
+        test_db, imported_copy.id, imported_copy.index_generation
+    )
+
+    current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
+    external = current.external_source_config
+    # The later inconclusive check keeps the earlier specific reason.
+    assert external["status"] == "inaccessible"
+    assert external["last_error"] == "钉钉源文档不存在或已被删除"
+    assert external["sync"]["last_error_code"] == "external_source_missing"
+
+
+def test_recovered_source_returns_to_accessible(
+    test_db: Session,
+    test_user: User,
+    imported_copy: KnowledgeDocument,
+    live_update_time: AsyncMock,
+    import_dispatches: list[dict],
+) -> None:
+    from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
+    from app.services.knowledge.external_document_providers import (
+        ExternalSourceUnavailableError,
+    )
+
+    _serve_existing_content(test_db, imported_copy, "导入时的正文")
+    live_update_time.side_effect = ExternalSourceUnavailableError(
+        "钉钉源文档不存在或已被删除", error_code="external_source_missing"
+    )
+    assert not refresh_dingtalk_copy(
+        test_db, imported_copy.id, imported_copy.index_generation
+    )
+
+    # The next cycle reaches the source again and finds it unchanged.
+    live_update_time.side_effect = None
+    live_update_time.return_value = 1789562644000
+    assert not refresh_dingtalk_copy(
+        test_db, imported_copy.id, imported_copy.index_generation
+    )
+
+    current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
+    external = current.external_source_config
+    assert external["status"] == "accessible"
+    assert "last_error" not in external
+    assert "last_error_code" not in external["sync"]
+    assert current.index_status == DocumentIndexStatus.SUCCESS
+    assert import_dispatches == []
+
+
+def test_landed_body_restores_accessible_after_a_deleted_source(
+    test_db: Session,
+    test_user: User,
+    imported_copy: KnowledgeDocument,
+    monkeypatch: pytest.MonkeyPatch,
+    import_dispatches: list[dict],
+) -> None:
+    """A manual reimport that reads the source again clears the warning."""
+    from app.services.knowledge.index_state_machine import mark_document_index_succeeded
+
+    imported_copy.update_external_source_config(
+        status="inaccessible",
+        last_error="钉钉源文档不存在或已被删除",
+        sync={
+            "last_checked_at": "2026-09-17T00:00:00+00:00",
+            "last_error_code": "external_source_missing",
+        },
+    )
+    imported_copy.index_status = DocumentIndexStatus.QUEUED
+    test_db.commit()
+    fetch = AsyncMock(
+        return_value=ExternalDocumentContent(
+            name="恢复的正文",
+            file_extension="md",
+            content=b"restored content",
+            metadata={"source_update_time": 1789562649000},
+        )
+    )
+    monkeypatch.setattr(
+        get_external_document_provider("dingtalk"), "fetch_content", fetch
+    )
+    monkeypatch.setattr(
+        "app.tasks.knowledge_tasks.index_document_task.delay",
+        MagicMock(return_value=SimpleNamespace(id="index-task")),
+    )
+
+    run_external_document_import(
+        test_db, imported_copy, test_user, generation=imported_copy.index_generation
+    )
+    current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
+    assert current.external_source_config["status"] == "accessible"
+    assert "last_error" not in current.external_source_config
+    assert mark_document_index_succeeded(test_db, current.id, current.index_generation)
+    test_db.refresh(current)
+    external = current.external_source_config
+    assert external["status"] == "accessible"
+    assert "last_error" not in external
+    assert "last_error_code" not in external["sync"]
+
+
 @pytest.mark.parametrize("change", ["disable", "delete", "new_generation"])
 def test_changes_during_probe_prevent_refresh(
     test_db: Session,

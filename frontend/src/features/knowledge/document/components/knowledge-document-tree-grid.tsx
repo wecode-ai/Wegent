@@ -45,7 +45,12 @@ import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hoo
 import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import { getProcessingErrorMessage } from '../utils/processing-error'
-import { isDingtalkCopyDocument, isDocumentIndexInFlight } from '../utils/documentUtils'
+import {
+  getExternalSourceInfo,
+  isDingtalkCopyDocument,
+  isDocumentIndexInFlight,
+  isExternalSourceUnavailable,
+} from '../utils/documentUtils'
 import { useDingtalkSyncLabel } from '../hooks/useDingtalkSyncLabel'
 import type { SortField, SortOrder } from './FolderTree'
 import type {
@@ -375,6 +380,17 @@ export function KnowledgeDocumentTreeGrid({
                 ? document.source_config.url
                 : null
             const displayName = getDocumentDisplayName(document)
+            const externalSource = getExternalSourceInfo(document)
+            const externalSourceUnavailable = isExternalSourceUnavailable(document)
+            const externalSourceFailed = externalSource?.status === 'sync_error'
+            const externalSourceBadgeLabel = externalSourceFailed
+              ? t('document.document.sourceSyncFailed')
+              : t('document.document.sourceInaccessible')
+            const externalSourceBadgeHint =
+              externalSource?.last_error ||
+              (externalSourceFailed
+                ? t('document.document.sourceSyncFailedHint')
+                : t('document.document.sourceInaccessibleHint'))
             return (
               <div
                 className="flex items-center gap-2 overflow-hidden min-w-0"
@@ -397,6 +413,25 @@ export function KnowledgeDocumentTreeGrid({
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
+                {externalSourceUnavailable && (
+                  <TooltipProvider>
+                    <Tooltip delayDuration={200}>
+                      <TooltipTrigger asChild>
+                        <Badge
+                          variant="default"
+                          size="sm"
+                          className="flex-shrink-0 cursor-help whitespace-nowrap bg-red-500/10 text-red-600 border-red-500/20"
+                          data-testid={`external-source-inaccessible-${document.id}`}
+                        >
+                          {externalSourceBadgeLabel}
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs">
+                        <p className="text-xs">{externalSourceBadgeHint}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
                 {sourceUrl && (
                   <button
                     className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors flex-shrink-0"

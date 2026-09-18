@@ -526,4 +526,52 @@ describe('KnowledgeDocumentTreeGrid DingTalk manual sync', () => {
     fireEvent.click(syncButton)
     expect(onSync).not.toHaveBeenCalled()
   })
+
+  it('flags a deleted DingTalk source without hiding the indexed copy', () => {
+    renderDocumentRow(
+      createDingtalkCopy({
+        source_config: {
+          external: {
+            provider: 'dingtalk',
+            resource_id: 'node-30',
+            title: '钉钉文档',
+            status: 'inaccessible',
+            last_error: '钉钉源文档不存在或已被删除',
+          },
+        },
+      })
+    )
+
+    const sourceStatus = screen.getByTestId('external-source-inaccessible-30')
+    expect(sourceStatus).toHaveTextContent('document.document.sourceInaccessible')
+    expect(screen.queryByTestId('wiki-source-missing-30')).not.toBeInTheDocument()
+    // The copy keeps serving its last successful index.
+    expect(screen.getByText('document.document.indexStatus.available')).toBeInTheDocument()
+  })
+
+  it('flags a failed DingTalk check as a synchronization failure', () => {
+    renderDocumentRow(
+      createDingtalkCopy({
+        source_config: {
+          external: {
+            provider: 'dingtalk',
+            resource_id: 'node-30',
+            title: '钉钉文档',
+            status: 'sync_error',
+            last_error: '无法连接钉钉',
+          },
+        },
+      })
+    )
+
+    expect(screen.getByTestId('external-source-inaccessible-30')).toHaveTextContent(
+      'document.document.sourceSyncFailed'
+    )
+  })
+
+  it('leaves a reachable DingTalk source free of the unavailable badge', () => {
+    renderDocumentRow(createDingtalkCopy())
+
+    expect(screen.queryByTestId('external-source-inaccessible-30')).not.toBeInTheDocument()
+  })
 })
