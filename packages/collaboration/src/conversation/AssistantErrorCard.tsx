@@ -33,9 +33,17 @@ export function AssistantErrorCard({
       ? t("assistant_error.types.model_protocol_error.description_with_model", {
           model: modelName,
         })
-      : !hasErrorDetails && parsedError.type === "generic_error"
-        ? t("assistant_error.types.generic_error.description_without_details")
-        : t(parsedError.descriptionKey);
+      : parsedError.type === "model_service_connection_error" &&
+          parsedError.endpoint
+        ? t(
+            "assistant_error.types.model_service_connection_error.description_with_endpoint",
+            {
+              endpoint: parsedError.endpoint,
+            },
+          )
+        : !hasErrorDetails && parsedError.type === "generic_error"
+          ? t("assistant_error.types.generic_error.description_without_details")
+          : t(parsedError.descriptionKey);
 
   return (
     <div
@@ -46,10 +54,16 @@ export function AssistantErrorCard({
         <AlertTriangle className="h-3 w-3" strokeWidth={2} />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold leading-5 text-text-primary">
+        <p
+          data-testid="assistant-error-title"
+          className="text-sm font-semibold leading-5 text-text-primary"
+        >
           {title}
         </p>
-        <p className="mt-0.5 text-xs leading-[18px] text-text-secondary">
+        <p
+          data-testid="assistant-error-description"
+          className="mt-0.5 text-xs leading-[18px] text-text-secondary"
+        >
           {description}
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
