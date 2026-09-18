@@ -131,7 +131,10 @@ import {
   runtimeTaskTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
-import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  getRuntimeTaskLifecycleKey,
+  type RuntimeTaskLifecycleStoreSnapshot,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import {
   findRuntimeTask,
   hydrateRuntimeTaskAddress,
@@ -498,6 +501,7 @@ export interface CloudTodoWorkspaceProps {
   onFocusedItemHandled?: () => void
   onActiveProjectChange?: (project: LocatedCloudProject | null) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onMarkRuntimeTaskRead?: (address: RuntimeTaskAddress) => void
   onArchiveRuntimeTasks?: (
     addresses: RuntimeTaskAddress[]
   ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
@@ -650,6 +654,7 @@ export function CloudTodoWorkspace({
   onFocusedItemHandled,
   onActiveProjectChange,
   onOpenRuntimeTask,
+  onMarkRuntimeTaskRead,
   onArchiveRuntimeTasks,
   onOpenSettings,
   onLogout,
@@ -994,7 +999,6 @@ export function CloudTodoWorkspace({
   const focusedItemRequestRef = useRef<string | null>(null)
   const boardSnapshotSignatureRef = useRef<string | null>(null)
   const boardLiveSubscriptionActiveRef = useRef(false)
-  const markingReadItemKeysRef = useRef(new Set<string>())
   const resetProjectViewState = useCallback(() => {
     setProjectView('board')
     setBoardParentId(null)
@@ -1824,62 +1828,39 @@ export function CloudTodoWorkspace({
   const selectedItemServices = selectedItemProject
     ? services.projectSpaceDetailServices?.[selectedItemProject.location]
     : undefined
-  const markItemRead = useCallback(
-    async (item: LocatedLoopItem) => {
-      if (!item.is_unread) return
-      const project = projectForItem(item)
-      const itemApi = apiForProject(project)
-      if (!project || (project.location === 'cloud' ? !cloudWorkspaceApi : !itemApi)) return
-      const projectKey = projectSpaceKey(projectSpaceRef(project))
-      const requestKey = `${projectKey}\0${item.id}`
-      if (markingReadItemKeysRef.current.has(requestKey)) return
-      markingReadItemKeysRef.current.add(requestKey)
-
-      try {
-        const updated = {
-          ...(project.location === 'cloud'
-            ? toCloudLoopItem(await cloudWorkspaceApi!.issues.markRead(item.id))
-            : await itemApi!.markLoopItemRead(item.id)),
-          project_store: item.project_store,
+  const runtimeAddressesForTaskBoardItem = useCallback(
+    (item: CloudLoopItem): RuntimeTaskAddress[] => {
+      if (isRuntimeMyWorkItem(item)) return [item.runtime_address]
+      const addresses = new Map<string, RuntimeTaskAddress>()
+      for (const binding of activeItemTaskBindings[item.id] ?? []) {
+        const address = { deviceId: binding.device_id, taskId: binding.task_id }
+        addresses.set(getRuntimeTaskLifecycleKey(address), address)
+      }
+      for (const address of runtimeAddressesByWorkItem.get(`${item.cloud_project_id}:${item.id}`) ??
+        []) {
+        addresses.set(getRuntimeTaskLifecycleKey(address), address)
+      }
+      return [...addresses.values()]
+    },
+    [activeItemTaskBindings, runtimeAddressesByWorkItem]
+  )
+  const isTaskBoardItemUnread = useCallback(
+    (item: CloudLoopItem): boolean =>
+      runtimeAddressesForTaskBoardItem(item).some(address =>
+        runtimeTaskLifecycle?.unreadTaskKeys.has(getRuntimeTaskLifecycleKey(address))
+      ),
+    [runtimeAddressesForTaskBoardItem, runtimeTaskLifecycle]
+  )
+  const markTaskBoardItemRead = useCallback(
+    (item: CloudLoopItem) => {
+      if (!onMarkRuntimeTaskRead) return
+      for (const address of runtimeAddressesForTaskBoardItem(item)) {
+        if (runtimeTaskLifecycle?.unreadTaskKeys.has(getRuntimeTaskLifecycleKey(address))) {
+          onMarkRuntimeTaskRead(address)
         }
-        const applyReadSnapshot = (current: LocatedLoopItem) => ({
-          ...preferNewestLoopItemSnapshot(current, updated),
-          is_unread: false,
-        })
-        if (project.location === 'cloud') {
-          cloudWorkspace.commands.replaceIssue(updated as CollaborationIssue)
-        }
-        setSelectedItem(current => (current?.id === item.id ? applyReadSnapshot(current) : current))
-        if (project.location === 'local') {
-          setDetailItems(current =>
-            current.map(candidate =>
-              candidate.id === item.id ? applyReadSnapshot(candidate) : candidate
-            )
-          )
-        }
-        if (project.location === 'local') {
-          setItems(current =>
-            current.map(candidate =>
-              candidate.id === item.id ? applyReadSnapshot(candidate) : candidate
-            )
-          )
-          setLocalProjectItems(current => ({
-            ...current,
-            [projectKey]: (current[projectKey] ?? []).map(candidate =>
-              candidate.id === item.id ? applyReadSnapshot(candidate) : candidate
-            ),
-          }))
-        }
-      } catch (error) {
-        console.warn('[Wework project board] mark Issue read failed', {
-          itemId: item.id,
-          error,
-        })
-      } finally {
-        markingReadItemKeysRef.current.delete(requestKey)
       }
     },
-    [apiForProject, cloudWorkspaceApi, projectForItem]
+    [onMarkRuntimeTaskRead, runtimeAddressesForTaskBoardItem, runtimeTaskLifecycle]
   )
   useEffect(() => {
     if (
@@ -1922,12 +1903,6 @@ export function CloudTodoWorkspace({
       active = false
     }
   }, [cloudWorkspaceApi, selectedItem, selectedItemApi, selectedItemProject, t])
-  useEffect(() => {
-    if (!selectedItem?.is_unread || selectedItemProject?.task_provider !== 'local') {
-      return
-    }
-    window.queueMicrotask(() => void markItemRead(selectedItem))
-  }, [markItemRead, selectedItem, selectedItemProject])
   // Source for the detail drawer / creation dialog when the selected todo lives
   // in a project other than the one shown on the board.
   const detailAllItems =
@@ -3867,13 +3842,14 @@ export function CloudTodoWorkspace({
       setPinnedBoardPreview(null)
       setBackgroundTaskItemId(null)
       closeTaskPanel()
+      if (isMyTasksBoard) markTaskBoardItemRead(item)
       if (isRuntimeMyWorkItem(item)) {
         void openBoardRuntimeTask(item.runtime_address)
         return
       }
       setSelectedItem(item)
     },
-    [closeTaskPanel, openBoardRuntimeTask]
+    [closeTaskPanel, isMyTasksBoard, markTaskBoardItemRead, openBoardRuntimeTask]
   )
 
   function closeTopPanel() {
@@ -4981,6 +4957,7 @@ export function CloudTodoWorkspace({
                         return (
                           <CloudTodoBoardCard
                             item={item}
+                            unread={isMyTasksBoard ? isTaskBoardItemUnread(item) : undefined}
                             processingStatus={isProcessingStatus(item.status)}
                             taskBindings={
                               (
@@ -5011,7 +4988,7 @@ export function CloudTodoWorkspace({
                                   : null
                               )
                             }
-                            onMarkRead={markItemRead}
+                            onMarkRead={isMyTasksBoard ? markTaskBoardItemRead : undefined}
                             onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
                             onOpenRuntimeTask={openBoardRuntimeTask}
                             display={boardCardDisplay}
