@@ -25,6 +25,7 @@ import {
   Search,
   SquareTerminal,
   Sparkles,
+  Target,
   X,
 } from 'lucide-react'
 import {
@@ -958,11 +959,11 @@ function getRuntimeTaskPriorityTime(task: RuntimeTaskSummary): number {
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
-function getRuntimePriorityTaskKey(
+function getRuntimeTaskSortableId(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary
 ): string {
-  return `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
+  return `${workspace.deviceId}:${task.taskId}`
 }
 
 function getProjectHoverSources(
@@ -1964,19 +1965,21 @@ function RuntimeTaskRow({
                     }
                     className="flex h-[30px] w-[30px] items-center justify-center"
                   >
-                    <span className="relative flex h-4 w-4 items-center justify-center">
+                    {hasActiveGoal ? (
+                      <span
+                        data-testid={`runtime-local-task-goal-dot-${task.taskId}`}
+                        className="relative flex h-5 w-5 items-center justify-center text-primary"
+                        aria-hidden="true"
+                      >
+                        <CompositedSpinner icon={Loader2} className="absolute inset-0 h-5 w-5" />
+                        <Target className="h-3.5 w-3.5" />
+                      </span>
+                    ) : (
                       <CompositedSpinner
                         icon={Loader2}
                         className="h-4 w-4 text-[rgb(var(--color-sidebar-text-muted))]"
                       />
-                      {hasActiveGoal ? (
-                        <span
-                          data-testid={`runtime-local-task-goal-dot-${task.taskId}`}
-                          aria-hidden="true"
-                          className="absolute h-1.5 w-1.5 rounded-full bg-primary"
-                        />
-                      ) : null}
-                    </span>
+                    )}
                   </span>
                 ) : priorityReason === 'waiting' ? (
                   <span
@@ -2971,9 +2974,7 @@ function ProjectItem({
                   testId={`project-runtime-task-sortable-${project.id}`}
                   className="space-y-0.5"
                   items={visibleRuntimeTaskItems}
-                  getId={({ workspace, task }) =>
-                    `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
-                  }
+                  getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
                   getLabel={({ task }) => task.title}
                   getExternalDragData={({ workspace, task }) => ({
                     paneKey: getWorkbenchPaneKey({
@@ -3562,7 +3563,7 @@ export function DesktopSidebar({
   const priorityViewSources = useMemo<DesktopSidebarPrioritySource<RuntimePriorityTaskItem>[]>(
     () =>
       allPriorityViewTaskItems.map(item => ({
-        key: getRuntimePriorityTaskKey(item.workspace, item.task),
+        key: getRuntimeTaskSortableId(item.workspace, item.task),
         item,
         pinned: Boolean(item.task.pinned),
         pinnedOrder: item.task.pinnedOrder ?? Number.MAX_SAFE_INTEGER,
@@ -4283,7 +4284,7 @@ export function DesktopSidebar({
                 priorityItems={priorityView.priorityItems}
                 pinnedItems={priorityView.pinnedItems}
                 recentGroups={priorityView.recentGroups}
-                getTaskKey={item => getRuntimePriorityTaskKey(item.workspace, item.task)}
+                getTaskKey={item => getRuntimeTaskSortableId(item.workspace, item.task)}
                 showPinned={priorityShowPinned}
                 onTogglePinned={() => setPriorityShowPinned(showPinned => !showPinned)}
                 canMarkAllAsRead={
@@ -4345,9 +4346,7 @@ export function DesktopSidebar({
                         testId="pinned-runtime-task-sortable-list"
                         className="space-y-0.5"
                         items={pinnedTaskItems}
-                        getId={({ workspace, task }) =>
-                          `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
-                        }
+                        getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
                         getLabel={({ task }) => task.title}
                         getExternalDragData={({ workspace, task }) => ({
                           paneKey: getWorkbenchPaneKey({
@@ -4864,9 +4863,7 @@ export function DesktopSidebar({
                           testId="runtime-chat-task-sortable-list"
                           className="space-y-0.5"
                           items={regularChatTaskItems}
-                          getId={({ workspace, task }) =>
-                            `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
-                          }
+                          getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
                           getLabel={({ task }) => task.title}
                           getExternalDragData={({ workspace, task }) => ({
                             paneKey: getWorkbenchPaneKey({
