@@ -1132,10 +1132,15 @@ impl Drop for CodexThreadUnsubscribeObservation {
     }
 }
 
-fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerSharedState>> {
+fn shared_codex_app_server_states(
+) -> &'static StdMutex<HashMap<String, Arc<Mutex<CodexAppServerSharedState>>>> {
     static STATES: OnceLock<StdMutex<HashMap<String, Arc<Mutex<CodexAppServerSharedState>>>>> =
         OnceLock::new();
-    let states = STATES.get_or_init(|| StdMutex::new(HashMap::new()));
+    STATES.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerSharedState>> {
+    let states = shared_codex_app_server_states();
     let mut states = states
         .lock()
         .expect("Codex app-server shared state registry should not be poisoned");
@@ -1143,6 +1148,35 @@ fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerShared
         .entry(binary.to_owned())
         .or_insert_with(|| Arc::new(Mutex::new(CodexAppServerSharedState::default())))
         .clone()
+}
+
+/// Terminates every shared Codex app-server owned by this executor.
+///
+/// The desktop app owns this executor process: once its sidecar stops, the
+/// agents it was driving must stop with it. Leaving them alive also strands a
+/// parked stdio read on the blocking pool, and Tokio's runtime shutdown waits
+/// for blocking tasks without a timeout.
+pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
+    let states = {
+        let states = shared_codex_app_server_states()
+            .lock()
+            .expect("Codex app-server shared state registry should not be poisoned");
+        states.values().cloned().collect::<Vec<_>>()
+    };
+    let mut terminated = 0;
+    for state in states {
+        let mut state = state.lock().await;
+        if state.process.take().is_some() {
+            terminated += 1;
+        }
+    }
+    if terminated > 0 {
+        log_executor_event(
+            "codex app-server processes terminated",
+            &[("count", terminated.to_string())],
+        );
+    }
+    terminated
 }
 
 #[allow(dead_code)]
@@ -3199,6 +3233,14 @@ fn signal_codex_app_server_child(child: &mut Child) {
             let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGTERM);
             let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGKILL);
         }
+        return;
+    }
+
+    // Windows has no graceful signal for a windowless console child, so take the
+    // whole tree down: the app-server owns tool subprocesses of its own.
+    #[cfg(windows)]
+    if let Some(process_id) = child.id() {
+        crate::process::kill_windows_process_tree(process_id);
         return;
     }
 

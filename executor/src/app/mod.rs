@@ -155,7 +155,7 @@ pub async fn run_with_shell_environment(
         reserve_executor_stdout_for_protocol();
     }
 
-    match (plan.http_server, plan.local_sidecar) {
+    let outcome = match (plan.http_server, plan.local_sidecar) {
         (Some(http_server), None) => server::serve(http_server.server_config())
             .await
             .map_err(AppError::Server),
@@ -173,7 +173,12 @@ pub async fn run_with_shell_environment(
         (None, None) => Err(AppError::Server(
             "startup plan has no runtime target".to_owned(),
         )),
-    }
+    };
+    // The app endpoint stopping means the desktop app is gone: take the agent
+    // processes it drove down with us instead of letting them outlive this
+    // executor, and release the blocking reads parked on their stdio.
+    crate::agents::terminate_agent_processes().await;
+    outcome
 }
 
 fn log_shell_environment_load(result: Option<Result<Option<ShellEnvironmentLoad>, String>>) {

@@ -2,12 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::env;
+use std::{env, time::Duration};
 
 #[cfg(unix)]
 use std::thread;
 
 use wegent_executor::app::cli::CliArgs;
+
+/// Upper bound for tearing the runtime down once the app side is gone.
+///
+/// Tokio's runtime shutdown waits for the blocking pool without a timeout, and
+/// the blocking pool holds the child stdio reads that keep this process alive.
+/// The bound keeps the exit deterministic instead of relying on the app to
+/// force-kill the tree.
+const RUNTIME_SHUTDOWN_BUDGET: Duration = Duration::from_secs(2);
 
 #[cfg(any(target_os = "macos", test))]
 const OPEN_FILES_SOFT_LIMIT: libc::rlim_t = 65_536;
@@ -132,12 +140,26 @@ fn main() {
     } else {
         None
     };
-    if let Err(error) = runtime().block_on(wegent_executor::app::run_with_shell_environment(
+    let runtime_instance = runtime();
+    let outcome = runtime_instance.block_on(wegent_executor::app::run_with_shell_environment(
         args,
         shell_environment,
-    )) {
+    ));
+    shutdown_runtime(runtime_instance);
+    if let Err(error) = outcome {
         wegent_executor::logging::write_executor_error_line(&error.to_string());
         std::process::exit(error.exit_code());
+    }
+}
+
+fn shutdown_runtime(runtime_instance: tokio::runtime::Runtime) {
+    let started = std::time::Instant::now();
+    runtime_instance.shutdown_timeout(RUNTIME_SHUTDOWN_BUDGET);
+    if started.elapsed() >= RUNTIME_SHUTDOWN_BUDGET {
+        wegent_executor::logging::write_executor_log_line(&format!(
+            "executor runtime shutdown exceeded {}ms; exiting without draining blocking tasks",
+            RUNTIME_SHUTDOWN_BUDGET.as_millis()
+        ));
     }
 }
 
