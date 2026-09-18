@@ -272,6 +272,14 @@ class ResponseCreateInput(BaseModel):
         default=False,
         description="If True, return immediately with 'in_progress' status and run task in background",
     )
+    omit_mcp_binary_output: bool = Field(
+        default=False,
+        description="If True, replace base64 media payloads (images, audio, video) "
+        "in MCP tool output with a compact placeholder such as "
+        "'<image/jpeg payload omitted: 2048 bytes>' instead of returning the raw "
+        "bytes. Disabled by default, so existing callers keep receiving the raw "
+        "MCP tool output.",
+    )
     reasoning: Optional[ReasoningConfig] = Field(
         default=None,
         description="Configuration for model reasoning/thinking. Supported for gpt-5 and o-series models. "

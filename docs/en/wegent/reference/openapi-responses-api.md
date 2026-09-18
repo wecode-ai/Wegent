@@ -51,6 +51,21 @@ POST /api/v1/responses
 | `previous_response_id` | string | No | Previous response ID for follow-up conversations |
 | `reasoning` | object | No | Model reasoning configuration with `effort` and optional `summary` fields |
 | `tools` | array | No | Wegent custom tools configuration |
+| `omit_mcp_binary_output` | boolean | No | Replace media payloads (base64 images, audio, and video) in MCP tool output with a summary placeholder (default: `false`, raw output is returned) |
+
+#### MCP binary output
+
+MCP tools that fetch media answer with base64 payloads, which bloats the response body and can break caller parsers. With `omit_mcp_binary_output` set to `true`, media payloads in `mcp_call` items are replaced with a summary placeholder such as `<image/jpeg payload omitted: 2048 bytes>`:
+
+```json
+{
+  "model": "default#my-assistant",
+  "input": "Download this image and summarise it",
+  "omit_mcp_binary_output": true
+}
+```
+
+Text output is always returned unchanged, and model calls still receive the complete original content, so model output is unaffected.
 
 #### Model Format
 
@@ -491,3 +506,4 @@ This appends to the same task, maintaining conversation context.
 - Bot/Ghost MCP tools configured in the CRD are always available
 - Use `wegent_chat_bot` tool to enable full server-side capabilities
 - Streaming is only supported for Chat Shell type Teams
+- Raw `mcp_call` output is returned by default; set `omit_mcp_binary_output` to `true` to replace media payloads such as base64 images with a summary placeholder like `<image/jpeg payload omitted: 2048 bytes>`. Non-media output is returned unchanged and model calls still use the complete original content
