@@ -143,6 +143,10 @@ export function supportsRemoteSessions(device: DeviceLike, deviceId?: string | n
   return routeKind ? routeKind === 'remote-relay' : isRemoteDevice(device)
 }
 
+export function supportsVncDesktop(device: DeviceLike, deviceId?: string | null): boolean {
+  return isClaudeCodeDevice(device) && supportsCloudSessions(device, deviceId)
+}
+
 export function isDeviceInteractiveSessionEnabled(
   device: Pick<DeviceInfo, 'runtime_features'>,
   session: 'codeServer' | 'terminal'

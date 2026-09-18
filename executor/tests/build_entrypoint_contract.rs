@@ -163,6 +163,18 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(device_dockerfile.contains("ENV WEGENT_WORKSPACE_ROOTS=/home/wegent"));
     assert!(device_dockerfile.contains("ENV DEVICE_CODE_SERVER_ENABLED=true"));
     assert!(device_dockerfile.contains("ENV DEVICE_TERMINAL_ENABLED=true"));
+    assert!(device_dockerfile.contains("ENV DEVICE_VNC_DESKTOP_ENABLED=true"));
+    assert!(device_dockerfile.contains("ENV DEVICE_VNC_RFB_ADDR=127.0.0.1:5901"));
+    for package in [
+        "dbus-x11",
+        "tigervnc-standalone-server",
+        "tigervnc-tools",
+        "xclip",
+        "xfce4",
+        "xfce4-terminal",
+    ] {
+        assert!(device_dockerfile.contains(package));
+    }
     assert!(device_dockerfile.contains(
         "DEVICE_CODE_SERVER_ENABLED=\"$(normalize_enabled_flag DEVICE_CODE_SERVER_ENABLED)\""
     ));
@@ -171,6 +183,12 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(device_dockerfile.contains(
         "export DEVICE_SESSION_GATEWAY_ENABLED DEVICE_CODE_SERVER_ENABLED DEVICE_TERMINAL_ENABLED"
     ));
+    assert!(device_dockerfile.contains(
+        "DEVICE_VNC_DESKTOP_ENABLED=\"$(normalize_enabled_flag DEVICE_VNC_DESKTOP_ENABLED)\""
+    ));
+    assert!(device_dockerfile.contains("tigervncserver :1"));
+    assert!(device_dockerfile.contains("-localhost yes"));
+    assert!(device_dockerfile.contains("-SecurityTypes None"));
     assert!(!device_dockerfile.contains(
         "export DEVICE_CODE_SERVER_ENABLED=\"$(normalize_enabled_flag DEVICE_CODE_SERVER_ENABLED)\""
     ));

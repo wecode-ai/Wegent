@@ -1156,12 +1156,14 @@ def test_remote_command_policy_separates_read_only_and_mutating_keys():
         "workspace_tree",
         "workspace_read_text_file",
         "workspace_read_file_chunk",
+        "vnc_clipboard_read",
     } <= REMOTE_READ_ONLY_COMMAND_KEYS
     assert {
         "environment_prepare",
         "git_checkout",
         "git_commit",
         "git_push",
+        "vnc_clipboard_write",
     } <= REMOTE_MUTATING_COMMAND_KEYS
     assert INTERNAL_DEVICE_COMMAND_KEYS == {
         "environment_prepare",

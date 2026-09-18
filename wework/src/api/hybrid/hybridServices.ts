@@ -792,6 +792,9 @@ export function createHybridWorkbenchServices(
       if (isLocalDeviceId(deviceId)) {
         return localServices.deviceApi.executeCommand(deviceId, data)
       }
+      if (data.command_key === 'vnc_clipboard_read' || data.command_key === 'vnc_clipboard_write') {
+        return cloudServices.deviceApi.executeCommand(deviceId, data)
+      }
       return cloudRuntimeIpc.request<DeviceCommandResponse>(
         'device.execute_command',
         data,

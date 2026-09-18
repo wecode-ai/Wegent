@@ -30,10 +30,19 @@ DEFAULT_REMOTE_DEVICE_EXECUTOR_INSTALL_URL = (
 DEVICE_SESSION_GATEWAY_PORT = 17888
 # The executor home identity is consumed by the container image entrypoint,
 # which refuses to reuse a volume recorded under a different device. Host
-# processes keep no such marker, so the key stays container-only. Worktree
-# persistence is declared for both variants: the container pins a named volume
-# and the process script pins a stable EXECUTOR_HOME under $HOME.
-CONTAINER_ONLY_ENV_KEYS = frozenset({"WEGENT_EXECUTOR_HOME_ID"})
+# processes keep no such marker, so the key stays container-only. The VNC
+# desktop keys describe the managed device image, which alone installs
+# TigerVNC and the session gateway. Worktree persistence is declared for both
+# variants: the container pins a named volume and the process script pins a
+# stable EXECUTOR_HOME under $HOME.
+CONTAINER_ONLY_ENV_KEYS = frozenset(
+    {
+        "WEGENT_EXECUTOR_HOME_ID",
+        "DEVICE_VNC_DESKTOP_ENABLED",
+        "DEVICE_VNC_RFB_ADDR",
+        "DEVICE_VNC_CLIPBOARD_MODE",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -271,6 +280,9 @@ class DefaultRemoteDeviceCommandProvider:
             "EXECUTOR_MODE": "local",
             "DEVICE_CODE_SERVER_ENABLED": "true",
             "DEVICE_TERMINAL_ENABLED": "true",
+            "DEVICE_VNC_DESKTOP_ENABLED": "true",
+            "DEVICE_VNC_RFB_ADDR": "127.0.0.1:5901",
+            "DEVICE_VNC_CLIPBOARD_MODE": "text",
             "WEGENT_EXECUTOR_HOME_ID": context.device_id,
             "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED": "true",
             "WEGENT_BACKEND_URL": backend_url,
