@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -24,6 +25,12 @@ from typing import Any, AsyncIterator
 
 import aiohttp
 from sqlalchemy.orm import Session
+
+if sys.version_info >= (3, 11):
+    from builtins import BaseExceptionGroup
+else:  # pragma: no cover - the declared Python 3.10 floor
+    # anyio, which raises the group, depends on this backport below 3.11.
+    from exceptiongroup import BaseExceptionGroup
 
 from app.core.async_utils import AsyncSessionManager
 from app.core.config import settings

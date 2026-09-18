@@ -13,6 +13,7 @@ contract coverage instead of rewriting it. DingTalk is the reference adapter.
 
 import json
 import logging
+import sys
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
@@ -20,6 +21,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.orm import Session
+
+if sys.version_info >= (3, 11):
+    from builtins import ExceptionGroup
+else:  # pragma: no cover - the declared Python 3.10 floor
+    # anyio, which raises the group, depends on this backport below 3.11.
+    from exceptiongroup import ExceptionGroup
 
 from app.models.user import User
 from app.services.knowledge.external_document_providers import (
