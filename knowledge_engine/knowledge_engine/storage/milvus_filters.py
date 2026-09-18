@@ -18,19 +18,18 @@ loudly, so an unsupported request can never be dropped or widened into a full
 knowledge base read.
 
 One condition carries no constraint in the shared flat-condition contract when
-it has no key or no value; that shape is skipped rather than rejected, because
-callers already send it for "no filter on this field".
+its key and operator are supported and it has no value; that shape is skipped
+rather than rejected, because callers already send it for "no filter on this
+field". Everything else is validated first: a missing key, an unsupported key
+or an unsupported operator fails even when the value is empty.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from knowledge_engine.retrieval.filters import (
-    iter_valid_conditions,
-    normalize_metadata_operator,
-)
+from knowledge_engine.retrieval.filters import normalize_metadata_operator
 from knowledge_engine.storage.milvus_native import (
     DOC_REF_KEY,
     ID_FIELD,
@@ -102,8 +101,12 @@ def compile_metadata_conditions(
         )
 
     terms = [
-        _compile_condition(condition, allow_document_scope=allow_document_scope)
-        for condition in iter_valid_conditions(metadata_condition)
+        term
+        for term in (
+            _compile_condition(condition, allow_document_scope=allow_document_scope)
+            for condition in conditions
+        )
+        if term is not None
     ]
     if not terms:
         return []
@@ -144,21 +147,34 @@ def _require_flat_conditions(
     return list(conditions)
 
 
-def _compile_condition(condition: Dict[str, Any], *, allow_document_scope: bool) -> str:
-    """Compile one supported condition into a single metadata comparison."""
-    key = str(condition.get("key"))
+def _compile_condition(
+    condition: Dict[str, Any], *, allow_document_scope: bool
+) -> Optional[str]:
+    """Compile one supported condition, or ``None`` when it carries no value.
+
+    The key, the internal scope and the operator are validated before the value
+    is looked at, so a key or operator this adapter cannot honour is never
+    hidden behind an empty value. Only a supported key with a supported
+    operator and no value expresses no constraint, and that shape is skipped.
+    """
+    key = condition.get("key")
+    if not isinstance(key, str) or not key:
+        raise ValueError(
+            "metadata_condition conditions require a non-empty string key."
+        )
     field = _condition_field(key, allow_document_scope=allow_document_scope)
     operator = normalize_metadata_operator(condition.get("operator"))
+    if operator not in SUPPORTED_OPERATORS:
+        raise ValueError(
+            f"metadata_condition operator '{operator}' is not supported; "
+            f"supported operators: {', '.join(SUPPORTED_OPERATORS)}."
+        )
     value = condition.get("value")
-
+    if value is None:
+        return None
     if operator == "eq":
         return f"{field} == {_literal(key, value)}"
-    if operator == "in":
-        return f"{field} in [{', '.join(_members(key, value))}]"
-    raise ValueError(
-        f"metadata_condition operator '{operator}' is not supported; "
-        f"supported operators: {', '.join(SUPPORTED_OPERATORS)}."
-    )
+    return f"{field} in [{', '.join(_members(key, value))}]"
 
 
 def _condition_field(key: str, *, allow_document_scope: bool) -> str:

@@ -2119,11 +2119,70 @@ def test_retrieve_skips_a_condition_without_a_constraint():
         retrieval_setting={"score_threshold": 0.0},
         metadata_condition={
             "operator": "and",
-            "conditions": [{"key": "filename", "operator": "eq", "value": None}],
+            "conditions": [
+                {"key": "filename", "operator": "eq", "value": None},
+                {"key": "file_name", "operator": "==", "value": None},
+                {"key": "file_type", "operator": "in"},
+            ],
         },
     )
 
-    assert 'metadata["filename"]' not in store.searches[0]["filter"]
+    expression = store.searches[0]["filter"]
+    assert 'metadata["knowledge_id"] == "1"' in expression
+    for key in ("filename", "file_name", "file_type"):
+        assert f'metadata["{key}"]' not in expression
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        {"key": "doc_ref", "operator": "eq", "value": None},
+        {"key": "id", "operator": "eq", "value": None},
+        {"key": "knowledge_id", "operator": "eq", "value": None},
+        {"key": "category", "operator": "eq", "value": None},
+        {"key": "filename", "operator": "gte", "value": None},
+        {"key": "filename", "operator": "contains", "value": None},
+        {"key": "", "operator": "eq", "value": None},
+        {"key": "", "operator": "eq", "value": "a.txt"},
+        {"operator": "eq", "value": "a.txt"},
+        {"key": 5, "operator": "eq", "value": None},
+    ],
+)
+def test_retrieve_validates_a_condition_before_its_empty_value(condition):
+    """An unusable key or operator never hides behind an empty value."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    with pytest.raises(ValueError):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=FakeEmbedModel([[1.0, 0.0]]),
+            retrieval_setting={"score_threshold": 0.0},
+            metadata_condition={"operator": "and", "conditions": [condition]},
+        )
+
+    assert store.searches == []
+
+
+def test_get_all_chunks_validates_a_condition_before_its_empty_value():
+    """The reading path validates the same way, with doc_ref as its own key."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    with pytest.raises(ValueError):
+        backend.get_all_chunks(
+            "1",
+            max_chunks=10,
+            metadata_condition={
+                "operator": "and",
+                "conditions": [{"key": "category", "operator": "eq"}],
+            },
+        )
+
+    assert store.queries == []
 
 
 def test_retrieve_answers_empty_for_a_scope_that_names_no_document():
