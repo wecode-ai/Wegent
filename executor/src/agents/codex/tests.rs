@@ -14,6 +14,53 @@ fn windows_router_auth_script_succeeds_after_reading_from_nul() {
     );
 }
 
+fn spawn_idle_app_server_child() -> Child {
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "pause"]);
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 60"]);
+        command
+    };
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("the idle app-server child should start")
+}
+
+#[tokio::test]
+async fn terminating_shared_app_servers_releases_every_registered_process() {
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().expect("the child should expose stdin");
+    let state = shared_codex_app_server_state("codex-app-server-termination-test");
+    state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::new(Mutex::new(HashMap::new())),
+        notifications: CodexNotificationHub::new(),
+        reader_task: tokio::spawn(async {}),
+    });
+
+    let terminated = terminate_shared_codex_app_servers().await;
+
+    assert!(
+        terminated >= 1,
+        "the registered app-server process was not terminated"
+    );
+    assert!(
+        state.lock().await.process.is_none(),
+        "the terminated app-server process stayed registered"
+    );
+}
+
 #[tokio::test]
 async fn codex_request_preparation_stops_when_cancelled() {
     let (cancel_tx, mut cancellation) = oneshot::channel();
