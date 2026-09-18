@@ -410,7 +410,15 @@ impl CodexAppServerClient {
                 return Ok(false);
             }
             if !allow_active_turns && !state.active_threads.is_empty() {
-                return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
+                log_codex_environment_change(
+                    "codex runtime proxy update deferred",
+                    "runtime_proxy_update",
+                    &state.runtime_proxy_env,
+                    &runtime_proxy_env,
+                    &state.active_threads,
+                );
+                replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
+                return Ok(true);
             }
             replace_proxy_environment(&mut state.runtime_proxy_env, runtime_proxy_env);
             state.process_environment.clear();
@@ -674,12 +682,14 @@ impl CodexAppServerClient {
             .unwrap_or(&empty_launch_environment);
         let process_environment =
             codex_process_environment(&state.runtime_proxy_env, launch_environment);
-        if state.process.is_some() && state.process_environment != process_environment {
-            if !state.active_threads.is_empty() {
-                return Err(
-                    "cannot change Codex app-server environment while a turn is active".to_owned(),
-                );
-            }
+        if state.process.is_some()
+            && codex_process_environment_requires_restart(
+                "rpc_request",
+                &state.process_environment,
+                &process_environment,
+                &state.active_threads,
+            )
+        {
             state.process = None;
             state.process_environment.clear();
         }
@@ -991,12 +1001,14 @@ impl CodexAppServerClient {
         let mut initialize_elapsed = None;
         let process_environment =
             codex_process_environment(&state.runtime_proxy_env, &BTreeMap::new());
-        if state.process.is_some() && state.process_environment != process_environment {
-            if !state.active_threads.is_empty() {
-                return Err(
-                    "cannot change Codex app-server environment while a turn is active".to_owned(),
-                );
-            }
+        if state.process.is_some()
+            && codex_process_environment_requires_restart(
+                "startup",
+                &state.process_environment,
+                &process_environment,
+                &state.active_threads,
+            )
+        {
             state.process = None;
             state.process_environment.clear();
         }
@@ -1039,10 +1051,14 @@ impl CodexAppServerClient {
         }
         let process_environment =
             codex_process_environment(&state.runtime_proxy_env, &launch_config.env);
-        if state.process.is_some() && state.process_environment != process_environment {
-            if !state.active_threads.is_empty() {
-                return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
-            }
+        if state.process.is_some()
+            && codex_process_environment_requires_restart(
+                "turn_start",
+                &state.process_environment,
+                &process_environment,
+                &state.active_threads,
+            )
+        {
             state.process = None;
             state.process_environment.clear();
         }
@@ -4007,6 +4023,73 @@ fn codex_process_environment(
     environment.extend(launch_env.clone());
     replace_proxy_environment(&mut environment, runtime_proxy_env.clone());
     environment
+}
+
+fn codex_process_environment_requires_restart(
+    source: &str,
+    current: &BTreeMap<String, String>,
+    requested: &BTreeMap<String, String>,
+    active_threads: &HashMap<String, usize>,
+) -> bool {
+    if current == requested {
+        return false;
+    }
+    let (event, restart) = if active_threads.is_empty() {
+        (
+            "codex shared app-server environment restart scheduled",
+            true,
+        )
+    } else {
+        ("codex shared app-server environment change deferred", false)
+    };
+    log_codex_environment_change(event, source, current, requested, active_threads);
+    restart
+}
+
+fn log_codex_environment_change(
+    event: &str,
+    source: &str,
+    current: &BTreeMap<String, String>,
+    requested: &BTreeMap<String, String>,
+    active_threads: &HashMap<String, usize>,
+) {
+    let fields = codex_environment_change_fields(source, current, requested, active_threads);
+    log_executor_event(event, &fields);
+}
+
+fn codex_environment_change_fields(
+    source: &str,
+    current: &BTreeMap<String, String>,
+    requested: &BTreeMap<String, String>,
+    active_threads: &HashMap<String, usize>,
+) -> Vec<(&'static str, String)> {
+    let current_keys = current.keys().cloned().collect::<BTreeSet<_>>();
+    let requested_keys = requested.keys().cloned().collect::<BTreeSet<_>>();
+    let added_keys = requested_keys
+        .difference(&current_keys)
+        .cloned()
+        .collect::<Vec<_>>();
+    let removed_keys = current_keys
+        .difference(&requested_keys)
+        .cloned()
+        .collect::<Vec<_>>();
+    let changed_keys = current_keys
+        .intersection(&requested_keys)
+        .filter(|key| current.get(*key) != requested.get(*key))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut active_thread_ids = active_threads.keys().cloned().collect::<Vec<_>>();
+    active_thread_ids.sort();
+    let active_turn_count = active_threads.values().sum::<usize>();
+    vec![
+        ("source", source.to_owned()),
+        ("added_env_keys", added_keys.join(",")),
+        ("removed_env_keys", removed_keys.join(",")),
+        ("changed_env_keys", changed_keys.join(",")),
+        ("active_thread_ids", active_thread_ids.join(",")),
+        ("active_thread_count", active_threads.len().to_string()),
+        ("active_turn_count", active_turn_count.to_string()),
+    ]
 }
 
 fn replace_proxy_environment(
