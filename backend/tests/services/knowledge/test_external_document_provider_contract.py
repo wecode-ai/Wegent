@@ -301,42 +301,82 @@ class TestDingTalkProviderContract(ProviderContractSuite):
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "message,error_code",
+        "envelope",
         [
-            ("The node does not exist", "external_source_missing"),
-            ("node 已被删除", "external_source_missing"),
-            ("No permission to access this node", "external_source_unavailable"),
-            ("当前账号无权访问该文档", "external_source_unavailable"),
+            # Real capture (2026-09-18): a deleted document, recycled upstream.
+            {
+                "success": False,
+                "errorCode": "invalidParameter.item.notFound",
+                "errorMsg": "workspace node has been recycled",
+                "logId": "2135ce2f17897129652262261e04fa",
+            },
+            # Real capture: a well-formed dentryUuid that never existed.
+            {
+                "success": False,
+                "errorCode": "invalidRequest.resource.notFound",
+                "errorMsg": "Data not found",
+                "logId": "2135ce2f17897129141858836e057e",
+            },
         ],
     )
     async def test_node_metadata_naming_a_gone_source_signals_unavailable(
-        self, test_user, monkeypatch, message, error_code
+        self, test_user, monkeypatch, envelope
     ):
         """A positively gone node keeps its reason distinct from a fetch failure."""
         self.configure_user(monkeypatch, test_user)
-        self.answer_document_info(monkeypatch, {"success": False, "message": message})
+        self.answer_document_info(monkeypatch, envelope)
 
         with pytest.raises(ExternalSourceUnavailableError) as excinfo:
             await self.make_provider().get_update_time(test_user, "probe-node")
 
-        assert excinfo.value.error_code == error_code
+        assert excinfo.value.error_code == "external_source_missing"
+        # The user-facing record keeps the provider's own message and logId:
+        # DingTalk support asks for the logId when troubleshooting.
+        assert envelope["errorMsg"] in str(excinfo.value)
+        assert envelope["logId"] in str(excinfo.value)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "result",
         [
+            # Real capture: a malformed nodeId is an input problem, not a
+            # gone source.
+            {
+                "success": False,
+                "errorCode": "invalidRequest.inputArgs.invalid",
+                "errorMsg": (
+                    "nodeId 格式不合法，非 URL 格式时 nodeId 须为 dentryUuid：32 位"
+                    "字母数字字符串。收到：nonexistent-node-12345（22 个字符）。"
+                ),
+                "logId": "2135ce2f17897129143658854e057e",
+            },
+            # Real capture (read path): the message names both not-exist and
+            # no-access under an input-args code. Without a captured revoked
+            # permission sample no permission classification is made.
+            {
+                "success": False,
+                "errorCode": "invalidRequest.inputArgs.invalid",
+                "errorMsg": (
+                    "指定的节点不存在或无权访问，请确认节点 ID 正确且您有权访问"
+                    "该节点。dentryUuid: 00000000000000000000000000000000"
+                ),
+                "logId": "2127f60017897129501712230e04ea",
+            },
+            # Unknown code: only captured codes may mark a source gone.
+            {"success": False, "errorCode": "server.internal.error"},
+            # No structured code at all.
+            {"success": False, "message": "rate limited, please retry"},
+            {"success": False},
             SimpleNamespace(
                 isError=True,
                 content=[SimpleNamespace(type="text", text="internal server error")],
             ),
-            {"success": False, "message": "rate limited, please retry"},
-            {"success": False},
         ],
     )
     async def test_metadata_failure_without_source_evidence_stays_transient(
         self, test_user, monkeypatch, result
     ):
-        """Only explicit evidence may turn a probe failure into a gone source."""
+        """Only captured error codes may turn a probe failure into a gone source."""
         from app.services.knowledge.external_document_providers import (
             ExternalDocumentFetchError,
         )
@@ -348,6 +388,12 @@ class TestDingTalkProviderContract(ProviderContractSuite):
             await self.make_provider().get_update_time(test_user, "probe-node")
 
         assert not isinstance(excinfo.value, ExternalSourceUnavailableError)
+        # A structured envelope failure keeps its provider detail for the
+        # user-facing record instead of collapsing to a generic wrapper.
+        if isinstance(result, dict) and result.get("errorCode"):
+            assert result["errorCode"] in str(excinfo.value)
+            if result.get("errorMsg"):
+                assert result["errorMsg"] in str(excinfo.value)
 
     @pytest.mark.asyncio
     async def test_fetch_turns_a_deleted_node_into_a_missing_source(
@@ -356,15 +402,22 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         provider = self.make_provider()
         self.configure_user(monkeypatch, test_user)
         self.create_resource(test_db, test_user, "deleted-copy", "Deleted Doc")
+        # Real capture: the node was deleted upstream and recycled.
         self.answer_document_info(
             monkeypatch,
-            {"success": False, "message": "The node does not exist"},
+            {
+                "success": False,
+                "errorCode": "invalidParameter.item.notFound",
+                "errorMsg": "workspace node has been recycled",
+                "logId": "2135ce2f17897129652262261e04fa",
+            },
         )
 
         with pytest.raises(ExternalSourceUnavailableError) as excinfo:
             await provider.fetch_content(test_db, test_user, "deleted-copy")
 
         assert excinfo.value.error_code == "external_source_missing"
+        assert "workspace node has been recycled" in str(excinfo.value)
 
     @staticmethod
     def answer_document_info(monkeypatch: pytest.MonkeyPatch, result: Any) -> None:
@@ -372,7 +425,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         if not isinstance(result, SimpleNamespace):
             result = SimpleNamespace(
                 isError=False,
-                # The provider sends raw UTF-8, so markers arrive verbatim.
+                # The provider sends raw UTF-8, so payloads arrive verbatim.
                 content=[
                     SimpleNamespace(
                         type="text", text=json.dumps(result, ensure_ascii=False)

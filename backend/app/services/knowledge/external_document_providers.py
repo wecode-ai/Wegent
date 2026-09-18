@@ -222,29 +222,17 @@ def _read_update_time(info: dict[str, Any], node_id: str) -> int | None:
     return update_time
 
 
-# DingTalk answers a gone node or a revoked permission as an unsuccessful
-# ``get_document_info`` envelope. These markers are the only evidence that may
-# turn a failed read into a recorded deletion; anything else stays transient.
-_SOURCE_MISSING_MARKERS = (
-    "not found",
-    "notfound",
-    "not exist",
-    "does not exist",
-    "no such",
-    "deleted",
-    "removed",
-    "不存在",
-    "已删除",
-    "已被删除",
-)
-_SOURCE_FORBIDDEN_MARKERS = (
-    "permission",
-    "forbidden",
-    "denied",
-    "unauthorized",
-    "no access",
-    "无权",
-    "没有权限",
+# Real captures from the DingTalk Docs MCP (2026-09-18): a deleted node
+# answers errorCode=invalidParameter.item.notFound ("workspace node has been
+# recycled"); a never-existing node answers invalidRequest.resource.notFound
+# ("Data not found"). The structured code is the only signal trusted to mark
+# a source gone; every other failure, including any permission wording,
+# stays transient until a real revoked-access sample is captured.
+_SOURCE_GONE_ERROR_CODES = frozenset(
+    {
+        "invalidParameter.item.notFound",
+        "invalidRequest.resource.notFound",
+    }
 )
 
 
@@ -261,31 +249,38 @@ def _mcp_result_text(result: Any) -> str:
 def _source_unavailable_error(result: Any) -> ExternalSourceUnavailableError | None:
     """Read a ``get_document_info`` result that positively reports a gone node.
 
-    Only a node named as missing/deleted, or an explicit access denial, counts.
-    A tool error, a timeout or an unreadable payload keeps its transient
-    classification, so a hiccup is never recorded as a deleted source.
+    Only a business envelope whose errorCode names the resource gone (recycled
+    or missing) counts. A tool error, a timeout or any other failure keeps its
+    transient classification, so a hiccup is never recorded as a deleted
+    source. The provider's own message and logId ride on the exception: they
+    are DingTalk's user-facing text and what its support asks for.
     """
-    text = _mcp_result_text(result)
-    if not getattr(result, "isError", False):
-        try:
-            payload = json.loads(text)
-        except (TypeError, ValueError):
-            payload = None
-        if isinstance(payload, dict) and payload.get("success") is True:
-            # A node we could read is neither missing nor revoked.
-            return None
-    lowered = text.lower()
-    if any(marker in lowered for marker in _SOURCE_MISSING_MARKERS):
-        return ExternalSourceUnavailableError(
-            "钉钉源文档不存在或已被删除",
-            error_code="external_source_missing",
-        )
-    if any(marker in lowered for marker in _SOURCE_FORBIDDEN_MARKERS):
-        return ExternalSourceUnavailableError(
-            "无权访问钉钉源文档",
-            error_code="external_source_unavailable",
-        )
-    return None
+    if getattr(result, "isError", False):
+        return None
+    try:
+        payload = json.loads(_mcp_result_text(result))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("success") is not False:
+        return None
+    if payload.get("errorCode") not in _SOURCE_GONE_ERROR_CODES:
+        return None
+    message = str(payload.get("errorMsg") or "").strip()
+    log_id = str(payload.get("logId") or "").strip()
+    detail = message or "钉钉源文档不存在或已被删除"
+    if log_id:
+        detail = f"{detail} (logId {log_id})"
+    return ExternalSourceUnavailableError(detail, error_code="external_source_missing")
+
+
+def _envelope_failure_detail(payload: Any) -> str:
+    """Append the provider's structured failure detail to a generic report."""
+    if not isinstance(payload, dict):
+        return ""
+    code = str(payload.get("errorCode") or "").strip()
+    message = str(payload.get("errorMsg") or "").strip()
+    detail = " ".join(part for part in (code, message) if part)
+    return f": {detail[:500]}" if detail else ""
 
 
 class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
@@ -581,7 +576,8 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         )
         if not succeeded:
             raise ExternalDocumentFetchError(
-                f"DingTalk MCP returned an unsuccessful response for {tool_name}"
+                f"DingTalk MCP returned an unsuccessful response for "
+                f"{tool_name}{_envelope_failure_detail(payload)}"
             )
         return payload
 

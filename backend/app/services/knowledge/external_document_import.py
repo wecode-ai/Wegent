@@ -618,7 +618,9 @@ def run_external_document_import(
             generation,
         )
     except ExternalSourceUnavailableError as exc:
-        _mark_external_source_unavailable(db, document_id, provider_id, generation)
+        _mark_external_source_unavailable(
+            db, document_id, provider_id, generation, error=exc
+        )
         logger.warning(
             "[External Import] Source of document %s is no longer accessible: %s",
             document_id,
@@ -640,23 +642,32 @@ def _mark_external_source_unavailable(
     document_id: int,
     provider_id: str,
     generation: int,
+    *,
+    error: ExternalSourceUnavailableError,
 ) -> None:
     """Mark the source inaccessible and record the initial import failure.
 
     The placeholder is kept for an explicit retry. The source is only marked
     when this attempt's failure actually landed; a stale generation must not
-    overwrite the outcome of a newer attempt.
+    overwrite the outcome of a newer attempt. The provider's own message
+    (with its logId) is what the user sees, per DingTalk's troubleshooting
+    guidance.
     """
+    message = str(error).strip()
     mark_document_index_failed(
         db=db,
         document_id=document_id,
         generation=generation,
         error=build_processing_error(
             stage=DocumentProcessingStage.SYSTEM,
-            code="external_source_unavailable",
+            code=error.error_code,
             message=(
-                "The external source is no longer accessible. Restore access "
-                "and retry the import."
+                message[:1000]
+                if message
+                else (
+                    "The external source is no longer accessible. Restore "
+                    "access and retry the import."
+                )
             ),
             retryable=True,
             generation=generation,

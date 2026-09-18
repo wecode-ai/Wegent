@@ -182,7 +182,9 @@ def _mark_source_inaccessible(
     db.commit()
 
 
-def _mark_sync_check_failed(db: Session, document: KnowledgeDocument) -> None:
+def _mark_sync_check_failed(
+    db: Session, document: KnowledgeDocument, message: str | None = None
+) -> None:
     """Record a check that proved nothing about the source.
 
     The check time always moves; an inconclusive check never replaces the
@@ -193,7 +195,12 @@ def _mark_sync_check_failed(db: Session, document: KnowledgeDocument) -> None:
         document.update_external_source_config(sync=sync)
     else:
         sync["last_error_code"] = SYNC_CHECK_FAILED_CODE
-        document.update_external_source_config(status="sync_error", sync=sync)
+        updates: dict[str, object] = {"status": "sync_error", "sync": sync}
+        # The provider's failure text is user-facing; keep the previous one
+        # when this attempt carries none.
+        if message and message.strip():
+            updates["last_error"] = message.strip()
+        document.update_external_source_config(**updates)
     db.commit()
 
 
@@ -232,7 +239,7 @@ def refresh_dingtalk_copy(
         )
         return False
     except ExternalDocumentFetchError as exc:
-        _mark_sync_check_failed(db, document)
+        _mark_sync_check_failed(db, document, str(exc))
         logger.warning(
             "[DingTalk Sync] probe failed document_id=%s generation=%s error=%s",
             document_id,

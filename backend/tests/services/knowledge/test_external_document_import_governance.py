@@ -460,10 +460,8 @@ class TestExternalSourceUnavailable:
         assert document.is_active is False
         external = document.source_config["external"]
         assert external["status"] == "inaccessible"
-        assert external["last_error"] == (
-            "The external source is no longer accessible. Restore access "
-            "and retry the import."
-        )
+        # The provider's own message is what the user sees, verbatim.
+        assert external["last_error"] == "node not found"
         error = document.processing_error_payload
         assert error is not None
         assert error["code"] == "external_source_unavailable"

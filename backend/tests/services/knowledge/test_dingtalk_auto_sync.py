@@ -525,7 +525,8 @@ def test_deleted_source_marks_the_copy_inaccessible_and_keeps_its_content(
 
     attachment_id = _serve_existing_content(test_db, imported_copy, "导入时的正文")
     live_update_time.side_effect = ExternalSourceUnavailableError(
-        "钉钉源文档不存在或已被删除", error_code="external_source_missing"
+        "workspace node has been recycled (logId 2135ce2f17897129652262261e04fa)",
+        error_code="external_source_missing",
     )
 
     assert (
@@ -536,7 +537,10 @@ def test_deleted_source_marks_the_copy_inaccessible_and_keeps_its_content(
     current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
     external = current.external_source_config
     assert external["status"] == "inaccessible"
-    assert external["last_error"] == "钉钉源文档不存在或已被删除"
+    assert (
+        external["last_error"]
+        == "workspace node has been recycled (logId 2135ce2f17897129652262261e04fa)"
+    )
     assert external["sync"]["last_error_code"] == "external_source_missing"
     assert external["sync"]["last_checked_at"]
     # The copy keeps serving its last successful body and index.
@@ -574,6 +578,8 @@ def test_transient_probe_failure_keeps_the_copy_usable(
     # A check that proves nothing about the source must not claim it is gone.
     assert external["status"] != "inaccessible"
     assert external["sync"]["last_error_code"] == "external_sync_check_failed"
+    # The transient reason itself stays visible to the user.
+    assert external["last_error"] == "DingTalk metadata read timed out"
     assert current.index_status == DocumentIndexStatus.SUCCESS
     assert current.is_active is True
     assert current.attachment_id == attachment_id
@@ -595,7 +601,8 @@ def test_repeated_probe_failure_keeps_the_recorded_reason(
 
     _serve_existing_content(test_db, imported_copy, "导入时的正文")
     live_update_time.side_effect = ExternalSourceUnavailableError(
-        "钉钉源文档不存在或已被删除", error_code="external_source_missing"
+        "workspace node has been recycled (logId 2135ce2f17897129652262261e04fa)",
+        error_code="external_source_missing",
     )
     assert not refresh_dingtalk_copy(
         test_db, imported_copy.id, imported_copy.index_generation
@@ -612,7 +619,10 @@ def test_repeated_probe_failure_keeps_the_recorded_reason(
     external = current.external_source_config
     # The later inconclusive check keeps the earlier specific reason.
     assert external["status"] == "inaccessible"
-    assert external["last_error"] == "钉钉源文档不存在或已被删除"
+    assert (
+        external["last_error"]
+        == "workspace node has been recycled (logId 2135ce2f17897129652262261e04fa)"
+    )
     assert external["sync"]["last_error_code"] == "external_source_missing"
 
 
@@ -630,7 +640,8 @@ def test_recovered_source_returns_to_accessible(
 
     _serve_existing_content(test_db, imported_copy, "导入时的正文")
     live_update_time.side_effect = ExternalSourceUnavailableError(
-        "钉钉源文档不存在或已被删除", error_code="external_source_missing"
+        "workspace node has been recycled (logId 2135ce2f17897129652262261e04fa)",
+        error_code="external_source_missing",
     )
     assert not refresh_dingtalk_copy(
         test_db, imported_copy.id, imported_copy.index_generation
@@ -664,7 +675,7 @@ def test_landed_body_restores_accessible_after_a_deleted_source(
 
     imported_copy.update_external_source_config(
         status="inaccessible",
-        last_error="钉钉源文档不存在或已被删除",
+        last_error="workspace node has been recycled (logId 2135ce2f17897129652262261e04fa)",
         sync={
             "last_checked_at": "2026-09-17T00:00:00+00:00",
             "last_error_code": "external_source_missing",
@@ -954,7 +965,8 @@ def test_unchanged_source_keeps_the_copy_name(
     [
         ExternalDocumentFetchError("DingTalk metadata read timed out"),
         ExternalSourceUnavailableError(
-            "钉钉源文档不存在或已被删除", error_code="external_source_missing"
+            "workspace node has been recycled (logId 2135ce2f17897129652262261e04fa)",
+            error_code="external_source_missing",
         ),
     ],
 )
