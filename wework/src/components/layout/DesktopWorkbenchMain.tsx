@@ -1,6 +1,7 @@
 import {
   memo,
   type MouseEvent as ReactMouseEvent,
+  type UIEvent,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -1861,9 +1862,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
   const workbenchScrollRef = useRef<HTMLDivElement | null>(null)
+  const workbenchScrollbarTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const conversationSurfaceRef = useRef<HTMLDivElement | null>(null)
   const [measuredWorkbenchContentWidth, setMeasuredWorkbenchContentWidth] = useState(0)
   const workbenchResizeObserverRef = useRef<ResizeObserver | null>(null)
+  const hideWorkbenchScrollbar = useCallback(() => {
+    clearTimeout(workbenchScrollbarTimeoutRef.current)
+    workbenchScrollRef.current?.removeAttribute('data-scrolling')
+  }, [])
+  const handleWorkbenchScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      hideWorkbenchScrollbar()
+      event.currentTarget.dataset.scrolling = 'true'
+      workbenchScrollbarTimeoutRef.current = setTimeout(hideWorkbenchScrollbar, 1000)
+    },
+    [hideWorkbenchScrollbar]
+  )
+
+  useEffect(() => hideWorkbenchScrollbar, [hideWorkbenchScrollbar])
   const setWorkbenchMainRef = useCallback((element: HTMLElement | null) => {
     workbenchResizeObserverRef.current?.disconnect()
     workbenchResizeObserverRef.current = null
@@ -4940,13 +4956,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           <div
             ref={workbenchScrollRef}
+            onScroll={handleWorkbenchScroll}
             data-testid="desktop-workbench-content"
             data-scroll-origin={hasConversation ? 'bottom' : 'top'}
             data-embedded-browser-label={defaultEmbeddedBrowserLabel}
             className={cn(
               'relative flex h-full min-w-0 flex-1',
               hasConversation
-                ? 'flex-col-reverse overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
+                ? 'scrollbar-auto-hide flex-col-reverse overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
                 : 'overflow-hidden',
               showPageTopBar && 'pt-11'
             )}
