@@ -61,10 +61,10 @@ match_kind = "exact"
 #methods = ["GET"]
 #path = "/api/wework-transcripts"
 #match_kind = "exact"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/startup"
-#match_kind = "exact"
+[[routes]]
+methods = ["GET"]
+path = "/api/startup"
+match_kind = "exact"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/tables"
