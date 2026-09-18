@@ -413,9 +413,19 @@ def _create_reader() -> IKindReader:
             result = ext.wrap(base)
             if result:
                 logger.info("Kind reader extension loaded")
-                return result
+                base = result
         except Exception as e:
             logger.warning(f"Failed to load kind reader extension: {e}")
+
+    if settings.KIND_READER_CACHE_ENABLED:
+        from app.services.readers.kind_cache import (
+            CachedKindReader,
+            install_kind_change_listener,
+        )
+
+        install_kind_change_listener()
+        logger.info("Kind reader Redis cache enabled")
+        return CachedKindReader(base)
 
     return base
 
