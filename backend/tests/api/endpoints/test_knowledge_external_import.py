@@ -946,6 +946,121 @@ class TestRetryExternalDocumentImport:
         assert response.status_code == 403
 
 
+def _create_synchronized_wiki_document(
+    test_db: Session,
+    user_id: int,
+    knowledge_base_id: int,
+    *,
+    index_status: str = "success",
+) -> KnowledgeDocument:
+    document = _create_failed_external_document(
+        test_db,
+        user_id,
+        knowledge_base_id,
+        index_status=index_status,
+    )
+    document.external_source.external_provider = "wiki"
+    document.external_source.external_resource_id = "v1:conn-primary:42"
+    document.attachment_id = 123
+    document.is_active = index_status == "success"
+    document.source_config = {
+        "external": {
+            "provider": "wiki",
+            "title": "Runbook",
+            "sync": {
+                "enabled": True,
+                "connection_id": "conn-primary",
+                "resource_id": "42",
+                "content_version": "2026-09-06T01:00:00Z",
+                "indexed_version": "2026-09-06T01:00:00Z",
+            },
+        }
+    }
+    test_db.commit()
+    test_db.refresh(document)
+    return document
+
+
+class TestSynchronizeExternalDocument:
+    def test_requeues_successful_sync_without_hiding_old_index(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_synchronized_wiki_document(test_db, test_user.id, kb_id)
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-sync"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["index_status"] == "queued"
+        assert response.json()["is_active"] is True
+        assert dispatched == [document.id]
+
+    def test_rejects_unsynchronized_external_document(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(
+            test_db, test_user.id, kb_id, index_status="failed"
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-sync"
+        )
+
+        assert response.status_code == 400
+        assert dispatched == []
+
+    def test_returns_conflict_while_sync_is_running(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_synchronized_wiki_document(
+            test_db, test_user.id, kb_id, index_status="queued"
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-sync"
+        )
+
+        assert response.status_code == 409
+        assert dispatched == []
+
+    def test_requires_manage_permission(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_synchronized_wiki_document(test_db, test_user.id, kb_id)
+        monkeypatch.setattr(
+            KnowledgeService,
+            "can_manage_knowledge_base_documents",
+            staticmethod(lambda db, kb_id, user_id: False),
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-sync"
+        )
+
+        assert response.status_code == 403
+
+
 class TestExternalImportFailureVisibility:
     def test_list_exposes_structured_failure_reason(
         self,

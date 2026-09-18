@@ -352,6 +352,9 @@
       "reindexFailed": "Failed to start reindex",
       "retryImportSuccess": "Import retry started",
       "retryImportFailed": "Failed to start import retry",
+      "resync": "Sync again",
+      "resyncSuccess": "Wiki synchronization started",
+      "resyncFailed": "Failed to start Wiki synchronization",
       "excelFileSizeExceeded": "File size exceeds the limit: Excel files ({{extension}}) must be {{limit}}MB or smaller for indexing. Current file size: {{size}}MB. Please reduce the file size or split into smaller files.",
       "openLink": "Open Link",
       "download": "Download",
@@ -368,13 +371,19 @@
       },
       "type": {
         "web": "Web Page",
-        "external": "External"
+        "external": "External",
+        "wiki": "Wiki"
       },
       "sourceInaccessible": "Source unavailable",
       "sourceInaccessibleHint": "The external source was deleted or access was revoked; restore access, then retry the import",
+      "sourceSyncFailed": "Synchronization failed",
+      "sourceSyncFailedHint": "The latest synchronization failed; existing local content remains available and will be retried",
+      "wikiSourceMissing": "Wiki source document not found",
+      "wikiSourceMissingHint": "The Wiki page was deleted; the knowledge base continues using the last successfully synchronized index",
       "externalSource": {
         "lastImportedAt": "Last imported {{time}}",
-        "accessible": "Source available"
+        "accessible": "Source available",
+        "wikiConnectionName": "Wiki connection: {{name}}"
       },
       "search": "Search documents",
       "searchInFolder": "Search documents in {{folder}}",
@@ -635,7 +644,12 @@
       "discardTitle": "Discard unsaved content?",
       "discardDescription": "Closing clears unsaved content from every source. Materials already added are not affected.",
       "keepEditing": "Keep editing",
-      "discard": "Discard and close"
+      "discard": "Discard and close",
+      "wiki": {
+        "entry": "External Wiki",
+        "noPermission": "No permission to bind external wiki documents",
+        "busy": "Another material is being processed. Please wait"
+      }
     },
     "permission": {
       "noAccess": "You do not have permission to perform this action",
@@ -1368,5 +1382,36 @@
       "worker_abandoned": "The worker stopped reporting and the run was reclaimed",
       "publish_refused": "The version was written but refused by the publish gate"
     }
+  },
+  "wikiSection": {
+    "synced_badge": "Synced Wiki",
+    "connection": "Wiki connection",
+    "loading": "Loading wiki bindings…",
+    "load_failed": "Failed to load wiki bindings",
+    "add_failed": "Failed to bind",
+    "remove_failed": "Failed to unbind",
+    "unbind": "Unbind",
+    "tree_empty": "No published pages inside the bound scopes",
+    "load_tree_failed": "Failed to load wiki pages",
+    "page_list_truncated": "This site exceeds the browsing limit, so only the most recently updated pages are shown. Ask an administrator to raise WIKI_TREE_MAX_PAGES to browse older pages.",
+    "connection_failed_tooltip": "Connection failed: {{message}}",
+    "need_connection": "Configure the external wiki connection in Settings → Integrations first",
+    "bound_title": "Bound documents",
+    "bound_empty": "No wiki documents bound yet",
+    "picker_title": "Pick wiki pages to bind (multi-select)",
+    "picker_search": "Search title or path",
+    "item_count": "({{count}})",
+    "select_all": "Select all",
+    "clear_selection": "Clear selection",
+    "select_directory": "Select directory \"{{name}}\"",
+    "clear_directory_selection": "Clear directory \"{{name}}\" selection",
+    "expand_directory": "Expand directory \"{{name}}\"",
+    "collapse_directory": "Collapse directory \"{{name}}\"",
+    "already_bound": "Bound",
+    "already_bound_n": "{{count}} wiki documents are already bound and were skipped",
+    "resynced_n": "Resynchronized {{count}} wiki documents",
+    "processing_n": "{{count}} wiki documents are already processing and were skipped",
+    "bind_selected": "Bind selected ({{count}})",
+    "bind_scope_success_n": "Bound {{count}} wiki documents"
   }
 }

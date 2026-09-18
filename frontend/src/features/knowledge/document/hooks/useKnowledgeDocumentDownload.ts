@@ -5,6 +5,8 @@
 import { useCallback } from 'react'
 
 import { downloadAttachment, isVideoFileName } from '@/apis/attachments'
+import type { KnowledgeDocument } from '@/types/knowledge'
+import { isSyncedWikiDocument } from '../utils/documentUtils'
 import { getKnowledgeVideoDownloader } from '../video-download-registry'
 
 /**
@@ -16,30 +18,26 @@ import { getKnowledgeVideoDownloader } from '../video-download-registry'
  * storage; it is used only after the caller has allowed the action.
  */
 export function useKnowledgeDocumentDownload() {
-  return useCallback(
-    async (document: {
-      id: number
-      attachment_id?: number | null
-      name: string
-      source_type: string
-    }): Promise<void> => {
-      if (!document.attachment_id || document.source_type !== 'file') return
+  return useCallback(async (document: KnowledgeDocument): Promise<void> => {
+    if (
+      !document.attachment_id ||
+      (document.source_type !== 'file' && !isSyncedWikiDocument(document))
+    )
+      return
 
-      if (isVideoFileName(document.name)) {
-        let downloader = getKnowledgeVideoDownloader()
-        if (!downloader) {
-          const { loadKBExtensions } = await import('../extension-loader')
-          await loadKBExtensions()
-          downloader = getKnowledgeVideoDownloader()
-        }
-        if (downloader) {
-          await downloader(document.attachment_id, document.name)
-          return
-        }
+    if (isVideoFileName(document.name)) {
+      let downloader = getKnowledgeVideoDownloader()
+      if (!downloader) {
+        const { loadKBExtensions } = await import('../extension-loader')
+        await loadKBExtensions()
+        downloader = getKnowledgeVideoDownloader()
       }
+      if (downloader) {
+        await downloader(document.attachment_id, document.name)
+        return
+      }
+    }
 
-      await downloadAttachment(document.attachment_id, document.name)
-    },
-    []
-  )
+    await downloadAttachment(document.attachment_id, document.name)
+  }, [])
 }

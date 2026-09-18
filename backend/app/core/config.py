@@ -338,6 +338,22 @@ class Settings(BaseSettings):
     EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_REQUESTS: int = 20
     EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_WINDOW_SECONDS: int = 60
 
+    # External Wiki synchronized import and page-picker configuration.
+    WIKIJS_GRAPHQL_TIMEOUT_SECONDS: int = 30  # Wiki.js connector per-request timeout
+    WIKI_TREE_MAX_PAGES: int = Field(
+        default=5000, ge=1
+    )  # Tree browse page-list upper bound
+    EXTERNAL_DOC_SYNC_ENABLED: bool = True
+    EXTERNAL_DOC_SYNC_CRON: str = "0 19 * * *"
+    EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE: int = 500
+    EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS: int = 10000
+    EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS: int = 2700
+    WIKI_SYNC_REMOTE_BATCH_SIZE: int = 500
+    EXTERNAL_DOC_SYNC_LOCK_TTL_SECONDS: int = 3600
+    KNOWLEDGE_ATTACHMENT_ORPHAN_RETENTION_HOURS: int = 24
+    KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_BATCH_SIZE: int = 200
+    KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS: int = 3600
+
     # Celery configuration
     CELERY_BROKER_URL: Optional[str] = None  # If None/empty, uses REDIS_URL
     CELERY_RESULT_BACKEND: Optional[str] = None  # If None/empty, uses REDIS_URL

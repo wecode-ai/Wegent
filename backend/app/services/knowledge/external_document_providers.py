@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 import aiohttp
 from sqlalchemy.orm import Session
@@ -29,10 +29,14 @@ from app.core.async_utils import AsyncSessionManager
 from app.core.config import settings
 from app.models.user import User
 from app.services.dingtalk_document_types import get_import_extension
+from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.plugin_upstream_fetch import UpstreamFetchError, validate_upstream_url
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.services.knowledge.external_sync_providers import ResolvedExternalDocument
 
 EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS = 180
 _SPREADSHEET_MCP_SERVICES = {
@@ -64,6 +68,15 @@ class ExternalSourceUnavailableError(ExternalDocumentFetchError):
     document's source as inaccessible; it is distinct from a transient fetch
     failure and the failed initial import may be retried.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "external_source_unavailable",
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
 
 
 class ExternalImportLostWriteError(RuntimeError):
@@ -151,10 +164,26 @@ class ExternalDocumentContent:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class PreparedExternalDocumentFetch:
+    """Provider-owned payload detached from the database Session."""
+
+    external_resource_id: str
+    payload: Any = field(repr=False)
+
+
 class ExternalDocumentProvider(ABC):
     """Contract every external document provider adapter must fulfil."""
 
     provider_id: str
+
+    def preflight_resolved_import(
+        self,
+        db: Session,
+        user: User,
+        resolved_documents: list[ResolvedExternalDocument],
+    ) -> None:
+        """Validate provider state immediately before resolved metadata is stored."""
 
     @abstractmethod
     def resolve_importable(
@@ -186,6 +215,35 @@ class ExternalDocumentProvider(ABC):
         resource is gone or access was revoked, ExternalDocumentFetchError
         for transient failures.
         """
+
+
+class DetachedExternalDocumentProvider(ExternalDocumentProvider):
+    """Provider whose remote fetch can run after releasing the DB Session."""
+
+    @abstractmethod
+    def prepare_content_fetch(
+        self,
+        db: Session,
+        user: User,
+        external_resource_id: str,
+    ) -> PreparedExternalDocumentFetch:
+        """Resolve database-backed metadata into a detached provider payload."""
+
+    @abstractmethod
+    async def fetch_prepared_content(
+        self, prepared: PreparedExternalDocumentFetch
+    ) -> ExternalDocumentContent:
+        """Fetch a prepared document body without a database Session."""
+
+    async def fetch_content(
+        self,
+        db: Session,
+        user: User,
+        external_resource_id: str,
+    ) -> ExternalDocumentContent:
+        """Fetch through the detached phases when called via the base contract."""
+        prepared = self.prepare_content_fetch(db, user, external_resource_id)
+        return await self.fetch_prepared_content(prepared)
 
 
 def _positive_update_time(value: Any) -> int | None:
@@ -518,7 +576,19 @@ def get_external_document_provider(
     provider_id: str,
 ) -> ExternalDocumentProvider | None:
     """Return the registered adapter for a provider ID, or None."""
-    return _EXTERNAL_DOCUMENT_PROVIDERS.get((provider_id or "").strip().lower())
+    normalized = (provider_id or "").strip().lower()
+    if (
+        normalized == WIKI_PROVIDER_ID
+        and normalized not in _EXTERNAL_DOCUMENT_PROVIDERS
+    ):
+        # Import lazily so the provider-neutral base contract remains usable on
+        # its own while the Wiki adapter can implement both provider seams.
+        from app.services.knowledge.external_sync_providers import (  # noqa: PLC0415
+            wiki_external_sync_provider,
+        )
+
+        register_external_document_provider(wiki_external_sync_provider)
+    return _EXTERNAL_DOCUMENT_PROVIDERS.get(normalized)
 
 
 register_external_document_provider(DingTalkExternalDocumentProvider())

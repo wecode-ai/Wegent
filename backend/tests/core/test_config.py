@@ -112,6 +112,11 @@ class TestSettings:
 
         assert build_settings_from_env().SCHEDULED_TASKS_ENABLED is False
 
+    @pytest.mark.parametrize("invalid_value", [0, -1])
+    def test_wiki_tree_page_limit_must_be_positive(self, invalid_value):
+        with pytest.raises(ValidationError):
+            build_settings(WIKI_TREE_MAX_PAGES=invalid_value)
+
     def test_plugin_publication_active_request_limit_must_be_positive(self):
         """Prevent capacity configuration from disabling publication globally."""
         with pytest.raises(
