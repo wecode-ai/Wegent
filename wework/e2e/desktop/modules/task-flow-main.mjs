@@ -2660,11 +2660,21 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
-        await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
-          text: `WEWORK_DESKTOP_E2E_TASK ${DEFAULT_ISSUE_ADDITIONAL_CONTEXT}`,
-          visible: true,
-          timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-        })
+        const restoredTaskId = taskRowTestId.replace('runtime-local-task-row-', '')
+        await waitForWorkbenchTask(
+          control,
+          restoredTaskId,
+          'The cloud Issue task row did not become the current runtime task'
+        )
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="work-item-guide-summary-title"]`,
+          {
+            text: `WEWORK_DESKTOP_E2E_TASK ${DEFAULT_ISSUE_ADDITIONAL_CONTEXT}`,
+            visible: true,
+            timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+          }
+        )
         await verifyExistingTaskBoardAssociation(control, associatedTaskTabTestId, {
           captureScreenshots: false,
         })
