@@ -35,9 +35,9 @@ import {
   X,
 } from "lucide-react";
 import {
-  IssueDetailAssigneeSelect,
   IssueDetailAttachments,
   IssueDetailPrioritySelect,
+  IssueDetailSearchableSelect,
   IssueDetailStatusSelect,
   IssueAutomationExecutionSummary,
   IssueWorkflowPlanSection,
@@ -1897,7 +1897,7 @@ export function TodoEditor(props: TodoEditorProps) {
           </section>
         </div>
       ) : null}
-      <IssueDetailAssigneeSelect
+      <IssueDetailSearchableSelect
         testId={
           isCreate ? "cloud-todo-create-assignee" : "cloud-todo-detail-assignee"
         }
@@ -1915,40 +1915,58 @@ export function TodoEditor(props: TodoEditorProps) {
         }}
         disabled={!canAssign || saving}
         className={overlayControlClass}
-        members={projectMembers}
-        agents={projectAgents}
-        teams={wegentTeams}
-        labels={{
-          empty: t("todo.add_assignee", "添加负责人"),
-          members: t("todo.members", "成员"),
-          agents: t("todo.agents", "机器人"),
-          teams: t("todo.agent_teams", "Wegent 智能体"),
-        }}
+        searchPlaceholder={t("todo.search_assignee", "搜索负责人")}
+        emptyLabel={t("todo.no_matching_assignee", "没有匹配的负责人")}
+        options={[
+          {
+            value: "",
+            label: t("todo.unassigned", "未指派"),
+          },
+          ...projectMembers.map((member) => ({
+            value: `user:${member.user_id}` as IssueAssigneeTarget,
+            label: member.user_name,
+            group: t("todo.members", "成员"),
+          })),
+          ...projectAgents.map((agent) => ({
+            value: `agent:${agent.id}` as IssueAssigneeTarget,
+            label: agent.name,
+            group: t("todo.agents", "机器人"),
+          })),
+          ...wegentTeams.map((team) => ({
+            value: `team:${team.id}` as IssueAssigneeTarget,
+            label: team.displayName || team.name,
+            group: t("todo.agent_teams", "Wegent 智能体"),
+          })),
+        ]}
       />
     </>
   );
   const parentSelect = (
-    <select
-      data-testid={
+    <IssueDetailSearchableSelect
+      testId={
         isCreate ? "cloud-todo-create-parent" : "cloud-todo-detail-parent"
       }
-      aria-label={t("todo.parent_issue", "父任务")}
+      accessibleLabel={t("todo.parent_issue", "父任务")}
       value={parentId}
-      onChange={(event) => setParentId(event.target.value)}
+      onChange={setParentId}
       disabled={!editable}
       className={overlayControlClass}
-    >
-      <option value="">
-        {isCreate
-          ? t("todo.top_level_issue", "顶层任务")
-          : t("todo.no_parent_issue", "无父任务")}
-      </option>
-      {parentOptions.map((candidate) => (
-        <option key={candidate.id} value={candidate.id}>
-          {candidate.id} · {candidate.title}
-        </option>
-      ))}
-    </select>
+      searchPlaceholder={t("todo.search_parent_issue", "搜索父任务")}
+      emptyLabel={t("todo.no_matching_parent_issue", "没有匹配的父任务")}
+      options={[
+        {
+          value: "",
+          label: isCreate
+            ? t("todo.top_level_issue", "顶层任务")
+            : t("todo.no_parent_issue", "无父任务"),
+        },
+        ...parentOptions.map((candidate) => ({
+          value: candidate.id,
+          label: `${candidate.id} · ${candidate.title}`,
+          searchText: `${candidate.id} ${candidate.title}`,
+        })),
+      ]}
+    />
   );
   const dueInput = (
     <input
@@ -2109,7 +2127,7 @@ export function TodoEditor(props: TodoEditorProps) {
             assigneeTeam?.name ??
             assigneeAgent?.name ??
             assignee?.user_name ??
-            t("common.add", "添加")}
+            t("todo.unassigned", "未指派")}
           <ChevronDown className="h-3 w-3 text-text-muted" />
           {assigneeSelect}
         </span>
@@ -2858,8 +2876,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             <CircleUserRound aria-hidden="true" size={15} />
                           )}
                           <strong title={assigneeName ?? undefined}>
-                            {assigneeName ??
-                              t("todo.add_assignee", "添加负责人")}
+                            {assigneeName ?? t("todo.unassigned", "未指派")}
                           </strong>
                           {canAssign ? (
                             <ChevronDown aria-hidden="true" size={13} />

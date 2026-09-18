@@ -1039,6 +1039,14 @@ semantics for all three.
   are supplied by the host conversation service. Do not fork card markup to bind
   those services. `ProjectBoardBody` owns all static toolbar icons and tooltips;
   both hosts use `ProjectBoardGroupPicker` for searchable grouping selection.
+  Issue 负责人和父 Issue 等候选数量可能增长的属性选择器必须使用可搜索弹层，
+  并在打开时聚焦搜索输入框。定位、外部点击、Escape 和关闭后的焦点恢复属于
+  共享弹层基础组件，不得在业务组件中重复实现。
+  Issue property pickers whose candidate lists can grow, including assignee and
+  parent Issue, must use a searchable popover and focus its search input when
+  opened. Positioning, outside-click handling, Escape and focus restoration
+  belong to the shared popover primitive and must not be reimplemented in
+  feature code.
   Desktop appearance and the Web collaboration scope obtain palette, typography
   and semantic aliases from `resolveThemeVariables`. Web retains its document's
   light/dark selection; desktop retains its user appearance preferences. Shared
