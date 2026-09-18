@@ -90,6 +90,21 @@ describe('RuntimeTaskCloseGuard', () => {
     expect(mocks.cancelMainWindowClose).not.toHaveBeenCalled()
   })
 
+  test('dismisses the close prompt with Escape without quitting', async () => {
+    render(<RuntimeTaskCloseGuard />)
+
+    await waitFor(() => expect(mocks.closeRequestHandler).toBeDefined())
+    act(() => {
+      mocks.closeRequestHandler?.()
+    })
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await waitFor(() => expect(mocks.cancelMainWindowClose).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('runtime-task-close-confirm-overlay')).not.toBeInTheDocument()
+    expect(mocks.quitApplication).not.toHaveBeenCalled()
+  })
+
   test('reopens the dialog when quitting completely fails', async () => {
     const error = new Error('native quit failed')
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
