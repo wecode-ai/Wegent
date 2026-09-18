@@ -433,7 +433,11 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         self.create_resource(test_db, test_user, "broken-read", "Broken Doc")
 
         async def broken_read(mcp_url, node_id, user):
-            raise ValueError("unexpected read failure")
+            # The MCP session wraps in-session failures in a task group.
+            raise ExceptionGroup(
+                "unhandled errors in a TaskGroup",
+                [ValueError("unexpected read failure")],
+            )
 
         monkeypatch.setattr(provider, "_fetch_document_content", broken_read)
 
@@ -443,7 +447,63 @@ class TestDingTalkProviderContract(ProviderContractSuite):
 
         # The class is how a deleted source is told apart from a broken session.
         assert "ValueError" in str(excinfo.value)
-        assert "type=ValueError" in caplog.text
+        assert "leaves=ValueError" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_fetch_unwraps_a_task_group_hiding_a_gone_source(
+        self, test_db, test_user, monkeypatch
+    ):
+        """The session teardown wrapper must not mask the classified reason."""
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.create_resource(test_db, test_user, "wrapped-read", "Wrapped Doc")
+
+        async def wrapped_read(mcp_url, node_id, user):
+            raise ExceptionGroup(
+                "unhandled errors in a TaskGroup",
+                [
+                    ExternalSourceUnavailableError(
+                        "workspace node has been recycled",
+                        error_code="external_source_missing",
+                    ),
+                    ValueError("teardown noise"),
+                ],
+            )
+
+        monkeypatch.setattr(provider, "_fetch_document_content", wrapped_read)
+
+        with pytest.raises(ExternalSourceUnavailableError) as excinfo:
+            await provider.fetch_content(test_db, test_user, "wrapped-read")
+
+        assert excinfo.value.error_code == "external_source_missing"
+        assert "workspace node has been recycled" in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_metadata_probe_unwraps_a_task_group_hiding_a_gone_source(
+        self, test_user, monkeypatch
+    ):
+        """The probe keeps the reason the session teardown wrapped."""
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.answer_document_info(monkeypatch, {})
+
+        def wrapped_info(result: Any) -> dict[str, Any]:
+            raise ExceptionGroup(
+                "unhandled errors in a TaskGroup",
+                [
+                    ExternalSourceUnavailableError(
+                        "workspace node has been recycled",
+                        error_code="external_source_missing",
+                    )
+                ],
+            )
+
+        monkeypatch.setattr(provider, "_read_document_info", wrapped_info)
+
+        with pytest.raises(ExternalSourceUnavailableError) as excinfo:
+            await provider.get_update_time(test_user, "probe-node")
+
+        assert excinfo.value.error_code == "external_source_missing"
 
     @staticmethod
     def answer_document_info(monkeypatch: pytest.MonkeyPatch, result: Any) -> None:

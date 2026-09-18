@@ -283,7 +283,7 @@ def _envelope_failure_detail(payload: Any) -> str:
     return f": {detail[:500]}" if detail else ""
 
 
-def _mcp_error_detail(exc: Exception) -> str:
+def _mcp_error_detail(exc: BaseException) -> str:
     """Read an MCP protocol error's structured payload, never transport text.
 
     A transport failure's message can embed the signed provider URL, so an
@@ -296,6 +296,39 @@ def _mcp_error_detail(exc: Exception) -> str:
         for part in (getattr(error, "code", None), getattr(error, "message", None))
         if part
     )
+
+
+def _leaf_errors(exc: BaseException) -> list[BaseException]:
+    """Flatten task-group wrappers into the failures that actually happened."""
+    if isinstance(exc, BaseExceptionGroup):
+        return [leaf for child in exc.exceptions for leaf in _leaf_errors(child)]
+    return [exc]
+
+
+def _read_failure(exc: BaseException) -> BaseException:
+    """Pick the failure to report, preferring the provider's own classification.
+
+    The MCP session runs inside an anyio task group, so a failure raised inside
+    it — a classified deleted source included — comes back wrapped in an
+    ``ExceptionGroup`` next to the session teardown noise, where the class that
+    carries the reason is no longer visible.
+    """
+    leaves = _leaf_errors(exc)
+    return next(
+        (leaf for leaf in leaves if isinstance(leaf, ExternalDocumentFetchError)),
+        leaves[0],
+    )
+
+
+def _failure_summary(exc: BaseException) -> str:
+    """Name every leaf of a wrapped failure without echoing transport text."""
+    names: list[str] = []
+    for leaf in _leaf_errors(exc):
+        detail = _mcp_error_detail(leaf)
+        names.append(
+            f"{type(leaf).__name__}:{detail}" if detail else type(leaf).__name__
+        )
+    return ",".join(names)[:500]
 
 
 class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
@@ -326,10 +359,14 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         except ExternalDocumentFetchError:
             raise
         except Exception as exc:
+            failure = _read_failure(exc)
+            if isinstance(failure, ExternalDocumentFetchError):
+                # The session teardown wrapper must not hide the reason.
+                raise failure
             # The cause class is enough to separate transport failures from MCP
             # protocol errors without echoing provider payloads into logs.
             raise ExternalDocumentFetchError(
-                f"DingTalk metadata read failed: {type(exc).__name__}"
+                f"DingTalk metadata read failed: {type(failure).__name__}"
             ) from None
         return _read_update_time(info, node_id)
 
@@ -417,15 +454,19 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         except ExternalDocumentFetchError:
             raise
         except Exception as exc:
+            failure = _read_failure(exc)
+            if isinstance(failure, ExternalDocumentFetchError):
+                # The session teardown wrapper must not hide the reason.
+                raise failure
             # Keep the failure class (and an MCP error payload) visible: without
             # it a deleted source and a broken session look identical.
             logger.warning(
-                "[DingTalk Provider] Content read failed type=%s detail=%s",
+                "[DingTalk Provider] Content read failed type=%s leaves=%s",
                 type(exc).__name__,
-                _mcp_error_detail(exc) or "none",
+                _failure_summary(exc),
             )
             raise ExternalDocumentFetchError(
-                f"DingTalk content read failed: {type(exc).__name__}"
+                f"DingTalk content read failed: {type(failure).__name__}"
             ) from None
         if update_time is not None:
             metadata = {**metadata, "source_update_time": update_time}
