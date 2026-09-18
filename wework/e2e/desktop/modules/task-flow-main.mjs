@@ -1224,9 +1224,6 @@ async function main() {
       ...(DESKTOP_SEGMENT === 'local-file-preview'
         ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
         : {}),
-      ...(DESKTOP_SEGMENT === 'running-conversation-history'
-        ? { WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS: '1500' }
-        : {}),
       WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
       WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
       WEWORK_E2E_CLOUD_TOKEN:
@@ -1289,6 +1286,11 @@ async function main() {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
+    if (DESKTOP_SEGMENT === 'running-conversation-history') {
+      appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS = '1500'
+    } else {
+      delete appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS
+    }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: desktopScenario?.electronLaunchArguments ?? [],
