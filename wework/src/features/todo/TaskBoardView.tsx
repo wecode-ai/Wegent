@@ -16,6 +16,7 @@ import {
 import { TaskBoardColumnCreateButton } from '@/features/todo/TaskBoardActions'
 import { runtimeMyWorkItems, type RuntimeMyWorkItem } from '@/features/todo/runtimeMyWork'
 import { columnDotClasses, columns } from '@/features/todo/todoShared'
+import { getRuntimeTaskReminderKey } from '@/features/workbench/runtimeTaskReminders'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
@@ -23,7 +24,9 @@ import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 interface TaskBoardViewProps {
   runtimeWork: RuntimeWorkListResponse | null
   runtimeTaskLifecycle: RuntimeTaskLifecycleStoreSnapshot
+  unreadRuntimeTaskKeys: ReadonlySet<string>
   onCreateTask: () => void
+  onMarkRuntimeTaskRead: (address: RuntimeTaskAddress) => void
   onOpenRuntimeTask: (address: RuntimeTaskAddress) => void
 }
 
@@ -48,7 +51,9 @@ function taskBinding(item: RuntimeMyWorkItem): CloudTodoBoardTaskBinding {
 export function TaskBoardView({
   runtimeWork,
   runtimeTaskLifecycle,
+  unreadRuntimeTaskKeys,
   onCreateTask,
+  onMarkRuntimeTaskRead,
   onOpenRuntimeTask,
 }: TaskBoardViewProps) {
   const { t } = useTranslation('common')
@@ -239,9 +244,13 @@ export function TaskBoardView({
         renderItem={(item, column, state) => (
           <CloudTodoBoardCard
             item={item}
+            unread={unreadRuntimeTaskKeys.has(getRuntimeTaskReminderKey(item.runtime_address))}
             processingStatus={item.status !== 'inbox'}
             taskBindings={[taskBinding(item)]}
-            onClick={() => onOpenRuntimeTask(item.runtime_address)}
+            onClick={() => {
+              onMarkRuntimeTaskRead(item.runtime_address)
+              onOpenRuntimeTask(item.runtime_address)
+            }}
             onArchive={() => undefined}
             onOpenRuntimeTask={onOpenRuntimeTask}
             display={boardCardDisplay}

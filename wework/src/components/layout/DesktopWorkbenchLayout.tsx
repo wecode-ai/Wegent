@@ -1134,7 +1134,9 @@ export function DesktopWorkbenchLayout({
               <TaskBoardView
                 runtimeWork={state.runtimeWork}
                 runtimeTaskLifecycle={runtimeTaskLifecycle}
+                unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}
                 onCreateTask={startNewChatOutsideHarness}
+                onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
                 onOpenRuntimeTask={address => {
                   void openRuntimeTaskOutsideHarness(address)
                 }}

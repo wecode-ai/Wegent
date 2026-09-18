@@ -6,6 +6,7 @@ import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { createProjectApi } from '@/api/projects'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { AuthContext } from '@/features/auth/useAuth'
 import { AppearanceProvider } from '@/features/appearance'
 import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -17,6 +18,7 @@ import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
 } from '@/features/workbench/runtimeConversationCache'
+import type { RuntimeTaskReminderState } from '@/features/workbench/runtimeTaskReminders'
 import {
   resolveTemporaryChatActiveModel,
   resolveTemporaryChatModelSelection,
@@ -1186,6 +1188,7 @@ describe('DesktopWorkbenchLayout', () => {
     workspaceFileApi?: WorkbenchContextValue['workspaceFileApi']
     workspaceTabId?: string
     runtimeWorkApi?: WorkbenchServices['runtimeWorkApi']
+    runtimeTaskReminders?: RuntimeTaskReminderState
     lifecycleTaskRunning?: boolean
     isAwaitingAssistantStart?: boolean
     isRuntimeTranscriptLoading?: boolean
@@ -1504,6 +1507,7 @@ describe('DesktopWorkbenchLayout', () => {
       unsubscribeRuntimeTaskNotifications:
         props.onUnsubscribeRuntimeTaskNotifications ??
         vi.fn().mockResolvedValue({ subscribed: false }),
+      runtimeTaskReminders: props.runtimeTaskReminders,
       refreshWorkLists: vi.fn().mockResolvedValue(undefined),
       refreshDevices: props.onRefreshDevices ?? vi.fn().mockResolvedValue(undefined),
       getRemoteDeviceStartupCommand: vi.fn().mockResolvedValue({ command: '' }),
@@ -3128,6 +3132,8 @@ describe('DesktopWorkbenchLayout', () => {
     const titlebarActionsPortal = document.createElement('div')
     titlebarActionsPortal.id = TITLEBAR_ACTIONS_PORTAL_ID
     document.body.append(titlebarActionsPortal)
+    const markRuntimeTaskRead = vi.fn()
+    const onOpenRuntimeTask = vi.fn().mockResolvedValue(undefined)
     const runtimeWork: RuntimeWorkListResponse = {
       projects: [],
       chats: [
@@ -3155,6 +3161,18 @@ describe('DesktopWorkbenchLayout', () => {
         {...baseProps}
         state={{ ...baseProps.state, runtimeWork }}
         projectWork={{ ...baseProps.projectWork, runtimeWork }}
+        runtimeTaskReminders={{
+          unreadTaskKeys: new Set(['device-1\0local-board-task']),
+          unreadCount: 1,
+          hasRunningTasks: false,
+          preferences: {
+            ...defaultAppPreferences,
+            taskCompletionNotificationsEnabled: true,
+          },
+          markRuntimeTaskRead,
+          items: [],
+        }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
       />
     )
 
@@ -3166,11 +3184,32 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('cloud-todo-column-dropzone-in_review-scrollbar')).toBeInTheDocument()
     expect(screen.getByTestId('task-view-board-transition')).toHaveClass('task-view-board-enter')
     expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveTextContent('本地看板任务')
+    expect(
+      screen.getByTestId('cloud-todo-card-unread-runtime:device-1:local-board-task')
+    ).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-add')).toHaveAccessibleName('新建任务')
     expect(screen.queryByTestId('cloud-todo-workspace')).not.toBeInTheDocument()
     expect(deliveryApiMock.listCloudProjects).not.toHaveBeenCalled()
     expect(window.location.pathname).toBe('/')
     expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-card-runtime:device-1:local-board-task'))
+    expect(markRuntimeTaskRead).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      taskId: 'local-board-task',
+      runtime: 'codex',
+      workspacePath: '/workspace/local-task',
+    })
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      taskId: 'local-board-task',
+      runtime: 'codex',
+      workspacePath: '/workspace/local-task',
+    })
+    expect(screen.queryByTestId('task-board-surface')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+    expect(screen.getByTestId('task-board-surface')).toHaveTextContent('本地看板任务')
 
     await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
     expect(screen.queryByTestId('task-board-surface')).not.toBeInTheDocument()
