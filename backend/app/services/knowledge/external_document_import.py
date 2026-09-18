@@ -39,7 +39,7 @@ from app.services.knowledge.folder_policy import assert_document_can_be_placed_i
 from app.services.knowledge.index_state_machine import (
     ACTIVE_INDEX_STATUSES,
     mark_document_index_enqueue_failed,
-    mark_document_index_failed,
+    mark_document_index_refresh_failed,
     prepare_document_index_enqueue,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
@@ -556,13 +556,13 @@ def run_external_document_import(
     """
     Fetch the external body, attach it, and start indexing.
 
-    Runs inside the Celery worker for one claimed ``generation``. Any failure
-    marks the document failed with a structured processing error (stale
-    generations are ignored by the state machine); the placeholder itself is
-    kept. A lost write right (document deleted or superseded mid-run) is not a
-    failure: this attempt simply stands down. When the provider reports the
-    source is gone or access was revoked during the initial import, the
-    placeholder is marked inaccessible and remains available for retry.
+    Runs inside the Celery worker for one claimed ``generation``. A failure
+    records a structured processing error (stale generations are ignored by the
+    state machine) and never deletes the document: a copy that already serves a
+    body keeps serving it, while a placeholder without one is marked failed for
+    retry. When the provider reports the source is gone or access was revoked,
+    the source is marked inaccessible. A lost write right (document deleted or
+    superseded mid-run) is not a failure: this attempt simply stands down.
     """
     from app.services.knowledge.orchestrator import knowledge_orchestrator
 
@@ -636,16 +636,17 @@ def _mark_external_source_unavailable(
     *,
     error: ExternalSourceUnavailableError,
 ) -> None:
-    """Mark the source inaccessible and record the initial import failure.
+    """Mark the source inaccessible and record the failed attempt.
 
-    The placeholder is kept for an explicit retry. The source is only marked
-    when this attempt's failure actually landed; a stale generation must not
-    overwrite the outcome of a newer attempt. The provider's own message
-    (with its logId) is what the user sees, per DingTalk's troubleshooting
-    guidance.
+    A copy that already serves a body keeps serving it, so only its source
+    health changes; a placeholder without one fails so the user can retry it.
+    The source is only marked when this attempt's failure actually landed; a
+    stale generation must not overwrite the outcome of a newer attempt. The
+    provider's own message (with its logId) is what the user sees, per
+    DingTalk's troubleshooting guidance.
     """
     message = str(error).strip()
-    mark_document_index_failed(
+    mark_document_index_refresh_failed(
         db=db,
         document_id=document_id,
         generation=generation,
@@ -673,8 +674,12 @@ def _mark_external_import_failed(
     provider_id: str,
     generation: int,
 ) -> None:
-    """Record the fetch failure on the document without deleting it."""
-    mark_document_index_failed(
+    """Record the fetch failure on the document without deleting it.
+
+    A copy that already serves a body keeps serving it and reports the failed
+    sync; a placeholder without one fails so the user can retry it.
+    """
+    mark_document_index_refresh_failed(
         db=db,
         document_id=document_id,
         generation=generation,

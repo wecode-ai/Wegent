@@ -428,12 +428,16 @@ _INDEX_SUCCEEDED_ALLOWED_STATUSES = {
 def _finalize_external_source_on_success(
     document: KnowledgeDocument,
 ) -> None:
-    """Record import completion without inferring source health from indexing."""
+    """Record when the copy last imported and which body that success served.
+
+    Source health is never inferred from indexing here.
+    """
     if not document.has_external_identity:
         return
 
     document.update_external_source_config(
         last_success_at=datetime.now(timezone.utc).isoformat(),
+        last_success_attachment_id=document.attachment_id,
     )
 
 
@@ -508,6 +512,107 @@ def mark_document_index_succeeded(
     return True
 
 
+def _load_active_index_attempt(
+    db: Session, document_id: int, generation: int
+) -> Optional[KnowledgeDocument]:
+    """Lock the document when this attempt still owns the active generation.
+
+    Returns ``None`` after rolling back when the attempt lost its write right
+    (the document is gone, or a newer generation took over), so no caller ever
+    finalizes a state it no longer owns.
+    """
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == document_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if document is None:
+        db.rollback()
+        return None
+
+    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
+    if (
+        document.index_generation != generation
+        or current_status not in ACTIVE_INDEX_STATUSES
+    ):
+        db.rollback()
+        return None
+    return document
+
+
+def _persist_attempt_failure(
+    document: KnowledgeDocument,
+    generation: int,
+    candidate: DocumentProcessingError,
+) -> DocumentProcessingError:
+    """Store the attempt's failure for the user and return what was stored."""
+    try:
+        persisted_error = DocumentProcessingError.model_validate(
+            {
+                **candidate.model_dump(),
+                "generation": generation,
+                "occurred_at": datetime.now(timezone.utc),
+            }
+        )
+    except (AttributeError, TypeError, ValidationError):
+        persisted_error = generic_processing_error(
+            generation=generation,
+            stage=DocumentProcessingStage.SYSTEM,
+        )
+
+    document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
+    document.updated_at = _utcnow()
+    return persisted_error
+
+
+def _write_source_health(
+    document: KnowledgeDocument,
+    status: str,
+    error: DocumentProcessingError,
+) -> None:
+    """Record source health without touching the document's index availability."""
+    if not document.has_external_identity:
+        return
+    document.update_external_source_config(status=status, last_error=error.message)
+
+
+def _mark_document_index_failed(
+    document: KnowledgeDocument,
+    generation: int,
+    candidate: DocumentProcessingError,
+) -> None:
+    """Record a failure that leaves the document with nothing to serve."""
+    persisted_error = _persist_attempt_failure(document, generation, candidate)
+    document.index_status = DocumentIndexStatus.FAILED
+    # Every "the source is gone" code marks the copy, not only the legacy
+    # spelling: the provider mints more than one, and matching a single
+    # hard-coded code silently drops the source state. Any other failure says
+    # nothing about the source, so it leaves that mark alone.
+    if persisted_error.code.startswith("external_source_"):
+        _write_source_health(document, "inaccessible", persisted_error)
+
+
+def _serves_previously_indexed_body(document: KnowledgeDocument) -> bool:
+    """Whether the copy still holds the body its last successful import indexed.
+
+    A refresh only replaces the attached body once the new one lands, so an
+    attempt that failed before that leaves the attachment the last successful
+    import indexed in place, and only that body's index is still in service.
+    Copies imported before that body was recorded fall back to the success
+    timestamp; one that never imported successfully has nothing to fall back
+    on.
+    """
+    external = document.external_source_config
+    if not document.attachment_id or not external:
+        return False
+    indexed_attachment_id = external.get("last_success_attachment_id")
+    if indexed_attachment_id is None:
+        return bool(external.get("last_success_at"))
+    return indexed_attachment_id == document.attachment_id
+
+
 @trace_sync(
     span_name="knowledge.mark_document_index_failed",
     tracer_name="knowledge.state_machine",
@@ -528,55 +633,19 @@ def mark_document_index_failed(
     The document itself is never deleted by a failure, so the user can retry
     the initial import on the same record.
     """
-    document = (
-        db.query(KnowledgeDocument)
-        .filter(KnowledgeDocument.id == document_id)
-        .with_for_update()
-        .populate_existing()
-        .first()
-    )
+    document = _load_active_index_attempt(db, document_id, generation)
     if document is None:
-        db.rollback()
         return False
 
-    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
-    if (
-        document.index_generation != generation
-        or current_status not in ACTIVE_INDEX_STATUSES
-    ):
-        db.rollback()
-        return False
-
-    candidate = error or generic_processing_error(
-        generation=generation,
-        stage=DocumentProcessingStage.SYSTEM,
-    )
-    try:
-        persisted_error = DocumentProcessingError.model_validate(
-            {
-                **candidate.model_dump(),
-                "generation": generation,
-                "occurred_at": datetime.now(timezone.utc),
-            }
-        )
-    except (AttributeError, TypeError, ValidationError):
-        persisted_error = generic_processing_error(
+    _mark_document_index_failed(
+        document,
+        generation,
+        error
+        or generic_processing_error(
             generation=generation,
             stage=DocumentProcessingStage.SYSTEM,
-        )
-
-    document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
-    document.index_status = DocumentIndexStatus.FAILED
-    document.updated_at = _utcnow()
-    # Every "the source is gone" code marks the copy, not only the legacy
-    # spelling: the provider mints more than one, and matching a single
-    # hard-coded code silently drops the source state.
-    if document.has_external_identity and persisted_error.code.startswith(
-        "external_source_"
-    ):
-        document.update_external_source_config(
-            status="inaccessible", last_error=persisted_error.message
-        )
+        ),
+    )
 
     db.commit()
     _record_transition(
@@ -584,6 +653,65 @@ def mark_document_index_failed(
         document_id=document_id,
         generation=generation,
         reason="finalized",
+    )
+    return True
+
+
+@trace_sync(
+    span_name="knowledge.mark_document_index_refresh_failed",
+    tracer_name="knowledge.state_machine",
+    extract_attributes=lambda db, document_id, generation: {
+        "knowledge.document_id": document_id,
+        "knowledge.index_generation": generation,
+    },
+)
+def mark_document_index_refresh_failed(
+    db: Session,
+    document_id: int,
+    generation: int,
+    *,
+    error: Optional[DocumentProcessingError] = None,
+) -> bool:
+    """Finalize a failed external import attempt without dropping served content.
+
+    A refresh replaces a body the copy already serves, so an attempt that
+    fetched no replacement leaves the previous body and its index untouched:
+    the failure is recorded (source health stays independent from index
+    health) while the copy keeps serving what it already had. An attempt with
+    no previously indexed body has nothing to fall back on and fails like the
+    initial import.
+    """
+    document = _load_active_index_attempt(db, document_id, generation)
+    if document is None:
+        return False
+
+    candidate = error or generic_processing_error(
+        generation=generation,
+        stage=DocumentProcessingStage.SYSTEM,
+    )
+    if _serves_previously_indexed_body(document):
+        persisted_error = _persist_attempt_failure(document, generation, candidate)
+        document.index_status = DocumentIndexStatus.SUCCESS
+        document.is_active = True
+        # The body and its index are still the ones the copy served; only the
+        # source's own health moved.
+        source_status = (
+            "inaccessible"
+            if persisted_error.code.startswith("external_source_")
+            else "sync_error"
+        )
+        _write_source_health(document, source_status, persisted_error)
+        reason = "served_body_kept"
+    else:
+        _mark_document_index_failed(document, generation, candidate)
+        reason = "finalized"
+
+    db.commit()
+    _record_transition(
+        "knowledge.index.finalize.failed",
+        document_id=document_id,
+        generation=generation,
+        reason=reason,
     )
     return True
 
