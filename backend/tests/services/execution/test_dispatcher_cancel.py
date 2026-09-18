@@ -296,3 +296,90 @@ async def test_dispatch_sse_cancels_while_waiting_for_event() -> None:
     emitted_events = [call.args[0] for call in emitter.emit.call_args_list]
     assert [event.type for event in emitted_events] == [EventType.CANCELLED.value]
     session_manager.unregister_stream.assert_awaited_once_with(request.subtask_id)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sse_fails_when_stream_becomes_idle() -> None:
+    dispatcher = ExecutionDispatcher()
+    request = _make_sse_request(subtask_id=60)
+    emitter = AsyncMock()
+    stream = _BlockingStream()
+    session_manager = AsyncMock()
+    session_manager.register_stream.return_value = asyncio.Event()
+    session_manager.is_cancelled.return_value = False
+
+    with (
+        patch.dict("sys.modules", {"openai": _build_fake_openai_module(stream)}),
+        patch(
+            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            return_value={
+                "model": "test-model",
+                "input": "hello",
+                "metadata": {},
+                "model_config": {},
+            },
+        ),
+        patch(
+            "app.services.execution.dispatcher._SSE_STREAM_IDLE_TIMEOUT_SECONDS",
+            0.01,
+        ),
+        patch("app.services.chat.storage.session.session_manager", session_manager),
+    ):
+        await asyncio.wait_for(
+            dispatcher._dispatch_sse(request, _sse_target(), emitter),
+            timeout=1,
+        )
+
+    assert stream.iteration_cancelled.is_set()
+    emitted_events = [call.args[0] for call in emitter.emit.call_args_list]
+    assert [event.type for event in emitted_events] == [EventType.ERROR.value]
+    assert emitted_events[0].error_code == "sse_stream_idle_timeout"
+    session_manager.unregister_stream.assert_awaited_once_with(request.subtask_id)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sse_fails_when_stream_startup_times_out() -> None:
+    dispatcher = ExecutionDispatcher()
+    request = _make_sse_request(subtask_id=61)
+    emitter = AsyncMock()
+    stream = _BlockingStream()
+    create_blocker = _BlockingCreate()
+    session_manager = AsyncMock()
+    session_manager.register_stream.return_value = asyncio.Event()
+    session_manager.is_cancelled.return_value = False
+
+    with (
+        patch.dict(
+            "sys.modules",
+            {
+                "openai": _build_fake_openai_module(
+                    stream,
+                    create_blocker=create_blocker,
+                )
+            },
+        ),
+        patch(
+            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            return_value={
+                "model": "test-model",
+                "input": "hello",
+                "metadata": {},
+                "model_config": {},
+            },
+        ),
+        patch(
+            "app.services.execution.dispatcher._SSE_STREAM_IDLE_TIMEOUT_SECONDS",
+            0.01,
+        ),
+        patch("app.services.chat.storage.session.session_manager", session_manager),
+    ):
+        await asyncio.wait_for(
+            dispatcher._dispatch_sse(request, _sse_target(), emitter),
+            timeout=1,
+        )
+
+    assert create_blocker.cancelled.is_set()
+    emitted_events = [call.args[0] for call in emitter.emit.call_args_list]
+    assert [event.type for event in emitted_events] == [EventType.ERROR.value]
+    assert emitted_events[0].error_code == "sse_stream_start_timeout"
+    session_manager.unregister_stream.assert_awaited_once_with(request.subtask_id)

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from openai import AsyncOpenAI
 
 from app.core.async_utils import run_in_main_loop
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.task_status import extract_task_error
 from app.stores.tasks import subtask_store, task_store
@@ -61,10 +62,15 @@ logger = logging.getLogger(__name__)
 
 _FRONTEND_ERROR_EMITTED_ATTR = "_frontend_error_emitted"
 _SSE_CANCEL_POLL_INTERVAL_SECONDS = 1.0
+_SSE_STREAM_IDLE_TIMEOUT_SECONDS = settings.CHAT_STREAM_IDLE_TIMEOUT_SECONDS
 
 
 class InvalidToolCallEventError(ValueError):
     """Raised when a Responses API tool event is missing its correlation ID."""
+
+
+class SSEStreamIdleTimeoutError(TimeoutError):
+    """Raised when a Chat Shell SSE stream stops producing events."""
 
 
 def _require_non_empty_tool_use_id(tool_use_id: Any, *, context: str) -> str:
@@ -1157,6 +1163,23 @@ class ExecutionDispatcher:
             )
 
     @staticmethod
+    async def _iterate_sse_stream_with_idle_timeout(stream: Any):
+        """Yield SSE events while enforcing a maximum silent period."""
+        while True:
+            try:
+                event = await asyncio.wait_for(
+                    stream.__anext__(),
+                    timeout=_SSE_STREAM_IDLE_TIMEOUT_SECONDS,
+                )
+            except StopAsyncIteration:
+                return
+            except asyncio.TimeoutError as exc:
+                raise SSEStreamIdleTimeoutError(
+                    "Chat Shell SSE stream became idle"
+                ) from exc
+            yield event
+
+    @staticmethod
     async def _cancel_sse_stream_open(
         stream_open_task: asyncio.Task[Any],
     ) -> None:
@@ -1329,6 +1352,9 @@ class ExecutionDispatcher:
         terminal_event_type = ""
         stream_open_task: Optional[asyncio.Task[Any]] = None
         stream_task: Optional[asyncio.Task[None]] = None
+        startup_timeout_task = asyncio.create_task(
+            asyncio.sleep(_SSE_STREAM_IDLE_TIMEOUT_SECONDS)
+        )
         cancel_task = asyncio.create_task(
             self._wait_for_sse_cancellation(
                 session_manager,
@@ -1356,30 +1382,11 @@ class ExecutionDispatcher:
                 )
             )
             done, _ = await asyncio.wait(
-                {stream_open_task, cancel_task},
+                {stream_open_task, cancel_task, startup_timeout_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
-            if stream_open_task not in done:
-                cancel_source = await cancel_task
-                cancelled = True
-                logger.info(
-                    "[ExecutionDispatcher] Cancellation detected while opening "
-                    "SSE stream: task_id=%d, subtask_id=%d, source=%s",
-                    request.task_id,
-                    request.subtask_id,
-                    cancel_source,
-                )
-                await self._cancel_sse_stream_open(stream_open_task)
-                await emitter.emit(
-                    ExecutionEvent(
-                        type=EventType.CANCELLED,
-                        task_id=request.task_id,
-                        subtask_id=request.subtask_id,
-                        message_id=request.message_id,
-                    )
-                )
-            else:
+            if stream_open_task in done:
                 stream_context = await stream_open_task
                 # Keep the response in an async context so cancellation closes
                 # the underlying httpx response immediately.
@@ -1409,7 +1416,9 @@ class ExecutionDispatcher:
                                 "subtask_id": str(request.subtask_id),
                             },
                         )
-                        async for event in stream:
+                        async for event in self._iterate_sse_stream_with_idle_timeout(
+                            stream
+                        ):
                             event_count += 1
                             event_type = getattr(event, "type", None)
                             if not event_type:
@@ -1509,7 +1518,39 @@ class ExecutionDispatcher:
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     if stream_task in done:
-                        await stream_task
+                        try:
+                            await stream_task
+                        except SSEStreamIdleTimeoutError:
+                            terminal_event_type = "sse_stream_idle_timeout"
+                            error_message = (
+                                "Chat Shell did not send a stream event within "
+                                f"{_SSE_STREAM_IDLE_TIMEOUT_SECONDS} seconds."
+                            )
+                            logger.warning(
+                                "[ExecutionDispatcher] SSE stream became idle: "
+                                "task_id=%d, subtask_id=%d, request_id=%s",
+                                request.task_id,
+                                request.subtask_id,
+                                request_id,
+                            )
+                            add_span_event(
+                                "sse.openai_stream_idle_timeout",
+                                {
+                                    "timeout_seconds": _SSE_STREAM_IDLE_TIMEOUT_SECONDS,
+                                    "task_id": str(request.task_id),
+                                    "subtask_id": str(request.subtask_id),
+                                },
+                            )
+                            await emitter.emit(
+                                ExecutionEvent(
+                                    type=EventType.ERROR,
+                                    task_id=request.task_id,
+                                    subtask_id=request.subtask_id,
+                                    message_id=request.message_id,
+                                    error=error_message,
+                                    error_code="sse_stream_idle_timeout",
+                                )
+                            )
                     else:
                         cancel_source = await cancel_task
                         cancelled = True
@@ -1566,6 +1607,57 @@ class ExecutionDispatcher:
                                 error_code="sse_stream_no_terminal",
                             )
                         )
+            elif cancel_task in done:
+                cancel_source = await cancel_task
+                cancelled = True
+                logger.info(
+                    "[ExecutionDispatcher] Cancellation detected while opening "
+                    "SSE stream: task_id=%d, subtask_id=%d, source=%s",
+                    request.task_id,
+                    request.subtask_id,
+                    cancel_source,
+                )
+                await self._cancel_sse_stream_open(stream_open_task)
+                await emitter.emit(
+                    ExecutionEvent(
+                        type=EventType.CANCELLED,
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                        message_id=request.message_id,
+                    )
+                )
+            else:
+                terminal_event_type = "sse_stream_start_timeout"
+                await self._cancel_sse_stream_open(stream_open_task)
+                error_message = (
+                    "Chat Shell did not establish a stream within "
+                    f"{_SSE_STREAM_IDLE_TIMEOUT_SECONDS} seconds."
+                )
+                logger.warning(
+                    "[ExecutionDispatcher] SSE stream startup timed out: "
+                    "task_id=%d, subtask_id=%d, request_id=%s",
+                    request.task_id,
+                    request.subtask_id,
+                    request_id,
+                )
+                add_span_event(
+                    "sse.openai_stream_start_timeout",
+                    {
+                        "timeout_seconds": _SSE_STREAM_IDLE_TIMEOUT_SECONDS,
+                        "task_id": str(request.task_id),
+                        "subtask_id": str(request.subtask_id),
+                    },
+                )
+                await emitter.emit(
+                    ExecutionEvent(
+                        type=EventType.ERROR,
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                        message_id=request.message_id,
+                        error=error_message,
+                        error_code="sse_stream_start_timeout",
+                    )
+                )
 
             logger.info(
                 "[ExecutionDispatcher] SSE stream completed: task_id=%d, "
@@ -1596,7 +1688,12 @@ class ExecutionDispatcher:
         finally:
             pending_tasks = [
                 task
-                for task in (stream_open_task, stream_task, cancel_task)
+                for task in (
+                    stream_open_task,
+                    stream_task,
+                    startup_timeout_task,
+                    cancel_task,
+                )
                 if task is not None and not task.done()
             ]
             for task in pending_tasks:
