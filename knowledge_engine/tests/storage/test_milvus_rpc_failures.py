@@ -111,7 +111,7 @@ def _store(client: _RecordingClient) -> MilvusDocumentStore:
     )
 
 
-def test_query_rows_bounds_the_rpc_with_the_configured_timeout():
+def test_query_rows_bounds_the_rpc_with_the_configured_timeout() -> None:
     client = _RecordingClient()
 
     _store(client).query_rows(

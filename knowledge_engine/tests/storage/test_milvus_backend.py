@@ -239,7 +239,7 @@ class FakeStore:
         finally:
             self.clients_closed += 1
 
-    def has_collection(self, client, collection_name):
+    def has_collection(self, client: Any, collection_name: str) -> bool:
         self.has_collection_calls.append(collection_name)
         return self.collection_exists
 
@@ -293,7 +293,7 @@ class FakeStore:
 
     def delete_rows(
         self,
-        client,
+        client: Any,
         collection_name: str,
         filter_expr: str,
         *,
@@ -1052,7 +1052,7 @@ def test_index_rejects_configured_dimension_mismatch():
         )
 
 
-def test_a_failed_write_is_reported_without_a_compensating_delete():
+def test_a_failed_write_is_reported_without_a_compensating_delete() -> None:
     """A failed write is raised as it is; nobody deletes for it.
 
     The replacement delete runs before the write, so a write that fails after
@@ -1241,7 +1241,7 @@ def test_retrieve_missing_index_does_not_call_the_embedding_provider():
 
 
 @pytest.mark.parametrize("retrieval_mode", ["vector", "keyword", "hybrid"])
-def test_one_retrieve_reads_the_stored_contract_once(retrieval_mode):
+def test_one_retrieve_reads_the_stored_contract_once(retrieval_mode) -> None:
     """One request reads the contract once and reuses what it read.
 
     The contract lives in the collection's own description, so the request that
@@ -2407,7 +2407,7 @@ def test_delete_document_never_prepares_vectors(monkeypatch):
     assert result["deleted_chunks"] == 1
 
 
-def test_delete_knowledge_clears_only_the_knowledge_base_scope():
+def test_delete_knowledge_clears_only_the_knowledge_base_scope() -> None:
     backend = _backend()
     store = FakeStore(rows=[_stored_chunk_row("42", 0), _stored_chunk_row("42", 1)])
     backend._store = store

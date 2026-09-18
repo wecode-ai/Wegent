@@ -187,17 +187,17 @@ def test_a_row_iterator_without_a_configured_timeout_stays_bounded():
 class _DeleteClient:
     """Records the delete request the store sends and what the RPC answered."""
 
-    def __init__(self, *, answer: dict) -> None:
+    def __init__(self, *, answer: dict[str, Any]) -> None:
         self.answer = answer
-        self.deletes: list[dict] = []
-        self.flushes: list[dict] = []
+        self.deletes: list[dict[str, Any]] = []
+        self.flushes: list[dict[str, Any]] = []
         self.lookups: list[str] = []
 
     def has_collection(self, collection_name: str, **kwargs) -> bool:
         self.lookups.append(collection_name)
         return True
 
-    def delete(self, **kwargs) -> dict:
+    def delete(self, **kwargs) -> dict[str, Any]:
         self.deletes.append(kwargs)
         return self.answer
 
@@ -246,13 +246,13 @@ class _SparseSearchClient:
 
     def __init__(self) -> None:
         self.lookups: list[str] = []
-        self.searches: list[dict] = []
+        self.searches: list[dict[str, Any]] = []
 
     def has_collection(self, collection_name: str, **kwargs) -> bool:
         self.lookups.append(collection_name)
         return True
 
-    def search(self, **kwargs) -> list:
+    def search(self, **kwargs) -> list[list[dict[str, Any]]]:
         self.searches.append(kwargs)
         return [
             [
@@ -264,7 +264,7 @@ class _SparseSearchClient:
         ]
 
 
-def test_keyword_search_uses_the_sparse_bm25_field_not_a_query_vector():
+def test_keyword_search_uses_the_sparse_bm25_field_not_a_query_vector() -> None:
     """A keyword query sends retrieval text; no dense vector is ever built."""
     client = _SparseSearchClient()
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
@@ -304,13 +304,13 @@ class _HybridSearchClient:
 
     def __init__(self) -> None:
         self.lookups: list[str] = []
-        self.hybrid_requests: list[dict] = []
+        self.hybrid_requests: list[dict[str, Any]] = []
 
     def has_collection(self, collection_name: str, **kwargs) -> bool:
         self.lookups.append(collection_name)
         return True
 
-    def hybrid_search(self, **kwargs) -> list:
+    def hybrid_search(self, **kwargs) -> list[list[dict[str, Any]]]:
         self.hybrid_requests.append(kwargs)
         return [
             [
@@ -322,7 +322,7 @@ class _HybridSearchClient:
         ]
 
 
-def test_hybrid_search_sends_both_branches_and_the_native_ranker():
+def test_hybrid_search_sends_both_branches_and_the_native_ranker() -> None:
     """One native hybrid call carries both branches, one filter and the weights."""
     client = _HybridSearchClient()
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
