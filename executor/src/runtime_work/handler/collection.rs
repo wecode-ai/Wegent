@@ -518,6 +518,9 @@ impl RuntimeWorkRpcHandler {
                 });
             }
 
+            for (sidebar_order, index) in group.listed.iter().enumerate() {
+                links[*index].sidebar_order = Some(sidebar_order);
+            }
             let ordered_indices = if group.unlisted_before_listed {
                 group.unlisted.into_iter().chain(group.listed)
             } else {
@@ -525,7 +528,9 @@ impl RuntimeWorkRpcHandler {
             };
             for (next_order, index) in ordered_indices.enumerate() {
                 links[index].list_order = Some(next_order);
-                links[index].sidebar_order = Some(next_order);
+                if !group.unlisted_before_listed {
+                    links[index].sidebar_order = Some(next_order);
+                }
             }
         }
     }
