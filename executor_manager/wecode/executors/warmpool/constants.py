@@ -52,6 +52,7 @@ LABEL_TEAM_MODE = "aigc.weibo.com/team-mode"
 LABEL_WARM_POOL = "aigc.weibo.com/warm-pool"
 LABEL_POOL_STATE = "aigc.weibo.com/pool-state"
 LABEL_POOL_PROFILE = "aigc.weibo.com/pool-profile"
+LABEL_RELEASE_INSTANCE = "app.kubernetes.io/instance"
 
 POOL_PROFILE_EXECUTOR_STANDARD = "executor-standard"
 
