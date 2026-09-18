@@ -5178,11 +5178,14 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     for (const state of ['inbox', 'pending', 'in_progress', 'in_review', 'completed']) {
-      expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}`)).toHaveClass(
-        'overflow-y-auto',
+      expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}-viewport`)).toHaveClass(
         'overscroll-y-contain',
+        'pr-1.5'
+      )
+      expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}-content`)).toHaveClass(
         'px-2',
-        'pt-2'
+        'pt-2',
+        'pb-2'
       )
       expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}`)).not.toHaveClass('p-2')
     }

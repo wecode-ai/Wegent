@@ -593,6 +593,12 @@ recipe closely:
   Short threads therefore fill the viewport while long and virtualized threads
   grow naturally. Keep bottom following stable across delayed virtual
   measurements, but stop following immediately after an explicit user scroll.
+- The active-thread viewport uses bottom-origin scrolling and may expose a
+  negative `scrollTop` range. A custom scrollbar must map its track, thumb,
+  pointer, and keyboard positions to that real range instead of assuming the
+  usual `0..max` coordinates. Keep the overlay track at the workbench's outer
+  edge, use the sidebar scrollbar's theme tokens, and treat track clicks and
+  thumb drags as explicit user scrolling.
 - When guidance or another runtime event inserts, removes, or reorders messages
   inside a virtualized thread, remeasure mounted rows from the first changed
   index. The virtual container must include every rendered row so no message can
@@ -718,6 +724,13 @@ The active board page uses arrow cursors for actions, including navigation,
 filters, cards, and portaled menus or popovers. Enforce this at the shared page
 boundary instead of adding per-control cursor fixes. Hidden board tabs must not
 affect other pages. Preserve text editing, drag, and resize cursor semantics.
+
+Boards with more columns than the viewport expose an overlay horizontal
+scrollbar, and each overflowing column exposes an overlay vertical scrollbar.
+Neither scrollbar may add a permanent footer gutter or change the column width.
+Constrain third-party intrinsic measurement wrappers to the viewport width so a
+long unbroken card title cannot widen or clip the card, and reserve a small
+content inset so card edges do not overlap the vertical thumb.
 
 ## 7. Interaction and state
 

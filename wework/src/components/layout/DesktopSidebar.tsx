@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   Columns2,
+  Columns3,
   Edit3,
   FolderOpen,
   FolderPlus,
@@ -236,7 +237,7 @@ interface DesktopSidebarProps {
   onOpenLocalHarnessSession?: (sessionId: string) => void
   onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
   onOpenSearch?: () => void
-  onOpenMyWork?: () => void
+  onToggleMyWork?: () => void
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -308,6 +309,8 @@ interface DesktopSidebarProps {
   onOpenSettings: (options?: OpenSettingsOptions) => void
   onLogout: () => void
 }
+
+type TaskViewAction = 'priority' | 'board'
 
 interface RuntimeTaskPinMutation {
   createdRevision: number
@@ -3162,7 +3165,7 @@ export function DesktopSidebar({
   onOpenLocalHarnessSession,
   onCloseLocalHarnessSession,
   onOpenSearch,
-  onOpenMyWork,
+  onToggleMyWork,
   onStartNewProjectChat,
   onOpenRuntimeTask,
   onMarkRuntimeTaskRead,
@@ -3295,6 +3298,9 @@ export function DesktopSidebar({
     readStoredBoolean(chatsExpandedStorageKey, true)
   )
   const [priorityFilterActive, setPriorityFilterActive] = useState(false)
+  const [taskViewAction, setTaskViewAction] = useState<TaskViewAction>(() =>
+    onToggleMyWork ? 'board' : 'priority'
+  )
   const [prioritySession, setPrioritySession] = useState<DesktopSidebarPrioritySession | null>(null)
   const priorityFilterShortcut = useConfiguredKeybinding(TOGGLE_PRIORITY_FILTER_COMMAND)
   const [priorityShowPinned, setPriorityShowPinned] = useState(() =>
@@ -3609,21 +3615,39 @@ export function DesktopSidebar({
         priorityItems: livePriorityTaskItems,
         recentGroups: [],
       }
-  const togglePriorityFilter = useCallback(() => {
-    if (priorityFilterActive) {
-      setPriorityFilterActive(false)
-      setPrioritySession(null)
-      return
-    }
-    setPrioritySession(createDesktopSidebarPrioritySession(priorityViewSources, priorityShowPinned))
-    setPriorityFilterActive(true)
-  }, [
-    priorityFilterActive,
-    priorityShowPinned,
-    priorityViewSources,
-    setPriorityFilterActive,
-    setPrioritySession,
-  ])
+  const setPriorityFilterEnabled = useCallback(
+    (enabled: boolean) => {
+      if (!enabled) {
+        setPriorityFilterActive(false)
+        setPrioritySession(null)
+        return
+      }
+      setPrioritySession(
+        createDesktopSidebarPrioritySession(priorityViewSources, priorityShowPinned)
+      )
+      setPriorityFilterActive(true)
+    },
+    [priorityShowPinned, priorityViewSources, setPriorityFilterActive, setPrioritySession]
+  )
+  const selectedTaskViewAction = taskViewAction === 'board' && onToggleMyWork ? 'board' : 'priority'
+  const selectTaskViewAction = useCallback(
+    (action: TaskViewAction) => {
+      setTaskViewAction(action)
+      if (action === 'board') {
+        setPriorityFilterEnabled(false)
+        if (taskView !== 'default-work-items') onToggleMyWork?.()
+        return
+      }
+      if (taskView === 'default-work-items') onToggleMyWork?.()
+      setPriorityFilterEnabled(true)
+    },
+    [onToggleMyWork, setPriorityFilterEnabled, setTaskViewAction, taskView]
+  )
+  const togglePriorityTaskView = useCallback(() => {
+    setTaskViewAction('priority')
+    if (taskView === 'default-work-items') onToggleMyWork?.()
+    setPriorityFilterEnabled(taskView === 'default-work-items' || !priorityFilterActive)
+  }, [onToggleMyWork, priorityFilterActive, setPriorityFilterEnabled, setTaskViewAction, taskView])
 
   const unreadPriorityTaskItems = useMemo(
     () =>
@@ -4063,12 +4087,12 @@ export function DesktopSidebar({
         return
       event.preventDefault()
       event.stopPropagation()
-      togglePriorityFilter()
+      togglePriorityTaskView()
     }
 
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [priorityFilterShortcut, togglePriorityFilter])
+  }, [priorityFilterShortcut, togglePriorityTaskView])
 
   useEffect(() => {
     if (!currentRuntimeTaskKey || !currentRuntimeTaskRowVisible) return
@@ -4156,45 +4180,100 @@ export function DesktopSidebar({
                     </button>
                   </Tooltip>
                 )}
-                <TitlebarTooltip
-                  label={
-                    priorityFilterActive
-                      ? t('workbench.priority_filter_turn_off', '关闭优先级筛选')
-                      : t('workbench.priority_filter', '按优先级筛选')
-                  }
-                  shortcut={
-                    priorityFilterActive ? undefined : (priorityFilterShortcut ?? undefined)
-                  }
-                  align="end"
-                  testId="runtime-priority-filter-tooltip"
+                <span
+                  data-testid="runtime-task-view-control"
+                  className="inline-flex shrink-0 items-center rounded-lg"
                 >
-                  <button
-                    type="button"
-                    data-testid="runtime-priority-filter-button"
-                    onClick={togglePriorityFilter}
-                    aria-pressed={priorityFilterActive}
-                    className={cn(
-                      'relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500',
-                      priorityFilterActive && 'bg-[rgb(var(--color-sidebar-active))]'
-                    )}
-                    aria-label={
-                      priorityNeedsAttention && !priorityFilterActive
-                        ? t('workbench.priority_filter_needs_attention', '按优先级筛选，需要关注')
+                  <TitlebarTooltip
+                    label={
+                      selectedTaskViewAction === 'board'
+                        ? t('workbench.work_item_create_title', '看板')
                         : priorityFilterActive
                           ? t('workbench.priority_filter_turn_off', '关闭优先级筛选')
                           : t('workbench.priority_filter', '按优先级筛选')
                     }
+                    shortcut={
+                      selectedTaskViewAction === 'priority' && !priorityFilterActive
+                        ? (priorityFilterShortcut ?? undefined)
+                        : undefined
+                    }
+                    align="end"
+                    testId="runtime-priority-filter-tooltip"
                   >
-                    <Bell className="h-4 w-4" aria-hidden="true" />
-                    {priorityNeedsAttention && !priorityFilterActive && (
-                      <span
-                        data-testid="runtime-priority-filter-attention-dot"
-                        aria-hidden="true"
-                        className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
-                      />
-                    )}
-                  </button>
-                </TitlebarTooltip>
+                    <button
+                      type="button"
+                      data-testid="runtime-priority-filter-button"
+                      onClick={
+                        selectedTaskViewAction === 'board' ? onToggleMyWork : togglePriorityTaskView
+                      }
+                      aria-pressed={
+                        selectedTaskViewAction === 'board'
+                          ? taskView === 'default-work-items'
+                          : priorityFilterActive
+                      }
+                      className={cn(
+                        'relative flex h-7 w-7 shrink-0 items-center justify-center text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500',
+                        onToggleMyWork ? 'rounded-l-lg' : 'rounded-lg',
+                        (selectedTaskViewAction === 'board'
+                          ? taskView === 'default-work-items'
+                          : priorityFilterActive) && 'bg-[rgb(var(--color-sidebar-active))]'
+                      )}
+                      aria-label={
+                        selectedTaskViewAction === 'board'
+                          ? t('workbench.work_item_create_title', '看板')
+                          : priorityNeedsAttention && !priorityFilterActive
+                            ? t(
+                                'workbench.priority_filter_needs_attention',
+                                '按优先级筛选，需要关注'
+                              )
+                            : priorityFilterActive
+                              ? t('workbench.priority_filter_turn_off', '关闭优先级筛选')
+                              : t('workbench.priority_filter', '按优先级筛选')
+                      }
+                    >
+                      {selectedTaskViewAction === 'board' ? (
+                        <Columns3 className="h-4 w-4" aria-hidden="true" />
+                      ) : (
+                        <ListTodo className="h-4 w-4" aria-hidden="true" />
+                      )}
+                      {selectedTaskViewAction === 'priority' &&
+                        priorityNeedsAttention &&
+                        !priorityFilterActive && (
+                          <span
+                            data-testid="runtime-priority-filter-attention-dot"
+                            aria-hidden="true"
+                            className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
+                          />
+                        )}
+                    </button>
+                  </TitlebarTooltip>
+                  {onToggleMyWork ? (
+                    <ActionMenu
+                      ariaLabel={t('workbench.task_view_menu', '任务视图')}
+                      testId="runtime-task-view-menu-button"
+                      menuTestId="runtime-task-view-menu"
+                      icon={ChevronDown}
+                      placement="bottom-end"
+                      showTriggerTooltip={false}
+                      items={[
+                        {
+                          label: t('workbench.priority_filter', '按优先级筛选'),
+                          icon: ListTodo,
+                          testId: 'runtime-task-view-priority',
+                          shortcut: priorityFilterShortcut ?? undefined,
+                          onSelect: () => selectTaskViewAction('priority'),
+                        },
+                        {
+                          label: t('workbench.work_item_create_title', '看板'),
+                          icon: Columns3,
+                          testId: 'runtime-task-view-board',
+                          onSelect: () => selectTaskViewAction('board'),
+                        },
+                      ]}
+                      triggerClassName="flex h-7 w-4 shrink-0 items-center justify-center rounded-r-lg text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500 [&_svg]:h-2.5 [&_svg]:w-2.5"
+                    />
+                  ) : null}
+                </span>
               </>
             }
           />
@@ -4217,15 +4296,6 @@ export function DesktopSidebar({
             }}
           >
             <nav className="mb-4 space-y-0.5">
-              {onOpenMyWork ? (
-                <DesktopSidebarNavItem
-                  icon={ListTodo}
-                  label={t('workbench.work_item_create_title', '看板')}
-                  testId="task-my-work-button"
-                  selected={taskView === 'default-work-items'}
-                  onClick={onOpenMyWork}
-                />
-              ) : null}
               {sidebarNavigation.map(item => {
                 if (item.surface === 'module') {
                   return (
