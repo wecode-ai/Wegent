@@ -1,0 +1,116 @@
+{
+  "catalogVersion": 1,
+  "events": [
+    {
+      "name": "smart_app_marketplace_opened",
+      "eventSchemaVersion": 1,
+      "properties": {
+        "domain": {
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      },
+      "includeSmartAppIdentity": false
+    },
+    {
+      "name": "smart_app_owned_opened",
+      "eventSchemaVersion": 1,
+      "properties": {
+        "domain": {
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      },
+      "includeSmartAppIdentity": false
+    },
+    {
+      "name": "smart_app_opened",
+      "eventSchemaVersion": 1,
+      "properties": {
+        "domain": {
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      },
+      "includeSmartAppIdentity": true
+    },
+    {
+      "name": "smart_app_install_succeeded",
+      "eventSchemaVersion": 1,
+      "properties": {
+        "domain": {
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      },
+      "includeSmartAppIdentity": false
+    },
+    {
+      "name": "smart_app_install_failed",
+      "eventSchemaVersion": 1,
+      "properties": {
+        "domain": {
+          "type": "enum",
+          "values": ["smart_app"]
+        },
+        "failure_stage": {
+          "type": "enum",
+          "values": ["download", "validate", "install", "confirm"]
+        }
+      },
+      "includeSmartAppIdentity": false
+    },
+    {
+      "name": "smart_app_update_succeeded",
+      "eventSchemaVersion": 1,
+      "properties": {
+        "domain": {
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      },
+      "includeSmartAppIdentity": false
+    },
+    {
+      "name": "smart_app_update_failed",
+      "eventSchemaVersion": 1,
+      "properties": {
+        "domain": {
+          "type": "enum",
+          "values": ["smart_app"]
+        },
+        "failure_stage": {
+          "type": "enum",
+          "values": ["download", "validate", "install", "confirm"]
+        }
+      },
+      "includeSmartAppIdentity": false
+    },
+    {
+      "name": "smart_app_zip_import_succeeded",
+      "eventSchemaVersion": 1,
+      "properties": {
+        "domain": {
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      },
+      "includeSmartAppIdentity": false
+    },
+    {
+      "name": "smart_app_zip_import_failed",
+      "eventSchemaVersion": 1,
+      "properties": {
+        "domain": {
+          "type": "enum",
+          "values": ["smart_app"]
+        },
+        "failure_stage": {
+          "type": "enum",
+          "values": ["preview", "validate", "install", "confirm"]
+        }
+      },
+      "includeSmartAppIdentity": false
+    }
+  ]
+}

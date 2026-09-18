@@ -1,0 +1,46 @@
+{
+  "name": "@wegent/dsh-internal-telemetry",
+  "displayName": "Wework Internal Telemetry",
+  "description": "Sends allowlisted Wework Smart App telemetry to an internal PostHog project.",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test *.test.mjs"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@wegent/dsh-app-wework"
+      ],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "batch-queue.js",
+    "catalog",
+    "catalog.js",
+    "client.js",
+    "config.js",
+    "cordis.patch.yml",
+    "identity.js",
+    "index.js",
+    "internal-telemetry.env.example",
+    "posthog-client.js",
+    "projection.js"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-runtime": "0.1.1-rc.2"
+  }
+}
