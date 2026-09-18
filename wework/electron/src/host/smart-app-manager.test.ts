@@ -225,6 +225,54 @@ describe('SmartAppManager', () => {
     ).rejects.toThrow('Smart app upload must use HTTPS')
   })
 
+  test('rejects Smart app upload redirects', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-upload-redirect-'))
+    roots.push(root)
+    const archivePath = join(root, 'smart-app.zip')
+    await writeFile(archivePath, 'smart-app-package')
+    let redirectedBytes = 0
+    const redirectTarget = createServer((request, response) => {
+      request.on('data', chunk => {
+        redirectedBytes += Buffer.from(chunk).byteLength
+      })
+      request.on('end', () => {
+        response.writeHead(204)
+        response.end()
+      })
+    })
+    await new Promise<void>(resolve => redirectTarget.listen(0, '127.0.0.1', resolve))
+    const targetAddress = redirectTarget.address()
+    if (!targetAddress || typeof targetAddress === 'string') {
+      throw new Error('Missing server address')
+    }
+    const uploadServer = createServer((_request, response) => {
+      response.writeHead(307, { location: `http://127.0.0.1:${targetAddress.port}/redirected` })
+      response.end()
+    })
+    await new Promise<void>(resolve => uploadServer.listen(0, '127.0.0.1', resolve))
+    const uploadAddress = uploadServer.address()
+    if (!uploadAddress || typeof uploadAddress === 'string') {
+      throw new Error('Missing server address')
+    }
+
+    try {
+      await expect(
+        createManager(root).upload(
+          archivePath,
+          `http://127.0.0.1:${uploadAddress.port}/api/smart-apps/submissions/1/artifact`
+        )
+      ).rejects.toThrow()
+      expect(redirectedBytes).toBe(0)
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        uploadServer.close(error => (error ? reject(error) : resolve()))
+      )
+      await new Promise<void>((resolve, reject) =>
+        redirectTarget.close(error => (error ? reject(error) : resolve()))
+      )
+    }
+  })
+
   test('creates linked apps, adds local plugins and copies marketplace apps for editing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-editable-'))
     roots.push(root)

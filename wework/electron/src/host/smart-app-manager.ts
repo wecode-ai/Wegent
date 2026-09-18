@@ -565,6 +565,9 @@ export class SmartAppManager {
       method: 'PUT',
       headers: { 'content-type': 'application/zip' },
       body: bytes,
+      // The link is scoped to one submission, and a 307 or 308 would resend the archive to another
+      // host, so refuse redirects instead of following them.
+      redirect: 'error',
     })
     if (!response.ok) throw new Error(`Smart app upload failed with HTTP ${response.status}`)
   }
