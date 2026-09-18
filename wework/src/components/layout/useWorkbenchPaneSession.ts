@@ -19,6 +19,7 @@ import { appendBufferedRuntimePaneMessageAction } from '@/features/workbench/run
 import {
   deriveRuntimePaneStatus,
   isRuntimeTaskBusyError,
+  resolveRuntimePaneLifecycleAddress,
 } from '@/features/workbench/runtimePaneStatus'
 import {
   consumeRuntimeTaskLifecycleBlock,
@@ -466,7 +467,10 @@ export function useWorkbenchPaneSession({
     },
     [applyMessageActions, flushPendingMessageActions]
   )
-  const lifecycleAddress = runtimeTaskLoadTarget?.address ?? currentRuntimeTask
+  const lifecycleAddress = resolveRuntimePaneLifecycleAddress(
+    currentRuntimeTask,
+    runtimeTaskLoadTarget?.address
+  )
   const taskLifecycle = useRuntimeTaskLifecycle(lifecycleAddress)
   const taskGoalStatus = taskLifecycle?.goalStatus ?? null
   const goalExecutionStatus = taskLifecycle?.task?.goalExecutionStatus ?? null
