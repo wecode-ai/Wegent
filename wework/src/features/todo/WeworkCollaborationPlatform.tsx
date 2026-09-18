@@ -46,6 +46,7 @@ import {
   createWeworkDeliverySharedWorkspaceApi,
 } from '@/features/collaboration'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
+import type { createAgentResourceApi } from '@/api/agentResources'
 import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import type {
@@ -601,6 +602,65 @@ function withoutDefaultWorkItemProject(api: SharedWorkspaceApi): SharedWorkspace
   }
 }
 
+async function materializeLocalAgentResource(
+  input: Record<string, unknown>,
+  api: ReturnType<typeof createAgentResourceApi> | undefined,
+  locale: 'zh-CN' | 'en'
+): Promise<Record<string, unknown>> {
+  if (input.runtime !== 'wegent') return input
+  const translate = createCollaborationTranslator(locale)
+  const teamId = Number(input.wegentTeamId ?? input.wegent_team_id)
+  if (!api || !Number.isInteger(teamId) || teamId < 1) {
+    throw new Error(translate('todo.local_agent_resource_unavailable'))
+  }
+  const detail = await api.getAgent(teamId)
+  if (!detail.runtime) {
+    throw new Error(translate('todo.local_agent_runtime_unsupported'))
+  }
+  return {
+    ...input,
+    name: String(input.name || detail.displayName || detail.name),
+    runtime: detail.runtime === 'ClaudeCode' ? 'claude_code' : 'codex',
+    wegentTeamId: teamId,
+    model: detail.model.name || null,
+    systemPrompt: detail.systemPrompt,
+    additionalSkills: detail.skills,
+    mcpServers: detail.mcpServers,
+  }
+}
+
+function withLocalAgentResources(
+  api: SharedWorkspaceApi,
+  agentResourceApi: ReturnType<typeof createAgentResourceApi> | undefined,
+  locale: 'zh-CN' | 'en'
+): SharedWorkspaceApi {
+  return {
+    ...api,
+    agents: {
+      ...api.agents,
+      async create(projectId, input) {
+        return api.agents.create(
+          projectId,
+          await materializeLocalAgentResource(input, agentResourceApi, locale)
+        )
+      },
+      async update(projectId, agentId, input) {
+        if (input.status === 'archived') return api.agents.update(projectId, agentId, input)
+        const current = (await api.agents.list(projectId)).find(agent => agent.id === agentId)
+        const teamId = current?.wegentTeamId
+        const nextInput = teamId
+          ? await materializeLocalAgentResource(
+              { ...input, runtime: 'wegent', wegentTeamId: teamId },
+              agentResourceApi,
+              locale
+            )
+          : input
+        return api.agents.update(projectId, agentId, nextInput)
+      },
+    },
+  }
+}
+
 // eslint-disable-next-line react-refresh/only-export-components
 export function createWeworkPlatformApi(
   cloudApi: SharedWorkspaceApi | undefined,
@@ -609,9 +669,10 @@ export function createWeworkPlatformApi(
   userName: string,
   userEmail: string | null,
   localDetailServices?: ProjectSpaceDetailServices,
-  locale: 'zh-CN' | 'en' = 'zh-CN'
+  locale: 'zh-CN' | 'en' = 'zh-CN',
+  agentResourceApi?: ReturnType<typeof createAgentResourceApi>
 ): SharedWorkspaceApi | null {
-  const localApi = createLocalWorkspaceApi(
+  const localWorkspaceApi = createLocalWorkspaceApi(
     localDeliveryApi,
     userId,
     userName,
@@ -619,7 +680,8 @@ export function createWeworkPlatformApi(
     localDetailServices,
     locale
   )
-  if (!localApi) return cloudApi ? withoutDefaultWorkItemProject(cloudApi) : null
+  if (!localWorkspaceApi) return cloudApi ? withoutDefaultWorkItemProject(cloudApi) : null
+  const localApi = withLocalAgentResources(localWorkspaceApi, agentResourceApi, locale)
   if (!cloudApi?.workspaces) return withoutDefaultWorkItemProject(localApi)
 
   const isLocalWorkspace = (workspaceId: string | undefined) => workspaceId === LOCAL_WORKSPACE_ID
@@ -1502,12 +1564,14 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         collaborationUserName,
         props.user.email ?? null,
         props.services.projectSpaceDetailServices?.local,
-        locale
+        locale,
+        props.services.agentResourceApi
       ),
     [
       api,
       props.services.projectSpaceApis?.local,
       props.services.projectSpaceDetailServices?.local,
+      props.services.agentResourceApi,
       props.user.email,
       props.user.id,
       collaborationUserName,

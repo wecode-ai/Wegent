@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CollaborationPlatformLocation, SharedWorkspaceApi } from '@wegent/collaboration'
 import type { DeliveryApi } from '@/api/deliveries'
+import type { createAgentResourceApi } from '@/api/agentResources'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import type { ProjectSpaceDetailServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
@@ -1408,6 +1409,82 @@ describe('Wework collaboration workspace API', () => {
       }),
     ])
     expect(listCloudMembers).not.toHaveBeenCalled()
+  })
+
+  it('materializes a Wegent Agent resource into a runnable local project agent', async () => {
+    const createLocalAgent = vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({
+      id: 'LA-1',
+      projectId: 'local-project',
+      status: 'active',
+      version: 1,
+      ...input,
+    }))
+    const localDetails = {
+      ...createLocalDetailServices(),
+      projectChatAgentApi: {
+        list: vi.fn(async () => []),
+        create: createLocalAgent,
+        update: vi.fn(),
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const getAgent = vi.fn(async () => ({
+      teamId: 91,
+      botId: 92,
+      name: 'review-agent',
+      displayName: 'Review Agent',
+      namespace: 'default',
+      runtime: 'Codex' as const,
+      shellName: 'Codex',
+      model: { name: 'gpt-5.6-sol', type: 'public' as const, namespace: 'default' },
+      systemPrompt: 'Review carefully.',
+      skills: [{ skillId: 7, name: 'code-review', namespace: 'default', isPublic: false }],
+      mcpServers: { github: { command: 'github-mcp' } },
+    }))
+    const agentResourceApi = {
+      getAgent,
+    } as unknown as ReturnType<typeof createAgentResourceApi>
+    const createCloudAgent = vi.fn()
+    const api = createWeworkPlatformApi(
+      {
+        workspaces: {},
+        projects: {},
+        agents: { create: createCloudAgent },
+      } as unknown as SharedWorkspaceApi,
+      createLocalDeliveryApi(),
+      1,
+      'admin',
+      null,
+      localDetails,
+      'zh-CN',
+      agentResourceApi
+    )
+
+    await expect(
+      api?.agents.create('local-project', {
+        name: 'Review Agent',
+        runtime: 'wegent',
+        wegentTeamId: 91,
+      })
+    ).resolves.toMatchObject({
+      runtime: 'codex',
+      wegentTeamId: 91,
+      model: 'gpt-5.6-sol',
+    })
+    expect(getAgent).toHaveBeenCalledWith(91)
+    expect(createLocalAgent).toHaveBeenCalledWith(
+      'local-project',
+      expect.objectContaining({
+        runtime: 'codex',
+        wegentTeamId: 91,
+        model: 'gpt-5.6-sol',
+        systemPrompt: 'Review carefully.',
+        additionalSkills: [
+          { skillId: 7, name: 'code-review', namespace: 'default', isPublic: false },
+        ],
+        mcpServers: { github: { command: 'github-mcp' } },
+      })
+    )
+    expect(createCloudAgent).not.toHaveBeenCalled()
   })
 
   it('routes local workspace overview snapshots to the local project API', async () => {

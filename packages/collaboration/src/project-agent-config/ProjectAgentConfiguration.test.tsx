@@ -60,6 +60,7 @@ function projectAgent(
 
 function createApi(options?: {
   agents?: WorkspaceProjectAgent[];
+  resourceAgents?: CollaborationOwnedAgent[];
   workspaceAgents?: CollaborationOwnedAgent[];
 }) {
   const rows = [...(options?.agents ?? [projectAgent()])];
@@ -83,7 +84,7 @@ function createApi(options?: {
     projects: {},
     resources: {
       list: vi.fn(async () => ({
-        agents: [],
+        agents: options?.resourceAgents ?? [],
         execution_environments: [],
       })),
     },
@@ -309,6 +310,36 @@ describe("ProjectAgentConfiguration", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
+  it("allows a host to materialize a cloud Agent resource into a local project", async () => {
+    const cloudAgent = { ...workspaceAgent, location: "cloud" as const };
+    const { api } = createApi({
+      resourceAgents: [cloudAgent],
+      workspaceAgents: [],
+    });
+    const localProject = { ...project, project_store: "local" as const };
+    const host = {
+      ...hostedCreationHost,
+      supportsExistingAgentSelection: true,
+      supportsCrossLocationAgentSelection: true,
+    };
+    await act(async () => {
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          host={host}
+          project={localProject}
+          onError={vi.fn()}
+          translate={(_key, fallback) => fallback}
+        />,
+      );
+    });
+
+    await click("project-agent-add");
+    expect(element("project-agent-wegent-team").textContent).toContain(
+      "研发团队",
+    );
+  });
+
   it("creates a project Agent through the resource-library host and binds it to the project", async () => {
     const { api, create } = createApi({ workspaceAgents: [] });
     await renderHosted(api);
@@ -385,7 +416,8 @@ describe("ProjectAgentConfiguration", () => {
     ).toBeNull();
   });
 
-  it("offers no edit action for project Agents without an editable resource", async () => {    const { api } = createApi({
+  it("offers no edit action for project Agents without an editable resource", async () => {
+    const { api } = createApi({
       agents: [projectAgent({ runtime: "claude_code" })],
       workspaceAgents: [],
     });

@@ -732,6 +732,7 @@ impl LocalTaskStore {
         });
         metadata["execution_device_id"] = json!(input.execution_device_id);
         metadata["local_project_id"] = json!(input.local_project_id);
+        metadata["wegent_team_id"] = json!(input.wegent_team_id);
         connection.execute(
             "INSERT INTO loop_items (
                 id, resource_type, project_space, cloud_project_id, name, title,
@@ -812,6 +813,9 @@ impl LocalTaskStore {
         }
         if let Some(local_project_id) = input.local_project_id {
             metadata["local_project_id"] = json!(local_project_id);
+        }
+        if let Some(wegent_team_id) = input.wegent_team_id {
+            metadata["wegent_team_id"] = json!(wegent_team_id);
         }
         if let Some(plugins) = input.plugins {
             metadata["plugins"] = json!(plugins);
@@ -3841,6 +3845,7 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .unwrap_or(1),
         workspace_policy: text("workspace_policy", "project"),
         local_project_id: metadata.get("local_project_id").and_then(Value::as_i64),
+        wegent_team_id: metadata.get("wegent_team_id").and_then(Value::as_i64),
         plugins: metadata
             .get("plugins")
             .and_then(Value::as_array)
@@ -4678,6 +4683,7 @@ mod tests {
                     max_concurrent_executions: 1,
                     workspace_policy: "project".to_owned(),
                     local_project_id: None,
+                    wegent_team_id: None,
                     created_by_user_id: Some(7),
                     plugins: Vec::new(),
                     additional_skills: Vec::new(),
@@ -5450,6 +5456,7 @@ mod tests {
                     max_concurrent_executions: 1,
                     workspace_policy: "project".to_owned(),
                     local_project_id: None,
+                    wegent_team_id: Some(91),
                     created_by_user_id: Some(42),
                     plugins: vec![json!({
                         "id": "github@openai",
@@ -5463,6 +5470,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(agent.created_by_user_id, 42);
+        assert_eq!(agent.wegent_team_id, Some(91));
         assert_eq!(agent.plugins[0]["id"], "github@openai");
         let listed = store.list_chat_agents(&project.id).unwrap();
         assert_eq!(listed[0].created_by_user_id, 42);
@@ -5598,6 +5606,7 @@ mod tests {
                     max_concurrent_executions: 1,
                     workspace_policy: "project".to_owned(),
                     local_project_id: Some(7),
+                    wegent_team_id: Some(12),
                     created_by_user_id: Some(7),
                     plugins: Vec::new(),
                     additional_skills: Vec::new(),
@@ -5606,6 +5615,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(agent.local_project_id, Some(7));
+        assert_eq!(agent.wegent_team_id, Some(12));
         let listed = store.list_chat_agents(&project.id).unwrap();
         assert_eq!(listed[0].local_project_id, Some(7));
 
@@ -5628,6 +5638,7 @@ mod tests {
                     max_concurrent_executions: None,
                     workspace_policy: None,
                     local_project_id: Some(Some(9)),
+                    wegent_team_id: None,
                     plugins: None,
                     additional_skills: None,
                     mcp_servers: None,
@@ -5635,6 +5646,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(updated.local_project_id, Some(9));
+        assert_eq!(updated.wegent_team_id, Some(12));
 
         let cleared = store
             .update_chat_agent(
@@ -5655,6 +5667,7 @@ mod tests {
                     max_concurrent_executions: None,
                     workspace_policy: None,
                     local_project_id: Some(None),
+                    wegent_team_id: Some(Some(13)),
                     plugins: None,
                     additional_skills: None,
                     mcp_servers: None,
@@ -5662,6 +5675,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(cleared.local_project_id, None);
+        assert_eq!(cleared.wegent_team_id, Some(13));
     }
 
     #[test]
@@ -5684,6 +5698,7 @@ mod tests {
                     max_concurrent_executions: 20,
                     workspace_policy: "project".to_owned(),
                     local_project_id: None,
+                    wegent_team_id: None,
                     created_by_user_id: None,
                     plugins: Vec::new(),
                     additional_skills: Vec::new(),
@@ -5707,6 +5722,7 @@ mod tests {
                     max_concurrent_executions: 1,
                     workspace_policy: "project".to_owned(),
                     local_project_id: None,
+                    wegent_team_id: None,
                     created_by_user_id: None,
                     plugins: Vec::new(),
                     additional_skills: Vec::new(),
@@ -5806,6 +5822,7 @@ mod tests {
                     max_concurrent_executions: 2,
                     workspace_policy: "project".to_owned(),
                     local_project_id: None,
+                    wegent_team_id: None,
                     created_by_user_id: Some(7),
                     plugins: Vec::new(),
                     additional_skills: Vec::new(),
@@ -5882,6 +5899,7 @@ mod tests {
                     max_concurrent_executions: 1,
                     workspace_policy: "project".to_owned(),
                     local_project_id: None,
+                    wegent_team_id: None,
                     created_by_user_id: Some(7),
                     plugins: Vec::new(),
                     additional_skills: Vec::new(),
@@ -6014,6 +6032,7 @@ mod tests {
                     max_concurrent_executions: 1,
                     workspace_policy: "project".to_owned(),
                     local_project_id: None,
+                    wegent_team_id: None,
                     created_by_user_id: Some(7),
                     plugins: Vec::new(),
                     additional_skills: Vec::new(),
@@ -6079,6 +6098,7 @@ mod tests {
                     max_concurrent_executions: 1,
                     workspace_policy: "project".to_owned(),
                     local_project_id: None,
+                    wegent_team_id: None,
                     created_by_user_id: Some(7),
                     plugins: Vec::new(),
                     additional_skills: Vec::new(),
@@ -6638,6 +6658,7 @@ mod tests {
                     max_concurrent_executions: 1,
                     workspace_policy: "project".to_owned(),
                     local_project_id: None,
+                    wegent_team_id: None,
                     created_by_user_id: None,
                     plugins: Vec::new(),
                     additional_skills: Vec::new(),

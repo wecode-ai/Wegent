@@ -25,6 +25,11 @@ export interface ProjectAgentConfigurationHost {
    * library set it to false so the picker is never rendered.
    */
   supportsExistingAgentSelection?: boolean;
+  /**
+   * Whether an Agent resource may be materialized into a project whose
+   * storage location differs from the resource catalog's location.
+   */
+  supportsCrossLocationAgentSelection?: boolean;
   renderAgentCreator?(props: {
     namespace: string;
     onClose(): void;

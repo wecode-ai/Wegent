@@ -230,16 +230,27 @@ describe('local delivery API', () => {
   })
 
   test('local robot create sends the creator id', async () => {
-    const request = vi.fn(async () => ({ id: 'LA-1', created_by_user_id: 7 }))
+    const record = {
+      id: 'LA-1',
+      created_by_user_id: 7,
+      wegent_team_id: 91,
+    }
+    const request = vi.fn(async (method: string) =>
+      method === 'chat_agents.list' ? [record] : record
+    )
     const api = createLocalProjectChatAgentApi(request, 7)
     await api.create('project-1', {
       name: 'Local Bot',
       runtime: 'codex',
       executionDeviceId: 'local-device',
+      wegentTeamId: 91,
     })
+    await expect(api.list('project-1')).resolves.toEqual([
+      expect.objectContaining({ id: 'LA-1', wegentTeamId: 91 }),
+    ])
     expect(request).toHaveBeenCalledWith('chat_agents.create', {
       project_id: 'project-1',
-      agent: expect.objectContaining({ created_by_user_id: 7 }),
+      agent: expect.objectContaining({ created_by_user_id: 7, wegent_team_id: 91 }),
     })
   })
 
