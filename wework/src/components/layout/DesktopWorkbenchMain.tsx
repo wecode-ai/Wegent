@@ -5002,6 +5002,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 >
                   <ScrollableMessageArea
                     messages={paneMessages}
+                    turns={paneSession.turns}
                     loading={paneSession.transcriptLoading}
                     isWaitingForAssistant={
                       !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator

@@ -46,13 +46,22 @@ describe('runtime conversation client', () => {
     expect(onChatError).not.toHaveBeenCalled()
     emit({
       event: 'response.failed',
-      payload: { ...address, data: { error: { message: 'Model unavailable' } } },
+      payload: {
+        ...address,
+        data: {
+          error: { message: 'Model unavailable' },
+          startedAt: 1_789_714_800_000,
+          durationMs: 2500,
+        },
+      },
     })
     expect(onChatError).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: address.deviceId,
         taskId: address.taskId,
         error: 'Model unavailable',
+        startedAt: 1_789_714_800_000,
+        durationMs: 2500,
       })
     )
     cleanup()
