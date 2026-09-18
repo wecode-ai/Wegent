@@ -217,6 +217,7 @@ export function reduceRuntimeConversationTurns(
           ...boundVisibleRuntimeProcessingBlocks(turn, items),
           status: "done",
           streamingThinkingContent: undefined,
+          durationMs: action.durationMs,
           completedAt: new Date().toISOString(),
           fileChanges: action.fileChanges ?? turn.fileChanges,
           error: undefined,
@@ -230,6 +231,7 @@ export function reduceRuntimeConversationTurns(
           items: settleRuntimeReconnectingBlocks(turn.items),
           status: "cancelled",
           streamingThinkingContent: undefined,
+          durationMs: action.durationMs,
           completedAt: new Date().toISOString(),
           stoppedNotice: true,
         };
@@ -241,6 +243,7 @@ export function reduceRuntimeConversationTurns(
           items: settleRuntimeReconnectingBlocks(turn.items),
           status: "failed",
           streamingThinkingContent: undefined,
+          durationMs: action.durationMs,
           completedAt: new Date().toISOString(),
           error: action.error,
           errorType: action.errorType,

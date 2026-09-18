@@ -68,6 +68,7 @@ export interface ChatErrorPayload {
   type?: string;
   deviceId?: string;
   shellType?: string;
+  durationMs?: number;
 }
 
 export interface ChatStartPayload {

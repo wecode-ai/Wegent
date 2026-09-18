@@ -553,13 +553,14 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
 
     expect(actions).toEqual([
-      {
+      expect.objectContaining({
         type: 'assistant_started',
         taskId: 'runtime-task-1',
         subtaskId: 'codex-turn-9',
         clientUserMessageId: 'client-user-1',
         shellType: undefined,
-      },
+        startedAt: expect.any(Number),
+      }),
     ])
   })
 
@@ -1101,6 +1102,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
       offset: 0,
       result: {
         turnId: 'turn-9',
+        durationMs: 18_250,
         value: [
           '当前分支比 origin/main ahead 1，可以直接 push。',
           '',
@@ -1114,6 +1116,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
       type: 'assistant_done',
       subtaskId: 'subtask-9',
       turnId: 'turn-9',
+      durationMs: 18_250,
     })
     expect(info).toHaveBeenCalledWith(
       '[Wework] Runtime terminal event accepted',

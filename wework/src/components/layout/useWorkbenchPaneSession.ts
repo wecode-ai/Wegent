@@ -78,6 +78,7 @@ import type {
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type {
   GuidanceWorkbenchMessage,
+  RuntimeConversationTurn,
   RuntimePaneQueuedMessage,
   RuntimePaneTranscript,
   RuntimeSubagentStatus,
@@ -395,6 +396,9 @@ export function useWorkbenchPaneSession({
   const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
     currentRuntimeTask ? getRuntimeConversationMessages(currentRuntimeTask) : []
   )
+  const [turns, setTurns] = useState<RuntimeConversationTurn[]>(() =>
+    currentRuntimeTask ? getRuntimeConversationTurns(currentRuntimeTask) : []
+  )
   const messagesRef = useRef<WorkbenchMessage[]>(messages)
   const applyMessageActions = useCallback((actions: RuntimePaneMessageAction[]) => {
     if (actions.length === 0) return
@@ -572,6 +576,7 @@ export function useWorkbenchPaneSession({
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
       setMessages([])
+      setTurns([])
       setSubagentStatuses([])
       setTaskPlan(null)
       return
@@ -586,6 +591,7 @@ export function useWorkbenchPaneSession({
         )
       }
       setMessages(getRuntimeConversationMessages(address))
+      setTurns(getRuntimeConversationTurns(address))
       setSubagentStatuses(metadata.subagentStatuses)
       setTaskPlan(metadata.taskPlan)
       setGoalContinuation(metadata.goalContinuation)
@@ -2909,6 +2915,7 @@ export function useWorkbenchPaneSession({
     continuation: goalContinuation,
     taskRunning: paneStatus.taskExecution.running,
     messages,
+    turns,
     activeAssistantMessage,
   })
 

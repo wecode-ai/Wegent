@@ -29,6 +29,9 @@ pub(super) struct CodexRunState {
     root_thread_id: Option<String>,
     goal_status: Option<String>,
     goal_status_observed: bool,
+    turn_started_at_ms: Option<i64>,
+    turn_completed_at_ms: Option<i64>,
+    turn_duration_ms: Option<i64>,
 }
 
 impl CodexRunState {
@@ -54,6 +57,14 @@ impl CodexRunState {
         self.goal_status
             .as_deref()
             .is_some_and(|status| status.eq_ignore_ascii_case("active"))
+    }
+
+    pub(super) fn turn_timing(&self) -> (Option<i64>, Option<i64>, Option<i64>) {
+        (
+            self.turn_started_at_ms,
+            self.turn_completed_at_ms,
+            self.turn_duration_ms,
+        )
     }
 
     pub(super) fn response_item_id(&self) -> Option<&str> {
@@ -97,6 +108,12 @@ impl CodexRunState {
             Some("turn/started") => {
                 if !self.is_subagent_message(message_params(message)) {
                     self.reset_turn_output();
+                    let params = message_params(message);
+                    let turn = params.get("turn").unwrap_or(params);
+                    self.turn_started_at_ms = integer_field(turn, "startedAt")
+                        .or_else(|| integer_field(turn, "started_at"));
+                    self.turn_completed_at_ms = None;
+                    self.turn_duration_ms = None;
                 }
                 None
             }
@@ -142,6 +159,15 @@ impl CodexRunState {
                 if !self.is_subagent_message(message_params(message))
                     && is_root_codex_turn_event(message_params(message)) =>
             {
+                let params = message_params(message);
+                let turn = params.get("turn").unwrap_or(params);
+                self.turn_started_at_ms = integer_field(turn, "startedAt")
+                    .or_else(|| integer_field(turn, "started_at"))
+                    .or(self.turn_started_at_ms);
+                self.turn_completed_at_ms = integer_field(turn, "completedAt")
+                    .or_else(|| integer_field(turn, "completed_at"));
+                self.turn_duration_ms = integer_field(turn, "durationMs")
+                    .or_else(|| integer_field(turn, "duration_ms"));
                 Some(self.completed(message_params(message)))
             }
             Some("turn/completed") => None,
@@ -351,6 +377,10 @@ impl CodexRunState {
             },
         }
     }
+}
+
+fn integer_field(value: &Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(Value::as_i64)
 }
 
 fn codex_error_will_retry(params: &Value) -> bool {

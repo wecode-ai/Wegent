@@ -2426,6 +2426,9 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
             response_value_origin: crate::agents::CodexResponseValueOrigin::Final,
             goal_status: Some("complete".to_owned()),
             goal_status_observed: true,
+            started_at_ms: None,
+            completed_at_ms: None,
+            duration_ms: None,
         }),
     );
 
@@ -2527,6 +2530,9 @@ fn stale_terminal_result_cannot_emit_or_finish_replacement_execution() {
             response_value_origin: crate::agents::CodexResponseValueOrigin::Final,
             goal_status: None,
             goal_status_observed: false,
+            started_at_ms: None,
+            completed_at_ms: None,
+            duration_ms: None,
         }),
     );
 
@@ -3256,6 +3262,9 @@ fn completed_responses_use_the_active_codex_turn_id() {
                 response_value_origin: value_origin,
                 goal_status: None,
                 goal_status_observed: false,
+                started_at_ms: Some(1_780_000_000_000),
+                completed_at_ms: Some(1_780_000_018_250),
+                duration_ms: Some(18_250),
             }),
         );
 
@@ -3265,6 +3274,7 @@ fn completed_responses_use_the_active_codex_turn_id() {
         assert_eq!(event["event"], "response.completed", "{case}");
         assert_eq!(event["payload"]["subtaskId"], "turn-1", "{case}");
         assert_eq!(event["payload"]["data"]["turnId"], "turn-1", "{case}");
+        assert_eq!(event["payload"]["data"]["durationMs"], 18_250, "{case}");
         assert_eq!(
             event["payload"]["data"]["valueOrigin"],
             value_origin.as_str(),

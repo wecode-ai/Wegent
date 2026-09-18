@@ -1523,6 +1523,9 @@ impl RuntimeWorkRpcHandler {
                             "valueOrigin": response_value_origin.as_str(),
                             "turnId": active_turn.map(|turn| &turn.turn_id),
                             "itemId": response_item_id,
+                            "startedAt": turn.started_at_ms,
+                            "completedAt": turn.completed_at_ms,
+                            "durationMs": turn.duration_ms,
                         }),
                     ),
                     ExecutionOutcome::WaitingForUserInput { stop_reason } => emit_response_event(
@@ -1535,6 +1538,9 @@ impl RuntimeWorkRpcHandler {
                             "value": "",
                             "valueOrigin": "empty",
                             "turnId": active_turn.map(|turn| &turn.turn_id),
+                            "startedAt": turn.started_at_ms,
+                            "completedAt": turn.completed_at_ms,
+                            "durationMs": turn.duration_ms,
                             "stop_reason": stop_reason,
                             "silent_exit": true,
                             "silent_exit_reason": "waiting_for_user_input"
@@ -1546,7 +1552,12 @@ impl RuntimeWorkRpcHandler {
                         "response.incomplete",
                         local_task_id,
                         &event_request,
-                        json!({"error": {"message": message}}),
+                        json!({
+                            "error": {"message": message},
+                            "startedAt": turn.started_at_ms,
+                            "completedAt": turn.completed_at_ms,
+                            "durationMs": turn.duration_ms,
+                        }),
                     ),
                     ExecutionOutcome::Failed { message } => {
                         self.persist_failed_assistant_message(
@@ -1566,7 +1577,12 @@ impl RuntimeWorkRpcHandler {
                             "response.failed",
                             local_task_id,
                             &event_request,
-                            json!({"error": {"message": message}}),
+                            json!({
+                                "error": {"message": message},
+                                "startedAt": turn.started_at_ms,
+                                "completedAt": turn.completed_at_ms,
+                                "durationMs": turn.duration_ms,
+                            }),
                         );
                     }
                     ExecutionOutcome::Running => {}
