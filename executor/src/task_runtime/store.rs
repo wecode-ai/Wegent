@@ -420,6 +420,10 @@ impl LocalTaskStore {
         let item = get_item_from(&connection, task_id, "task")?
             .filter(|item| item.cloud_project_id.as_deref() == Some(project_id))
             .ok_or(TaskRuntimeError::TaskNotFound)?;
+        if project_id == DEFAULT_WORK_ITEM_PROJECT_ID {
+            drop(connection);
+            return self.get_task(project_id, task_id);
+        }
         if item.metadata["is_unread"] == json!(true) {
             connection.execute(
                 "UPDATE loop_items
@@ -1744,13 +1748,16 @@ impl LocalTaskStore {
             transaction.execute(
                 "UPDATE loop_items
                  SET status = 'in_review', sort_order = 0,
-                     metadata = json_set(metadata, '$.is_unread', json('true')),
+                     metadata = CASE
+                         WHEN cloud_project_id = ?3 THEN metadata
+                         ELSE json_set(metadata, '$.is_unread', json('true'))
+                     END,
                      version = version + 1, updated_at = ?1
                  WHERE id = (SELECT loop_item_id FROM loop_item_executions WHERE id = ?2)
                    AND assignee_agent_id =
                        (SELECT agent_id FROM loop_item_executions WHERE id = ?2)
                    AND status != 'completed'",
-                params![timestamp, execution_id],
+                params![timestamp, execution_id, DEFAULT_WORK_ITEM_PROJECT_ID],
             )?;
         }
         update_agent_comment(
@@ -2433,7 +2440,8 @@ impl LocalTaskStore {
              SET status = ?1,
                  completed_at = CASE WHEN ?1 = 'completed' THEN ?2 ELSE NULL END,
                  metadata = CASE
-                     WHEN ?5 THEN json_set(metadata, '$.is_unread', json('true'))
+                     WHEN ?5 AND cloud_project_id != ?7
+                         THEN json_set(metadata, '$.is_unread', json('true'))
                      ELSE metadata
                  END,
                  sort_order = 0, version = version + 1, updated_at = ?2
@@ -2458,7 +2466,8 @@ impl LocalTaskStore {
                 device_id,
                 task_id,
                 preserve_reviewed,
-                observed_at_ms
+                observed_at_ms,
+                DEFAULT_WORK_ITEM_PROJECT_ID
             ],
         )?;
         transaction.execute(
@@ -4606,7 +4615,9 @@ fn advance_local_workflow_after_execution(
             |row| row.get(0),
         )
         .optional()?;
-    item.metadata["is_unread"] = json!(true);
+    if execution.cloud_project_id != DEFAULT_WORK_ITEM_PROJECT_ID {
+        item.metadata["is_unread"] = json!(true);
+    }
     let status = if all_required_completed {
         "completed"
     } else if active_agent_id.is_some() {
@@ -7390,14 +7401,14 @@ mod tests {
                 .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
                 .unwrap()
                 .metadata["is_unread"],
-            json!(true)
+            Value::Null
         );
         assert_eq!(
             store
                 .mark_task_read(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
                 .unwrap()
                 .metadata["is_unread"],
-            json!(false)
+            Value::Null
         );
 
         assert_eq!(
@@ -7425,7 +7436,7 @@ mod tests {
                 .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
                 .unwrap()
                 .metadata["is_unread"],
-            json!(false)
+            Value::Null
         );
 
         assert_eq!(

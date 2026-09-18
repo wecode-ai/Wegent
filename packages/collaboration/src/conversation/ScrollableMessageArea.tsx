@@ -58,6 +58,7 @@ function ScrollableMessagePaneContent({
   scrollButtonClassName,
   scrollTestId = 'chat-message-scroll-area',
   externalScrollRef,
+  externalScrollInteractionRef,
   turnNavigationPortalTarget,
   conversationKey,
   devices,
@@ -743,20 +744,33 @@ function ScrollableMessagePaneContent({
   useEffect(() => {
     const externalScroller = externalScrollRef?.current
     if (!externalScroller || externalScroller === internalScrollRef.current) return
-
-    externalScroller.addEventListener('scroll', handleScroll)
-    externalScroller.addEventListener('wheel', markUserScrollIntent)
-    externalScroller.addEventListener('pointerdown', markUserScrollIntent)
-    externalScroller.addEventListener('touchstart', markUserScrollIntent)
-    externalScroller.addEventListener('keydown', markUserScrollIntent)
-    return () => {
-      externalScroller.removeEventListener('scroll', handleScroll)
-      externalScroller.removeEventListener('wheel', markUserScrollIntent)
-      externalScroller.removeEventListener('pointerdown', markUserScrollIntent)
-      externalScroller.removeEventListener('touchstart', markUserScrollIntent)
-      externalScroller.removeEventListener('keydown', markUserScrollIntent)
+    const externalInteraction = externalScrollInteractionRef?.current
+    const interactionTargets = externalInteraction
+      ? [externalScroller, externalInteraction]
+      : [externalScroller]
+    const markScrollbarDrag = (event: PointerEvent) => {
+      if (event.buttons === 1) markUserScrollIntent(event)
     }
-  }, [externalScrollRef, handleScroll, markUserScrollIntent])
+
+    externalInteraction?.addEventListener('pointermove', markScrollbarDrag)
+    externalScroller.addEventListener('scroll', handleScroll)
+    interactionTargets.forEach(target => {
+      target.addEventListener('wheel', markUserScrollIntent)
+      target.addEventListener('pointerdown', markUserScrollIntent)
+      target.addEventListener('touchstart', markUserScrollIntent)
+      target.addEventListener('keydown', markUserScrollIntent)
+    })
+    return () => {
+      externalInteraction?.removeEventListener('pointermove', markScrollbarDrag)
+      externalScroller.removeEventListener('scroll', handleScroll)
+      interactionTargets.forEach(target => {
+        target.removeEventListener('wheel', markUserScrollIntent)
+        target.removeEventListener('pointerdown', markUserScrollIntent)
+        target.removeEventListener('touchstart', markUserScrollIntent)
+        target.removeEventListener('keydown', markUserScrollIntent)
+      })
+    }
+  }, [externalScrollInteractionRef, externalScrollRef, handleScroll, markUserScrollIntent])
 
   const scrollToBottomButton = showScrollButton ? (
     <button

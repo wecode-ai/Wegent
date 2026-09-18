@@ -104,6 +104,7 @@ export interface CloudTodoBoardTaskBinding {
 
 interface CloudTodoBoardCardProps {
   item: CloudLoopItem
+  unread?: boolean
   taskBindings?: CloudTodoBoardTaskBinding[]
   onClick: () => void
   onConfigureExecution?: () => void
@@ -131,6 +132,7 @@ interface CloudTodoBoardCardProps {
 
 export function CloudTodoBoardCard({
   item,
+  unread,
   taskBindings = [],
   onClick,
   onConfigureExecution,
@@ -180,6 +182,7 @@ export function CloudTodoBoardCard({
   return (
     <IssueBoardCard
       item={item}
+      unread={unread}
       reference={item.id}
       display={display}
       labels={createIssueBoardCardLabels(t)}
